@@ -1,0 +1,229 @@
+version: 1
+name: "tpch_q19_profile"
+
+tests:
+  - id: "tpch_q19_profile.010_branch1_part_filter_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, joined-predicate-pushdown, string-enum-filter, numeric-predicate, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and p.p_size >= 1
+        and p.p_size <= 5
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.020_branch1_full_filter_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and l.l_quantity >= 1
+        and l.l_quantity <= 11
+        and p.p_size >= 1
+        and p.p_size <= 5
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.030_branch1_revenue"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, child-side-joined-aggregate-expression, profile]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and l.l_quantity >= 1
+        and l.l_quantity <= 11
+        and p.p_size >= 1
+        and p.p_size <= 5
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.040_branch2_full_filter_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#23'
+        and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+        and l.l_quantity >= 10
+        and l.l_quantity <= 20
+        and p.p_size >= 1
+        and p.p_size <= 10
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.050_branch2_revenue"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, child-side-joined-aggregate-expression, profile]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#23'
+        and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+        and l.l_quantity >= 10
+        and l.l_quantity <= 20
+        and p.p_size >= 1
+        and p.p_size <= 10
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.060_branch3_full_filter_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#34'
+        and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+        and l.l_quantity >= 20
+        and l.l_quantity <= 30
+        and p.p_size >= 1
+        and p.p_size <= 15
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.070_branch3_revenue"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q19, two-table-join, mixed-table-predicate, joined-predicate-pushdown, child-side-joined-aggregate-expression, profile]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#34'
+        and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+        and l.l_quantity >= 20
+        and l.l_quantity <= 30
+        and p.p_size >= 1
+        and p.p_size <= 15
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.080_formal_or_count"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q19, two-table-join, mixed-table-or, joined-predicate-pushdown, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where
+        (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and p.p_size >= 1
+          and p.p_size <= 5
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and p.p_size >= 1
+          and p.p_size <= 10
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and p.p_size >= 1
+          and p.p_size <= 15
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      row_count: 1
+
+  - id: "tpch_q19_profile.090_formal_or_revenue"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q19, two-table-join, mixed-table-or, joined-predicate-pushdown, child-side-joined-aggregate-expression, profile]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where
+        (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and p.p_size >= 1
+          and p.p_size <= 5
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and p.p_size >= 1
+          and p.p_size <= 10
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and p.p_size >= 1
+          and p.p_size <= 15
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      row_count: 1

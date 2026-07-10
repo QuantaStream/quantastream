@@ -1,0 +1,202 @@
+package core
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/stvp/rendezvous"
+	"golang.org/x/sync/errgroup"
+)
+
+// IngestRecord is a transport-neutral row mutation routed through a single
+// session owner.
+type IngestRecord struct {
+	TableName string
+	Data      map[string]interface{}
+	ShardKey  string
+}
+
+// SessionRouterConfig configures deterministic fanout across session workers.
+type SessionRouterConfig struct {
+	TableCache     *TableCacheStruct
+	BasePath       string
+	Conn           *shared.Conn
+	ShardCount     int
+	ChannelSize    int
+	FlushInterval  time.Duration
+	OnSessionOpen  func()
+	OnSessionClose func()
+	OnProcessed    func()
+	OnError        func(error)
+}
+
+// SessionRouter owns non-threadsafe Session objects behind worker channels.
+type SessionRouter struct {
+	cfg           SessionRouterConfig
+	hashTable     *rendezvous.Table
+	shardChannels map[string]chan IngestRecord
+	sessionCache  sync.Map
+	eg            errgroup.Group
+	closeOnce     sync.Once
+}
+
+// NewSessionRouter creates session workers and deterministic shard routing.
+func NewSessionRouter(cfg SessionRouterConfig) (*SessionRouter, error) {
+	if cfg.TableCache == nil {
+		return nil, fmt.Errorf("table cache is required")
+	}
+	if cfg.Conn == nil {
+		return nil, fmt.Errorf("connection is required")
+	}
+	if cfg.ShardCount <= 0 {
+		return nil, fmt.Errorf("shard count must be positive")
+	}
+	if cfg.ChannelSize <= 0 {
+		cfg.ChannelSize = 100000
+	}
+	if cfg.FlushInterval <= 0 {
+		cfg.FlushInterval = time.Second
+	}
+
+	router := &SessionRouter{
+		cfg:           cfg,
+		shardChannels: make(map[string]chan IngestRecord),
+	}
+	shardIDs := make([]string, cfg.ShardCount)
+	for i := 0; i < cfg.ShardCount; i++ {
+		shardID := fmt.Sprintf("shard%v", i)
+		shardIDs[i] = shardID
+		router.shardChannels[shardID] = make(chan IngestRecord, cfg.ChannelSize)
+	}
+	router.hashTable = rendezvous.New(shardIDs)
+	for _, shardID := range shardIDs {
+		router.startWorker(shardID, router.shardChannels[shardID])
+	}
+	return router, nil
+}
+
+// Enqueue routes a record to the session worker selected by its shard key.
+func (r *SessionRouter) Enqueue(record IngestRecord) error {
+	if record.TableName == "" {
+		return fmt.Errorf("table name is required")
+	}
+	if record.ShardKey == "" {
+		return fmt.Errorf("shard key is required")
+	}
+	shard := r.hashTable.GetN(1, record.ShardKey)
+	ch, ok := r.shardChannels[shard[0]]
+	if !ok {
+		return fmt.Errorf("cannot locate channel for shard key %v", record.ShardKey)
+	}
+	ch <- record
+	return nil
+}
+
+// Close drains workers and closes all owned sessions.
+func (r *SessionRouter) Close() error {
+	r.closeOnce.Do(func() {
+		for _, ch := range r.shardChannels {
+			close(ch)
+		}
+	})
+	return r.eg.Wait()
+}
+
+func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
+	r.eg.Go(func() error {
+		var shardTableKeys sync.Map
+		for {
+			select {
+			case record, open := <-ch:
+				if !open {
+					return r.closeWorkerSessions(&shardTableKeys)
+				}
+				if err := r.putRecord(shardID, record, &shardTableKeys); err != nil {
+					if r.cfg.OnError != nil {
+						r.cfg.OnError(err)
+					}
+					return err
+				}
+			default:
+				if err := r.flushIdleSessions(&shardTableKeys); err != nil {
+					if r.cfg.OnError != nil {
+						r.cfg.OnError(err)
+					}
+					return err
+				}
+				time.Sleep(r.cfg.FlushInterval)
+			}
+		}
+	})
+}
+
+func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTableKeys *sync.Map) error {
+	shardTableKey := fmt.Sprintf("%v+%v", shardID, record.TableName)
+	conn, ok := r.sessionCache.Load(shardTableKey)
+	if !ok {
+		session, err := OpenSession(r.cfg.TableCache, r.cfg.BasePath, record.TableName, true, r.cfg.Conn)
+		if err != nil {
+			return err
+		}
+		conn = session
+		r.sessionCache.Store(shardTableKey, session)
+		shardTableKeys.Store(shardTableKey, session)
+		if r.cfg.OnSessionOpen != nil {
+			r.cfg.OnSessionOpen()
+		}
+	}
+	if err := conn.(*Session).PutRow(record.TableName, record.Data, 0, false, false); err != nil {
+		return fmt.Errorf("ERROR in PutRow, shard %s - %v", shardID, err)
+	}
+	if r.cfg.OnProcessed != nil {
+		r.cfg.OnProcessed()
+	}
+	return nil
+}
+
+func (r *SessionRouter) flushIdleSessions(shardTableKeys *sync.Map) error {
+	var firstErr error
+	shardTableKeys.Range(func(k, v interface{}) bool {
+		session := v.(*Session)
+		if session.IsFlushing() {
+			return true
+		}
+		if time.Since(session.BatchBuffer.FlushedAt) > 2*r.cfg.FlushInterval {
+			if err := session.CloseSession(); err != nil {
+				firstErr = err
+				return false
+			}
+			shardTableKeys.Delete(k)
+			r.sessionCache.Delete(k)
+			if r.cfg.OnSessionClose != nil {
+				r.cfg.OnSessionClose()
+			}
+		} else if time.Since(session.BatchBuffer.ModifiedAt) > r.cfg.FlushInterval {
+			if err := session.Flush(); err != nil {
+				firstErr = err
+				return false
+			}
+		}
+		return true
+	})
+	return firstErr
+}
+
+func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) error {
+	var firstErr error
+	shardTableKeys.Range(func(k, v interface{}) bool {
+		if err := v.(*Session).CloseSession(); err != nil {
+			firstErr = err
+			return false
+		}
+		shardTableKeys.Delete(k)
+		r.sessionCache.Delete(k)
+		if r.cfg.OnSessionClose != nil {
+			r.cfg.OnSessionClose()
+		}
+		return true
+	})
+	return firstErr
+}

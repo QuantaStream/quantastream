@@ -1,0 +1,932 @@
+package shared
+
+//
+// Client side bitmap functions and API wrappers for bulk loading functions such as SetBit and
+// SetValue for bitmap and BSI fields respectively.
+//
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	pb "github.com/QuantaStream/quantastream/grpc"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	u "github.com/araddon/gou"
+	"github.com/golang/protobuf/ptypes/empty"
+	"golang.org/x/sync/errgroup"
+)
+
+var (
+	// Ensure BitmapIndex implements shared.Service
+	_ Service = (*BitmapIndex)(nil)
+)
+
+const (
+	timeFmt = "2006-01-02T15"
+	ifDelim = "/"
+)
+
+func formatShardTime(t time.Time) string {
+	return t.UTC().Format(timeFmt)
+}
+
+// BitmapIndex - Client side API for bitmap operations.
+//
+// Conn - "base" class wrapper for network connection to servers.
+// client - Array of client API wrappers, one each for every server node.
+type BitmapIndex struct {
+	*Conn
+	client []pb.BitmapIndexClient
+}
+
+// NewBitmapIndex - Initializer for client side API wrappers.
+func NewBitmapIndex(conn *Conn) *BitmapIndex {
+
+	clients := make([]pb.BitmapIndexClient, len(conn.ClientConnections()))
+	for i := 0; i < len(conn.ClientConnections()); i++ {
+		clients[i] = pb.NewBitmapIndexClient(conn.ClientConnections()[i])
+	}
+	c := &BitmapIndex{Conn: conn, client: clients}
+	conn.RegisterService(c)
+	return c
+}
+
+type bitmapClientSnapshot struct {
+	index  int
+	client pb.BitmapIndexClient
+}
+
+func (c *BitmapIndex) clientsSnapshot() []pb.BitmapIndexClient {
+	c.Conn.nodeMapLock.RLock()
+	defer c.Conn.nodeMapLock.RUnlock()
+
+	clients := make([]pb.BitmapIndexClient, len(c.Conn.clientConn))
+	for i, conn := range c.Conn.clientConn {
+		clients[i] = pb.NewBitmapIndexClient(conn)
+	}
+	return clients
+}
+
+func (c *BitmapIndex) activeClientsSnapshot() []bitmapClientSnapshot {
+	c.Conn.nodeMapLock.RLock()
+	defer c.Conn.nodeMapLock.RUnlock()
+
+	clients := make([]bitmapClientSnapshot, 0, len(c.Conn.clientConn))
+	for i, conn := range c.Conn.clientConn {
+		if c.Conn.ServicePort != 0 {
+			if i >= len(c.Conn.ids) {
+				continue
+			}
+			pbStat, found := c.Conn.nodeStatusMap.Load(c.Conn.ids[i])
+			if !found {
+				continue
+			}
+			status := pbStat.(*pb.StatusMessage)
+			if status.NodeState != "Active" {
+				continue
+			}
+		}
+		clients = append(clients, bitmapClientSnapshot{
+			index:  i,
+			client: pb.NewBitmapIndexClient(conn),
+		})
+	}
+	return clients
+}
+
+// MemberJoined - A new node joined the cluster.
+func (c *BitmapIndex) MemberJoined(nodeID, ipAddress string, index int) {
+
+	c.client = append(c.client, nil)
+	copy(c.client[index+1:], c.client[index:])
+	c.client[index] = pb.NewBitmapIndexClient(c.Conn.clientConn[index])
+}
+
+// MemberLeft - A node left the cluster.
+func (c *BitmapIndex) MemberLeft(nodeID string, index int) {
+
+	if len(c.client) <= 1 {
+		c.client = make([]pb.BitmapIndexClient, 0)
+		return
+	}
+	c.client = append(c.client[:index], c.client[index+1:]...)
+}
+
+// Client - Get a client by index.
+func (c *BitmapIndex) Client(index int) pb.BitmapIndexClient {
+
+	return c.client[index]
+}
+
+// BatchMutate - Send a batch of standard bitmap mutations to the server cluster for processing.
+// Does this by calling BatchMutateNode in parallel for optimal throughput.
+func (c *BitmapIndex) BatchMutate(batch map[string]map[string]map[uint64]map[int64]*Bitmap,
+	clear bool) error {
+
+	clients, batches, err := c.splitBitmapBatch(batch)
+	if err != nil {
+		return err
+	}
+	var eg errgroup.Group
+
+	for i, v := range batches {
+		cl := clients[i]
+		batch := v
+		eg.Go(func() error {
+			return c.BatchMutateNode(clear, cl, batch)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// BatchMutateNode - Send batch to its respective node.
+func (c *BitmapIndex) BatchMutateNode(clear bool, client pb.BitmapIndexClient,
+	batch map[string]map[string]map[uint64]map[int64]*Bitmap) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	b := make([]*pb.IndexKVPair, 0)
+	i := 0
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for rowID, ts := range field {
+				for t, bitmap := range ts {
+					buf, err := bitmap.Bits.ToBytes()
+					if err != nil {
+						u.Errorf("bitmap.Bits.ToBytes: %v", err)
+						return err
+					}
+					ba := make([][]byte, 1)
+					ba[0] = buf
+					b = append(b, &pb.IndexKVPair{IndexPath: indexName + "/" + fieldName,
+						Key: ToBytes(int64(rowID)), Value: ba, Time: t, IsClear: clear,
+						IsUpdate: bitmap.IsUpdate})
+					i++
+					//u.Debug("Sent batch %d for path %s\n", i, b[i].IndexPath)
+				}
+			}
+		}
+	}
+	stream, err := client.BatchMutate(ctx)
+
+	if err != nil {
+		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+		return fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+	}
+
+	for i := 0; i < len(b); i++ {
+		if err := stream.Send(b[i]); err != nil {
+			u.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+			return fmt.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+		}
+	}
+
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+	}
+
+	return err
+}
+
+// splitBitmapBatch - For a given batch of standard bitmap mutations, separate them into
+// sub-batches based upon a consistently hashed shard key so that they can be send to their
+// respective nodes.  For standard bitmaps, this shard key consists of [index/field/rowid/timestamp].
+// Special case for updates. Send a "clear" signal to non-targeted nodes for exclusive bitmap fields.
+func (c *BitmapIndex) splitBitmapBatch(batch map[string]map[string]map[uint64]map[int64]*Bitmap,
+) ([]pb.BitmapIndexClient, []map[string]map[string]map[uint64]map[int64]*Bitmap, error) {
+
+	c.Conn.nodeMapLock.RLock()
+	defer c.Conn.nodeMapLock.RUnlock()
+
+	clients := make([]pb.BitmapIndexClient, len(c.Conn.clientConn))
+	for i, conn := range c.Conn.clientConn {
+		clients[i] = pb.NewBitmapIndexClient(conn)
+	}
+	if len(clients) == 0 {
+		return nil, nil, fmt.Errorf("splitBitmapBatch: no bitmap clients available")
+	}
+	batches := make([]map[string]map[string]map[uint64]map[int64]*Bitmap, len(clients))
+	for i := range batches {
+		batches[i] = make(map[string]map[string]map[uint64]map[int64]*Bitmap)
+	}
+
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for rowID, ts := range field {
+				for t, bitmap := range ts {
+					tm := time.Unix(0, t)
+					opType := WriteIntent
+					if bitmap.IsUpdate {
+						opType = WriteIntentAll
+					}
+					indices, err := c.Conn.selectNodesLocked(fmt.Sprintf("%s/%s/%d/%s", indexName, fieldName,
+						rowID, formatShardTime(tm)), opType)
+
+					if err != nil {
+						return nil, nil, fmt.Errorf("splitBitmapBatch: %v", err)
+					}
+					for _, i := range indices {
+						if i < 0 || i >= len(batches) {
+							return nil, nil, fmt.Errorf("splitBitmapBatch: selected node index %d outside client count %d", i, len(batches))
+						}
+						if batches[i] == nil {
+							batches[i] = make(map[string]map[string]map[uint64]map[int64]*Bitmap)
+						}
+						if _, ok := batches[i][indexName]; !ok {
+							batches[i][indexName] = make(map[string]map[uint64]map[int64]*Bitmap)
+						}
+						if _, ok := batches[i][indexName][fieldName]; !ok {
+							batches[i][indexName][fieldName] = make(map[uint64]map[int64]*Bitmap)
+						}
+						if _, ok := batches[i][indexName][fieldName][rowID]; !ok {
+							batches[i][indexName][fieldName][rowID] = make(map[int64]*Bitmap)
+						}
+						batches[i][indexName][fieldName][rowID][t] = bitmap
+					}
+				}
+			}
+		}
+	}
+	return clients, batches, nil
+}
+
+// BatchSetValue - Send a batch of BSI mutations to the server cluster for processing.  Does this by calling
+// BatchSetValueNode in parallel for optimal throughput.
+func (c *BitmapIndex) BatchSetValue(batch map[string]map[string]map[int64]*roaring64.BSI) error {
+
+	clients, batches, err := c.splitBSIBatch(batch)
+	if err != nil {
+		return err
+	}
+	var eg errgroup.Group
+	for i, v := range batches {
+		cl := clients[i]
+		batch := v
+		eg.Go(func() error {
+			return c.BatchSetValueNode(cl, batch)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// BatchSetValueNode - Send a batch of BSI values to a specific node.
+func (c *BitmapIndex) BatchSetValueNode(client pb.BitmapIndexClient,
+	batch map[string]map[string]map[int64]*roaring64.BSI) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	b := make([]*pb.IndexKVPair, 0)
+	i := 0
+	var err error
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, bsi := range field {
+				if bsi.GetCardinality() == 0 {
+					u.Debugf("BSI for %s - %s is empty.", indexName, fieldName)
+					continue
+				}
+				bitCount := bsi.BitCount()
+				if bitCount == 0 {
+					bitCount = 1
+				}
+				ba, err := bsi.MarshalBinary()
+				if err != nil {
+					u.Errorf("BSI.MarshalBinary: %v", err)
+					return err
+				}
+				b = append(b, &pb.IndexKVPair{IndexPath: indexName + "/" + fieldName,
+					Key: ToBytes(int64(bitCount * -1)), Value: ba, Time: t})
+				i++
+				//u.Debugf("Sent batch %d for path %s\n", i, b[i].IndexPath)
+			}
+		}
+	}
+	stream, err := client.BatchMutate(ctx)
+	if err != nil {
+		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+		return fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+	}
+
+	for i := 0; i < len(b); i++ {
+		if err := stream.Send(b[i]); err != nil {
+			u.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+			return fmt.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+		}
+	}
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+	}
+	return nil
+}
+
+// For a given batch of BSI mutations, separate them into sub-batches based upon
+// a consistently hashed shard key so that they can be send to their respective nodes.
+// For BSI fields, this shard key consists of [index/field/timestamp].  All BSI slices
+// for a given field are co-located.
+func (c *BitmapIndex) splitBSIBatch(batch map[string]map[string]map[int64]*roaring64.BSI,
+) ([]pb.BitmapIndexClient, []map[string]map[string]map[int64]*roaring64.BSI, error) {
+
+	c.Conn.nodeMapLock.RLock()
+	defer c.Conn.nodeMapLock.RUnlock()
+
+	clients := make([]pb.BitmapIndexClient, len(c.Conn.clientConn))
+	for i, conn := range c.Conn.clientConn {
+		clients[i] = pb.NewBitmapIndexClient(conn)
+	}
+	if len(clients) == 0 {
+		return nil, nil, fmt.Errorf("splitBSIBatch: no bitmap clients available")
+	}
+	batches := make([]map[string]map[string]map[int64]*roaring64.BSI, len(clients))
+	for i := range batches {
+		batches[i] = make(map[string]map[string]map[int64]*roaring64.BSI)
+	}
+
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, bsi := range field {
+				tm := time.Unix(0, t)
+				indices, err := c.Conn.selectNodesLocked(fmt.Sprintf("%s/%s/%s", indexName, fieldName, formatShardTime(tm)), WriteIntent)
+				if err != nil {
+					return nil, nil, fmt.Errorf("splitBSIBatch: %v", err)
+				}
+				for _, i := range indices {
+					if i < 0 || i >= len(batches) {
+						return nil, nil, fmt.Errorf("splitBSIBatch: selected node index %d outside client count %d", i, len(batches))
+					}
+					if batches[i] == nil {
+						batches[i] = make(map[string]map[string]map[int64]*roaring64.BSI)
+					}
+					if _, ok := batches[i][indexName]; !ok {
+						batches[i][indexName] = make(map[string]map[int64]*roaring64.BSI)
+					}
+					if _, ok := batches[i][indexName][fieldName]; !ok {
+						batches[i][indexName][fieldName] = make(map[int64]*roaring64.BSI)
+					}
+					batches[i][indexName][fieldName][t] = bsi.Clone()
+				}
+			}
+		}
+	}
+	return clients, batches, nil
+}
+
+// BulkClear - Send a resultset bitmap to all nodes and perform bulk clear operation.
+func (c *BitmapIndex) BulkClear(index, fromTime, toTime string,
+	foundSet *roaring64.Bitmap) error {
+
+	data, err := foundSet.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	req := &pb.BulkClearRequest{Index: index, FoundSet: data}
+
+	if from, err := time.Parse(timeFmt, fromTime); err == nil {
+		req.FromTime = from.UnixNano()
+	} else {
+		return err
+	}
+	if to, err := time.Parse(timeFmt, toTime); err == nil {
+		req.ToTime = to.UnixNano()
+	} else {
+		return err
+	}
+
+	var eg errgroup.Group
+
+	// Send the same clear request to each node
+	indices, err := c.SelectNodes(index, WriteIntentAll)
+	if err != nil {
+		return fmt.Errorf("BulkClear: %v", err)
+	}
+	for _, n := range indices {
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			if err := c.clearClient(client, req, clientIndex); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Send bulk clear request to all nodes.
+func (c *BitmapIndex) clearClient(client pb.BitmapIndexClient, req *pb.BulkClearRequest,
+	clientIndex int) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	if _, err := client.BulkClear(ctx, req); err != nil {
+		return fmt.Errorf("%v.BulkClear(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return nil
+}
+
+// CheckoutSequence - Request a sequence generator from owning server node.
+func (c *BitmapIndex) CheckoutSequence(indexName, pkField string, ts time.Time,
+	reservationSize int) (*Sequencer, error) {
+
+	req := &pb.CheckoutSequenceRequest{Index: indexName, PkField: pkField, Time: ts.UnixNano(),
+		ReservationSize: uint32(reservationSize)}
+
+	// We are checking out a sequence with the intent to write, but we only want the Active primary hence ReadIntent
+	indices, err1 := c.SelectNodes(fmt.Sprintf("%s/%s/%s", indexName, pkField, formatShardTime(ts)), ReadIntent)
+	if err1 != nil {
+		return nil, fmt.Errorf("CheckoutSequence: %v", err1)
+	}
+
+	/*
+	 * Make sure to target the node with the true maximum column ID for the table.
+	 * If time quantums are enabled, then the PK must be a timestamp field.
+	 * (Note: For compound keys this must be the first (leftmost) key).
+	 * In this case, the timestamp is truncated with timeFmt and it's nano value is
+	 * added to the sequence start value on the server and returned to the client..
+	 */
+	res, err := c.sequencerClient(c.client[indices[0]], req, indices[0])
+	if err != nil {
+		return nil, err
+	}
+	return NewSequencer(res.Start, int(res.Count)), nil
+}
+
+// Send projection processing request to a specific node.
+func (c *BitmapIndex) sequencerClient(client pb.BitmapIndexClient, req *pb.CheckoutSequenceRequest,
+	clientIndex int) (result *pb.CheckoutSequenceResponse, err error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	if result, err = client.CheckoutSequence(ctx, req); err != nil {
+		return nil, fmt.Errorf("%v.CheckoutSequence(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+// Projection - Send fields and target set for a given index to cluster for projection processing.
+func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime int64,
+	foundSet *roaring64.Bitmap, negate bool) (map[string]*roaring64.BSI, map[string]map[uint64]*roaring64.Bitmap, error) {
+
+	bsiResults := make(map[string][]*roaring64.BSI, 0)
+	bitmapResults := make(map[string]map[uint64][]*roaring64.Bitmap, 0)
+
+	var data []byte
+	if foundSet != nil {
+		var err error
+		data, err = foundSet.MarshalBinary()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	req := &pb.ProjectionRequest{Index: index, Fields: fields, FromTime: fromTime,
+		ToTime: toTime, FoundSet: data, Negate: negate}
+
+	resultChan := make(chan *pb.ProjectionResponse, 100)
+	var eg errgroup.Group
+
+	// Send the same projection request to each readable node.
+	indices, err2 := c.SelectNodes(index, ReadIntentAll)
+	if err2 != nil {
+		return nil, nil, fmt.Errorf("Projection: %v", err2)
+	}
+	for _, n := range indices {
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			pr, err := c.projectionClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- pr
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, nil, err
+	}
+	close(resultChan)
+
+	for rs := range resultChan {
+		for _, v := range rs.GetBsiResults() {
+			bsi, ok := bsiResults[v.Field]
+			if !ok {
+				bsi = make([]*roaring64.BSI, 0)
+			}
+
+			newBsi := roaring64.NewDefaultBSI()
+			if err := newBsi.UnmarshalBinary(v.Bitmaps); err != nil {
+				return nil, nil, fmt.Errorf("unmarshalling BSI projection results - %v", err)
+			}
+			bsiResults[v.Field] = append(bsi, newBsi)
+		}
+		for _, v := range rs.GetBitmapResults() {
+			if _, ok := bitmapResults[v.Field]; !ok {
+				bitmapResults[v.Field] = make(map[uint64][]*roaring64.Bitmap, 0)
+			}
+			field := bitmapResults[v.Field]
+			bm, ok := field[v.RowId]
+			if !ok {
+				bm = make([]*roaring64.Bitmap, 0)
+			}
+			newBm := roaring64.NewBitmap()
+			if err := newBm.UnmarshalBinary(v.Bitmap); err != nil {
+				return nil, nil, fmt.Errorf("unmarshalling bitmap projection results - %v", err)
+			}
+			field[v.RowId] = append(bm, newBm)
+		}
+	}
+
+	// Aggregate the per node results
+	aggbsiResults := make(map[string]*roaring64.BSI)
+	for k, v := range bsiResults {
+		bsi := roaring64.NewDefaultBSI()
+		//bsi.ParOr(0, v...)
+		for _, z := range v {
+			bsi.ParOr(0, z)
+		}
+		aggbsiResults[k] = bsi
+	}
+	aggbitmapResults := make(map[string]map[uint64]*roaring64.Bitmap)
+	for k, v := range bitmapResults {
+		aggbitmapResults[k] = make(map[uint64]*roaring64.Bitmap)
+		for k2, v2 := range v {
+			aggbitmapResults[k][k2] = roaring64.ParOr(0, v2...)
+		}
+	}
+	return aggbsiResults, aggbitmapResults, nil
+}
+
+// Send projection processing request to a specific node.
+func (c *BitmapIndex) projectionClient(client pb.BitmapIndexClient, req *pb.ProjectionRequest,
+	clientIndex int) (*pb.ProjectionResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	result, err := client.Projection(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.Projection(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+// TableOperation - Handle TableOperations
+func (c *BitmapIndex) TableOperation(table, operation string) error {
+
+	sop := AllActive
+	var op pb.TableOperationRequest_OpType
+	switch operation {
+	case "deploy":
+		sop = Admin
+		op = pb.TableOperationRequest_DEPLOY
+	case "drop":
+		op = pb.TableOperationRequest_DROP
+	case "truncate":
+		op = pb.TableOperationRequest_TRUNCATE
+	default:
+		return fmt.Errorf("unknown operation %v", operation)
+	}
+	req := &pb.TableOperationRequest{Table: table, Operation: op}
+
+	var eg errgroup.Group
+
+	// Send the same tableOperation request to each node.  They must be all Active
+	indices, err := c.SelectNodes(table, sop)
+	if err != nil {
+		return fmt.Errorf("table %s operation: %v", operation, err)
+	}
+	for _, n := range indices {
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			if err := c.tableOperationClient(client, req, clientIndex); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Send a tableOperation request to one node.
+func (c *BitmapIndex) tableOperationClient(client pb.BitmapIndexClient, req *pb.TableOperationRequest,
+	clientIndex int) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), OpDeadline)
+	defer cancel()
+
+	_, err := client.TableOperation(ctx, req)
+	if err != nil {
+		return fmt.Errorf("%v.TableOperation(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return nil
+}
+
+// Commit - Send commitClient to all nodes. Wait for all to complete.
+func (c *BitmapIndex) Commit() error {
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return fmt.Errorf("commit: no active bitmap nodes")
+	}
+	var eg errgroup.Group
+
+	// Send the same commit request to each active node from one connection/status snapshot.
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			if err := c.commitClient(client, clientIndex); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Send a Commit request to a node.
+func (c *BitmapIndex) commitClient(client pb.BitmapIndexClient, clientIndex int) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), CommitDeadline)
+	defer cancel()
+	_, err := client.Commit(ctx, &empty.Empty{}) // where does this go, on the nodes?
+	if err != nil {
+		return fmt.Errorf("%v.Commit(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return nil
+}
+
+type PartitionInfoSummary struct {
+	Table      string
+	Quantum    time.Time
+	ModTime    time.Time
+	MemoryUsed uint32
+	Shards     int
+	TQType     string
+}
+
+// Send a shard info request
+func (c *BitmapIndex) shardInfoClient(client pb.BitmapIndexClient, req *pb.PartitionInfoRequest,
+	clientIndex int) (*pb.PartitionInfoResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	response, err := client.PartitionInfo(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.PartitionInfo(_) = _, %v, node = %s", client, err,
+			c.Conn.ClientConnections()[clientIndex].Target())
+	}
+	return response, nil
+}
+
+// PartitionInfo - Given a "ending" timestamp (and optional table filter), show all the shards before that time.
+func (c *BitmapIndex) PartitionInfo(before time.Time, index string) ([]*PartitionInfoSummary, error) {
+
+	shardInfoAgg := make(map[string]map[int64]*PartitionInfoSummary, 0)
+	indexList := make([]string, 0)
+	results := make([]*PartitionInfoSummary, 0)
+
+	req := &pb.PartitionInfoRequest{Index: index, Time: before.UnixNano()}
+	resultChan := make(chan *pb.PartitionInfoResult, 10000000)
+	var eg errgroup.Group
+
+	// Send the same shard info request to each readable node.
+	indices, err2 := c.SelectNodes(index, ReadIntentAll)
+	if err2 != nil {
+		return nil, fmt.Errorf("PartitionInfo: %v", err2)
+	}
+	for _, n := range indices {
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			pr, err := c.shardInfoClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			for _, r := range pr.GetPartitionInfoResults() {
+				resultChan <- r
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	close(resultChan)
+
+	// Summarize results
+	for rs := range resultChan {
+		if _, ok := shardInfoAgg[rs.Index]; !ok {
+			shardInfoAgg[rs.Index] = make(map[int64]*PartitionInfoSummary, 0)
+			indexList = append(indexList, rs.Index)
+		}
+		if sim, ok := shardInfoAgg[rs.Index][rs.Time]; !ok {
+			sim = &PartitionInfoSummary{Table: rs.Index, Quantum: time.Unix(0, rs.Time),
+				ModTime: time.Unix(0, rs.ModTime), MemoryUsed: rs.Bytes, Shards: 1, TQType: rs.TqType}
+			shardInfoAgg[rs.Index][rs.Time] = sim
+		} else {
+			if sim.ModTime.Before(time.Unix(0, rs.ModTime)) {
+				sim.ModTime = time.Unix(0, rs.ModTime)
+			}
+			sim.MemoryUsed += rs.Bytes
+			sim.Shards++
+			shardInfoAgg[rs.Index][rs.Time] = sim
+		}
+	}
+	sort.Strings(indexList)
+	for _, x := range indexList {
+		shardTimes := make([]int64, 0)
+		for k, _ := range shardInfoAgg[x] {
+			shardTimes = append(shardTimes, k)
+		}
+		sort.Slice(shardTimes, func(i, j int) bool { return shardTimes[i] > shardTimes[j] })
+		for _, v := range shardTimes {
+			results = append(results, shardInfoAgg[x][v])
+		}
+	}
+	return results, nil
+}
+
+// Initiate partition purge
+func (c *BitmapIndex) purgePartitionClient(client pb.BitmapIndexClient, req *pb.PartitionInfoRequest,
+	clientIndex int) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	_, err := client.OfflinePartitions(ctx, req)
+	if err != nil {
+		return fmt.Errorf("%v.OfflinePartitions(_) = _, %v, node = %s", client, err,
+			c.Conn.ClientConnections()[clientIndex].Target())
+	}
+	return nil
+}
+
+// OfflinePartitions - Given a "ending" timestamp (and optional table filter), offline older partitions.
+func (c *BitmapIndex) OfflinePartitions(before time.Time, index string) error {
+
+	req := &pb.PartitionInfoRequest{Index: index, Time: before.UnixNano()}
+	var eg errgroup.Group
+
+	// Send the same partition purge request to each writable  node.
+	indices, err2 := c.SelectNodes(index, WriteIntentAll)
+	if err2 != nil {
+		return fmt.Errorf("OfflinePartitions: %v", err2)
+	}
+	for _, n := range indices {
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			err := c.purgePartitionClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// BatchClearValue - Send a batch of requests to clear BSI values.
+func (c *BitmapIndex) BatchClearValue(batch map[string]map[string]map[int64]*roaring64.Bitmap) error {
+
+	batches := c.splitBSIClearBatch(batch)
+	var eg errgroup.Group
+	for i, v := range batches {
+		cl := c.client[i]
+		batch := v
+		eg.Go(func() error {
+			return c.BatchClearValueNode(cl, batch)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// BatchClearValueNode - Send a batch of BSI clear operations to a specific node.
+func (c *BitmapIndex) BatchClearValueNode(client pb.BitmapIndexClient,
+	batch map[string]map[string]map[int64]*roaring64.Bitmap) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	b := make([]*pb.IndexKVPair, 0)
+	i := 0
+	var err error
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, ebm := range field {
+				buf, err := ebm.ToBytes()
+				if err != nil {
+					u.Errorf("bitmap.ToBytes: %v", err)
+					return err
+				}
+				ba := make([][]byte, 1)
+				ba[0] = buf
+				b = append(b, &pb.IndexKVPair{IndexPath: indexName + "/" + fieldName,
+					Key: ToBytes(int64(-1)), Value: ba, Time: t, IsClear: true})
+				i++
+				//u.Debugf("Sent batch %d for path %s\n", i, b[i].IndexPath)
+			}
+		}
+	}
+	stream, err := client.BatchMutate(ctx)
+	if err != nil {
+		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+		return fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+	}
+
+	for i := 0; i < len(b); i++ {
+		if err := stream.Send(b[i]); err != nil {
+			u.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+			return fmt.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+		}
+	}
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+	}
+	return nil
+}
+
+// For a given batch of BSI clear mutations, separate them into sub-batches based upon
+// a consistently hashed shard key so that they can be send to their respective nodes.
+// For BSI fields, this shard key consists of [index/field/timestamp].  It contains the EBM
+// Of the values to be cleared.
+func (c *BitmapIndex) splitBSIClearBatch(batch map[string]map[string]map[int64]*roaring64.Bitmap,
+) []map[string]map[string]map[int64]*roaring64.Bitmap {
+
+	batches := make([]map[string]map[string]map[int64]*roaring64.Bitmap, len(c.client))
+	for i := range batches {
+		batches[i] = make(map[string]map[string]map[int64]*roaring64.Bitmap)
+	}
+
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, ebm := range field {
+				tm := time.Unix(0, t)
+				indices, err := c.SelectNodes(fmt.Sprintf("%s/%s/%s", indexName, fieldName, formatShardTime(tm)), WriteIntent)
+				if err != nil {
+					u.Errorf("splitBSIClearBatch: %v", err)
+					continue
+				}
+				for _, i := range indices {
+					if batches[i] == nil {
+						batches[i] = make(map[string]map[string]map[int64]*roaring64.Bitmap)
+					}
+					if _, ok := batches[i][indexName]; !ok {
+						batches[i][indexName] = make(map[string]map[int64]*roaring64.Bitmap)
+					}
+					if _, ok := batches[i][indexName][fieldName]; !ok {
+						batches[i][indexName][fieldName] = make(map[int64]*roaring64.Bitmap)
+					}
+					batches[i][indexName][fieldName][t] = ebm
+				}
+			}
+		}
+	}
+	return batches
+}

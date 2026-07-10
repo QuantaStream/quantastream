@@ -1,0 +1,399 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	u "github.com/araddon/gou"
+
+	"github.com/QuantaStream/quantastream/rbac"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
+	"github.com/QuantaStream/quantastream/test"
+	runtime "github.com/banzaicloud/logrus-runtime-formatter"
+	"github.com/hashicorp/consul/api"
+	logger "github.com/sirupsen/logrus"
+)
+
+const (
+	engineProxy          = "proxy"
+	engineRuntime        = "runtime"
+	engineRuntimeInspect = "runtime-inspect"
+	engineLegacyDirect   = "legacy-direct"
+)
+
+var consulAddress = "127.0.0.1:8500"
+
+// var buf bytes.Buffer
+var log = logger.New()
+
+type runnerConfig struct {
+	Engine        string
+	Host          string
+	User          string
+	Password      string
+	Database      string
+	Port          string
+	Consul        string
+	CaseID        string
+	Verbose       bool
+	DumpActual    bool
+	SlowThreshold time.Duration
+}
+
+type runnerHarness struct {
+	Runner roadmap.Runner
+	Close  func() error
+}
+
+func main() {
+	shared.SetUTCdefault()
+
+	suiteFile := flag.String("suite_file", "", "Path to a SQL roadmap YAML suite to execute.")
+	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: proxy, runtime, runtime-inspect, or legacy-direct.")
+	host := flag.String("host", "", "Quanta host to connect to.")
+	user := flag.String("user", "", "The username that will connect to the database.")
+	password := flag.String("password", "", "The password to use to connect.")
+	database := flag.String("db", "quanta", "The database to connect to.")
+	port := flag.String("port", "4000", "Port to connect to.")
+	consul := flag.String("consul", "127.0.0.1:8500", "Address of consul.")
+	caseID := flag.String("case", "", "Run only the suite test with this exact id.")
+	logLevel := flag.String("log_level", "", "Set the logging level to DEBUG for additional logging.")
+	verbose := flag.Bool("verbose", false, "Print each roadmap case SQL and detailed timing while it runs.")
+	dumpActual := flag.Bool("dump_actual", false, "Print actual query rows when a roadmap case mismatches.")
+	slowThreshold := flag.Duration("slow_threshold", 0, "Print a slow-case summary for roadmap cases at or above this duration, such as 10s.")
+	flag.Parse()
+
+	cfg := runnerConfig{
+		Engine:        strings.ToLower(strings.TrimSpace(*engine)),
+		Host:          *host,
+		User:          *user,
+		Password:      *password,
+		Database:      *database,
+		Port:          *port,
+		Consul:        *consul,
+		CaseID:        strings.TrimSpace(*caseID),
+		Verbose:       *verbose,
+		DumpActual:    *dumpActual,
+		SlowThreshold: *slowThreshold,
+	}
+	if err := validateFlags(*suiteFile, cfg); err != nil {
+		printUsage(err)
+		os.Exit(0)
+	}
+
+	configureLogging(*logLevel)
+
+	u.Debugf("suite_file : %s", *suiteFile)
+	u.Debugf("engine : %s", cfg.Engine)
+	u.Debugf("host : %s", cfg.Host)
+	u.Debugf("user : %s", cfg.User)
+	u.Debugf("database : %s", cfg.Database)
+	u.Debugf("port : %s", cfg.Port)
+	u.Debugf("log_level : %s", *logLevel)
+	u.Debugf("slow_threshold : %s", cfg.SlowThreshold)
+
+	suite, err := loadSuite(*suiteFile)
+	check(err)
+	if err := filterSuiteCase(suite, cfg.CaseID); err != nil {
+		log.Printf("SQL roadmap suite failed: %v", err)
+		os.Exit(1)
+	}
+
+	harness, err := buildHarness(suite, cfg)
+	if err != nil {
+		log.Printf("SQL roadmap suite failed: %v", err)
+		os.Exit(1)
+	}
+	if harness.Close != nil {
+		defer func() {
+			if err := harness.Close(); err != nil {
+				log.Printf("SQL roadmap harness close failed: %v", err)
+			}
+		}()
+	}
+
+	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold); err != nil {
+		log.Printf("SQL roadmap suite failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+func validateFlags(suiteFile string, cfg runnerConfig) error {
+	if suiteFile == "" {
+		return fmt.Errorf("suite_file is required")
+	}
+	switch cfg.Engine {
+	case engineProxy:
+		if cfg.Host == "" || cfg.User == "" {
+			return fmt.Errorf("host and user are required for proxy engine")
+		}
+	case engineRuntime, engineRuntimeInspect, engineLegacyDirect:
+	default:
+		return fmt.Errorf("unsupported engine %q", cfg.Engine)
+	}
+	return nil
+}
+
+func printUsage(err error) {
+	u.Warn()
+	u.Warn(err.Error())
+	u.Warn()
+	u.Warn("Example: ./sqlrunner -engine proxy -suite_file sqltests/joins_sql.yaml -host 127.0.0.1 -user MOLIG004 -db quanta -port 4000")
+	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
+	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
+	u.Warn("Legacy direct example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_smoke.yaml -consul 127.0.0.1:8500")
+}
+
+func configureLogging(logLevel string) {
+	if logLevel != "DEBUG" {
+		return
+	}
+	formatter := runtime.Formatter{ChildFormatter: &logger.TextFormatter{
+		FullTimestamp: true,
+	}}
+	formatter.Line = true
+	log.SetFormatter(&formatter)
+	log.SetOutput(os.Stdout)
+	log.SetLevel(logger.DebugLevel)
+	log.WithFields(logger.Fields{
+		"file": "driver.go",
+	}).Info("SqlRunner is running...")
+}
+
+func loadSuite(suiteFile string) (*roadmap.Suite, error) {
+	data, err := os.ReadFile(suiteFile)
+	if err != nil {
+		return nil, err
+	}
+	return roadmap.Parse(data)
+}
+
+func filterSuiteCase(suite *roadmap.Suite, caseID string) error {
+	if caseID == "" {
+		return nil
+	}
+	for _, test := range suite.Tests {
+		if test.ID == caseID {
+			suite.Tests = []roadmap.TestCase{test}
+			return nil
+		}
+	}
+	return fmt.Errorf("case %q not found in suite %q", caseID, suite.Name)
+}
+
+func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	switch cfg.Engine {
+	case engineProxy:
+		return buildProxyHarness(suite, cfg)
+	case engineLegacyDirect:
+		return buildLegacyDirectHarness(suite, cfg)
+	case engineRuntime, engineRuntimeInspect:
+		return buildRuntimeHarness(suite, cfg)
+	default:
+		return runnerHarness{}, fmt.Errorf("unsupported engine %q", cfg.Engine)
+	}
+}
+
+func buildProxyHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	var proxyConnect test.ProxyConnectStrings
+	proxyConnect.Host = cfg.Host
+	proxyConnect.User = cfg.User
+	proxyConnect.Password = cfg.Password
+	proxyConnect.Port = cfg.Port
+	proxyConnect.Database = cfg.Database
+
+	sharedKV, err := initializeCluster(cfg.Consul)
+	if err != nil {
+		return runnerHarness{}, err
+	}
+	if err := grantSQLRunnerRoles(sharedKV); err != nil {
+		return runnerHarness{}, err
+	}
+
+	proxyConnect.Timeout = suite.MaxCaseTimeout()
+	db, err := proxyConnect.ProxyConnectConnect()
+	if err != nil {
+		return runnerHarness{}, err
+	}
+
+	return runnerHarness{
+		Runner: roadmap.Runner{
+			DB:         db,
+			Admin:      func(_ context.Context, command string) error { return test.ExecuteAdminCommandAndWait(command) },
+			Verbose:    cfg.Verbose,
+			DumpActual: cfg.DumpActual,
+			Logf:       log.Printf,
+		},
+		Close: db.Close,
+	}, nil
+}
+
+func buildRuntimeHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	runtime, err := newRuntimeFixtureSQLRuntime(context.Background())
+	if err != nil {
+		return runnerHarness{}, err
+	}
+	engine := runtimeRoadmapEngine{Runtime: runtime}
+	if cfg.Verbose {
+		engine.Logf = log.Printf
+	}
+	if cfg.Engine == engineRuntimeInspect {
+		engine.Inspect = true
+	}
+	return runnerHarness{
+		Runner: roadmap.Runner{
+			Engine:     engine,
+			Admin:      func(context.Context, string) error { return nil },
+			Verbose:    cfg.Verbose,
+			DumpActual: cfg.DumpActual,
+			Logf:       log.Printf,
+		},
+	}, nil
+}
+
+func initializeCluster(consul string) (*shared.KVStore, error) {
+	test.ConsulAddress = consul
+	u.Debugf("ConsulAddress : %s", test.ConsulAddress)
+
+	consulClient, err := api.NewClient(&api.Config{Address: test.ConsulAddress})
+	if err != nil {
+		return nil, err
+	}
+
+	conn := shared.NewDefaultConnection("sqlrunner")
+	// conn.ServicePort = main.Port
+	conn.Quorum = 3
+	if err := conn.Connect(consulClient); err != nil {
+		return nil, err
+	}
+
+	sharedKV := shared.NewKVStore(conn)
+
+	// we're in cluster so we can just call admin status directly
+
+	now := time.Now()
+	for {
+		status, active, size := sharedKV.GetClusterState()
+		u.Debugf("consul status sqlrunner clusterState %v count %v size %v\n", status, active, size)
+
+		if status.String() == "GREEN" && active >= 3 && size >= 3 {
+			break
+		}
+		if time.Since(now) > time.Second*30 {
+			return nil, fmt.Errorf("consul timeout driver after NewKVStore")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return sharedKV, nil
+}
+
+func grantSQLRunnerRoles(sharedKV *shared.KVStore) error {
+	ctx, err := rbac.NewAuthContext(sharedKV, "USER001", true)
+	if err != nil {
+		return err
+	}
+	if err := ctx.GrantRole(rbac.DomainUser, "USER001", "quanta", true); err != nil {
+		return err
+	}
+
+	ctx, err = rbac.NewAuthContext(sharedKV, "MOLIG004", true)
+	if err != nil {
+		return err
+	}
+	return ctx.GrantRole(rbac.DomainUser, "MOLIG004", "quanta", true)
+}
+
+func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration) error {
+	summary := runner.Run(ctx, suite)
+	log.Printf("\n-------- SQL Roadmap Suite: %s --------", summary.Suite)
+	for _, result := range summary.Results {
+		duration := formatCaseDuration(result.Duration, verbose)
+		if result.Details == "" {
+			log.Printf("%-6s %s%s", result.Status, result.ID, duration)
+		} else {
+			log.Printf("%-6s %s%s: %s", result.Status, result.ID, duration, result.Details)
+		}
+	}
+	logSlowCases(summary, slowThreshold, verbose)
+	if summary.HasFailures() {
+		return fmt.Errorf("suite contains FAIL or XPASS results")
+	}
+	return nil
+}
+
+func logSlowCases(summary roadmap.Summary, threshold time.Duration, verbose bool) {
+	slow := slowCaseResults(summary, threshold)
+	if len(slow) == 0 {
+		return
+	}
+	log.Printf("SLOW   cases >= %s", formatSlowThreshold(threshold, verbose))
+	for _, result := range slow {
+		log.Printf("SLOW   %s%s %s", result.ID, formatCaseDuration(result.Duration, verbose), result.Status)
+	}
+}
+
+func slowCaseResults(summary roadmap.Summary, threshold time.Duration) []roadmap.CaseResult {
+	if threshold <= 0 {
+		return nil
+	}
+	var slow []roadmap.CaseResult
+	for _, result := range summary.Results {
+		if result.Duration >= threshold {
+			slow = append(slow, result)
+		}
+	}
+	sort.Slice(slow, func(i, j int) bool {
+		if slow[i].Duration == slow[j].Duration {
+			return slow[i].ID < slow[j].ID
+		}
+		return slow[i].Duration > slow[j].Duration
+	})
+	return slow
+}
+
+func formatSlowThreshold(duration time.Duration, verbose bool) string {
+	if verbose {
+		return duration.Round(time.Millisecond).String()
+	}
+	rounded := duration.Round(time.Second)
+	if rounded == 0 {
+		return "<1s"
+	}
+	return rounded.String()
+}
+
+func formatCaseDuration(duration time.Duration, verbose bool) string {
+	if duration == 0 {
+		return ""
+	}
+	if verbose {
+		return fmt.Sprintf(" [%s]", duration.Round(time.Millisecond))
+	}
+	rounded := duration.Round(time.Second)
+	if rounded == 0 {
+		return " [<1s]"
+	}
+	return fmt.Sprintf(" [%s]", rounded)
+}
+
+func logAdminOutput(command string, output []byte) {
+	log.Print("-------------------------------------------------------------------------------")
+	log.Printf("%s", command)
+	log.Print("Output:")
+	log.Printf("%v", string(output[:]))
+}
+
+var _ = logAdminOutput // fixme: (atw) unused
+
+func check(err error) {
+	if err != nil {
+		fmt.Println("check err", err)
+		panic(err.Error())
+	}
+}

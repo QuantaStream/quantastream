@@ -1,0 +1,13 @@
+tableName: deliveries_qa
+primaryKey: delivery_id
+attributes:
+- fieldName: delivery_id
+  mappingStrategy: StringHashBSI
+  type: String
+- fieldName: line_id
+  mappingStrategy: ParentRelation
+  type: String
+  foreignKey: lineitems_qa
+- fieldName: status
+  mappingStrategy: StringEnum
+  type: String

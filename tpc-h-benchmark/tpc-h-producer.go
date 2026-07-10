@@ -1,0 +1,492 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	_ "runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/kinesis"
+	"github.com/hashicorp/consul/api"
+	"golang.org/x/sync/errgroup"
+	"gopkg.in/alecthomas/kingpin.v2"
+)
+
+// Variables to identify the build
+var (
+	Version  string
+	Build    string
+	EPOCH, _ = time.ParseInLocation(time.RFC3339, "2000-01-01T00:00:00+00:00", time.UTC)
+	loc, _   = time.LoadLocation("Local")
+)
+
+// Exit Codes
+const (
+	Success = 0
+)
+
+// Main strct defines command line arguments variables and various global meta-data associated with record loads.
+type Main struct {
+	Index     string
+	BatchSize int
+	Path      string
+	File      string
+	Prefix    string
+	Pattern   string
+	AWSRegion string
+	//S3svc        *s3.S3
+	//S3files      []*s3.Object
+	totalBytes   int64
+	bytesLock    sync.RWMutex
+	totalRecs    *Counter
+	failedRecs   *Counter
+	Stream       string
+	IsNested     bool
+	ConsulAddr   string
+	ConsulClient *api.Client
+	Table        *shared.BasicTable
+	outClient    *kinesis.Kinesis
+	conn         *shared.Conn
+	router       *core.SessionRouter
+	tableCache   *core.TableCacheStruct
+	lock         *api.Lock
+	shardCols    []*shared.BasicAttribute
+	Direct       bool
+	Workers      int
+}
+
+type LoadSummary struct {
+	Table           string
+	Records         int64
+	Failures        int64
+	Bytes           int64
+	EnqueueDuration time.Duration
+	DrainDuration   time.Duration
+	TotalDuration   time.Duration
+}
+
+// NewMain allocates a new pointer to Main struct with empty record counter
+func NewMain() *Main {
+	m := &Main{
+		totalRecs:  &Counter{},
+		failedRecs: &Counter{},
+	}
+	return m
+}
+
+func main() {
+
+	app := kingpin.New(os.Args[0], "Quanta TPC-H Kinesis Data Producer").DefaultEnvars()
+	app.Version("Version: " + Version + "\nBuild: " + Build)
+
+	filePath := app.Arg("file-path", "Path to TPC-H data files directory.").Required().String()
+	index := app.Arg("index", "Table name.").Required().String()
+	stream := app.Arg("stream", "Kinesis stream name. Required unless --direct is set.").String()
+	region := app.Flag("aws-region", "AWS region.").Default("us-east-1").String()
+	batchSize := app.Flag("batch-size", "PutRecords batch size").Default("100").Int32()
+	direct := app.Flag("direct", "Load directly into Quanta sessions instead of writing to Kinesis.").Bool()
+	workers := app.Flag("workers", "Direct-load session worker count.").Default("3").Int()
+	environment := app.Flag("env", "Environment [DEV, QA, STG, VAL, PROD]").Default("DEV").String()
+	consul := app.Flag("consul-endpoint", "Consul agent address/port").Default("127.0.0.1:8500").String()
+
+	shared.InitLogging("WARN", *environment, "TPC-H-Producer", Version, "Quanta")
+
+	kingpin.MustParse(app.Parse(os.Args[1:]))
+
+	main := NewMain()
+	main.Index = *index
+	main.BatchSize = int(*batchSize)
+	main.AWSRegion = *region
+	main.Stream = *stream
+	main.ConsulAddr = *consul
+	main.Direct = *direct
+	main.Workers = *workers
+	if !main.Direct && main.Stream == "" {
+		log.Fatal("stream is required unless --direct is set")
+	}
+
+	log.Printf("Table name %v.\n", main.Index)
+	log.Printf("Batch size %d.\n", main.BatchSize)
+	log.Printf("AWS region %s\n", main.AWSRegion)
+	if main.Direct {
+		log.Printf("Direct load workers %d.\n", main.Workers)
+	} else {
+		log.Printf("Kinesis stream  %s.\n", main.Stream)
+	}
+	log.Printf("Consul agent at [%s]\n", main.ConsulAddr)
+
+	if err := main.Init(); err != nil {
+		log.Fatal(err)
+	}
+
+	main.Path = *filePath
+
+	var eg errgroup.Group
+	var ticker *time.Ticker
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for range c {
+			log.Printf("Interrupted,  Bytes processed: %s", core.Bytes(main.BytesProcessed()))
+			os.Exit(0)
+		}
+	}()
+
+	fullPath := fmt.Sprintf("%s/%s.tbl", main.Path, main.Index)
+	readFile, err := os.Open(fullPath)
+	if err != nil {
+		log.Fatalf("Open error %v", err)
+	}
+
+	ticker = main.printStats()
+
+	startedAt := time.Now()
+	enqueueStartedAt := time.Now()
+	main.processRowsForFile(readFile)
+	enqueueFinishedAt := time.Now()
+
+	readFile.Close()
+	if main.router != nil {
+		if err := main.router.Close(); err != nil {
+			log.Fatalf("router close error %v", err)
+		}
+		commitStartedAt := time.Now()
+		if err := main.commitDirectLoad(); err != nil {
+			log.Fatalf("direct load commit error %v", err)
+		}
+		log.Printf("TPC-H direct load commit table=%s elapsed=%s", main.Index, time.Since(commitStartedAt).Round(time.Millisecond))
+	}
+	finishedAt := time.Now()
+
+	if err := eg.Wait(); err != nil {
+		log.Fatalf("Open error %v", err)
+	}
+	ticker.Stop()
+	summary := LoadSummary{
+		Table:           main.Index,
+		Records:         main.totalRecs.Get(),
+		Failures:        main.failedRecs.Get(),
+		Bytes:           main.BytesProcessed(),
+		EnqueueDuration: enqueueFinishedAt.Sub(enqueueStartedAt),
+		DrainDuration:   finishedAt.Sub(enqueueFinishedAt),
+		TotalDuration:   finishedAt.Sub(startedAt),
+	}
+	main.logLoadSummary(summary)
+	if summary.Failures > 0 {
+		log.Fatalf("TPC-H load failed table=%s failures=%d records=%d", summary.Table, summary.Failures, summary.Records)
+	}
+
+}
+
+func exitErrorf(msg string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, msg+"\n", args...)
+	os.Exit(1)
+}
+
+func (m *Main) processRowsForFile(readFile *os.File) {
+
+	fileScanner := bufio.NewScanner(readFile)
+	fileScanner.Split(bufio.ScanLines)
+
+	putBatch := make([]*kinesis.PutRecordsRequestEntry, 0)
+
+	i := 0
+	for fileScanner.Scan() {
+
+		// Split the pipe delimited text line
+		s := strings.Split(fileScanner.Text(), "|")
+		i++
+
+		shardKey, record := m.generateRecord(s)
+		outData, err := json.Marshal(record)
+		if err != nil {
+			m.failedRecs.Add(1)
+			log.Printf("marshal error %v", err)
+			continue
+		}
+
+		if m.Direct {
+			if err := m.router.Enqueue(core.IngestRecord{
+				TableName: m.Index,
+				Data:      record,
+				ShardKey:  shardKey,
+			}); err != nil {
+				m.failedRecs.Add(1)
+				log.Printf("direct load error %v", err)
+				continue
+			}
+		} else {
+			putBatch = append(putBatch, &kinesis.PutRecordsRequestEntry{
+				Data:         outData,
+				PartitionKey: aws.String(shardKey),
+			})
+
+			if i%m.BatchSize == 0 {
+				// put data to stream
+				putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
+					Records:    putBatch,
+					StreamName: aws.String(m.Stream),
+				})
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				m.failedRecs.Add(int(*putOutput.FailedRecordCount))
+				putBatch = make([]*kinesis.PutRecordsRequestEntry, 0)
+			}
+		}
+
+		m.totalRecs.Add(1)
+		m.AddBytes(len(outData))
+	}
+
+	if !m.Direct && len(putBatch) > 0 {
+		putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
+			Records:    putBatch,
+			StreamName: aws.String(m.Stream),
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		m.failedRecs.Add(int(*putOutput.FailedRecordCount))
+	}
+}
+
+func (m *Main) logLoadSummary(summary LoadSummary) {
+	totalSeconds := summary.TotalDuration.Seconds()
+	enqueueSeconds := summary.EnqueueDuration.Seconds()
+	rowsPerSecond := float64(summary.Records)
+	bytesPerSecond := float64(summary.Bytes)
+	enqueueRowsPerSecond := float64(summary.Records)
+	if totalSeconds > 0 {
+		rowsPerSecond /= totalSeconds
+		bytesPerSecond /= totalSeconds
+	}
+	if enqueueSeconds > 0 {
+		enqueueRowsPerSecond /= enqueueSeconds
+	}
+
+	log.Printf("TPC-H load summary table=%s mode=%s records=%d failures=%d bytes=%s enqueue=%s drain=%s total=%s rows_per_sec=%.2f enqueue_rows_per_sec=%.2f bytes_per_sec=%s",
+		summary.Table,
+		m.loadMode(),
+		summary.Records,
+		summary.Failures,
+		core.Bytes(summary.Bytes),
+		summary.EnqueueDuration.Round(time.Millisecond),
+		summary.DrainDuration.Round(time.Millisecond),
+		summary.TotalDuration.Round(time.Millisecond),
+		rowsPerSecond,
+		enqueueRowsPerSecond,
+		core.Bytes(bytesPerSecond),
+	)
+}
+
+func (m *Main) loadMode() string {
+	if m.Direct {
+		return "direct"
+	}
+	return "kinesis"
+}
+
+// generateRecord builds the loader envelope consumed by Kinesis and direct load.
+func (m *Main) generateRecord(fields []string) (string, map[string]interface{}) {
+	env := make(map[string]interface{}, 0)
+	data := make(map[string]interface{}, 0)
+
+	var sb strings.Builder
+
+	for _, v := range m.Table.Attributes {
+		if v.SourceOrdinal > 0 {
+			data[v.FieldName] = fields[v.SourceOrdinal-1]
+		}
+	}
+	for _, v := range m.shardCols {
+		if x, ok := data[v.FieldName]; ok {
+			sb.WriteString(x.(string))
+		}
+	}
+	env["data"] = data
+	env["type"] = m.Index
+	shardKey := sb.String()
+	env["shardKey"] = shardKey
+	return shardKey, env
+}
+
+// Init function initializes process.
+func (m *Main) Init() error {
+
+	var err error
+
+	m.ConsulClient, err = api.NewClient(&api.Config{Address: m.ConsulAddr})
+	if err != nil {
+		return err
+	}
+
+	m.Table, err = shared.LoadSchema("", m.Index, m.ConsulClient)
+	if err != nil {
+		return err
+	}
+
+	pkInfo, errx := m.Table.GetPrimaryKeyInfo()
+	if errx != nil {
+		return errx
+	}
+	m.shardCols = pkInfo
+	if m.Direct {
+		return m.initDirect()
+	}
+
+	// Initialize AWS client
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String(m.AWSRegion)},
+	)
+
+	if err != nil {
+		return fmt.Errorf("error creating S3 session: %v", err)
+	}
+
+	m.outClient = kinesis.New(sess)
+	outStreamName := aws.String(m.Stream)
+	_, err = m.outClient.DescribeStream(&kinesis.DescribeStreamInput{StreamName: outStreamName})
+	if err != nil {
+		return fmt.Errorf("error creating kinesis stream %s: %v", m.Stream, err)
+	}
+
+	return nil
+}
+
+func (m *Main) initDirect() error {
+	m.tableCache = core.NewTableCacheStruct()
+	m.conn = shared.NewDefaultConnection("tpch-direct-loader")
+	m.conn.Quorum = 3
+	if err := m.conn.Connect(m.ConsulClient); err != nil {
+		return err
+	}
+	if err := m.waitDirectClusterReady(2 * time.Minute); err != nil {
+		return err
+	}
+	if m.Workers <= 0 {
+		m.Workers = 3
+	}
+	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+		TableCache:    m.tableCache,
+		Conn:          m.conn,
+		ShardCount:    m.Workers,
+		ChannelSize:   m.BatchSize * m.Workers,
+		FlushInterval: time.Second,
+		OnError: func(err error) {
+			m.failedRecs.Add(1)
+			log.Printf("direct load error %v", err)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	m.router = router
+	return nil
+}
+
+func (m *Main) waitDirectClusterReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, activeCount, targetSize := m.conn.GetClusterState()
+		clientCount := len(m.conn.ClientConnections())
+		if state == shared.Green && targetSize > 0 && activeCount >= targetSize && clientCount >= targetSize {
+			log.Printf("TPC-H direct load cluster ready table=%s state=%s active=%d target=%d clients=%d",
+				m.Index, state, activeCount, targetSize, clientCount)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("direct load cluster not ready for table=%s state=%s active=%d target=%d clients=%d",
+				m.Index, state, activeCount, targetSize, clientCount)
+		}
+		log.Printf("TPC-H direct load waiting for cluster table=%s state=%s active=%d target=%d clients=%d",
+			m.Index, state, activeCount, targetSize, clientCount)
+		time.Sleep(time.Second)
+	}
+}
+
+func (m *Main) commitDirectLoad() error {
+	if !m.Direct || m.conn == nil {
+		return nil
+	}
+	state, activeCount, targetSize := m.conn.GetClusterState()
+	clientCount := len(m.conn.ClientConnections())
+	log.Printf("TPC-H direct load commit cluster table=%s state=%s active=%d target=%d clients=%d",
+		m.Index, state, activeCount, targetSize, clientCount)
+	if state != shared.Green || targetSize <= 0 || activeCount < targetSize || clientCount < targetSize {
+		return fmt.Errorf("direct load commit requires green cluster table=%s state=%s active=%d target=%d clients=%d",
+			m.Index, state, activeCount, targetSize, clientCount)
+	}
+	session, err := core.OpenSession(m.tableCache, "", m.Index, true, m.conn)
+	if err != nil {
+		return err
+	}
+	if err := session.Commit(); err != nil {
+		_ = session.CloseSession()
+		return err
+	}
+	return session.CloseSession()
+}
+
+// printStats outputs to Log current status of loader
+// Includes data on processed: bytes, records, time duration in seconds, and rate of bytes per sec"
+func (m *Main) printStats() *time.Ticker {
+	t := time.NewTicker(time.Second * 10)
+	start := time.Now()
+	go func() {
+		for range t.C {
+			duration := time.Since(start)
+			bytes := m.BytesProcessed()
+			log.Printf("Bytes: %s, Records: %v, Failed: %v, Duration: %v, Rate: %v/s", core.Bytes(bytes), m.totalRecs.Get(), m.failedRecs.Get(), duration, core.Bytes(float64(bytes)/duration.Seconds()))
+		}
+	}()
+	return t
+}
+
+// AddBytes provides thread safe processing to set the total bytes processed.
+// Adds the bytes parameter to total bytes processed.
+func (m *Main) AddBytes(n int) {
+	m.bytesLock.Lock()
+	m.totalBytes += int64(n)
+	m.bytesLock.Unlock()
+}
+
+// BytesProcessed provides thread safe read of total bytes processed.
+func (m *Main) BytesProcessed() (num int64) {
+	m.bytesLock.Lock()
+	num = m.totalBytes
+	m.bytesLock.Unlock()
+	return
+}
+
+// Counter - Generic counter with mutex (threading) support
+type Counter struct {
+	num  int64
+	lock sync.Mutex
+}
+
+// Add function provides thread safe addition of counter value based on input parameter.
+func (c *Counter) Add(n int) {
+	c.lock.Lock()
+	c.num += int64(n)
+	c.lock.Unlock()
+}
+
+// Get function provides thread safe read of counter value.
+func (c *Counter) Get() (ret int64) {
+	c.lock.Lock()
+	ret = c.num
+	c.lock.Unlock()
+	return
+}

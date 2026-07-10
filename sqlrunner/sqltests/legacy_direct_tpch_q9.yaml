@@ -1,0 +1,207 @@
+version: 1
+name: legacy_direct_tpch_q9
+
+tests:
+  - id: legacy_direct_tpch_q9.010.green_part_line_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
+    sql: |-
+      select count(*) as green_part_line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_name like '%green%'
+    expect:
+      columns: [green_part_line_count]
+      rows:
+        - [3223]
+
+  - id: legacy_direct_tpch_q9.020.green_part_order_line_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
+    sql: |-
+      select count(*) as green_part_order_line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      where p.p_name like '%green%'
+    expect:
+      columns: [green_part_order_line_count]
+      rows:
+        - [3223]
+
+  - id: legacy_direct_tpch_q9.030.green_part_line_revenue
+    status: supported
+    kind: query
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, aggregate, arithmetic]
+    # Q9 revenue-side arithmetic is supported over the single-sink part -> lineitem graph.
+    # The live probe that introduced this case reported [19s] on the local laptop.
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as green_revenue
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_name like '%green%'
+    expect:
+      columns: [green_revenue]
+      rows:
+        - [1.0578082354430008e+08]
+
+  - id: legacy_direct_tpch_q9.035.green_supplier_nation_count
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-count, supplier-nation]
+    # Exercises the Q9 supplier/nation path without the partsupp profit term.
+    # The live probe that introduced this case reported [16s] on the local laptop.
+    sql: |-
+      select n.n_name, count(*) as line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where p.p_name like '%green%'
+      group by n.n_name
+      order by line_count desc, n.n_name
+      limit 10
+    expect:
+      columns: [n_name, line_count]
+      rows:
+        - ["MOZAMBIQUE", 296]
+        - ["CHINA", 250]
+        - ["UNITED STATES", 235]
+        - ["KENYA", 224]
+        - ["INDIA", 218]
+        - ["ROMANIA", 206]
+        - ["JAPAN", 180]
+        - ["EGYPT", 168]
+        - ["VIETNAM", 156]
+        - ["ETHIOPIA", 152]
+
+  - id: legacy_direct_tpch_q9.036.green_supplier_nation_revenue
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-aggregate, arithmetic, supplier-nation]
+    # Stages Q9 revenue arithmetic through the supplier/nation dimension path.
+    # The live probe that introduced this case reported [22s] on the local laptop.
+    sql: |-
+      select n.n_name, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where p.p_name like '%green%'
+      group by n.n_name
+      order by revenue desc, n.n_name
+      limit 10
+    expect:
+      columns: [n_name, revenue]
+      rows:
+        - ["MOZAMBIQUE", 1.0409323645000001e+07]
+        - ["CHINA", 7.8132646044000015e+06]
+        - ["UNITED STATES", 7.798064973100001e+06]
+        - ["KENYA", 7.721248012200002e+06]
+        - ["ROMANIA", 6.797614313400002e+06]
+        - ["INDIA", 6.338694809800001e+06]
+        - ["EGYPT", 5.533200195800002e+06]
+        - ["JAPAN", 5.499776500900002e+06]
+        - ["VIETNAM", 5.270173722799998e+06]
+        - ["ETHIOPIA", 4.740642206699999e+06]
+
+  - id: legacy_direct_tpch_q9.040.full_profit_sibling_tuple_profit
+    status: supported
+    kind: query
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, aggregate, arithmetic]
+    # Full Q9 profit kernel expands lineitem and partsupp sibling children under
+    # part, applies the ps_suppkey = l_suppkey residual equality over the
+    # late-materialized tuple rowset, and aggregates the profit expression.
+    # The live probe that introduced this case reported [22s] on the local laptop.
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount) - ps.ps_supplycost * l.l_quantity) as profit
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_name like '%green%'
+        and ps.ps_suppkey = l.l_suppkey
+    expect:
+      columns: [profit]
+      rows:
+        - [6.496882846429994e+07]
+
+  - id: legacy_direct_tpch_q9.045.green_brand_profit_grouped
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, grouped-aggregate, arithmetic]
+    # Stages grouped Q9 profit over the sibling-root tuple rowset before adding
+    # the formal nation/year dimensions. The live probe that introduced this
+    # case reported [22s] on the local laptop.
+    sql: |-
+      select p.p_brand, sum(l.l_extendedprice * (1 - l.l_discount) - ps.ps_supplycost * l.l_quantity) as profit
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_name like '%green%'
+        and ps.ps_suppkey = l.l_suppkey
+      group by p.p_brand
+      order by profit desc, p.p_brand
+      limit 10
+    expect:
+      columns: [p_brand, profit]
+      rows:
+        - ["Brand#35", 6.088678515799998e+06]
+        - ["Brand#41", 5.139432187500002e+06]
+        - ["Brand#34", 4.236644354400001e+06]
+        - ["Brand#53", 3.6082014613e+06]
+        - ["Brand#13", 3.530170657899998e+06]
+        - ["Brand#25", 3.0970568826999976e+06]
+        - ["Brand#15", 3.0071966232999987e+06]
+        - ["Brand#22", 2.9039839228999997e+06]
+        - ["Brand#31", 2.7820903646e+06]
+        - ["Brand#14", 2.7499852423000014e+06]
+
+  - id: legacy_direct_tpch_q9.050.formal_profit_nation_year
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, multi-sink, bidirectional-tuple-rowset, computed-group-by, grouped-aggregate]
+    # Formal Q9 expands a connected relationship graph in both FK directions:
+    # part -> lineitem/partsupp for the profit tuple, then lineitem -> orders
+    # and lineitem -> supplier -> nation for the grouping dimensions. The live
+    # probe that introduced this case reported [31s] on the local laptop.
+    sql: |-
+      select n.n_name,
+             year(o.o_orderdate) as o_year,
+             sum(l.l_extendedprice * (1 - l.l_discount) - ps.ps_supplycost * l.l_quantity) as sum_profit
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where p.p_name like '%green%'
+        and ps.ps_suppkey = l.l_suppkey
+      group by n.n_name, year(o.o_orderdate)
+      order by n.n_name, year(o.o_orderdate) desc
+      limit 10
+    expect:
+      columns: [n_name, o_year, sum_profit]
+      rows:
+        - ["ALGERIA", 1998, 97864.56819999998]
+        - ["ALGERIA", 1997, 368231.66949999996]
+        - ["ALGERIA", 1996, 196525.80460000003]
+        - ["ALGERIA", 1995, 341438.6885]
+        - ["ALGERIA", 1994, 677444.0160000001]
+        - ["ALGERIA", 1993, 458756.9157]
+        - ["ALGERIA", 1992, 549243.9510999998]
+        - ["ARGENTINA", 1998, 80448.76800000001]
+        - ["ARGENTINA", 1997, 186279.16179999997]
+        - ["ARGENTINA", 1996, 154041.88220000002]
+

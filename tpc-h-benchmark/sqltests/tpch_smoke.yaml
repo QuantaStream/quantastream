@@ -1,0 +1,251 @@
+version: 1
+name: "tpch_smoke"
+
+tests:
+  - id: "tpch_smoke.001.region_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, dimension]
+    sql: select count(*) from region
+    expect:
+      rows:
+        - [5]
+
+  - id: "tpch_smoke.002.nation_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, dimension]
+    sql: select count(*) from nation
+    expect:
+      rows:
+        - [25]
+
+  - id: "tpch_smoke.010.customer_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from customer
+    expect:
+      rows:
+        - [1500]
+
+  - id: "tpch_smoke.011.orders_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from orders
+    expect:
+      rows:
+        - [15000]
+
+  - id: "tpch_smoke.012.lineitem_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from lineitem
+    expect:
+      rows:
+        - [60175]
+
+  - id: "tpch_smoke.013.part_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from part
+    expect:
+      rows:
+        - [2000]
+
+  - id: "tpch_smoke.014.supplier_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from supplier
+    expect:
+      rows:
+        - [100]
+
+  - id: "tpch_smoke.015.partsupp_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count]
+    sql: select count(*) from partsupp
+    expect:
+      rows:
+        - [8000]
+
+  - id: "tpch_smoke.016.region_names"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch, fixture, dimension, projection]
+    sql: select r_name from region
+    expect:
+      rows:
+        - ["AFRICA"]
+        - ["AMERICA"]
+        - ["ASIA"]
+        - ["EUROPE"]
+        - ["MIDDLE EAST"]
+
+  - id: "tpch_smoke.017.nation_names"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch, fixture, dimension, projection]
+    sql: select n_name from nation
+    expect:
+      rows:
+        - ["ALGERIA"]
+        - ["ARGENTINA"]
+        - ["BRAZIL"]
+        - ["CANADA"]
+        - ["CHINA"]
+        - ["EGYPT"]
+        - ["ETHIOPIA"]
+        - ["FRANCE"]
+        - ["GERMANY"]
+        - ["INDIA"]
+        - ["INDONESIA"]
+        - ["IRAN"]
+        - ["IRAQ"]
+        - ["JAPAN"]
+        - ["JORDAN"]
+        - ["KENYA"]
+        - ["MOROCCO"]
+        - ["MOZAMBIQUE"]
+        - ["PERU"]
+        - ["ROMANIA"]
+        - ["RUSSIA"]
+        - ["SAUDI ARABIA"]
+        - ["UNITED KINGDOM"]
+        - ["UNITED STATES"]
+        - ["VIETNAM"]
+
+  - id: "tpch_smoke.020.customer_orders_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, parent-relation, count]
+    sql: |-
+      select count(*)
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+
+  - id: "tpch_smoke.021.orders_lineitem_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, parent-relation, count]
+    sql: |-
+      select count(*)
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+
+  - id: "tpch_smoke.022.customer_orders_lineitem_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, parent-relation, count]
+    sql: |-
+      select count(*)
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+
+  - id: "tpch_smoke.023.part_supplier_partsupp_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, parent-relation, bridge-table, count]
+    sql: |-
+      select count(*)
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on ps.ps_suppkey = s.s_suppkey
+
+  - id: "tpch_smoke.030.customer_orders_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, projection]
+    sql: |-
+      select c.c_custkey, c.c_name, o.o_orderkey, o.o_orderdate
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+    expect:
+      row_count: 5000
+
+  - id: "tpch_smoke.031.customer_orders_lineitem_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, projection]
+    sql: |-
+      select c.c_custkey, o.o_orderkey, l.l_linenumber, l.l_quantity
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+    expect:
+      row_count: 5000
+
+  - id: "tpch_smoke.040.region_nation_projection"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch, two-table-join, dimension, projection]
+    sql: |-
+      select r.r_name, n.n_name
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+    expect:
+      rows:
+        - ["AFRICA", "ALGERIA"]
+        - ["AMERICA", "ARGENTINA"]
+        - ["AMERICA", "BRAZIL"]
+        - ["AMERICA", "CANADA"]
+        - ["MIDDLE EAST", "EGYPT"]
+        - ["AFRICA", "ETHIOPIA"]
+        - ["EUROPE", "FRANCE"]
+        - ["EUROPE", "GERMANY"]
+        - ["ASIA", "INDIA"]
+        - ["ASIA", "INDONESIA"]
+        - ["MIDDLE EAST", "IRAN"]
+        - ["MIDDLE EAST", "IRAQ"]
+        - ["ASIA", "JAPAN"]
+        - ["MIDDLE EAST", "JORDAN"]
+        - ["AFRICA", "KENYA"]
+        - ["AFRICA", "MOROCCO"]
+        - ["AFRICA", "MOZAMBIQUE"]
+        - ["AMERICA", "PERU"]
+        - ["ASIA", "CHINA"]
+        - ["EUROPE", "ROMANIA"]
+        - ["EUROPE", "RUSSIA"]
+        - ["MIDDLE EAST", "SAUDI ARABIA"]
+        - ["ASIA", "VIETNAM"]
+        - ["EUROPE", "UNITED KINGDOM"]
+        - ["AMERICA", "UNITED STATES"]
+
+  - id: "tpch_smoke.050.q1_shape"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q1, group-by, multiple-aggregates, arithmetic]
+    sql: |-
+      select l_returnflag, l_linestatus, count(*) as count_order
+      from lineitem
+      group by l_returnflag, l_linestatus
+    expect:
+      rows:
+        - ["A", "F", 14876]
+        - ["N", "F", 348]
+        - ["N", "O", 30049]
+        - ["R", "F", 14902]
+
+  - id: "tpch_smoke.051.q3_shape"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, group-by, order-by, limit]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      order by revenue desc, o.o_orderdate
+      limit 10

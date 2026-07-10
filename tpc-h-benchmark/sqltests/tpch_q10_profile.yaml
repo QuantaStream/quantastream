@@ -1,0 +1,144 @@
+version: 1
+name: "tpch_q10_profile"
+
+tests:
+  - id: "tpch_q10_profile.010_orderdate_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q10, single-table, date-predicate, count, profile]
+    sql: |-
+      select count(*) as order_count
+      from orders as o
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.020_returned_lineitem_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [tpch-q10, single-table, string-enum-filter, count, profile]
+    sql: |-
+      select count(*) as returned_line_count
+      from lineitem as l
+      where l.l_returnflag = 'R'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.030_orders_lineitem_returned_count"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, two-table-join, date-predicate, string-enum-filter, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.040_customer_orders_date_count"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, two-table-join, date-predicate, count, profile]
+    sql: |-
+      select count(*) as order_count
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.050_customer_orders_lineitem_returned_count"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, three-table-join, date-predicate, string-enum-filter, count, profile]
+    sql: |-
+      select count(*) as line_count
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.060_returned_revenue_sum"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, three-table-join, date-predicate, string-enum-filter, aggregate-expression, profile]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+    expect:
+      row_count: 1
+
+  - id: "tpch_q10_profile.070_grouped_revenue_by_custkey"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, three-table-join, date-predicate, string-enum-filter, group-by, aggregate-expression, profile]
+    sql: |-
+      select c.c_custkey, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey
+      limit 20
+    expect:
+      row_count: 20
+
+  - id: "tpch_q10_profile.080_grouped_revenue_by_customer"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, three-table-join, date-predicate, string-enum-filter, group-by, aggregate-expression, profile]
+    sql: |-
+      select c.c_custkey, c.c_name, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name
+      limit 20
+    expect:
+      row_count: 20
+
+  - id: "tpch_q10_profile.090_revenue_by_customer_ordered_limit"
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [tpch-q10, three-table-join, date-predicate, string-enum-filter, group-by, aggregate-expression, order-by, limit, profile]
+    sql: |-
+      select c.c_custkey, c.c_name, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name
+      order by revenue desc
+      limit 20
+    expect:
+      row_count: 20

@@ -1,0 +1,254 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "io.grpc.disney.quanta";
+option java_outer_classname = "QuantaProto";
+option go_package = "github.com/QuantaStream/quantastream/grpc;shared";
+
+package shared;
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
+service ClusterAdmin {
+  rpc Status(google.protobuf.Empty) returns (StatusMessage) {}
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+}
+
+service KVStore {
+  rpc Put(IndexKVPair) returns (google.protobuf.Empty) {}
+  rpc BatchPut(stream IndexKVPair) returns (google.protobuf.Empty) {}
+  rpc Lookup(IndexKVPair) returns (IndexKVPair) {}
+  rpc BatchLookup(stream IndexKVPair) returns (stream IndexKVPair) {}
+  rpc Items(google.protobuf.StringValue) returns (stream IndexKVPair) {}
+  rpc PutStringEnum(StringEnum) returns (google.protobuf.UInt64Value) {}
+  rpc DeleteIndicesWithPrefix(DeleteIndicesWithPrefixRequest) returns (google.protobuf.Empty) {}
+  rpc IndexInfo(IndexInfoRequest) returns (IndexInfoResponse) {}
+}
+
+service StringSearch {
+  rpc BatchIndex(stream google.protobuf.StringValue) returns (google.protobuf.Empty) {}
+  rpc Search(google.protobuf.StringValue) returns (stream google.protobuf.UInt64Value) {}
+}
+
+service BitmapIndex {
+  rpc BatchMutate(stream IndexKVPair) returns (google.protobuf.Empty) {}
+  rpc BulkClear(BulkClearRequest) returns (google.protobuf.Empty) {}
+  rpc Query(BitmapQuery) returns (QueryResult) {}
+  rpc Join(JoinRequest) returns (JoinResponse) {}
+  rpc Projection(ProjectionRequest) returns (ProjectionResponse) {}
+  rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
+  rpc TableOperation(TableOperationRequest) returns (google.protobuf.Empty) {}
+  rpc Synchronize(google.protobuf.StringValue) returns (google.protobuf.Int64Value) {}
+  rpc SyncStatus(SyncStatusRequest) returns (SyncStatusResponse) {}
+  rpc Commit(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  rpc PartitionInfo(PartitionInfoRequest) returns (PartitionInfoResponse) {}
+  rpc OfflinePartitions(PartitionInfoRequest) returns (google.protobuf.Empty) {}
+}
+
+message StatusMessage {
+  string nodeState = 1;
+  string localIP = 2;
+  uint32 localPort = 3;
+  string version = 4;
+  uint32 replicas = 5;
+  uint32 shardCount = 6;
+  uint32 memoryUsed = 7;
+}
+
+message IndexKVPair {
+  string 	indexPath = 1;
+  bytes  	key = 2;
+  repeated bytes value = 3;
+  int64 	time = 4;
+  bool      isClear = 5;
+  bool      sync = 6;
+  bool      isUpdate = 7;
+}
+
+message StringEnum {
+  string 	indexPath = 1;
+  string    value = 2;
+}
+
+message BitmapQuery {
+  repeated QueryFragment query = 1;
+  int64    fromTime = 2;
+  int64    toTime = 3;
+}
+
+message QueryFragment {
+  string index = 1;
+  string field = 2;
+  uint64 rowID = 3;
+  bytes value = 4;
+  string id = 11;
+  repeated string childrenIds = 12;
+
+  enum OpType {
+	INTERSECT = 0;
+	UNION = 1;
+	DIFFERENCE = 2;
+    INNER_JOIN = 3;
+    OUTER_JOIN = 4;
+  }
+  OpType operation = 5;
+
+  enum BSIOp {
+    NA = 0;
+	LT = 1;
+	LE = 2;
+	EQ = 3;
+    GE = 4;
+    GT = 5;
+    RANGE = 6;
+    BATCH_EQ = 7;
+  }
+  BSIOp bsiOp = 6;
+  bytes begin = 7;
+  bytes end = 8;
+  string fk = 9;
+  repeated bytes values = 10;
+  float  samplePct = 13;
+  bool  nullCheck = 14;
+  bool  negate = 15;
+  bool  orContext = 16;
+}
+
+message TableOperationRequest {
+  string table = 1;
+  enum OpType {
+	DEPLOY = 0;
+	DROP = 1;
+	TRUNCATE = 2;
+  }
+  OpType operation = 2;
+}
+
+message QueryResult {
+  bytes    unions = 1;
+  repeated bytes intersects = 2;
+  repeated bytes differences = 3;
+  repeated BitmapResult samples = 4;
+  float    samplePct = 5;
+  bool     sampleIsUnion = 6;
+  bytes    existences = 7;
+  int32    andDifferencesCount = 8;
+}
+
+message JoinRequest {
+  string   driverIndex = 1;
+  repeated string fkFields = 2;
+  int64    fromTime = 3;
+  int64    toTime = 4;
+  bytes    foundSet = 5;
+  repeated bytes filterSets = 6;
+  bool     negate = 7;
+}
+
+message JoinResponse {
+  repeated bytes results = 1;
+}
+
+message BulkClearRequest {
+  string  index = 1;
+  int64    fromTime = 2;
+  int64    toTime = 3;
+  bytes   foundSet = 4;
+}
+
+message SyncStatusRequest {
+  string 	index = 1;
+  string 	field = 2;
+  uint64    rowId = 3;
+  int64 	time = 4;
+  uint64    cardinality = 5;
+  int64     bSIChecksum = 6;
+  int64     modTime = 7;
+  bool      sendData = 8;
+}
+
+message SyncStatusResponse {
+  bool      ok = 1;
+  uint64    cardinality = 2;
+  int64     BSIChecksum = 3;
+  int64     modTime = 4;
+  repeated bytes data = 5;
+}
+
+message PartitionInfoRequest {
+  int64     time = 1;
+  string    index = 2;
+}
+
+message PartitionInfoResponse {
+  repeated PartitionInfoResult partitionInfoResults = 1;
+}
+
+message PartitionInfoResult {
+  int64     time = 1;
+  string    index = 2;
+  string    field = 3;
+  int64     rowIdOrValue = 4;
+  uint32    bytes = 5;
+  int64     modTime = 6;
+  string    tqType = 7;
+}
+
+message IndexInfoRequest {
+  string   indexPath = 1;
+}
+
+message IndexInfoResponse {
+  string   indexPath = 1;
+  bool     exists = 2;
+  bool     wasOpen = 3;
+  uint32   count = 4;
+  int64    puts = 5;
+  int64    gets = 6;
+  int64    dels = 7;
+  int64    hashCollisions = 8;
+  int64    fileSize = 9;
+}
+
+message ProjectionRequest {
+  int64    fromTime = 1;
+  int64    toTime = 2;
+  bytes    foundSet = 3;
+  string   index = 4;
+  repeated string fields = 5;
+  bool     negate = 6; 
+}
+
+message BitmapResult {
+  string field = 1;
+  uint64 rowId = 2;
+  bytes  bitmap = 3;
+}
+
+message BSIResult {
+  string field = 1;
+  repeated bytes bitmaps = 2;
+}
+
+message ProjectionResponse {
+  repeated BitmapResult bitmapResults = 1;
+  repeated BSIResult bsiResults = 2;
+}
+
+message CheckoutSequenceRequest {
+  string   index = 1;
+  string   pkField = 2;
+  int64    time = 3;
+  uint32   reservationSize = 4;
+}
+
+message CheckoutSequenceResponse {
+  uint64   start = 3;
+  uint32   count = 4;
+}
+
+message DeleteIndicesWithPrefixRequest {
+  string   prefix = 1;
+  bool     retainEnums = 2;
+}
+

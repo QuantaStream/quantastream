@@ -1,0 +1,325 @@
+version: 1
+name: "multi_table_joins"
+
+tests:
+  - id: "multi_table_joins.001.drop_deliveries"
+    status: supported
+    kind: admin
+    sql: drop deliveries_qa
+
+  - id: "multi_table_joins.002.drop_lineitems"
+    status: supported
+    kind: admin
+    sql: drop lineitems_qa
+
+  - id: "multi_table_joins.003.drop_orders"
+    status: supported
+    kind: admin
+    sql: drop orders_qa
+
+  - id: "multi_table_joins.004.drop_customers"
+    status: supported
+    kind: admin
+    sql: drop customers_qa
+
+  - id: "multi_table_joins.005.create_customers"
+    status: supported
+    kind: admin
+    sql: create customers_qa
+
+  - id: "multi_table_joins.006.create_orders"
+    status: supported
+    kind: admin
+    sql: create orders_qa
+
+  - id: "multi_table_joins.007.create_lineitems"
+    status: supported
+    kind: admin
+    sql: create lineitems_qa
+
+  - id: "multi_table_joins.008.create_deliveries"
+    status: supported
+    kind: admin
+    sql: create deliveries_qa
+
+  - id: "multi_table_joins.010.insert_customer"
+    status: supported
+    kind: statement
+    sql: insert into customers_qa (cust_id, first_name, city, age) values ('1', 'Abe', 'Seattle', 30)
+
+  - id: "multi_table_joins.011.insert_customer"
+    status: supported
+    kind: statement
+    sql: insert into customers_qa (cust_id, first_name, city, age) values ('2', 'Abby', 'Tacoma', 40)
+
+  - id: "multi_table_joins.012.insert_customer"
+    status: supported
+    kind: statement
+    sql: insert into customers_qa (cust_id, first_name, city, age) values ('3', 'Annie', 'Everett', 50)
+
+  - id: "multi_table_joins.013.insert_customer"
+    status: supported
+    kind: statement
+    sql: insert into customers_qa (cust_id, first_name, city, age) values ('4', 'Carl', 'Spokane', 60)
+
+  - id: "multi_table_joins.014.commit_customers"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "multi_table_joins.020.insert_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('1', '101', '2023-06-01T01:00:00', 'UPS')
+
+  - id: "multi_table_joins.021.insert_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('1', '102', '2023-06-01T02:00:00', 'UPS')
+
+  - id: "multi_table_joins.022.insert_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('2', '201', '2023-06-01T03:00:00', 'FEDEX')
+
+  - id: "multi_table_joins.023.insert_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('4', '401', '2023-06-01T04:00:00', 'USPS')
+
+  - id: "multi_table_joins.024.commit_orders"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "multi_table_joins.030.insert_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitems_qa (line_id, order_id, category, quantity) values ('L1', '101', 'A', 2)
+
+  - id: "multi_table_joins.031.insert_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitems_qa (line_id, order_id, category, quantity) values ('L2', '101', 'B', 3)
+
+  - id: "multi_table_joins.032.insert_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitems_qa (line_id, order_id, category, quantity) values ('L3', '102', 'A', 5)
+
+  - id: "multi_table_joins.033.insert_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitems_qa (line_id, order_id, category, quantity) values ('L4', '201', 'C', 7)
+
+  - id: "multi_table_joins.034.commit_lineitems"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "multi_table_joins.040.insert_delivery"
+    status: supported
+    kind: statement
+    sql: insert into deliveries_qa (delivery_id, line_id, status) values ('D1', 'L1', 'delivered')
+
+  - id: "multi_table_joins.041.insert_delivery"
+    status: supported
+    kind: statement
+    sql: insert into deliveries_qa (delivery_id, line_id, status) values ('D2', 'L1', 'retry')
+
+  - id: "multi_table_joins.042.insert_delivery"
+    status: supported
+    kind: statement
+    sql: insert into deliveries_qa (delivery_id, line_id, status) values ('D3', 'L3', 'delivered')
+
+  - id: "multi_table_joins.043.insert_delivery"
+    status: supported
+    kind: statement
+    sql: insert into deliveries_qa (delivery_id, line_id, status) values ('D4', 'L4', 'delivered')
+
+  - id: "multi_table_joins.044.commit_deliveries"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "multi_table_joins.050.lineitem_count"
+    status: supported
+    kind: query
+    capabilities: [fixture, count]
+    sql: select count(*) from lineitems_qa
+    expect:
+      rows:
+        - [4]
+
+  - id: "multi_table_joins.051.delivery_count"
+    status: supported
+    kind: query
+    capabilities: [fixture, count]
+    sql: select count(*) from deliveries_qa
+    expect:
+      rows:
+        - [4]
+
+  - id: "multi_table_joins.052.orders_lineitems"
+    status: supported
+    kind: query
+    capabilities: [two-table-join, parent-relation]
+    sql: |-
+      select l.line_id, o.order_id
+      from orders_qa as o
+      inner join lineitems_qa as l on l.order_id = o.order_id
+    expect:
+      row_count: 4
+
+  - id: "multi_table_joins.053.lineitems_deliveries"
+    status: supported
+    kind: query
+    capabilities: [two-table-join, parent-relation, join-multiplicity]
+    sql: |-
+      select d.delivery_id, l.line_id
+      from lineitems_qa as l
+      inner join deliveries_qa as d on d.line_id = l.line_id
+    expect:
+      row_count: 4
+
+  - id: "multi_table_joins.100.three_table_projection"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [three-table-join, inner-join, projection]
+    sql: |-
+      select c.first_name, o.order_id, l.line_id, l.quantity
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id = o.order_id
+    expect:
+      columns: [first_name, order_id, line_id, quantity]
+      rows:
+        - ["Abby", "201", "L4", 7]
+        - ["Abe", "101", "L1", 2]
+        - ["Abe", "101", "L2", 3]
+        - ["Abe", "102", "L3", 5]
+
+  - id: "multi_table_joins.101.three_table_count"
+    status: supported
+    kind: query
+    capabilities: [three-table-join, inner-join, count, join-multiplicity]
+    sql: |-
+      select count(*)
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id = o.order_id
+    expect:
+      rows:
+        - [4]
+
+  - id: "multi_table_joins.102.three_table_group"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [three-table-join, inner-join, group-by, count, join-multiplicity]
+    sql: |-
+      select c.city, count(*) as line_count
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id = o.order_id
+      group by c.city
+    expect:
+      columns: [city, line_count]
+      rows:
+        - ["Seattle", 3]
+        - ["Tacoma", 1]
+
+  - id: "multi_table_joins.103.reversed_table_order"
+    status: supported
+    kind: query
+    capabilities: [three-table-join, inner-join, table-order]
+    sql: |-
+      select l.line_id, o.order_id, c.first_name
+      from lineitems_qa as l
+      inner join orders_qa as o on l.order_id = o.order_id
+      inner join customers_qa as c on o.cust_id = c.cust_id
+    expect:
+      row_count: 4
+
+  - id: "multi_table_joins.104.mixed_outer_chain"
+    status: xfail
+    issue: "Graph outer-join composition is not supported in this slice; keep the boundary explicit until null-extension is implemented across chained relationship-vector joins."
+    kind: query
+    capabilities: [three-table-join, outer-join, join-composition]
+    sql: |-
+      select c.first_name, o.order_id, l.line_id
+      from customers_qa as c
+      outer join orders_qa as o on o.cust_id = c.cust_id
+      outer join lineitems_qa as l on l.order_id = o.order_id
+    expect:
+      row_count: 6
+
+  - id: "multi_table_joins.105.final_anti_join"
+    status: xfail
+    issue: "The legacy ON a != b anti-join shorthand is not MySQL-compatible; prefer NOT IN or correlated NOT EXISTS until this custom shorthand is retired or redefined."
+    kind: query
+    order: rowsort
+    capabilities: [three-table-join, anti-join, join-composition]
+    sql: |-
+      select c.first_name, o.order_id
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id != o.order_id
+    expect:
+      columns: [first_name, order_id]
+      rows:
+        - ["Carl", "401"]
+
+  - id: "multi_table_joins.110.four_table_projection"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [four-table-join, inner-join, projection, join-multiplicity]
+    sql: |-
+      select c.first_name, o.order_id, l.line_id, d.delivery_id, d.status
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id = o.order_id
+      inner join deliveries_qa as d on d.line_id = l.line_id
+    expect:
+      columns: [first_name, order_id, line_id, delivery_id, status]
+      rows:
+        - ["Abby", "201", "L4", "D4", "delivered"]
+        - ["Abe", "101", "L1", "D1", "delivered"]
+        - ["Abe", "101", "L1", "D2", "retry"]
+        - ["Abe", "102", "L3", "D3", "delivered"]
+
+  - id: "multi_table_joins.111.four_table_count"
+    status: supported
+    kind: query
+    capabilities: [four-table-join, inner-join, count, join-multiplicity]
+    sql: |-
+      select count(*)
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+      inner join lineitems_qa as l on l.order_id = o.order_id
+      inner join deliveries_qa as d on d.line_id = l.line_id
+    expect:
+      rows:
+        - [4]
+
+  - id: "multi_table_joins.900.drop_deliveries"
+    status: supported
+    kind: admin
+    sql: drop deliveries_qa
+
+  - id: "multi_table_joins.901.drop_lineitems"
+    status: supported
+    kind: admin
+    sql: drop lineitems_qa
+
+  - id: "multi_table_joins.902.drop_orders"
+    status: supported
+    kind: admin
+    sql: drop orders_qa
+
+  - id: "multi_table_joins.903.drop_customers"
+    status: supported
+    kind: admin
+    sql: drop customers_qa

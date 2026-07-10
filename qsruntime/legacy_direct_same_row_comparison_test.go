@@ -1,0 +1,80 @@
+package qsruntime
+
+import (
+	"context"
+	"reflect"
+	"testing"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
+)
+
+func TestLegacyDirectSameRowBSIComparisonKernelFiltersRownumsWithoutMaterialization(t *testing.T) {
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	leftBSI := roaring64.NewBSI(0, 64)
+	rightBSI := roaring64.NewBSI(0, 64)
+	leftBSI.SetValue(1, 10)
+	leftBSI.SetValue(2, 30)
+	leftBSI.SetValue(3, 40)
+	rightBSI.SetValue(1, 20)
+	rightBSI.SetValue(2, 20)
+	rightBSI.SetValue(3, 40)
+
+	requests := []NativeProjectionBSIReadRequest{}
+	kernel := LegacyDirectSameRowBSIComparisonKernel{
+		Reader: NativeProjectionBSIReaderFunc(func(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			requests = append(requests, request)
+			switch request.PhysicalField {
+			case "l_receiptdate":
+				return NativeProjectionBSIReadResult{BSI: leftBSI}, nil, nil
+			case "l_commitdate":
+				return NativeProjectionBSIReadResult{BSI: rightBSI}, nil, nil
+			default:
+				t.Fatalf("unexpected physical field %q", request.PhysicalField)
+				return NativeProjectionBSIReadResult{}, nil, nil
+			}
+		}),
+	}
+
+	result, err := kernel.CompareSameRowFields(context.Background(), qsbridge.SameRowComparisonRequest{
+		ID:          "q21_late_receipt",
+		ProbePrefix: "q21_late_receipt_",
+		Domain: qsbridge.RownumDomainSet{
+			Domain:  qsbridge.RownumDomain{Table: lineitem, Role: "l"},
+			Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4},
+		},
+		Left:     qsbridge.FieldRef{Table: lineitem, Name: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime},
+		Right:    qsbridge.FieldRef{Table: lineitem, Name: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime},
+		Operator: qsbridge.BinaryOpGreater,
+		Kind:     qsbridge.SameRowComparisonBSI,
+	})
+	if err != nil {
+		t.Fatalf("CompareSameRowFields: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if got, want := result.Domain.Rownums, []qsbridge.QuantaRownum{2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rownums = %#v, want %#v", got, want)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("reader calls = %d, want 2", len(requests))
+	}
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_input_count", "4")
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_output_count", "1")
+}
+
+func TestUnsupportedSameRowComparisonKernelReportsBoundary(t *testing.T) {
+	result, err := UnsupportedSameRowComparisonKernel{}.CompareSameRowFields(context.Background(), qsbridge.SameRowComparisonRequest{
+		ID:          "unsupported",
+		ProbePrefix: "unsupported_",
+		Kind:        qsbridge.SameRowComparisonBSI,
+	})
+	if err != nil {
+		t.Fatalf("CompareSameRowFields: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", result.Diagnostics)
+	}
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "unsupported_kernel", "unsupported")
+}

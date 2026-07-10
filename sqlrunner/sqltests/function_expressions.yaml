@@ -1,0 +1,596 @@
+version: 1
+name: "function_expressions"
+
+tests:
+  - id: "function_expressions.000.drop_deliveries"
+    status: supported
+    kind: admin
+    sql: drop deliveries_qa
+
+  - id: "function_expressions.000a.drop_lineitems"
+    status: supported
+    kind: admin
+    sql: drop lineitems_qa
+
+  - id: "function_expressions.001.drop_orders"
+    status: supported
+    kind: admin
+    sql: drop orders_qa
+
+  - id: "function_expressions.002.drop_customers"
+    status: supported
+    kind: admin
+    sql: drop customers_qa
+
+  - id: "function_expressions.003.create_customers"
+    status: supported
+    kind: admin
+    sql: create customers_qa
+
+  - id: "function_expressions.004.create_orders"
+    status: supported
+    kind: admin
+    sql: create orders_qa
+
+  - id: "function_expressions.010.insert_customer"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, city, age)
+      values ('1', 'Abe', 'Seattle', 30)
+
+  - id: "function_expressions.011.insert_customer"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, city, age)
+      values ('2', 'Abby', 'Tacoma', 40)
+
+  - id: "function_expressions.012.insert_customer"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, city, age)
+      values ('3', 'Annie', 'Everett', 50)
+
+  - id: "function_expressions.013.commit_customers"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "function_expressions.020.insert_order"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_date, ship_via)
+      values ('1', '1001', '2023-06-01T01:00:00', '2023-06-01T04:00:00', 'UPS')
+
+  - id: "function_expressions.021.insert_order"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_date, ship_via)
+      values ('1', '1002', '2023-06-02T02:00:00', '2023-06-02T06:30:00', 'UPS')
+
+  - id: "function_expressions.022.insert_order"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_date, ship_via)
+      values ('2', '1003', '2023-06-03T03:00:00', '2023-06-03T05:00:00', 'FEDEX')
+
+  - id: "function_expressions.023.commit_orders"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "function_expressions.030.baseline_count"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as order_count
+      from orders_qa
+    expect:
+      columns: [order_count]
+      rows:
+        - [3]
+
+  - id: "function_expressions.031.baseline_sum"
+    status: supported
+    kind: query
+    sql: |-
+      select sum(age) as total_age
+      from customers_qa
+    expect:
+      columns: [total_age]
+      rows:
+        - [120]
+
+  - id: "function_expressions.100.qlbridge_builtin_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, qlbridge-builtin, select-expression]
+    sql: |-
+      select tostring(age) as age_text
+      from customers_qa
+    expect:
+      columns: [age_text]
+      rows:
+        - ['30']
+        - ['40']
+        - ['50']
+
+  - id: "function_expressions.100a.coercion_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, coercion, select-expression]
+    sql: |-
+      select first_name,
+             tostring(age) as age_text,
+             toint(age) as age_int,
+             tonumber(age) as age_number
+      from customers_qa
+    expect:
+      columns: [first_name, age_text, age_int, age_number]
+      rows:
+        - ['Abe', '30', 30, 30]
+        - ['Abby', '40', 40, 40]
+        - ['Annie', '50', 50, 50]
+
+  - id: "function_expressions.101.lower_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, select-expression]
+    sql: |-
+      select first_name, lower(city) as city_lower
+      from customers_qa
+    expect:
+      columns: [first_name, city_lower]
+      rows:
+        - ['Abe', 'seattle']
+        - ['Abby', 'tacoma']
+        - ['Annie', 'everett']
+
+  - id: "function_expressions.102.upper_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, select-expression]
+    sql: |-
+      select first_name, upper(city) as city_upper
+      from customers_qa
+    expect:
+      columns: [first_name, city_upper]
+      rows:
+        - ['Abe', 'SEATTLE']
+        - ['Abby', 'TACOMA']
+        - ['Annie', 'EVERETT']
+
+  - id: "function_expressions.103.length_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, select-expression]
+    sql: |-
+      select first_name, length(first_name) as name_len
+      from customers_qa
+    expect:
+      columns: [first_name, name_len]
+      rows:
+        - ['Abe', 3]
+        - ['Abby', 4]
+        - ['Annie', 5]
+
+  - id: "function_expressions.104.substr_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, select-expression]
+    sql: |-
+      select first_name, substr(first_name, 1, 2) as name_prefix
+      from customers_qa
+    expect:
+      columns: [first_name, name_prefix]
+      rows:
+        - ['Abe', 'Ab']
+        - ['Abby', 'Ab']
+        - ['Annie', 'An']
+
+  - id: "function_expressions.105.string_helper_aliases_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, select-expression]
+    sql: |-
+      select first_name,
+             lcase(city) as city_lcase,
+             ucase(city) as city_ucase,
+             char_length(first_name) as name_char_len,
+             substring(first_name, 1, 2) as name_substring,
+             mid(first_name, 1, 2) as name_mid
+      from customers_qa
+    expect:
+      columns: [first_name, city_lcase, city_ucase, name_char_len, name_substring, name_mid]
+      rows:
+        - ['Abe', 'seattle', 'SEATTLE', 3, 'Ab', 'Ab']
+        - ['Abby', 'tacoma', 'TACOMA', 4, 'Ab', 'Ab']
+        - ['Annie', 'everett', 'EVERETT', 5, 'An', 'An']
+
+  - id: "function_expressions.110.qlbridge_builtin_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, qlbridge-builtin, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where tostring(age) = '30'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+
+  - id: "function_expressions.111a.lower_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where lower(city) = 'seattle'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+
+  - id: "function_expressions.111b.upper_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where upper(city) = 'TACOMA'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+
+  - id: "function_expressions.111c.length_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where length(first_name) = 5
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Annie']
+
+  - id: "function_expressions.111d.substr_predicate"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where substr(first_name, 1, 2) = 'Ab'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+        - ['Abby']
+
+  - id: "function_expressions.111e.lcase_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where lcase(city) = 'seattle'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+
+  - id: "function_expressions.111f.ucase_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where ucase(city) = 'TACOMA'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+
+  - id: "function_expressions.111g.char_length_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where char_length(first_name) = 5
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Annie']
+
+  - id: "function_expressions.111h.substring_predicate"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where substring(first_name, 1, 2) = 'Ab'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+        - ['Abby']
+
+  - id: "function_expressions.111i.mid_predicate"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, string, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where mid(first_name, 1, 2) = 'Ab'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abe']
+        - ['Abby']
+
+  - id: "function_expressions.111j.toint_predicate"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, coercion, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where toint(age) >= 40
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+        - ['Annie']
+
+  - id: "function_expressions.111k.tonumber_predicate"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, coercion, where-expression]
+    sql: |-
+      select first_name
+      from customers_qa
+      where tonumber(age) >= 40
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+        - ['Annie']
+
+  - id: "function_expressions.112.residual_function_predicate_projection_limit"
+    status: supported
+    kind: query
+    capabilities: [function, where-expression, limit]
+    sql: |-
+      select first_name
+      from customers_qa
+      where tostring(age) = '50'
+      limit 1
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Annie']
+
+  - id: "function_expressions.114.residual_function_predicate_projection_limit_applied"
+    status: supported
+    kind: query
+    capabilities: [function, where-expression, limit]
+    sql: |-
+      select first_name
+      from customers_qa
+      where tostring(age) >= '30'
+      limit 2
+    expect:
+      columns: [first_name]
+      row_count: 2
+
+  - id: "function_expressions.116.residual_function_predicate_projection_offset"
+    status: supported
+    kind: query
+    capabilities: [function, where-expression, limit, offset]
+    sql: |-
+      select first_name
+      from customers_qa
+      where tostring(age) >= '30'
+      limit 1 offset 1
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+
+  - id: "function_expressions.118.string_hash_like_contains"
+    status: supported
+    kind: query
+    capabilities: [like, where-expression, string-backing-store]
+    sql: |-
+      select first_name
+      from customers_qa
+      where first_name like '%nn%'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Annie']
+
+  - id: "function_expressions.119.string_enum_like_underscore"
+    status: supported
+    kind: query
+    capabilities: [like, where-expression, string-enum]
+    sql: |-
+      select first_name
+      from customers_qa
+      where city like '_acoma'
+    expect:
+      columns: [first_name]
+      rows:
+        - ['Abby']
+
+  - id: "function_expressions.119a.quanta_topn_string_enum"
+    status: supported
+    kind: query
+    capabilities: [aggregate, quanta-custom, topn, string-enum]
+    sql: |-
+      select topn(city)
+      from customers_qa
+    expect:
+      columns: [topn_city, topn_count, topn_percent]
+      row_count: 4
+
+  - id: "function_expressions.120.quanta_timediff_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, quanta-custom, timediff, select-expression]
+    sql: |-
+      select order_id, timediff(ship_date, order_date, 'hours') as ship_hours
+      from orders_qa
+    expect:
+      columns: [order_id, ship_hours]
+      rows:
+        - ['1001', '3']
+        - ['1002', '4.5']
+        - ['1003', '2']
+
+  - id: "function_expressions.130.quanta_timediff_predicate"
+    status: supported
+    kind: query
+    capabilities: [function, quanta-custom, timediff, where-expression]
+    sql: |-
+      select order_id
+      from orders_qa
+      where timediff(ship_date, order_date, 'hours') > 3
+    expect:
+      columns: [order_id]
+      rows:
+        - ['1002']
+
+  - id: "function_expressions.135.function_predicate_before_aggregate"
+    status: supported
+    kind: query
+    capabilities: [function, where-expression, aggregate]
+    sql: |-
+      select count(*) as order_count
+      from orders_qa
+      where timediff(ship_date, order_date, 'hours') > 3
+    expect:
+      columns: [order_count]
+      rows:
+        - [1]
+
+  - id: "function_expressions.136.datetime_part_select_list"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, date-time, select-expression]
+    sql: |-
+      select order_id,
+             year(order_date) as order_year,
+             mm(order_date) as order_month,
+             monthofyear(order_date) as order_month_alias,
+             dayofweek(order_date) as order_dow,
+             hourofday(order_date) as order_hour
+      from orders_qa
+    expect:
+      columns: [order_id, order_year, order_month, order_month_alias, order_dow, order_hour]
+      rows:
+        - ['1001', 2023, 6, 6, 4, 1]
+        - ['1002', 2023, 6, 6, 5, 2]
+        - ['1003', 2023, 6, 6, 6, 3]
+
+  - id: "function_expressions.140.aggregate_expression_argument"
+    status: supported
+    kind: query
+    capabilities: [aggregate-expression, arithmetic]
+    sql: |-
+      select sum(age + 1) as adjusted_age
+      from customers_qa
+    expect:
+      rows:
+        - [123]
+
+  - id: "function_expressions.150.function_in_group_by"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, group-by]
+    sql: |-
+      select tostring(age) as age_text, count(*) as customer_count
+      from customers_qa
+      group by tostring(age)
+    expect:
+      row_count: 3
+
+  - id: "function_expressions.160.function_in_having"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [function, having]
+    sql: |-
+      select city, count(*) as customer_count
+      from customers_qa
+      group by city
+      having tostring(customer_count) = '1'
+    expect:
+      columns: [city, customer_count]
+      rows:
+        - ['Everett', 1]
+        - ['Seattle', 1]
+        - ['Tacoma', 1]
+
+  - id: "function_expressions.170.function_in_order_by"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [function, order-by]
+    sql: |-
+      select first_name
+      from customers_qa
+      order by tostring(age) desc
+    expect:
+      rows:
+        - ['Annie']
+        - ['Abby']
+        - ['Abe']
+
+  - id: "function_expressions.180.timediff_join_select_list"
+    status: xfail
+    kind: query
+    order: rowsort
+    capabilities: [function, quanta-custom, timediff, join, select-expression]
+    sql: |-
+      select c.first_name, timediff(o.ship_date, o.order_date, 'hours') as ship_hours
+      from customers_qa as c
+      inner join orders_qa as o on o.cust_id = c.cust_id
+    expect:
+      columns: [c.first_name, ship_hours]
+      rows:
+        - ['Abe', '3']
+        - ['Abe', '4.5']
+        - ['Abby', '2']

@@ -1,0 +1,1459 @@
+version: 1
+name: "tpch_queries"
+
+tests:
+
+  - id: "tpch_queries.q1.grouped_lineitem_shape"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q1, group-by, multiple-aggregates]
+    sql: |-
+      select l_returnflag, l_linestatus, count(*) as count_order
+      from lineitem
+      group by l_returnflag, l_linestatus
+    expect:
+      rows:
+        - ["A", "F", 14876]
+        - ["N", "F", 348]
+        - ["N", "O", 30049]
+        - ["R", "F", 14902]
+
+  - id: "tpch_queries.q2.010_europe_brass_part_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q2, five-table-join, string-enum-like, suffix-like, numeric-predicate, count]
+    sql: |-
+      select count(*) as europe_brass_part_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+    expect:
+      rows:
+        - [5]
+
+  - id: "tpch_queries.q2.020_europe_brass_part_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q2, five-table-join, string-enum-like, suffix-like, numeric-predicate, projection]
+    sql: |-
+      select p.p_partkey, p.p_mfgr, s.s_suppkey, ps.ps_supplycost
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+    expect:
+      row_count: 5
+
+  - id: "tpch_queries.q2.030_europe_brass_low_cost_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q2, five-table-join, string-enum-like, suffix-like, numeric-predicate, count]
+    sql: |-
+      select count(*) as europe_brass_low_cost_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+        and ps.ps_supplycost < 300
+    expect:
+      rows:
+        - [2]
+
+  - id: "tpch_queries.q3.010_customer_building_filter"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, filter, count]
+    sql: |-
+      select count(*)
+      from customer as c
+      where c.c_mktsegment = 'BUILDING'
+    expect:
+      rows:
+        - [337]
+
+  - id: "tpch_queries.q3.020_customer_orders_building_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, two-table-join, filter, projection]
+    sql: |-
+      select c.c_custkey, o.o_orderkey
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      where c.c_mktsegment = 'BUILDING'
+    expect:
+      row_count: 3706
+
+  - id: "tpch_queries.q3.030_customer_orders_lineitem_building_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, projection]
+    sql: |-
+      select c.c_custkey, o.o_orderkey, l.l_linenumber
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+    expect:
+      row_count: 5000
+
+  - id: "tpch_queries.q3.040_customer_orders_lineitem_grouping"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, group-by]
+    sql: |-
+      select l.l_orderkey, count(*) as line_count
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey
+    expect:
+      row_count: 3706
+
+  - id: "tpch_queries.q3.045_grouped_revenue_by_order"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, group-by, aggregate]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey
+    expect:
+      row_count: 3706
+
+  - id: "tpch_queries.q3.046_grouped_revenue_with_order_fields"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, group-by, aggregate, parent-fields]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+    expect:
+      row_count: 3706
+
+  - id: "tpch_queries.q3.046a_formal_date_filters_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, date-predicate, projection, limit]
+    sql: |-
+      select l.l_orderkey, o.o_orderdate, l.l_shipdate
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      limit 10
+    expect:
+      row_count: 10
+
+  - id: "tpch_queries.q3.046b_formal_date_filters_grouped_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, date-predicate, group-by, aggregate]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+    expect:
+      row_count: 2049
+
+  - id: "tpch_queries.q3.046c_formal_date_filters_grouped_revenue_limit"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, date-predicate, group-by, aggregate, limit]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      limit 10
+    expect:
+      row_count: 10
+
+  - id: "tpch_queries.q3.047_grouped_revenue_limit"
+    status: supported
+    issue: "performance - projecting o_orderdate for grouped Q3 scans many YMD timeRangeBSI fragments before LIMIT can be applied"
+    timeout: 60s
+    kind: query
+    capabilities: [tpch-q3, three-table-join, group-by, aggregate, limit]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      limit 10
+    expect:
+      row_count: 10
+
+  - id: "tpch_queries.q3.048_grouped_revenue_order_by"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, group-by, aggregate, order-by]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      order by revenue desc, o.o_orderdate
+    expect:
+      row_count: 3706
+
+  - id: "tpch_queries.q3.050_revenue_ordering_shape"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, date-predicate, group-by, aggregate, order-by, limit]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      order by revenue desc, o.o_orderdate
+      limit 10
+    expect:
+      row_count: 10
+
+  - id: "tpch_queries.q4.010_orderdate_priority_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q4, single-table, date-predicate, group-by]
+    sql: |-
+      select o_orderpriority, count(*) as order_count
+      from orders
+      where o_orderdate >= '1993-07-01'
+        and o_orderdate < '1993-10-01'
+      group by o_orderpriority
+      order by o_orderpriority
+    expect:
+      rows:
+        - ["1-URGENT", 104]
+        - ["2-HIGH", 111]
+        - ["3-MEDIUM", 120]
+        - ["4-NOT SPECIFIED", 109]
+        - ["5-LOW", 138]
+
+  - id: "tpch_queries.q5.010_asia_region_filter"
+    status: supported
+    kind: query
+    capabilities: [tpch-q5, filter, dimension]
+    sql: |-
+      select r.r_name
+      from region as r
+      where r.r_name = 'ASIA'
+    expect:
+      rows:
+        - ["ASIA"]
+
+  - id: "tpch_queries.q5.020_asia_nations"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q5, two-table-join, filter, dimension]
+    sql: |-
+      select n.n_name
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      where r.r_name = 'ASIA'
+    expect:
+      rows:
+        - ["CHINA"]
+        - ["INDIA"]
+        - ["INDONESIA"]
+        - ["JAPAN"]
+        - ["VIETNAM"]
+
+  - id: "tpch_queries.q5.030_asia_customer_orders_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q5, four-table-join, filter, projection]
+    sql: |-
+      select n.n_name, c.c_custkey, o.o_orderkey
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where r.r_name = 'ASIA'
+    expect:
+      row_count: 2959
+
+  - id: "tpch_queries.q5.040_asia_supplier_lineitem_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q5, four-table-join, filter, projection]
+    sql: |-
+      select n.n_name, s.s_suppkey, l.l_orderkey
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join supplier as s on s.s_nationkey = n.n_nationkey
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      where r.r_name = 'ASIA'
+    expect:
+      row_count: 5000
+
+  - id: "tpch_queries.q5.050_asia_customer_orders_lineitem_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q5, five-table-join, filter, projection]
+    sql: |-
+      select n.n_name, c.c_custkey, o.o_orderkey, l.l_linenumber
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where r.r_name = 'ASIA'
+    expect:
+      row_count: 5000
+
+  - id: "tpch_queries.q5.055_same_nation_combined_graph_count"
+    status: supported
+    issue: "performance - formal Q5 same-nation graph count is supported but still near the default 30s runner timeout"
+    timeout: 60s
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q5, six-table-join, filter, group-by, count, formal-q5]
+    sql: |-
+      select n.n_name, count(*) as line_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+        and c.c_nationkey = s.s_nationkey
+      group by n.n_name
+    expect:
+      row_count: 5
+
+  - id: "tpch_queries.q5.060_combined_graph_regional_count"
+    status: supported
+    issue: "performance - count-only combined graph is supported after join reduction projection caching"
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q5, six-table-join, filter, group-by, count]
+    sql: |-
+      select n.n_name, count(*) as line_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+      group by n.n_name
+    expect:
+      rows:
+        - ["CHINA", 4290]
+        - ["INDIA", 3098]
+        - ["INDONESIA", 2988]
+        - ["JAPAN", 2447]
+        - ["VIETNAM", 3641]
+
+  - id: "tpch_queries.q5.070_simple_regional_revenue"
+    status: supported
+    issue: "baseline Q5 revenue without discount arithmetic"
+    kind: query
+    order: rowsort
+    capabilities:
+      [tpch-q5, six-table-join, filter, date-predicate, group-by, aggregate]
+    sql: |-
+      select n.n_name, sum(l.l_extendedprice) as revenue
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+      group by n.n_name
+    expect:
+      rows:
+        - ["CHINA", "108715630.20"]
+        - ["INDIA", "76932168.98"]
+        - ["INDONESIA", "73272169.29"]
+        - ["JAPAN", "61566824.17"]
+        - ["VIETNAM", "90520443.70"]
+
+  - id: "tpch_queries.q5.080_regional_revenue_ordering"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities:
+      [
+        tpch-q5,
+        six-table-join,
+        filter,
+        date-predicate,
+        group-by,
+        aggregate,
+        order-by,
+        benchmark-roadmap,
+      ]
+    sql: |-
+      select n.n_name, sum(l.l_extendedprice) as revenue
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+      group by n.n_name
+      order by revenue desc
+    expect:
+      rows:
+        - ["CHINA", "108715630.20"]
+        - ["VIETNAM", "90520443.70"]
+        - ["INDIA", "76932168.98"]
+        - ["INDONESIA", "73272169.29"]
+        - ["JAPAN", "61566824.17"]
+
+  - id: "tpch_queries.q5.formal_revenue"
+    status: supported
+    issue: "performance - formal Q5 revenue is supported but remains a multi-second six-table grouped join"
+    timeout: 60s
+    kind: query
+    capabilities:
+      [
+        tpch-q5,
+        six-table-join,
+        field-comparison,
+        filter,
+        date-predicate,
+        group-by,
+        aggregate-expression,
+        order-by,
+        formal-q5,
+      ]
+    sql: |-
+      select n.n_name, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+        and c.c_nationkey = s.s_nationkey
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+      group by n.n_name
+      order by revenue desc
+    expect:
+      rows:
+        - ["VIETNAM", "4347349.82"]
+        - ["CHINA", "3208304.49"]
+        - ["INDONESIA", "3142880.00"]
+        - ["JAPAN", "2573140.21"]
+        - ["INDIA", "2234418.88"]
+
+  - id: "tpch_queries.q6.discounted_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q6, single-table, filter, date-predicate, numeric-predicate, aggregate-expression]
+    sql: |-
+      select sum(l.l_extendedprice * l.l_discount) as revenue
+      from lineitem as l
+      where l.l_shipdate >= '1994-01-01'
+        and l.l_shipdate < '1995-01-01'
+        and l.l_discount >= 0.05
+        and l.l_discount <= 0.07
+        and l.l_quantity < 24
+    expect:
+      rows:
+        - ["1.193053225300001e+06"]
+
+  - id: "tpch_queries.q7.010_france_supplier_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q7, two-table-join, string-enum-filter, count]
+    sql: |-
+      select count(*) as france_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'FRANCE'
+    expect:
+      rows:
+        - [2]
+
+  - id: "tpch_queries.q7.020_germany_customer_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q7, two-table-join, string-enum-filter, count]
+    sql: |-
+      select count(*) as germany_customer_count
+      from customer as c
+      inner join nation as n on n.n_nationkey = c.c_nationkey
+      where n.n_name = 'GERMANY'
+    expect:
+      rows:
+        - [57]
+
+  - id: "tpch_queries.q7.030_supplier_line_order_shipdate_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q7, three-table-join, date-predicate, count, performance-target]
+    sql: |-
+      select count(*) as q7_supplier_line_order_count
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      where l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+    expect:
+      rows:
+        - [17958]
+
+  - id: "tpch_queries.q7.040_france_supplier_path_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q7, five-table-join, string-enum-filter, date-predicate, count, performance-target]
+    sql: |-
+      select count(*) as q7_france_supplier_path_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      where n.n_name = 'FRANCE'
+        and l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+    expect:
+      rows:
+        - [373]
+
+  - id: "tpch_queries.q7.050_germany_customer_path_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q7, five-table-join, string-enum-filter, date-predicate, count, performance-target]
+    sql: |-
+      select count(*) as q7_germany_customer_path_count
+      from customer as c
+      inner join nation as n on n.n_nationkey = c.c_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where n.n_name = 'GERMANY'
+        and l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+    expect:
+      rows:
+        - [613]
+
+  - id: "tpch_queries.q8.010_economy_anodized_steel_part_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q8, single-table, string-enum-filter, count]
+    sql: |-
+      select count(*) as q8_part_type_count
+      from part
+      where p_type = 'ECONOMY ANODIZED STEEL'
+    expect:
+      rows:
+        - [12]
+
+  - id: "tpch_queries.q8.020_america_customer_order_line_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q8, six-table-join, string-enum-filter, date-predicate, count, performance-target]
+    sql: |-
+      select count(*) as q8_america_customer_order_line_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join part as p on p.p_partkey = l.l_partkey
+      where r.r_name = 'AMERICA'
+        and o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate <= '1996-12-31'
+        and p.p_type = 'ECONOMY ANODIZED STEEL'
+    expect:
+      rows:
+        - [29]
+
+  - id: "tpch_queries.q9.010_green_part_lineitem_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q9, two-table-join, string-backing-store, like, count]
+    sql: |-
+      select count(*) as green_part_join_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_name like '%green%'
+    expect:
+      rows:
+        - [3223]
+
+  - id: "tpch_queries.q9.020_green_part_lineitem_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch-q9, two-table-join, string-backing-store, like, projection, limit]
+    sql: |-
+      select p.p_partkey, p.p_name, l.l_orderkey, l.l_suppkey
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_name like '%green%'
+      limit 10
+    expect:
+      row_count: 10
+
+  - id: "tpch_queries.q9.030_green_part_order_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q9, three-table-join, string-backing-store, like, count, performance-target]
+    sql: |-
+      select count(*) as green_part_order_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      where p.p_name like '%green%'
+    expect:
+      rows:
+        - [3223]
+
+  - id: "tpch_queries.q10.revenue_by_customer"
+    status: supported
+    kind: query
+    capabilities: [tpch-q10, three-table-join, filter, date-predicate, group-by, aggregate-expression, order-by, limit]
+    sql: |-
+      select c.c_custkey, c.c_name, sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name
+      order by revenue desc
+      limit 20
+    expect:
+      rows:
+        - [1162, "Customer#000001162", "1131539.88"]
+        - [940, "Customer#000000940", "1006284.98"]
+        - [697, "Customer#000000697", "906256.01"]
+        - [244, "Customer#000000244", "846950.85"]
+        - [868, "Customer#000000868", "844427.20"]
+        - [664, "Customer#000000664", "837666.60"]
+        - [1201, "Customer#000001201", "830016.47"]
+        - [1318, "Customer#000001318", "826716.58"]
+        - [1150, "Customer#000001150", "812323.15"]
+        - [1001, "Customer#000001001", "810010.07"]
+        - [1126, "Customer#000001126", "804582.64"]
+        - [1255, "Customer#000001255", "801848.85"]
+        - [34, "Customer#000000034", "797149.82"]
+        - [1483, "Customer#000001483", "732106.63"]
+        - [739, "Customer#000000739", "730246.64"]
+        - [73, "Customer#000000073", "728666.78"]
+        - [1144, "Customer#000001144", "704124.91"]
+        - [277, "Customer#000000277", "699109.28"]
+        - [1234, "Customer#000001234", "694310.08"]
+        - [679, "Customer#000000679", "691270.36"]
+
+  - id: "tpch_queries.q11.010_german_supplier_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q11, two-table-join, string-enum-filter, count]
+    sql: |-
+      select count(*) as german_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'GERMANY'
+    expect:
+      rows:
+        - [5]
+
+  - id: "tpch_queries.q11.020_german_supplier_value_ordering"
+    status: supported
+    kind: query
+    capabilities: [tpch-q11, three-table-join, aggregate-expression, group-by, order-by, limit]
+    sql: |-
+      select s.s_suppkey, sum(ps.ps_supplycost * ps.ps_availqty) as value
+      from partsupp as ps
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'GERMANY'
+      group by s.s_suppkey
+      order by value desc
+      limit 10
+    expect:
+      rows:
+        - [77, "205920583.56"]
+        - [53, "193104538.04"]
+        - [85, "191073777.31"]
+        - [44, "182758703.25"]
+        - [33, "177396652.28"]
+
+  - id: "tpch_queries.q11.030_german_supplier_value_having"
+    status: supported
+    kind: query
+    capabilities: [tpch-q11, three-table-join, aggregate-expression, group-by, having, order-by]
+    sql: |-
+      select s.s_suppkey, sum(ps.ps_supplycost * ps.ps_availqty) as value
+      from partsupp as ps
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'GERMANY'
+      group by s.s_suppkey
+      having value > 190000000
+      order by value desc
+    expect:
+      rows:
+        - [77, "205920583.56"]
+        - [53, "193104538.04"]
+        - [85, "191073777.31"]
+
+  - id: "tpch_queries.q12.010_shipmode_receiptdate_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+    expect:
+      rows:
+        - [2764]
+
+  - id: "tpch_queries.q12.020_shipmode_receiptdate_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, group-by]
+    sql: |-
+      select l_shipmode, count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+      group by l_shipmode
+    expect:
+      rows:
+        - ["MAIL", 1360]
+        - ["SHIP", 1404]
+
+  - id: "tpch_queries.q12.030_shipmode_receiptdate_commitdate_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, field-comparison, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_commitdate < l.l_receiptdate
+        and l.l_shipdate < l.l_commitdate
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+    expect:
+      rows:
+        - [307]
+
+  - id: "tpch_queries.q12.040_shipmode_receiptdate_commitdate_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, field-comparison, group-by]
+    sql: |-
+      select l_shipmode, count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_commitdate < l_receiptdate
+        and l_shipdate < l_commitdate
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+      group by l_shipmode
+    expect:
+      rows:
+        - ["MAIL", 150]
+        - ["SHIP", 157]
+
+  - id: "tpch_queries.q14.010_promo_part_type_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q14, single-table, string-enum-like, prefix-like, count]
+    sql: |-
+      select count(*) as promo_part_count
+      from part
+      where p_type like 'PROMO%'
+    expect:
+      rows:
+        - [310]
+
+  - id: "tpch_queries.q14.011_non_promo_part_type_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q14, stringenum, like, not-like]
+    sql: |-
+      select count(*) as non_promo_part_count
+      from part
+      where p_type not like 'PROMO%'
+    expect:
+      rows:
+        - [1690]
+
+  - id: "tpch_queries.q14.020_promo_part_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q14, two-table-join, string-enum-like, prefix-like, count]
+    sql: |-
+      select count(*) as promo_part_join_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_type like 'PROMO%'
+    expect:
+      rows:
+        - [9335]
+
+  - id: "tpch_queries.q14.030_sep95_promo_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q14, two-table-join, string-enum-like, prefix-like, date-predicate, count]
+    sql: |-
+      select count(*) as sep95_promo_join_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where l.l_shipdate >= '1995-09-01'
+        and l.l_shipdate < '1995-10-01'
+        and p.p_type like 'PROMO%'
+    expect:
+      rows:
+        - [109]
+
+  - id: "tpch_queries.q14.formal_promo_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q14, two-table-join, string-enum-like, prefix-like, date-predicate, searched-case, conditional-aggregate, aggregate-ratio]
+    sql: |-
+      select
+        100.00 * sum(case
+          when p.p_type like 'PROMO%'
+          then l.l_extendedprice * (1 - l.l_discount)
+          else 0
+        end) / sum(l.l_extendedprice * (1 - l.l_discount)) as promo_revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where l.l_shipdate >= '1995-09-01'
+        and l.l_shipdate < '1995-10-01'
+    expect:
+      rows:
+        - ["16.014387811931957"]
+
+  - id: "tpch_queries.q15.010_supplier_revenue_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q15, single-table, date-predicate, residual-group-by, count]
+    sql: |-
+      select l_suppkey, count(*) as line_count
+      from lineitem
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+      group by l_suppkey
+      order by line_count desc
+      limit 10
+    expect:
+      rows:
+        - [21, 34]
+        - [75, 33]
+        - [31, 32]
+        - [46, 31]
+        - [82, 30]
+        - [76, 30]
+        - [49, 30]
+        - [57, 29]
+        - [33, 29]
+        - [4, 29]
+
+  - id: "tpch_queries.q15.020_supplier_revenue_sum"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q15, single-table, date-predicate, residual-group-by, aggregate-expression]
+    sql: |-
+      select l_suppkey,
+             sum(l_extendedprice * (1 - l_discount)) as total_revenue
+      from lineitem
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+      group by l_suppkey
+      order by total_revenue desc
+      limit 10
+    expect:
+      rows:
+        - [21, "1.1610994635999997e+06"]
+        - [76, "1.1604158477000003e+06"]
+        - [92, "1.1338051938e+06"]
+        - [82, "1.1187069353e+06"]
+        - [49, "1.1108453527999998e+06"]
+        - [75, "1.0823718483e+06"]
+        - [46, "1.0662141999e+06"]
+        - [19, "1.0049535066000001e+06"]
+        - [7, "997177.6750000003"]
+        - [56, "984793.1773000001"]
+
+  - id: "tpch_queries.q16.010_part_filter_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, single-table, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select count(*) as q16_part_filter_count
+      from part
+      where p_brand <> 'Brand#45'
+        and p_type not like 'MEDIUM POLISHED%'
+        and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+    expect:
+      rows:
+        - [299]
+
+  - id: "tpch_queries.q16.020_part_partsupp_filter_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, join, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select count(*) as q16_join_full_filter_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+    expect:
+      rows:
+        - [1228]
+
+  - id: "tpch_queries.q16.030_part_partsupp_projection"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, join, projection, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select p.p_partkey, p.p_brand, p.p_type, p.p_size, ps.ps_suppkey
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      limit 10
+    expect:
+      rows:
+        - [4, "Brand#34", "SMALL PLATED BRASS", 14, 30]
+        - [4, "Brand#34", "SMALL PLATED BRASS", 14, 55]
+        - [4, "Brand#34", "SMALL PLATED BRASS", 14, 80]
+        - [7, "Brand#11", "SMALL PLATED COPPER", 45, 8]
+        - [22, "Brand#43", "PROMO POLISHED BRASS", 19, 48]
+        - [22, "Brand#43", "PROMO POLISHED BRASS", 19, 73]
+        - [25, "Brand#55", "STANDARD BRUSHED COPPER", 3, 51]
+        - [25, "Brand#55", "STANDARD BRUSHED COPPER", 3, 1]
+        - [42, "Brand#52", "MEDIUM BURNISHED TIN", 45, 93]
+        - [45, "Brand#43", "SMALL BRUSHED NICKEL", 9, 46]
+
+  - id: "tpch_queries.q16.040_part_partsupp_group_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, two-table-join, group-by, count, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size, count(*) as supplier_rows
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_rows desc, p.p_brand, p.p_type, p.p_size
+      limit 10
+    expect:
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, 8]
+        - ["Brand#22", "LARGE BURNISHED TIN", 36, 8]
+        - ["Brand#14", "PROMO BRUSHED STEEL", 9, 8]
+        - ["Brand#55", "STANDARD BRUSHED STEEL", 19, 4]
+        - ["Brand#55", "STANDARD BRUSHED COPPER", 3, 4]
+        - ["Brand#55", "STANDARD ANODIZED BRASS", 36, 4]
+        - ["Brand#55", "SMALL PLATED COPPER", 45, 4]
+        - ["Brand#55", "PROMO BURNISHED STEEL", 14, 4]
+        - ["Brand#55", "PROMO BRUSHED STEEL", 36, 4]
+        - ["Brand#55", "MEDIUM BRUSHED TIN", 45, 4]
+
+  - id: "tpch_queries.q16.050_part_partsupp_group_value"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, two-table-join, group-by, aggregate-expression, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size,
+             sum(ps.ps_supplycost * ps.ps_availqty) as supplier_value
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_value desc
+      limit 10
+    expect:
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, "33085776.71"]
+        - ["Brand#55", "STANDARD BRUSHED COPPER", 3, "28323020.68"]
+        - ["Brand#11", "PROMO ANODIZED TIN", 45, "23853953.63"]
+        - ["Brand#25", "ECONOMY PLATED NICKEL", 23, "22229017.98"]
+        - ["Brand#43", "LARGE POLISHED TIN", 45, "22090085.67"]
+        - ["Brand#31", "SMALL PLATED COPPER", 36, "21867066.10"]
+        - ["Brand#23", "LARGE ANODIZED COPPER", 14, "21137539.58"]
+        - ["Brand#52", "ECONOMY BURNISHED STEEL", 36, "20553483.56"]
+        - ["Brand#31", "ECONOMY BURNISHED COPPER", 36, "20514360.59"]
+        - ["Brand#51", "MEDIUM ANODIZED TIN", 14, "20183232.19"]
+
+  - id: "tpch_queries.q16.060_part_partsupp_distinct_supplier_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, two-table-join, group-by, count-distinct, not-like, string-enum, numeric-predicate]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size,
+             count(distinct ps.ps_suppkey) as supplier_cnt
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_cnt desc, p.p_brand, p.p_type, p.p_size
+      limit 10
+    expect:
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, 8]
+        - ["Brand#14", "PROMO BRUSHED STEEL", 9, 8]
+        - ["Brand#22", "LARGE BURNISHED TIN", 36, 6]
+        - ["Brand#55", "STANDARD BRUSHED STEEL", 19, 4]
+        - ["Brand#55", "STANDARD BRUSHED COPPER", 3, 4]
+        - ["Brand#55", "STANDARD ANODIZED BRASS", 36, 4]
+        - ["Brand#55", "SMALL PLATED COPPER", 45, 4]
+        - ["Brand#55", "PROMO BURNISHED STEEL", 14, 4]
+        - ["Brand#55", "PROMO BRUSHED STEEL", 36, 4]
+        - ["Brand#55", "MEDIUM BRUSHED TIN", 45, 4]
+
+  - id: "tpch_queries.q16.070_partsupp_supplier_in_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, subquery, in, semi-join-rewrite, count]
+    sql: |-
+      select count(*) as ps_in_supplier
+      from partsupp
+      where ps_suppkey in (
+        select s_suppkey from supplier where s_nationkey in (1,2,3)
+      )
+    expect:
+      rows:
+        - [640]
+
+  - id: "tpch_queries.q16.080_partsupp_supplier_not_in_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q16, subquery, not-in, anti-join-rewrite, count]
+    sql: |-
+      select count(*) as ps_not_in_supplier
+      from partsupp
+      where ps_suppkey not in (
+        select s_suppkey from supplier where s_nationkey in (1,2,3)
+      )
+    expect:
+      rows:
+        - [7360]
+
+  - id: "tpch_queries.q17.010_brand_container_part_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q17, single-table, string-enum-filter, count]
+    sql: |-
+      select count(*) as brand_container_part_count
+      from part
+      where p_brand = 'Brand#45'
+        and p_container = 'MED JAR'
+    expect:
+      rows:
+        - [8]
+
+  - id: "tpch_queries.q17.020_brand_container_join_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q17, two-table-join, string-enum-filter, count]
+    sql: |-
+      select count(*) as brand_container_join_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_brand = 'Brand#45'
+        and p.p_container = 'MED JAR'
+    expect:
+      rows:
+        - [235]
+
+  - id: "tpch_queries.q17.030_brand_container_avg_yearly"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q17, two-table-join, string-enum-filter, aggregate-expression]
+    sql: |-
+      select sum(l.l_extendedprice) / 7.0 as avg_yearly
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#45'
+        and p.p_container = 'MED JAR'
+    expect:
+      rows:
+        - ["1.2620656500000001e+06"]
+
+  - id: "tpch_queries.q20.010_forest_part_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q20, single-table, string-backing-store, like, count]
+    sql: |-
+      select count(*) as forest_part_count
+      from part
+      where p_name like 'forest%'
+    expect:
+      rows:
+        - [16]
+
+  - id: "tpch_queries.q20.020_forest_partsupp_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q20, subquery, in, semi-join-rewrite, string-backing-store, like, count]
+    sql: |-
+      select count(*) as q20_forest_partsupp_count
+      from partsupp
+      where ps_partkey in (
+        select p_partkey
+        from part
+        where p_name like 'forest%'
+      )
+    expect:
+      rows:
+        - [64]
+
+  - id: "tpch_queries.q20.030_canada_supplier_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q20, two-table-join, filter, count]
+    sql: |-
+      select count(*) as canada_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'CANADA'
+    expect:
+      rows:
+        - [3]
+
+  - id: "tpch_queries.q20.040_lineitem_1994_part_supplier_qty"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q20, single-table, date-predicate, residual-group-by, aggregate, order-by, limit]
+    sql: |-
+      select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
+      from lineitem
+      where l_shipdate >= '1994-01-01'
+        and l_shipdate < '1995-01-01'
+      group by l_partkey, l_suppkey
+      order by shipped_qty desc
+      limit 10
+    expect:
+      rows:
+        - [1140, 41, 227]
+        - [1341, 56, 201]
+        - [662, 25, 197]
+        - [319, 4, 196]
+        - [1966, 11, 191]
+        - [1584, 85, 190]
+        - [574, 35, 188]
+        - [1274, 12, 176]
+        - [807, 74, 167]
+        - [1033, 34, 164]
+
+  - id: "tpch_queries.q20.050_lineitem_1994_part_supplier_qty_having"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q20, single-table, date-predicate, residual-group-by, aggregate, having, order-by, limit]
+    sql: |-
+      select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
+      from lineitem
+      where l_shipdate >= '1994-01-01'
+        and l_shipdate < '1995-01-01'
+      group by l_partkey, l_suppkey
+      having shipped_qty > 150
+      order by shipped_qty desc
+      limit 10
+    expect:
+      rows:
+        - [1140, 41, 227]
+        - [1341, 56, 201]
+        - [662, 25, 197]
+        - [319, 4, 196]
+        - [1966, 11, 191]
+        - [1584, 85, 190]
+        - [574, 35, 188]
+        - [1274, 12, 176]
+        - [807, 74, 167]
+        - [1033, 34, 164]
+
+  - id: "tpch_queries.q21.010_saudi_supplier_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, two-table-join, string-enum-filter, count]
+    sql: |-
+      select count(*) as saudi_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'SAUDI ARABIA'
+    expect:
+      rows:
+        - [1]
+
+  - id: "tpch_queries.q21.020_late_receipt_line_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, single-table, field-comparison, count, performance-target]
+    sql: |-
+      select count(*) as late_receipt_line_count
+      from lineitem
+      where l_receiptdate > l_commitdate
+    expect:
+      rows:
+        - [37897]
+
+  - id: "tpch_queries.q21.030_f_status_order_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, single-table, string-enum-filter, count]
+    sql: |-
+      select count(*) as f_status_order_count
+      from orders
+      where o_orderstatus = 'F'
+    expect:
+      rows:
+        - [7304]
+
+  - id: "tpch_queries.q21.040_saudi_late_supplier_wait_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, four-table-join, field-comparison, string-enum-filter, group-by, order-by, limit]
+    sql: |-
+      select s.s_name, count(*) as numwait
+      from supplier as s
+      inner join lineitem as l1 on s.s_suppkey = l1.l_suppkey
+      inner join orders as o on o.o_orderkey = l1.l_orderkey
+      inner join nation as n on s.s_nationkey = n.n_nationkey
+      where o.o_orderstatus = 'F'
+        and l1.l_receiptdate > l1.l_commitdate
+        and n.n_name = 'SAUDI ARABIA'
+      group by s.s_name
+      order by numwait desc, s.s_name
+      limit 10
+    expect:
+      rows:
+        - ["Supplier#000000074", 279]
+
+  - id: "tpch_queries.q18.010_large_order_quantity_threshold"
+    status: supported
+    kind: query
+    capabilities: [tpch-q18, single-table, residual-group-by, having, order-by, limit]
+    sql: |-
+      select l_orderkey, sum(l_quantity) as quantity_sum
+      from lineitem
+      group by l_orderkey
+      having quantity_sum > 300
+      order by quantity_sum desc
+      limit 10
+    expect:
+      rows:
+        - [29158, 305]
+        - [6882, 303]
+
+  - id: "tpch_queries.q19.010_brand_container_size_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, joined-predicate-pushdown, string-enum-filter, numeric-predicate, aggregate]
+    sql: |-
+      select count(*) as brand_container_size_count
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and p.p_size >= 1
+        and p.p_size <= 5
+    expect:
+      columns: [brand_container_size_count]
+      rows:
+        - ["66"]
+
+  - id: "tpch_queries.q19.020_brand_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, joined-predicate-pushdown, child-side-joined-aggregate-expression]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#12'
+    expect:
+      columns: [revenue]
+      rows:
+        - ["79919609.29"]
+
+  - id: "tpch_queries.q19.formal_discounted_revenue"
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [tpch-q19, two-table-join, mixed-table-or, joined-predicate-pushdown, child-side-joined-aggregate-expression]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where
+        (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and p.p_size >= 1
+          and p.p_size <= 5
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and p.p_size >= 1
+          and p.p_size <= 10
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and p.p_size >= 1
+          and p.p_size <= 15
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      columns: [revenue]
+      rows:
+        - ["22923.03"]
+
+  - id: "tpch_queries.functions.010_shipdate_year_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [sql-functions, date-function, residual-group-by, tpch-shape]
+    sql: |-
+      select year(l_shipdate) as l_year, count(*) as line_count
+      from lineitem
+      where l_shipdate >= '1992-01-01'
+      group by year(l_shipdate)
+      order by l_year
+    expect:
+      rows:
+        - [1992, 7712]
+        - [1993, 9009]
+        - [1994, 9484]
+        - [1995, 8773]
+        - [1996, 9200]
+        - [1997, 9172]
+        - [1998, 6825]
+
+  - id: "tpch_queries.functions.020_part_type_prefix_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [sql-functions, string-function, residual-group-by, tpch-shape]
+    sql: |-
+      select substr(p_type, 1, 5) as prefix, count(*) as part_count
+      from part
+      group by substr(p_type, 1, 5)
+      order by part_count desc
+    expect:
+      rows:
+        - ["ECONO", 318]
+        - ["LARGE", 333]
+        - ["MEDIU", 347]
+        - ["PROMO", 310]
+        - ["SMALL", 331]
+        - ["STAND", 361]

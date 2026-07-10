@@ -1,0 +1,112 @@
+version: 1
+name: "tpch_q12_profile"
+tests:
+  - id: "tpch_q12_profile.010_shipmode_receiptdate_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+    expect:
+      rows:
+        - [2764]
+
+  - id: "tpch_q12_profile.020_shipmode_receiptdate_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, group-by, profile]
+    sql: |-
+      select l_shipmode, count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+      group by l_shipmode
+      order by l_shipmode
+    expect:
+      rows:
+        - ["MAIL", 1360]
+        - ["SHIP", 1404]
+
+  - id: "tpch_q12_profile.030_commit_before_receipt_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q12, single-table, field-comparison, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem
+      where l_commitdate < l_receiptdate
+    expect:
+      rows:
+        - [37897]
+
+  - id: "tpch_q12_profile.040_ship_before_commit_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q12, single-table, field-comparison, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem
+      where l_shipdate < l_commitdate
+    expect:
+      rows:
+        - [29219]
+
+  - id: "tpch_q12_profile.050_both_field_comparisons_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q12, single-table, field-comparison, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem
+      where l_commitdate < l_receiptdate
+        and l_shipdate < l_commitdate
+    expect:
+      rows:
+        - [6941]
+
+  - id: "tpch_q12_profile.060_formal_lineitem_filter_count"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, field-comparison, profile]
+    sql: |-
+      select count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_commitdate < l_receiptdate
+        and l_shipdate < l_commitdate
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+    expect:
+      rows:
+        - [307]
+
+  - id: "tpch_q12_profile.070_formal_lineitem_filter_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q12, single-table, in-predicate, date-predicate, field-comparison, group-by, profile]
+    sql: |-
+      select l_shipmode, count(*) as line_count
+      from lineitem
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_commitdate < l_receiptdate
+        and l_shipdate < l_commitdate
+        and l_receiptdate >= '1994-01-01'
+        and l_receiptdate < '1995-01-01'
+      group by l_shipmode
+      order by l_shipmode
+    expect:
+      rows:
+        - ["MAIL", 150]
+        - ["SHIP", 157]

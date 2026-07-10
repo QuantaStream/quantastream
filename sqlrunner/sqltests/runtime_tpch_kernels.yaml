@@ -1,0 +1,1186 @@
+version: 1
+name: "runtime_tpch_kernels"
+
+tests:
+  - id: "runtime_tpch_kernels.001.drop_supplier"
+    status: supported
+    kind: admin
+    sql: drop supplier_qa
+
+  - id: "runtime_tpch_kernels.002.drop_partsupp"
+    status: supported
+    kind: admin
+    sql: drop partsupp_qa
+
+  - id: "runtime_tpch_kernels.003.drop_part"
+    status: supported
+    kind: admin
+    sql: drop part_qa
+
+  - id: "runtime_tpch_kernels.004.create_part"
+    status: supported
+    kind: admin
+    sql: create part_qa
+
+  - id: "runtime_tpch_kernels.005.create_partsupp"
+    status: supported
+    kind: admin
+    sql: create partsupp_qa
+
+  - id: "runtime_tpch_kernels.006.create_supplier"
+    status: supported
+    kind: admin
+    sql: create supplier_qa
+
+  - id: "runtime_tpch_kernels.010.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P1', 'Brand#35', 'SMALL POLISHED COPPER', 14)
+
+  - id: "runtime_tpch_kernels.011.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P2', 'Brand#35', 'SMALL POLISHED COPPER', 14)
+
+  - id: "runtime_tpch_kernels.012.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P3', 'Brand#45', 'MED JAR', 14)
+
+  - id: "runtime_tpch_kernels.013.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P4', 'Brand#14', 'PROMO BRUSHED STEEL', 9)
+
+  - id: "runtime_tpch_kernels.014.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P5', 'Brand#22', 'LARGE BURNISHED TIN', 36)
+
+  - id: "runtime_tpch_kernels.015.insert_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_size) values ('P6', 'Brand#55', 'MEDIUM POLISHED BRASS', 14)
+
+  - id: "runtime_tpch_kernels.016.commit_part"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.017.insert_q19_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_container, p_size) values ('P7', 'Brand#12', 'ECONOMY ANODIZED STEEL', 'SM BOX', 4)
+
+  - id: "runtime_tpch_kernels.018.insert_q19_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_container, p_size) values ('P8', 'Brand#12', 'ECONOMY ANODIZED STEEL', 'LG BOX', 4)
+
+  - id: "runtime_tpch_kernels.018a.insert_q19_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_container, p_size) values ('P9', 'Brand#23', 'STANDARD BRUSHED STEEL', 'MED BOX', 8)
+
+  - id: "runtime_tpch_kernels.018b.insert_q19_part"
+    status: supported
+    kind: statement
+    sql: insert into part_qa (p_partkey, p_brand, p_type, p_container, p_size) values ('P10', 'Brand#34', 'ECONOMY BURNISHED TIN', 'LG BOX', 12)
+
+  - id: "runtime_tpch_kernels.019.commit_q19_parts"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.020.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S1', 'reliable supplier')
+
+  - id: "runtime_tpch_kernels.021.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S2', 'Customer Complaints pending')
+
+  - id: "runtime_tpch_kernels.022.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S3', 'steady partner')
+
+  - id: "runtime_tpch_kernels.023.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S4', 'fast supplier')
+
+  - id: "runtime_tpch_kernels.024.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S5', 'Customer Complaints closed')
+
+  - id: "runtime_tpch_kernels.025.insert_supplier"
+    status: supported
+    kind: statement
+    sql: insert into supplier_qa (s_suppkey, s_comment) values ('S6', 'warehouse partner')
+
+  - id: "runtime_tpch_kernels.026.commit_supplier"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.030.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P1', 'S1', 10.25, 100)
+
+  - id: "runtime_tpch_kernels.031.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P1', 'S2', 10.25, 100)
+
+  - id: "runtime_tpch_kernels.032.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P2', 'S2', 12.50, 80)
+
+  - id: "runtime_tpch_kernels.033.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P2', 'S3', 12.50, 80)
+
+  - id: "runtime_tpch_kernels.034.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P4', 'S4', 8.00, 90)
+
+  - id: "runtime_tpch_kernels.035.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P4', 'S5', 8.00, 90)
+
+  - id: "runtime_tpch_kernels.036.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P5', 'S6', 20.00, 70)
+
+  - id: "runtime_tpch_kernels.037.insert_partsupp"
+    status: supported
+    kind: statement
+    sql: insert into partsupp_qa (ps_partkey, ps_suppkey, ps_supplycost, ps_availqty) values ('P3', 'S1', 5.00, 10)
+
+  - id: "runtime_tpch_kernels.038.commit_partsupp"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.100.q16_part_filter"
+    status: supported
+    kind: query
+    capabilities: [tpch-q16, residual-not-like, in-list, count]
+    sql: |-
+      select count(*) as part_count
+      from part_qa
+      where p_brand <> 'Brand#45'
+        and p_type not like 'MEDIUM POLISHED%'
+        and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+    expect:
+      columns: [part_count]
+      rows:
+        - [4]
+
+  - id: "runtime_tpch_kernels.110.q16_distinct_supplier_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q16, grouped-join, count-distinct]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size, count(distinct ps.ps_suppkey) as supplier_cnt
+      from part_qa as p
+      inner join partsupp_qa as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p.p_brand, p.p_type, p.p_size
+    expect:
+      columns: [p_brand, p_type, p_size, supplier_cnt]
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, 3]
+        - ["Brand#14", "PROMO BRUSHED STEEL", 9, 2]
+        - ["Brand#22", "LARGE BURNISHED TIN", 36, 1]
+
+  - id: "runtime_tpch_kernels.120.q16_complaint_supplier_filter"
+    status: supported
+    kind: query
+    capabilities: [tpch-q16, not-in, subquery-filter, count]
+    sql: |-
+      select count(*) as clean_partsupp_count
+      from partsupp_qa as ps
+      where ps.ps_suppkey not in (
+        select s_suppkey
+        from supplier_qa
+        where s_comment like '%Customer%Complaints%'
+      )
+    expect:
+      columns: [clean_partsupp_count]
+      rows:
+        - [5]
+
+  - id: "runtime_tpch_kernels.130.q16_distinct_supplier_count_without_complaints"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q16, grouped-join, count-distinct, anti-membership]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size, count(distinct ps.ps_suppkey) as supplier_cnt
+      from part_qa as p
+      inner join partsupp_qa as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+        and ps.ps_suppkey not in (
+          select s_suppkey
+          from supplier_qa
+          where s_comment like '%Customer%Complaints%'
+        )
+      group by p.p_brand, p.p_type, p.p_size
+    expect:
+      columns: [p_brand, p_type, p_size, supplier_cnt]
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, 2]
+        - ["Brand#14", "PROMO BRUSHED STEEL", 9, 1]
+        - ["Brand#22", "LARGE BURNISHED TIN", 36, 1]
+
+  - id: "runtime_tpch_kernels.140.q16_ordered_distinct_supplier_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q16, grouped-join, count-distinct, anti-membership, multi-key-order]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size, count(distinct ps.ps_suppkey) as supplier_cnt
+      from part_qa as p
+      inner join partsupp_qa as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+        and ps.ps_suppkey not in (
+          select s_suppkey
+          from supplier_qa
+          where s_comment like '%Customer%Complaints%'
+        )
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_cnt desc, p.p_brand, p.p_type, p.p_size
+      limit 3
+    expect:
+      columns: [p_brand, p_type, p_size, supplier_cnt]
+      rows:
+        - ["Brand#35", "SMALL POLISHED COPPER", 14, 2]
+        - ["Brand#14", "PROMO BRUSHED STEEL", 9, 1]
+        - ["Brand#22", "LARGE BURNISHED TIN", 36, 1]
+
+  - id: "runtime_tpch_kernels.150.q11_grouped_value_topn"
+    status: supported
+    kind: query
+    capabilities: [tpch-q11, grouped-aggregate, having, order-by-aggregate, limit]
+    sql: |-
+      select ps.ps_partkey,
+             sum(ps.ps_supplycost * ps.ps_availqty) as part_value
+      from partsupp_qa as ps
+      group by ps.ps_partkey
+      having part_value > 1200
+      order by part_value desc
+      limit 2
+    expect:
+      columns: [ps_partkey, part_value]
+      rows:
+        - ["P1", 2050.0]
+        - ["P2", 2000.0]
+
+  - id: "runtime_tpch_kernels.200.drop_orders_tpch"
+    status: supported
+    kind: admin
+    sql: drop orders_tpch_qa
+
+  - id: "runtime_tpch_kernels.201.drop_customer_tpch"
+    status: supported
+    kind: admin
+    sql: drop customer_tpch_qa
+
+  - id: "runtime_tpch_kernels.202.create_customer_tpch"
+    status: supported
+    kind: admin
+    sql: create customer_tpch_qa
+
+  - id: "runtime_tpch_kernels.203.create_orders_tpch"
+    status: supported
+    kind: admin
+    sql: create orders_tpch_qa
+
+  - id: "runtime_tpch_kernels.210.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C1', '13-111-111-1111', 100.00)
+
+  - id: "runtime_tpch_kernels.211.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C2', '31-222-222-2222', 200.00)
+
+  - id: "runtime_tpch_kernels.212.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C3', '23-333-333-3333', -50.00)
+
+  - id: "runtime_tpch_kernels.213.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C4', '29-444-444-4444', 300.00)
+
+  - id: "runtime_tpch_kernels.214.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C5', '18-555-555-5555', 120.00)
+
+  - id: "runtime_tpch_kernels.215.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C6', '17-666-666-6666', 80.00)
+
+  - id: "runtime_tpch_kernels.216.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C7', '30-777-777-7777', 0.00)
+
+  - id: "runtime_tpch_kernels.217.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C8', '11-888-888-8888', 500.00)
+
+  - id: "runtime_tpch_kernels.218.insert_customer_tpch"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal) values ('C9', '13-999-999-9999', 75.00)
+
+  - id: "runtime_tpch_kernels.219.commit_customer_tpch"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.220.insert_orders_tpch"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey) values ('O1', 'C2')
+
+  - id: "runtime_tpch_kernels.221.insert_orders_tpch"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey) values ('O2', 'C6')
+
+  - id: "runtime_tpch_kernels.222.commit_orders_tpch"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.230.q22_phone_prefix_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q22, scalar-in, residual-scalar-filter, count]
+    sql: |-
+      select count(*) as prefix_count
+      from customer_tpch_qa as c
+      where substr(c.c_phone, 1, 2) in ('13', '31', '23', '29', '30', '18', '17')
+    expect:
+      columns: [prefix_count]
+      rows:
+        - [8]
+
+  - id: "runtime_tpch_kernels.240.q22_positive_no_order_group"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q22, scalar-in, anti-membership, group-by, sum]
+    sql: |-
+      select substr(c.c_phone, 1, 2) as cntrycode,
+             count(*) as numcust,
+             sum(c.c_acctbal) as totacctbal
+      from customer_tpch_qa as c
+      where substr(c.c_phone, 1, 2) in ('13', '31', '23', '29', '30', '18', '17')
+        and c.c_acctbal > 0
+        and c.c_custkey not in (
+          select o_custkey
+          from orders_tpch_qa
+        )
+      group by substr(c.c_phone, 1, 2)
+    expect:
+      columns: [cntrycode, numcust, totacctbal]
+      rows:
+        - ["13", 2, 175.0]
+        - ["18", 1, 120.0]
+        - ["29", 1, 300.0]
+
+  - id: "runtime_tpch_kernels.300.drop_lineitem_tpch"
+    status: supported
+    kind: admin
+    sql: drop lineitem_tpch_qa
+
+  - id: "runtime_tpch_kernels.301.create_lineitem_tpch"
+    status: supported
+    kind: admin
+    sql: create lineitem_tpch_qa
+
+  - id: "runtime_tpch_kernels.310.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O10', 'S1', '1996-01-10', '1996-01-11', '1996-01-12', 100.00, 0.10, 5, 'MAIL')
+
+  - id: "runtime_tpch_kernels.311.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O11', 'S1', '1996-02-10', '1996-02-11', '1996-02-12', 200.00, 0.00, 7, 'SHIP')
+
+  - id: "runtime_tpch_kernels.312.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O12', 'S2', '1996-03-15', '1996-03-16', '1996-03-17', 300.00, 0.10, 3, 'MAIL')
+
+  - id: "runtime_tpch_kernels.313.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O13', 'S2', '1996-04-01', '1996-04-02', '1996-04-03', 1000.00, 0.00, 11, 'TRUCK')
+
+  - id: "runtime_tpch_kernels.314.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O14', 'S3', '1995-12-31', '1996-01-01', '1996-01-02', 500.00, 0.20, 13, 'MAIL')
+
+  - id: "runtime_tpch_kernels.315.insert_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O15', 'S3', '1996-01-20', '1996-01-21', '1996-01-22', 50.00, 0.20, 2, 'AIR')
+
+  - id: "runtime_tpch_kernels.316.commit_lineitem_tpch"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.317.insert_q1_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_tax, l_quantity, l_shipmode, l_returnflag, l_linestatus) values ('O60', 'S1', '1998-08-01', '1998-08-02', '1998-08-03', 100.00, 0.10, 0.05, 10, 'MAIL', 'A', 'F')
+
+  - id: "runtime_tpch_kernels.318.insert_q1_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_tax, l_quantity, l_shipmode, l_returnflag, l_linestatus) values ('O61', 'S2', '1998-08-10', '1998-08-11', '1998-08-12', 200.00, 0.00, 0.10, 20, 'SHIP', 'A', 'F')
+
+  - id: "runtime_tpch_kernels.319.insert_q1_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_tax, l_quantity, l_shipmode, l_returnflag, l_linestatus) values ('O62', 'S3', '1998-08-20', '1998-08-21', '1998-08-22', 50.00, 0.20, 0.00, 5, 'AIR', 'R', 'F')
+
+  - id: "runtime_tpch_kernels.319a.commit_q1_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.319b.q1_pricing_summary"
+    status: supported
+    kind: query
+    capabilities: [tpch-q1, single-table, time-range, grouped-aggregate, arithmetic-aggregate, avg, multi-key-order]
+    sql: |-
+      select l_returnflag,
+             l_linestatus,
+             sum(l_quantity) as sum_qty,
+             sum(l_extendedprice) as sum_base_price,
+             sum(l_extendedprice * (1 - l_discount)) as sum_disc_price,
+             sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) as sum_charge,
+             avg(l_quantity) as avg_qty,
+             avg(l_extendedprice) as avg_price,
+             avg(l_discount) as avg_disc,
+             count(*) as count_order
+      from lineitem_tpch_qa
+      where l_shipdate >= '1998-01-01'
+        and l_shipdate <= '1998-09-02'
+      group by l_returnflag, l_linestatus
+      order by l_returnflag, l_linestatus
+    expect:
+      columns: [l_returnflag, l_linestatus, sum_qty, sum_base_price, sum_disc_price, sum_charge, avg_qty, avg_price, avg_disc, count_order]
+      rows:
+        - ["A", "F", 30.0, 300.0, 290.0, 314.5, 15, 150.0, 0.05, 2]
+        - ["R", "F", 5.0, 50.0, 40.0, 40.0, 5, 50.0, 0.2, 1]
+
+  - id: "runtime_tpch_kernels.320.insert_q6_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O30', 'S1', '1994-02-01', '1994-02-02', '1994-02-03', 1000.00, 0.06, 10, 'AIR')
+
+  - id: "runtime_tpch_kernels.321.insert_q6_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O31', 'S1', '1994-03-01', '1994-03-02', '1994-03-03', 1000.00, 0.04, 10, 'AIR')
+
+  - id: "runtime_tpch_kernels.322.insert_q6_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O32', 'S2', '1994-04-01', '1994-04-02', '1994-04-03', 1000.00, 0.06, 25, 'MAIL')
+
+  - id: "runtime_tpch_kernels.323.insert_q6_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O33', 'S2', '1995-01-01', '1995-01-02', '1995-01-03', 1000.00, 0.06, 10, 'SHIP')
+
+  - id: "runtime_tpch_kernels.324.insert_q6_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O34', 'S3', '1994-05-01', '1994-05-02', '1994-05-03', 500.00, 0.07, 12, 'TRUCK')
+
+  - id: "runtime_tpch_kernels.325.commit_q6_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.326.q6_discounted_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q6, single-table, time-range, numeric-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l_extendedprice * l_discount) as revenue
+      from lineitem_tpch_qa
+      where l_shipdate >= '1994-01-01'
+        and l_shipdate < '1995-01-01'
+        and l_discount >= 0.05
+        and l_discount <= 0.07
+        and l_quantity < 24
+    expect:
+      columns: [revenue]
+      rows:
+        - [95.0]
+
+  - id: "runtime_tpch_kernels.327.insert_q14_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O40', 'P4', 'S4', '1995-09-10', '1995-09-11', '1995-09-12', 100.00, 0.10, 5, 'AIR')
+
+  - id: "runtime_tpch_kernels.328.insert_q14_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O41', 'P1', 'S1', '1995-09-15', '1995-09-16', '1995-09-17', 100.00, 0.00, 5, 'MAIL')
+
+  - id: "runtime_tpch_kernels.329.commit_q14_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.329a.q14_conditional_promo_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q14, two-table-join, time-range, string-enum-like, searched-case, conditional-aggregate]
+    sql: |-
+      select sum(case when p.p_type like 'PROMO%' then l.l_extendedprice * (1 - l.l_discount) else 0 end) as promo_revenue,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from lineitem_tpch_qa as l
+      inner join part_qa as p on p.p_partkey = l.l_partkey
+      where l.l_shipdate >= '1995-09-01'
+        and l.l_shipdate < '1995-10-01'
+    expect:
+      columns: [promo_revenue, total_revenue]
+      rows:
+        - [90.0, 190.0]
+
+  - id: "runtime_tpch_kernels.329b.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O80', 'P7', 'S1', '1995-09-20', '1995-09-21', '1995-09-22', 100.00, 0.10, 5, 'AIR', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329c.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O81', 'P7', 'S1', '1995-09-21', '1995-09-22', '1995-09-23', 50.00, 0.00, 12, 'AIR', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329d.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O82', 'P8', 'S2', '1995-09-22', '1995-09-23', '1995-09-24', 200.00, 0.10, 5, 'AIR REG', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329e.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O83', 'P9', 'S3', '1995-09-23', '1995-09-24', '1995-09-25', 300.00, 0.10, 15, 'AIR', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329f.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O84', 'P9', 'S3', '1995-09-24', '1995-09-25', '1995-09-26', 400.00, 0.10, 21, 'AIR', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329g.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O85', 'P10', 'S4', '1995-09-25', '1995-09-26', '1995-09-27', 500.00, 0.10, 25, 'AIR REG', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329h.insert_q19_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_partkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_shipinstruct) values ('O86', 'P10', 'S4', '1995-09-26', '1995-09-27', '1995-09-28', 600.00, 0.10, 25, 'SHIP', 'DELIVER IN PERSON')
+
+  - id: "runtime_tpch_kernels.329i.commit_q19_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.329j.q19_branch1_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, string-enum-filter, scalar-in, numeric-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from part_qa as p
+      inner join lineitem_tpch_qa as l on l.l_partkey = p.p_partkey
+      where p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and p.p_size <= 5
+        and l.l_quantity >= 1
+        and l.l_quantity <= 11
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      columns: [revenue]
+      rows:
+        - [90.0]
+
+  - id: "runtime_tpch_kernels.329k.q19_branch2_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, string-enum-filter, scalar-in, numeric-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from part_qa as p
+      inner join lineitem_tpch_qa as l on l.l_partkey = p.p_partkey
+      where p.p_brand = 'Brand#23'
+        and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+        and p.p_size <= 10
+        and l.l_quantity >= 10
+        and l.l_quantity <= 20
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      columns: [revenue]
+      rows:
+        - [270.0]
+
+  - id: "runtime_tpch_kernels.329l.q19_branch3_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, string-enum-filter, scalar-in, numeric-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from part_qa as p
+      inner join lineitem_tpch_qa as l on l.l_partkey = p.p_partkey
+      where p.p_brand = 'Brand#34'
+        and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+        and p.p_size <= 15
+        and l.l_quantity >= 20
+        and l.l_quantity <= 30
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+    expect:
+      columns: [revenue]
+      rows:
+        - [450.0]
+
+  - id: "runtime_tpch_kernels.329m.q19_formal_or_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, grouped-filter, formal-or]
+    sql: |-
+      select count(*) as line_count
+      from part_qa as p
+      inner join lineitem_tpch_qa as l on l.l_partkey = p.p_partkey
+      where (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and p.p_size <= 5
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and p.p_size <= 10
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and p.p_size <= 15
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      columns: [line_count]
+      rows:
+        - [3]
+
+  - id: "runtime_tpch_kernels.329n.q19_formal_or_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q19, two-table-join, grouped-filter, formal-or, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from part_qa as p
+      inner join lineitem_tpch_qa as l on l.l_partkey = p.p_partkey
+      where (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and p.p_size <= 5
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and p.p_size <= 10
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and p.p_size <= 15
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      columns: [revenue]
+      rows:
+        - [810.0]
+
+  - id: "runtime_tpch_kernels.330.q15_lineitem_date_window_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q15, time-range, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem_tpch_qa
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+    expect:
+      columns: [line_count]
+      rows:
+        - [4]
+
+  - id: "runtime_tpch_kernels.340.q15_lineitem_revenue_sum"
+    status: supported
+    kind: query
+    capabilities: [tpch-q15, time-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l_extendedprice * (1 - l_discount)) as total_revenue
+      from lineitem_tpch_qa
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+    expect:
+      columns: [total_revenue]
+      rows:
+        - [600.0]
+
+  - id: "runtime_tpch_kernels.350.q15_grouped_supplier_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q15, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate]
+    sql: |-
+      select l_suppkey,
+             sum(l_extendedprice * (1 - l_discount)) as total_revenue
+      from lineitem_tpch_qa
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+      group by l_suppkey
+      order by total_revenue desc, l_suppkey
+      limit 3
+    expect:
+      columns: [l_suppkey, total_revenue]
+      rows:
+        - ["S1", 290.0]
+        - ["S2", 270.0]
+        - ["S3", 40.0]
+
+  - id: "runtime_tpch_kernels.351.insert_q12_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderpriority) values ('O50', 'C10', '1-URGENT')
+
+  - id: "runtime_tpch_kernels.352.insert_q12_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderpriority) values ('O51', 'C11', '3-MEDIUM')
+
+  - id: "runtime_tpch_kernels.353.insert_q12_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderpriority) values ('O52', 'C10', '2-HIGH')
+
+  - id: "runtime_tpch_kernels.354.insert_q12_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderpriority) values ('O53', 'C11', '5-LOW')
+
+  - id: "runtime_tpch_kernels.355.commit_q12_orders"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.356.insert_q12_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O50', 'S1', '1994-02-01', '1994-02-03', '1994-02-05', 100.00, 0.00, 5, 'MAIL')
+
+  - id: "runtime_tpch_kernels.357.insert_q12_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O51', 'S1', '1994-03-01', '1994-03-03', '1994-03-05', 100.00, 0.00, 5, 'MAIL')
+
+  - id: "runtime_tpch_kernels.358.insert_q12_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O52', 'S2', '1994-04-01', '1994-04-03', '1994-04-05', 100.00, 0.00, 5, 'SHIP')
+
+  - id: "runtime_tpch_kernels.359.insert_q12_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O53', 'S2', '1994-05-01', '1994-05-03', '1994-05-05', 100.00, 0.00, 5, 'SHIP')
+
+  - id: "runtime_tpch_kernels.359a.commit_q12_lineitems"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.360.q12_shipmode_group_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q12, time-range, scalar-in, group-by]
+    sql: |-
+      select l_shipmode, count(*) as line_count
+      from lineitem_tpch_qa
+      where l_shipmode in ('MAIL', 'SHIP')
+        and l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+      group by l_shipmode
+    expect:
+      columns: [l_shipmode, line_count]
+      rows:
+        - ["MAIL", 2]
+        - ["SHIP", 1]
+
+  - id: "runtime_tpch_kernels.361.q12_formal_priority_counts"
+    status: supported
+    kind: query
+    capabilities: [tpch-q12, two-table-join, time-range, field-comparison, scalar-in, searched-case, conditional-aggregate, group-by]
+    sql: |-
+      select l.l_shipmode,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 1 else 0 end) as high_line_count,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 0 else 1 end) as low_line_count
+      from orders_tpch_qa as o
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_commitdate < l.l_receiptdate
+        and l.l_shipdate < l.l_commitdate
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+      group by l.l_shipmode
+    expect:
+      columns: [l_shipmode, high_line_count, low_line_count]
+      rows:
+        - ["MAIL", 1.0, 1.0]
+        - ["SHIP", 1.0, 1.0]
+
+  - id: "runtime_tpch_kernels.361a.q12_count_and_priority_counts"
+    status: supported
+    kind: query
+    capabilities: [tpch-q12, two-table-join, time-range, field-comparison, scalar-in, searched-case, conditional-aggregate, grouped-aggregate]
+    sql: |-
+      select l.l_shipmode,
+             count(*) as line_count,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 1 else 0 end) as high_line_count,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 0 else 1 end) as low_line_count
+      from orders_tpch_qa as o
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_commitdate < l.l_receiptdate
+        and l.l_shipdate < l.l_commitdate
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+      group by l.l_shipmode
+      order by l.l_shipmode
+    expect:
+      columns: [l_shipmode, line_count, high_line_count, low_line_count]
+      rows:
+        - ["MAIL", 2, 1.0, 1.0]
+        - ["SHIP", 2, 1.0, 1.0]
+
+  - id: "runtime_tpch_kernels.362.insert_q4_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate, o_orderpriority) values ('O70', 'C1', '1993-07-10', '1-URGENT')
+
+  - id: "runtime_tpch_kernels.363.insert_q4_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate, o_orderpriority) values ('O71', 'C2', '1993-08-10', '3-MEDIUM')
+
+  - id: "runtime_tpch_kernels.364.insert_q4_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate, o_orderpriority) values ('O72', 'C3', '1993-09-10', '2-HIGH')
+
+  - id: "runtime_tpch_kernels.365.insert_q4_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate, o_orderpriority) values ('O73', 'C4', '1993-10-01', '5-LOW')
+
+  - id: "runtime_tpch_kernels.366.commit_q4_orders"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.367.insert_q4_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O70', 'S1', '1993-07-11', '1993-07-12', '1993-07-13', 100.00, 0.00, 5, 'MAIL')
+
+  - id: "runtime_tpch_kernels.368.insert_q4_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O71', 'S2', '1993-08-11', '1993-08-12', '1993-08-13', 100.00, 0.00, 5, 'SHIP')
+
+  - id: "runtime_tpch_kernels.369.insert_q4_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O72', 'S3', '1993-09-11', '1993-09-14', '1993-09-13', 100.00, 0.00, 5, 'TRUCK')
+
+  - id: "runtime_tpch_kernels.369a.insert_q4_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode) values ('O73', 'S4', '1993-10-02', '1993-10-03', '1993-10-04', 100.00, 0.00, 5, 'AIR')
+
+  - id: "runtime_tpch_kernels.369b.commit_q4_lineitems"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.369c.q4_order_priority_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q4, time-range, semi-membership, field-comparison, group-by, order-by]
+    sql: |-
+      select o_orderpriority, count(*) as order_count
+      from orders_tpch_qa
+      where o_orderdate >= '1993-07-01'
+        and o_orderdate < '1993-10-01'
+        and o_orderkey in (
+          select l_orderkey
+          from lineitem_tpch_qa
+          where l_commitdate < l_receiptdate
+        )
+      group by o_orderpriority
+      order by o_orderpriority
+    expect:
+      columns: [o_orderpriority, order_count]
+      rows:
+        - ["1-URGENT", 1]
+        - ["3-MEDIUM", 1]
+
+  - id: "runtime_tpch_kernels.370.insert_q3_customer"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal, c_mktsegment) values ('C10', '13-101-101-1010', 100.00, 'BUILDING')
+
+  - id: "runtime_tpch_kernels.371.insert_q3_customer"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_phone, c_acctbal, c_mktsegment) values ('C11', '13-111-111-1110', 100.00, 'AUTOMOBILE')
+
+  - id: "runtime_tpch_kernels.372.insert_q3_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O10', 'C10', '1995-03-10')
+
+  - id: "runtime_tpch_kernels.373.insert_q3_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O11', 'C10', '1995-03-12')
+
+  - id: "runtime_tpch_kernels.374.insert_q3_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O12', 'C11', '1995-03-10')
+
+  - id: "runtime_tpch_kernels.375.commit_q3_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.380.q3_grouped_revenue"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, time-range, grouped-aggregate, arithmetic-aggregate, multi-key-order]
+    sql: |-
+      select l.l_orderkey,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue,
+             o.o_orderdate
+      from customer_tpch_qa as c
+      inner join orders_tpch_qa as o on o.o_custkey = c.c_custkey
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by l.l_orderkey, o.o_orderdate
+      order by revenue desc, o.o_orderdate
+      limit 2
+    expect:
+      columns: [l_orderkey, revenue, o_orderdate]
+      rows:
+        - ["O11", 200.0, 794966400000]
+        - ["O10", 90.0, 794793600000]
+
+  - id: "runtime_tpch_kernels.381.q3_grouped_line_count"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, time-range, grouped-aggregate, multi-key-order]
+    sql: |-
+      select l.l_orderkey,
+             count(*) as line_count,
+             o.o_orderdate
+      from customer_tpch_qa as c
+      inner join orders_tpch_qa as o on o.o_custkey = c.c_custkey
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by l.l_orderkey, o.o_orderdate
+      order by line_count desc, o.o_orderdate
+      limit 2
+    expect:
+      columns: [l_orderkey, line_count, o_orderdate]
+      rows:
+        - ["O10", 1, 794793600000]
+        - ["O11", 1, 794966400000]
+
+  - id: "runtime_tpch_kernels.390.insert_q10_customer"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_name, c_phone, c_acctbal) values ('C20', 'Customer#000000020', '13-202-202-2020', 100.00)
+
+  - id: "runtime_tpch_kernels.391.insert_q10_customer"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_name, c_phone, c_acctbal) values ('C21', 'Customer#000000021', '31-212-212-2121', 100.00)
+
+  - id: "runtime_tpch_kernels.392.insert_q10_customer"
+    status: supported
+    kind: statement
+    sql: insert into customer_tpch_qa (c_custkey, c_name, c_phone, c_acctbal) values ('C22', 'Customer#000000022', '23-222-222-2222', 100.00)
+
+  - id: "runtime_tpch_kernels.393.insert_q10_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O20', 'C20', '1993-10-15')
+
+  - id: "runtime_tpch_kernels.394.insert_q10_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O21', 'C20', '1993-11-01')
+
+  - id: "runtime_tpch_kernels.395.insert_q10_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O22', 'C21', '1993-12-15')
+
+  - id: "runtime_tpch_kernels.396.insert_q10_order"
+    status: supported
+    kind: statement
+    sql: insert into orders_tpch_qa (o_orderkey, o_custkey, o_orderdate) values ('O23', 'C22', '1994-01-15')
+
+  - id: "runtime_tpch_kernels.397.insert_q10_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_returnflag) values ('O20', 'S1', '1993-10-20', '1993-10-21', '1993-10-22', 100.00, 0.10, 5, 'MAIL', 'R')
+
+  - id: "runtime_tpch_kernels.398.insert_q10_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_returnflag) values ('O21', 'S1', '1993-11-05', '1993-11-06', '1993-11-07', 200.00, 0.00, 7, 'SHIP', 'R')
+
+  - id: "runtime_tpch_kernels.399.insert_q10_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_returnflag) values ('O22', 'S2', '1993-12-20', '1993-12-21', '1993-12-22', 150.00, 0.20, 3, 'MAIL', 'R')
+
+  - id: "runtime_tpch_kernels.400.insert_q10_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_returnflag) values ('O21', 'S2', '1993-11-06', '1993-11-07', '1993-11-08', 500.00, 0.00, 1, 'AIR', 'N')
+
+  - id: "runtime_tpch_kernels.401.insert_q10_lineitem"
+    status: supported
+    kind: statement
+    sql: insert into lineitem_tpch_qa (l_orderkey, l_suppkey, l_shipdate, l_commitdate, l_receiptdate, l_extendedprice, l_discount, l_quantity, l_shipmode, l_returnflag) values ('O23', 'S3', '1994-01-20', '1994-01-21', '1994-01-22', 1000.00, 0.00, 1, 'TRUCK', 'R')
+
+  - id: "runtime_tpch_kernels.402.commit_q10_rows"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "runtime_tpch_kernels.410.q10_revenue_by_customer"
+    status: supported
+    kind: query
+    capabilities: [tpch-q10, three-table-join, time-range, string-enum-filter, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
+    sql: |-
+      select c.c_custkey,
+             c.c_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer_tpch_qa as c
+      inner join orders_tpch_qa as o on o.o_custkey = c.c_custkey
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name
+      order by revenue desc
+      limit 2
+    expect:
+      columns: [c_custkey, c_name, revenue]
+      rows:
+        - ["C20", "Customer#000000020", 290.0]
+        - ["C21", "Customer#000000021", 120.0]
+
+  - id: "runtime_tpch_kernels.411.q10_returned_line_count_by_customer"
+    status: supported
+    kind: query
+    capabilities: [tpch-q10, three-table-join, time-range, string-enum-filter, grouped-aggregate, order-by-aggregate, limit]
+    sql: |-
+      select c.c_custkey,
+             c.c_name,
+             count(*) as returned_line_count
+      from customer_tpch_qa as c
+      inner join orders_tpch_qa as o on o.o_custkey = c.c_custkey
+      inner join lineitem_tpch_qa as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name
+      order by returned_line_count desc, c.c_custkey
+      limit 2
+    expect:
+      columns: [c_custkey, c_name, returned_line_count]
+      rows:
+        - ["C20", "Customer#000000020", 2]
+        - ["C21", "Customer#000000021", 1]

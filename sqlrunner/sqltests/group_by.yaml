@@ -1,0 +1,264 @@
+version: 1
+name: "group_by"
+
+tests:
+  - id: "group_by.000a.drop_deliveries"
+    status: supported
+    kind: admin
+    sql: drop deliveries_qa
+
+  - id: "group_by.000b.drop_lineitems"
+    status: supported
+    kind: admin
+    sql: drop lineitems_qa
+
+  - id: "group_by.000.drop_orders"
+    status: supported
+    kind: admin
+    sql: drop orders_qa
+
+  - id: "group_by.001.drop"
+    status: supported
+    kind: admin
+    sql: drop customers_qa
+
+  - id: "group_by.002.create"
+    status: supported
+    kind: admin
+    sql: create customers_qa
+
+  - id: "group_by.003.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('200', 'Bob', 'Madden', 'NM', 'Santa Fe', true, 42, 71)
+
+  - id: "group_by.004.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('210', 'Iris', 'Henderson', 'NM', 'Albequerque', false, 25, 62)
+
+  - id: "group_by.005.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('220', 'Ted', 'Adams', 'CO', 'Denver', true, 88, 68)
+
+  - id: "group_by.006.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('230', 'Larry', 'Russell', 'WA', 'Tacoma', false, 44, 75)
+
+  - id: "group_by.007.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('240', 'Forrest', 'Chambers', 'WA', 'Walla Walla', true, 16, 59)
+
+  - id: "group_by.008.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('250', 'Mike', 'Emerson', 'ID', 'Boise', false, 48, 48)
+
+  - id: "group_by.009.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('260', 'Henry', 'Talley', 'MT', 'Billings', true, 59, 59)
+
+  - id: "group_by.010.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('270', 'Aaron', 'Levy', 'CO', 'Colorado Springs', false, 75, 55)
+
+  - id: "group_by.011.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('280', 'Keefer', 'Cash', 'WA', 'Bellingham', true, 55, 76)
+
+  - id: "group_by.012.insert"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, state, city, isActive, age, height)
+      values ('290', 'Bill', 'Gregory', 'WA', 'Wenatchee', true, 5, 72)
+
+  - id: "group_by.013.commit"
+    status: supported
+    kind: statement
+    sql: commit
+
+  - id: "group_by.020.count_by_active"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, count]
+    sql: |-
+      select isActive, count(*) as customer_count
+      from customers_qa
+      group by isActive
+    expect:
+      columns: [isActive, customer_count]
+      rows:
+        - [false, 4]
+        - [true, 6]
+
+  - id: "group_by.021.filtered_count"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, count, where]
+    sql: |-
+      select isActive, count(*) as customer_count
+      from customers_qa
+      where age >= 40
+      group by isActive
+    expect:
+      columns: [isActive, customer_count]
+      rows:
+        - [false, 3]
+        - [true, 4]
+
+  - id: "group_by.022.multiple_aggregates"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, multiple-aggregates]
+    sql: |-
+      select isActive,
+             count(*) as customer_count,
+             min(age) as minimum_age,
+             max(age) as maximum_age,
+             sum(age) as total_age,
+             avg(age) as average_age
+      from customers_qa
+      group by isActive
+    expect:
+      columns: [isActive, customer_count, minimum_age, maximum_age, total_age, average_age]
+      rows:
+        - [false, 4, 25, 75, 192, 48]
+        - [true, 6, 5, 88, 265, 44.166666666666664]
+
+  - id: "group_by.023.two_group_fields"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, multiple-group-fields]
+    sql: |-
+      select isActive, city, count(*) as customer_count
+      from customers_qa
+      group by isActive, city
+    expect:
+      columns: [isActive, city, customer_count]
+      rows:
+        - [false, "Albequerque", 1]
+        - [false, "Boise", 1]
+        - [false, "Colorado Springs", 1]
+        - [false, "Tacoma", 1]
+        - [true, "Bellingham", 1]
+        - [true, "Billings", 1]
+        - [true, "Denver", 1]
+        - [true, "Santa Fe", 1]
+        - [true, "Walla Walla", 1]
+        - [true, "Wenatchee", 1]
+
+  - id: "group_by.024.aliased_group"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, alias]
+    sql: |-
+      select isActive as active, count(*) as customer_count
+      from customers_qa
+      group by isActive
+    expect:
+      columns: [active, customer_count]
+      rows:
+        - [false, 4]
+        - [true, 6]
+
+  - id: "group_by.025.group_bsi_field"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, bsi-group-field]
+    sql: |-
+      select state, count(*) as customer_count
+      from customers_qa
+      group by state
+    expect:
+      columns: [state, customer_count]
+      rows:
+        - ["CO", 2]
+        - ["ID", 1]
+        - ["MT", 1]
+        - ["NM", 2]
+        - ["WA", 4]
+
+  - id: "group_by.026.having"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, having]
+    sql: |-
+      select isActive, count(*) as customer_count
+      from customers_qa
+      group by isActive
+      having customer_count > 4
+    expect:
+      columns: [isActive, customer_count]
+      rows:
+        - [true, 6]
+
+  - id: "group_by.027.order_by_aggregate"
+    status: supported
+    kind: query
+    order: exact
+    capabilities: [group-by, order-by]
+    sql: |-
+      select isActive, count(*) as customer_count
+      from customers_qa
+      group by isActive
+      order by customer_count desc
+    expect:
+      columns: [isActive, customer_count]
+      rows:
+        - [true, 6]
+        - [false, 4]
+
+  - id: "group_by.028.count_by_city"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [group-by, count, string-enum]
+    sql: |-
+      select city, count(*) as customer_count
+      from customers_qa
+      group by city
+    expect:
+      columns: [city, customer_count]
+      rows:
+        - ["Albequerque", 1]
+        - ["Bellingham", 1]
+        - ["Billings", 1]
+        - ["Boise", 1]
+        - ["Colorado Springs", 1]
+        - ["Denver", 1]
+        - ["Santa Fe", 1]
+        - ["Tacoma", 1]
+        - ["Walla Walla", 1]
+        - ["Wenatchee", 1]

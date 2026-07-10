@@ -1,0 +1,94 @@
+version: 1
+name: legacy_direct_qa_basic
+
+tests:
+  - id: legacy_direct_qa_basic.001.drop_orders
+    status: supported
+    kind: admin
+    sql: |-
+      drop orders_qa
+
+  - id: legacy_direct_qa_basic.002.drop_customers
+    status: supported
+    kind: admin
+    sql: |-
+      drop customers_qa
+
+  - id: legacy_direct_qa_basic.003.create_customers
+    status: supported
+    kind: admin
+    sql: |-
+      create customers_qa
+
+  - id: legacy_direct_qa_basic.004.create_orders
+    status: supported
+    kind: admin
+    sql: |-
+      create orders_qa
+
+  - id: legacy_direct_qa_basic.005.insert_customer_abe
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('1','Abe','123 Main','Seattle','WA','98072','425-232-4323','cell;home')
+
+  - id: legacy_direct_qa_basic.006.insert_customer_abby
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('2','Abby','234 Main','Tacoma','WA','98011','425-333-2222','cell;business')
+
+  - id: legacy_direct_qa_basic.007.insert_customer_annie
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('3','Annie','345 Main','Seattle','WA','98072','425-333-2233','cell;home')
+
+  - id: legacy_direct_qa_basic.008.insert_order_1001
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_via) values('1','1001','2023-06-01T01:00:00','UPS')
+
+  - id: legacy_direct_qa_basic.009.insert_order_1002
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_via) values('1','1002','2023-06-01T02:00:00','UPS')
+
+  - id: legacy_direct_qa_basic.010.insert_order_1003
+    status: supported
+    kind: statement
+    sql: |-
+      insert into orders_qa (cust_id, order_id, order_date, ship_via) values('3','1003','2023-06-01T03:00:00','FEDEX')
+
+  - id: legacy_direct_qa_basic.011.commit
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: legacy_direct_qa_basic.012.customer_city_count
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as seattle_count
+      from customers_qa
+      where city = 'Seattle'
+    expect:
+      rows:
+        - [2]
+
+  - id: legacy_direct_qa_basic.013.customer_city_projection
+    status: supported
+    kind: query
+    order: rowsort
+    sql: |-
+      select first_name
+      from customers_qa
+      where city = 'Seattle'
+    expect:
+      columns: [first_name]
+      rows:
+        - ["Abe"]
+        - ["Annie"]

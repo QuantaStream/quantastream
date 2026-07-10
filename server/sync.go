@@ -1,0 +1,910 @@
+package server
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
+	pb "github.com/QuantaStream/quantastream/grpc"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/akrylysov/pogreb"
+	u "github.com/araddon/gou"
+	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/golang/protobuf/ptypes/wrappers"
+)
+
+type bsiSyncEntry struct {
+	indexName string
+	fieldName string
+	ts        int64
+	bsi       *BSIBitmap
+}
+
+type bitmapSyncEntry struct {
+	indexName string
+	fieldName string
+	rowID     uint64
+	ts        int64
+	bitmap    *StandardBitmap
+}
+
+// SyncStatus - Sync handshake.
+/*  SyncStatusRequest
+    Index       string    // Table name.
+    Field       string    // Field name.
+    RowId       int64     // RowID value (ignored for BSI types)
+    Time        int64     // Timestamp for data partition key.
+    Cardinality uint64    // Local item cardinality to be checked against remote item.
+    BsiChecksum int64     // Local BSI sum to be checked against remote item (BSI only).
+    ModTime     int64     // Local modification timestamp to be checked against remote item.
+    SendData    bool      // If true and the remote check fails, the remote will return bitmap/bsi data.
+*/
+/*  SyncStatusResponse
+    Ok          bool      // Local and remote data matches.
+    Cardinality uint64    // Remote cardinality
+    BsiChecksum int64     // Remote BSI sum.
+    ModTime     int64     // Remote modification timestamp.
+    Data        [][]byte  // Remote data (if applicable).
+*/
+func (m *BitmapIndex) SyncStatus(ctx context.Context, req *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error) {
+
+	if req.Index == "" {
+		return nil, fmt.Errorf("index not specified for sync status")
+	}
+	if req.Field == "" {
+		return nil, fmt.Errorf("field not specified for sync status")
+	}
+
+	// Silently ignore non-existing fields for now.  TODO: Re-evaluate this.
+	attr, err := m.getFieldConfig(req.Index, req.Field)
+	if err != nil {
+		return nil, err
+	}
+
+	tq := attr.Parent.TimeQuantumType
+	if tq != "" && req.Time == 0 {
+		return nil, fmt.Errorf("time not specified for sync status and time quantum is enabled for %s", req.Index)
+	}
+
+	isBSI := m.isBSI(req.Index, req.Field)
+	response := &pb.SyncStatusResponse{}
+	var skew time.Duration
+	reqTime := time.Unix(0, req.ModTime)
+	if isBSI {
+		m.bsiCacheLock.RLock()
+		v := m.bsiCache[req.Index][req.Field][req.Time]
+		if v == nil {
+			m.bsiCacheLock.RUnlock()
+			return response, nil
+		}
+		m.bsiCacheLock.RUnlock()
+		v.Lock.RLock()
+		defer v.Lock.RUnlock()
+		sum, card := v.Sum(v.GetExistenceBitmap())
+
+		response.Cardinality = uint64(card)
+		response.ModTime = v.ModTime.UnixNano()
+		response.BSIChecksum = int64(sum)
+		if v.ModTime.After(reqTime) {
+			skew = v.ModTime.Sub(reqTime)
+		} else {
+			skew = reqTime.Sub(v.ModTime)
+		}
+		cardDiff := response.Cardinality - req.Cardinality
+		sumDiff := response.BSIChecksum - req.BSIChecksum
+		response.Ok = cardDiff == 0 && sumDiff == 0 && skew.Milliseconds() < 100
+		if !response.Ok && req.SendData {
+			ba, err := v.MarshalBinary()
+			if err != nil {
+				return response, err
+			}
+			response.Data = ba
+		}
+	} else {
+		m.bitmapCacheLock.RLock()
+		v := m.bitmapCache[req.Index][req.Field][req.RowId][req.Time]
+		if v == nil {
+			m.bitmapCacheLock.RUnlock()
+			return response, nil
+		}
+		m.bitmapCacheLock.RUnlock()
+		v.Lock.RLock()
+		defer v.Lock.RUnlock()
+		response.Cardinality = v.Bits.GetCardinality()
+		response.ModTime = v.ModTime.UnixNano()
+		if v.ModTime.After(reqTime) {
+			skew = v.ModTime.Sub(reqTime)
+		} else {
+			skew = reqTime.Sub(v.ModTime)
+		}
+		cardDiff := response.Cardinality - req.Cardinality
+		response.Ok = cardDiff == 0 && skew.Milliseconds() < 100
+		if !response.Ok && req.SendData {
+			buf, err := v.Bits.ToBytes()
+			if err != nil {
+				return response, err
+			}
+			ba := make([][]byte, 1)
+			ba[0] = buf
+			response.Data = ba
+		}
+	}
+
+	return response, nil
+}
+
+// Synchronize - Connect to peer to push deltas (new nodes receive data)
+func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue) (*wrappers.Int64Value, error) {
+
+	// This is the entire synchronization flow.  Connect to new node and push data.
+	newNodeID := req.Value
+
+	// Count of the number of key differences found
+	syncDifferences := 0
+
+	ci, err := m.GetClientIndexForNodeID(newNodeID)
+	if err != nil {
+		u.Errorf("%s GetClientForNodeID = %s failed.", m.hashKey, newNodeID)
+		//os.Exit(1)
+		return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("GetClientForNodeID = %s failed.", newNodeID)
+	}
+	targetIP := m.ClientConnections()[ci].Target()
+
+	cx, cancel := context.WithTimeout(context.Background(), shared.Deadline)
+	defer cancel()
+
+	// Invoke status IP on new node. Can we not? (atw)
+	status, err := m.Admin[ci].Status(cx, &empty.Empty{})
+	if err != nil {
+		return &wrappers.Int64Value{Value: int64(-1)},
+			fmt.Errorf(fmt.Sprintf("%v.Status(_) = _, %v, node = %s\n", m.Admin[ci], err, targetIP))
+	}
+
+	// atw turned this off
+	// Verify that client stub IP (targetIP) is the same as the new nodes IP returned by status.
+	// eg targetIP eg 127.0.0.1:4000 in local mode
+	// eg status.LocalIP eg fe80::1 in local mode so, atw don't do this check in local mode.
+	// if !strings.HasPrefix(targetIP, status.LocalIP) {
+	// fmt.Println("Stub IP", targetIP, "does not match new node (remote) = ", status.LocalIP)
+	// return &wrappers.Int64Value{Value: int64(-1)},
+	// 	fmt.Errorf("Stub IP %v does not match new node (remote) = %v", targetIP, status.LocalIP)
+	// }
+	u.Infof("%s is requesting a sync push. %s status %v", m.hashKey, newNodeID, status.GetNodeState())
+	defer u.Infof("%s is DONE with sync push. %s diffs %v ", m.hashKey, newNodeID, syncDifferences)
+
+	peerClient := m.Conn.GetService("BitmapIndex").(*shared.BitmapIndex)
+	newNode := peerClient.Client(ci) // <- bitmap peer client for new node.
+	peerKVClient := m.Conn.GetService("KVStore").(*shared.KVStore)
+	newKVClient := peerKVClient.Client(ci) // <- kvStore peer client for new node.
+
+	// Push UserRoles
+	err = m.simpleKVPush(peerKVClient, newKVClient, "UserRoles", reflect.String, reflect.String)
+	if err != nil {
+		u.Errorf("simpleKVPush: error pushing UserRoles - %v", err)
+	}
+
+	// Iterate over a cache snapshot so concurrent sync pushes can safely mutate
+	// the live nested maps through the normal locked update paths.
+	for _, entry := range m.bsiSyncSnapshot() {
+		indexName := entry.indexName
+		fieldName := entry.fieldName
+		t := entry.ts
+		bsi := entry.bsi
+		attr, err := m.getFieldConfig(indexName, fieldName)
+		if err != nil {
+			continue
+			// This could occur when a table is dropped and re-created but persisten shards still exist
+			// for a column that was removed in the newly created table.
+			// return &wrappers.Int64Value{Value: int64(-1)},
+			// fmt.Errorf("Synchronize field metadata lookup failed for %s.%s", indexName, fieldName)
+		}
+		table := attr.Parent
+		pka, errx := table.GetPrimaryKeyInfo()
+		if errx != nil {
+			return &wrappers.Int64Value{Value: int64(-1)},
+				fmt.Errorf("Synchronize field: GetPrimaryKeyInfo() failed for %s.%s - %v", indexName, fieldName, errx)
+		}
+		fieldIsPrimaryKeyAnchor := (fieldName == pka[0].FieldName)
+		// Should this item be pushed to new node?
+		key := fmt.Sprintf("%s/%s/%s", indexName, fieldName, formatShardTime(time.Unix(0, t)))
+		found, replica := m.CheckNodeForKey(key, newNodeID)
+		if !found {
+			continue // nope soldier on
+		}
+		// Should this key even be here? (long term, i.e. after sync complete)
+		foundLocal, localReplica := m.CheckNodeForKey(key, m.GetNodeID())
+
+		// u.Infof("Key %s should be replica %d on node %s.", key, replica, newNodeID)
+		// invoke status check
+		bsi.Lock.RLock()
+		sum, card := bsi.Sum(bsi.GetExistenceBitmap())
+		modtime := bsi.ModTime
+		bsi.Lock.RUnlock()
+		reqs := &pb.SyncStatusRequest{Index: indexName, Field: fieldName, Time: t, SendData: true,
+			Cardinality: card,
+			BSIChecksum: sum,
+			ModTime:     modtime.UnixNano(),
+		}
+		res, err := newNode.SyncStatus(cx, reqs)
+		// unlock
+		if err != nil {
+			return &wrappers.Int64Value{Value: int64(-1)},
+				fmt.Errorf(fmt.Sprintf("%v.SyncStatus(_) = _, %v, node = %s\n", newNode, err, targetIP))
+		}
+		if res.Ok {
+			u.Debugf("bmi No differences for key %s.", key)
+			continue // data matches
+		}
+
+		// Unmarshal data from response
+		resBsi := roaring64.NewBSI(int64(attr.MaxValue), int64(attr.MinValue))
+		if len(res.Data) == 0 && res.Cardinality > 0 {
+			return &wrappers.Int64Value{Value: int64(-1)},
+				fmt.Errorf("deserialize sync response - BSI index out of range %d, Index = %s, Field = %s",
+					len(res.Data), indexName, fieldName)
+		}
+		if res.Cardinality > 0 {
+			if err := resBsi.UnmarshalBinary(res.Data); err != nil {
+				return &wrappers.Int64Value{Value: int64(-1)},
+					fmt.Errorf("deserialize sync reponse - BSI UnmarshalBinary error - %v", err)
+			}
+		}
+		// Calculate the diff
+		// What about value differences where BSIs intersect? FIXME:
+		pushDiff := roaring64.AndNot(bsi.GetExistenceBitmap(), resBsi.GetExistenceBitmap())
+		pullDiff := roaring64.AndNot(resBsi.GetExistenceBitmap(), bsi.GetExistenceBitmap())
+
+		// New joining nodes key modification time should be earlier than me. if so push diffs
+		remoteModTime := time.Unix(0, res.ModTime).UTC()
+		if remoteModTime.Before(bsi.ModTime) {
+			pullDiff = roaring64.NewBitmap()
+		} else {
+			if pullDiff.GetCardinality() > 0 && !foundLocal {
+				u.Infof("Ignoring remote diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", key,
+					bsi.GetExistenceBitmap().GetCardinality(), resBsi.GetExistenceBitmap().GetCardinality(),
+					pullDiff.GetCardinality())
+				pullDiff = roaring64.NewBitmap() // Ignore differences on remote because should'nt remain here.
+			}
+		}
+
+		if pushDiff.GetCardinality() > 0 { // atw this one ?? FIX this.
+			syncDifferences++
+			u.Infof("%s bmi Key %s should be replica %d on node %s.", m.hashKey, key, replica, newNodeID)
+			if !foundLocal {
+				syncDifferences-- // not a difference but a deletion, happens later
+				u.Infof("%s Also, this bmi key %s should be removed locally (%s) via purge thread.", m.hashKey, key, m.GetNodeID())
+				continue
+			} else {
+				u.Infof("%s Also, this bmi key %s should be replica %d locally (%s)", m.hashKey, key, localReplica, m.GetNodeID())
+			}
+			u.Infof("%s Pushing server diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", m.hashKey, key,
+				bsi.GetExistenceBitmap().GetCardinality(), resBsi.GetExistenceBitmap().GetCardinality(),
+				pushDiff.GetCardinality())
+			pushBSI := bsi.NewBSIRetainSet(pushDiff)
+			err := m.pushBSIDiff(peerClient, newNode, indexName, fieldName, t, pushBSI)
+			if err != nil {
+				fmt.Println(m.hashKey, "bmi sync check diffs pushBSIDiff failed", err)
+				return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("pushBSIDiff failed - %v", err)
+			}
+		}
+
+		// "OR" in the localDiff
+		if pullDiff.GetCardinality() > 0 {
+			syncDifferences++
+			u.Infof("%s bmi Merging remote diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", m.hashKey, key,
+				bsi.GetExistenceBitmap().GetCardinality(), resBsi.GetExistenceBitmap().GetCardinality(),
+				pullDiff.GetCardinality())
+			pullBSI := resBsi.NewBSIRetainSet(pullDiff)
+			err := m.mergeBSIDiff(indexName, fieldName, t, pullBSI)
+			if err != nil {
+				return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("mergeBSIDiff failed - %v", err)
+			}
+		}
+		// Process backing strings for StringHashBSI
+		if attr.MappingStrategy == "StringHashBSI" {
+			if err := m.syncStringBackingStore(peerKVClient, newKVClient, indexName, fieldName, t,
+				pushDiff, pullDiff); err != nil {
+				u.Errorf("String backing store sync failed for '%s' - %v", key, err)
+			}
+		}
+
+		// At this point we've finished any attribute specific processing, if this is the PK anchor attribute
+		// then we need to process PK/SK indices used for ingestion.
+		if !fieldIsPrimaryKeyAnchor {
+			continue
+		}
+
+		// Process PK Index
+		if table.PrimaryKey != "" {
+			pkIndex := fmt.Sprintf("%s%s%s.PK", key, sep, table.PrimaryKey)
+			err = m.indexKVPush(peerKVClient, newKVClient, pkIndex)
+			if err != nil {
+				u.Errorf("error pushing index %s for table %s - %v", pkIndex, indexName, err)
+			}
+		}
+		// Process SK Indices if any
+		for _, v := range strings.Split(table.SecondaryKeys, ",") {
+			skIndex := fmt.Sprintf("%s%s%s.SK", key, sep, v)
+			err := m.indexKVPush(peerKVClient, newKVClient, skIndex)
+			if err != nil {
+				u.Errorf("error pushing index %s for table %s - %v", skIndex, indexName, err)
+			}
+		}
+	}
+
+	u.Infof("%s New joining node is iterating bitmapCache %v", m.hashKey, newNodeID)
+
+	// Iterate over a cache snapshot so concurrent sync pushes can safely mutate
+	// the live nested maps through the normal locked update paths.
+	syncedEnumMetadata := make(map[string]struct{})
+	for _, entry := range m.bitmapSyncSnapshot() {
+		indexName := entry.indexName
+		fieldName := entry.fieldName
+		rowID := entry.rowID
+		t := entry.ts
+		bitmap := entry.bitmap
+		if m.isBSI(indexName, fieldName) {
+			continue
+		}
+		// If field is StringEnum, sync metadata
+		fieldKey := fmt.Sprintf("%s.%s", indexName, fieldName)
+		if _, alreadySynced := syncedEnumMetadata[fieldKey]; !alreadySynced {
+			syncedEnumMetadata[fieldKey] = struct{}{}
+			if attr, err := m.getFieldConfig(indexName, fieldName); err == nil {
+				if attr.MappingStrategy == "StringEnum" {
+					if err := m.syncEnumMetadataWithRetry(peerKVClient, newKVClient, indexName, fieldName); err != nil {
+						u.Errorf("StringEnum metadata sync failed for '%s.%s' - %v", indexName, fieldName, err)
+					}
+				}
+			}
+		}
+		// Should this item be pushed to new node?
+		key := fmt.Sprintf("%s/%s/%d/%s", indexName, fieldName, rowID, formatShardTime(time.Unix(0, t)))
+		found, replica := m.CheckNodeForKey(key, newNodeID)
+		// fmt.Println("BitmapIndex Synchronize key found=", found, m.hashKey, key, replica)
+		if !found {
+			continue // nope soldier on
+		}
+		// Should this key even be here? (long term, i.e. after sync complete)
+		foundLocal, localReplica := m.CheckNodeForKey(key, m.GetNodeID())
+		// fmt.Println("BitmapIndex Synchronize local key found", m.hashKey, key, localReplica)
+
+		//u.Infof("Key %s should be replica %d on node %s.", key, newNodeID)
+		// invoke status check
+		bitmap.Lock.RLock()
+		reqs := &pb.SyncStatusRequest{Index: indexName, Field: fieldName, RowId: rowID, Time: t, SendData: true,
+			Cardinality: bitmap.Bits.GetCardinality(),
+			ModTime:     bitmap.ModTime.UnixNano(),
+		}
+		bitmap.Lock.RUnlock() // never hold a lock while making a grpc call
+		res, err := newNode.SyncStatus(cx, reqs)
+		if err != nil {
+			return &wrappers.Int64Value{Value: int64(-1)},
+				fmt.Errorf(fmt.Sprintf("%v.SyncStatus(_) = _, %v, node = %s\n", newNode, err, targetIP))
+		}
+		if res.Ok {
+			u.Debugf("No differences for key %s.", key)
+			continue // data matches
+		}
+		// Unmarshal data from response
+		resBm := roaring64.NewBitmap()
+		if len(res.Data) != 1 && res.Cardinality > 0 {
+			return &wrappers.Int64Value{Value: int64(-1)},
+				fmt.Errorf("deserialize sync response - Index out of range %d, Index = %s, Field = %s, rowID = %d",
+					len(res.Data), indexName, fieldName, rowID)
+		}
+		if len(res.Data) == 1 && res.Cardinality > 0 {
+			if err := resBm.UnmarshalBinary(res.Data[0]); err != nil {
+				return &wrappers.Int64Value{Value: int64(-1)},
+					fmt.Errorf("deserialize sync reponse - UnmarshalBinary error - %v", err)
+			}
+		}
+		// Calculate the diff
+		pushDiff := roaring64.AndNot(bitmap.Bits, resBm)
+		pullDiff := roaring64.AndNot(resBm, bitmap.Bits)
+
+		// New joining nodes key modification time should be earlier than me. if so push diffs
+		remoteModTime := time.Unix(0, res.ModTime).UTC()
+		if remoteModTime.Before(bitmap.ModTime) {
+			pullDiff = roaring64.NewBitmap()
+		} else {
+			if pullDiff.GetCardinality() > 0 && !foundLocal {
+				u.Infof("%s Ignoring remote diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", m.hashKey, key,
+					bitmap.Bits.GetCardinality(), resBm.GetCardinality(), pullDiff.GetCardinality())
+				pullDiff = roaring64.NewBitmap() // Ignore differences on remote because shoudn't remain here.
+			}
+		}
+
+		if pushDiff.GetCardinality() > 0 {
+			syncDifferences++
+			u.Infof("%s BMSf Key %s should be replica %d on node %s.", m.hashKey, key, replica, newNodeID)
+			if !foundLocal {
+				syncDifferences-- // not a difference but a deletion, happens later
+				u.Infof("%s BMSf Also, this key %s should be removed locally (%s) via purge thread.", m.hashKey, key, m.GetNodeID())
+				continue
+			} else {
+				u.Infof("%s BMSf Also, this key %s should be replica %d locally (%s)", m.hashKey, key, localReplica, m.GetNodeID())
+			}
+			u.Infof("%s BMSf Pushing server diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", m.hashKey, key,
+				bitmap.Bits.GetCardinality(), resBm.GetCardinality(), pushDiff.GetCardinality())
+
+			err := m.pushBitmapDiff(peerClient, newNode, indexName, fieldName, rowID, t, pushDiff)
+
+			if err != nil {
+				u.Infof("%s pushBitmapDiff had err %s key %v", m.hashKey, err, key)
+				return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("pushBitmapDiff failed - %v", err)
+			}
+		}
+		// "OR" in the localDiff
+		if pullDiff.GetCardinality() > 0 {
+			syncDifferences++
+			u.Infof("BMSf Merging remote diff for key %s, local = %d, remote (new) = %d, delta = %d.\n", key,
+				bitmap.Bits.GetCardinality(), resBm.GetCardinality(), pullDiff.GetCardinality())
+			err := m.mergeBitmapDiff(indexName, fieldName, rowID, t, pullDiff)
+			if err != nil {
+				return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("pullBitmapDiff failed - %v", err)
+			}
+		}
+	}
+
+	u.Infof("%s New joining node normal end %v", m.hashKey, newNodeID)
+
+	// clean up this node?
+	// m.cleanupStrandedShards()
+	return &wrappers.Int64Value{Value: int64(syncDifferences)}, nil
+}
+
+func (m *BitmapIndex) bsiSyncSnapshot() []bsiSyncEntry {
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+
+	entries := make([]bsiSyncEntry, 0)
+	for indexName, index := range m.bsiCache {
+		for fieldName, field := range index {
+			for ts, bsi := range field {
+				entries = append(entries, bsiSyncEntry{
+					indexName: indexName,
+					fieldName: fieldName,
+					ts:        ts,
+					bsi:       bsi,
+				})
+			}
+		}
+	}
+	return entries
+}
+
+func (m *BitmapIndex) bitmapSyncSnapshot() []bitmapSyncEntry {
+	m.bitmapCacheLock.RLock()
+	defer m.bitmapCacheLock.RUnlock()
+
+	entries := make([]bitmapSyncEntry, 0)
+	for indexName, index := range m.bitmapCache {
+		for fieldName, field := range index {
+			for rowID, tsMap := range field {
+				for ts, bitmap := range tsMap {
+					entries = append(entries, bitmapSyncEntry{
+						indexName: indexName,
+						fieldName: fieldName,
+						rowID:     rowID,
+						ts:        ts,
+						bitmap:    bitmap,
+					})
+				}
+			}
+		}
+	}
+	return entries
+}
+
+func (m *BitmapIndex) pushBitmapDiff(peerClient *shared.BitmapIndex, newNode pb.BitmapIndexClient, index, field string,
+	rowID uint64, ts int64, diff *roaring64.Bitmap) error {
+
+	batch := make(map[string]map[string]map[uint64]map[int64]*shared.Bitmap, 0)
+	tm := make(map[int64]*shared.Bitmap, 0)
+	tm[ts] = shared.NewBitmap(diff, false) // TODO: Double check if isUpdate should be false
+	rm := make(map[uint64]map[int64]*shared.Bitmap, 0)
+	rm[rowID] = tm
+	fm := make(map[string]map[uint64]map[int64]*shared.Bitmap, 0)
+	fm[field] = rm
+	batch[index] = fm
+	// cleanup memory on exit
+	defer func() {
+		delete(tm, ts)
+		delete(rm, rowID)
+		delete(fm, field)
+		delete(batch, index)
+	}()
+
+	err := peerClient.BatchMutateNode(false, newNode, batch)
+	if err != nil {
+		return fmt.Errorf("pushBitmapDiff failed - %v", err)
+	}
+	return nil
+}
+
+// mergeBitmapDiff - "OR" in remote difference to local bitmap cache.
+func (m *BitmapIndex) mergeBitmapDiff(index, field string, rowID uint64, ts int64, diff *roaring64.Bitmap) error {
+
+	m.bitmapCacheLock.Lock()
+	// TODO:  How we will handle "exclusive" fields?
+	sbm, ok := m.bitmapCache[index][field][rowID][ts]
+	if !ok {
+		m.bitmapCacheLock.Unlock()
+		return fmt.Errorf("mergeBitmapDiff failed cache item missing for index = %s, field = %s, rowID = %d, time = %d",
+			index, field, rowID, ts)
+	}
+	sbm.Lock.Lock()
+	defer sbm.Lock.Unlock()
+	m.bitmapCacheLock.Unlock()
+	sbm.Bits = roaring64.ParOr(0, sbm.Bits, diff)
+	sbm.ModTime = time.Now()
+
+	return nil
+}
+
+func (m *BitmapIndex) syncEnumMetadataWithRetry(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, index, field string) error {
+	const maxAttempts = 5
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := m.syncEnumMetadata(peerKV, remoteKV, index, field)
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "database is locked") || attempt == maxAttempts {
+			return err
+		}
+		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
+	return nil
+}
+
+// synchronize StringEnum metadata with remote.
+func (m *BitmapIndex) syncEnumMetadata(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, index, field string) error {
+
+	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
+	kvPath := fmt.Sprintf("%s%s%s.StringEnum", index, sep, field)
+	var db *pogreb.DB
+	err := shared.Retry(5, 20*time.Second, func() (err error) {
+		var errx error
+		db, errx = localKV.getStore(kvPath)
+		if errx != nil {
+			err = errx
+		}
+		return
+	})
+	if err != nil {
+		return fmt.Errorf("syncEnumMetadata:getStore(local) failed for %s.%s - %v", index, field, err)
+	}
+	defer localKV.closeStore(kvPath)
+
+	// Get remote index file counts, size
+	remoteInfo, errx := peerKV.IndexInfoNode(remoteKV, kvPath)
+	if errx != nil {
+		return fmt.Errorf("syncEnumMetadata:remoteKV.IndexInfo failed for %s - %v", kvPath, errx)
+	}
+
+	if remoteInfo.Exists {
+		// Compare against local info
+		localFileSize, err := db.FileSize()
+		if err != nil {
+			return fmt.Errorf("syncEnumMetadata:FileSize(local) err - %v", err)
+		}
+		localCount := db.Count()
+
+		// If file size and counts match then no need to push data.
+		if localCount == remoteInfo.Count && localFileSize == remoteInfo.FileSize {
+			return nil
+		}
+	}
+
+	localBatch := make(map[interface{}]interface{}, 0)
+	it := db.Items()
+	for {
+		key, val, err := it.Next()
+		if err != nil {
+			if err != pogreb.ErrIterationDone {
+				return fmt.Errorf("syncEnumMetadata:db.Items failed for %s.%s - %v", index, field, err)
+			}
+			break
+		}
+		localBatch[string(key)] = binary.LittleEndian.Uint64(val)
+	}
+
+	var remoteBatch map[interface{}]interface{}
+	remoteBatch, err = peerKV.NodeItems(remoteKV, kvPath, reflect.String, reflect.Uint64)
+	if err != nil {
+		return fmt.Errorf("syncEnumMetadata:remoteKV.Items failed for %s.%s - %v", index, field, err)
+	}
+
+	// Iterate local batch and create push batch
+	// This creates new values where they are missing but what happens if key/value pairs have different values?
+	pushBatch := make(map[interface{}]interface{}, 0)
+	for k, v := range localBatch {
+		if rval, found := remoteBatch[k]; found {
+			// TODO: Make sure rowIDs match
+			if rval != v {
+				u.Infof("StringEnum metadata For %s.%s remote has value %d, local has %d for %s", index, field, rval, v, k)
+			}
+			continue
+		}
+		u.Infof("StringEnum metadata For %s.%s remote is missing %s:%d", index, field, k, v)
+		pushBatch[k] = v
+	}
+
+	// Iterate remote batch and create pull batch
+	pullBatch := make(map[interface{}]interface{}, 0)
+	for k, v := range remoteBatch {
+		if lval, found := localBatch[k]; found {
+			// TODO: Make sure rowIDs match
+			if lval != v {
+				u.Infof("StringEnum metadata For %s.%s local has value %d, remote has %d for %s", index, field, lval, v, k)
+			}
+			continue
+		}
+		u.Infof("StringEnum metadata For %s.%s local is missing %s:%d", index, field, k, v)
+		pullBatch[k] = v
+	}
+
+	// TODO: Pass this as a parameter
+	verifyOnly := false
+	if verifyOnly {
+		return nil
+	}
+
+	// Begin writes
+
+	// Push to remote
+	err = peerKV.BatchPutNode(remoteKV, kvPath, pushBatch)
+	if err != nil {
+		return fmt.Errorf("syncEnumMetadata:remoteKV.BatchPut failed for %s.%s - %v", index, field, err)
+	}
+
+	// Update local
+	defer db.Sync()
+	for k, v := range pullBatch {
+		if err := db.Put(shared.ToBytes(k), shared.ToBytes(v)); err != nil {
+			return fmt.Errorf("syncEnumMetadata:db.Put failed for %s.%s - %v", index, field, err)
+		}
+	}
+
+	return nil
+}
+
+func (m *BitmapIndex) pushBSIDiff(peerClient *shared.BitmapIndex, newNode pb.BitmapIndexClient, index, field string,
+	ts int64, diff *roaring64.BSI) error {
+
+	batch := make(map[string]map[string]map[int64]*roaring64.BSI, 0)
+	tm := make(map[int64]*roaring64.BSI, 0)
+	tm[ts] = diff
+	fm := make(map[string]map[int64]*roaring64.BSI, 0)
+	fm[field] = tm
+	batch[index] = fm
+	// cleanup memory on exit
+	defer func() {
+		delete(tm, ts)
+		delete(fm, field)
+		delete(batch, index)
+	}()
+
+	err := peerClient.BatchSetValueNode(newNode, batch)
+	if err != nil {
+		return fmt.Errorf("pushBSIDiff failed - %v", err)
+	}
+	return nil
+}
+
+// mergeBSIDiff - set the remote difference to local bsi cache.
+func (m *BitmapIndex) mergeBSIDiff(index, field string, ts int64, diff *roaring64.BSI) error {
+
+	m.bsiCacheLock.Lock()
+	sbsi, ok := m.bsiCache[index][field][ts]
+	if !ok {
+		m.bsiCacheLock.Unlock()
+		return fmt.Errorf("mergeBSIDiff failed cache item missing for index = %s, field = %s, time = %d",
+			index, field, ts)
+	}
+	sbsi.Lock.Lock()
+	defer sbsi.Lock.Unlock()
+	m.bsiCacheLock.Unlock()
+	sbsi.ClearValues(diff.GetExistenceBitmap())
+	sbsi.ParOr(0, diff)
+	sbsi.ModTime = time.Now()
+
+	return nil
+}
+
+// Synchronize string backing store with remote.
+func (m *BitmapIndex) syncStringBackingStore(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, index, field string,
+	ts int64, pushDiff, pullDiff *roaring64.Bitmap) error {
+
+	timeStr := formatShardTime(time.Unix(0, ts))
+
+	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
+	kvPath := fmt.Sprintf("%s%s%s%s%s", index, sep, field, sep, timeStr)
+
+	u.Debugf("%s syncStringBackingStore kvPath %s", m.hashKey, kvPath)
+	defer u.Debugf("%s syncStringBackingStore DONE %s", m.hashKey, kvPath)
+	var db *pogreb.DB
+	err := shared.Retry(5, 20*time.Second, func() (err error) {
+		var errx error
+		db, errx = localKV.getStore(kvPath)
+		if errx != nil {
+			err = errx
+		}
+		return
+	})
+	if err != nil {
+		return fmt.Errorf("syncStringBackingStore:getStore failed for %s.%s.%s - %v", index, field, timeStr, err)
+	}
+	defer localKV.closeStore(kvPath)
+
+	// TODO: Pass this as a parameter
+	verifyOnly := false
+
+	// Iterate over columnID values in the remote existence bitmap diff and lookup values in local backing store
+	pushBatch := make(map[interface{}]interface{}, pushDiff.GetCardinality())
+	foundCount := 0
+	if pushDiff != nil {
+		for _, v := range pushDiff.ToArray() {
+			val, err := db.Get(shared.ToBytes(v))
+			if err != nil {
+				return fmt.Errorf("syncStringBackingStore:db.Get - %v", err)
+			}
+			if val != nil {
+				foundCount++
+				pushBatch[v] = string(val)
+			}
+		}
+	}
+
+	// Iterate over columnID values in the local existence bitmap diff and lookup values in the remote backing store
+	var pullBatch map[interface{}]interface{}
+	if pullDiff != nil {
+		pullBatch := make(map[interface{}]interface{}, pullDiff.GetCardinality())
+		for _, v := range pullDiff.ToArray() {
+			pullBatch[v] = ""
+		}
+		pullBatch, err = peerKV.BatchLookupNode(remoteKV, kvPath, pullBatch)
+		if err != nil {
+			return fmt.Errorf("syncStringBackingStore:remoteKV.BatchLookupNode failed for %s.%s.%s - %v", index, field,
+				timeStr, err)
+		}
+	}
+
+	if verifyOnly {
+		if foundCount > 0 {
+			u.Infof("Remote is missing %d backing strings for %s.%s.%s.", foundCount, index, field, timeStr)
+		}
+		if pullBatch != nil && len(pullBatch) > 0 {
+			u.Infof("Local is missing %d backing strings for %s.%s.%s.", len(pullBatch),
+				index, field, timeStr)
+		}
+		return nil
+	}
+
+	// Begin writes
+
+	// Push to remote
+	if foundCount > 0 {
+		err = peerKV.BatchPutNode(remoteKV, kvPath, pushBatch)
+		if err != nil {
+			return fmt.Errorf("syncStringBackingStore:remoteKV.BatchPut failed for %s.%s.%s - %v", index, field, timeStr, err)
+		}
+	}
+
+	// Update local
+	if pullBatch != nil && len(pullBatch) > 0 {
+		defer db.Sync()
+		for k, v := range pullBatch {
+			if err := db.Put(shared.ToBytes(k), shared.ToBytes(v)); err != nil {
+				return fmt.Errorf("syncStringBackingStore:db.Put failed for %s.%s.%s - %v", index, field, timeStr, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Simple KV push for simple stores (UserRoles, etc.)
+func (m *BitmapIndex) simpleKVPush(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, kvPath string,
+	keyType, valType reflect.Kind) error {
+
+	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
+	var db *pogreb.DB
+	err := shared.Retry(5, 20*time.Second, func() (err error) {
+		var errx error
+		db, errx = localKV.getStore(kvPath)
+		if errx != nil {
+			err = errx
+		}
+		return
+	})
+	if err != nil {
+		return fmt.Errorf("simpleKVPush:getStore failed for %s - %v", kvPath, err)
+	}
+	defer localKV.closeStore(kvPath)
+
+	pushBatch := make(map[interface{}]interface{}, 0)
+	it := db.Items()
+	for {
+		key, val, err := it.Next()
+		if err != nil {
+			if err != pogreb.ErrIterationDone {
+				return fmt.Errorf("simpleKVPush:db.Items failed for %s - %v", kvPath, err)
+			}
+			break
+		}
+		pushBatch[shared.UnmarshalValue(keyType, key)] = shared.UnmarshalValue(valType, val)
+	}
+	if len(pushBatch) > 0 {
+		err = peerKV.BatchPutNode(remoteKV, kvPath, pushBatch)
+		if err != nil {
+			return fmt.Errorf("simpleKVPush:remoteKV.BatchPut failed for %s - %v", kvPath, err)
+		}
+	}
+
+	return nil
+}
+
+// Synchronize index (PK/SK)  backing store with remote.
+func (m *BitmapIndex) indexKVPush(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, kvPath string) error {
+
+	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
+	var db *pogreb.DB
+	err := shared.Retry(5, 20*time.Second, func() (err error) {
+		var errx error
+		db, errx = localKV.getStore(kvPath)
+		if errx != nil {
+			err = errx
+		}
+		return
+	})
+	if err != nil {
+		return fmt.Errorf("indexKVPush:getStore failed for %s - %v", kvPath, err)
+	}
+	defer localKV.closeStore(kvPath)
+
+	// Get remote index file counts, size
+	remoteInfo, errx := peerKV.IndexInfoNode(remoteKV, kvPath)
+	if errx != nil {
+		return fmt.Errorf("indexKVPush:remoteKV.IndexInfo failed for %s - %v", kvPath, errx)
+	}
+	if remoteInfo.Exists {
+		// Compare against local info
+		localFileSize, err := db.FileSize()
+		if err != nil {
+			return fmt.Errorf("indexKVPush:FileSize(local) err - %v", err)
+		}
+		localCount := db.Count()
+
+		// If file size and counts match then no need to push data.
+		if localCount == remoteInfo.Count && localFileSize == remoteInfo.FileSize {
+			return nil
+		}
+	}
+
+	pushBatch := make(map[interface{}]interface{}, 0)
+	it := db.Items()
+	for {
+		key, val, err := it.Next()
+		if err != nil {
+			if err != pogreb.ErrIterationDone {
+				return fmt.Errorf("indexKVPush:db.Items failed for %s - %v", kvPath, err)
+			}
+			break
+		}
+		pushBatch[shared.UnmarshalValue(reflect.String, key)] = shared.UnmarshalValue(reflect.Uint64, val)
+	}
+	if len(pushBatch) > 0 {
+		err = peerKV.BatchPutNode(remoteKV, kvPath, pushBatch)
+		if err != nil {
+			return fmt.Errorf("indexKVPush:remoteKV.BatchPut failed for %s - %v", kvPath, err)
+		}
+	}
+
+	return nil
+}

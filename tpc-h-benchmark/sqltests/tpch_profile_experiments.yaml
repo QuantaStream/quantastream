@@ -1,0 +1,55 @@
+version: 1
+name: "tpch_profile_experiments"
+
+tests:
+  - id: "tpch_profile_experiments.q3.grouped_revenue_by_orderkey"
+    status: supported
+    issue: "profile experiment - Q3 grouped revenue using only the lineitem order key"
+    timeout: 180s
+    kind: query
+    capabilities: [tpch-q3, three-table-join, filter, group-by, aggregate, profile, scale-variable, key-grouping]
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey
+
+  - id: "tpch_profile_experiments.q5.combined_graph_regional_count_by_key"
+    status: supported
+    issue: "profile experiment - Q5 count grouped by nation key instead of StringEnum label"
+    timeout: 180s
+    kind: query
+    capabilities: [tpch-q5, six-table-join, filter, group-by, count, profile, scale-variable, key-grouping]
+    sql: |-
+      select n.n_nationkey, count(*) as line_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+      group by n.n_nationkey
+
+  - id: "tpch_profile_experiments.q5.regional_revenue_ordering_by_key"
+    status: supported
+    issue: "profile experiment - Q5 revenue grouped by nation key before label materialization"
+    timeout: 180s
+    kind: query
+    capabilities: [tpch-q5, six-table-join, filter, date-predicate, group-by, aggregate, order-by, profile, scale-variable, key-grouping]
+    sql: |-
+      select n.n_nationkey, sum(l.l_extendedprice) as revenue
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where r.r_name = 'ASIA'
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+      group by n.n_nationkey
+      order by revenue desc
+

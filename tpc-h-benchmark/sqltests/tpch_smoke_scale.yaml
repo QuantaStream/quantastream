@@ -1,0 +1,181 @@
+version: 1
+name: "tpch_smoke_scale"
+
+tests:
+  - id: "tpch_smoke_scale.001.region_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, dimension, scale-neutral]
+    sql: select count(*) from region
+    expect:
+      rows:
+        - [5]
+
+  - id: "tpch_smoke_scale.002.nation_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, dimension, scale-neutral]
+    sql: select count(*) from nation
+    expect:
+      rows:
+        - [25]
+
+  - id: "tpch_smoke_scale.010.customer_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from customer
+
+  - id: "tpch_smoke_scale.011.orders_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from orders
+
+  - id: "tpch_smoke_scale.012.lineitem_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from lineitem
+
+  - id: "tpch_smoke_scale.013.part_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from part
+
+  - id: "tpch_smoke_scale.014.supplier_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from supplier
+
+  - id: "tpch_smoke_scale.015.partsupp_table_available"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, count, scale-variable]
+    sql: select count(*) from partsupp
+
+  - id: "tpch_smoke_scale.016.region_names"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch, fixture, dimension, projection, scale-neutral]
+    sql: select r_name from region
+    expect:
+      rows:
+        - ["AFRICA"]
+        - ["AMERICA"]
+        - ["ASIA"]
+        - ["EUROPE"]
+        - ["MIDDLE EAST"]
+
+  - id: "tpch_smoke_scale.017.nation_names"
+    status: supported
+    kind: query
+    capabilities: [tpch, fixture, dimension, scale-neutral]
+    sql: select count(*) from nation
+    expect:
+      rows:
+        - [25]
+
+  - id: "tpch_smoke_scale.020.customer_orders_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, parent-relation, count, scale-variable]
+    sql: |-
+      select count(*)
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+
+  - id: "tpch_smoke_scale.021.orders_lineitem_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, parent-relation, count, scale-variable]
+    sql: |-
+      select count(*)
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+
+  - id: "tpch_smoke_scale.022.customer_orders_lineitem_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, parent-relation, count, scale-variable]
+    sql: |-
+      select count(*)
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+
+  - id: "tpch_smoke_scale.023.part_supplier_partsupp_join_count"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, parent-relation, bridge-table, count, scale-variable]
+    sql: |-
+      select count(*)
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on ps.ps_suppkey = s.s_suppkey
+
+  - id: "tpch_smoke_scale.030.customer_orders_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch, two-table-join, projection, scale-variable]
+    sql: |-
+      select c.c_custkey, c.c_name, o.o_orderkey, o.o_orderdate
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+    expect:
+      row_count: 5000
+
+  - id: "tpch_smoke_scale.031.customer_orders_lineitem_projection"
+    status: supported
+    kind: query
+    capabilities: [tpch, three-table-join, projection, scale-variable]
+    sql: |-
+      select c.c_custkey, o.o_orderkey, l.l_linenumber, l.l_quantity
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+    expect:
+      row_count: 5000
+
+  - id: "tpch_smoke_scale.040.region_nation_projection"
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [tpch, two-table-join, dimension, projection, scale-neutral]
+    sql: |-
+      select r.r_name, n.n_name
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+    expect:
+      row_count: 25
+
+  - id: "tpch_smoke_scale.050.q1_shape"
+    status: supported
+    kind: query
+    capabilities: [tpch-q1, group-by, multiple-aggregates, arithmetic, scale-variable]
+    sql: |-
+      select l_returnflag, l_linestatus, count(*) as count_order
+      from lineitem
+      group by l_returnflag, l_linestatus
+    expect:
+      row_count: 4
+
+  - id: "tpch_smoke_scale.051.q3_shape"
+    status: supported
+    kind: query
+    capabilities: [tpch-q3, three-table-join, group-by, order-by, limit, scale-variable]
+    timeout: 120s
+    sql: |-
+      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment = 'BUILDING'
+      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+      order by revenue desc, o.o_orderdate
+      limit 10
+    expect:
+      row_count: 10

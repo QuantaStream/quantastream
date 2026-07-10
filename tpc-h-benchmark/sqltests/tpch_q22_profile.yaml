@@ -1,0 +1,71 @@
+version: 1
+name: "tpch_q22_profile"
+
+tests:
+  - id: "tpch_q22_profile.010_phone_prefix_or_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    order: exact
+    capabilities: [tpch-q22, single-table, function-expression, residual-filter, or-predicate, count, profile]
+    sql: |-
+      select count(*) as phone_prefix_count
+      from customer
+      where substr(c_phone, 1, 2) = '13'
+         or substr(c_phone, 1, 2) = '31'
+         or substr(c_phone, 1, 2) = '23'
+         or substr(c_phone, 1, 2) = '29'
+         or substr(c_phone, 1, 2) = '30'
+         or substr(c_phone, 1, 2) = '18'
+         or substr(c_phone, 1, 2) = '17'
+    expect:
+      rows:
+        - [429]
+
+  - id: "tpch_q22_profile.020_phone_prefix_positive_balance_group"
+    status: supported
+    kind: query
+    timeout: 120s
+    order: rowsort
+    capabilities: [tpch-q22, single-table, function-expression, residual-filter, or-predicate, numeric-predicate, group-by, aggregate, profile]
+    sql: |-
+      select substr(c_phone, 1, 2) as cntrycode,
+             count(*) as customer_count,
+             sum(c_acctbal) as total_acctbal
+      from customer
+      where (substr(c_phone, 1, 2) = '13'
+          or substr(c_phone, 1, 2) = '31'
+          or substr(c_phone, 1, 2) = '23'
+          or substr(c_phone, 1, 2) = '29'
+          or substr(c_phone, 1, 2) = '30'
+          or substr(c_phone, 1, 2) = '18'
+          or substr(c_phone, 1, 2) = '17')
+        and c_acctbal > 0
+      group by substr(c_phone, 1, 2)
+      order by cntrycode
+    expect:
+      rows:
+        - ["13", 69, "399355.35"]
+        - ["17", 57, "285908.7"]
+        - ["18", 60, "326430.62"]
+        - ["23", 54, "278472.77999999997"]
+        - ["29", 64, "346598.16"]
+        - ["30", 67, "410154.39999999997"]
+        - ["31", 58, "315244.8500000001"]
+
+  - id: "tpch_q22_profile.030_customer_without_orders_count"
+    status: supported
+    kind: query
+    timeout: 120s
+    order: exact
+    capabilities: [tpch-q22, subquery, not-in, anti-membership, count, profile]
+    sql: |-
+      select count(*) as customer_without_orders_count
+      from customer
+      where c_custkey not in (
+        select o_custkey
+        from orders
+      )
+    expect:
+      rows:
+        - [500]

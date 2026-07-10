@@ -1,0 +1,50 @@
+version: 1
+name: runtime_mixed_boolean
+tests:
+  - id: runtime_mixed_boolean.001.or_of_and_filter_execution
+    status: supported
+    kind: query
+    capabilities: [runtime-fixture, grouped-filter, boolean-or, boolean-and]
+    sql: |
+      select o_orderkey, o_custkey
+      from orders
+      where (o_custkey = 501 and o_orderkey > 1002)
+         or (o_custkey = 502 and o_orderkey < 1003)
+      order by o_orderkey
+    expect:
+      columns: [o_orderkey, o_custkey]
+      rows:
+        - [1002, 502]
+        - [1003, 501]
+
+  - id: runtime_mixed_boolean.002.and_of_or_filter_execution
+    status: supported
+    kind: query
+    capabilities: [runtime-fixture, grouped-filter, boolean-or, boolean-and, string-filter]
+    sql: |
+      select o_orderkey, o_orderpriority
+      from orders
+      where (o_custkey = 501 or o_orderpriority = '3-MEDIUM')
+        and o_orderkey > 1001
+      order by o_orderkey
+    expect:
+      columns: [o_orderkey, o_orderpriority]
+      rows:
+        - [1002, "3-MEDIUM"]
+        - [1003, "5-LOW"]
+
+  - id: runtime_mixed_boolean.003.nested_parenthesized_filter_execution
+    status: supported
+    kind: query
+    capabilities: [runtime-fixture, grouped-filter, nested-parentheses]
+    sql: |
+      select o_orderkey, o_custkey
+      from orders
+      where o_custkey = 501
+        and (o_orderkey = 1001 or o_orderkey = 1003)
+      order by o_orderkey
+    expect:
+      columns: [o_orderkey, o_custkey]
+      rows:
+        - [1001, 501]
+        - [1003, 501]

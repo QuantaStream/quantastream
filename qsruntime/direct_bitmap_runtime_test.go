@@ -1,0 +1,2371 @@
+package qsruntime
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+)
+
+func TestDirectBitmapSeedMembershipOnlyRequestUsesLeftFieldExistence(t *testing.T) {
+	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
+	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
+	request := NewSQLExecutionRequest(qsbridge.QuantaIntermediateQuery{}, qsbridge.ExecutionRequest{})
+	request.SourceIndexes = []string{"partsupp"}
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  qsbridge.FieldRef{Table: partsupp, Name: "ps_partkey", PhysicalName: "ps_partkey", Type: qsbridge.DataTypeInt},
+		Right: qsbridge.FieldRef{Table: part, Name: "p_partkey", PhysicalName: "p_partkey", Type: qsbridge.DataTypeInt},
+		Kind:  qsbridge.MembershipSemi,
+	}}
+
+	seeded := directBitmapSeedMembershipOnlyRequest(request)
+	if len(seeded.Query.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(seeded.Query.Fragments))
+	}
+	fragment := seeded.Query.Fragments[0]
+	if fragment.Index != "partsupp" || fragment.Field != "ps_partkey" || !fragment.NullCheck || !fragment.Negate {
+		t.Fatalf("fragment = %#v, want partsupp.ps_partkey is not null", fragment)
+	}
+}
+
+func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
+	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
+	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
+	customerID := qsbridge.FieldRef{Table: customers, Name: "cust_id", PhysicalName: "cust_id", Type: qsbridge.DataTypeString}
+	orderCustomerID := qsbridge.FieldRef{
+		Table:        orders,
+		Name:         "cust_id",
+		PhysicalName: "cust_id",
+		Type:         qsbridge.DataTypeString,
+		Encoding:     qsbridge.EncodingProfile{LegacyName: "ParentRelation"},
+	}
+	for _, test := range []struct {
+		name string
+		kind qsbridge.MembershipKind
+		want uint64
+	}{
+		{name: "semi", kind: qsbridge.MembershipSemi, want: 2},
+		{name: "anti", kind: qsbridge.MembershipAnti, want: 8},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := DirectBitmapRuntime{
+				Adapter: BitmapQueryResultAdapter{},
+				Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+					return DirectSessionHandleFunc{
+						QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+							index, ok := request.RootIndex()
+							if !ok {
+								t.Fatalf("membership request had no root index")
+							}
+							switch index {
+							case "customers_qa":
+								return BitmapQueryResult{Success: true, Count: 10, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}, nil, nil
+							case "orders_qa":
+								return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{101, 102, 103}}, nil, nil
+							default:
+								t.Fatalf("unexpected bitmap request root index %q", index)
+								return BitmapQueryResult{}, nil, nil
+							}
+						},
+					}, nil, nil
+				}),
+				Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+					t.Fatalf("relationship-vector membership should not materialize business keys for %s", request.Index)
+					return qsbridge.QuantaProjectedRowSet{}, nil, nil
+				}),
+				RelationshipReader: InMemoryRelationshipVectorIndex{Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+					"orders_qa.cust_id": {
+						101: {1},
+						102: {1},
+						103: {10},
+					},
+				}},
+			}
+			request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+				Fragments: []qsbridge.QuantaQueryFragment{{
+					Index:     "customers_qa",
+					Field:     "cust_id",
+					Operation: qsbridge.QuantaOperationIntersect,
+					NullCheck: true,
+					Negate:    true,
+				}},
+			})
+			request.Memberships = []qsbridge.MembershipEdge{{
+				Left:  customerID,
+				Right: orderCustomerID,
+				Kind:  test.kind,
+				Legal: true,
+			}}
+			request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "customer_count", Type: qsbridge.DataTypeInt}}
+
+			result, err := runtime.ExecuteDirect(context.Background(), request)
+			if err != nil {
+				t.Fatalf("execute direct: %v", err)
+			}
+			if result.Diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+			}
+			if result.RowSet.CandidateCount() != 1 || len(result.RowSet.ProjectionVectors) != 1 || len(result.RowSet.ProjectionVectors[0].Values) != 1 {
+				t.Fatalf("rowset = %#v, want one count aggregate cell", result.RowSet)
+			}
+			if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(test.want) {
+				t.Fatalf("count aggregate = %#v, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDirectBitmapRuntimeFiltersRelationshipVectorMembershipResiduals(t *testing.T) {
+	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
+	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
+	customerID := qsbridge.FieldRef{Table: customers, Name: "cust_id", PhysicalName: "cust_id", Type: qsbridge.DataTypeString}
+	orderCustomerID := qsbridge.FieldRef{
+		Table:        orders,
+		Name:         "cust_id",
+		PhysicalName: "cust_id",
+		Type:         qsbridge.DataTypeString,
+		Encoding:     qsbridge.EncodingProfile{LegacyName: "ParentRelation"},
+	}
+	shipVia := qsbridge.FieldRef{Table: orders, Name: "ship_via", PhysicalName: "ship_via", Type: qsbridge.DataTypeString}
+	materialized := false
+	runtime := DirectBitmapRuntime{
+		Adapter: BitmapQueryResultAdapter{},
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					index, ok := request.RootIndex()
+					if !ok {
+						t.Fatalf("membership request had no root index")
+					}
+					switch index {
+					case "customers_qa":
+						return BitmapQueryResult{Success: true, Count: 10, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}, nil, nil
+					case "orders_qa":
+						return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{101, 102, 103}}, nil, nil
+					default:
+						t.Fatalf("unexpected bitmap request root index %q", index)
+						return BitmapQueryResult{}, nil, nil
+					}
+				},
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materialized = true
+			if request.Index != "orders_qa" {
+				t.Fatalf("materialization index = %q, want orders_qa", request.Index)
+			}
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "orders_qa",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{
+						Field: qsbridge.QuantaProjectionField{Index: "orders_qa", Field: "cust_id", PhysicalName: "cust_id"},
+						Values: []qsbridge.ResultCell{
+							{Kind: qsbridge.ValueInt, Value: int64(1)},
+							{Kind: qsbridge.ValueInt, Value: int64(1)},
+							{Kind: qsbridge.ValueInt, Value: int64(10)},
+						},
+					},
+					{
+						Field: qsbridge.QuantaProjectionField{Index: "orders_qa", Field: "ship_via", PhysicalName: "ship_via"},
+						Values: []qsbridge.ResultCell{
+							{Kind: qsbridge.ValueString, Value: "UPS"},
+							{Kind: qsbridge.ValueString, Value: "UPS"},
+							{Kind: qsbridge.ValueString, Value: "FEDEX"},
+						},
+					},
+				},
+			}, nil, nil
+		}),
+		RelationshipReader: InMemoryRelationshipVectorIndex{Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+			"orders_qa.cust_id": {
+				101: {1},
+				102: {1},
+				103: {10},
+			},
+		}},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "customers_qa",
+			Field:     "cust_id",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  customerID,
+		Right: orderCustomerID,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{{
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(shipVia), qsbridge.Literal(qsbridge.ValueString, "UPS")),
+			Placement: qsbridge.PredicatePushdown,
+		}},
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "customer_count", Type: qsbridge.DataTypeInt}}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if !materialized {
+		t.Fatalf("expected residual materialization")
+	}
+	if result.RowSet.CandidateCount() != 1 || len(result.RowSet.ProjectionVectors) != 1 || len(result.RowSet.ProjectionVectors[0].Values) != 1 {
+		t.Fatalf("rowset = %#v, want one count aggregate cell", result.RowSet)
+	}
+	if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(1) {
+		t.Fatalf("count aggregate = %#v, want 1", got)
+	}
+}
+
+func TestDirectBitmapRuntimeExecutesBorrowedSession(t *testing.T) {
+	released := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{
+						Success: true,
+						Count:   2,
+						Rownums: []qsbridge.QuantaRownum{1, 2},
+					}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet {
+					released = true
+					return nil
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !released {
+		t.Fatalf("session was not released")
+	}
+	if result.Count != 2 {
+		t.Fatalf("count = %d, want 2", result.Count)
+	}
+	if got := result.CandidateCount(); got != 2 {
+		t.Fatalf("candidate count = %d, want 2", got)
+	}
+}
+
+func TestDirectBitmapRuntimeMaterializesProjectionThroughKernel(t *testing.T) {
+	field := qsbridge.QuantaProjectionField{Index: "orders", Field: "o_orderkey", Visible: true}
+	called := false
+	runtime := DirectBitmapRuntime{
+		Adapter: BitmapQueryResultAdapter{},
+		Materialization: qsruntimeMaterializationKernelFunc(func(_ context.Context, request qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			called = true
+			if request.RequestCount() != 1 {
+				t.Fatalf("request count = %d, want one", request.RequestCount())
+			}
+			materializationRequest := request.Requests[0]
+			if materializationRequest.Index != "orders" || len(materializationRequest.Rownums) != 2 {
+				t.Fatalf("materialization request = %#v, want orders candidate rownums", materializationRequest)
+			}
+			return qsbridge.ProjectionMaterializationKernelResult{
+				ID: request.ID,
+				Results: []qsbridge.ProjectionMaterializationResult{{
+					ID:      materializationRequest.DependencyID,
+					Request: materializationRequest,
+					RowSet: qsbridge.QuantaProjectedRowSet{
+						Index:   "orders",
+						Rownums: append([]qsbridge.QuantaRownum(nil), materializationRequest.Rownums...),
+						ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+							Field: field,
+							Values: []qsbridge.ResultCell{
+								{Kind: qsbridge.ValueInt, Value: int64(1001)},
+								{Kind: qsbridge.ValueInt, Value: int64(1002)},
+							},
+						}},
+					},
+				}},
+				Probes: []qsbridge.ProjectionProbe{{Section: "projection_materialization", Name: "kernel_called", Value: "true"}},
+			}, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{field},
+	}).WithCandidateSet(qsbridge.QuantaCandidateSet{
+		Index:   "orders",
+		Rownums: []qsbridge.QuantaRownum{7, 8},
+	})
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !called {
+		t.Fatalf("materialization kernel was not called")
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.RowSet.CandidateCount() != 2 {
+		t.Fatalf("rowset = %#v, want two materialized rows", result.RowSet)
+	}
+	if got := result.RowSet.ProjectionVectors[0].Values[1].Value; got != int64(1002) {
+		t.Fatalf("second projection value = %#v, want 1002", got)
+	}
+	if len(result.Probes) == 0 {
+		t.Fatalf("probes = %#v, want kernel probe forwarded", result.Probes)
+	}
+}
+
+func TestDirectBitmapDistinctProjectedRowSetKeepsFirstVisibleTuple(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "customers_qa",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customers_qa", Field: "first_name", Visible: true},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "Abe"},
+					{Kind: qsbridge.ValueString, Value: "Abe"},
+					{Kind: qsbridge.ValueString, Value: "Annie"},
+					{Kind: qsbridge.ValueString, Value: "Abe"},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customers_qa", Field: "cust_id", Visible: false},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "101"},
+					{Kind: qsbridge.ValueString, Value: "102"},
+					{Kind: qsbridge.ValueString, Value: "103"},
+					{Kind: qsbridge.ValueString, Value: "104"},
+				},
+			},
+		},
+	}
+
+	distinct := directBitmapDistinctProjectedRowSet(rowSet)
+	if got := distinct.Rownums; len(got) != 2 || got[0] != 1 || got[1] != 3 {
+		t.Fatalf("rownums = %#v, want first Abe and Annie rows", got)
+	}
+	values := distinct.ProjectionVectors[0].Values
+	if len(values) != 2 || values[0].Value != "Abe" || values[1].Value != "Annie" {
+		t.Fatalf("visible values = %#v, want Abe/Annie", values)
+	}
+	hidden := distinct.ProjectionVectors[1].Values
+	if len(hidden) != 2 || hidden[0].Value != "101" || hidden[1].Value != "103" {
+		t.Fatalf("hidden values = %#v, want rows aligned with kept visible tuples", hidden)
+	}
+}
+
+func TestDirectBitmapRuntimeExecutesMutationThroughSession(t *testing.T) {
+	released := false
+	called := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				MutationFunc: func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+					called = true
+					if request.Mutation.Kind != qsbridge.MutationUpdate {
+						t.Fatalf("mutation kind = %q, want update", request.Mutation.Kind)
+					}
+					return qsbridge.StatementResult{AffectedRows: 2, Status: "Rows matched: 2"}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet {
+					released = true
+					return nil
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), ExecutionRequest{
+		Mutation: qsbridge.MutationShape{Kind: qsbridge.MutationUpdate},
+	})
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !called || !released {
+		t.Fatalf("called=%v released=%v, want both true", called, released)
+	}
+	if result.Statement.AffectedRows != 2 {
+		t.Fatalf("affected rows = %d, want 2", result.Statement.AffectedRows)
+	}
+}
+
+func TestDirectBitmapProjectedValuesUsesRoleForRepeatedAliases(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field:  qsbridge.QuantaProjectionField{Index: "nation", Role: "n1", Field: "n_name"},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "FRANCE"}},
+			},
+			{
+				Field:  qsbridge.QuantaProjectionField{Index: "nation", Role: "n2", Field: "n_name"},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "GERMANY"}},
+			},
+		},
+	}
+	values, ok := directBitmapProjectedValues(rowSet, qsbridge.FieldRef{
+		Table: qsbridge.TableInstance{Table: "nation", Alias: "n2"},
+		Name:  "n_name",
+	})
+	if !ok {
+		t.Fatalf("n2 values not found")
+	}
+	if len(values) != 1 || values[0].Value != "GERMANY" {
+		t.Fatalf("n2 values = %#v, want GERMANY", values)
+	}
+}
+
+func TestDirectBitmapGroupExpressionIndexUsesRoleForRepeatedAliases(t *testing.T) {
+	n1 := qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "nation", Alias: "n1"}, Name: "n_name"}
+	n2 := qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "nation", Alias: "n2"}, Name: "n_name"}
+	groups := []directBitmapGroupExpression{
+		{Expr: qsbridge.Field(n1), Field: n1},
+		{Expr: qsbridge.Field(n2), Field: n2},
+	}
+	if index := directBitmapGroupExpressionIndex(qsbridge.Field(n2), groups); index != 1 {
+		t.Fatalf("n2 group index = %d, want 1", index)
+	}
+}
+
+func TestDirectBitmapEvaluateMaterializedSearchedCaseExpr(t *testing.T) {
+	priority := qsbridge.FieldRef{
+		Table:        qsbridge.TableInstance{Table: "orders", Alias: "o"},
+		Name:         "o_orderpriority",
+		PhysicalName: "o_orderpriority",
+		Type:         qsbridge.DataTypeString,
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "orders",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{
+				Index:        "orders",
+				Field:        "o_orderpriority",
+				PhysicalName: "o_orderpriority",
+				Type:         qsbridge.DataTypeString,
+				Visible:      true,
+			},
+			Values: []qsbridge.ResultCell{
+				{Kind: qsbridge.ValueString, Value: "1-URGENT"},
+				{Kind: qsbridge.ValueString, Value: "2-HIGH"},
+				{Kind: qsbridge.ValueString, Value: "3-MEDIUM"},
+			},
+		}},
+	}
+	expr := qsbridge.SearchedCase(
+		[]qsbridge.SearchedCaseWhen{{
+			Condition: qsbridge.Binary(
+				qsbridge.BinaryOpOr,
+				qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(priority), qsbridge.Literal(qsbridge.ValueString, "1-URGENT")),
+				qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(priority), qsbridge.Literal(qsbridge.ValueString, "2-HIGH")),
+			),
+			Result: qsbridge.Literal(qsbridge.ValueInt, int64(1)),
+		}},
+		qsbridge.Literal(qsbridge.ValueInt, int64(0)),
+	)
+	want := []int64{1, 1, 0}
+	for i := range want {
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(expr, rowSet, i)
+		if diagnostics.BlocksNative() {
+			t.Fatalf("row %d diagnostics = %#v", i, diagnostics)
+		}
+		if cell.Kind != qsbridge.ValueInt || cell.Value != want[i] {
+			t.Fatalf("row %d cell = %#v, want int %d", i, cell, want[i])
+		}
+	}
+}
+
+func TestDirectBitmapRuntimeRejectsRelationshipVectorJoinBeforeBorrow(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "orders", Alias: "o"},
+			Name:  "o_orderkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_orderkey",
+		},
+		Kind: qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{
+			Kind: qsbridge.RelationshipEncodingVector,
+			Capabilities: qsbridge.RelationshipCapabilities{
+				qsbridge.RelationshipCapabilityParentLookup,
+				qsbridge.RelationshipCapabilityJoinReduction,
+			},
+		},
+		Legal: true,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called for relationship-vector join")
+			return nil, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected relationship-vector join diagnostic")
+	}
+	if got := result.Diagnostics.Codes()[0]; got != qsbridge.DiagnosticUnsupportedJoin {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticUnsupportedJoin)
+	}
+	if got := result.Diagnostics[0].Message; got != "relationship-vector join execution is not wired yet: o.o_orderkey -> l.l_orderkey" {
+		t.Fatalf("diagnostic message = %q", got)
+	}
+}
+
+func TestDirectBitmapRuntimeRejectsGroupedFilterBeforeBorrow(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterLeaf,
+			Fragment:  qsbridge.QuantaQueryFragment{Index: "orders", Field: "o_orderkey", Operation: qsbridge.QuantaOperationIntersect, BSIOp: qsbridge.QuantaBSIOpEQ},
+		},
+	})
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called for grouped filter")
+			return nil, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected grouped filter diagnostic")
+	}
+	if got := result.Diagnostics.Codes()[0]; got != qsbridge.DiagnosticUnsupportedSQL {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticUnsupportedSQL)
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterBuildsCandidateSet(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterUnion,
+			Children: []qsbridge.QuantaFilterExpression{
+				{
+					Operation: qsbridge.QuantaFilterIntersect,
+					Children: []qsbridge.QuantaFilterExpression{
+						{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "orders", Field: "a"}},
+						{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "orders", Field: "b"}},
+					},
+				},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "orders", Field: "c"}},
+			},
+		},
+	})
+	adapter := DirectBitmapFilterTreeAdapter{Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+		return DirectSessionHandleFunc{
+			QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+				field := request.Query.Fragments[0].Field
+				switch field {
+				case "a":
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				case "b":
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{2, 3}}, nil, nil
+				case "c":
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{5, 2}}, nil, nil
+				default:
+					t.Fatalf("unexpected filter leaf field %q", field)
+					return BitmapQueryResult{}, nil, nil
+				}
+			},
+		}, nil, nil
+	})}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !adapted.HasCandidateSet {
+		t.Fatalf("expected precomputed candidate set")
+	}
+	want := []qsbridge.QuantaRownum{2, 3, 5}
+	if len(adapted.CandidateSet.Rownums) != len(want) {
+		t.Fatalf("rownums = %#v, want %#v", adapted.CandidateSet.Rownums, want)
+	}
+	for i, rownum := range want {
+		if adapted.CandidateSet.Rownums[i] != rownum {
+			t.Fatalf("rownums = %#v, want %#v", adapted.CandidateSet.Rownums, want)
+		}
+	}
+	if !adapted.Query.Filter.Empty() || len(adapted.Query.Fragments) != 0 {
+		t.Fatalf("adapted query = %#v, want filter/fragments cleared", adapted.Query)
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterEvaluatesIntersectLeafWithinCandidates(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterIntersect,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "first"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{
+					Index:      "lineitem",
+					Field:      "l_quantity",
+					Operation:  qsbridge.QuantaOperationIntersect,
+					BSIOp:      qsbridge.QuantaBSIOpGT,
+					Literal:    qsbridge.Literal(qsbridge.ValueInt, int64(9)),
+					HasLiteral: true,
+				}},
+			},
+		},
+	})
+	queryCalls := 0
+	materializeCalls := 0
+	adapter := DirectBitmapFilterTreeAdapter{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalls++
+					field := request.Query.Fragments[0].Field
+					if field != "first" {
+						t.Fatalf("unexpected bitmap leaf %q, want only first leaf to query broadly", field)
+					}
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				},
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materializeCalls++
+			if request.Index != "lineitem" || len(request.ProjectionFields) != 1 || request.ProjectionFields[0].Field != "l_quantity" {
+				t.Fatalf("materialization request = %#v, want lineitem.l_quantity", request)
+			}
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field:  request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(5)}, {Kind: qsbridge.ValueInt, Value: int64(10)}, {Kind: qsbridge.ValueInt, Value: int64(15)}},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if queryCalls != 1 {
+		t.Fatalf("query calls = %d, want 1", queryCalls)
+	}
+	if materializeCalls != 1 {
+		t.Fatalf("materialize calls = %d, want 1", materializeCalls)
+	}
+	want := []qsbridge.QuantaRownum{2, 3}
+	if len(adapted.CandidateSet.Rownums) != len(want) {
+		t.Fatalf("rownums = %#v, want %#v", adapted.CandidateSet.Rownums, want)
+	}
+	for i, rownum := range want {
+		if adapted.CandidateSet.Rownums[i] != rownum {
+			t.Fatalf("rownums = %#v, want %#v", adapted.CandidateSet.Rownums, want)
+		}
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterRejectsMixedRownumDomains(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterUnion,
+			Children: []qsbridge.QuantaFilterExpression{
+				{
+					Operation: qsbridge.QuantaFilterIntersect,
+					Children: []qsbridge.QuantaFilterExpression{
+						{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+						{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+					},
+				},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_shipmode"}},
+			},
+		},
+	})
+	adapter := DirectBitmapFilterTreeAdapter{Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+		t.Fatalf("session provider should not be called for mixed-domain grouped filter")
+		return nil, nil, nil
+	})}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if got := diagnostics.Codes()[0]; got != qsbridge.DiagnosticUnsupportedSQL {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticUnsupportedSQL)
+	}
+	for _, want := range []string{
+		"sources=lineitem,part",
+		"target=lineitem",
+		"strategies=relationship_vector_normalization",
+	} {
+		if !strings.Contains(diagnostics[0].Message, want) {
+			t.Fatalf("diagnostic message = %q, want %q", diagnostics[0].Message, want)
+		}
+	}
+	if adapted.HasCandidateSet {
+		t.Fatalf("mixed-domain filter should not produce a candidate set")
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterRoutesMixedRownumDomainsToNormalizer(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterUnion,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+			},
+		},
+	})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		Kind:     qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{Kind: qsbridge.RelationshipEncodingVector},
+	}}
+	normalizer := &FixtureFilterDomainNormalizationExecutor{}
+	adapter := DirectBitmapFilterTreeAdapter{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called before mixed-domain normalization")
+			return nil, nil, nil
+		}),
+		Normalizer: normalizer,
+	}
+
+	_, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want unsupported normalization blocker", diagnostics)
+	}
+	if !normalizer.LastPlan.Required() {
+		t.Fatalf("normalization plan = %#v, want required", normalizer.LastPlan)
+	}
+	if normalizer.LastPlan.Operation != FilterDomainNormalizeGroupedFilter {
+		t.Fatalf("operation = %q, want grouped_filter", normalizer.LastPlan.Operation)
+	}
+	if len(normalizer.LastPlan.Requests) != 1 {
+		t.Fatalf("requests = %#v, want one source-to-target request", normalizer.LastPlan.Requests)
+	}
+	normalizationRequest := normalizer.LastPlan.Requests[0]
+	if normalizationRequest.SourceDomain != "part" || normalizationRequest.TargetDomain != "lineitem" {
+		t.Fatalf("request domains = %s -> %s, want part -> lineitem", normalizationRequest.SourceDomain, normalizationRequest.TargetDomain)
+	}
+	if len(normalizationRequest.RelationshipPath) != 1 {
+		t.Fatalf("relationship path = %#v, want one-hop path", normalizationRequest.RelationshipPath)
+	}
+}
+
+func TestDirectBitmapFilterDomainTranslationTargetsRelationshipVectorChild(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "part", Field: "p_partkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterUnion,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+			},
+		},
+	})
+	request.SourceIndexes = []string{"part", "lineitem"}
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table:    qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:     "l_partkey",
+			Encoding: qsbridge.EncodingProfile{Kind: qsbridge.EncodingRelation},
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		Kind: qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{
+			Kind: qsbridge.RelationshipEncodingVector,
+			Capabilities: qsbridge.RelationshipCapabilities{
+				qsbridge.RelationshipCapabilityJoinReduction,
+			},
+		},
+	}}
+
+	translation := directBitmapFilterDomainTranslation(request)
+	if !translation.Required {
+		t.Fatalf("translation = %#v, want required mixed-domain normalization", translation)
+	}
+	if translation.TargetDomain != "lineitem" {
+		t.Fatalf("target = %q, want lineitem", translation.TargetDomain)
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterContinuesAfterSuccessfulNormalization(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterIntersect,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+			},
+		},
+	})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		Kind:     qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{Kind: qsbridge.RelationshipEncodingVector},
+	}}
+	reader := InMemoryRelationshipVectorIndex{
+		Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+			"part.p_brand": {
+				7: {2},
+				8: {4},
+			},
+		},
+	}
+	normalizer := NewReaderBackedFilterDomainNormalizer(
+		testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+			"p_brand": {Index: "part", Rownums: []qsbridge.QuantaRownum{7, 8}},
+		}},
+		reader,
+	)
+	adapter := DirectBitmapFilterTreeAdapter{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					field := request.Query.Fragments[0].Field
+					switch field {
+					case "l_quantity":
+						return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{4, 5}}, nil, nil
+					default:
+						t.Fatalf("unexpected filter leaf field %q", field)
+						return BitmapQueryResult{}, nil, nil
+					}
+				},
+			}, nil, nil
+		}),
+		Normalizer: normalizer,
+	}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !adapted.HasCandidateSet {
+		t.Fatalf("expected precomputed candidate set")
+	}
+	if len(adapted.CandidateSet.Rownums) != 1 || adapted.CandidateSet.Rownums[0] != 4 {
+		t.Fatalf("rownums = %#v, want [4]", adapted.CandidateSet.Rownums)
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterKeepsLegacyReaderBoundaryExplicit(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterIntersect,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+			},
+		},
+	})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		Kind:     qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{Kind: qsbridge.RelationshipEncodingVector},
+	}}
+	reader := &LegacyDirectRelationshipVectorReader{}
+	adapter := DirectBitmapFilterTreeAdapter{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called after legacy reader boundary")
+			return nil, nil, nil
+		}),
+		Normalizer: NewReaderBackedFilterDomainNormalizer(
+			testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+				"p_brand": {Index: "part", Rownums: []qsbridge.QuantaRownum{7, 8}},
+			}},
+			reader,
+		),
+	}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want legacy reader boundary", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "legacy-direct relationship-vector reader is not wired yet") {
+		t.Fatalf("diagnostic message = %q, want legacy reader boundary", diagnostics[0].Message)
+	}
+	if adapted.HasCandidateSet {
+		t.Fatalf("legacy reader boundary should not produce candidate set")
+	}
+	if reader.LastRequest.SourceDomain != "part" || reader.LastRequest.TargetDomain != "lineitem" {
+		t.Fatalf("reader request domains = %s -> %s, want part -> lineitem", reader.LastRequest.SourceDomain, reader.LastRequest.TargetDomain)
+	}
+	if reader.LastRequest.LeafName() != "part.p_brand" {
+		t.Fatalf("reader leaf = %q, want part.p_brand", reader.LastRequest.LeafName())
+	}
+}
+
+func TestRelationshipVectorFilterDomainNormalizationKernelReportsMissingPath(t *testing.T) {
+	kernel := RelationshipVectorFilterDomainNormalizationKernel{
+		Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+			"p_brand": {Index: "part", Rownums: []qsbridge.QuantaRownum{7}},
+		}},
+		Translator: &FixtureFilterDomainRelationshipVectorTranslator{},
+	}
+	normalization := FilterDomainNormalizationRequest{
+		Operation:    FilterDomainNormalizeGroupedFilter,
+		SourceDomain: "part",
+		TargetDomain: "lineitem",
+		Strategy:     qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+	}
+
+	_, diagnostics, err := kernel.NormalizeFilterLeaf(context.Background(), ExecutionRequest{}, normalization, qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"})
+	if err != nil {
+		t.Fatalf("NormalizeFilterLeaf error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "relationship path missing") {
+		t.Fatalf("diagnostic message = %q, want path missing", diagnostics[0].Message)
+	}
+}
+
+func TestRelationshipVectorFilterDomainNormalizationKernelReportsDirectionMismatch(t *testing.T) {
+	normalization := FilterDomainNormalizationRequest{
+		Operation:    FilterDomainNormalizeGroupedFilter,
+		SourceDomain: "supplier",
+		TargetDomain: "lineitem",
+		Strategy:     qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		RelationshipPath: []qsbridge.RelationshipJoinPlanEdge{{
+			Left: qsbridge.FieldRef{
+				Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+				Name:  "l_partkey",
+			},
+			Right: qsbridge.FieldRef{
+				Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+				Name:  "p_partkey",
+			},
+			ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+		}},
+	}
+	kernel := RelationshipVectorFilterDomainNormalizationKernel{
+		Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+			"s_name": {Index: "supplier", Rownums: []qsbridge.QuantaRownum{7}},
+		}},
+		Translator: &FixtureFilterDomainRelationshipVectorTranslator{},
+	}
+
+	_, diagnostics, err := kernel.NormalizeFilterLeaf(context.Background(), ExecutionRequest{}, normalization, qsbridge.QuantaQueryFragment{Index: "supplier", Field: "s_name"})
+	if err != nil {
+		t.Fatalf("NormalizeFilterLeaf error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "direction mismatch") {
+		t.Fatalf("diagnostic message = %q, want direction mismatch", diagnostics[0].Message)
+	}
+}
+
+func TestRelationshipVectorFilterDomainNormalizationKernelReportsUnsupportedMultiHop(t *testing.T) {
+	edge := qsbridge.RelationshipJoinPlanEdge{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+	}
+	normalization := FilterDomainNormalizationRequest{
+		Operation:        FilterDomainNormalizeGroupedFilter,
+		SourceDomain:     "part",
+		TargetDomain:     "lineitem",
+		Strategy:         qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		RelationshipPath: []qsbridge.RelationshipJoinPlanEdge{edge, edge},
+	}
+	kernel := RelationshipVectorFilterDomainNormalizationKernel{
+		Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+			"p_brand": {Index: "part", Rownums: []qsbridge.QuantaRownum{7}},
+		}},
+		Translator: &FixtureFilterDomainRelationshipVectorTranslator{},
+	}
+
+	_, diagnostics, err := kernel.NormalizeFilterLeaf(context.Background(), ExecutionRequest{}, normalization, qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"})
+	if err != nil {
+		t.Fatalf("NormalizeFilterLeaf error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "multi-hop relationship path is not supported yet") {
+		t.Fatalf("diagnostic message = %q, want multi-hop unsupported", diagnostics[0].Message)
+	}
+}
+
+func TestRelationshipVectorFilterDomainNormalizationKernelAllowsEmptyTargetCandidates(t *testing.T) {
+	normalization := FilterDomainNormalizationRequest{
+		Operation:    FilterDomainNormalizeGroupedFilter,
+		SourceDomain: "part",
+		TargetDomain: "lineitem",
+		Strategy:     qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		RelationshipPath: []qsbridge.RelationshipJoinPlanEdge{{
+			Left: qsbridge.FieldRef{
+				Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+				Name:  "l_partkey",
+			},
+			Right: qsbridge.FieldRef{
+				Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+				Name:  "p_partkey",
+			},
+			ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+		}},
+	}
+	kernel := RelationshipVectorFilterDomainNormalizationKernel{
+		Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+			"p_brand": {Index: "part", Rownums: []qsbridge.QuantaRownum{7}},
+		}},
+		Translator: &FixtureFilterDomainRelationshipVectorTranslator{
+			Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+				"part.p_brand": {},
+			},
+		},
+	}
+
+	leaf, diagnostics, err := kernel.NormalizeFilterLeaf(context.Background(), ExecutionRequest{}, normalization, qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"})
+	if err != nil {
+		t.Fatalf("NormalizeFilterLeaf error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if leaf.CandidateSet.Index != "lineitem" {
+		t.Fatalf("candidate index = %q, want lineitem", leaf.CandidateSet.Index)
+	}
+	if len(leaf.CandidateSet.Rownums) != 0 {
+		t.Fatalf("candidate rownums = %#v, want empty target set", leaf.CandidateSet.Rownums)
+	}
+}
+
+func TestKernelFilterDomainNormalizationExecutorNormalizesSourceBranches(t *testing.T) {
+	edge := qsbridge.RelationshipJoinPlanEdge{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+	}
+	brand := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"},
+	}
+	container := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_container"},
+	}
+	quantity := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"},
+	}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			{
+				Operation: qsbridge.QuantaFilterIntersect,
+				Children:  []qsbridge.QuantaFilterExpression{brand, container},
+			},
+			quantity,
+		},
+	}
+	translator := &FixtureFilterDomainRelationshipVectorTranslator{
+		Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+			"part.p_brand": {
+				2: {20},
+			},
+		},
+	}
+	executor := KernelFilterDomainNormalizationExecutor{
+		Kernel: RelationshipVectorFilterDomainNormalizationKernel{
+			Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+				"p_brand":     {Index: "part", Rownums: []qsbridge.QuantaRownum{1, 2}},
+				"p_container": {Index: "part", Rownums: []qsbridge.QuantaRownum{2, 3}},
+			}},
+			Translator: translator,
+		},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Filter: filter})
+	plan := FilterDomainNormalizationPlan{
+		Translation: qsbridge.QuantaFilterDomainTranslation{
+			Required:      true,
+			SourceDomains: []string{"lineitem", "part"},
+			TargetDomain:  "lineitem",
+			Strategies:    []qsbridge.PhysicalStrategy{qsbridge.PhysicalStrategyRelationshipVectorNormalization},
+		},
+		Requests: []FilterDomainNormalizationRequest{{
+			Operation:        FilterDomainNormalizeGroupedFilter,
+			SourceDomain:     "part",
+			TargetDomain:     "lineitem",
+			RelationshipPath: []qsbridge.RelationshipJoinPlanEdge{edge},
+			Strategy:         qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		}},
+	}
+
+	rewrite, diagnostics, err := executor.NormalizeFilterDomains(context.Background(), request, plan)
+	if err != nil {
+		t.Fatalf("NormalizeFilterDomains error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(rewrite.Branches) != 1 {
+		t.Fatalf("branches = %d, want 1", len(rewrite.Branches))
+	}
+	if len(rewrite.Leaves) != 0 {
+		t.Fatalf("leaves = %d, want 0", len(rewrite.Leaves))
+	}
+	branch := rewrite.Branches[0]
+	if branch.SourceCount != 1 || len(branch.CandidateSet.Rownums) != 1 || branch.CandidateSet.Rownums[0] != 20 {
+		t.Fatalf("branch = %#v, want one translated target row 20 from one source row", branch)
+	}
+	if len(translator.Calls) != 1 {
+		t.Fatalf("translator calls = %d, want 1", len(translator.Calls))
+	}
+	if len(translator.Calls[0].SourceCandidates.Rownums) != 1 || translator.Calls[0].SourceCandidates.Rownums[0] != 2 {
+		t.Fatalf("source candidates = %#v, want [2]", translator.Calls[0].SourceCandidates.Rownums)
+	}
+	rewritten := rewrite.Apply(filter)
+	if !rewritten.Children[0].CandidateSetLeaf() {
+		t.Fatalf("rewritten source branch = %#v, want candidate-set leaf", rewritten.Children[0])
+	}
+	if !rewritten.Children[1].Leaf() {
+		t.Fatalf("rewritten target leaf = %#v, want original lineitem leaf", rewritten.Children[1])
+	}
+}
+
+func TestDirectBitmapFilterTreeAdapterReportsIncompleteNormalizationRewrite(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterIntersect,
+			Children: []qsbridge.QuantaFilterExpression{
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"}},
+				{Operation: qsbridge.QuantaFilterLeaf, Fragment: qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"}},
+			},
+		},
+	})
+	normalizer := &FixtureFilterDomainNormalizationExecutor{
+		Succeed:       true,
+		RewriteResult: qsbridge.FilterDomainRewriteResult{TargetDomain: "lineitem"},
+	}
+	adapter := DirectBitmapFilterTreeAdapter{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called when normalization leaves mixed domains")
+			return nil, nil, nil
+		}),
+		Normalizer: normalizer,
+	}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	for _, want := range []string{
+		"filter-domain normalization incomplete after rewrite",
+		"remaining_sources=part",
+		"target=lineitem",
+	} {
+		if !strings.Contains(diagnostics[0].Message, want) {
+			t.Fatalf("diagnostic message = %q, want %q", diagnostics[0].Message, want)
+		}
+	}
+	if adapted.HasCandidateSet {
+		t.Fatalf("incomplete normalization should not produce a candidate set")
+	}
+}
+
+func TestDirectBitmapRuntimeUsesPrecomputedCandidateSet(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
+	}).WithCandidateSet(qsbridge.QuantaCandidateSet{Index: "orders", Rownums: []qsbridge.QuantaRownum{8, 9}})
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called for precomputed candidate set")
+			return nil, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field:  request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(8)}, {Kind: qsbridge.ValueInt, Value: int64(9)}},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.RowSet.Rownums) != 2 || result.RowSet.Rownums[0] != 8 || result.RowSet.Rownums[1] != 9 {
+		t.Fatalf("rownums = %#v, want [8 9]", result.RowSet.Rownums)
+	}
+}
+
+func TestDirectBitmapRuntimeUsesFilterAdapterBeforeBorrow(t *testing.T) {
+	filterAdapted := false
+	queryExecuted := false
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterLeaf,
+			Fragment:  qsbridge.QuantaQueryFragment{Index: "orders", Field: "o_orderkey", Operation: qsbridge.QuantaOperationIntersect, BSIOp: qsbridge.QuantaBSIOpEQ},
+		},
+	})
+	runtime := DirectBitmapRuntime{
+		FilterAdapter: DirectBitmapFilterAdapterFunc(func(ctx context.Context, got ExecutionRequest) (ExecutionRequest, qsbridge.DiagnosticSet, error) {
+			filterAdapted = true
+			got.Query.Filter = qsbridge.QuantaFilterExpression{}
+			got.Query.Fragments = []qsbridge.QuantaQueryFragment{{Index: "orders", Field: "o_orderkey"}}
+			return got, nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			if !request.Query.Filter.Empty() {
+				t.Fatalf("filter was not adapted away: %#v", request.Query.Filter)
+			}
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryExecuted = true
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field:  request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(1)}},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if !filterAdapted || !queryExecuted {
+		t.Fatalf("filterAdapted/queryExecuted = %t/%t, want true/true", filterAdapted, queryExecuted)
+	}
+}
+
+func TestDirectBitmapRuntimeUsesRelationshipVectorJoinExecutor(t *testing.T) {
+	executor := &recordingRelationshipVectorJoinExecutor{}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "orders", Alias: "o"},
+			Name:  "o_orderkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_orderkey",
+		},
+		Kind:     qsbridge.JoinKindInner,
+		Encoding: qsbridge.RelationshipEncodingProfile{Kind: qsbridge.RelationshipEncodingVector},
+		Legal:    true,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called for relationship-vector join")
+			return nil, nil, nil
+		}),
+		RelationshipJoins: executor,
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !executor.called {
+		t.Fatalf("relationship executor was not called")
+	}
+	if result.Statement.Status != "relationship executor called" {
+		t.Fatalf("status = %q, want relationship executor called", result.Statement.Status)
+	}
+}
+
+type recordingRelationshipVectorJoinExecutor struct {
+	called bool
+}
+
+func (e *recordingRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoin(_ context.Context, _ ExecutionRequest, request RelationshipVectorJoinRequest) (ExecutionResult, error) {
+	e.called = true
+	if request.EdgeCount() != 1 {
+		return ExecutionResult{
+			Diagnostics: qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"relationship request edge count mismatch",
+			)},
+		}, nil
+	}
+	return ExecutionResult{
+		Statement: qsbridge.StatementResult{Status: "relationship executor called"},
+	}, nil
+}
+
+func TestDirectBitmapRuntimeMaterializesProjectionFields(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "orders",
+			Field:     "o_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpGE,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index:   "orders",
+			Field:   "o_orderkey",
+			Type:    qsbridge.DataTypeInt,
+			Visible: true,
+		}},
+	})
+	materialized := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{
+						Success: true,
+						Count:   2,
+						Rownums: []qsbridge.QuantaRownum{8, 9},
+					}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materialized = true
+			if request.Index != "orders" {
+				t.Fatalf("materialization index = %q, want orders", request.Index)
+			}
+			if request.CandidateCount() != 2 {
+				t.Fatalf("candidate count = %d, want 2", request.CandidateCount())
+			}
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field:  request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(8)}, {Kind: qsbridge.ValueInt, Value: int64(9)}},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !materialized {
+		t.Fatalf("materializer was not called")
+	}
+	if result.RowSet.ProjectionCount() != 1 {
+		t.Fatalf("projection count = %d, want 1", result.RowSet.ProjectionCount())
+	}
+}
+
+func TestDirectBitmapRuntimeExecutesInsertMutation(t *testing.T) {
+	released := false
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Mutation = qsbridge.MutationShape{
+		Kind:   qsbridge.MutationInsert,
+		Target: qsbridge.TableInstance{Schema: "quanta", Table: "customers_qa"},
+		Columns: []qsbridge.FieldRef{
+			{Name: "cust_id"},
+		},
+		Rows: []qsbridge.MutationRow{{
+			Values: []qsbridge.Expr{qsbridge.Literal(qsbridge.ValueString, "9001")},
+		}},
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				InsertFunc: func(ctx context.Context, got ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+					if got.Mutation.Kind != qsbridge.MutationInsert {
+						t.Fatalf("mutation = %q, want insert", got.Mutation.Kind)
+					}
+					return qsbridge.StatementResult{AffectedRows: 1, LastInsertID: 9001}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet {
+					released = true
+					return nil
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !released {
+		t.Fatalf("session was not released")
+	}
+	if result.Statement.AffectedRows != 1 || result.Statement.LastInsertID != 9001 {
+		t.Fatalf("statement = %#v, want affected=1 lastInsertID=9001", result.Statement)
+	}
+}
+
+func TestDirectBitmapRuntimeSynthesizesCountAggregateRows(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "part",
+			Field:     "p_partkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpGE,
+		}},
+	})
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "part_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 2000}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 || chunk.Rows[0][0].Value != int64(2000) {
+		t.Fatalf("chunk rows = %#v, want one count cell", chunk.Rows)
+	}
+}
+
+func TestDirectBitmapRuntimeEvaluatesGlobalAggregateRatioProjection(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
+	numerator := qsbridge.FieldRef{Table: table, Name: "promo_revenue", Type: qsbridge.DataTypeFloat}
+	denominator := qsbridge.FieldRef{Table: table, Name: "total_revenue", Type: qsbridge.DataTypeFloat}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_shipdate",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpRange,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{
+			{Index: "lineitem", Field: "promo_revenue", Type: qsbridge.DataTypeFloat},
+			{Index: "lineitem", Field: "total_revenue", Type: qsbridge.DataTypeFloat},
+		},
+	})
+	request.SourceIndexes = []string{"lineitem"}
+	request.SQLAggregates = []qsbridge.Aggregate{
+		{Function: "sum", Input: qsbridge.Field(numerator), Alias: "promo_revenue", Type: qsbridge.DataTypeFloat},
+		{Function: "sum", Input: qsbridge.Field(denominator), Alias: "total_revenue", Type: qsbridge.DataTypeFloat},
+	}
+	request.Projection = []qsbridge.ProjectionColumn{{
+		Expr: qsbridge.Binary(
+			qsbridge.BinaryOpDivide,
+			qsbridge.Binary(qsbridge.BinaryOpMultiply, qsbridge.Literal(qsbridge.ValueFloat, float64(100)), qsbridge.AggregateRef("promo_revenue", 0)),
+			qsbridge.AggregateRef("total_revenue", 1),
+		),
+		Alias: "promo_revenue",
+		Type:  qsbridge.DataTypeFloat,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 2, Rownums: []qsbridge.QuantaRownum{1, 2}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "lineitem",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{Field: request.ProjectionFields[0], Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueFloat, Value: float64(5)}, {Kind: qsbridge.ValueFloat, Value: float64(7)}}},
+					{Field: request.ProjectionFields[1], Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueFloat, Value: float64(50)}, {Kind: qsbridge.ValueFloat, Value: float64(70)}}},
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(result.RowSet.ProjectionVectors) != 1 || result.RowSet.ProjectionVectors[0].Field.Field != "promo_revenue" {
+		t.Fatalf("projection vectors = %#v, want promo_revenue", result.RowSet.ProjectionVectors)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 || chunk.Rows[0][0].Value != float64(10) {
+		t.Fatalf("rows = %#v, want one ratio cell 10", chunk.Rows)
+	}
+}
+
+func TestDirectBitmapRuntimeMaterializesGroupedCountAggregate(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "orders", Table: "orders"}
+	priority := qsbridge.FieldRef{Table: table, Name: "o_orderpriority", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "orders",
+			Field:     "o_orderdate",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpGE,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderpriority", Type: qsbridge.DataTypeString}},
+	})
+	request.SourceIndexes = []string{"orders"}
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(priority)}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "order_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.Field(priority), Direction: qsbridge.SortAscending}}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: qsbridge.Field(priority), Type: qsbridge.DataTypeString},
+		{Expr: qsbridge.AggregateRef("order_count", 0), Alias: "order_count", Type: qsbridge.DataTypeInt},
+	}
+	materialized := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 5, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materialized = true
+			if len(request.Rownums) != 5 {
+				t.Fatalf("materialization rownums = %#v, want 5 candidates", request.Rownums)
+			}
+			if len(request.ProjectionFields) != 1 || request.ProjectionFields[0].Field != "o_orderpriority" {
+				t.Fatalf("projection fields = %#v, want o_orderpriority", request.ProjectionFields)
+			}
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "orders",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field: request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueString, Value: "1-URGENT"},
+						{Kind: qsbridge.ValueString, Value: "2-HIGH"},
+						{Kind: qsbridge.ValueString, Value: "1-URGENT"},
+						{Kind: qsbridge.ValueString, Value: "3-MEDIUM"},
+						{Kind: qsbridge.ValueString, Value: "2-HIGH"},
+					},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if !materialized {
+		t.Fatalf("grouped count aggregate used bitmap count fast path; want materialization")
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	want := [][]any{{"1-URGENT", int64(2)}, {"2-HIGH", int64(2)}, {"3-MEDIUM", int64(1)}}
+	if len(chunk.Rows) != len(want) {
+		t.Fatalf("rows = %#v, want %d grouped rows", chunk.Rows, len(want))
+	}
+	for i := range want {
+		if chunk.Rows[i][0].Value != want[i][0] || chunk.Rows[i][1].Value != want[i][1] {
+			t.Fatalf("row %d = %#v, want %#v", i, chunk.Rows[i], want[i])
+		}
+	}
+}
+
+func TestDirectBitmapRuntimeAppliesSingleTableMembershipBeforeCountAggregate(t *testing.T) {
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	customers := qsbridge.TableInstance{Table: "customers", Alias: "c"}
+	orderCustomerID := qsbridge.FieldRef{Table: orders, Name: "customer_id", Type: qsbridge.DataTypeInt}
+	customerID := qsbridge.FieldRef{Table: customers, Name: "cust_id", Type: qsbridge.DataTypeInt}
+
+	for _, tc := range []struct {
+		name string
+		kind qsbridge.MembershipKind
+		want int64
+	}{
+		{name: "semi", kind: qsbridge.MembershipSemi, want: 2},
+		{name: "anti", kind: qsbridge.MembershipAnti, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+				Fragments: []qsbridge.QuantaQueryFragment{{
+					Index:     "orders",
+					Field:     "order_id",
+					Operation: qsbridge.QuantaOperationIntersect,
+					BSIOp:     qsbridge.QuantaBSIOpGE,
+				}},
+			})
+			request.Memberships = []qsbridge.MembershipEdge{{
+				Left:  orderCustomerID,
+				Right: customerID,
+				Kind:  tc.kind,
+				Legal: true,
+			}}
+			request.SQLAggregates = []qsbridge.Aggregate{{
+				Function: "count",
+				Alias:    "order_count",
+				Type:     qsbridge.DataTypeInt,
+			}}
+
+			runtime := DirectBitmapRuntime{
+				Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+					return DirectSessionHandleFunc{
+						QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+							index, _ := request.RootIndex()
+							switch index {
+							case "orders":
+								return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+							case "customers":
+								return BitmapQueryResult{Success: true, Count: 2, Rownums: []qsbridge.QuantaRownum{101, 102}}, nil, nil
+							default:
+								t.Fatalf("unexpected query index %q", index)
+								return BitmapQueryResult{}, nil, nil
+							}
+						},
+						ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+					}, nil, nil
+				}),
+				Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+					values := []qsbridge.ResultCell(nil)
+					switch request.Index {
+					case "orders":
+						values = []qsbridge.ResultCell{
+							{Kind: qsbridge.ValueInt, Value: int64(10)},
+							{Kind: qsbridge.ValueInt, Value: int64(20)},
+							{Kind: qsbridge.ValueInt, Value: int64(30)},
+						}
+					case "customers":
+						values = []qsbridge.ResultCell{
+							{Kind: qsbridge.ValueInt, Value: int64(20)},
+							{Kind: qsbridge.ValueInt, Value: int64(30)},
+						}
+					default:
+						t.Fatalf("unexpected materialization index %q", request.Index)
+					}
+					return qsbridge.QuantaProjectedRowSet{
+						Index:   request.Index,
+						Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+						ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+							Field:  request.ProjectionFields[0],
+							Values: values,
+						}},
+					}, nil, nil
+				}),
+			}
+
+			result, err := runtime.ExecuteDirect(context.Background(), request)
+			if err != nil {
+				t.Fatalf("execute direct: %v", err)
+			}
+			if result.Diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+			}
+			chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+			}
+			if got := chunk.Rows[0][0].Value; got != tc.want {
+				t.Fatalf("count value = %#v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDirectBitmapRuntimeMaterializesResidualPredicatesBeforeCount(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "part", Table: "part"}
+	partType := qsbridge.FieldRef{Table: table, Name: "p_type", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "part",
+			Field:     "p_size",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "part",
+			Field: "p_type",
+			Type:  qsbridge.DataTypeString,
+		}},
+	})
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpNotLike, qsbridge.Field(partType), qsbridge.Literal(qsbridge.ValueString, "MEDIUM POLISHED%")),
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "part_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	materialized := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materialized = true
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "part",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field: request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueString, Value: "SMALL POLISHED COPPER"},
+						{Kind: qsbridge.ValueString, Value: "MEDIUM POLISHED BRASS"},
+						{Kind: qsbridge.ValueString, Value: "LARGE BURNISHED TIN"},
+					},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if !materialized {
+		t.Fatalf("materializer was not called")
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if got := chunk.Rows[0][0].Value; got != int64(2) {
+		t.Fatalf("count = %#v, want 2", got)
+	}
+}
+
+func TestDirectBitmapRuntimeRejectsUnsupportedAggregates(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{Index: "part"}},
+	})
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "sum", Type: qsbridge.DataTypeFloat}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 2000}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected unsupported aggregate diagnostics")
+	}
+}
+
+func TestDirectBitmapRuntimeMaterializesNumericAggregates(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "part", Table: "part"}
+	field := qsbridge.FieldRef{Table: table, Name: "p_size", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{Index: "part"}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "part",
+			Field: "p_size",
+			Type:  qsbridge.DataTypeInt,
+		}},
+	})
+	request.SQLAggregates = []qsbridge.Aggregate{
+		{Function: "sum", Input: qsbridge.Field(field), Alias: "sum_size", Type: qsbridge.DataTypeFloat},
+		{Function: "min", Input: qsbridge.Field(field), Alias: "min_size", Type: qsbridge.DataTypeFloat},
+		{Function: "max", Input: qsbridge.Field(field), Alias: "max_size", Type: qsbridge.DataTypeFloat},
+		{Function: "avg", Input: qsbridge.Field(field), Alias: "avg_size", Type: qsbridge.DataTypeFloat},
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "part",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field:  request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(3)}, {Kind: qsbridge.ValueInt, Value: int64(9)}, {Kind: qsbridge.ValueInt, Value: int64(14)}},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	got := chunk.Rows[0]
+	want := []float64{26, 3, 14, 26.0 / 3.0}
+	for i, wantValue := range want {
+		if gotValue, ok := got[i].Value.(float64); !ok || gotValue != wantValue {
+			t.Fatalf("row[%d] = %#v, want %v", i, got[i].Value, wantValue)
+		}
+	}
+}
+
+func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "partsupp", Table: "partsupp"}
+	partKey := qsbridge.FieldRef{Table: table, Name: "ps_partkey", Type: qsbridge.DataTypeInt}
+	supplyCost := qsbridge.FieldRef{Table: table, Name: "ps_supplycost", Type: qsbridge.DataTypeFloat}
+	availQty := qsbridge.FieldRef{Table: table, Name: "ps_availqty", Type: qsbridge.DataTypeInt}
+	aggregate := qsbridge.Aggregate{
+		Function: "sum",
+		Input:    qsbridge.Binary(qsbridge.BinaryOpMultiply, qsbridge.Field(supplyCost), qsbridge.Field(availQty)),
+		Alias:    "part_value",
+		Type:     qsbridge.DataTypeFloat,
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{
+			{Index: "partsupp", Field: "ps_partkey", Type: qsbridge.DataTypeInt},
+			{Index: "partsupp", Field: "ps_supplycost", Type: qsbridge.DataTypeFloat},
+			{Index: "partsupp", Field: "ps_availqty", Type: qsbridge.DataTypeInt},
+		},
+	})
+	request.SourceIndexes = []string{"partsupp"}
+	request.SQLAggregates = []qsbridge.Aggregate{aggregate}
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(partKey)}
+	request.Having = []qsbridge.Predicate{{
+		Expr: qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.AggregateRef("part_value", 0), qsbridge.Literal(qsbridge.ValueFloat, float64(1200))),
+	}}
+	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("part_value", 0), Direction: qsbridge.SortDescending}}
+	request.Result = qsbridge.ResultShape{Limit: 2}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: qsbridge.Field(partKey), Type: qsbridge.DataTypeInt},
+		{Expr: qsbridge.AggregateRef("part_value", 0), Alias: "part_value", Type: qsbridge.DataTypeFloat},
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 6, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "partsupp",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{Field: request.ProjectionFields[0], Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueInt, Value: int64(1)},
+						{Kind: qsbridge.ValueInt, Value: int64(1)},
+						{Kind: qsbridge.ValueInt, Value: int64(2)},
+						{Kind: qsbridge.ValueInt, Value: int64(3)},
+						{Kind: qsbridge.ValueInt, Value: int64(4)},
+						{Kind: qsbridge.ValueInt, Value: int64(5)},
+					}},
+					{Field: request.ProjectionFields[1], Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueFloat, Value: float64(10)},
+						{Kind: qsbridge.ValueFloat, Value: float64(10.5)},
+						{Kind: qsbridge.ValueFloat, Value: float64(20)},
+						{Kind: qsbridge.ValueFloat, Value: float64(1)},
+						{Kind: qsbridge.ValueFloat, Value: float64(15)},
+						{Kind: qsbridge.ValueFloat, Value: float64(14)},
+					}},
+					{Field: request.ProjectionFields[2], Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+						{Kind: qsbridge.ValueInt, Value: int64(100)},
+					}},
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want 2 rows", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != int64(1) || chunk.Rows[0][1].Value != float64(2050) {
+		t.Fatalf("first row = %#v, want part 1 value 2050", chunk.Rows[0])
+	}
+	if chunk.Rows[1][0].Value != int64(2) || chunk.Rows[1][1].Value != float64(2000) {
+		t.Fatalf("second row = %#v, want part 2 value 2000", chunk.Rows[1])
+	}
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "candidate_rows", "6")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "groups", "5")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "post_having_groups", "4")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "sort_input_groups", "4")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "limit", "2")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "final_rows", "2")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "topn_candidate", "true")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "order_strategy", "heap_topn")
+	assertExecutionProbeName(t, result.Probes, "direct_bitmap", "phase_bitmap_query_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_materialization_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_residual_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_group_values_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_aggregate_inputs_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_group_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_having_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_order_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_output_elapsed")
+	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_limit_elapsed")
+}
+
+func assertExecutionProbe(t *testing.T, probes []ExecutionProbe, section string, name string, value string) {
+	t.Helper()
+	for _, probe := range probes {
+		if probe.Section == section && probe.Name == name && probe.Value == value {
+			return
+		}
+	}
+	t.Fatalf("probe %s/%s=%s not found in %#v", section, name, value, probes)
+}
+
+func assertExecutionProbeName(t *testing.T, probes []ExecutionProbe, section string, name string) {
+	t.Helper()
+	for _, probe := range probes {
+		if probe.Section == section && probe.Name == name && probe.Value != "" {
+			return
+		}
+	}
+	t.Fatalf("probe %s/%s not found in %#v", section, name, probes)
+}
+
+func TestDirectBitmapNumericCellValueParsesRationalStrings(t *testing.T) {
+	value, ok := directBitmapNumericCellValue(qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "123/100"})
+	if !ok || value != 1.23 {
+		t.Fatalf("numeric value = %v/%t, want 1.23/true", value, ok)
+	}
+}
+
+func TestDirectBitmapEvaluateMaterializedSubstringCall(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "customer",
+		Rownums: []qsbridge.QuantaRownum{1},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "c_phone", Visible: true},
+			Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "13-750-942-6364"}},
+		}},
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(
+		qsbridge.Call("substr", qsbridge.Field(qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "customer"}, Name: "c_phone"}), qsbridge.Literal(qsbridge.ValueInt, int64(1)), qsbridge.Literal(qsbridge.ValueInt, int64(2))),
+		rowSet,
+		0,
+	)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if cell.Kind != qsbridge.ValueString || cell.Value != "13" {
+		t.Fatalf("cell = %#v, want string 13", cell)
+	}
+}
+
+func TestDirectBitmapEvaluateMaterializedBinaryExprPropagatesNull(t *testing.T) {
+	field := qsbridge.FieldRef{
+		Table: qsbridge.TableInstance{Table: "lineitem"},
+		Name:  "l_discount",
+		Type:  qsbridge.DataTypeFloat,
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "lineitem",
+		Rownums: []qsbridge.QuantaRownum{1},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{
+				Index: "lineitem",
+				Field: "l_discount",
+				Type:  qsbridge.DataTypeFloat,
+			},
+			Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueNull, Value: nil}},
+		}},
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedBinaryExpr(qsbridge.BinaryExpr{
+		Left:  qsbridge.Literal(qsbridge.ValueInt, int64(1)),
+		Op:    qsbridge.BinaryOpSubtract,
+		Right: qsbridge.FieldExpr{Ref: field},
+	}, rowSet, 0)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if cell.Kind != qsbridge.ValueNull || cell.Value != nil {
+		t.Fatalf("cell = %#v, want NULL", cell)
+	}
+}
+
+func TestDirectBitmapRuntimeRequiresMaterializerForProjection(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "orders",
+			Field:     "o_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpGE,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
+	})
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected missing materializer diagnostics")
+	}
+}
+
+func TestDirectBitmapRuntimeReportsMissingSessionProvider(t *testing.T) {
+	result, err := DirectBitmapRuntime{}.ExecuteDirect(context.Background(), NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected missing provider diagnostics")
+	}
+	if got := result.Diagnostics.Codes()[0]; got != qsbridge.DiagnosticInternalInvariant {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticInternalInvariant)
+	}
+}
+
+func TestDirectBitmapRuntimeReportsNilSession(t *testing.T) {
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return nil, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected nil session diagnostics")
+	}
+	if got := result.Diagnostics.Codes()[0]; got != qsbridge.DiagnosticInternalInvariant {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticInternalInvariant)
+	}
+}
+
+func TestDirectBitmapRuntimeAppendsQueryAndReleaseDiagnostics(t *testing.T) {
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true}, qsbridge.DiagnosticSet{
+						qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, "query diagnostic"),
+					}, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet {
+					return qsbridge.DiagnosticSet{
+						qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "release diagnostic"),
+					}
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("diagnostic count = %d, want 2", len(result.Diagnostics))
+	}
+}
+
+func TestDirectBitmapRuntimeLimitsProjectedRowSet(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "part",
+		Rownums: []qsbridge.QuantaRownum{10, 20, 30},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{Index: "part", Field: "p_size", Type: qsbridge.DataTypeInt, Visible: true},
+			Values: []qsbridge.ResultCell{
+				{Kind: qsbridge.ValueInt, Value: int64(1)},
+				{Kind: qsbridge.ValueInt, Value: int64(2)},
+				{Kind: qsbridge.ValueInt, Value: int64(3)},
+			},
+		}},
+	}
+
+	limited := directBitmapLimitProjectedRowSet(rowSet, 1, 1)
+	if got := limited.CandidateCount(); got != 1 {
+		t.Fatalf("candidate count = %d, want 1", got)
+	}
+	if got := limited.Rownums[0]; got != qsbridge.QuantaRownum(20) {
+		t.Fatalf("rownum = %d, want 20", got)
+	}
+	if got := limited.ProjectionVectors[0].Values[0].Value; got != int64(2) {
+		t.Fatalf("projected value = %v, want 2", got)
+	}
+	if got := rowSet.CandidateCount(); got != 3 {
+		t.Fatalf("source row set was mutated; candidate count = %d, want 3", got)
+	}
+}
+
+func TestDirectBitmapRuntimeOrdersVisibleProjectedRowSetByResultColumns(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "part", Table: "part"}
+	size := qsbridge.FieldRef{Table: table, Name: "p_size", Type: qsbridge.DataTypeInt}
+	typ := qsbridge.FieldRef{Table: table, Name: "p_type", Type: qsbridge.DataTypeString}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "part",
+		Rownums: []qsbridge.QuantaRownum{10},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field:  qsbridge.QuantaProjectionField{Index: "part", Field: "p_type", Type: qsbridge.DataTypeString, Visible: true},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "PROMO BURNISHED COPPER"}},
+			},
+			{
+				Field:  qsbridge.QuantaProjectionField{Index: "part", Field: "p_size", Type: qsbridge.DataTypeInt, Visible: true},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(45)}},
+			},
+		},
+	}
+
+	ordered := directBitmapOrderVisibleProjectedRowSet(rowSet, []qsbridge.FieldRef{size, typ})
+	if got := ordered.ProjectionVectors[0].Field.Field; got != "p_size" {
+		t.Fatalf("first vector field = %q, want p_size", got)
+	}
+	if got := ordered.ProjectionVectors[1].Field.Field; got != "p_type" {
+		t.Fatalf("second vector field = %q, want p_type", got)
+	}
+}
+
+func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedYearGroup(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "orders", Table: "orders", Alias: "o"}
+	orderDate := qsbridge.FieldRef{Table: table, Name: "o_orderdate", Type: qsbridge.DataTypeTime}
+	totalPrice := qsbridge.FieldRef{Table: table, Name: "o_totalprice", Type: qsbridge.DataTypeFloat}
+	yearExpr := qsbridge.FunctionCall(
+		qsbridge.FunctionDefinition{Name: "year", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeInt},
+		qsbridge.Field(orderDate),
+	)
+	request := ExecutionRequest{
+		SourceIndexes: []string{"orders"},
+		GroupBy:       []qsbridge.Expr{yearExpr},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: yearExpr, Alias: "o_year", Type: qsbridge.DataTypeInt},
+			{Expr: qsbridge.AggregateRef("total_revenue", 0), Alias: "total_revenue", Type: qsbridge.DataTypeFloat},
+			{
+				Expr: qsbridge.Binary(
+					qsbridge.BinaryOpDivide,
+					qsbridge.AggregateRef("total_revenue", 0),
+					qsbridge.AggregateRef("order_count", 1),
+				),
+				Alias: "avg_revenue",
+				Type:  qsbridge.DataTypeFloat,
+			},
+		},
+		SQLAggregates: []qsbridge.Aggregate{
+			{
+				Function: "sum",
+				Input:    qsbridge.Field(totalPrice),
+				Alias:    "total_revenue",
+				Type:     qsbridge.DataTypeFloat,
+			},
+			{
+				Function: "count",
+				Alias:    "order_count",
+				Type:     qsbridge.DataTypeInt,
+			},
+		},
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "orders",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "o_orderdate", Type: qsbridge.DataTypeTime},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueTime, Value: time.Date(1995, 3, 15, 0, 0, 0, 0, time.UTC)},
+					{Kind: qsbridge.ValueTime, Value: time.Date(1996, 4, 10, 0, 0, 0, 0, time.UTC)},
+					{Kind: qsbridge.ValueTime, Value: time.Date(1996, 7, 20, 0, 0, 0, 0, time.UTC)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "o_totalprice", Type: qsbridge.DataTypeFloat},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueFloat, Value: float64(10)},
+					{Kind: qsbridge.ValueFloat, Value: float64(20)},
+					{Kind: qsbridge.ValueFloat, Value: float64(30)},
+				},
+			},
+		},
+	}
+
+	result := directBitmapMaterializedGroupedAggregateResult(request, materialized, ExecutionResult{})
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two grouped rows", chunk.Rows)
+	}
+	if got := chunk.Rows[0][0].Value; got != int64(1995) {
+		t.Fatalf("first year = %v, want 1995", got)
+	}
+	if got := chunk.Rows[0][1].Value; got != float64(10) {
+		t.Fatalf("first total = %v, want 10", got)
+	}
+	if got := chunk.Rows[0][2].Value; got != float64(10) {
+		t.Fatalf("first average = %v, want 10", got)
+	}
+	if got := chunk.Rows[1][0].Value; got != int64(1996) {
+		t.Fatalf("second year = %v, want 1996", got)
+	}
+	if got := chunk.Rows[1][1].Value; got != float64(50) {
+		t.Fatalf("second total = %v, want 50", got)
+	}
+	if got := chunk.Rows[1][2].Value; got != float64(25) {
+		t.Fatalf("second average = %v, want 25", got)
+	}
+}

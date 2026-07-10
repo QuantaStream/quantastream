@@ -1,0 +1,16 @@
+tableName: lineitems_qa
+primaryKey: line_id
+attributes:
+- fieldName: line_id
+  mappingStrategy: StringHashBSI
+  type: String
+- fieldName: order_id
+  mappingStrategy: ParentRelation
+  type: String
+  foreignKey: orders_qa
+- fieldName: category
+  mappingStrategy: StringEnum
+  type: String
+- fieldName: quantity
+  mappingStrategy: IntBSI
+  type: Integer

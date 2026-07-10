@@ -1,0 +1,1862 @@
+version: 1
+name: legacy_direct_tpch_kernels
+
+tests:
+  - id: legacy_direct_tpch_kernels.000a.q1_grouped_lineitem_shape
+    status: supported
+    kind: query
+    order: exact
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q1, single-table, grouped-aggregate, count, grouped-materialization]
+    sql: |-
+      select l_returnflag, l_linestatus, count(*) as count_order
+      from lineitem
+      group by l_returnflag, l_linestatus
+      order by l_returnflag, l_linestatus
+    expect:
+      columns: [l_returnflag, l_linestatus, count_order]
+      rows:
+        - ["A", "F", 14876]
+        - ["N", "F", 348]
+        - ["N", "O", 30049]
+        - ["R", "F", 14902]
+
+  - id: legacy_direct_tpch_kernels.000b.q4_orderdate_priority_group_count
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q4, single-table, time-range, grouped-aggregate, count, order-by, grouped-materialization]
+    sql: |-
+      select o_orderpriority, count(*) as order_count
+      from orders
+      where o_orderdate >= '1993-07-01'
+        and o_orderdate < '1993-10-01'
+      group by o_orderpriority
+      order by o_orderpriority
+    expect:
+      columns: [o_orderpriority, order_count]
+      rows:
+        - ["1-URGENT", 104]
+        - ["2-HIGH", 111]
+        - ["3-MEDIUM", 120]
+        - ["4-NOT SPECIFIED", 109]
+        - ["5-LOW", 138]
+
+  - id: legacy_direct_tpch_kernels.000c.q2_europe_brass_part_count
+    status: supported
+    kind: query
+    order: exact
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
+    sql: |-
+      select count(*) as europe_brass_part_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+    expect:
+      columns: [europe_brass_part_count]
+      rows:
+        - [5]
+
+  - id: legacy_direct_tpch_kernels.000d.q2_europe_brass_part_projection
+    status: supported
+    kind: query
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, projection, graph-projection]
+    # Verifies mixed-table graph projection after aligning sink rows back to
+    # ancestor roles and applying residual projected predicates.
+    sql: |-
+      select p.p_partkey, p.p_mfgr, s.s_suppkey, ps.ps_supplycost
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+    expect:
+      row_count: 5
+
+  - id: legacy_direct_tpch_kernels.000e.q2_europe_brass_low_cost_count
+    status: supported
+    kind: query
+    order: exact
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
+    sql: |-
+      select count(*) as europe_brass_low_cost_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      inner join region as r on r.r_regionkey = n.n_regionkey
+      where p.p_size = 15
+        and p.p_type like '%BRASS'
+        and r.r_name = 'EUROPE'
+        and ps.ps_supplycost < 300
+    expect:
+      columns: [europe_brass_low_cost_count]
+      rows:
+        - [2]
+
+  - id: legacy_direct_tpch_kernels.001.q3_customer_building_filter
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q3, string-filter, count]
+    sql: |-
+      select count(*) as building_customer_count
+      from customer as c
+      where c.c_mktsegment = 'BUILDING'
+    expect:
+      columns: [building_customer_count]
+      rows:
+        - [337]
+
+  - id: legacy_direct_tpch_kernels.002.q3_customer_orders_building_projection
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q3, relationship-vector-join, string-filter, projection]
+    # Time-sharded child tables need a synthetic shard window when the child
+    # side has no local predicates.
+    sql: |-
+      select c.c_custkey, o.o_orderkey
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      where c.c_mktsegment = 'BUILDING'
+    expect:
+      columns: [c_custkey, o_orderkey]
+      row_count: 3706
+
+  - id: legacy_direct_tpch_kernels.002a.q3_orders_lineitem_date_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q3, relationship-vector-join, time-range, count]
+    # The legacy proxy returned 32289 here, which is only the child-side
+    # l_shipdate predicate count. The relationship-vector reducer returns the
+    # SQL intersection after applying both parent and child date predicates.
+    sql: |-
+      select count(*) as q3_order_line_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+    expect:
+      columns: [q3_order_line_count]
+      rows:
+        - [1464]
+
+  - id: legacy_direct_tpch_kernels.003.q5_asia_region_filter
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, string-filter, dimension]
+    sql: |-
+      select r.r_name
+      from region as r
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [r_name]
+      rows:
+        - ["ASIA"]
+
+  - id: legacy_direct_tpch_kernels.004.q5_asia_nations
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, string-filter, dimension]
+    order: rowsort
+    sql: |-
+      select n.n_name
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [n_name]
+      rows:
+        - ["CHINA"]
+        - ["INDIA"]
+        - ["INDONESIA"]
+        - ["JAPAN"]
+        - ["VIETNAM"]
+
+  - id: legacy_direct_tpch_kernels.004a.q5_asia_supplier_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, dimension, count]
+    sql: |-
+      select count(*) as asia_supplier_count
+      from nation as n
+      inner join supplier as s on s.s_nationkey = n.n_nationkey
+      where n.n_regionkey = 2
+    expect:
+      columns: [asia_supplier_count]
+      rows:
+        - [27]
+
+  - id: legacy_direct_tpch_kernels.004b.q5_asia_customer_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, dimension, count]
+    sql: |-
+      select count(*) as asia_customer_count
+      from nation as n
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      where n.n_regionkey = 2
+    expect:
+      columns: [asia_customer_count]
+      rows:
+        - [309]
+
+  - id: legacy_direct_tpch_kernels.004c.q5_supplier_lineitem_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, fact-table, count, full-child-scan]
+    # This proves the supplier -> lineitem fact-side vector shape. It is
+    # intentionally preserved even though the current runtime scans the full
+    # time-sharded lineitem child side when there is no local child predicate.
+    sql: |-
+      select count(*) as supplier_line_count
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      where s.s_nationkey = 12
+    expect:
+      columns: [supplier_line_count]
+      rows:
+        - [2447]
+
+  - id: legacy_direct_tpch_kernels.004d.q5_region_nation_supplier_chain_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    sql: |-
+      select count(*) as asia_supplier_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join supplier as s on s.s_nationkey = n.n_nationkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [asia_supplier_count]
+      rows:
+        - [27]
+
+  - id: legacy_direct_tpch_kernels.004e.q5_region_nation_customer_chain_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    sql: |-
+      select count(*) as asia_customer_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [asia_customer_count]
+      rows:
+        - [309]
+
+  - id: legacy_direct_tpch_kernels.004f.q5_region_nation_supplier_lineitem_chain_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
+    # This proves dimension filtering can flow through a three-edge chain into
+    # the lineitem fact table. The final supplier -> lineitem hop still scans
+    # the full time-sharded child side in this slice.
+    sql: |-
+      select count(*) as asia_supplier_line_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join supplier as s on s.s_nationkey = n.n_nationkey
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [asia_supplier_line_count]
+      rows:
+        - [16464]
+
+  - id: legacy_direct_tpch_kernels.004g.q5_region_nation_customer_orders_chain_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    sql: |-
+      select count(*) as asia_customer_order_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [asia_customer_order_count]
+      rows:
+        - [2959]
+
+  - id: legacy_direct_tpch_kernels.004h.q5_region_nation_customer_orders_lineitem_chain_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
+    # This proves the customer/orders side can flow into lineitem. The final
+    # orders -> lineitem hop still scans the full time-sharded child side in
+    # this slice.
+    sql: |-
+      select count(*) as asia_customer_line_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [asia_customer_line_count]
+      rows:
+        - [11708]
+
+  - id: legacy_direct_tpch_kernels.004i.q5_supplier_customer_converging_graph_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, count]
+    # This proves graph reduction can handle a supplier existence edge
+    # converging on the customer/orders/lineitem chain.
+    sql: |-
+      select count(*) as q5_graph_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [q5_graph_count]
+      rows:
+        - [11708]
+
+  - id: legacy_direct_tpch_kernels.004j.q5_converging_graph_revenue_projection
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, projection, limit]
+    # This is the first graph projection slice. It intentionally materializes
+    # sink-table lineitem revenue inputs only; ancestor-field projection needs
+    # full joined-tuple reconstruction across the graph.
+    sql: |-
+      select l.l_extendedprice, l.l_discount
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+      limit 3
+    expect:
+      columns: [l_extendedprice, l_discount]
+      rows:
+        - [8784.63, 0.03]
+        - [22191.8, 0.07]
+        - [33110.5, 0.04]
+
+  - id: legacy_direct_tpch_kernels.004k.q5_converging_graph_total_revenue
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, arithmetic-aggregate]
+    # Ungrouped graph aggregate over sink-table lineitem revenue inputs. This
+    # proves graph aggregate input materialization before grouped nation revenue.
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+    expect:
+      columns: [total_revenue]
+      rows:
+        - [3.97022970406798e+08]
+
+  - id: legacy_direct_tpch_kernels.004l.q5_converging_graph_grouped_revenue
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, grouped-aggregate]
+    # Grouped graph aggregate over an ancestor nation key and sink-table
+    # lineitem revenue inputs. This still does not enforce the formal Q5
+    # same-nation supplier/customer predicate.
+    sql: |-
+      select n.n_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+      group by n.n_name
+      order by total_revenue desc
+      limit 5
+    expect:
+      columns: [n_name, total_revenue]
+      rows:
+        - ["INDONESIA", 8.888988295860012e+07]
+        - ["JAPAN", 8.833366716640009e+07]
+        - ["VIETNAM", 8.4569834052e+07]
+        - ["INDIA", 7.257359374429998e+07]
+        - ["CHINA", 6.265599248549995e+07]
+
+  - id: legacy_direct_tpch_kernels.004m.q5_same_nation_grouped_revenue
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, residual-join, grouped-aggregate]
+    # Same-nation supplier/customer residual equality over the converged graph.
+    # This is one rung short of formal Q5 because it does not include the
+    # orders.o_orderdate [1994-01-01, 1995-01-01) window yet.
+    sql: |-
+      select n.n_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+        and s.s_nationkey = c.c_nationkey
+      group by n.n_name
+      order by total_revenue desc
+      limit 5
+    expect:
+      columns: [n_name, total_revenue]
+      rows:
+        - ["VIETNAM", 5.8950565009e+06]
+        - ["CHINA", 4.955977471600002e+06]
+        - ["INDONESIA", 4.508005852000003e+06]
+        - ["JAPAN", 3.955963255900001e+06]
+        - ["INDIA", 3.069194983500001e+06]
+
+  - id: legacy_direct_tpch_kernels.004n.q5_orderdate_same_nation_grouped_revenue
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate]
+    # Formal-shaped Q5 kernel: ASIA region, 1994 order date window,
+    # same-nation supplier/customer residual equality, and grouped discounted
+    # revenue. The simple parser expresses the same-nation predicate in WHERE.
+    # The orders date window constrains the parent shard scope; the final
+    # lineitem vector/value reads must use the foundset rather than treating the
+    # parent date as a child physical shard window.
+    sql: |-
+      select n.n_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      where r.r_name = 'ASIA'
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+        and s.s_nationkey = c.c_nationkey
+      group by n.n_name
+      order by total_revenue desc
+      limit 5
+    expect:
+      columns: [n_name, total_revenue]
+      rows:
+        - ["VIETNAM", 1000926.6998999998]
+        - ["CHINA", 740210.7569999999]
+        - ["JAPAN", 660651.2424999999]
+        - ["INDONESIA", 566379.5275999999]
+        - ["INDIA", 422874.6844]
+
+  - id: legacy_direct_tpch_kernels.004o.q5_orderdate_same_nation_join_on_grouped_revenue
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate, join-on-residual]
+    # Same kernel as .004n, but with the same-nation supplier/customer
+    # residual equality expressed canonically as an additional JOIN ON
+    # conjunct.
+    sql: |-
+      select n.n_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+                              and s.s_nationkey = c.c_nationkey
+      where r.r_name = 'ASIA'
+        and o.o_orderdate >= '1994-01-01'
+        and o.o_orderdate < '1995-01-01'
+      group by n.n_name
+      order by total_revenue desc
+      limit 5
+    expect:
+      columns: [n_name, total_revenue]
+      rows:
+        - ["VIETNAM", 1000926.6998999998]
+        - ["CHINA", 740210.7569999999]
+        - ["JAPAN", 660651.2424999999]
+        - ["INDONESIA", 566379.5275999999]
+        - ["INDIA", 422874.6844]
+
+  - id: legacy_direct_tpch_kernels.004o1.q6_discounted_revenue
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q6, single-table, time-range, numeric-range, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice * l.l_discount) as revenue
+      from lineitem as l
+      where l.l_shipdate >= '1994-01-01'
+        and l.l_shipdate < '1995-01-01'
+        and l.l_discount >= 0.05
+        and l.l_discount <= 0.07
+        and l.l_quantity < 24
+    expect:
+      columns: [revenue]
+      rows:
+        - ["1.193053225300001e+06"]
+
+  - id: legacy_direct_tpch_kernels.004p.q7_repeated_nation_alias_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
+    # Repeated nation roles are independent, and the shipdate predicate targets
+    # lineitem's shard key, so the child foundset can drive broad relationship
+    # vector reads without losing the FK BSI.
+    sql: |-
+      select count(*) as q7_france_germany_line_count
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = s.s_nationkey
+      inner join nation as n2 on n2.n_nationkey = c.c_nationkey
+      where n1.n_name = 'FRANCE'
+        and n2.n_name = 'GERMANY'
+        and l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+    expect:
+      columns: [q7_france_germany_line_count]
+      rows:
+        - [18]
+
+  - id: legacy_direct_tpch_kernels.004q.q7_repeated_nation_alias_count_without_shipdate
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
+    # Same repeated-alias frontier as .004p, without the shipdate window. This
+    # proves role-keyed repeated-table filters can stay independent from
+    # time-range relationship-vector projection.
+    sql: |-
+      select count(*) as q7_france_germany_line_count
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = s.s_nationkey
+      inner join nation as n2 on n2.n_nationkey = c.c_nationkey
+      where n1.n_name = 'FRANCE'
+        and n2.n_name = 'GERMANY'
+    expect:
+      columns: [q7_france_germany_line_count]
+      rows:
+        - [57]
+
+  - id: legacy_direct_tpch_kernels.004q1.q7_france_germany_revenue_by_year
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, aggregate, computed-group-by]
+    order: rowsort
+    # Stages Q7's revenue/year grouped output for one nation-pair direction.
+    # The formal bidirectional `(FRANCE, GERMANY) OR (GERMANY, FRANCE)` predicate
+    # remains a parser/planner boolean-normalization slice.
+    sql: |-
+      select n1.n_name as supp_nation,
+             n2.n_name as cust_nation,
+             year(l.l_shipdate) as l_year,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = s.s_nationkey
+      inner join nation as n2 on n2.n_nationkey = c.c_nationkey
+      where n1.n_name = 'FRANCE'
+        and n2.n_name = 'GERMANY'
+        and l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+      group by n1.n_name, n2.n_name, year(l.l_shipdate)
+    expect:
+      columns: [supp_nation, cust_nation, l_year, revenue]
+      rows:
+        - ["FRANCE", "GERMANY", 1995, 268068.57739999995]
+        - ["FRANCE", "GERMANY", 1996, 303862.298]
+
+  - id: legacy_direct_tpch_kernels.004q2.q7_formal_bidirectional_revenue_by_year
+    status: supported
+    kind: query
+    timeout: 30s
+    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, boolean-or, aggregate, computed-group-by]
+    # Formal Q7 validates bidirectional OR-branch residual evaluation across
+    # repeated nation roles after relationship-vector graph reduction.
+    sql: |-
+      select n1.n_name as supp_nation,
+             n2.n_name as cust_nation,
+             year(l.l_shipdate) as l_year,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = s.s_nationkey
+      inner join nation as n2 on n2.n_nationkey = c.c_nationkey
+      where ((n1.n_name = 'FRANCE' and n2.n_name = 'GERMANY')
+          or (n1.n_name = 'GERMANY' and n2.n_name = 'FRANCE'))
+        and l.l_shipdate >= '1995-01-01'
+        and l.l_shipdate <= '1996-12-31'
+      group by n1.n_name, n2.n_name, year(l.l_shipdate)
+    expect:
+      columns: [supp_nation, cust_nation, l_year, revenue]
+      rows:
+        - ["FRANCE", "GERMANY", 1995, 268068.57739999995]
+        - ["FRANCE", "GERMANY", 1996, 303862.298]
+        - ["GERMANY", "FRANCE", 1995, 621159.4881999999]
+        - ["GERMANY", "FRANCE", 1996, 379095.8853999999]
+
+  - id: legacy_direct_tpch_kernels.004r.q8_repeated_nation_alias_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, string-filter, time-range, count]
+    # Q8 repeats nation as customer nation and supplier nation. The current
+    # SF0.01 TPCH data has no matching Brazil/part/order rows, so this case
+    # also protects graph reduction's empty-set short-circuit.
+    sql: |-
+      select count(*) as q8_brazil_line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = c.c_nationkey
+      inner join region as r on r.r_regionkey = n1.n_regionkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n2 on n2.n_nationkey = s.s_nationkey
+      where r.r_name = 'AMERICA'
+        and n2.n_name = 'BRAZIL'
+        and p.p_type = 'ECONOMY ANODIZED STEEL'
+        and o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate <= '1996-12-31'
+    expect:
+      columns: [q8_brazil_line_count]
+      rows:
+        - [0]
+
+  - id: legacy_direct_tpch_kernels.004s.q8_market_share_revenue_inputs
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case]
+    # Stages Q8's market-share numerator/denominator inputs without the final
+    # year grouping or ratio projection. This protects role-aware
+    # materialization for aggregate inputs from repeated table aliases.
+    sql: |-
+      select sum(case when n2.n_name = 'BRAZIL'
+                      then l.l_extendedprice * (1 - l.l_discount)
+                      else 0 end) as brazil_revenue,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = c.c_nationkey
+      inner join region as r on r.r_regionkey = n1.n_regionkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n2 on n2.n_nationkey = s.s_nationkey
+      where r.r_name = 'AMERICA'
+        and p.p_type = 'ECONOMY ANODIZED STEEL'
+        and o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate <= '1996-12-31'
+    expect:
+      columns: [brazil_revenue, total_revenue]
+      rows:
+        - [0, 997854.8810000002]
+
+  - id: legacy_direct_tpch_kernels.004t.q8_market_share_revenue_inputs_by_year
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by]
+    order: rowsort
+    # Stages Q8's year grouping over the market-share numerator/denominator
+    # inputs. The next case verifies final aggregate-ratio projection.
+    sql: |-
+      select year(o.o_orderdate) as o_year,
+             sum(case when n2.n_name = 'BRAZIL'
+                      then l.l_extendedprice * (1 - l.l_discount)
+                      else 0 end) as brazil_revenue,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = c.c_nationkey
+      inner join region as r on r.r_regionkey = n1.n_regionkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n2 on n2.n_nationkey = s.s_nationkey
+      where r.r_name = 'AMERICA'
+        and p.p_type = 'ECONOMY ANODIZED STEEL'
+        and o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate <= '1996-12-31'
+      group by year(o.o_orderdate)
+    expect:
+      columns: [o_year, brazil_revenue, total_revenue]
+      rows:
+        - [1995, 0, 377808.4896]
+        - [1996, 0, 620046.3914]
+
+  - id: legacy_direct_tpch_kernels.004u.q8_market_share_ratio_by_year
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by, aggregate-ratio]
+    order: rowsort
+    # Completes the Q8 market-share kernel by evaluating arithmetic over two
+    # hidden aggregate slots in the grouped output projection.
+    sql: |-
+      select year(o.o_orderdate) as o_year,
+             sum(case when n2.n_name = 'BRAZIL'
+                      then l.l_extendedprice * (1 - l.l_discount)
+                      else 0 end) / sum(l.l_extendedprice * (1 - l.l_discount)) as mkt_share
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      inner join customer as c on c.c_custkey = o.o_custkey
+      inner join nation as n1 on n1.n_nationkey = c.c_nationkey
+      inner join region as r on r.r_regionkey = n1.n_regionkey
+      inner join supplier as s on s.s_suppkey = l.l_suppkey
+      inner join nation as n2 on n2.n_nationkey = s.s_nationkey
+      where r.r_name = 'AMERICA'
+        and p.p_type = 'ECONOMY ANODIZED STEEL'
+        and o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate <= '1996-12-31'
+      group by year(o.o_orderdate)
+    expect:
+      columns: [o_year, mkt_share]
+      rows:
+        - [1995, 0]
+        - [1996, 0]
+
+  - id: legacy_direct_tpch_kernels.004v.q9_green_part_line_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
+    # Q9's `p_name LIKE '%green%'` is a backing-string residual predicate. This
+    # case verifies it filters the parent `part` side before counting matching
+    # lineitem children.
+    sql: |-
+      select count(*) as green_part_line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_name like '%green%'
+    expect:
+      columns: [green_part_line_count]
+      rows:
+        - [3223]
+
+  - id: legacy_direct_tpch_kernels.004w.q9_green_part_order_line_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
+    # Extends the green-part residual filter through the Q9
+    # part -> lineitem -> orders graph count.
+    sql: |-
+      select count(*) as green_part_order_line_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      inner join orders as o on o.o_orderkey = l.l_orderkey
+      where p.p_name like '%green%'
+    expect:
+      columns: [green_part_order_line_count]
+      rows:
+        - [3223]
+
+  - id: legacy_direct_tpch_kernels.004x.q10_formal_revenue_by_customer_projection
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [legacy-direct, tpch-q10, relationship-vector-graph, time-range, string-filter, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, formal-projection]
+    # Formal Q10 projection over customer -> orders -> lineitem plus customer
+    # nation now preserves grouped customer BSI and text fields, including
+    # c_acctbal, c_address, c_phone, and c_comment.
+    sql: |-
+      select c.c_custkey,
+             c.c_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue,
+             c.c_acctbal,
+             n.n_name,
+             c.c_address,
+             c.c_phone,
+             c.c_comment
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      inner join nation as n on n.n_nationkey = c.c_nationkey
+      where o.o_orderdate >= '1993-10-01'
+        and o.o_orderdate < '1994-01-01'
+        and l.l_returnflag = 'R'
+      group by c.c_custkey, c.c_name, c.c_acctbal, n.n_name, c.c_address, c.c_phone, c.c_comment
+      order by revenue desc
+      limit 10
+    expect:
+      columns: [c_custkey, c_name, revenue, c_acctbal, n_name, c_address, c_phone, c_comment]
+      rows:
+        - [679, "Customer#000000679", 378211.32519999996, 1394.44, "IRAN", "IJf1FlZL9I9m,rvofcoKy5pRUOjUQV", "20-146-696-9508", "ely pending frays boost carefully"]
+        - [1201, "Customer#000001201", 374331.534, 5165.39, "IRAN", "LfCSVKWozyWOGDW02g9UX,XgH5YU2o5ql1zBrN", "20-825-400-1187", "lyly pending packages. special requests sleep-- platelets use blithely after the instructions. sometimes even id"]
+        - [422, "Customer#000000422", 366451.0126, 10213.62, "INDONESIA", "AyNzZBvmIDo42JtjP9xzaK3pnvkh Qc0o08ssnvq", "19-299-247-2444", "eposits; furiously ironic packages accordi"]
+        - [334, "Customer#000000334", 360370.75499999995, 10079.85, "EGYPT", "OPN1N7t4aQ23TnCpc", "14-947-291-5002", "fully busily special ideas. carefully final excuses lose slyly carefully express accounts. even, ironic platelets ar"]
+        - [805, "Customer#000000805", 359448.9036, 511.69, "IRAN", "wCKx5zcHvwpSffyc9qfi9dvqcm9LT,cLAG", "20-732-989-5653", "busy sentiments. pending packages haggle among the express requests-- slyly regular excuses above the slyl"]
+        - [932, "Customer#000000932", 341608.27530000004, 6553.37, "JORDAN", "HN9Ap0NsJG7Mb8O", "23-300-708-7927", "packages boost slyly along the furiously express foxes. ev"]
+        - [853, "Customer#000000853", 341236.6246, 10041.03, "BRAZIL", "U0 9PrwAgWK8AE0GHmnCGtH9BTexWWv87k", "12-869-161-3468", "yly special deposits wake alongside of"]
+        - [872, "Customer#000000872", 338328.7808, 9627.15, "PERU", "vLP7iNZBK4B,HANFTKabVI3AO Y9O8H", "27-357-139-7164", " detect. packages wake slyly express foxes. even deposits ru"]
+        - [737, "Customer#000000737", 338185.33650000003, 2501.74, "CHINA", "NdjG1k243iCLSoy1lYqMIrpvuH1Uf75", "28-658-938-1102", "ding to the final platelets. regular packages against the carefully final ideas hag"]
+        - [1118, "Customer#000001118", 319875.72799999994, 4130.18, "IRAQ", "QHg,DNvEVXaYoCdrywazjAJ", "21-583-715-8627", "y regular requests above the blithely ironic accounts use slyly bold packages: regular pinto beans eat carefully spe"]
+
+  - id: legacy_direct_tpch_kernels.005.q12_shipmode_in_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, string-filter, scalar-in, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      where l.l_shipmode in ('MAIL', 'SHIP')
+    expect:
+      columns: [line_count]
+      rows:
+        - [17151]
+
+  - id: legacy_direct_tpch_kernels.006.q12_receiptdate_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, time-range, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      where l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+    expect:
+      columns: [line_count]
+      rows:
+        - [9525]
+
+  - id: legacy_direct_tpch_kernels.007.q12_shipmode_receiptdate_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, string-filter, scalar-in, time-range, count]
+    sql: |-
+      select count(*) as line_count
+      from lineitem as l
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+    expect:
+      columns: [line_count]
+      rows:
+        - [2764]
+
+  - id: legacy_direct_tpch_kernels.008.q12_orders_lineitem_shipmode_receipt_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, count]
+    sql: |-
+      select count(*) as q12_join_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+    expect:
+      columns: [q12_join_count]
+      rows:
+        - [2764]
+
+  - id: legacy_direct_tpch_kernels.009.q12_orders_lineitem_shipmode_grouped_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, count]
+    # The date field comparisons mirror the formal Q12 lineitem predicate and
+    # now run as post-reduction residual filters over the joined rowset.
+    sql: |-
+      select l.l_shipmode, count(*) as line_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_commitdate < l.l_receiptdate
+        and l.l_shipdate < l.l_commitdate
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+      group by l.l_shipmode
+      order by l.l_shipmode
+    expect:
+      columns: [l_shipmode, line_count]
+      rows:
+        - [MAIL, 150]
+        - [SHIP, 157]
+
+  - id: legacy_direct_tpch_kernels.009a.q12_orders_lineitem_priority_case_counts
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, searched-case, conditional-aggregate]
+    # This staged kernel uses IN/NOT IN inside searched CASE to avoid the known
+    # parser corner around OR/AND inside aggregate CASE predicates.
+    sql: |-
+      select l.l_shipmode,
+             sum(case
+                   when o.o_orderpriority in ('1-URGENT', '2-HIGH')
+                   then 1 else 0 end) as high_line_count,
+             sum(case
+                   when o.o_orderpriority not in ('1-URGENT', '2-HIGH')
+                   then 1 else 0 end) as low_line_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+      group by l.l_shipmode
+      order by l.l_shipmode
+    expect:
+      columns: [l_shipmode, high_line_count, low_line_count]
+      rows:
+        - [MAIL, 547, 813]
+        - [SHIP, 559, 845]
+
+  - id: legacy_direct_tpch_kernels.009b.q12_orders_lineitem_formal_kernel_counts
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, field-comparison, grouped-aggregate, searched-case, conditional-aggregate]
+    # Combines the formal Q12 lineitem date-comparison predicates with the
+    # priority conditional aggregates. This keeps the CASE predicates in
+    # IN/NOT IN form; the exact formal OR/AND spelling remains a parser cleanup
+    # slice.
+    sql: |-
+      select l.l_shipmode,
+             sum(case
+                   when o.o_orderpriority in ('1-URGENT', '2-HIGH')
+                   then 1 else 0 end) as high_line_count,
+             sum(case
+                   when o.o_orderpriority not in ('1-URGENT', '2-HIGH')
+                   then 1 else 0 end) as low_line_count
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where l.l_shipmode in ('MAIL', 'SHIP')
+        and l.l_commitdate < l.l_receiptdate
+        and l.l_shipdate < l.l_commitdate
+        and l.l_receiptdate >= '1994-01-01'
+        and l.l_receiptdate < '1995-01-01'
+      group by l.l_shipmode
+      order by l.l_shipmode
+    expect:
+      columns: [l_shipmode, high_line_count, low_line_count]
+      rows:
+        - [MAIL, 64, 86]
+        - [SHIP, 61, 96]
+
+  - id: legacy_direct_tpch_kernels.009c.q13_customer_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q13, count]
+    # Legacy-direct requires an explicit predicate for a table scan; c_custkey
+    # covers the full customer key domain in the SF0.01 data.
+    sql: |-
+      select count(*) as customer_count
+      from customer
+      where c_custkey >= 1
+    expect:
+      columns: [customer_count]
+      rows:
+        - [1500]
+
+  - id: legacy_direct_tpch_kernels.009d.q13_customer_orders_grouped_count
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [legacy-direct, tpch-q13, relationship-vector-join, grouped-aggregate, count, order-by-aggregate, limit]
+    sql: |-
+      select c.c_custkey, count(*) as order_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      group by c.c_custkey
+      order by order_count desc, c.c_custkey
+      limit 10
+    expect:
+      columns: [c_custkey, order_count]
+      rows:
+        - [79, 32]
+        - [643, 32]
+        - [712, 32]
+        - [898, 32]
+        - [1282, 32]
+        - [4, 31]
+        - [73, 30]
+        - [334, 30]
+        - [1078, 30]
+        - [1213, 30]
+
+  - id: legacy_direct_tpch_kernels.009e.q13_special_request_comment_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q13, contains-like, residual-filter, count]
+    sql: |-
+      select count(*) as special_request_order_count
+      from orders
+      where o_comment like '%special%requests%'
+    expect:
+      columns: [special_request_order_count]
+      rows:
+        - [0]
+
+  - id: legacy_direct_tpch_kernels.009f.q13_left_outer_join_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q13, left-outer-join, null-extension, relationship-vector-join]
+    # Verifies the left-parent-preserving relationship-vector count kernel.
+    # Formal Q13 still needs projected null-extension and derived-table
+    # second-stage grouping after this boundary.
+    sql: |-
+      select count(*) as q13_left_join_count
+      from customer as c
+      left outer join orders as o
+        on o.o_custkey = c.c_custkey
+       and o.o_comment not like '%special%requests%'
+    expect:
+      columns: [q13_left_join_count]
+      rows:
+        - [15500]
+
+  - id: legacy_direct_tpch_kernels.009g.q14_conditional_promo_revenue_components
+    status: supported
+    kind: query
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate]
+    # Stages formal Q14 by verifying the conditional promo numerator and total
+    # discounted-revenue denominator. The final ratio projection is tracked below.
+    sql: |-
+      select sum(case
+          when p.p_type like 'PROMO%'
+          then l.l_extendedprice * (1 - l.l_discount)
+          else 0
+        end) as promo_revenue,
+        sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where l.l_shipdate >= '1995-09-01'
+        and l.l_shipdate < '1995-10-01'
+    expect:
+      columns: [promo_revenue, total_revenue]
+      rows:
+        - ["3.7728624032e+06", "2.4362194442399982e+07"]
+
+  - id: legacy_direct_tpch_kernels.009h.q14_formal_promo_revenue_ratio
+    status: supported
+    kind: query
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate, aggregate-ratio]
+    # Verifies final scalar projection over hidden aggregate numerator and
+    # denominator inputs for formal Q14.
+    sql: |-
+      select
+        100.00 * sum(case
+          when p.p_type like 'PROMO%'
+          then l.l_extendedprice * (1 - l.l_discount)
+          else 0
+        end) / sum(l.l_extendedprice * (1 - l.l_discount)) as promo_revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where l.l_shipdate >= '1995-09-01'
+        and l.l_shipdate < '1995-10-01'
+    expect:
+      columns: [promo_revenue]
+      rows:
+        - ["15.486545812284083"]
+
+  - id: legacy_direct_tpch_kernels.010.q11_partsupp_grouped_value_topn
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit, subsecond-kernel-expectation]
+    # Performance expectation: this kernel should remain sub-second on the
+    # local SF 0.01 TPCH data. Regressions usually mean grouped aggregate input
+    # vectors are being re-evaluated per group instead of precomputed once.
+    sql: |-
+      select ps_partkey,
+             sum(ps_supplycost * ps_availqty) as part_value
+      from partsupp
+      where ps_partkey >= 1
+      group by ps_partkey
+      having part_value > 100000
+      order by part_value desc
+      limit 10
+    expect:
+      columns: [ps_partkey, part_value]
+      rows:
+        - [25, 28323020.680000003]
+        - [670, 26342805.700000003]
+        - [124, 25962759.900000002]
+        - [222, 25172161.64]
+        - [1100, 24580969.03]
+        - [175, 23853953.63]
+        - [1616, 23096978.060000002]
+        - [1931, 22543021.8]
+        - [197, 22485519.67]
+        - [1312, 22472227.650000002]
+
+  - id: legacy_direct_tpch_kernels.011.q11_aggregate_expression_having
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [legacy-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, aggregate-expression-having, order-by-aggregate, limit, subsecond-kernel-expectation]
+    # Direct aggregate-expression HAVING now matches the alias HAVING shape.
+    sql: |-
+      select ps_partkey,
+             sum(ps_supplycost * ps_availqty) as part_value
+      from partsupp
+      where ps_partkey >= 1
+      group by ps_partkey
+      having sum(ps_supplycost * ps_availqty) > 100000
+      order by part_value desc
+      limit 10
+    expect:
+      columns: [ps_partkey, part_value]
+      rows:
+        - [25, 28323020.680000003]
+        - [670, 26342805.700000003]
+        - [124, 25962759.900000002]
+        - [222, 25172161.64]
+        - [1100, 24580969.03]
+        - [175, 23853953.63]
+        - [1616, 23096978.060000002]
+        - [1931, 22543021.8]
+        - [197, 22485519.67]
+        - [1312, 22472227.650000002]
+
+  - id: legacy_direct_tpch_kernels.012.q11_formal_scalar_subquery_threshold
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 30s
+    capabilities: [legacy-direct, tpch-q11, scalar-subquery, having, parser-boundary]
+    # Uncorrelated scalar aggregate HAVING subqueries are evaluated once and
+    # substituted as literal thresholds before the normal grouped aggregate path.
+    sql: |-
+      select ps.ps_partkey,
+             sum(ps.ps_supplycost * ps.ps_availqty) as part_value
+      from partsupp as ps
+      inner join supplier as s on s.s_suppkey = ps.ps_suppkey
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'GERMANY'
+      group by ps.ps_partkey
+      having part_value > (
+        select sum(ps2.ps_supplycost * ps2.ps_availqty) * 0.0001
+        from partsupp as ps2
+        inner join supplier as s2 on s2.s_suppkey = ps2.ps_suppkey
+        inner join nation as n2 on n2.n_nationkey = s2.s_nationkey
+        where n2.n_name = 'GERMANY'
+      )
+      order by part_value desc
+      limit 10
+    expect:
+      columns: [ps_partkey, part_value]
+      rows:
+        - ["1376", "1.327124989e+07"]
+        - ["788", "9.49864806e+06"]
+        - ["1071", "9.3882644e+06"]
+        - ["1768", "9.20719975e+06"]
+        - ["1168", "8.881908959999999e+06"]
+        - ["1084", "8.70949416e+06"]
+        - ["1415", "8.47148956e+06"]
+        - ["1338", "8.29384112e+06"]
+        - ["124", "8.2032093e+06"]
+        - ["1232", "8.11166334e+06"]
+
+  - id: legacy_direct_tpch_kernels.020.q15_grouped_supplier_revenue
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q15, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
+    sql: |-
+      select l_suppkey,
+             sum(l_extendedprice * (1 - l_discount)) as total_revenue
+      from lineitem
+      where l_shipdate >= '1996-01-01'
+        and l_shipdate < '1996-04-01'
+      group by l_suppkey
+      order by total_revenue desc
+      limit 10
+    expect:
+      columns: [l_suppkey, total_revenue]
+      rows:
+        - [21, 1161099.4635999997]
+        - [76, 1160415.8477000003]
+        - [92, 1133805.1938]
+        - [82, 1118706.9353]
+        - [49, 1110845.3527999998]
+        - [75, 1082371.8483]
+        - [46, 1066214.1999]
+        - [19, 1004953.5066000001]
+        - [7, 997177.6750000003]
+        - [56, 984793.1773000001]
+
+  - id: legacy_direct_tpch_kernels.021.q15_supplier_join_grouped_revenue
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, foundset-follow-up]
+    sql: |-
+      select s.s_suppkey, s.s_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      where l.l_shipdate >= '1996-01-01'
+        and l.l_shipdate < '1996-04-01'
+      group by s.s_suppkey, s.s_name
+      order by total_revenue desc
+      limit 10
+    expect:
+      columns: [s_suppkey, s_name, total_revenue]
+      rows:
+        - [21, "Supplier#000000021", 1161099.4635999997]
+        - [76, "Supplier#000000076", 1160415.8477000003]
+        - [92, "Supplier#000000092", 1133805.1938]
+        - [82, "Supplier#000000082", 1118706.9353]
+        - [49, "Supplier#000000049", 1110845.3527999998]
+        - [75, "Supplier#000000075", 1082371.8483]
+        - [46, "Supplier#000000046", 1066214.1999]
+        - [19, "Supplier#000000019", 1004953.5066000001]
+        - [7, "Supplier#000000007", 997177.6750000003]
+        - [56, "Supplier#000000056", 984793.1773000001]
+
+  - id: legacy_direct_tpch_kernels.022.q15_max_supplier_revenue
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, max-revenue]
+    # Stages the formal Q15 max-revenue supplier selection without requiring
+    # view/temp-table materialization. The top supplier is the max grouped
+    # revenue row for the lineitem date window.
+    sql: |-
+      select s.s_suppkey, s.s_name,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
+      from supplier as s
+      inner join lineitem as l on l.l_suppkey = s.s_suppkey
+      where l.l_shipdate >= '1996-01-01'
+        and l.l_shipdate < '1996-04-01'
+      group by s.s_suppkey, s.s_name
+      order by total_revenue desc
+      limit 1
+    expect:
+      columns: [s_suppkey, s_name, total_revenue]
+      rows:
+        - [21, "Supplier#000000021", 1161099.4635999997]
+
+  - id: legacy_direct_tpch_kernels.023.q17_brand_container_part_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q17, string-filter, count]
+    sql: |-
+      select count(*) as brand_container_part_count
+      from part
+      where p_brand = 'Brand#45'
+        and p_container = 'MED JAR'
+    expect:
+      columns: [brand_container_part_count]
+      rows:
+        - [8]
+
+  - id: legacy_direct_tpch_kernels.024.q17_brand_container_join_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q17, relationship-vector-join, string-filter, count]
+    sql: |-
+      select count(*) as brand_container_join_count
+      from part as p
+      inner join lineitem as l on l.l_partkey = p.p_partkey
+      where p.p_brand = 'Brand#45'
+        and p.p_container = 'MED JAR'
+    expect:
+      columns: [brand_container_join_count]
+      rows:
+        - [235]
+
+  - id: legacy_direct_tpch_kernels.025.q17_joined_yearly_extended_price
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q17, relationship-vector-join, string-filter, arithmetic-aggregate]
+    sql: |-
+      select sum(l.l_extendedprice) / 7.0 as avg_yearly
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#45'
+        and p.p_container = 'MED JAR'
+    expect:
+      columns: [avg_yearly]
+      rows:
+        - [1.2620656500000001e+06]
+
+  - id: legacy_direct_tpch_kernels.026.q17_formal_correlated_average_quantity
+    status: supported
+    kind: query
+    timeout: 120s
+    capabilities: [legacy-direct, tpch-q17, correlated-scalar-subquery, aggregate-subquery, parser-boundary]
+    # Q17's correlated average predicate is rewritten into per-part residual
+    # thresholds before the normal relationship-vector aggregate path.
+    sql: |-
+      select sum(l.l_extendedprice) / 7.0 as avg_yearly
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where p.p_brand = 'Brand#45'
+        and p.p_container = 'MED JAR'
+        and l.l_quantity < (
+          select 0.2 * avg(l2.l_quantity)
+          from lineitem as l2
+          where l2.l_partkey = p.p_partkey
+        )
+    expect:
+      columns: [avg_yearly]
+      rows:
+        - ["10321.16857142857"]
+
+  - id: legacy_direct_tpch_kernels.026a.q18_direct_lineitem_orderkey_grouping
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q18, relationship-column-grouping, grouped-aggregate, having, order-by-aggregate, limit, full-table-scan]
+    # Direct child-FK grouping now produces the same large-order keys as the
+    # joined Q18 kernel below. It remains intentionally marked as a heavier
+    # full-scan-style kernel because it groups all lineitem candidates.
+    sql: |-
+      select l.l_orderkey, sum(l.l_quantity) as sum_quantity
+      from lineitem as l
+      group by l.l_orderkey
+      having sum_quantity > 300
+      order by sum_quantity desc
+      limit 10
+    expect:
+      columns: [l_orderkey, sum_quantity]
+      rows:
+        - [29158, 305]
+        - [6882, 303]
+
+  - id: legacy_direct_tpch_kernels.026b.q18_joined_large_order_grouping
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 45s
+    capabilities: [legacy-direct, tpch-q18, relationship-vector-join, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
+    sql: |-
+      select o.o_orderkey, sum(l.l_quantity) as sum_quantity
+      from orders as o
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      group by o.o_orderkey
+      having sum_quantity > 300
+      order by sum_quantity desc
+      limit 10
+    expect:
+      columns: [o_orderkey, sum_quantity]
+      rows:
+        - [29158, 305]
+        - [6882, 303]
+
+  - id: legacy_direct_tpch_kernels.026c.q18_customer_large_order_projection
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q18, relationship-vector-graph, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, formal-projection, limit]
+    sql: |-
+      select c.c_name, c.c_custkey, o.o_orderkey, o.o_orderdate, o.o_totalprice,
+             sum(l.l_quantity) as sum_quantity
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      group by c.c_name, c.c_custkey, o.o_orderkey, o.o_orderdate, o.o_totalprice
+      having sum_quantity > 300
+      order by o.o_totalprice desc, o.o_orderdate
+      limit 10
+    expect:
+      columns: [c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice, sum_quantity]
+      rows:
+        - ["Customer#000000667", 667, 29158, "1995-10-21T06:00:00Z", 439687.23, 305]
+        - ["Customer#000000178", 178, 6882, "1997-04-09T06:00:00Z", 422359.65, 303]
+
+  - id: legacy_direct_tpch_kernels.026d.q19_formal_discounted_revenue
+    status: supported
+    kind: query
+    timeout: 180s
+    capabilities: [legacy-direct, tpch-q19, relationship-vector-join, mixed-table-or, scalar-in, arithmetic-aggregate, grouped-boolean-lowering]
+    # Q19 proves the formal mixed-table OR revenue shape. The grouped filter
+    # tree now targets the lineitem child domain and uses constrained
+    # branch-local evaluation so the final join materialization is narrow.
+    sql: |-
+      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from lineitem as l
+      inner join part as p on p.p_partkey = l.l_partkey
+      where
+        (
+          p.p_brand = 'Brand#12'
+          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+          and l.l_quantity >= 1
+          and l.l_quantity <= 11
+          and p.p_size >= 1
+          and p.p_size <= 5
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#23'
+          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+          and l.l_quantity >= 10
+          and l.l_quantity <= 20
+          and p.p_size >= 1
+          and p.p_size <= 10
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+        or
+        (
+          p.p_brand = 'Brand#34'
+          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+          and l.l_quantity >= 20
+          and l.l_quantity <= 30
+          and p.p_size >= 1
+          and p.p_size <= 15
+          and l.l_shipmode in ('AIR', 'AIR REG')
+          and l.l_shipinstruct = 'DELIVER IN PERSON'
+        )
+    expect:
+      columns: [revenue]
+      rows:
+        - ["22923.028"]
+
+  - id: legacy_direct_tpch_kernels.027.q20_canada_supplier_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q20, relationship-vector-join, string-filter, count]
+    sql: |-
+      select count(*) as canada_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'CANADA'
+    expect:
+      columns: [canada_supplier_count]
+      rows:
+        - [3]
+
+  - id: legacy_direct_tpch_kernels.028.q20_forest_part_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q20, contains-like, residual-filter, full-domain-seed, count]
+    # The full-domain p_partkey predicate seeds legacy-direct execution before
+    # applying the backing-string residual p_name LIKE predicate.
+    sql: |-
+      select count(*) as forest_part_count
+      from part
+      where p_partkey >= 1
+        and p_name like 'forest%'
+    expect:
+      columns: [forest_part_count]
+      rows:
+        - [16]
+
+  - id: legacy_direct_tpch_kernels.029.q20_forest_partsupp_join_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q20, relationship-vector-join, contains-like, residual-filter, full-domain-seed, count]
+    sql: |-
+      select count(*) as forest_partsupp_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_partkey >= 1
+        and p.p_name like 'forest%'
+    expect:
+      columns: [forest_partsupp_count]
+      rows:
+        - [64]
+
+  - id: legacy_direct_tpch_kernels.029a.q20_shipped_quantity_grouped
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [legacy-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
+    sql: |-
+      select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
+      from lineitem
+      where l_shipdate >= '1994-01-01'
+        and l_shipdate < '1995-01-01'
+      group by l_partkey, l_suppkey
+      order by shipped_qty desc
+      limit 10
+    expect:
+      columns: [l_partkey, l_suppkey, shipped_qty]
+      rows:
+        - [1140, 41, 227]
+        - [1341, 56, 201]
+        - [662, 25, 197]
+        - [319, 4, 196]
+        - [1966, 11, 191]
+        - [1584, 85, 190]
+        - [574, 35, 188]
+        - [1274, 12, 176]
+        - [807, 74, 167]
+        - [1033, 34, 164]
+
+  - id: legacy_direct_tpch_kernels.029b.q20_shipped_quantity_fixed_having
+    status: supported
+    kind: query
+    order: rowsort
+    capabilities: [legacy-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
+    sql: |-
+      select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
+      from lineitem
+      where l_shipdate >= '1994-01-01'
+        and l_shipdate < '1995-01-01'
+      group by l_partkey, l_suppkey
+      having shipped_qty > 150
+      order by shipped_qty desc
+      limit 10
+    expect:
+      columns: [l_partkey, l_suppkey, shipped_qty]
+      rows:
+        - [1140, 41, 227]
+        - [1341, 56, 201]
+        - [662, 25, 197]
+        - [319, 4, 196]
+        - [1966, 11, 191]
+        - [1584, 85, 190]
+        - [574, 35, 188]
+        - [1274, 12, 176]
+        - [807, 74, 167]
+        - [1033, 34, 164]
+
+  - id: legacy_direct_tpch_kernels.029c.q20_forest_partsupp_membership_subquery
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q20, semi-membership, subquery-filter, parser, full-domain-seed, count]
+    # Verifies IN (SELECT ...) membership with an inner subquery AND predicate.
+    sql: |-
+      select count(*) as forest_partsupp_count
+      from partsupp
+      where ps_partkey in (
+        select p_partkey
+        from part
+        where p_partkey >= 1
+          and p_name like 'forest%'
+      )
+    expect:
+      columns: [forest_partsupp_count]
+      rows:
+        - [64]
+
+  - id: legacy_direct_tpch_kernels.029d.q21_saudi_supplier_count
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q21, relationship-vector-join, string-filter, count]
+    sql: |-
+      select count(*) as saudi_supplier_count
+      from supplier as s
+      inner join nation as n on n.n_nationkey = s.s_nationkey
+      where n.n_name = 'SAUDI ARABIA'
+    expect:
+      columns: [saudi_supplier_count]
+      rows:
+        - [1]
+
+  - id: legacy_direct_tpch_kernels.029e.q21_f_status_order_count
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q21, single-table, string-filter, count]
+    sql: |-
+      select count(*) as f_status_order_count
+      from orders
+      where o_orderstatus = 'F'
+    expect:
+      columns: [f_status_order_count]
+      rows:
+        - [7304]
+
+  - id: legacy_direct_tpch_kernels.029f.q21_late_receipt_line_count
+    status: supported
+    kind: query
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q21, single-table, field-comparison, count]
+    sql: |-
+      select count(*) as late_receipt_line_count
+      from lineitem
+      where l_receiptdate > l_commitdate
+    expect:
+      columns: [late_receipt_line_count]
+      rows:
+        - [37897]
+
+  - id: legacy_direct_tpch_kernels.029g.q21_saudi_late_supplier_wait_count
+    status: supported
+    kind: query
+    order: rowsort
+    timeout: 90s
+    capabilities: [legacy-direct, tpch-q21, relationship-vector-graph, field-comparison, string-filter, grouped-aggregate, order-by-aggregate, limit]
+    # The graph produces 279 Saudi/F-order candidate rows before the lineitem
+    # date residual; 182 rows satisfy l_receiptdate > l_commitdate.
+    sql: |-
+      select s.s_name, count(*) as numwait
+      from supplier as s
+      inner join lineitem as l1 on s.s_suppkey = l1.l_suppkey
+      inner join orders as o on o.o_orderkey = l1.l_orderkey
+      inner join nation as n on s.s_nationkey = n.n_nationkey
+      where o.o_orderstatus = 'F'
+        and l1.l_receiptdate > l1.l_commitdate
+        and n.n_name = 'SAUDI ARABIA'
+      group by s.s_name
+      order by numwait desc, s.s_name
+      limit 10
+    expect:
+      columns: [s_name, numwait]
+      rows:
+        - ["Supplier#000000074", 182]
+
+  - id: legacy_direct_tpch_kernels.029h.q22_phone_prefix_or_count
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q22, single-table, function-expression, residual-filter, or-predicate, full-domain-seed, grouped-boolean-lowering]
+    # Seeded phone-prefix OR lowers as a bitmap seed plus grouped residual predicate.
+    sql: |-
+      select count(*) as phone_prefix_count
+      from customer
+      where c_custkey >= 1
+        and (
+          substr(c_phone, 1, 2) = '13'
+          or substr(c_phone, 1, 2) = '31'
+          or substr(c_phone, 1, 2) = '23'
+          or substr(c_phone, 1, 2) = '29'
+          or substr(c_phone, 1, 2) = '30'
+          or substr(c_phone, 1, 2) = '18'
+          or substr(c_phone, 1, 2) = '17'
+        )
+    expect:
+      columns: [phone_prefix_count]
+      rows:
+        - [429]
+
+  - id: legacy_direct_tpch_kernels.029i.q22_customer_without_orders_count
+    status: supported
+    kind: query
+    timeout: 60s
+    capabilities: [legacy-direct, tpch-q22, anti-membership, subquery-filter, full-domain-seed, count]
+    sql: |-
+      select count(*) as customer_without_orders_count
+      from customer
+      where c_custkey >= 1
+        and c_custkey not in (
+          select o_custkey
+          from orders
+        )
+    expect:
+      columns: [customer_without_orders_count]
+      rows:
+        - [500]
+
+  - id: legacy_direct_tpch_kernels.030.q16_part_filter_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, string-filter, residual-not-like, scalar-in, count]
+    sql: |-
+      select count(*) as part_count
+      from part
+      where p_brand <> 'Brand#45'
+        and p_type not like 'MEDIUM POLISHED%'
+        and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+    expect:
+      columns: [part_count]
+      rows:
+        - [299]
+
+  - id: legacy_direct_tpch_kernels.040.q16_part_filter_grouped_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, string-filter, residual-not-like, scalar-in, grouped-aggregate, count, order-by-aggregate, limit]
+    sql: |-
+      select p_brand, p_type, p_size, count(*) as part_count
+      from part
+      where p_brand <> 'Brand#45'
+        and p_type not like 'MEDIUM POLISHED%'
+        and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p_brand, p_type, p_size
+      order by part_count desc, p_brand, p_type, p_size
+      limit 10
+    expect:
+      columns: [p_brand, p_type, p_size, part_count]
+      rows:
+        - [Brand#14, PROMO BRUSHED STEEL, 9, 2]
+        - [Brand#22, LARGE BURNISHED TIN, 36, 2]
+        - [Brand#35, SMALL POLISHED COPPER, 14, 2]
+        - [Brand#11, ECONOMY BURNISHED NICKEL, 49, 1]
+        - [Brand#11, LARGE PLATED TIN, 23, 1]
+        - [Brand#11, MEDIUM ANODIZED BRASS, 45, 1]
+        - [Brand#11, MEDIUM BRUSHED BRASS, 45, 1]
+        - [Brand#11, PROMO ANODIZED BRASS, 3, 1]
+        - [Brand#11, PROMO ANODIZED BRASS, 49, 1]
+        - [Brand#11, PROMO ANODIZED TIN, 45, 1]
+
+  - id: legacy_direct_tpch_kernels.050.q16_part_partsupp_filtered_join_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, count]
+    sql: |-
+      select count(*) as join_count
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+    expect:
+      columns: [join_count]
+      rows:
+        - [1196]
+
+  - id: legacy_direct_tpch_kernels.055.q16_part_partsupp_filtered_projection
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, projection, limit]
+    sql: |-
+      select p.p_brand, ps.ps_suppkey
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      limit 10
+    expect:
+      columns: [p_brand, ps_suppkey]
+      row_count: 10
+
+  - id: legacy_direct_tpch_kernels.060.q16_part_partsupp_distinct_supplier_count
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, grouped-aggregate, count-distinct, order-by-aggregate, limit]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size,
+             count(distinct ps.ps_suppkey) as supplier_cnt
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_cnt desc, p.p_brand, p.p_type, p.p_size
+      limit 10
+    expect:
+      columns: [p_brand, p_type, p_size, supplier_cnt]
+      rows:
+        - [Brand#14, PROMO BRUSHED STEEL, 9, 8]
+        - [Brand#35, SMALL POLISHED COPPER, 14, 8]
+        - [Brand#22, LARGE BURNISHED TIN, 36, 6]
+        - [Brand#11, ECONOMY BURNISHED NICKEL, 49, 4]
+        - [Brand#11, LARGE PLATED TIN, 23, 4]
+        - [Brand#11, MEDIUM ANODIZED BRASS, 45, 4]
+        - [Brand#11, MEDIUM BRUSHED BRASS, 45, 4]
+        - [Brand#11, PROMO ANODIZED BRASS, 3, 4]
+        - [Brand#11, PROMO ANODIZED BRASS, 49, 4]
+        - [Brand#11, PROMO ANODIZED TIN, 45, 4]
+
+  - id: legacy_direct_tpch_kernels.070.q16_complaint_supplier_filter
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, anti-membership, subquery-filter, residual-like, count]
+    sql: |-
+      select count(*) as clean_partsupp_count
+      from partsupp as ps
+      where ps.ps_partkey >= 1
+        and ps.ps_suppkey not in (
+          select s_suppkey
+          from supplier
+          where s_comment like '%Customer%Complaints%'
+        )
+    expect:
+      columns: [clean_partsupp_count]
+      rows:
+        - [8000]
+
+  - id: legacy_direct_tpch_kernels.080.q16_supplier_nation_partsupp_semi_membership
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, semi-membership, subquery-filter, scalar-in, count]
+    sql: |-
+      select count(*) as supplier_nation_partsupp_count
+      from partsupp as ps
+      where ps.ps_partkey >= 1
+        and ps.ps_suppkey in (
+          select s_suppkey
+          from supplier
+          where s_nationkey in (1, 2, 3)
+        )
+    expect:
+      columns: [supplier_nation_partsupp_count]
+      rows:
+        - [640]
+
+  - id: legacy_direct_tpch_kernels.090.q16_supplier_nation_partsupp_anti_membership
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, anti-membership, subquery-filter, scalar-in, count]
+    sql: |-
+      select count(*) as non_supplier_nation_partsupp_count
+      from partsupp as ps
+      where ps.ps_partkey >= 1
+        and ps.ps_suppkey not in (
+          select s_suppkey
+          from supplier
+          where s_nationkey in (1, 2, 3)
+        )
+    expect:
+      columns: [non_supplier_nation_partsupp_count]
+      rows:
+        - [7360]
+
+  - id: legacy_direct_tpch_kernels.100.q16_distinct_supplier_count_without_complaints
+    status: supported
+    kind: query
+    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, anti-membership, subquery-filter, grouped-aggregate, count-distinct, order-by-aggregate, limit]
+    sql: |-
+      select p.p_brand, p.p_type, p.p_size,
+             count(distinct ps.ps_suppkey) as supplier_cnt
+      from part as p
+      inner join partsupp as ps on ps.ps_partkey = p.p_partkey
+      where p.p_brand <> 'Brand#45'
+        and p.p_type not like 'MEDIUM POLISHED%'
+        and p.p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+        and ps.ps_suppkey not in (
+          select s_suppkey
+          from supplier
+          where s_comment like '%Customer%Complaints%'
+        )
+      group by p.p_brand, p.p_type, p.p_size
+      order by supplier_cnt desc, p.p_brand, p.p_type, p.p_size
+      limit 10
+    expect:
+      columns: [p_brand, p_type, p_size, supplier_cnt]
+      rows:
+        - [Brand#14, PROMO BRUSHED STEEL, 9, 8]
+        - [Brand#35, SMALL POLISHED COPPER, 14, 8]
+        - [Brand#22, LARGE BURNISHED TIN, 36, 6]
+        - [Brand#11, ECONOMY BURNISHED NICKEL, 49, 4]
+        - [Brand#11, LARGE PLATED TIN, 23, 4]
+        - [Brand#11, MEDIUM ANODIZED BRASS, 45, 4]
+        - [Brand#11, MEDIUM BRUSHED BRASS, 45, 4]
+        - [Brand#11, PROMO ANODIZED BRASS, 3, 4]
+        - [Brand#11, PROMO ANODIZED BRASS, 49, 4]
+        - [Brand#11, PROMO ANODIZED TIN, 45, 4]

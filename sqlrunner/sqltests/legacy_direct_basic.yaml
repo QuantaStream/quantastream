@@ -1,0 +1,77 @@
+version: 1
+name: legacy_direct_basic
+tests:
+  - id: legacy_direct_basic.part_size_filter_count
+    kind: query
+    sql: |
+      select count(*) as part_count
+      from part
+      where p_size in (3, 9, 14);
+    expect:
+      columns: ["part_count"]
+      types: ["BIGINT"]
+      rows:
+        - [112]
+
+  - id: legacy_direct_basic.part_type_filter_count
+    kind: query
+    sql: |
+      select count(*) as part_count
+      from part
+      where p_type in ('PROMO BURNISHED COPPER', 'SMALL BRUSHED BRASS');
+    expect:
+      columns: ["part_count"]
+      types: ["BIGINT"]
+      rows:
+        - [24]
+
+  - id: legacy_direct_basic.part_multi_column_projection
+    kind: query
+    sql: |
+      select p_size, p_type
+      from part
+      where p_size = 14
+      limit 2;
+    expect:
+      columns: ["p_size", "p_type"]
+      types: ["BIGINT", "VARCHAR"]
+      rows:
+        - [14, "SMALL PLATED BRASS"]
+        - [14, "MEDIUM ANODIZED BRASS"]
+
+  - id: legacy_direct_basic.part_projection_limit_offset
+    kind: query
+    sql: |
+      select p_size, p_type
+      from part
+      where p_type = 'PROMO BURNISHED COPPER'
+      limit 1 offset 1;
+    expect:
+      columns: ["p_size", "p_type"]
+      types: ["BIGINT", "VARCHAR"]
+      rows:
+        - [45, "PROMO BURNISHED COPPER"]
+
+  - id: legacy_direct_basic.part_size_sum
+    kind: query
+    sql: |
+      select sum(p_size) as size_sum
+      from part
+      where p_size = 14;
+    expect:
+      columns: ["size_sum"]
+      types: ["DOUBLE"]
+      rows:
+        - [518]
+
+  - id: legacy_direct_basic.part_size_avg
+    kind: query
+    sql: |
+      select avg(p_size) as avg_size
+      from part
+      where p_size in (3, 9, 14);
+    expect:
+      columns: ["avg_size"]
+      types: ["DOUBLE"]
+      rows:
+        - [8.723214285714286]

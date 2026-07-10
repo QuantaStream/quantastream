@@ -1,0 +1,114 @@
+version: 1
+name: runtime_smoke
+tests:
+  - id: runtime_smoke.001.project_order_keys
+    status: supported
+    sql: |
+      select o_orderkey
+      from orders
+    expect:
+      columns: [o_orderkey]
+      types: [BIGINT]
+      rows:
+        - [1001]
+        - [1002]
+        - [1003]
+
+  - id: runtime_smoke.002.filter_order_key_ge
+    status: supported
+    sql: |
+      select o_orderkey, o_custkey
+      from orders
+      where o_orderkey >= 1002
+    expect:
+      columns: [o_orderkey, o_custkey]
+      types: [BIGINT, BIGINT]
+      rows:
+        - [1002, 502]
+        - [1003, 501]
+
+  - id: runtime_smoke.003.filter_order_key_eq
+    status: supported
+    sql: |
+      select o_orderpriority
+      from orders
+      where o_orderkey = 1003
+    expect:
+      columns: [o_orderpriority]
+      types: [VARCHAR]
+      rows:
+        - [5-LOW]
+
+  - id: runtime_smoke.004.filter_order_key_lt
+    status: supported
+    sql: |
+      select o_orderkey
+      from orders
+      where o_orderkey < 1003
+    expect:
+      columns: [o_orderkey]
+      types: [BIGINT]
+      rows:
+        - [1001]
+        - [1002]
+
+  - id: runtime_smoke.005.order_by_desc_limit
+    status: supported
+    sql: |
+      select o_orderkey
+      from orders
+      order by o_orderkey desc
+      limit 2
+    expect:
+      columns: [o_orderkey]
+      types: [BIGINT]
+      rows:
+        - [1003]
+        - [1002]
+
+  - id: runtime_smoke.006.order_by_limit_offset
+    status: supported
+    sql: |
+      select o_orderkey
+      from orders
+      order by o_orderkey
+      limit 1 offset 1
+    expect:
+      columns: [o_orderkey]
+      types: [BIGINT]
+      rows:
+        - [1002]
+
+  - id: runtime_smoke.007.count_all
+    status: supported
+    sql: |
+      select count(*) as order_count
+      from orders
+    expect:
+      columns: [order_count]
+      types: [BIGINT]
+      rows:
+        - [3]
+
+  - id: runtime_smoke.008.filtered_count
+    status: supported
+    sql: |
+      select count(*) as order_count
+      from orders
+      where o_custkey = 501
+    expect:
+      columns: [order_count]
+      types: [BIGINT]
+      rows:
+        - [2]
+
+  - id: runtime_smoke.009.sum_totalprice
+    status: supported
+    sql: |
+      select sum(o_totalprice) as total_price
+      from orders
+    expect:
+      columns: [total_price]
+      types: [DOUBLE]
+      rows:
+        - [393.5]
