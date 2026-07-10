@@ -324,10 +324,12 @@ compatibility:
 - cache small authorization metadata in memory after loading it from the
   authoritative metadata store
 
-The existing `rbac` package and `quanta-rbac-util` show the intended role
-concepts, but the role store, proxy handshake, token exchange, and MySQL session
-semantics should be reworked together. Avoid papering over the current behavior
-with more hard-coded usernames, passwords, or `database()` responses.
+The historical RBAC implementation has been quarantined under `_quarantine/rbac`
+for short-term reference and is no longer part of the active core build. Role
+concepts may inform the replacement, but the role store, proxy handshake, token
+exchange, and MySQL session semantics should be reworked together in the
+qsbridge-based MySQL-compatible auth path. Avoid papering over historical
+behavior with more hard-coded usernames, passwords, or `database()` responses.
 
 ## Deployment Validation
 

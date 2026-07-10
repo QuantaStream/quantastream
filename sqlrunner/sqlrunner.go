@@ -11,7 +11,6 @@ import (
 
 	u "github.com/araddon/gou"
 
-	"github.com/QuantaStream/quantastream/rbac"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
 	"github.com/QuantaStream/quantastream/test"
@@ -293,20 +292,11 @@ func initializeCluster(consul string) (*shared.KVStore, error) {
 	return sharedKV, nil
 }
 
-func grantSQLRunnerRoles(sharedKV *shared.KVStore) error {
-	ctx, err := rbac.NewAuthContext(sharedKV, "USER001", true)
-	if err != nil {
-		return err
-	}
-	if err := ctx.GrantRole(rbac.DomainUser, "USER001", "quanta", true); err != nil {
-		return err
-	}
-
-	ctx, err = rbac.NewAuthContext(sharedKV, "MOLIG004", true)
-	if err != nil {
-		return err
-	}
-	return ctx.GrantRole(rbac.DomainUser, "MOLIG004", "quanta", true)
+func grantSQLRunnerRoles(_ *shared.KVStore) error {
+	// The historical KVStore-backed RBAC seed path is quarantined.
+	// MySQL-compatible authentication and authorization will be owned by
+	// the qsbridge session and protocol stack instead of this proxy-era hook.
+	return nil
 }
 
 func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration) error {

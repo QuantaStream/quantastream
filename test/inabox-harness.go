@@ -18,11 +18,10 @@ import (
 
 	"github.com/QuantaStream/quantastream/core"
 	admin "github.com/QuantaStream/quantastream/quanta-admin-lib"
-	u "github.com/araddon/gou"
-	//"github.com/QuantaStream/quantastream/rbac"
 	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"
+	u "github.com/araddon/gou"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/hashicorp/consul/api"
 )
@@ -577,24 +576,6 @@ func local_Ensure_cluster(count int, state *ClusterLocalState) {
 		// need to sort this out and just have one
 
 		fmt.Println("consul status ", sharedKV.Consul.Status())
-
-		/*
-			fmt.Println("before rbac.NewAuthContext in inabox-harness driver.go")
-
-			ctx, err := rbac.NewAuthContext(sharedKV, "USER001", true)
-			if err != nil {
-				log.Fatal(err)
-			}
-			err = ctx.GrantRole(rbac.DomainUser, "USER001", "quanta", true)
-			check(err)
-
-			ctx, err = rbac.NewAuthContext(sharedKV, "MOLIG004", true)
-			if err != nil {
-				log.Fatal(err)
-			}
-			err = ctx.GrantRole(rbac.SystemAdmin, "MOLIG004", "quanta", true)
-			check(err)
-		*/
 
 		state.weStartedTheCluster = true
 	} else {
