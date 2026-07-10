@@ -1,112 +1,173 @@
-# Quanta Overview
+# QuantaStream
 
-*Quanta* is an open-source, generalized HTAP (Hybrid Transactional/Analytical Processing) database engine built on the Roaring Bitmap libraries. Designed as a highly performant alternative to traditional databases, *Quanta* emulates a subset of the MySQL networking protocol, providing compatibility with many MySQL drivers and tools. While it doesn’t support transactions or stored procedures, *Quanta* enables access to a wide ecosystem of MySQL-compatible resources and does support user-defined functions (UDFs).
+QuantaStream is a bitmap-native analytical database engine being prepared for an open-source 1.0 release. It is designed to execute SQL over compressed bitmap and BSI-backed data structures, with late materialization and relationship-vector joins used wherever possible instead of row-by-row processing.
 
-The primary advantage of *Quanta* is its ability to provide subsecond access to large datasets with real-time updates. Data is compressed upon import and accessed directly in this format, allowing for high-performance querying on highly compressed data. Additionally, *Quanta* manages high cardinality strings by storing them in a distributed, persistent hashtable across Data Nodes. The architecture is similar to Apache Cassandra, allowing for both scalability and fault tolerance, with a future roadmap goal to enable active/active high availability and disaster recovery across multiple data centers.
+The project exposes a MySQL-compatible SQL surface so existing tools and drivers can connect through familiar protocols, while the engine underneath is optimized for analytical filtering, joins, aggregation, categorical distribution analysis, and live-ingest-friendly workloads.
 
-## Architecture
+QuantaStream is currently in private pre-1.0 development. The public-facing documentation in this repository describes the intended core product, current development direction, and the local Quanta-in-a-Box workflow that will anchor the first release.
 
-The architecture of *Quanta* supports horizontal scalability, low-latency access, and efficient data ingestion and querying. Here are the core components:
+## Why QuantaStream
 
-- **Client Applications**: Applications connect to *Quanta* using industry-standard MySQL drivers, which communicate with the Query Processor via a Network Load Balancer.
+Traditional databases usually optimize around row storage, indexes, and tuple-oriented execution. QuantaStream starts from a different assumption: analytical workloads often want to reduce large sets quickly, combine those sets, and materialize only the final values needed by the user.
 
-- **Query Processor (Proxy)**: This component handles SQL queries from client applications. Multiple instances of the Query Processor are deployed for scalability, and a load balancer distributes MySQL connections across all instances. Each Query Processor can connect to all active Data Nodes, where data is transmitted as serialized byte arrays representing compressed bitmaps. The Query Processor re-hydrates these bitmaps and performs bitmap operations (e.g., AND, OR, difference) to deliver the final query response.
+QuantaStream represents data using bitmap-oriented structures, including Roaring Bitmaps and Bit-Sliced Indexes. This allows the engine to answer many predicates and joins as set operations over compressed data:
 
-- **Data Nodes**: These nodes form the primary storage and processing layer, organized as a cluster to handle data ingestion and retrieval tasks. Data Nodes communicate with the Query Processor via gRPC, sending compact byte arrays to optimize network load. *Quanta* also stores high cardinality strings in a distributed hashtable across Data Nodes for efficient retrieval.
+- bitmap intersections, unions, and differences for filtering and boolean logic
+- BSI operations for numeric, timestamp, and relationship-vector work
+- dictionary-backed low-cardinality string handling for categorical data
+- late materialization of strings and scalar values after set reduction
+- relationship-vector traversal for parent/child joins
 
-- **Kinesis Consumers**: The Kinesis Consumers ingest data streams from Amazon Kinesis, communicating with the Data Nodes via gRPC. They transform incoming data into bitmaps, buffer and aggregate them with OR operations, and then send the results to the appropriate Data Nodes for storage. This approach allows *Quanta* to pre-aggregate data efficiently before it reaches the Data Nodes.
+The long-term goal is an engine that feels accessible through ordinary SQL while taking advantage of bitmap algebra internally.
 
-- **Consul (Service Discovery and Metadata Storage)**: Consul enables service discovery by identifying the network endpoints of active Data Nodes, which are then accessible to upstream components like the Query Processors and Kinesis Consumers. Consul also leverages a key/value store to manage schema metadata for tables and fields, enabling consistent access to schema information across the system.
+## Current Status
+
+QuantaStream is not yet a public 1.0 release. The project is actively consolidating the core engine, SQL planner, execution runtime, schema model, and local deployment story.
+
+Current development focus:
+
+- Quanta-in-a-Box as the default local development and demo environment
+- qsbridge-based SQL planning and execution
+- MySQL-compatible protocol, session, and authentication work
+- SQLRunner-based correctness suites
+- TPC-H-oriented analytical validation
+- schema documentation for bitmap-native data representation
+- cleanup of historical Quanta code paths as the QuantaStream engine stabilizes
+
+The repository is intentionally being simplified so the eventual public release is a complete and useful core product, not a limited community edition.
+
+## Architecture At A Glance
+
+QuantaStream separates SQL-facing planning from bitmap-native storage and execution.
+
+Core components:
+
+- **SQL and planner layer:** Parses SQL, builds query intent, validates supported shapes, and coordinates execution.
+- **Execution runtime:** Applies bitmap, BSI, relationship-vector, aggregate, and materialization kernels.
+- **Data nodes:** Own shards and store bitmap/BSI-backed column data and supporting persisted values.
+- **Consul metadata and discovery:** Provides cluster coordination, service discovery, and schema metadata storage in the current distributed model.
+- **Quanta-in-a-Box:** Runs the local development topology in one process while preserving the same conceptual node/query boundaries.
+
+QuantaStream is designed so Quanta-in-a-Box can be productive for small deployments and demos, while the same core architecture can grow toward multi-node distributed deployments.
+
+For a deeper architectural overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## SQL Surface
+
+QuantaStream targets a practical analytical SQL subset rather than immediate full MySQL compatibility. The MySQL protocol matters because it makes the engine accessible from familiar tools and drivers; SQL semantics are being expanded deliberately through test coverage.
+
+Current SQL work includes:
+
+- projections, filters, ordering, limits, and offsets
+- joins over relationship vectors
+- grouping and aggregate execution
+- function expressions in select lists and predicates
+- subquery and membership shapes used by analytical workloads
+- QuantaStream-specific functions such as `topn(...)`
+- TPC-H query-shape coverage through SQLRunner suites
+
+Supported behavior is tracked in [docs/SUPPORTED_SQL.md](docs/SUPPORTED_SQL.md). Known gaps are tracked in [docs/UNSUPPORTED_SQL.md](docs/UNSUPPORTED_SQL.md).
+
+## Schema Model
+
+QuantaStream schemas are explicit about how data should be represented. A field is not just a SQL type; it also declares the storage representation used by the bitmap engine.
+
+Examples include:
+
+- standard bitmaps for low-cardinality values
+- StringEnum dictionaries for categorical strings
+- BSI-backed integers, floating point values, and timestamps
+- relationship-vector fields for parent/child table traversal
+- backing storage for high-cardinality strings
+- scalar versus set multiplicity for multi-valued fields
+
+This schema-first design is central to QuantaStream performance. See [docs/SCHEMA_DESIGN.md](docs/SCHEMA_DESIGN.md) for details.
+
+## Quanta-in-a-Box
+
+Quanta-in-a-Box is the primary near-term development and validation environment. It runs the local cluster shape needed for demos, SQL conformance work, and TPC-H experimentation without requiring a full distributed deployment.
+
+Recommended environment:
+
+- Linux or WSL2
+- Go 1.22+
+- HashiCorp Consul
+- 16 GB RAM minimum, 32 GB recommended for TPC-H experimentation
+
+Start with [docs/QUICKSTART.md](docs/QUICKSTART.md). Deployment assumptions and production-readiness notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Validation And Benchmarks
+
+QuantaStream uses SQLRunner suites to lock down SQL behavior and result correctness. TPC-H is the primary analytical validation roadmap, first for correctness and capability coverage, then for performance work.
+
+The TPC-H roadmap tracks supported query shapes, staged probes, and remaining blockers across Q1-Q22. See [docs/TPCH.md](docs/TPCH.md).
+
+## Driver And Tool Compatibility
+
+The goal is broad compatibility with standard MySQL client tooling and network drivers. Existing and target client ecosystems include:
+
+- Go SQL drivers
+- Java/JDBC
+- Python MySQL connectors
+- Node.js MySQL clients
+- MySQL command-line tools
+
+The compatibility plan is documented in [docs/MYSQL-COMPATIBILITY.md](docs/MYSQL-COMPATIBILITY.md).
 
 ## Roadmap
 
-*Quanta*'s roadmap focuses on expanding SQL capabilities, scalability, and performance optimization. Key goals include:
+### 1.0: Core QuantaStream
 
-1. **Enhanced SQL Support**: Adding support for SQL features like GROUP BY, HAVING clauses, and multiple aggregations in the SELECT list to enable complex analytical queries, particularly for TPC-H benchmarking.
-   
-2. **Autoscaling and Resource Optimization**: Developing an autoscaler to dynamically add or remove Data Nodes based on workload, with metrics-driven scaling to manage resource use efficiently.
+Primary goals:
 
-3. **Optimized Data Distribution and Load Balancing**: Improving the data distribution strategy based on resource utilization. Dynamic data distribution will help balance load across nodes more effectively.
+- Quanta-in-a-Box local runtime
+- bitmap-native SQL planner and execution runtime
+- practical MySQL-compatible SQL endpoint
+- documented schema design model
+- SQLRunner correctness suites
+- TPC-H-oriented demo and validation path
+- batch loading and basic live-ingest demonstrations
+- basic backup, restart, and recovery guidance
+- contributor-ready documentation and tests
 
-4. **Active/Active HA/DR**: Implementing active/active high availability and disaster recovery across multiple data centers for improved resilience.
+### 2.0: Distributed And Operational Readiness
 
-5. **Conflict Resolution and Time Synchronization**: Adding conflict resolution strategies using vector clocks or version vectors. With AWS’s Time Sync service, *Quanta* aims to eventually support microsecond-level time synchronization for conflict management.
+Planned areas:
 
-6. **GPU-Accelerated Bitmap Processing**: Exploring GPU acceleration for core bitmap operations to improve performance on large-scale data processing tasks.
+- production multi-node deployment hardening
+- improved caching and query reuse
+- replication, failover, and recovery workflows
+- richer management and observability APIs
+- standards-based authentication and authorization integration
+- analyzer tooling to infer schema candidates from sample data
 
+### Future: Enterprise And Multi-Region
 
-# Requirements 
+Longer-term direction:
 
-Go version 1.14.14 or later.
-HashiCorp Consul 1.4.x or later.
+- cloud-provider deployment integrations
+- multi-region and multi-data-center topology support
+- active/active high availability and disaster recovery
+- advanced workload management and optimizer guidance
+- deeper performance work in Roaring Bitmap and BSI execution paths
 
+## Documentation
 
-# Getting Started
+Useful starting points:
 
-[A Quick Start Guide can be found here](https://github.com/QuantaStream/quantastream/tree/master/test/README.md)
+- [Quickstart](docs/QUICKSTART.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Schema Design](docs/SCHEMA_DESIGN.md)
+- [Supported SQL](docs/SUPPORTED_SQL.md)
+- [Unsupported SQL](docs/UNSUPPORTED_SQL.md)
+- [TPC-H Roadmap](docs/TPCH.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [MySQL Compatibility](docs/MYSQL-COMPATIBILITY.md)
+- [Glossary](docs/GLOSSARY.md)
+- [Development Notes](docs/DEVELOPMENT.md)
 
-# Build and Deployment
+## Contributing
 
-[Build and Deployment Instructions](https://github.com/QuantaStream/quantastream/tree/master/Docker/README.md)
+QuantaStream is currently preparing for its public 1.0 release. External contribution workflow will be documented before the repository is opened broadly.
 
-# Configuration Documentation
-[Schema File Configuration Docs](https://github.com/QuantaStream/quantastream/tree/master/configuration/README.md)
-
-# Terminology
-[Quanta Glossary](docs/GLOSSARY.md)
-
-# Tool and Driver compatibility
-* MySQL command line client (5.7.0)
-* Java JDBC driver (8.0.11)
-* Python MySQL connector
-* Node.js MySQL driver
-* MySQL Workbench (coming soon!)
-
-# Road Map
-The current code base is not public yet as we are preparing for the 1.0 release.
-
-## Version 1.0 - Quanta-in-a-box 
-* Support for SQL Views.
-* Support for SQL Subqueries.
-* Support for temporary tables.
-* Hierarchic (non-Star Schema) joins.
-* Drop-in MySql support
-* Both batch and steaming data load with queries against live cluster.
-* Competitive TPC-H benchmark.
-* Basic backup/recovery.
-* Production readiness.
-
-## Version 2.0 - Broad scaling and enterprise readiness.
-* Intermediate results caching.
-- Full support for multi-node deployment
-- Replication, failover, HA/DR
-- Scale out/in of a live cluster.  Ability to add/remove nodes which shard re-distibution.
-- Enterprise grade security, standards based authentication integration, RBAC.
-
-## Version 3.0 - Update anywhere across geographically distributed data centers.
-- Enhanced monitoring and management APIs.
-- Active/Active multi data center support.
-- Automated cluster management leveraging AI.
-
-
-
-
-# Issues
-
-The process for reporting bugs is as follows:
-
-1. Write a unit test that reproduces the issue.
-2. Create a branch off of develop containing the test case.
-3. Submit a pull request.
-
-
-# Contributing
-
-Contributions are always welcome.  The process is straightforward:
-
-1. Create your feature branch off of the develop branch (git checkout -b my-new-feature)
-2. Write Tests!
-3. Make sure the codebase adhere to the Go coding standards by executing `gofmt -s -w ./` followed by `golint`
-4. Commit your changes (git commit -am 'Add some feature')
-5. Push to the branch (git push origin my-new-feature)
-6. Create new Pull Request.
+For now, development follows a simple rule: every engine behavior change should be backed by focused Go tests, SQLRunner coverage, or both.
