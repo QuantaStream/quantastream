@@ -63,15 +63,9 @@ HashiCorp Consul 1.4.x or later.
 * MySQL Workbench (coming soon!)
 
 # Road Map
-The current version is 0.8 and is currently in "alpha" state.
+The current code base is not public yet as we are preparing for the 1.0 release.
 
-## Version 0.9
-This version once release will be considered "beta" and will include the following:
-* Cluster administration/monitoring tools and API.
-* RBAC interfaces.
-
-
-## Version 1.0 - Quanta-in-a-box community edition.
+## Version 1.0 - Quanta-in-a-box 
 * Support for SQL Views.
 * Support for SQL Subqueries.
 * Support for temporary tables.
