@@ -20,3 +20,9 @@ by SQL surface area and carry `feature`, `compatibility`, and `requires`
 metadata for scorecards. These suites are intended to run against a stock MySQL
 reference and QuantaStream comparison harness; they are not TPC-H benchmarks and
 should not absorb engine-specific profiling probes.
+
+The current seed suites are:
+
+- `mysql_compat_select.yaml`
+- `mysql_compat_predicates.yaml`
+- `mysql_compat_functions.yaml`

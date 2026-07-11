@@ -1,0 +1,55 @@
+version: 1
+name: mysql_compat_functions
+
+tests:
+  - id: mysql_compat_functions.001.string_case
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, lower, upper]
+    sql: |
+      select lower('SEATTLE') as city_lower, upper('tacoma') as city_upper
+    expect:
+      columns: [city_lower, city_upper]
+      rows:
+        - [seattle, TACOMA]
+
+  - id: mysql_compat_functions.002.substring_aliases
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, substring, substr]
+    sql: |
+      select substring('alphabet', 1, 3) as a, substr('alphabet', 4, 2) as b
+    expect:
+      columns: [a, b]
+      rows:
+        - [alp, ha]
+
+  - id: mysql_compat_functions.003.length
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, length, char_length]
+    sql: |
+      select length('Abe') as byte_len, char_length('Annie') as char_len
+    expect:
+      columns: [byte_len, char_len]
+      rows:
+        - [3, 5]
+
+  - id: mysql_compat_functions.004.coalesce
+    status: supported
+    kind: query
+    feature: scalar_functions_null
+    compatibility: mysql
+    requires: [select, coalesce, null]
+    sql: |
+      select coalesce(null, 'fallback') as value
+    expect:
+      columns: [value]
+      rows:
+        - [fallback]

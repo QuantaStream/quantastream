@@ -1,0 +1,59 @@
+version: 1
+name: mysql_compat_predicates
+
+tests:
+  - id: mysql_compat_predicates.001.comparison_and_boolean
+    status: supported
+    kind: query
+    feature: predicates_comparison
+    compatibility: mysql
+    requires: [select, where, comparison, and]
+    sql: |
+      select 1 as matched
+      where 3 > 2 and 2 <= 2
+    expect:
+      columns: [matched]
+      rows:
+        - [1]
+
+  - id: mysql_compat_predicates.002.between
+    status: supported
+    kind: query
+    feature: predicates_between
+    compatibility: mysql
+    requires: [select, where, between]
+    sql: |
+      select 'inside' as bucket
+      where 5 between 1 and 10
+    expect:
+      columns: [bucket]
+      rows:
+        - [inside]
+
+  - id: mysql_compat_predicates.003.in_list
+    status: supported
+    kind: query
+    feature: predicates_membership
+    compatibility: mysql
+    requires: [select, where, in]
+    sql: |
+      select 'hit' as result
+      where 'b' in ('a', 'b', 'c')
+    expect:
+      columns: [result]
+      rows:
+        - [hit]
+
+  - id: mysql_compat_predicates.004.like_prefix
+    status: supported
+    kind: query
+    feature: predicates_like
+    compatibility: mysql
+    requires: [select, where, like]
+    sql: |
+      select 'match' as result
+      where 'green forest' like 'green%'
+    expect:
+      columns: [result]
+      rows:
+        - [match]

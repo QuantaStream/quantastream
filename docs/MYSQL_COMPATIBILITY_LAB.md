@@ -99,3 +99,9 @@ go run ./sqlrunner -engine-diff mysql-reference,qsbridge -suite_file sqltests/my
 
 The report should group results by feature and category so we can see whether a
 change improves compatibility broadly or only fixes one case.
+
+
+Current scaffolding includes canonical expected-result capture structures and
+query-result comparison helpers. The CLI should still grow explicit
+`-capture_expected` and differential execution flags before this becomes a live
+reference workflow.
