@@ -29,8 +29,8 @@ modes:
 ### `inabox-direct`
 
 `inabox-direct` is primarily a development and conformance mode. Some tooling
-may still use transitional flag names while the repository finishes moving away
-from historical proxy terminology.
+may still use direct-mode names because the query engine is hosted by the test
+process.
 
 In this mode:
 
@@ -52,7 +52,7 @@ cd ~/projects/quantastream/start-local
 ./start-local.sh --nodes-only --dev-fast-start
 
 cd ~/projects/quantastream/sqlrunner
-go run . -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml
+go run . -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500
 ```
 
 ### `inabox-standard`
@@ -112,7 +112,12 @@ cd ~/projects/quantastream/start-local
 
 cd ~/projects/quantastream/sqlrunner
 go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
+go run . -engine inabox-local -suite_file sqltests/inabox_direct_joins.yaml
+go run . -engine inabox-local -suite_file sqltests/mutate_tests_body.yaml
 ```
+
+These suites validate the MySQL wire path through the native proxy while still
+using the local node cluster.
 
 ### `distributed`
 

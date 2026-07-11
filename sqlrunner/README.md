@@ -96,10 +96,10 @@ filter while the `part -> partsupp` relationship-vector join remains a separate
 execution boundary.
 
 `-engine inabox-direct` runs SQLRunner through the new qsbridge/qsruntime
-planning path, then adapts the lowered Quanta intermediate query directly into
-legacy bitmap execution. It requires a running local QuantaStream node cluster and Consul,
-but it bypasses the MySQL proxy and network wire path. This mode is the current
-vertical-slice bridge for proving simple SQL against real Quanta bitmap data:
+planning path, then adapts the lowered Quanta intermediate query into the
+direct bitmap/node execution path. It requires a running local QuantaStream
+node cluster and Consul, but it bypasses the MySQL proxy and network wire path.
+This mode proves SQL against real QuantaStream bitmap data without the MySQL socket:
 
 ```bash
 go run . \
@@ -131,7 +131,7 @@ go run . \
 basic one-table execution. It keeps a smaller, deliberate set of supported
 cases: numeric and StringEnum filtering, multi-column projection,
 `LIMIT/OFFSET`, and simple global numeric aggregates. Use it when validating
-that a local local node cluster can execute the current qsbridge/qsruntime vertical
+that a local node cluster can execute the current qsbridge/qsruntime vertical
 slice:
 
 ```bash
@@ -186,6 +186,21 @@ The broad TPC-H kernel suite is opt-in:
 ```bash
 RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 ```
+
+`-engine inabox-local` runs SQLRunner through the native MySQL-compatible
+proxy on port `4000`. Use it when the local harness is running the proxy and
+you want to validate the socket/wire path rather than hosting the query engine
+inside SQLRunner:
+
+```bash
+go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
+go run . -engine inabox-local -suite_file sqltests/inabox_direct_joins.yaml
+go run . -engine inabox-local -suite_file sqltests/mutate_tests_body.yaml
+```
+
+These suites mirror the current proxy smoke checkpoint: basic SQL,
+relationship-vector joins, and mutation coverage over the new MySQL protocol
+front door.
 
 ## Benchmark Report Mode
 
