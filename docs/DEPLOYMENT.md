@@ -14,6 +14,10 @@ environment. It is not the intended limit of production topology.
 
 QIAB runs three data nodes and the query proxy in one process.
 
+A future `inabox-standard` profile should define the QIAB settings used for
+controlled benchmark comparisons. The benchmark methodology is tracked in
+[`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
+
 The near-term goal is to make QIAB production-credible for small deployments,
 not merely useful for tests and demos. A supported QIAB profile should define
 durable external storage, restart behavior, backup and restore, health checks,

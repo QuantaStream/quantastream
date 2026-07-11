@@ -4,6 +4,9 @@ TPC-H is the near-term analytical validation target for Quanta. The goal is to
 use it as a correctness and capability roadmap before treating it as a formal
 performance benchmark.
 
+Formal performance comparisons belong in the Benchmark Lab methodology described
+in [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
+
 ## Existing Schema Model
 
 The repository already contains TPC-H table schemas under

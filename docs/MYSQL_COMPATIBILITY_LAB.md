@@ -128,6 +128,13 @@ MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENG
 The helper writes local capture output under `expected/local/` by default and
 uses `-engine_diff mysql-reference,<target>` for one-command comparisons.
 
+## Benchmark Boundary
+
+The compatibility lab is correctness-first. It may record durations, but it
+should not treat MySQL-vs-QuantaStream timing as a compatibility decision.
+Benchmark timing comparisons are tracked separately in
+[`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
+
 ## Generated Suite Convention
 
 Generated compatibility suites should default to ignored local paths such as
