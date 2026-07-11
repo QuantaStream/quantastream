@@ -1,10 +1,6 @@
 package qsmysql
 
-import (
-	"fmt"
-
-	"github.com/QuantaStream/quantastream/qsbridge"
-)
+import "fmt"
 
 // ConnectionState names the socket-free MySQL session state.
 type ConnectionState string
@@ -83,7 +79,7 @@ func (c Connection) AcceptPermissiveAuth() (Connection, CommandResponse, error) 
 		return c, CommandResponse{}, fmt.Errorf("cannot accept auth from state %s", c.State)
 	}
 	c.State = ConnectionStateReady
-	return c, StatementOKResponse(qsbridge.StatementResult{}), nil
+	return c, AuthSuccessResponse(c.AuthPluginName), nil
 }
 
 // WithClosing moves a connection to closing state.

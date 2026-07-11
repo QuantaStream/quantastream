@@ -1,6 +1,10 @@
 package qsmysql
 
-import "github.com/QuantaStream/quantastream/qsbridge"
+import (
+	"strings"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+)
 
 // CommandResponseKind identifies one MySQL command response shape.
 type CommandResponseKind string
@@ -23,6 +27,12 @@ type CommandResponse struct {
 	Close   bool
 }
 
+const (
+	authMoreDataPacketHeader      = 0x01
+	cachingSHA2FastAuthSuccess    = 0x03
+	cachingSHA2PasswordPluginName = "caching_sha2_password"
+)
+
 // QueryResponse encodes a query result as MySQL text-result packets.
 func QueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
 	packets, err := TextResultSetPackets(result)
@@ -35,6 +45,20 @@ func QueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
 // StatementOKResponse encodes a statement response as a MySQL OK packet.
 func StatementOKResponse(statement qsbridge.StatementResult) CommandResponse {
 	return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{OKPacket(1, statement)}}
+}
+
+// AuthSuccessResponse encodes the successful server side of a MySQL auth exchange.
+func AuthSuccessResponse(pluginName string) CommandResponse {
+	if strings.TrimSpace(pluginName) == "" {
+		pluginName = defaultAuthPluginName
+	}
+	if strings.EqualFold(pluginName, cachingSHA2PasswordPluginName) {
+		return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{
+			{SequenceID: 1, Payload: []byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}},
+			OKPacket(2, qsbridge.StatementResult{}),
+		}}
+	}
+	return StatementOKResponse(qsbridge.StatementResult{})
 }
 
 // PingResponse returns the OK response for COM_PING.

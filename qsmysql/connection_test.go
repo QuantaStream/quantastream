@@ -31,6 +31,37 @@ func TestConnectionStateMachineTracksHandshakeAuthAndReady(t *testing.T) {
 	}
 }
 
+func TestConnectionAcceptsCachingSHA2PermissiveHandshakeAuth(t *testing.T) {
+	connection := NewConnection(102)
+	var err error
+	connection, err = connection.WithHandshakeSent()
+	if err != nil {
+		t.Fatalf("WithHandshakeSent failed: %v", err)
+	}
+	connection, err = connection.AcceptHandshakeResponse(HandshakeResponse41{
+		CapabilityFlags: CapabilityProtocol41 | CapabilitySecureConnection | CapabilityPluginAuth,
+		Username:        "guy",
+		Database:        "quanta",
+		AuthPluginName:  cachingSHA2PasswordPluginName,
+	})
+	if err != nil {
+		t.Fatalf("AcceptHandshakeResponse failed: %v", err)
+	}
+	connection, authOK, err := connection.AcceptPermissiveAuth()
+	if err != nil {
+		t.Fatalf("AcceptPermissiveAuth failed: %v", err)
+	}
+	if !connection.CanAcceptCommand() || authOK.Kind != CommandResponseOK || len(authOK.Packets) != 2 {
+		t.Fatalf("connection = %#v authOK = %#v", connection, authOK)
+	}
+	if string(authOK.Packets[0].Payload) != string([]byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}) {
+		t.Fatalf("first auth packet = %#v, want caching_sha2 fast auth success", authOK.Packets[0])
+	}
+	if authOK.Packets[1].Payload[0] != okPacketHeader {
+		t.Fatalf("second auth packet = %#v, want OK", authOK.Packets[1])
+	}
+}
+
 func TestConnectionAcceptsPermissiveHandshakeAuth(t *testing.T) {
 	connection := NewConnection(101)
 	var err error

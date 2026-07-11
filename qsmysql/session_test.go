@@ -72,6 +72,51 @@ func TestSessionRunnerHandshakeAuthAndCommandLoop(t *testing.T) {
 	}
 }
 
+func TestSessionRunnerCachingSHA2AuthWritesFastAuthAndOKPackets(t *testing.T) {
+	var input bytes.Buffer
+	var output bytes.Buffer
+	runner := NewSessionRunner(SessionRunnerConfig{
+		ConnectionID:   78,
+		AuthPluginData: []byte("12345678901234567890"),
+		Stream:         NewStream(&input, &output),
+		Handler:        &testCommandHandler{},
+	})
+	if err := runner.SendHandshake(context.Background()); err != nil {
+		t.Fatalf("SendHandshake failed: %v", err)
+	}
+	clientResponse, err := EncodePacket(Packet{
+		SequenceID: 1,
+		Payload: testHandshakeResponsePayload(
+			CapabilityProtocol41|CapabilitySecureConnection|CapabilityPluginAuth|CapabilityConnectWithDB,
+			"guy",
+			[]byte{1, 2, 3},
+			"quanta",
+			cachingSHA2PasswordPluginName,
+		),
+	})
+	if err != nil {
+		t.Fatalf("EncodePacket client response failed: %v", err)
+	}
+	input.Write(clientResponse)
+	authOK, err := runner.AcceptHandshakeResponse(context.Background())
+	if err != nil {
+		t.Fatalf("AcceptHandshakeResponse failed: %v", err)
+	}
+	if authOK.Kind != CommandResponseOK || !runner.Connection.CanAcceptCommand() {
+		t.Fatalf("authOK = %#v connection=%#v", authOK, runner.Connection)
+	}
+	packets := readSessionTestPackets(t, output.Bytes())
+	if len(packets) != 3 {
+		t.Fatalf("auth packets = %#v, want handshake, fast-auth, OK", packets)
+	}
+	if packets[1].SequenceID != 2 || string(packets[1].Payload) != string([]byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}) {
+		t.Fatalf("fast auth packet = %#v", packets[1])
+	}
+	if packets[2].SequenceID != 3 || packets[2].Payload[0] != okPacketHeader {
+		t.Fatalf("OK packet = %#v", packets[2])
+	}
+}
+
 func TestSessionRunnerRejectsCommandsBeforeAuth(t *testing.T) {
 	runner := NewSessionRunner(SessionRunnerConfig{
 		Stream:  NewStream(bytes.NewReader(nil), &bytes.Buffer{}),

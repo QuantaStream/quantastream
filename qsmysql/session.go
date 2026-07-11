@@ -184,7 +184,7 @@ func clonePacketsWithSequence(packets []Packet, sequenceID byte) []Packet {
 	cloned := make([]Packet, len(packets))
 	for i, packet := range packets {
 		cloned[i] = Packet{
-			SequenceID: sequenceID,
+			SequenceID: sequenceID + byte(i),
 			Payload:    append([]byte(nil), packet.Payload...),
 		}
 	}
