@@ -6,6 +6,13 @@ import (
 	"testing"
 )
 
+func TestSessionRunnerDefaultHandshakeUsesTwentyByteAuthSeed(t *testing.T) {
+	runner := NewSessionRunner(SessionRunnerConfig{})
+	if got := len(runner.Handshake.AuthPluginData); got != 20 {
+		t.Fatalf("default auth plugin data length = %d, want 20", got)
+	}
+}
+
 func TestSessionRunnerHandshakeAuthAndCommandLoop(t *testing.T) {
 	var input bytes.Buffer
 	var output bytes.Buffer

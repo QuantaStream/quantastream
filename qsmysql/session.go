@@ -40,7 +40,7 @@ func NewSessionRunner(config SessionRunnerConfig) SessionRunner {
 	if handshake.ServerVersion == "" {
 		authPluginData := config.AuthPluginData
 		if len(authPluginData) == 0 {
-			authPluginData = []byte("quantastream-auth-seed")
+			authPluginData = []byte("quantastream-auth-v1")
 		}
 		handshake = NewDefaultHandshake(connectionID, authPluginData)
 	}
