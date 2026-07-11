@@ -39,6 +39,22 @@ func TestValidateFlagsRequiresMySQLReferenceDSN(t *testing.T) {
 	}
 }
 
+func TestValidateFlagsAllowsEngineDiffWithValidEngines(t *testing.T) {
+	cfg := runnerConfig{EngineDiff: "runtime,runtime"}
+
+	if err := validateFlags("sqltests/mysql_compat_select.yaml", cfg); err != nil {
+		t.Fatalf("engine_diff validation should accept runtime pair: %v", err)
+	}
+}
+
+func TestValidateFlagsRequiresMySQLReferenceDSNInEngineDiff(t *testing.T) {
+	cfg := runnerConfig{EngineDiff: "mysql-reference,runtime"}
+
+	if err := validateFlags("sqltests/mysql_compat_select.yaml", cfg); err == nil {
+		t.Fatal("engine_diff validation should require DSN when mysql-reference is present")
+	}
+}
+
 func TestValidateFlagsRequiresProxyConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineProxy}
 
@@ -140,6 +156,22 @@ func TestSlowCaseResultsDisabledWithoutThreshold(t *testing.T) {
 	}}
 	if got := slowCaseResults(summary, 0); len(got) != 0 {
 		t.Fatalf("slow cases = %#v, want none", got)
+	}
+}
+
+func TestParseEngineDiffRequiresReferenceAndTarget(t *testing.T) {
+	diff, err := parseEngineDiff(" mysql-reference , runtime ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.Reference != engineMySQLReference || diff.Target != engineRuntime {
+		t.Fatalf("diff = %#v, want mysql-reference -> runtime", diff)
+	}
+	if _, err := parseEngineDiff("runtime"); err == nil {
+		t.Fatal("single engine diff should fail")
+	}
+	if _, err := parseEngineDiff("runtime,"); err == nil {
+		t.Fatal("empty target engine diff should fail")
 	}
 }
 

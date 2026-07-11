@@ -41,6 +41,7 @@ type runnerConfig struct {
 	Port            string
 	Consul          string
 	CaseID          string
+	EngineDiff      string
 	MySQLDSN        string
 	MySQLDriver     string
 	Verbose         bool
@@ -67,6 +68,7 @@ func main() {
 	port := flag.String("port", "4000", "Port to connect to.")
 	consul := flag.String("consul", "127.0.0.1:8500", "Address of consul.")
 	caseID := flag.String("case", "", "Run only the suite test with this exact id.")
+	engineDiff := flag.String("engine_diff", "", "Run a compatibility differential pass as reference,target engines.")
 	logLevel := flag.String("log_level", "", "Set the logging level to DEBUG for additional logging.")
 	mysqlDSN := flag.String("mysql_dsn", "", "database/sql DSN for the mysql-reference engine.")
 	mysqlDriver := flag.String("mysql_driver", defaultMySQLReferenceDriver, "database/sql driver name for the mysql-reference engine.")
@@ -86,6 +88,7 @@ func main() {
 		Port:            *port,
 		Consul:          *consul,
 		CaseID:          strings.TrimSpace(*caseID),
+		EngineDiff:      strings.TrimSpace(*engineDiff),
 		MySQLDSN:        *mysqlDSN,
 		MySQLDriver:     *mysqlDriver,
 		Verbose:         *verbose,
@@ -115,6 +118,14 @@ func main() {
 	if err := filterSuiteCase(suite, cfg.CaseID); err != nil {
 		log.Printf("SQL roadmap suite failed: %v", err)
 		os.Exit(1)
+	}
+
+	if cfg.EngineDiff != "" {
+		if err := executeCompatibilityDiff(context.Background(), suite, cfg); err != nil {
+			log.Printf("SQL compatibility diff failed: %v", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	harness, err := buildHarness(suite, cfg)
@@ -148,18 +159,17 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 	if suiteFile == "" {
 		return fmt.Errorf("suite_file is required")
 	}
-	switch cfg.Engine {
-	case engineProxy:
-		if cfg.Host == "" || cfg.User == "" {
-			return fmt.Errorf("host and user are required for proxy engine")
+	if cfg.EngineDiff != "" {
+		diff, err := parseEngineDiff(cfg.EngineDiff)
+		if err != nil {
+			return err
 		}
-	case engineRuntime, engineRuntimeInspect, engineLegacyDirect:
-	case engineMySQLReference:
-		return mysqlReferenceConfig{Driver: cfg.MySQLDriver, DSN: cfg.MySQLDSN}.validate()
-	default:
-		return fmt.Errorf("unsupported engine %q", cfg.Engine)
+		if err := validateEngineForFlags(diff.Reference, cfg); err != nil {
+			return err
+		}
+		return validateEngineForFlags(diff.Target, cfg)
 	}
-	return nil
+	return validateEngineForFlags(cfg.Engine, cfg)
 }
 
 func printUsage(err error) {
@@ -172,6 +182,7 @@ func printUsage(err error) {
 	u.Warn("Legacy direct example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_smoke.yaml -consul 127.0.0.1:8500")
 	u.Warn("MySQL reference example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 	u.Warn("Capture example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml")
+	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 }
 
 func configureLogging(logLevel string) {
@@ -329,14 +340,7 @@ func grantSQLRunnerRoles(_ *shared.KVStore) error {
 func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration, compatReport bool) error {
 	summary := runner.Run(ctx, suite)
 	log.Printf("\n-------- SQL Roadmap Suite: %s --------", summary.Suite)
-	for _, result := range summary.Results {
-		duration := formatCaseDuration(result.Duration, verbose)
-		if result.Details == "" {
-			log.Printf("%-6s %s%s", result.Status, result.ID, duration)
-		} else {
-			log.Printf("%-6s %s%s: %s", result.Status, result.ID, duration, result.Details)
-		}
-	}
+	logSummaryResults(summary, verbose)
 	logSlowCases(summary, slowThreshold, verbose)
 	if compatReport {
 		logCompatibilityReport(suite, summary)

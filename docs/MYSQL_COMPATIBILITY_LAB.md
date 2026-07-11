@@ -105,6 +105,7 @@ Current scaffolding includes canonical expected-result capture structures and
 query-result comparison helpers. The CLI now supports `-capture_expected` for
 writing a runnable SQLRunner suite whose `expect` blocks are captured from any
 configured SQLRunner engine. The intended workflow is to capture from stock
-MySQL, then run the generated suite against QuantaStream. Differential execution
-is still a future slice; live MySQL remains caller-provided through
-`-engine mysql-reference` and `-mysql_dsn`.
+MySQL, then run the generated suite against QuantaStream. The CLI also supports
+`-engine_diff reference,target` as a one-command version of that workflow. Live
+MySQL remains caller-provided through `-engine mysql-reference` and
+`-mysql_dsn`.

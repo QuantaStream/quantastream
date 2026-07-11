@@ -38,3 +38,10 @@ QuantaStream. A live MySQL server is only required when the selected engine is
 ```bash
 go run . -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml
 ```
+
+The same capture-and-run flow can be executed in one command when both engines
+are available:
+
+```bash
+go run . -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'
+```
