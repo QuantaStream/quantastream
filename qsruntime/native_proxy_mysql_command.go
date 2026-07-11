@@ -35,6 +35,9 @@ func (f NativeProxyFrontDoor) HandleMySQLCommand(ctx context.Context, command qs
 	case qsmysql.CommandKindQuit:
 		return qsmysql.QuitResponse(), nil
 	case qsmysql.CommandKindQuery:
+		if response, ok, err := nativeProxyMySQLMetadataQueryResponse(command); ok || err != nil {
+			return response, err
+		}
 		result, err := f.Server.ExecuteSQL(ctx, command.SQL, options)
 		if err != nil {
 			return qsmysql.ErrorResponseFromError(err), nil

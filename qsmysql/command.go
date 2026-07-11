@@ -19,8 +19,10 @@ const (
 
 // Command is the protocol-neutral result of decoding a MySQL command packet payload.
 type Command struct {
-	Kind CommandKind
-	SQL  string
+	Kind         CommandKind
+	SQL          string
+	ConnectionID uint32
+	Database     string
 }
 
 // DecodeCommand decodes the payload of a MySQL command packet.
