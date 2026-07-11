@@ -1,10 +1,6 @@
 package qsmysql
 
-import (
-	"strings"
-
-	"github.com/QuantaStream/quantastream/qsbridge"
-)
+import "github.com/QuantaStream/quantastream/qsbridge"
 
 // CommandResponseKind identifies one MySQL command response shape.
 type CommandResponseKind string
@@ -48,16 +44,7 @@ func StatementOKResponse(statement qsbridge.StatementResult) CommandResponse {
 }
 
 // AuthSuccessResponse encodes the successful server side of a MySQL auth exchange.
-func AuthSuccessResponse(pluginName string, capabilities CapabilityFlag) CommandResponse {
-	if strings.TrimSpace(pluginName) == "" {
-		pluginName = defaultAuthPluginName
-	}
-	if strings.EqualFold(pluginName, cachingSHA2PasswordPluginName) {
-		return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{
-			{SequenceID: 1, Payload: []byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}},
-			OKPacketWithCapabilities(2, qsbridge.StatementResult{}, capabilities),
-		}}
-	}
+func AuthSuccessResponse(_ string, capabilities CapabilityFlag) CommandResponse {
 	return StatementOKResponse(qsbridge.StatementResult{}).WithCapabilities(capabilities)
 }
 

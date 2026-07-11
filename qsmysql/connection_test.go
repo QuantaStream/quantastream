@@ -51,14 +51,11 @@ func TestConnectionAcceptsCachingSHA2PermissiveHandshakeAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcceptPermissiveAuth failed: %v", err)
 	}
-	if !connection.CanAcceptCommand() || authOK.Kind != CommandResponseOK || len(authOK.Packets) != 2 {
+	if !connection.CanAcceptCommand() || authOK.Kind != CommandResponseOK || len(authOK.Packets) != 1 {
 		t.Fatalf("connection = %#v authOK = %#v", connection, authOK)
 	}
-	if string(authOK.Packets[0].Payload) != string([]byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}) {
-		t.Fatalf("first auth packet = %#v, want caching_sha2 fast auth success", authOK.Packets[0])
-	}
-	if authOK.Packets[1].Payload[0] != okPacketHeader {
-		t.Fatalf("second auth packet = %#v, want OK", authOK.Packets[1])
+	if authOK.Packets[0].Payload[0] != okPacketHeader {
+		t.Fatalf("auth packet = %#v, want direct OK", authOK.Packets[0])
 	}
 }
 

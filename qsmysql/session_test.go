@@ -79,7 +79,7 @@ func TestSessionRunnerHandshakeAuthAndCommandLoop(t *testing.T) {
 	}
 }
 
-func TestSessionRunnerCachingSHA2AuthWritesFastAuthAndOKPackets(t *testing.T) {
+func TestSessionRunnerCachingSHA2AuthWritesDirectOKPacket(t *testing.T) {
 	var input bytes.Buffer
 	var output bytes.Buffer
 	runner := NewSessionRunner(SessionRunnerConfig{
@@ -113,14 +113,11 @@ func TestSessionRunnerCachingSHA2AuthWritesFastAuthAndOKPackets(t *testing.T) {
 		t.Fatalf("authOK = %#v connection=%#v", authOK, runner.Connection)
 	}
 	packets := readSessionTestPackets(t, output.Bytes())
-	if len(packets) != 3 {
-		t.Fatalf("auth packets = %#v, want handshake, fast-auth, OK", packets)
+	if len(packets) != 2 {
+		t.Fatalf("auth packets = %#v, want handshake, direct OK", packets)
 	}
-	if packets[1].SequenceID != 2 || string(packets[1].Payload) != string([]byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}) {
-		t.Fatalf("fast auth packet = %#v", packets[1])
-	}
-	if packets[2].SequenceID != 3 || packets[2].Payload[0] != okPacketHeader {
-		t.Fatalf("OK packet = %#v", packets[2])
+	if packets[1].SequenceID != 2 || packets[1].Payload[0] != okPacketHeader {
+		t.Fatalf("OK packet = %#v", packets[1])
 	}
 }
 
