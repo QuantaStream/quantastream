@@ -2,7 +2,10 @@ package qsmysql
 
 import "fmt"
 
-const defaultAuthPluginName = "caching_sha2_password"
+const (
+	defaultAuthPluginName  = "caching_sha2_password"
+	defaultCapabilityFlags = CapabilityLongPassword | CapabilityProtocol41 | CapabilitySecureConnection | CapabilityPluginAuth | CapabilitySessionTrack
+)
 
 // HandshakeV10 is the MySQL protocol 10 initial server greeting.
 type HandshakeV10 struct {
@@ -21,7 +24,7 @@ func NewDefaultHandshake(connectionID uint32, authPluginData []byte) HandshakeV1
 		ServerVersion:   "8.0.0-quantastream",
 		ConnectionID:    connectionID,
 		AuthPluginData:  append([]byte(nil), authPluginData...),
-		CapabilityFlags: CapabilityLongPassword | CapabilityProtocol41 | CapabilitySecureConnection | CapabilityPluginAuth,
+		CapabilityFlags: defaultCapabilityFlags,
 		CharacterSet:    CharacterSetUTF8MB4GeneralCI,
 		StatusFlags:     StatusAutocommit,
 		AuthPluginName:  defaultAuthPluginName,
@@ -42,7 +45,7 @@ func (h HandshakeV10) Payload() ([]byte, error) {
 	}
 	capabilities := h.CapabilityFlags
 	if capabilities == 0 {
-		capabilities = CapabilityLongPassword | CapabilityProtocol41 | CapabilitySecureConnection | CapabilityPluginAuth
+		capabilities = defaultCapabilityFlags
 	}
 	charset := h.CharacterSet
 	if charset == 0 {

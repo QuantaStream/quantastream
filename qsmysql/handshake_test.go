@@ -79,3 +79,30 @@ func TestHandshakePayloadRejectsOversizedAuthPluginData(t *testing.T) {
 		t.Fatal("expected oversized auth plugin data to fail")
 	}
 }
+
+func TestDefaultHandshakeAdvertisesSessionTrack(t *testing.T) {
+	handshake := NewDefaultHandshake(42, []byte("12345678901234567890"))
+	if handshake.CapabilityFlags&CapabilitySessionTrack == 0 {
+		t.Fatalf("capabilities = 0x%x, want CLIENT_SESSION_TRACK", uint32(handshake.CapabilityFlags))
+	}
+	payload, err := handshake.Payload()
+	if err != nil {
+		t.Fatalf("Payload failed: %v", err)
+	}
+	encodedCapabilities := handshakePayloadCapabilityFlags(payload)
+	if encodedCapabilities&CapabilitySessionTrack == 0 {
+		t.Fatalf("encoded capabilities = 0x%x, want CLIENT_SESSION_TRACK", uint32(encodedCapabilities))
+	}
+}
+
+func handshakePayloadCapabilityFlags(payload []byte) CapabilityFlag {
+	offset := 1
+	for offset < len(payload) && payload[offset] != 0 {
+		offset++
+	}
+	offset += 1 + 4 + 8 + 1
+	lower := uint16(payload[offset]) | uint16(payload[offset+1])<<8
+	offset += 2 + 1 + 2
+	upper := uint16(payload[offset]) | uint16(payload[offset+1])<<8
+	return CapabilityFlag(uint32(lower) | uint32(upper)<<16)
+}
