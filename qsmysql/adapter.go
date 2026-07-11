@@ -16,6 +16,7 @@ func ByteModelReadiness() AdapterReadiness {
 		PacketCodec:    true,
 		Handshake:      true,
 		CommandDecoder: true,
+		Resultsets:     true,
 	}
 }
 

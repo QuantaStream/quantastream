@@ -4,7 +4,7 @@ import "testing"
 
 func TestByteModelReadinessIsNotNetworkReady(t *testing.T) {
 	readiness := ByteModelReadiness()
-	if !readiness.PacketCodec || !readiness.Handshake || !readiness.CommandDecoder {
+	if !readiness.PacketCodec || !readiness.Handshake || !readiness.CommandDecoder || !readiness.Resultsets {
 		t.Fatalf("readiness = %#v, want byte model pieces ready", readiness)
 	}
 	if readiness.PacketIOReady() {

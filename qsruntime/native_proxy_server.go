@@ -105,7 +105,7 @@ func (f NativeProxyFrontDoor) Summary() NativeProxyFrontDoorSummary {
 		RuntimeReady: f.RuntimeReady(),
 		WireReady:    f.WireReady(),
 		Ready:        f.Ready(),
-		AdapterReady: f.MySQLAdapter.PacketCodec && f.MySQLAdapter.Handshake && f.MySQLAdapter.CommandDecoder,
+		AdapterReady: f.MySQLAdapter.PacketCodec && f.MySQLAdapter.Handshake && f.MySQLAdapter.CommandDecoder && f.MySQLAdapter.Resultsets,
 	}
 	if !summary.WireReady {
 		summary.NextStep = f.MySQLAdapter.NextStep()
