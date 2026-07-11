@@ -14,6 +14,9 @@ func logCompatibilityReport(suite *roadmap.Suite, summary roadmap.Summary) {
 	for _, line := range compatibilityReportLines(report) {
 		log.Print(line)
 	}
+	for _, line := range compatibilityReportCaseLines(report) {
+		log.Print(line)
+	}
 }
 
 func compatibilityReportLines(report roadmap.CompatibilityReport) []string {
@@ -25,14 +28,15 @@ func compatibilityReportLines(report roadmap.CompatibilityReport) []string {
 }
 
 func compatibilityCountLine(label string, counts map[string]int) string {
-	categories := []string{
-		roadmap.CompatibilityResultPass,
-		roadmap.CompatibilityResultFail,
-		roadmap.CompatibilityResultUnsupported,
-		roadmap.CompatibilityResultTypeWarn,
-		roadmap.CompatibilityResultPerfWarn,
+	categories := compatibilityReportCategories()
+	parts := make([]string, 0, len(categories)+1)
+	total := 0
+	for _, count := range counts {
+		total += count
 	}
-	parts := make([]string, 0, len(categories))
+	if total > 0 {
+		parts = append(parts, fmt.Sprintf("TOTAL=%d", total))
+	}
 	for _, category := range categories {
 		if count := counts[category]; count > 0 {
 			parts = append(parts, fmt.Sprintf("%s=%d", category, count))
@@ -41,6 +45,31 @@ func compatibilityCountLine(label string, counts map[string]int) string {
 	if len(parts) == 0 {
 		parts = append(parts, "none")
 	}
-	sort.Strings(parts)
 	return fmt.Sprintf("%s %s", label, strings.Join(parts, " "))
+}
+
+func compatibilityReportCaseLines(report roadmap.CompatibilityReport) []string {
+	var lines []string
+	for _, test := range report.Cases {
+		if test.Category == roadmap.CompatibilityResultPass {
+			continue
+		}
+		detail := strings.TrimSpace(test.Details)
+		if detail == "" {
+			detail = "-"
+		}
+		lines = append(lines, fmt.Sprintf("CASE %s %s %s: %s", test.Feature, test.ID, test.Category, detail))
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+func compatibilityReportCategories() []string {
+	return []string{
+		roadmap.CompatibilityResultPass,
+		roadmap.CompatibilityResultFail,
+		roadmap.CompatibilityResultUnsupported,
+		roadmap.CompatibilityResultTypeWarn,
+		roadmap.CompatibilityResultPerfWarn,
+	}
 }

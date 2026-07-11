@@ -1,0 +1,88 @@
+version: 1
+name: mysql_compat_group_order
+
+tests:
+  - id: mysql_compat_group_order.001.group_count
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by
+    compatibility: mysql
+    requires: [select, derived_table, group_by, count, order_by]
+    sql: |
+      select city, count(*) as customer_count
+      from (
+        select 'Seattle' as city
+        union all select 'Seattle'
+        union all select 'Tacoma'
+      ) as customers
+      group by city
+      order by city
+    expect:
+      columns: [city, customer_count]
+      rows:
+        - [Seattle, 2]
+        - [Tacoma, 1]
+
+  - id: mysql_compat_group_order.002.having_sum
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_having
+    compatibility: mysql
+    requires: [select, derived_table, group_by, having, sum, order_by]
+    sql: |
+      select region, sum(amount) as total_amount
+      from (
+        select 'north' as region, 10 as amount
+        union all select 'north', 7
+        union all select 'south', 3
+      ) as sales
+      group by region
+      having sum(amount) > 10
+      order by total_amount desc
+    expect:
+      columns: [region, total_amount]
+      rows:
+        - [north, 17]
+
+  - id: mysql_compat_group_order.003.order_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, derived_table, order_by, limit, offset]
+    sql: |
+      select n
+      from (
+        select 3 as n
+        union all select 1
+        union all select 2
+      ) as numbers
+      order by n
+      limit 1 offset 1
+    expect:
+      columns: [n]
+      rows:
+        - [2]
+
+  - id: mysql_compat_group_order.004.order_by_alias_desc
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, derived_table, aliases, order_by]
+    sql: |
+      select label, score * 2 as doubled_score
+      from (
+        select 'a' as label, 4 as score
+        union all select 'b', 7
+      ) as scored
+      order by doubled_score desc
+    expect:
+      columns: [label, doubled_score]
+      rows:
+        - [b, 14]
+        - [a, 8]

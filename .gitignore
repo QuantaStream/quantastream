@@ -1,1 +1,4 @@
 /test/localClusterData/
+/sqlrunner/expected/local/
+/sqlrunner/expected/generated/
+/sqlrunner/expected/*.local.yaml

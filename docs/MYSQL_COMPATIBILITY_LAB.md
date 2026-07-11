@@ -24,6 +24,21 @@ compatibility gap is intentionally selected for implementation.
 - Do not make compatibility lab code a dependency of core execution packages.
 - Do not hide known differences through overly broad normalization.
 
+## Current Status
+
+The lean lab framework is in place:
+
+- Compatibility metadata and report categories are supported in SQLRunner.
+- Canonical result capture can generate normal runnable SQLRunner suites.
+- Differential mode can capture from one engine and run the generated suite
+  against another engine in one command.
+- Seed suites cover select, predicates, functions, grouping/order, joins,
+  subqueries, and mutations.
+- Live MySQL remains caller-provided; normal CI should not depend on it.
+
+Further work should deepen the compatibility corpus and use the lab output to
+prioritize engine fixes.
+
 ## Work Slices
 
 ### Slice 1: Roadmap Metadata
@@ -100,6 +115,26 @@ go run ./sqlrunner -engine-diff mysql-reference,qsbridge -suite_file sqltests/my
 The report should group results by feature and category so we can see whether a
 change improves compatibility broadly or only fixes one case.
 
+## Live MySQL Workflow
+
+SQLRunner intentionally does not own MySQL startup. The lab expects a
+caller-provided DSN for stock MySQL. From the `sqlrunner` directory:
+
+```bash
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' ./run-mysql-compat.sh
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=legacy-direct ./run-mysql-compat.sh
+```
+
+The helper writes local capture output under `expected/local/` by default and
+uses `-engine_diff mysql-reference,<target>` for one-command comparisons.
+
+## Generated Suite Convention
+
+Generated compatibility suites should default to ignored local paths such as
+`sqlrunner/expected/local/`. Curated generated suites may be promoted under
+`sqlrunner/expected/` when they become reviewed compatibility contracts. This
+keeps one-off captures out of source control while leaving room for stable
+reference contracts later.
 
 Current scaffolding includes canonical expected-result capture structures and
 query-result comparison helpers. The CLI now supports `-capture_expected` for

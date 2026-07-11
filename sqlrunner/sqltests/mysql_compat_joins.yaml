@@ -1,0 +1,90 @@
+version: 1
+name: mysql_compat_joins
+
+tests:
+  - id: mysql_compat_joins.001.inner_join_projection
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_inner
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, aliases, order_by]
+    sql: |
+      select c.name, o.order_id
+      from (
+        select 1 as cust_id, 'Abe' as name
+        union all select 2, 'Abby'
+      ) as c
+      inner join (
+        select 1001 as order_id, 1 as cust_id
+        union all select 1002, 1
+      ) as o on o.cust_id = c.cust_id
+      order by o.order_id
+    expect:
+      columns: [name, order_id]
+      rows:
+        - [Abe, 1001]
+        - [Abe, 1002]
+
+  - id: mysql_compat_joins.002.left_join_null_extension
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_left_outer
+    compatibility: mysql
+    requires: [select, derived_table, left_join, null, order_by]
+    sql: |
+      select c.name, o.order_id
+      from (
+        select 1 as cust_id, 'Abe' as name
+        union all select 2, 'Abby'
+      ) as c
+      left join (
+        select 1001 as order_id, 1 as cust_id
+      ) as o on o.cust_id = c.cust_id
+      order by c.cust_id
+    expect:
+      columns: [name, order_id]
+      rows:
+        - [Abe, 1001]
+        - [Abby, null]
+
+  - id: mysql_compat_joins.003.join_on_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_predicates
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, on_predicate, comparison]
+    sql: |
+      select c.name, o.amount
+      from (
+        select 1 as cust_id, 'Abe' as name
+        union all select 2, 'Abby'
+      ) as c
+      inner join (
+        select 1 as cust_id, 25 as amount
+        union all select 2, 5
+      ) as o on o.cust_id = c.cust_id and o.amount > 10
+      order by c.name
+    expect:
+      columns: [name, amount]
+      rows:
+        - [Abe, 25]
+
+  - id: mysql_compat_joins.004_three_table_join
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_multi_table
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, multi_join]
+    sql: |
+      select c.name, o.order_id, l.sku
+      from (select 1 as cust_id, 'Abe' as name) as c
+      inner join (select 1001 as order_id, 1 as cust_id) as o on o.cust_id = c.cust_id
+      inner join (select 1001 as order_id, 'SKU-1' as sku) as l on l.order_id = o.order_id
+    expect:
+      columns: [name, order_id, sku]
+      rows:
+        - [Abe, 1001, SKU-1]

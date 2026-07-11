@@ -26,6 +26,10 @@ The current seed suites are:
 - `mysql_compat_select.yaml`
 - `mysql_compat_predicates.yaml`
 - `mysql_compat_functions.yaml`
+- `mysql_compat_group_order.yaml`
+- `mysql_compat_joins.yaml`
+- `mysql_compat_subqueries.yaml`
+- `mysql_compat_mutations.yaml`
 
 ## Capturing MySQL Reference Results
 
@@ -36,12 +40,28 @@ QuantaStream. A live MySQL server is only required when the selected engine is
 `mysql-reference`.
 
 ```bash
-go run . -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml
+go run . -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/local/mysql_compat_select.yaml
 ```
+
+Generated compatibility suites should be written under `sqlrunner/expected/local/`
+for local work. Promote generated suites into `sqlrunner/expected/` only after
+they become reviewed compatibility contracts.
 
 The same capture-and-run flow can be executed in one command when both engines
 are available:
 
 ```bash
 go run . -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'
+```
+
+
+## Live MySQL Helper
+
+SQLRunner does not start or own a MySQL server. When a stock MySQL reference is
+available, `run-mysql-compat.sh` standardizes capture and diff commands from the
+`sqlrunner` directory:
+
+```bash
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' ./run-mysql-compat.sh
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=legacy-direct ./run-mysql-compat.sh
 ```
