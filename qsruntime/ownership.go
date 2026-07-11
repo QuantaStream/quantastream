@@ -170,6 +170,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"executor_selector.go",
 		"inspection_rows.go",
 		"materialization.go",
+		"native_proxy_mysql_command.go",
 		"native_proxy_runtime.go",
 		"native_proxy_server.go",
 		"relationship_join_plan.go",
