@@ -303,9 +303,15 @@ The local development defaults are not a production security profile.
 
 ### Authentication and Authorization
 
-Authentication and authorization are deployment concerns and are not part of
-the supported Quanta 1.0 scope. They remain enterprise-readiness work for a
-future release.
+QuantaStream 1.0 will include a simple MySQL-compatible account and
+password authentication model in the public/core repository. The
+`quanta-admin` tool will provide account and password administration for
+this built-in core auth path.
+
+Enterprise identity integration is a separate adapter surface. OAuth, OIDC,
+JWT, SSO, cloud-provider identity systems, and other enterprise-grade
+integrations should plug into the same auth/session contract without becoming
+hard-coded behavior in the core MySQL protocol path.
 
 The historical Quanta authentication design used OpenID Connect JWT tokens to
 gate access to the proxy service. In that model, an external identity provider
@@ -337,13 +343,13 @@ configuration, TLS guidance, token validation behavior, authorization/RBAC
 semantics, audit logging, secret rotation, and operational tests.
 
 The current proxy authentication and RBAC code should be treated as historical
-implementation context rather than the target design. Quanta's MySQL-compatible
-network protocol is intended to work across a broad range of standard client
-drivers and tools, including currently used Node.js, Python, Java/JDBC, and
-native Go clients. Authentication work therefore needs to preserve driver
-compatibility at the protocol boundary, not only make the command-line MySQL
-client happy. The replacement should start from broad MySQL client
-compatibility:
+implementation context rather than the target design. QuantaStream's
+MySQL-compatible network protocol is intended to work across a broad range of
+standard client drivers and tools, including currently used Node.js, Python,
+Java/JDBC, and native Go clients. Authentication work therefore needs to
+preserve driver compatibility at the protocol boundary, not only make the
+command-line MySQL client happy. The built-in replacement should start from
+broad MySQL client compatibility:
 
 - implement the MySQL authentication handshake cleanly enough for standard
   drivers and tools to connect without special-case behavior
@@ -353,8 +359,9 @@ compatibility:
   part of the same session model
 - separate authentication, authorization, and session/database selection
   responsibilities
-- define stable interfaces for identity providers, credential validation, and
-  role lookup
+- define stable interfaces for local account/password validation, optional
+  identity providers, credential validation, and role lookup
+- manage built-in account/password state through `quanta-admin`
 - keep enterprise identity integration pluggable, with JWT/OIDC/OAuth-style
   providers as future adapters rather than hard-coded proxy behavior
 - cache small authorization metadata in memory after loading it from the
