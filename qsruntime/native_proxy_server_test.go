@@ -67,3 +67,57 @@ func TestNativeProxyServerDelegatesExecutionAndInspection(t *testing.T) {
 		t.Fatalf("inspection route = %#v, want direct QIAB", inspection.Runtime.Route)
 	}
 }
+
+func TestNativeProxyFrontDoorDefaultsToMySQLQIABWithoutClaimingWireReadiness(t *testing.T) {
+	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{}, NativeProxyFrontDoorConfig{})
+	summary := frontDoor.Summary()
+
+	if summary.Protocol != qsbridge.ProtocolMySQL || summary.Driver != "mysql-wire" {
+		t.Fatalf("summary protocol = %#v, want MySQL wire defaults", summary)
+	}
+	if summary.BindAddress != "127.0.0.1" || summary.Port != 4000 {
+		t.Fatalf("summary address = %#v, want 127.0.0.1:4000", summary)
+	}
+	if summary.Route != ExecutionPathDirectQIAB {
+		t.Fatalf("summary route = %#v, want direct QIAB", summary)
+	}
+	if summary.Ready || summary.WireReady || summary.RuntimeReady {
+		t.Fatalf("summary readiness = %#v, want scaffold not network-ready", summary)
+	}
+	if summary.NextStep == "" {
+		t.Fatalf("summary = %#v, want next step", summary)
+	}
+}
+
+func TestNativeProxyFrontDoorSeparatesRuntimeReadinessFromPacketIO(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 1}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	summary := frontDoor.Summary()
+
+	if !summary.RuntimeReady {
+		t.Fatalf("summary = %#v, want runtime ready", summary)
+	}
+	if summary.WireReady || summary.Ready {
+		t.Fatalf("summary = %#v, packet IO should still block network readiness", summary)
+	}
+}
+
+func TestNativeProxyFrontDoorCanRepresentMountedWireAdapter(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 1}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{PacketIOReady: true, BindAddress: "0.0.0.0", Port: 4400})
+	summary := frontDoor.Summary()
+
+	if !summary.Ready || !summary.RuntimeReady || !summary.WireReady {
+		t.Fatalf("summary = %#v, want fully ready front door when packet IO is mounted", summary)
+	}
+	if summary.BindAddress != "0.0.0.0" || summary.Port != 4400 {
+		t.Fatalf("summary address = %#v, want configured address", summary)
+	}
+	if summary.NextStep != "" {
+		t.Fatalf("summary = %#v, want no next step when ready", summary)
+	}
+}

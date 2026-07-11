@@ -33,22 +33,27 @@ var consulAddress = "127.0.0.1:8500"
 var log = logger.New()
 
 type runnerConfig struct {
-	Engine          string
-	Host            string
-	User            string
-	Password        string
-	Database        string
-	Port            string
-	Consul          string
-	CaseID          string
-	EngineDiff      string
-	MySQLDSN        string
-	MySQLDriver     string
-	Verbose         bool
-	CompatReport    bool
-	DumpActual      bool
-	CaptureExpected string
-	SlowThreshold   time.Duration
+	Engine            string
+	Host              string
+	User              string
+	Password          string
+	Database          string
+	Port              string
+	Consul            string
+	CaseID            string
+	EngineDiff        string
+	MySQLDSN          string
+	MySQLDriver       string
+	Verbose           bool
+	CompatReport      bool
+	DumpActual        bool
+	CaptureExpected   string
+	SlowThreshold     time.Duration
+	BenchmarkReport   string
+	BenchmarkProfile  string
+	BenchmarkMetadata string
+	BenchmarkWarmup   int
+	BenchmarkRuns     int
 }
 
 type runnerHarness struct {
@@ -77,25 +82,35 @@ func main() {
 	captureExpected := flag.String("capture_expected", "", "Write a runnable SQLRunner suite with expectations captured from the selected engine.")
 	slowThreshold := flag.Duration("slow_threshold", 0, "Print a slow-case summary for roadmap cases at or above this duration, such as 10s.")
 	compatReport := flag.Bool("compat_report", false, "Print a compatibility scorecard grouped by feature and result category.")
+	benchmarkReport := flag.String("benchmark_report", "", "Write a JSON benchmark report for repeated measured suite runs.")
+	benchmarkProfile := flag.String("benchmark_profile", "developer-local", "Benchmark profile name recorded in -benchmark_report output.")
+	benchmarkMetadata := flag.String("benchmark_metadata", "", "Comma-separated key=value metadata recorded in -benchmark_report output.")
+	benchmarkWarmup := flag.Int("benchmark_warmup", 0, "Warm-up suite runs before measured benchmark runs.")
+	benchmarkRuns := flag.Int("benchmark_runs", 1, "Measured suite runs written to -benchmark_report output.")
 	flag.Parse()
 
 	cfg := runnerConfig{
-		Engine:          strings.ToLower(strings.TrimSpace(*engine)),
-		Host:            *host,
-		User:            *user,
-		Password:        *password,
-		Database:        *database,
-		Port:            *port,
-		Consul:          *consul,
-		CaseID:          strings.TrimSpace(*caseID),
-		EngineDiff:      strings.TrimSpace(*engineDiff),
-		MySQLDSN:        *mysqlDSN,
-		MySQLDriver:     *mysqlDriver,
-		Verbose:         *verbose,
-		CompatReport:    *compatReport,
-		DumpActual:      *dumpActual,
-		CaptureExpected: strings.TrimSpace(*captureExpected),
-		SlowThreshold:   *slowThreshold,
+		Engine:            strings.ToLower(strings.TrimSpace(*engine)),
+		Host:              *host,
+		User:              *user,
+		Password:          *password,
+		Database:          *database,
+		Port:              *port,
+		Consul:            *consul,
+		CaseID:            strings.TrimSpace(*caseID),
+		EngineDiff:        strings.TrimSpace(*engineDiff),
+		MySQLDSN:          *mysqlDSN,
+		MySQLDriver:       *mysqlDriver,
+		Verbose:           *verbose,
+		CompatReport:      *compatReport,
+		DumpActual:        *dumpActual,
+		CaptureExpected:   strings.TrimSpace(*captureExpected),
+		SlowThreshold:     *slowThreshold,
+		BenchmarkReport:   strings.TrimSpace(*benchmarkReport),
+		BenchmarkProfile:  strings.TrimSpace(*benchmarkProfile),
+		BenchmarkMetadata: strings.TrimSpace(*benchmarkMetadata),
+		BenchmarkWarmup:   *benchmarkWarmup,
+		BenchmarkRuns:     *benchmarkRuns,
 	}
 	if err := validateFlags(*suiteFile, cfg); err != nil {
 		printUsage(err)
@@ -149,6 +164,14 @@ func main() {
 		return
 	}
 
+	if cfg.BenchmarkReport != "" {
+		if err := executeBenchmarkSuite(context.Background(), suite, harness.Runner, cfg); err != nil {
+			log.Printf("SQL benchmark suite failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold, cfg.CompatReport); err != nil {
 		log.Printf("SQL roadmap suite failed: %v", err)
 		os.Exit(1)
@@ -158,6 +181,18 @@ func main() {
 func validateFlags(suiteFile string, cfg runnerConfig) error {
 	if suiteFile == "" {
 		return fmt.Errorf("suite_file is required")
+	}
+	if cfg.BenchmarkWarmup < 0 {
+		return fmt.Errorf("benchmark_warmup cannot be negative")
+	}
+	if cfg.BenchmarkReport != "" && cfg.BenchmarkRuns <= 0 {
+		return fmt.Errorf("benchmark_runs must be greater than zero")
+	}
+	if cfg.BenchmarkReport != "" && cfg.CaptureExpected != "" {
+		return fmt.Errorf("benchmark_report cannot be combined with capture_expected")
+	}
+	if cfg.BenchmarkReport != "" && cfg.EngineDiff != "" {
+		return fmt.Errorf("benchmark_report cannot be combined with engine_diff")
 	}
 	if cfg.EngineDiff != "" {
 		diff, err := parseEngineDiff(cfg.EngineDiff)
@@ -183,6 +218,7 @@ func printUsage(err error) {
 	u.Warn("MySQL reference example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 	u.Warn("Capture example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml")
 	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
+	u.Warn("Benchmark example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
 }
 
 func configureLogging(logLevel string) {

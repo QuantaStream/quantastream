@@ -187,6 +187,35 @@ The broad TPC-H kernel suite is opt-in:
 RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-legacy-direct-readiness.sh
 ```
 
+## Benchmark Report Mode
+
+SQLRunner can write a local JSON benchmark artifact for repeated measured suite
+runs. This mode is correctness-gated: measured runs that contain `FAIL` or
+`XPASS` still fail the command.
+
+Use this for local developer evidence only unless the deployment follows the
+Benchmark Lab controls in `../docs/BENCHMARK_LAB.md`:
+
+```bash
+go run . \
+  -engine legacy-direct \
+  -suite_file sqltests/legacy_direct_tpch_kernels.yaml \
+  -benchmark_profile developer-local \
+  -benchmark_warmup 1 \
+  -benchmark_runs 3 \
+  -benchmark_metadata commit=$(git rev-parse --short HEAD),cache=warm \
+  -benchmark_report expected/local/tpch-kernels.json
+```
+
+The wrapper script uses the same flags with environment-variable defaults:
+
+```bash
+BENCHMARK_RUNS=3 ./run-benchmark.sh
+```
+
+Generated benchmark artifacts should stay under ignored local paths unless a
+specific report is intentionally promoted.
+
 ## TPC-H Suites
 
 TPC-H-specific suites live with the benchmark assets under

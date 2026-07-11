@@ -91,6 +91,28 @@ This is not perfect equivalence because QuantaStream and MySQL use different
 storage and execution models. It is, however, a disciplined comparison when the
 purpose is to understand user-observable SQL behavior and response time.
 
+## MySQL Reference Deployment Recipe
+
+For a Tier 3 reference benchmark, deploy MySQL as a peer system rather than as a
+local convenience process:
+
+1. Choose one cloud provider, region, instance family, CPU count, memory size,
+   storage class, and network placement.
+2. Deploy QuantaStream using the `inabox-standard` profile on one instance.
+3. Deploy stock MySQL on a matching instance in the same private network.
+4. Run the benchmark driver from a third instance in the same placement group or
+   from an explicitly documented equivalent network path.
+5. Load the same logical dataset into both systems using recorded loader
+   commands.
+6. Run SQLRunner compatibility checks first. Treat benchmark numbers as invalid
+   when correctness does not pass for the same suite and dataset.
+7. Run warm-up passes, then repeated measured passes, and publish median and
+   tail values with the recorded environment metadata.
+
+MySQL configuration should be ordinary and documented. Avoid bespoke tuning
+unless the same level of tuning is also documented for QuantaStream and the goal
+of the run is explicitly a tuned-system comparison.
+
 ## Measurement Rules
 
 For every benchmark run, record:
@@ -117,18 +139,25 @@ remain correctness-first:
 - Timing comparison should be introduced as benchmark-lab reporting, not as a
   default compatibility failure mode.
 
-Future benchmark tooling can add explicit flags or wrappers for repeated runs,
-warm-up passes, and report artifacts. Those additions should preserve the
-boundary between correctness and performance.
+The current scaffold supports `-benchmark_report`, `-benchmark_profile`,
+`-benchmark_warmup`, `-benchmark_runs`, and `-benchmark_metadata` for normal
+SQLRunner suite execution. The helper script `sqlrunner/run-benchmark.sh` wraps
+those flags for local developer runs. These reports are benchmark artifacts, not
+compatibility verdicts.
+
+Future benchmark tooling can add richer report formats and deployment metadata
+collection. Those additions should preserve the boundary between correctness and
+performance.
 
 ## Initial Work Items
 
-1. Define the `inabox-standard` deployment profile and document its operational
-   shape.
-2. Add a benchmark runner wrapper that records environment metadata and repeats
-   SQLRunner suites.
-3. Add a MySQL reference deployment recipe for the same cloud profile.
-4. Produce a local developer benchmark report format before attempting a public
-   reference benchmark.
+1. Extend the benchmark report with host and storage metadata auto-detection for
+   developer-local and `inabox-standard` runs.
+2. Add a MySQL reference deployment template once the preferred cloud baseline is
+   selected.
+3. Promote a small read-only benchmark suite that is safe to repeat without
+   mutating benchmark state.
+4. Add a local developer benchmark summary renderer for comparing two report
+   files.
 5. Promote benchmark results only after correctness has passed for the same
    suite and dataset.

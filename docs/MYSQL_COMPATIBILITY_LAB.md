@@ -128,6 +128,22 @@ MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENG
 The helper writes local capture output under `expected/local/` by default and
 uses `-engine_diff mysql-reference,<target>` for one-command comparisons.
 
+
+Recommended workflow:
+
+1. Start with a small `mysql_compat_*.yaml` suite and mark unsupported cases as
+   explicit `xfail` rows.
+2. Capture expected results from stock MySQL with `-capture_expected` or
+   `MYSQL_COMPAT_MODE=capture`.
+3. Run the generated suite against QuantaStream with `-engine_diff` or
+   `MYSQL_COMPAT_MODE=diff`.
+4. Use `-compat_report` to group failures by feature and category.
+5. Promote reviewed generated suites only when they represent a stable
+   compatibility contract rather than a local experiment.
+
+Timing from these runs is useful context, but it is not the compatibility
+verdict. Move repeatable timing work to the Benchmark Lab.
+
 ## Benchmark Boundary
 
 The compatibility lab is correctness-first. It may record durations, but it

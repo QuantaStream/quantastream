@@ -14,8 +14,11 @@ environment. It is not the intended limit of production topology.
 
 QIAB runs three data nodes and the query proxy in one process.
 
-A future `inabox-standard` profile should define the QIAB settings used for
-controlled benchmark comparisons. The benchmark methodology is tracked in
+The `inabox-standard` profile is the named QIAB baseline for conformance and
+benchmark work. It is intentionally boring: one host, one QuantaStream process,
+three local data-node identities, a local Consul development agent unless an
+external Consul address is explicitly supplied, and the MySQL-compatible endpoint
+on port `4000`. The benchmark methodology is tracked in
 [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
 
 The near-term goal is to make QIAB production-credible for small deployments,
@@ -32,6 +35,35 @@ It is appropriate for:
 
 Its shared process and host lifecycle make it less suitable for large-scale
 production deployment or independent node maintenance.
+
+### `inabox-standard` Profile
+
+`inabox-standard` is a repeatable QIAB profile, not a new distributed topology.
+It exists so compatibility runs, local benchmark runs, and future reference
+benchmarks can name the same baseline.
+
+Required shape:
+
+- one QuantaStream process on one host
+- three in-process data-node identities
+- one local query/proxy endpoint exposed on port `4000`
+- Consul at `127.0.0.1:8500` unless overridden
+- node data rooted outside the Git working tree when used for benchmark runs
+- default database name `quanta`
+- UTC time handling for generated data and benchmark metadata
+
+Operational expectations:
+
+- The profile must start from a known empty or known restored data root.
+- The data root path must be recorded with benchmark metadata.
+- The QuantaStream commit, loader command, suite command, and cache state must
+  be recorded for any benchmark result.
+- The profile may be used for small deployments, but benchmark claims should
+  still distinguish it from a multi-host production cluster.
+
+The profile deliberately does not define cloud sizing, host replacement,
+rolling upgrade, or multi-proxy behavior. Those belong to containerized or
+multi-host deployment profiles.
 
 ### Containerized Cluster
 

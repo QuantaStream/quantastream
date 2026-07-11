@@ -6,6 +6,106 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+// NativeProxyFrontDoorConfig captures the first bounded MySQL proxy re-entry point.
+type NativeProxyFrontDoorConfig struct {
+	Server        NativeProxyServerConfig
+	Protocol      qsbridge.ProtocolProfile
+	BindAddress   string
+	Port          int
+	PacketIOReady bool
+}
+
+// WithDefaults returns a MySQL/QIAB front-door config without claiming packet IO is implemented.
+func (c NativeProxyFrontDoorConfig) WithDefaults() NativeProxyFrontDoorConfig {
+	c.Server = c.Server.WithDefaults()
+	if c.Protocol.Kind == qsbridge.ProtocolUnknown {
+		c.Protocol = qsbridge.NewProtocolProfile(
+			qsbridge.ProtocolMySQL,
+			"mysql-wire",
+			qsbridge.ProtocolCapabilityPreparedStatements,
+			qsbridge.ProtocolCapabilityStatementResults,
+			qsbridge.ProtocolCapabilitySessionActions,
+			qsbridge.ProtocolCapabilityExplain,
+		)
+	}
+	if c.BindAddress == "" {
+		c.BindAddress = "127.0.0.1"
+	}
+	if c.Port == 0 {
+		c.Port = 4000
+	}
+	return c
+}
+
+// NativeProxyFrontDoor is a protocol-aware bootstrap view, not a network listener.
+type NativeProxyFrontDoor struct {
+	Server        NativeProxyServer
+	Protocol      qsbridge.ProtocolProfile
+	BindAddress   string
+	Port          int
+	PacketIOReady bool
+}
+
+// NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native proxy server.
+func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFrontDoorConfig) NativeProxyFrontDoor {
+	config = config.WithDefaults()
+	return NativeProxyFrontDoor{
+		Server:        NewNativeProxyServer(runtime, config.Server),
+		Protocol:      config.Protocol.Clone(),
+		BindAddress:   config.BindAddress,
+		Port:          config.Port,
+		PacketIOReady: config.PacketIOReady,
+	}
+}
+
+// RuntimeReady reports whether SQL execution can be reached behind the front door.
+func (f NativeProxyFrontDoor) RuntimeReady() bool {
+	return f.Server.Ready()
+}
+
+// WireReady reports whether the network packet adapter is present.
+func (f NativeProxyFrontDoor) WireReady() bool {
+	return f.PacketIOReady
+}
+
+// Ready reports whether the front door is ready to accept network clients.
+func (f NativeProxyFrontDoor) Ready() bool {
+	return f.RuntimeReady() && f.WireReady()
+}
+
+// NativeProxyFrontDoorSummary is a small status row for the MySQL proxy re-entry milestone.
+type NativeProxyFrontDoorSummary struct {
+	Protocol     qsbridge.ProtocolKind
+	Driver       string
+	BindAddress  string
+	Port         int
+	Route        ExecutionPath
+	RuntimeReady bool
+	WireReady    bool
+	Ready        bool
+	NextStep     string
+}
+
+// Summary returns protocol-facing readiness metadata for the front door scaffold.
+func (f NativeProxyFrontDoor) Summary() NativeProxyFrontDoorSummary {
+	summary := NativeProxyFrontDoorSummary{
+		Protocol:     f.Protocol.Kind,
+		Driver:       f.Protocol.Driver,
+		BindAddress:  f.BindAddress,
+		Port:         f.Port,
+		Route:        f.Server.Route.Path,
+		RuntimeReady: f.RuntimeReady(),
+		WireReady:    f.WireReady(),
+		Ready:        f.Ready(),
+	}
+	if !summary.WireReady {
+		summary.NextStep = "implement MySQL packet IO adapter and command loop"
+	} else if !summary.RuntimeReady {
+		summary.NextStep = "attach ready native SQL runtime"
+	}
+	return summary
+}
+
 // NativeProxyServerConfig captures server-side ownership metadata before wire protocol binding.
 type NativeProxyServerConfig struct {
 	Route ExecutionRoute
