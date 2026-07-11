@@ -2,7 +2,7 @@ package qsmysql
 
 import "fmt"
 
-const defaultAuthPluginName = "mysql_native_password"
+const defaultAuthPluginName = "caching_sha2_password"
 
 // HandshakeV10 is the MySQL protocol 10 initial server greeting.
 type HandshakeV10 struct {
