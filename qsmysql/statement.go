@@ -14,18 +14,30 @@ const (
 
 // OKPacket returns a MySQL OK packet for a statement-style response.
 func OKPacket(sequenceID byte, statement qsbridge.StatementResult) Packet {
-	return Packet{SequenceID: sequenceID, Payload: OKPayload(statement)}
+	return OKPacketWithCapabilities(sequenceID, statement, 0)
+}
+
+// OKPacketWithCapabilities returns an OK packet shaped for negotiated client capabilities.
+func OKPacketWithCapabilities(sequenceID byte, statement qsbridge.StatementResult, capabilities CapabilityFlag) Packet {
+	return Packet{SequenceID: sequenceID, Payload: OKPayloadWithCapabilities(statement, capabilities)}
 }
 
 // OKPayload encodes statement metadata as a MySQL OK packet payload.
 func OKPayload(statement qsbridge.StatementResult) []byte {
+	return OKPayloadWithCapabilities(statement, 0)
+}
+
+// OKPayloadWithCapabilities encodes statement metadata as a MySQL OK packet payload.
+func OKPayloadWithCapabilities(statement qsbridge.StatementResult, capabilities CapabilityFlag) []byte {
 	payload := []byte{okPacketHeader}
 	payload = appendLengthEncodedInteger(payload, statement.AffectedRows)
 	payload = appendLengthEncodedInteger(payload, statement.LastInsertID)
 	payload = appendUint16LE(payload, uint16(StatusAutocommit))
 	payload = appendUint16LE(payload, statement.Warnings)
-	if statement.Status != "" {
+	if capabilities&CapabilitySessionTrack != 0 {
 		payload = appendLengthEncodedString(payload, statement.Status)
+	} else if statement.Status != "" {
+		payload = append(payload, []byte(statement.Status)...)
 	}
 	return payload
 }

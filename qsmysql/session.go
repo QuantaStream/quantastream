@@ -165,11 +165,12 @@ func (r *SessionRunner) ServeNextCommand(ctx context.Context) (CommandResponse, 
 		return CommandResponse{}, fmt.Errorf("mysql connection is not ready for commands: %s", r.Connection.State)
 	}
 	response, err := (CommandLoop{
-		Reader:       r.Stream,
-		Writer:       r.Stream,
-		Handler:      r.Handler,
-		ConnectionID: r.Connection.ID,
-		Database:     r.Connection.Database,
+		Reader:          r.Stream,
+		Writer:          r.Stream,
+		Handler:         r.Handler,
+		ConnectionID:    r.Connection.ID,
+		Database:        r.Connection.Database,
+		CapabilityFlags: r.Connection.CapabilityFlags,
 	}).ServeNext(ctx)
 	if err != nil {
 		return response, err

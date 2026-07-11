@@ -20,11 +20,12 @@ const (
 
 // Connection tracks MySQL protocol state without owning a network socket.
 type Connection struct {
-	ID             uint32
-	State          ConnectionState
-	Username       string
-	Database       string
-	AuthPluginName string
+	ID              uint32
+	State           ConnectionState
+	Username        string
+	Database        string
+	AuthPluginName  string
+	CapabilityFlags CapabilityFlag
 }
 
 // NewConnection returns a new socket-free MySQL connection state.
@@ -69,6 +70,7 @@ func (c Connection) AcceptHandshakeResponse(response HandshakeResponse41) (Conne
 	c.Username = response.Username
 	c.Database = response.Database
 	c.AuthPluginName = response.AuthPluginName
+	c.CapabilityFlags = response.CapabilityFlags
 	c.State = ConnectionStateAuthPending
 	return c, nil
 }
@@ -79,7 +81,7 @@ func (c Connection) AcceptPermissiveAuth() (Connection, CommandResponse, error) 
 		return c, CommandResponse{}, fmt.Errorf("cannot accept auth from state %s", c.State)
 	}
 	c.State = ConnectionStateReady
-	return c, AuthSuccessResponse(c.AuthPluginName), nil
+	return c, AuthSuccessResponse(c.AuthPluginName, c.CapabilityFlags), nil
 }
 
 // WithClosing moves a connection to closing state.

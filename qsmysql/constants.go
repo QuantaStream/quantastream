@@ -33,6 +33,8 @@ const (
 	CapabilitySecureConnection CapabilityFlag = 0x00008000
 	// CapabilityPluginAuth is CLIENT_PLUGIN_AUTH.
 	CapabilityPluginAuth CapabilityFlag = 0x00080000
+	// CapabilitySessionTrack is CLIENT_SESSION_TRACK.
+	CapabilitySessionTrack CapabilityFlag = 0x00800000
 )
 
 // CharacterSet identifies a MySQL connection character set.

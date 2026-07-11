@@ -24,6 +24,13 @@ func TestOKPayloadEncodesStatementMetadata(t *testing.T) {
 	}
 }
 
+func TestOKPayloadWithSessionTrackIncludesEmptyInfo(t *testing.T) {
+	payload := OKPayloadWithCapabilities(qsbridge.StatementResult{}, CapabilitySessionTrack)
+	if !bytes.Equal(payload, []byte{okPacketHeader, 0, 0, byte(StatusAutocommit), 0, 0, 0, 0}) {
+		t.Fatalf("OK payload = %v, want session-track empty info field", payload)
+	}
+}
+
 func TestERRPayloadEncodesProtocolError(t *testing.T) {
 	payload := ERRPayload(qsbridge.ProtocolError{
 		SQLState:   qsbridge.SQLStateSyntaxError,

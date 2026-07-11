@@ -1,6 +1,7 @@
 package qsmysql
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -54,6 +55,27 @@ func TestCommandLoopDecodesHandlesAndWritesResponse(t *testing.T) {
 	}
 	if response.Kind != CommandResponseOK || len(writer.packets) != 1 || writer.packets[0].Payload[0] != okPacketHeader {
 		t.Fatalf("response = %#v written=%#v", response, writer.packets)
+	}
+}
+
+func TestCommandLoopShapesOKForSessionTrackCapability(t *testing.T) {
+	reader := &testPacketReader{packets: []Packet{{SequenceID: 0, Payload: []byte{byte(CommandPing)}}}}
+	writer := &testPacketWriter{}
+
+	response, err := (CommandLoop{
+		Reader:          reader,
+		Writer:          writer,
+		Handler:         &testCommandHandler{},
+		CapabilityFlags: CapabilitySessionTrack,
+	}).ServeNext(context.Background())
+	if err != nil {
+		t.Fatalf("ServeNext failed: %v", err)
+	}
+	if response.Kind != CommandResponseOK || len(writer.packets) != 1 {
+		t.Fatalf("response = %#v written=%#v", response, writer.packets)
+	}
+	if got := writer.packets[0].Payload; !bytes.Equal(got, []byte{okPacketHeader, 0, 0, byte(StatusAutocommit), 0, 0, 0, 0}) {
+		t.Fatalf("written OK payload = %v, want session-track shape", got)
 	}
 }
 

@@ -48,17 +48,39 @@ func StatementOKResponse(statement qsbridge.StatementResult) CommandResponse {
 }
 
 // AuthSuccessResponse encodes the successful server side of a MySQL auth exchange.
-func AuthSuccessResponse(pluginName string) CommandResponse {
+func AuthSuccessResponse(pluginName string, capabilities CapabilityFlag) CommandResponse {
 	if strings.TrimSpace(pluginName) == "" {
 		pluginName = defaultAuthPluginName
 	}
 	if strings.EqualFold(pluginName, cachingSHA2PasswordPluginName) {
 		return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{
 			{SequenceID: 1, Payload: []byte{authMoreDataPacketHeader, cachingSHA2FastAuthSuccess}},
-			OKPacket(2, qsbridge.StatementResult{}),
+			OKPacketWithCapabilities(2, qsbridge.StatementResult{}, capabilities),
 		}}
 	}
-	return StatementOKResponse(qsbridge.StatementResult{})
+	return StatementOKResponse(qsbridge.StatementResult{}).WithCapabilities(capabilities)
+}
+
+// WithCapabilities reshapes OK packets for negotiated client capabilities.
+func (r CommandResponse) WithCapabilities(capabilities CapabilityFlag) CommandResponse {
+	if capabilities&CapabilitySessionTrack == 0 || r.Kind != CommandResponseOK {
+		return r
+	}
+	r.Packets = clonePackets(r.Packets)
+	for i := range r.Packets {
+		if len(r.Packets[i].Payload) == 7 && r.Packets[i].Payload[0] == okPacketHeader {
+			r.Packets[i].Payload = append(r.Packets[i].Payload, 0)
+		}
+	}
+	return r
+}
+
+func clonePackets(packets []Packet) []Packet {
+	cloned := make([]Packet, len(packets))
+	for i, packet := range packets {
+		cloned[i] = Packet{SequenceID: packet.SequenceID, Payload: append([]byte(nil), packet.Payload...)}
+	}
+	return cloned
 }
 
 // PingResponse returns the OK response for COM_PING.

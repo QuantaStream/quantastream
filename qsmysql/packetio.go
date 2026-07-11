@@ -19,11 +19,12 @@ type CommandHandler interface {
 
 // CommandLoop is a socket-free MySQL command loop over packet reader/writer interfaces.
 type CommandLoop struct {
-	Reader       PacketReader
-	Writer       PacketWriter
-	Handler      CommandHandler
-	ConnectionID uint32
-	Database     string
+	Reader          PacketReader
+	Writer          PacketWriter
+	Handler         CommandHandler
+	ConnectionID    uint32
+	Database        string
+	CapabilityFlags CapabilityFlag
 }
 
 // ServeNext reads, decodes, handles, and writes the response for one command packet.
@@ -43,6 +44,7 @@ func (l CommandLoop) ServeNext(ctx context.Context) (CommandResponse, error) {
 	if err != nil {
 		response = ErrorResponseFromError(err)
 	}
+	response = response.WithCapabilities(l.CapabilityFlags)
 	return response, writeResponsePackets(ctx, l.Writer, response)
 }
 
