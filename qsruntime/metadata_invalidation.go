@@ -28,12 +28,18 @@ type MetadataChangeEvent struct {
 // metadata and must use RuntimeDictionaryInvalidator instead.
 type RuntimeMetadataInvalidator struct {
 	Catalog       CatalogInvalidationTarget
+	Tables        TableInvalidationTarget
 	DefaultSchema string
 }
 
 // CatalogInvalidationTarget is the narrow cache hook required for catalog metadata.
 type CatalogInvalidationTarget interface {
 	InvalidateTable(schema string, name string)
+}
+
+// TableInvalidationTarget is the runtime hook for table-scoped cached sessions and table metadata.
+type TableInvalidationTarget interface {
+	InvalidateTable(name string)
 }
 
 // ApplyChange invalidates metadata affected by a catalog table change.
@@ -43,6 +49,7 @@ func (i RuntimeMetadataInvalidator) ApplyChange(event MetadataChangeEvent) {
 		return
 	}
 	i.InvalidateTable(i.DefaultSchema, table)
+	i.InvalidateRuntimeTable(table)
 }
 
 // InvalidateTable evicts cached catalog metadata for a table.
@@ -62,4 +69,13 @@ func (i RuntimeMetadataInvalidator) InvalidateTable(schema string, table string)
 	if schema != "" {
 		i.Catalog.InvalidateTable("", table)
 	}
+}
+
+// InvalidateRuntimeTable evicts table-scoped runtime state such as pooled sessions.
+func (i RuntimeMetadataInvalidator) InvalidateRuntimeTable(table string) {
+	table = strings.TrimSpace(table)
+	if table == "" || i.Tables == nil {
+		return
+	}
+	i.Tables.InvalidateTable(table)
 }

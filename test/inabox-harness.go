@@ -178,19 +178,7 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 		shared.InitLogging(logging, environment, "Proxy", Version, "Quanta")
 	}
 
-	//log.Printf("Connecting to Consul at: [%s] ...\n", proxy.ConsulAddr)
-	//consulConfig := &api.Config{Address: proxy.ConsulAddr}
-	//consulConfig := &api.Config{Address: "127.0.0.1:8500"}
-	/*
-		stopSchemaWatch, errx := shared.RegisterSchemaChangeListenerWithStop(consulConfig, proxy.SchemaChangeListener)
-		if errx != nil {
-			u.Error(errx)
-			os.Exit(1)
-		}
-		localProxy.StopSchemaWatch = stopSchemaWatch
-	*/
-
-	fmt.Println("Proxy RegisterSchemaChangeListener done")
+	fmt.Println("Proxy RegisterSchemaChangeListener deferred until runtime is ready")
 
 	poolSize := 4
 
@@ -233,6 +221,23 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 		u.Error(diagnostics)
 	}
 	localProxy.Runtime = proxyRuntime
+	if catalog, ok := proxyRuntime.Runtime.Environment.Catalog.(qsruntime.CatalogInvalidationTarget); ok {
+		consulConfig := &api.Config{Address: ConsulAddress}
+		stopSchemaWatch, errx := shared.RegisterSchemaChangeListenerWithStop(
+			consulConfig,
+			qsruntime.LegacySchemaChangeListener(qsruntime.RuntimeMetadataInvalidator{
+				Catalog:       catalog,
+				Tables:        localProxy.Src.GetSessionPool(),
+				DefaultSchema: "quanta",
+			}),
+		)
+		if errx != nil {
+			u.Error(errx)
+			os.Exit(1)
+		}
+		localProxy.StopSchemaWatch = stopSchemaWatch
+	}
+	fmt.Println("Proxy RegisterSchemaChangeListener done")
 	localProxy.FrontDoor = qsruntime.NewNativeProxyFrontDoor(proxyRuntime, qsruntime.NativeProxyFrontDoorConfig{
 		BindAddress:   "127.0.0.1",
 		Port:          4000,

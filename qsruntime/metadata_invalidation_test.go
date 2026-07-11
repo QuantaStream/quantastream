@@ -8,8 +8,10 @@ import (
 
 func TestRuntimeMetadataInvalidatorAppliesMetadataChange(t *testing.T) {
 	catalog := &recordingInvalidatableCatalog{}
+	tables := &recordingTableInvalidationTarget{}
 	invalidator := RuntimeMetadataInvalidator{
 		Catalog:       catalog,
+		Tables:        tables,
 		DefaultSchema: "quanta",
 	}
 
@@ -17,6 +19,9 @@ func TestRuntimeMetadataInvalidatorAppliesMetadataChange(t *testing.T) {
 
 	if len(catalog.tables) != 2 || catalog.tables[0] != "quanta.customers_qa" || catalog.tables[1] != ".customers_qa" {
 		t.Fatalf("invalidated tables = %#v, want schema-qualified and unqualified customers_qa", catalog.tables)
+	}
+	if len(tables.tables) != 1 || tables.tables[0] != "customers_qa" {
+		t.Fatalf("runtime invalidated tables = %#v, want customers_qa", tables.tables)
 	}
 }
 
@@ -41,6 +46,14 @@ func TestRuntimeDictionaryInvalidatorInvalidatesStringEnumField(t *testing.T) {
 
 type recordingInvalidatableCatalog struct {
 	tables []string
+}
+
+type recordingTableInvalidationTarget struct {
+	tables []string
+}
+
+func (t *recordingTableInvalidationTarget) InvalidateTable(table string) {
+	t.tables = append(t.tables, table)
 }
 
 func (c *recordingInvalidatableCatalog) Table(string, string) (qsbridge.TableDefinition, qsbridge.DiagnosticSet) {

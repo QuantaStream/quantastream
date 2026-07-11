@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -16,13 +17,14 @@ var ErrPoolDrained = errors.New("session pool drained")
 
 // SessionPool - Session pool encapsulates a Quanta session.
 type SessionPool struct {
-	AppHost      *shared.Conn
-	baseDir      string
-	sessPoolMap  map[string]*sessionPoolEntry
-	sessPoolLock sync.RWMutex
-	semaphores   chan struct{}
-	poolSize     int
-	maxUsed      int32
+	AppHost          *shared.Conn
+	baseDir          string
+	sessPoolMap      map[string]*sessionPoolEntry
+	tableGenerations map[string]uint64
+	sessPoolLock     sync.RWMutex
+	semaphores       chan struct{}
+	poolSize         int
+	maxUsed          int32
 
 	TableCache *TableCacheStruct
 
@@ -31,7 +33,8 @@ type SessionPool struct {
 
 // SessionPool - Pool of Quanta connections
 type sessionPoolEntry struct {
-	pool chan *Session
+	pool       chan *Session
+	generation uint64
 }
 
 // NewSessionPool - Construct a session pool to constrain resource consumption.
@@ -42,7 +45,8 @@ func NewSessionPool(tableCache *TableCacheStruct, appHost *shared.Conn, baseDir 
 	}
 
 	p := &SessionPool{AppHost: appHost, baseDir: baseDir,
-		sessPoolMap: make(map[string]*sessionPoolEntry), semaphores: make(chan struct{}, poolSize), poolSize: poolSize}
+		sessPoolMap: make(map[string]*sessionPoolEntry), tableGenerations: make(map[string]uint64),
+		semaphores: make(chan struct{}, poolSize), poolSize: poolSize}
 	p.TableCache = tableCache
 	for i := 0; i < poolSize; i++ {
 		p.semaphores <- struct{}{}
@@ -50,8 +54,8 @@ func NewSessionPool(tableCache *TableCacheStruct, appHost *shared.Conn, baseDir 
 	return p
 }
 
-func (m *SessionPool) newSessionPoolEntry() *sessionPoolEntry {
-	return &sessionPoolEntry{pool: make(chan *Session, m.poolSize)}
+func (m *SessionPool) newSessionPoolEntry(tableName string) *sessionPoolEntry {
+	return &sessionPoolEntry{pool: make(chan *Session, m.poolSize), generation: m.tableGenerationLocked(tableName)}
 }
 
 func (m *SessionPool) getPoolByTableName(tableName string) *sessionPoolEntry {
@@ -59,7 +63,7 @@ func (m *SessionPool) getPoolByTableName(tableName string) *sessionPoolEntry {
 	var cp *sessionPoolEntry
 	var found bool
 	if cp, found = m.sessPoolMap[tableName]; !found {
-		cp = m.newSessionPoolEntry()
+		cp = m.newSessionPoolEntry(tableName)
 		m.sessPoolMap[tableName] = cp
 	}
 	return cp
@@ -80,12 +84,14 @@ func (m *SessionPool) Borrow(tableName string) (*Session, error) {
 		}
 		select {
 		case r := <-cp.pool:
+			r.poolGeneration = cp.generation
 			return r, nil
 		default:
 			conn, err := m.NewSession(tableName)
 			if err != nil {
 				return nil, fmt.Errorf("borrowSession %v", err)
 			}
+			conn.poolGeneration = cp.generation
 			return conn, nil
 		}
 	default:
@@ -105,8 +111,14 @@ func (m *SessionPool) Return(tableName string, conn *Session) {
 		conn.CloseSession()
 		return
 	}
-	cp := m.getPoolByTableName(tableName)
+	stale := m.sessionGenerationStaleLocked(tableName, conn.poolGeneration)
 	m.sessPoolLock.Unlock()
+
+	if stale {
+		conn.CloseSession()
+		m.returnSemaphore()
+		return
+	}
 
 	conn.Flush()
 
@@ -116,6 +128,13 @@ func (m *SessionPool) Return(tableName string, conn *Session) {
 		conn.CloseSession()
 		return
 	}
+	if m.sessionGenerationStaleLocked(tableName, conn.poolGeneration) {
+		conn.CloseSession()
+		m.returnSemaphoreLocked()
+		return
+	}
+	cp := m.getPoolByTableName(tableName)
+	conn.poolGeneration = cp.generation
 	select {
 	case m.semaphores <- struct{}{}:
 		select {
@@ -125,6 +144,90 @@ func (m *SessionPool) Return(tableName string, conn *Session) {
 		}
 	default: //Don't block
 	}
+}
+
+// InvalidateTable closes pooled sessions and cached metadata for a table after a schema change.
+func (m *SessionPool) InvalidateTable(tableName string) {
+	canonical := sessionPoolTableKey(tableName)
+	if canonical == "" {
+		return
+	}
+	var stale []*Session
+
+	m.sessPoolLock.Lock()
+	if m.closed {
+		m.sessPoolLock.Unlock()
+		return
+	}
+	m.tableGenerations[canonical] = m.tableGenerations[canonical] + 1
+	for key, entry := range m.sessPoolMap {
+		if sessionPoolTableKey(key) != canonical {
+			continue
+		}
+		delete(m.sessPoolMap, key)
+		for {
+			select {
+			case session := <-entry.pool:
+				if session != nil {
+					stale = append(stale, session)
+				}
+			default:
+				goto drained
+			}
+		}
+	drained:
+	}
+	m.sessPoolLock.Unlock()
+
+	for _, session := range stale {
+		session.CloseSession()
+	}
+	m.invalidateTableCache(tableName)
+}
+
+func (m *SessionPool) invalidateTableCache(tableName string) {
+	if m.TableCache == nil {
+		return
+	}
+	canonical := sessionPoolTableKey(tableName)
+	m.TableCache.TableCacheLock.Lock()
+	defer m.TableCache.TableCacheLock.Unlock()
+	for key, table := range m.TableCache.TableCache {
+		if sessionPoolTableKey(key) == canonical || (table != nil && sessionPoolTableKey(table.Name) == canonical) {
+			delete(m.TableCache.TableCache, key)
+		}
+	}
+}
+
+func (m *SessionPool) tableGenerationLocked(tableName string) uint64 {
+	if m.tableGenerations == nil {
+		m.tableGenerations = make(map[string]uint64)
+	}
+	return m.tableGenerations[sessionPoolTableKey(tableName)]
+}
+
+func (m *SessionPool) sessionGenerationStaleLocked(tableName string, generation uint64) bool {
+	return generation != m.tableGenerationLocked(tableName)
+}
+
+func (m *SessionPool) returnSemaphore() {
+	m.sessPoolLock.Lock()
+	defer m.sessPoolLock.Unlock()
+	m.returnSemaphoreLocked()
+}
+
+func (m *SessionPool) returnSemaphoreLocked() {
+	if m.closed {
+		return
+	}
+	select {
+	case m.semaphores <- struct{}{}:
+	default:
+	}
+}
+
+func sessionPoolTableKey(tableName string) string {
+	return strings.ToLower(strings.TrimSpace(tableName))
 }
 
 // NewSession - Construct a new session.

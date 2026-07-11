@@ -40,18 +40,19 @@ const (
 
 // Session - State for session (non-threadsafe)
 type Session struct {
-	BasePath     string // path to schema directory
-	BitIndex     *shared.BitmapIndex
-	BatchBuffer  *shared.BatchBuffer
-	StringIndex  *shared.StringSearch
-	KVStore      *shared.KVStore
-	TableBuffers map[string]*TableBuffer
-	Nested       bool
-	DateFilter   *time.Time // optional filter to only include records matching timestamp
-	BytesRead    int        // Bytes read for a row (record)
-	CreatedAt    time.Time
-	stateLock    sync.Mutex
-	flushing     bool
+	BasePath       string // path to schema directory
+	BitIndex       *shared.BitmapIndex
+	BatchBuffer    *shared.BatchBuffer
+	StringIndex    *shared.StringSearch
+	KVStore        *shared.KVStore
+	TableBuffers   map[string]*TableBuffer
+	Nested         bool
+	DateFilter     *time.Time // optional filter to only include records matching timestamp
+	BytesRead      int        // Bytes read for a row (record)
+	CreatedAt      time.Time
+	poolGeneration uint64
+	stateLock      sync.Mutex
+	flushing       bool
 
 	tableCache *TableCacheStruct
 }
