@@ -26,3 +26,15 @@ The current seed suites are:
 - `mysql_compat_select.yaml`
 - `mysql_compat_predicates.yaml`
 - `mysql_compat_functions.yaml`
+
+## Capturing MySQL Reference Results
+
+Compatibility suites can generate runnable SQLRunner suites with `expect`
+blocks captured from any SQLRunner engine. The normal workflow is to run
+`-capture_expected` against stock MySQL, then run the generated suite against
+QuantaStream. A live MySQL server is only required when the selected engine is
+`mysql-reference`.
+
+```bash
+go run . -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml
+```

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -138,5 +140,54 @@ func TestSlowCaseResultsDisabledWithoutThreshold(t *testing.T) {
 	}}
 	if got := slowCaseResults(summary, 0); len(got) != 0 {
 		t.Fatalf("slow cases = %#v, want none", got)
+	}
+}
+
+type captureMainFakeEngine struct{}
+
+func (captureMainFakeEngine) Query(_ context.Context, _ string) (roadmap.QueryResult, error) {
+	return roadmap.QueryResult{
+		Columns: []string{"Value"},
+		Types:   []string{"INT"},
+		Rows:    [][]roadmap.Cell{{{Text: "1.0"}}},
+	}, nil
+}
+
+func (captureMainFakeEngine) Exec(_ context.Context, _ string) (int64, error) {
+	return 3, nil
+}
+
+func TestCaptureCompatibilityExpectedWritesFile(t *testing.T) {
+	path := t.TempDir() + "/expected.yaml"
+	suite := &roadmap.Suite{
+		Version: 1,
+		Name:    "capture-main",
+		Tests: []roadmap.TestCase{{
+			ID:            "capture.001.query",
+			Status:        roadmap.CaseSupported,
+			Kind:          "query",
+			Feature:       "select_projection",
+			Compatibility: roadmap.CompatibilityMySQL,
+			SQL:           "select 1",
+		}},
+	}
+	runner := roadmap.Runner{Engine: captureMainFakeEngine{}}
+
+	if err := captureCompatibilityExpected(context.Background(), suite, runner, runnerConfig{CaptureExpected: path}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := roadmap.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Tests) != 1 {
+		t.Fatalf("captured tests = %#v, want 1", captured.Tests)
+	}
+	if got := captured.Tests[0].Expect.Rows[0][0]; got != "1" {
+		t.Fatalf("captured value = %#v, want canonical 1", got)
 	}
 }

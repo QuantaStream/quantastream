@@ -187,3 +187,7 @@ func roadmapRows(rows [][]CompatibilityCell) [][]Cell {
 	}
 	return result
 }
+
+func yamlMarshal(value interface{}) ([]byte, error) {
+	return yaml.Marshal(value)
+}

@@ -33,20 +33,21 @@ var consulAddress = "127.0.0.1:8500"
 var log = logger.New()
 
 type runnerConfig struct {
-	Engine        string
-	Host          string
-	User          string
-	Password      string
-	Database      string
-	Port          string
-	Consul        string
-	CaseID        string
-	MySQLDSN      string
-	MySQLDriver   string
-	Verbose       bool
-	CompatReport  bool
-	DumpActual    bool
-	SlowThreshold time.Duration
+	Engine          string
+	Host            string
+	User            string
+	Password        string
+	Database        string
+	Port            string
+	Consul          string
+	CaseID          string
+	MySQLDSN        string
+	MySQLDriver     string
+	Verbose         bool
+	CompatReport    bool
+	DumpActual      bool
+	CaptureExpected string
+	SlowThreshold   time.Duration
 }
 
 type runnerHarness struct {
@@ -71,25 +72,27 @@ func main() {
 	mysqlDriver := flag.String("mysql_driver", defaultMySQLReferenceDriver, "database/sql driver name for the mysql-reference engine.")
 	verbose := flag.Bool("verbose", false, "Print each roadmap case SQL and detailed timing while it runs.")
 	dumpActual := flag.Bool("dump_actual", false, "Print actual query rows when a roadmap case mismatches.")
+	captureExpected := flag.String("capture_expected", "", "Write a runnable SQLRunner suite with expectations captured from the selected engine.")
 	slowThreshold := flag.Duration("slow_threshold", 0, "Print a slow-case summary for roadmap cases at or above this duration, such as 10s.")
 	compatReport := flag.Bool("compat_report", false, "Print a compatibility scorecard grouped by feature and result category.")
 	flag.Parse()
 
 	cfg := runnerConfig{
-		Engine:        strings.ToLower(strings.TrimSpace(*engine)),
-		Host:          *host,
-		User:          *user,
-		Password:      *password,
-		Database:      *database,
-		Port:          *port,
-		Consul:        *consul,
-		CaseID:        strings.TrimSpace(*caseID),
-		MySQLDSN:      *mysqlDSN,
-		MySQLDriver:   *mysqlDriver,
-		Verbose:       *verbose,
-		CompatReport:  *compatReport,
-		DumpActual:    *dumpActual,
-		SlowThreshold: *slowThreshold,
+		Engine:          strings.ToLower(strings.TrimSpace(*engine)),
+		Host:            *host,
+		User:            *user,
+		Password:        *password,
+		Database:        *database,
+		Port:            *port,
+		Consul:          *consul,
+		CaseID:          strings.TrimSpace(*caseID),
+		MySQLDSN:        *mysqlDSN,
+		MySQLDriver:     *mysqlDriver,
+		Verbose:         *verbose,
+		CompatReport:    *compatReport,
+		DumpActual:      *dumpActual,
+		CaptureExpected: strings.TrimSpace(*captureExpected),
+		SlowThreshold:   *slowThreshold,
 	}
 	if err := validateFlags(*suiteFile, cfg); err != nil {
 		printUsage(err)
@@ -127,6 +130,14 @@ func main() {
 		}()
 	}
 
+	if cfg.CaptureExpected != "" {
+		if err := captureCompatibilityExpected(context.Background(), suite, harness.Runner, cfg); err != nil {
+			log.Printf("SQL roadmap capture failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold, cfg.CompatReport); err != nil {
 		log.Printf("SQL roadmap suite failed: %v", err)
 		os.Exit(1)
@@ -160,6 +171,7 @@ func printUsage(err error) {
 	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
 	u.Warn("Legacy direct example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_smoke.yaml -consul 127.0.0.1:8500")
 	u.Warn("MySQL reference example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
+	u.Warn("Capture example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml")
 }
 
 func configureLogging(logLevel string) {
@@ -331,6 +343,31 @@ func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runn
 	}
 	if summary.HasFailures() {
 		return fmt.Errorf("suite contains FAIL or XPASS results")
+	}
+	return nil
+}
+
+func captureCompatibilityExpected(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, cfg runnerConfig) error {
+	capture := runner.CaptureCompatibilityExpected(ctx, suite, roadmap.CompatibilityCaptureOptions{Canonical: roadmap.DefaultCanonicalOptions()})
+	log.Printf("\n-------- SQL Compatibility Capture: %s --------", capture.Summary.Suite)
+	for _, result := range capture.Summary.Results {
+		duration := formatCaseDuration(result.Duration, cfg.Verbose)
+		if result.Details == "" {
+			log.Printf("%-6s %s%s", result.Status, result.ID, duration)
+		} else {
+			log.Printf("%-6s %s%s: %s", result.Status, result.ID, duration, result.Details)
+		}
+	}
+	data, err := roadmap.MarshalCompatibilityExpectedSuite(capture.Suite)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(cfg.CaptureExpected, data, 0644); err != nil {
+		return err
+	}
+	log.Printf("WROTE  %s (%d captured cases)", cfg.CaptureExpected, len(capture.Expected.Cases))
+	if capture.Summary.HasFailures() {
+		return fmt.Errorf("capture contains FAIL results")
 	}
 	return nil
 }

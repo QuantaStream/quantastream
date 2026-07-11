@@ -120,3 +120,114 @@ func (e caseAwareRecorder) Exec(ctx context.Context, statement string) (int64, e
 	*e.seen = append(*e.seen, e.test)
 	return (&fakeEngine{}).Exec(ctx, statement)
 }
+
+func TestRunnerCapturesCompatibilityExpectedResults(t *testing.T) {
+	suite := &Suite{
+		Version: 1,
+		Name:    "capture",
+		Tests: []TestCase{
+			{
+				ID:            "capture.001.query",
+				Status:        CaseSupported,
+				Kind:          "query",
+				Order:         "rowsort",
+				Feature:       "select_projection",
+				Compatibility: CompatibilityMySQL,
+				SQL:           "select id from orders",
+			},
+			{
+				ID:     "capture.002.statement",
+				Status: CaseSupported,
+				Kind:   "statement",
+				SQL:    "insert into orders values (1)",
+			},
+		},
+	}
+	engine := &fakeEngine{}
+
+	result := (Runner{Engine: engine}).CaptureCompatibilityExpected(context.Background(), suite, CompatibilityCaptureOptions{})
+
+	if result.Summary.HasFailures() {
+		t.Fatalf("capture summary = %#v, want no failures", result.Summary.Results)
+	}
+	if result.Expected.Suite != "capture" {
+		t.Fatalf("suite = %q, want capture", result.Expected.Suite)
+	}
+	if len(result.Expected.Cases) != 2 {
+		t.Fatalf("cases = %#v, want 2", result.Expected.Cases)
+	}
+	if len(result.Suite.Tests) != 2 {
+		t.Fatalf("generated suite tests = %#v, want 2", result.Suite.Tests)
+	}
+	if got := result.Suite.Tests[0].Expect.Rows[0][0]; got != "7" {
+		t.Fatalf("generated suite first row = %#v, want 7", got)
+	}
+	queryCase := result.Expected.Cases[0]
+	if queryCase.ID != "capture.001.query" || queryCase.Kind != "query" {
+		t.Fatalf("query case = %#v", queryCase)
+	}
+	if len(queryCase.Rows) != 1 || queryCase.Rows[0][0].Text != "7" {
+		t.Fatalf("query rows = %#v, want 7", queryCase.Rows)
+	}
+	if queryCase.Types[0] != "INTEGER" {
+		t.Fatalf("query types = %#v, want INTEGER", queryCase.Types)
+	}
+	statementCase := result.Expected.Cases[1]
+	if statementCase.AffectedRows == nil || *statementCase.AffectedRows != 2 {
+		t.Fatalf("affected rows = %#v, want 2", statementCase.AffectedRows)
+	}
+}
+
+func TestRunnerCaptureExecutesAdminWithoutCapturingExpectedCase(t *testing.T) {
+	suite := &Suite{
+		Version: 1,
+		Name:    "capture-admin",
+		Tests: []TestCase{
+			{ID: "capture.001.admin", Status: CaseSupported, Kind: "admin", SQL: "create table t"},
+			{ID: "capture.002.query", Status: CaseSupported, Kind: "query", SQL: "select id from t"},
+		},
+	}
+	adminCalls := 0
+
+	result := (Runner{
+		Engine: &fakeEngine{},
+		Admin: func(context.Context, string) error {
+			adminCalls++
+			return nil
+		},
+	}).CaptureCompatibilityExpected(context.Background(), suite, CompatibilityCaptureOptions{})
+
+	if adminCalls != 1 {
+		t.Fatalf("admin calls = %d, want 1", adminCalls)
+	}
+	if len(result.Expected.Cases) != 1 || result.Expected.Cases[0].ID != "capture.002.query" {
+		t.Fatalf("captured cases = %#v, want only query", result.Expected.Cases)
+	}
+}
+
+func TestBuildCompatibilityExpectedSuiteCanBeParsedAsRoadmapSuite(t *testing.T) {
+	suite := &Suite{
+		Version: 1,
+		Name:    "capture-parse",
+		Tests: []TestCase{{
+			ID:            "capture.001.query",
+			Status:        CaseSupported,
+			Kind:          "query",
+			Feature:       "select_projection",
+			Compatibility: CompatibilityMySQL,
+			SQL:           "select 1 as one",
+		}},
+	}
+	capture := (Runner{Engine: &fakeEngine{}}).CaptureCompatibilityExpected(context.Background(), suite, CompatibilityCaptureOptions{})
+	data, err := MarshalCompatibilityExpectedSuite(capture.Suite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(data)
+	if err != nil {
+		t.Fatalf("generated compatibility suite should parse: %v\n%s", err, data)
+	}
+	if got := parsed.Tests[0].Expect.Rows[0][0]; got != "7" {
+		t.Fatalf("parsed expected value = %#v, want 7", got)
+	}
+}
