@@ -34,6 +34,9 @@ type testCommandHandler struct {
 
 func (h *testCommandHandler) HandleCommand(ctx context.Context, command Command) (CommandResponse, error) {
 	h.got = command
+	if command.Kind == CommandKindQuit {
+		return QuitResponse(), nil
+	}
 	return PingResponse(), nil
 }
 

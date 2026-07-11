@@ -18,14 +18,16 @@ type SessionRunnerConfig struct {
 	Handshake      HandshakeV10
 	Stream         PacketReadWriter
 	Handler        CommandHandler
+	Authenticator  Authenticator
 }
 
 // SessionRunner drives one MySQL connection over an already-mounted packet stream.
 type SessionRunner struct {
-	Connection Connection
-	Handshake  HandshakeV10
-	Stream     PacketReadWriter
-	Handler    CommandHandler
+	Connection    Connection
+	Handshake     HandshakeV10
+	Stream        PacketReadWriter
+	Handler       CommandHandler
+	Authenticator Authenticator
 }
 
 // NewSessionRunner returns a connection runner with deterministic default handshake data.
@@ -42,11 +44,16 @@ func NewSessionRunner(config SessionRunnerConfig) SessionRunner {
 		}
 		handshake = NewDefaultHandshake(connectionID, authPluginData)
 	}
+	authenticator := config.Authenticator
+	if authenticator == nil {
+		authenticator = PermissiveAuthenticator{}
+	}
 	return SessionRunner{
-		Connection: NewConnection(connectionID),
-		Handshake:  handshake,
-		Stream:     config.Stream,
-		Handler:    config.Handler,
+		Connection:    NewConnection(connectionID),
+		Handshake:     handshake,
+		Stream:        config.Stream,
+		Handler:       config.Handler,
+		Authenticator: authenticator,
 	}
 }
 
@@ -87,18 +94,63 @@ func (r *SessionRunner) AcceptHandshakeResponse(ctx context.Context) (CommandRes
 	if err != nil {
 		return CommandResponse{}, err
 	}
+	authenticator := r.Authenticator
+	if authenticator == nil {
+		authenticator = PermissiveAuthenticator{}
+	}
+	decision, err := authenticator.Authenticate(ctx, authRequestFromHandshake(connection, response))
+	if err != nil {
+		return CommandResponse{}, err
+	}
+	if !decision.Accepted {
+		failure := ErrorResponse(decision.Failure)
+		failure.Packets = clonePacketsWithSequence(failure.Packets, packet.SequenceID+1)
+		if err := writeResponsePackets(ctx, r.Stream, failure); err != nil {
+			return CommandResponse{}, err
+		}
+		r.Connection = connection
+		return failure, nil
+	}
+	connection.Username = decision.Username
+	connection.Database = decision.Database
+	connection.AuthPluginName = decision.AuthPluginName
 	connection, authOK, err := connection.AcceptPermissiveAuth()
 	if err != nil {
 		return CommandResponse{}, err
 	}
 	authOK.Packets = clonePacketsWithSequence(authOK.Packets, packet.SequenceID+1)
-	for _, out := range authOK.Packets {
-		if err := r.Stream.WritePacket(ctx, out); err != nil {
-			return CommandResponse{}, err
-		}
+	if err := writeResponsePackets(ctx, r.Stream, authOK); err != nil {
+		return CommandResponse{}, err
 	}
 	r.Connection = connection
 	return authOK, nil
+}
+
+// Serve performs handshake, authentication, and command processing until the session closes.
+func (r *SessionRunner) Serve(ctx context.Context) error {
+	if err := r.SendHandshake(ctx); err != nil {
+		return err
+	}
+	authResponse, err := r.AcceptHandshakeResponse(ctx)
+	if err != nil {
+		return err
+	}
+	if authResponse.Kind == CommandResponseError {
+		r.Connection = r.Connection.WithClosing()
+		return nil
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		response, err := r.ServeNextCommand(ctx)
+		if err != nil {
+			return err
+		}
+		if response.Close || r.Connection.State == ConnectionStateClosing {
+			return nil
+		}
+	}
 }
 
 // ServeNextCommand reads, handles, and writes one command response.

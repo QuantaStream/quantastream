@@ -15,6 +15,7 @@ type NativeProxyFrontDoorConfig struct {
 	Port          int
 	PacketIOReady bool
 	MySQLAdapter  qsmysql.AdapterReadiness
+	Authenticator qsmysql.Authenticator
 }
 
 // WithDefaults returns a MySQL/QIAB front-door config without claiming packet IO is implemented.
@@ -50,11 +51,16 @@ type NativeProxyFrontDoor struct {
 	Port          int
 	PacketIOReady bool
 	MySQLAdapter  qsmysql.AdapterReadiness
+	Authenticator qsmysql.Authenticator
 }
 
 // NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native proxy server.
 func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFrontDoorConfig) NativeProxyFrontDoor {
 	config = config.WithDefaults()
+	authenticator := config.Authenticator
+	if authenticator == nil {
+		authenticator = qsmysql.PermissiveAuthenticator{}
+	}
 	return NativeProxyFrontDoor{
 		Server:        NewNativeProxyServer(runtime, config.Server),
 		Protocol:      config.Protocol.Clone(),
@@ -62,6 +68,7 @@ func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFront
 		Port:          config.Port,
 		PacketIOReady: config.PacketIOReady || config.MySQLAdapter.PacketIOReady(),
 		MySQLAdapter:  config.MySQLAdapter,
+		Authenticator: authenticator,
 	}
 }
 

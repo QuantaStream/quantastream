@@ -96,3 +96,89 @@ func readSessionTestPackets(t *testing.T, data []byte) []Packet {
 	}
 	return packets
 }
+
+func TestSessionRunnerRejectedAuthWritesErrorAndStaysNotReady(t *testing.T) {
+	var input bytes.Buffer
+	var output bytes.Buffer
+	runner := NewSessionRunner(SessionRunnerConfig{
+		ConnectionID:   88,
+		AuthPluginData: []byte("12345678901234567890"),
+		Stream:         NewStream(&input, &output),
+		Handler:        &testCommandHandler{},
+		Authenticator:  RejectingAuthenticator{Message: "nope"},
+	})
+	if err := runner.SendHandshake(context.Background()); err != nil {
+		t.Fatalf("SendHandshake failed: %v", err)
+	}
+	clientResponse, err := EncodePacket(Packet{
+		SequenceID: 1,
+		Payload: testHandshakeResponsePayload(
+			CapabilityProtocol41|CapabilitySecureConnection|CapabilityPluginAuth,
+			"guy",
+			[]byte{1, 2, 3},
+			"",
+			"mysql_native_password",
+		),
+	})
+	if err != nil {
+		t.Fatalf("EncodePacket client response failed: %v", err)
+	}
+	input.Write(clientResponse)
+	authResponse, err := runner.AcceptHandshakeResponse(context.Background())
+	if err != nil {
+		t.Fatalf("AcceptHandshakeResponse failed: %v", err)
+	}
+	if authResponse.Kind != CommandResponseError || runner.Connection.CanAcceptCommand() {
+		t.Fatalf("authResponse = %#v connection=%#v", authResponse, runner.Connection)
+	}
+	packets := readSessionTestPackets(t, output.Bytes())
+	if len(packets) != 2 || packets[1].SequenceID != 2 || packets[1].Payload[0] != errPacketHeader {
+		t.Fatalf("packets = %#v", packets)
+	}
+}
+
+func TestSessionRunnerServeRunsUntilQuit(t *testing.T) {
+	var input bytes.Buffer
+	var output bytes.Buffer
+	handler := &testCommandHandler{}
+	runner := NewSessionRunner(SessionRunnerConfig{
+		ConnectionID:   99,
+		AuthPluginData: []byte("12345678901234567890"),
+		Stream:         NewStream(&input, &output),
+		Handler:        handler,
+	})
+	clientResponse, err := EncodePacket(Packet{
+		SequenceID: 1,
+		Payload: testHandshakeResponsePayload(
+			CapabilityProtocol41|CapabilitySecureConnection|CapabilityPluginAuth,
+			"guy",
+			[]byte{1, 2, 3},
+			"",
+			"mysql_native_password",
+		),
+	})
+	if err != nil {
+		t.Fatalf("EncodePacket client response failed: %v", err)
+	}
+	ping, err := EncodePacket(Packet{SequenceID: 0, Payload: []byte{byte(CommandPing)}})
+	if err != nil {
+		t.Fatalf("EncodePacket ping failed: %v", err)
+	}
+	quit, err := EncodePacket(Packet{SequenceID: 0, Payload: []byte{byte(CommandQuit)}})
+	if err != nil {
+		t.Fatalf("EncodePacket quit failed: %v", err)
+	}
+	input.Write(clientResponse)
+	input.Write(ping)
+	input.Write(quit)
+	if err := runner.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve failed: %v", err)
+	}
+	if runner.Connection.State != ConnectionStateClosing || handler.got.Kind != CommandKindQuit {
+		t.Fatalf("connection=%#v handler=%#v", runner.Connection, handler.got)
+	}
+	packets := readSessionTestPackets(t, output.Bytes())
+	if len(packets) != 3 || packets[0].SequenceID != 0 || packets[1].Payload[0] != okPacketHeader || packets[2].Payload[0] != okPacketHeader {
+		t.Fatalf("packets = %#v", packets)
+	}
+}
