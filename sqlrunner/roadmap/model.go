@@ -32,6 +32,9 @@ type TestCase struct {
 	Kind            string        `yaml:"kind"`
 	Order           string        `yaml:"order"`
 	Capabilities    []string      `yaml:"capabilities"`
+	Feature         string        `yaml:"feature"`
+	Compatibility   string        `yaml:"compatibility"`
+	Requires        []string      `yaml:"requires"`
 	Diagnostics     []string      `yaml:"expected_diagnostics"`
 	Issue           string        `yaml:"issue"`
 	Timeout         string        `yaml:"timeout"`
@@ -96,11 +99,14 @@ func normalizeTestCase(test *TestCase) error {
 	test.Status = strings.ToLower(strings.TrimSpace(test.Status))
 	test.Kind = strings.ToLower(strings.TrimSpace(test.Kind))
 	test.Order = strings.ToLower(strings.TrimSpace(test.Order))
+	test.Feature = normalizeTag(test.Feature)
+	test.Compatibility = normalizeTag(test.Compatibility)
 	test.SQL = strings.TrimSpace(test.SQL)
 	test.Timeout = strings.TrimSpace(test.Timeout)
 	for i := range test.Diagnostics {
 		test.Diagnostics[i] = strings.ToLower(strings.TrimSpace(test.Diagnostics[i]))
 	}
+	test.Requires = normalizeTags(test.Requires)
 
 	if test.Timeout != "" {
 		duration, err := time.ParseDuration(test.Timeout)
@@ -146,7 +152,38 @@ func normalizeTestCase(test *TestCase) error {
 	if test.Kind != "query" && (len(test.Expect.Rows) > 0 || test.Expect.RowCount != nil) {
 		return fmt.Errorf("%s statement cannot expect rows", test.ID)
 	}
+	if test.Compatibility != "" {
+		switch test.Compatibility {
+		case CompatibilityMySQL, CompatibilityQuanta, CompatibilityQuantaExtension:
+		default:
+			return fmt.Errorf("%s has invalid compatibility %q", test.ID, test.Compatibility)
+		}
+		if test.Feature == "" {
+			return fmt.Errorf("%s compatibility metadata requires feature", test.ID)
+		}
+	}
 	return nil
+}
+
+func normalizeTag(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeTags(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := normalizeTag(value)
+		if normalized != "" {
+			result = append(result, normalized)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (t TestCase) CaseTimeout() time.Duration {

@@ -24,6 +24,7 @@ const (
 	engineRuntime        = "runtime"
 	engineRuntimeInspect = "runtime-inspect"
 	engineLegacyDirect   = "legacy-direct"
+	engineMySQLReference = "mysql-reference"
 )
 
 var consulAddress = "127.0.0.1:8500"
@@ -40,7 +41,10 @@ type runnerConfig struct {
 	Port          string
 	Consul        string
 	CaseID        string
+	MySQLDSN      string
+	MySQLDriver   string
 	Verbose       bool
+	CompatReport  bool
 	DumpActual    bool
 	SlowThreshold time.Duration
 }
@@ -54,7 +58,7 @@ func main() {
 	shared.SetUTCdefault()
 
 	suiteFile := flag.String("suite_file", "", "Path to a SQL roadmap YAML suite to execute.")
-	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: proxy, runtime, runtime-inspect, or legacy-direct.")
+	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: proxy, runtime, runtime-inspect, legacy-direct, or mysql-reference.")
 	host := flag.String("host", "", "Quanta host to connect to.")
 	user := flag.String("user", "", "The username that will connect to the database.")
 	password := flag.String("password", "", "The password to use to connect.")
@@ -63,9 +67,12 @@ func main() {
 	consul := flag.String("consul", "127.0.0.1:8500", "Address of consul.")
 	caseID := flag.String("case", "", "Run only the suite test with this exact id.")
 	logLevel := flag.String("log_level", "", "Set the logging level to DEBUG for additional logging.")
+	mysqlDSN := flag.String("mysql_dsn", "", "database/sql DSN for the mysql-reference engine.")
+	mysqlDriver := flag.String("mysql_driver", defaultMySQLReferenceDriver, "database/sql driver name for the mysql-reference engine.")
 	verbose := flag.Bool("verbose", false, "Print each roadmap case SQL and detailed timing while it runs.")
 	dumpActual := flag.Bool("dump_actual", false, "Print actual query rows when a roadmap case mismatches.")
 	slowThreshold := flag.Duration("slow_threshold", 0, "Print a slow-case summary for roadmap cases at or above this duration, such as 10s.")
+	compatReport := flag.Bool("compat_report", false, "Print a compatibility scorecard grouped by feature and result category.")
 	flag.Parse()
 
 	cfg := runnerConfig{
@@ -77,7 +84,10 @@ func main() {
 		Port:          *port,
 		Consul:        *consul,
 		CaseID:        strings.TrimSpace(*caseID),
+		MySQLDSN:      *mysqlDSN,
+		MySQLDriver:   *mysqlDriver,
 		Verbose:       *verbose,
+		CompatReport:  *compatReport,
 		DumpActual:    *dumpActual,
 		SlowThreshold: *slowThreshold,
 	}
@@ -117,7 +127,7 @@ func main() {
 		}()
 	}
 
-	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold); err != nil {
+	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold, cfg.CompatReport); err != nil {
 		log.Printf("SQL roadmap suite failed: %v", err)
 		os.Exit(1)
 	}
@@ -133,6 +143,8 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 			return fmt.Errorf("host and user are required for proxy engine")
 		}
 	case engineRuntime, engineRuntimeInspect, engineLegacyDirect:
+	case engineMySQLReference:
+		return mysqlReferenceConfig{Driver: cfg.MySQLDriver, DSN: cfg.MySQLDSN}.validate()
 	default:
 		return fmt.Errorf("unsupported engine %q", cfg.Engine)
 	}
@@ -147,6 +159,7 @@ func printUsage(err error) {
 	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
 	u.Warn("Legacy direct example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_smoke.yaml -consul 127.0.0.1:8500")
+	u.Warn("MySQL reference example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 }
 
 func configureLogging(logLevel string) {
@@ -194,6 +207,8 @@ func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error)
 		return buildLegacyDirectHarness(suite, cfg)
 	case engineRuntime, engineRuntimeInspect:
 		return buildRuntimeHarness(suite, cfg)
+	case engineMySQLReference:
+		return buildMySQLReferenceHarness(suite, cfg)
 	default:
 		return runnerHarness{}, fmt.Errorf("unsupported engine %q", cfg.Engine)
 	}
@@ -299,7 +314,7 @@ func grantSQLRunnerRoles(_ *shared.KVStore) error {
 	return nil
 }
 
-func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration) error {
+func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration, compatReport bool) error {
 	summary := runner.Run(ctx, suite)
 	log.Printf("\n-------- SQL Roadmap Suite: %s --------", summary.Suite)
 	for _, result := range summary.Results {
@@ -311,6 +326,9 @@ func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runn
 		}
 	}
 	logSlowCases(summary, slowThreshold, verbose)
+	if compatReport {
+		logCompatibilityReport(suite, summary)
+	}
 	if summary.HasFailures() {
 		return fmt.Errorf("suite contains FAIL or XPASS results")
 	}

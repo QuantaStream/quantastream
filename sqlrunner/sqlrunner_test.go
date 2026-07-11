@@ -23,6 +23,20 @@ func TestValidateFlagsAllowsLegacyDirectWithoutProxyConnectionFlags(t *testing.T
 	}
 }
 
+func TestValidateFlagsAllowsMySQLReferenceWithDSN(t *testing.T) {
+	cfg := runnerConfig{Engine: engineMySQLReference, MySQLDSN: "user:pass@tcp(127.0.0.1:3306)/test"}
+
+	if err := validateFlags("sqltests/mysql_compat_select.yaml", cfg); err != nil {
+		t.Fatalf("mysql-reference validation should accept DSN: %v", err)
+	}
+}
+
+func TestValidateFlagsRequiresMySQLReferenceDSN(t *testing.T) {
+	if err := validateFlags("sqltests/mysql_compat_select.yaml", runnerConfig{Engine: engineMySQLReference}); err == nil {
+		t.Fatal("mysql-reference validation should require DSN")
+	}
+}
+
 func TestValidateFlagsRequiresProxyConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineProxy}
 

@@ -1,0 +1,46 @@
+version: 1
+name: mysql_compat_select
+
+tests:
+  - id: mysql_compat_select.001.literal_projection
+    status: supported
+    kind: query
+    feature: select_projection
+    compatibility: mysql
+    requires: [select, literal_projection, aliases]
+    sql: |
+      select 1 as one, 'alpha' as label
+    expect:
+      columns: [one, label]
+      rows:
+        - [1, alpha]
+
+  - id: mysql_compat_select.002.null_projection
+    status: supported
+    kind: query
+    feature: select_projection
+    compatibility: mysql
+    requires: [select, null]
+    sql: |
+      select null as missing_value
+    expect:
+      columns: [missing_value]
+      rows:
+        - [null]
+
+  - id: mysql_compat_select.003.order_by_limit
+    status: supported
+    kind: query
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, order_by, limit]
+    sql: |
+      select 2 as n
+      union all
+      select 1 as n
+      order by n
+      limit 1
+    expect:
+      columns: [n]
+      rows:
+        - [1]

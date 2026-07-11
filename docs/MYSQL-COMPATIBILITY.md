@@ -108,3 +108,7 @@ This lets day-to-day development stay fast while still preserving a credible pat
 - SQLRunner should remain the main compatibility control surface because it can target QuantaStream's actual architecture.
 - The official MySQL suite is too broad for routine CI, but it is valuable source material.
 - The long-term compatibility story should measure both SQL correctness and user-visible performance.
+
+## Implementation Plan
+
+See `MYSQL_COMPATIBILITY_LAB.md` for the implementation checklist and near-term work slices.

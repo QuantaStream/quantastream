@@ -12,3 +12,11 @@ Focused per-query suites, such as `legacy_direct_tpch_q9.yaml`, may contain
 heavier staged kernels, explicit expected-error boundaries, and local wall-time
 notes. Use them when a query family needs deeper coverage without making the
 main kernel suite harder to run casually.
+
+## MySQL compatibility suites
+
+`mysql_compat_*.yaml` suites are compatibility-lab inputs. They are organized
+by SQL surface area and carry `feature`, `compatibility`, and `requires`
+metadata for scorecards. These suites are intended to run against a stock MySQL
+reference and QuantaStream comparison harness; they are not TPC-H benchmarks and
+should not absorb engine-specific profiling probes.

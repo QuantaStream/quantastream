@@ -13,6 +13,9 @@ tests:
     kind: query
     order: rowsort
     capabilities: [inner-join]
+    feature: joins_inner
+    compatibility: mysql
+    requires: [select, inner_join]
     sql: |
       select c.cust_id, o.order_id
       from customers_qa as c
@@ -106,3 +109,18 @@ expect:
 This is intended for `runtime-inspect` cases that deliberately cross a known
 implementation boundary. Normal execution suites should continue to use
 `expect.error_contains` for user-visible SQL errors.
+
+## Compatibility metadata
+
+MySQL compatibility suites may add optional metadata used by compatibility
+reports:
+
+```yaml
+feature: scalar_functions
+compatibility: mysql
+requires: [select, lower, substring]
+```
+
+`feature` names the reporting bucket. `compatibility` names the reference
+surface, currently `mysql`, `quanta`, or `quanta_extension`. `requires` carries
+smaller capability tags for future scorecards and filtering.
