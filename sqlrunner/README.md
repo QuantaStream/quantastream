@@ -214,7 +214,11 @@ BENCHMARK_RUNS=3 ./run-benchmark.sh
 ```
 
 Generated benchmark artifacts should stay under ignored local paths unless a
-specific report is intentionally promoted.
+specific report is intentionally promoted. Render a human-readable summary with:
+
+```bash
+go run . -benchmark_summary expected/local/tpch-kernels.json
+```
 
 ## TPC-H Suites
 

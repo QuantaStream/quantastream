@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
@@ -260,4 +262,94 @@ func durationPercentile(durations []time.Duration, percentile float64) time.Dura
 
 func durationMillis(duration time.Duration) int64 {
 	return duration.Round(time.Millisecond).Milliseconds()
+}
+
+func printBenchmarkSummary(path string) error {
+	report, err := loadBenchmarkReport(path)
+	if err != nil {
+		return err
+	}
+	return renderBenchmarkSummary(os.Stdout, report)
+}
+
+func loadBenchmarkReport(path string) (benchmarkReport, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return benchmarkReport{}, err
+	}
+	var report benchmarkReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return benchmarkReport{}, err
+	}
+	if strings.TrimSpace(report.Suite) == "" {
+		return benchmarkReport{}, fmt.Errorf("benchmark report %q does not include a suite name", path)
+	}
+	return report, nil
+}
+
+func renderBenchmarkSummary(w io.Writer, report benchmarkReport) error {
+	if _, err := fmt.Fprintf(w, "Benchmark: %s\n", report.Suite); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Engine: %s\n", report.Engine); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Profile: %s\n", report.Profile); err != nil {
+		return err
+	}
+	if report.GeneratedAt != "" {
+		if _, err := fmt.Fprintf(w, "Generated: %s\n", report.GeneratedAt); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Runs: %d measured, %d warmup\n", report.MeasuredRuns, report.WarmupRuns); err != nil {
+		return err
+	}
+	if len(report.Metadata) > 0 {
+		if _, err := fmt.Fprintln(w, "\nMetadata:"); err != nil {
+			return err
+		}
+		for _, key := range sortedBenchmarkMetadataKeys(report.Metadata) {
+			if _, err := fmt.Fprintf(w, "  %s=%s\n", key, report.Metadata[key]); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "Case\tStatus\tRuns\tMin\tMedian\tP95\tMax"); err != nil {
+		return err
+	}
+	for _, result := range report.Cases {
+		if _, err := fmt.Fprintf(
+			tw,
+			"%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			result.ID,
+			result.Status,
+			result.Runs,
+			formatBenchmarkMillis(result.MinMS),
+			formatBenchmarkMillis(result.MedianMS),
+			formatBenchmarkMillis(result.P95MS),
+			formatBenchmarkMillis(result.MaxMS),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func sortedBenchmarkMetadataKeys(metadata map[string]string) []string {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func formatBenchmarkMillis(millis int64) string {
+	return fmt.Sprintf("%dms", millis)
 }

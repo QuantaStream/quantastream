@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,5 +60,38 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 	}
 	if report.Cases[1].Status != roadmap.ResultFail || report.Cases[1].FirstDetail != "mismatch" {
 		t.Fatalf("second case = %#v", report.Cases[1])
+	}
+}
+
+func TestRenderBenchmarkSummary(t *testing.T) {
+	report := benchmarkReport{
+		Suite:        "smoke",
+		Engine:       "runtime",
+		Profile:      "developer-local",
+		GeneratedAt:  "2026-07-11T13:20:50Z",
+		Metadata:     map[string]string{"profile": "runtime-smoke", "commit": "abc"},
+		WarmupRuns:   1,
+		MeasuredRuns: 2,
+		Cases: []benchmarkCaseReport{
+			{ID: "001.select", Status: roadmap.ResultPass, Runs: 2, MinMS: 10, MedianMS: 20, P95MS: 30, MaxMS: 40},
+		},
+	}
+
+	var out bytes.Buffer
+	if err := renderBenchmarkSummary(&out, report); err != nil {
+		t.Fatalf("renderBenchmarkSummary failed: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Benchmark: smoke",
+		"Engine: runtime",
+		"Runs: 2 measured, 1 warmup",
+		"commit=abc",
+		"001.select",
+		"20ms",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary text missing %q:\n%s", want, text)
+		}
 	}
 }

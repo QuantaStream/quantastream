@@ -54,6 +54,7 @@ type runnerConfig struct {
 	BenchmarkMetadata string
 	BenchmarkWarmup   int
 	BenchmarkRuns     int
+	BenchmarkSummary  string
 }
 
 type runnerHarness struct {
@@ -87,6 +88,7 @@ func main() {
 	benchmarkMetadata := flag.String("benchmark_metadata", "", "Comma-separated key=value metadata recorded in -benchmark_report output.")
 	benchmarkWarmup := flag.Int("benchmark_warmup", 0, "Warm-up suite runs before measured benchmark runs.")
 	benchmarkRuns := flag.Int("benchmark_runs", 1, "Measured suite runs written to -benchmark_report output.")
+	benchmarkSummary := flag.String("benchmark_summary", "", "Read a JSON benchmark report and print a human-readable summary.")
 	flag.Parse()
 
 	cfg := runnerConfig{
@@ -111,7 +113,16 @@ func main() {
 		BenchmarkMetadata: strings.TrimSpace(*benchmarkMetadata),
 		BenchmarkWarmup:   *benchmarkWarmup,
 		BenchmarkRuns:     *benchmarkRuns,
+		BenchmarkSummary:  strings.TrimSpace(*benchmarkSummary),
 	}
+	if cfg.BenchmarkSummary != "" {
+		if err := printBenchmarkSummary(cfg.BenchmarkSummary); err != nil {
+			log.Printf("SQL benchmark summary failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := validateFlags(*suiteFile, cfg); err != nil {
 		printUsage(err)
 		os.Exit(0)
@@ -219,6 +230,7 @@ func printUsage(err error) {
 	u.Warn("Capture example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml")
 	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 	u.Warn("Benchmark example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
+	u.Warn("Benchmark summary example: ./sqlrunner -benchmark_summary expected/local/tpch.json")
 }
 
 func configureLogging(logLevel string) {
