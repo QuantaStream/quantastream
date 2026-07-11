@@ -34,48 +34,134 @@ func (f LegacyQuantaSourceFactory) NewDirectRuntime(ctx context.Context, config 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	runtime, diagnostics := NewLegacyDirectBitmapRuntimeFromSource(quantaSource, f.TableCache, LegacyDirectRuntimeOptions{})
+	return runtime, diagnostics, nil
+}
+
+// LegacyDirectRuntimeOptions controls compatibility adapter wiring while the direct runtime is split out.
+type LegacyDirectRuntimeOptions struct {
+	DefaultSchema             string
+	ApplyRecommendedEdgeOrder bool
+}
+
+// NewLegacyDirectBitmapRuntimeFromSource builds the direct bitmap runtime around an existing Quanta source.
+func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, tableCache *core.TableCacheStruct, options LegacyDirectRuntimeOptions) (DirectBitmapRuntime, qsbridge.DiagnosticSet) {
+	if quantaSource == nil || quantaSource.GetSessionPool() == nil {
+		return DirectBitmapRuntime{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "direct runtime source is not initialized"),
+		}
+	}
+	if tableCache == nil {
+		return DirectBitmapRuntime{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "direct runtime table cache is not initialized"),
+		}
+	}
 	sessions := LegacyQuantaSourceSessionProvider{Source: quantaSource}
 	bsiReader := LegacyDirectProjectionBSIReader{
 		Source:     quantaSource,
-		TableCache: f.TableCache,
+		TableCache: tableCache,
 	}
 	dictionaryIDReader := LegacyDirectProjectionDictionaryIDReader{
 		Source:     quantaSource,
-		TableCache: f.TableCache,
+		TableCache: tableCache,
 	}
 	backingStringReader := LegacyDirectBackingStringLookupReader{
 		Source:     quantaSource,
-		TableCache: f.TableCache,
+		TableCache: tableCache,
 	}
 	dictionaryResolver := LegacyTableCacheDictionaryResolver{
 		TableCache:          quantaSource.GetSessionPool().TableCache,
-		FallbackTableCaches: []*core.TableCacheStruct{f.TableCache},
+		FallbackTableCaches: []*core.TableCacheStruct{tableCache},
+		Schema:              options.DefaultSchema,
 	}
 	materialization := FallbackProjectionMaterializationKernel{
 		Preferred: NativeProjectionMaterializationKernel{
 			Reader: NativeProjectionBSIFieldReader{
-				TableCache:       f.TableCache,
+				TableCache:       tableCache,
 				Reader:           bsiReader,
 				DictionaryReader: dictionaryIDReader,
 			},
 			Rehydrator: NativeProjectionCompositeRehydrator{
-				Dictionary:     NativeProjectionDictionaryLabelRehydrator{Resolver: dictionaryResolver},
+				Dictionary:     NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, dictionaryResolver),
 				BackingStrings: backingStringReader,
 			},
 		},
 	}
 	sameRowComparison := LegacyDirectSameRowBSIComparisonKernel{
 		Source:     quantaSource,
-		TableCache: f.TableCache,
+		TableCache: tableCache,
 		Reader:     bsiReader,
 	}
+	relationshipReader := &LegacyDirectRelationshipVectorReader{
+		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
+			Source:     quantaSource,
+			TableCache: tableCache,
+		},
+	}
 	return DirectBitmapRuntime{
-		Sessions:          sessions,
-		Adapter:           BitmapQueryResultAdapter{},
-		FilterAdapter:     LegacyDirectFilterTreeAdapter(sessions, quantaSource, f.TableCache, nil, materialization),
-		Materialization:   materialization,
-		SameRowComparison: sameRowComparison,
-	}, nil, nil
+		Sessions:           sessions,
+		Adapter:            BitmapQueryResultAdapter{},
+		FilterAdapter:      LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization),
+		Materialization:    materialization,
+		SameRowComparison:  sameRowComparison,
+		RelationshipReader: relationshipReader,
+		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
+			Source:                    quantaSource,
+			TableCache:                tableCache,
+			Materialization:           materialization,
+			SameRowComparison:         sameRowComparison,
+			ApplyRecommendedEdgeOrder: options.ApplyRecommendedEdgeOrder,
+		},
+	}, nil
+}
+
+// NewNativeProxyRuntimeFromSource builds a SQL-facing runtime over an existing Quanta source.
+func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.QuantaSource, tableCache *core.TableCacheStruct, config NativeProxyRuntimeConfig) (NativeProxyRuntime, qsbridge.DiagnosticSet, error) {
+	config = config.WithDefaults()
+	if quantaSource == nil || quantaSource.GetSessionPool() == nil {
+		return NativeProxyRuntime{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native proxy runtime source is not initialized"),
+		}, nil
+	}
+	if tableCache == nil {
+		return NativeProxyRuntime{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native proxy runtime table cache is not initialized"),
+		}, nil
+	}
+	dictionaryResolver := LegacyTableCacheDictionaryResolver{
+		TableCache:          quantaSource.GetSessionPool().TableCache,
+		FallbackTableCaches: []*core.TableCacheStruct{tableCache},
+		Schema:              config.DefaultSchema,
+	}
+	runtime, diagnostics, err := SQLRuntimeBuilder{
+		Parser: qsbridge.SimpleParserBridge{},
+		Lowerer: qsbridge.QuantaIntermediateLowerer{
+			Dictionaries: dictionaryResolver,
+		},
+		DefaultSchema:  config.DefaultSchema,
+		CatalogVersion: config.CatalogVersion,
+		EnvironmentBuilder: RuntimeEnvironmentBuilder{
+			Config:  config.Direct,
+			Profile: config.Profile,
+			CatalogFactory: LegacyTableCacheCatalogFactory{
+				TableCache: tableCache,
+				Functions:  append([]qsbridge.FunctionDefinition(nil), config.Functions...),
+			},
+			DirectFactory: DirectRuntimeFactoryFunc(func(context.Context, DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {
+				runtime, diagnostics := NewLegacyDirectBitmapRuntimeFromSource(quantaSource, tableCache, LegacyDirectRuntimeOptions{
+					DefaultSchema:             config.DefaultSchema,
+					ApplyRecommendedEdgeOrder: config.ApplyRecommendedEdgeOrder,
+				})
+				return runtime, diagnostics, nil
+			}),
+		},
+		EnableFilterExpressions: config.EnableFilterExpressions,
+	}.Build(ctx)
+	if err != nil || diagnostics.BlocksNative() {
+		return NativeProxyRuntime{}, diagnostics, err
+	}
+	return NativeProxyRuntime{Runtime: runtime}, nil, nil
 }
 
 func (f LegacyQuantaSourceFactory) ensureTableCache() qsbridge.DiagnosticSet {

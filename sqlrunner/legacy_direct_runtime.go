@@ -94,86 +94,17 @@ func (s *legacyDirectHarnessState) rebuild(ctx context.Context) error {
 }
 
 func legacyDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config qsruntime.DirectRuntimeConfig, catalogTableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) (qsruntime.SQLRuntime, qsbridge.DiagnosticSet, error) {
-	return qsruntime.SQLRuntimeBuilder{
-		Parser: qsbridge.SimpleParserBridge{},
-		Lowerer: qsbridge.QuantaIntermediateLowerer{Dictionaries: qsruntime.LegacyTableCacheDictionaryResolver{
-			TableCache:          quantaSource.GetSessionPool().TableCache,
-			FallbackTableCaches: []*core.TableCacheStruct{catalogTableCache},
-			Schema:              legacyDirectDefaultSchema(cfg.Database),
-		}},
-		DefaultSchema:  legacyDirectDefaultSchema(cfg.Database),
-		CatalogVersion: qsbridge.CatalogVersion("sqlrunner-legacy-direct"),
-		EnvironmentBuilder: qsruntime.RuntimeEnvironmentBuilder{
-			Config:  config,
-			Profile: qsruntime.LegacyDirectRuntimeProfile(),
-			CatalogFactory: qsruntime.LegacyTableCacheCatalogFactory{
-				TableCache: catalogTableCache,
-				Functions:  legacyDirectSQLFunctions(),
-			},
-			DirectFactory: qsruntime.DirectRuntimeFactoryFunc(func(context.Context, qsruntime.DirectRuntimeConfig) (qsruntime.DirectRuntime, qsbridge.DiagnosticSet, error) {
-				sessions := qsruntime.LegacyQuantaSourceSessionProvider{Source: quantaSource}
-				bsiReader := qsruntime.LegacyDirectProjectionBSIReader{
-					Source:     quantaSource,
-					TableCache: catalogTableCache,
-				}
-				dictionaryIDReader := qsruntime.LegacyDirectProjectionDictionaryIDReader{
-					Source:     quantaSource,
-					TableCache: catalogTableCache,
-				}
-				backingStringReader := qsruntime.LegacyDirectBackingStringLookupReader{
-					Source:     quantaSource,
-					TableCache: catalogTableCache,
-				}
-				dictionaryResolver := qsruntime.LegacyTableCacheDictionaryResolver{
-					TableCache:          quantaSource.GetSessionPool().TableCache,
-					FallbackTableCaches: []*core.TableCacheStruct{catalogTableCache},
-					Schema:              legacyDirectDefaultSchema(cfg.Database),
-				}
-				materialization := qsruntime.FallbackProjectionMaterializationKernel{
-					Preferred: qsruntime.NativeProjectionMaterializationKernel{
-						Reader: qsruntime.NativeProjectionBSIFieldReader{
-							TableCache:       catalogTableCache,
-							Reader:           bsiReader,
-							DictionaryReader: dictionaryIDReader,
-						},
-						Rehydrator: qsruntime.NativeProjectionCompositeRehydrator{
-							Dictionary:     qsruntime.NativeProjectionDictionaryLabelRehydrator{Resolver: dictionaryResolver},
-							BackingStrings: backingStringReader,
-						},
-					},
-				}
-				sameRowComparison := qsruntime.LegacyDirectSameRowBSIComparisonKernel{
-					Source:     quantaSource,
-					TableCache: catalogTableCache,
-					Reader:     bsiReader,
-				}
-				relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
-					Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
-						Source:     quantaSource,
-						TableCache: catalogTableCache,
-					},
-				}
-				return qsruntime.DirectBitmapRuntime{
-					Sessions:           sessions,
-					Adapter:            qsruntime.BitmapQueryResultAdapter{},
-					FilterAdapter:      qsruntime.LegacyDirectFilterTreeAdapter(sessions, quantaSource, catalogTableCache, nil, materialization),
-					Materialization:    materialization,
-					SameRowComparison:  sameRowComparison,
-					RelationshipReader: relationshipReader,
-					RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
-						Source:                    quantaSource,
-						TableCache:                catalogTableCache,
-						Materialization:           materialization,
-						SameRowComparison:         sameRowComparison,
-						ApplyRecommendedEdgeOrder: os.Getenv("QUANTA_LEGACY_DIRECT_APPLY_EDGE_ORDER") == "1",
-					},
-				}, nil, nil
-			}),
-		},
-		EnableFilterExpressions: true,
-	}.Build(ctx)
+	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
+		Direct:                    config,
+		DefaultSchema:             legacyDirectDefaultSchema(cfg.Database),
+		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-legacy-direct"),
+		Functions:                 legacyDirectSQLFunctions(),
+		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
+		EnableFilterExpressions:   true,
+		ApplyRecommendedEdgeOrder: os.Getenv("QUANTA_LEGACY_DIRECT_APPLY_EDGE_ORDER") == "1",
+	})
+	return proxyRuntime.Runtime, diagnostics, err
 }
-
 func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheStruct, quantaSource *source.QuantaSource, tables []string) error {
 	if tableCache == nil {
 		return fmt.Errorf("legacy direct table cache is not initialized")

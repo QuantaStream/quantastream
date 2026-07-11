@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsruntime"
 	admin "github.com/QuantaStream/quantastream/quanta-admin-lib"
 	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
@@ -134,6 +136,7 @@ func StartNode(nodeStart int) (*server.Node, error) {
 type LocalProxyControl struct {
 	Stop            chan bool
 	Src             *source.QuantaSource
+	Runtime         qsruntime.NativeProxyRuntime
 	StopSchemaWatch func()
 }
 
@@ -210,6 +213,21 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 		u.Error(err)
 	}
 	fmt.Println("Proxy after NewQuantaSource")
+
+	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(context.Background(), localProxy.Src, tableCache, qsruntime.NativeProxyRuntimeConfig{
+		Direct:                  qsruntime.NewDirectRuntimeConfig(configDir, "127.0.0.1:8500", 4010, sessionPoolSize),
+		DefaultSchema:           "quanta",
+		CatalogVersion:          qsbridge.CatalogVersion("inabox-native-proxy"),
+		Profile:                 qsruntime.LegacyDirectRuntimeProfile(),
+		EnableFilterExpressions: true,
+	})
+	if err != nil {
+		u.Error(err)
+	}
+	if diagnostics.BlocksNative() {
+		u.Error(diagnostics)
+	}
+	localProxy.Runtime = proxyRuntime
 
 	fmt.Println("Proxy startup. ")
 
