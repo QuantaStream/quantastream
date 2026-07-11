@@ -1,115 +1,140 @@
-# Quanta Deployment Guide
+# QuantaStream Deployment Guide
 
 ## Purpose
 
-This document describes Quanta deployment models, operational requirements,
+This document describes QuantaStream deployment models, operational requirements,
 and areas that still require validation.
 
 Quanta-in-a-Box (QIAB) is the preferred development and conformance
 environment. It is not the intended limit of production topology.
 
-## Deployment Models
+## Deployment Modes
 
-### Quanta-in-a-Box
+QuantaStream uses named deployment modes so local development, single-process
+QIAB, local distributed validation, and full distributed deployments do not get
+blurred together. The current deployment vocabulary names four important
+modes:
 
-QIAB runs three data nodes and the query proxy in one process.
+- `inabox-direct`: a development/conformance mode where the query engine runs
+  inside the SQLRunner process and talks to a local data-node cluster.
+- `inabox-standard`: the intended simple QIAB profile, with the MySQL-compatible
+  server, query engine, and one lightweight in-process node adapter in one
+  process.
+- `inabox-local`: the local distributed-shape profile, with the new
+  MySQL-compatible proxy/server talking to local nodes through the normal
+  service-discovery and gRPC path.
+- `distributed`: the multi-host architecture with independently deployed query
+  processors, nodes, and loaders.
 
-The `inabox-standard` profile is the named QIAB baseline for conformance and
-benchmark work. It is intentionally boring: one host, one QuantaStream process,
-three local data-node identities, a local Consul development agent unless an
-external Consul address is explicitly supplied, and the MySQL-compatible endpoint
-on port `4000`. The benchmark methodology is tracked in
-[`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
+### `inabox-direct`
 
-The near-term goal is to make QIAB production-credible for small deployments,
-not merely useful for tests and demos. A supported QIAB profile should define
-durable external storage, restart behavior, backup and restore, health checks,
-log rotation, upgrade steps, and operational limits.
+`inabox-direct` is primarily a development and conformance mode. Some tooling
+may still use transitional flag names while the repository finishes moving away
+from historical proxy terminology.
 
-It is appropriate for:
+In this mode:
 
-- local development
-- SQL conformance and integration testing
-- demonstrations
-- small deployments where one process and one host are acceptable
+- SQLRunner or a test harness owns the query engine directly.
+- The query engine talks to a local data-node cluster.
+- Nodes are discovered through Consul.
+- Query-engine-to-node traffic still uses gRPC and the shared clustering path.
+- Distributed catalog metadata is stored in Consul.
+- StringEnum dictionary data is persisted through KVStore.
 
-Its shared process and host lifecycle make it less suitable for large-scale
-production deployment or independent node maintenance.
+This mode is valuable because it exercises distributed node behavior while
+avoiding the historical proxy path. It is not the target user-facing QIAB
+experience.
 
-### `inabox-standard` Profile
+### `inabox-standard`
 
-`inabox-standard` is a repeatable QIAB profile, not a new distributed topology.
-It exists so compatibility runs, local benchmark runs, and future reference
-benchmarks can name the same baseline.
+`inabox-standard` is the intended simple QIAB baseline for early adopters,
+demos, local development, and single-process benchmark comparisons.
 
 Required shape:
 
 - one QuantaStream process on one host
-- three in-process data-node identities
-- one local query/proxy endpoint exposed on port `4000`
-- Consul at `127.0.0.1:8500` unless overridden
-- node data rooted outside the Git working tree when used for benchmark runs
+- the new MySQL-compatible server/proxy in process
+- the query engine in process
+- one lightweight in-process node adapter around the storage/node package
+- no Consul requirement
+- no gRPC requirement between query engine and node adapter
+- catalog metadata readable from local configuration files
+- default MySQL-compatible endpoint on port `4000`
 - default database name `quanta`
 - UTC time handling for generated data and benchmark metadata
 
-Operational expectations:
+The near-term goal is to make `inabox-standard` production-credible for small
+deployments, not merely useful for tests and demos. A supported profile should
+define durable local storage, restart behavior, backup and restore, health
+checks, log rotation, upgrade steps, and operational limits.
 
-- The profile must start from a known empty or known restored data root.
-- The data root path must be recorded with benchmark metadata.
-- The QuantaStream commit, loader command, suite command, and cache state must
-  be recorded for any benchmark result.
-- The profile may be used for small deployments, but benchmark claims should
-  still distinguish it from a multi-host production cluster.
+This profile deliberately does not validate distributed service discovery,
+multi-node recovery, rebalancing, rolling upgrades, or multiple proxy behavior.
+Those belong to `inabox-local`, `distributed`, or future operations profiles.
 
-The profile deliberately does not define cloud sizing, host replacement,
-rolling upgrade, or multi-proxy behavior. Those belong to containerized or
-multi-host deployment profiles.
+### `inabox-local`
 
-### Containerized Cluster
+`inabox-local` is the local distributed-shape profile. As the new network layer
+comes online, this is the expected result of running the local harness such as
+`start-local`: the new MySQL-compatible query processor/proxy runs locally and
+talks to local data nodes through the distributed communication path.
 
-A containerized deployment should run Consul, the proxy, and each data node as
-separate services.
+Required shape:
 
-Containers may be replaced during normal operation. Quanta node data must
-therefore not exist only in a container writable layer.
+- one local host
+- local query processor/proxy with the new MySQL-compatible network layer
+- local data nodes managed by the development harness
+- Consul/service discovery in the path
+- gRPC in the query-processor-to-node path
+- durable local node data directories
+- optional global cache disabled by default until invalidation and consistency
+  behavior are mature
 
-Required properties:
+This mode validates distributed boundaries without requiring multiple physical
+hosts. It is the right local place to test node addressing, service discovery,
+cluster startup, gRPC behavior, and distributed catalog assumptions.
 
-- Node data directories use external durable volumes.
-- Container replacement preserves node identity and storage mapping.
-- Each node has an independent data directory.
-- Proxy containers remain stateless with respect to shard data.
-- Consul state is deployed according to Consul production guidance rather than
-  development-agent behavior.
+### `distributed`
 
-The repository contains component Dockerfiles, but a complete, validated
-container orchestration topology is not currently documented.
-
-### Multi-Host Production Cluster
-
-Large-scale production deployment should support independent Quanta data-node
-and proxy processes distributed across hosts.
+`distributed` is the full multi-host deployment mode.
 
 Expected properties:
 
-- independent node process lifecycles
-- durable node-local or attached storage
-- stable node identity
-- explicit network and firewall configuration
-- production Consul deployment
-- multiple proxy instances where availability requires them
-- operational monitoring, backup, recovery, and replacement procedures
+- query processors, nodes, and bulk loaders may run on separate hosts
+- Consul handles service discovery and distributed metadata coordination unless
+  deliberately replaced
+- gRPC is the normal query-processor-to-node communication boundary
+- node-local or attached durable storage is mapped to stable node identities
+- multiple query processors can be deployed where availability requires them
+- global caching may be enabled when invalidation, consistency, and observability
+  rules are mature
+- operational monitoring, backup, recovery, and replacement procedures are
+  documented and tested
 
-This topology is an architectural target. Its complete operational procedure
-and failure behavior still require formal validation.
+Longer-term distributed work includes failure recovery, node replacement,
+rebalancing, rolling upgrades, backup/restore, and geographically distributed
+active/active operation.
+
+### Containerized And Cloud Profiles
+
+Containers and cloud-provider deployment assets are packaging and operations
+profiles over the modes above, not separate engine semantics.
+
+The repository may contain component Dockerfiles or research artifacts, but a
+complete validated container orchestration topology is not currently documented.
+Containers must not be treated as durable storage. Any containerized topology
+must preserve node identity and mount external durable data volumes.
+
+Enterprise-grade packaging, cloud-provider integrations, managed deployment
+automation, and regional operations may live outside the public/core repository.
 
 ## Service Topology
 
 The main runtime services are:
 
 - Consul for discovery and cluster coordination
-- Quanta data nodes for shards, bitmap data, and BSI data
-- Query proxy for the MySQL-compatible SQL endpoint
+- QuantaStream data nodes for shards, bitmap data, and BSI data
+- Query processor/proxy for the MySQL-compatible SQL endpoint
 - ingestion processes as required by the deployment
 
 Development defaults currently include:
@@ -122,7 +147,7 @@ inventoried before publishing a production firewall specification.
 
 ## Persistent Storage
 
-Quanta data nodes serialize shard data beneath their configured data
+QuantaStream data nodes serialize shard data beneath their configured data
 directories. That storage is part of the node's durable state.
 
 Non-negotiable requirements:
@@ -133,17 +158,17 @@ Non-negotiable requirements:
 - Restarting a process must preserve its data directory.
 - Replacing a container or host must use an explicit recovery or remapping
   procedure.
-- Storage permissions and ownership must permit the Quanta process to read,
+- Storage permissions and ownership must permit the QuantaStream process to read,
   write, and reload serialized shards.
 
-The current QIAB development data is stored under:
+The current local distributed harness data is stored under:
 
 ```text
 test/localClusterData/quanta-node-<n>/data
 ```
 
-This path is useful for local testing but is not a production storage
-recommendation.
+This path is useful for local `inabox-local` testing but is not a production
+storage recommendation.
 
 ## Node Identity
 
@@ -160,7 +185,7 @@ changing node identity remains to be documented and validated.
 
 ## Administrative Addressing
 
-Quanta's internal shard ownership uses the stable consistent-hash node name,
+QuantaStream's internal shard ownership uses the stable consistent-hash node name,
 not the node's IP address. This is the correct durable identity for data
 placement, restart, and storage mapping.
 
@@ -169,7 +194,7 @@ debugging and targeted administration. In QIAB, `quanta-admin status` naturally
 shows `127.0.0.1` for every in-process node. In a multi-host deployment, status
 and administrative commands should expose enough information to distinguish:
 
-- stable Quanta node identity
+- stable QuantaStream node identity
 - advertised host or IP address
 - service port
 - data center or placement metadata
@@ -182,13 +207,14 @@ and network address information.
 
 ## Consul Requirements
 
-QIAB currently uses a local Consul development agent:
+`inabox-local` currently uses a local Consul development agent:
 
 ```bash
 consul agent -dev
 ```
 
-Consul development mode is not appropriate for production.
+Consul development mode is not appropriate for production. `inabox-standard`
+should not require Consul.
 
 A production deployment requires:
 
@@ -201,17 +227,18 @@ A production deployment requires:
 
 ## Startup and Shutdown
 
-The development startup order is:
+The `inabox-local` and distributed startup order is:
 
 1. Start Consul.
-2. Start Quanta data nodes.
+2. Start QuantaStream data nodes.
 3. Wait for the nodes to become active and the cluster to become healthy.
 4. Start or expose the query proxy.
 5. Start ingestion and client workloads.
 
-Shutdown should stop writes and ingestion before stopping nodes. QIAB performs
-node and proxy shutdown through its local harness, but production shutdown and
-drain semantics require further validation.
+Shutdown should stop writes and ingestion before stopping nodes. `inabox-local`
+performs node and proxy shutdown through its local harness, but production
+shutdown and drain semantics require further validation. `inabox-standard`
+should provide a simpler single-process lifecycle.
 
 ## Restart, Replacement, and Recovery
 
@@ -225,7 +252,7 @@ These are distinct operations:
 - **Node replacement:** a failed node is removed and its shard responsibility
   is recovered or redistributed.
 
-Verified in QIAB:
+Verified in the local distributed harness:
 
 - a three-node cluster can restart from serialized shard data
 - shard counts are restored
@@ -243,8 +270,9 @@ Not yet formally validated:
 
 ## Scaling
 
-QIAB uses a fixed three-node development cluster. Production scaling behavior
-must be tested independently.
+`inabox-standard` is a single-process, single-node-adapter profile.
+`inabox-local` uses a local multi-node development cluster. Production scaling
+behavior must be tested independently.
 
 Validation is needed for:
 
@@ -284,8 +312,10 @@ Production deployment should capture:
 - persistence and reload errors
 - ingestion lag and failures
 
-QIAB currently combines node and proxy logs in one process. Separate-process
-deployments should preserve component identity in every log stream.
+`inabox-standard` combines engine and node-adapter logs in one process.
+`inabox-local` may combine local harness logs, but component identity should
+still be visible. Separate-process deployments should preserve component
+identity in every log stream.
 
 ## Security
 
@@ -338,7 +368,7 @@ Example token exchange request:
 curl -v -H "Content-Type: application/text" -d "<jwt-access-token>" http://<proxy-host>:4001/
 ```
 
-Before this capability can be considered supported, Quanta needs validated
+Before this capability can be considered supported, QuantaStream needs validated
 configuration, TLS guidance, token validation behavior, authorization/RBAC
 semantics, audit logging, secret rotation, and operational tests.
 
@@ -377,11 +407,12 @@ behavior with more hard-coded usernames, passwords, or `database()` responses.
 ## Deployment Validation
 
 The SQL roadmap and integration suites should be environment-neutral and run
-through the proxy against:
+through the MySQL-compatible surface against:
 
-- QIAB
-- containerized clusters
-- multi-host clusters
+- `inabox-standard`
+- `inabox-local`
+- containerized distributed profiles
+- multi-host `distributed` profiles
 
 The same deterministic schemas, data, and expected results should be used
 wherever possible. Deployment-specific suites should additionally validate
@@ -389,20 +420,24 @@ restart, replacement, persistence, and topology changes.
 
 ## 1.0 Deployment Scope
 
-For 1.0, Quanta should be explicit about supported and aspirational
+For 1.0, QuantaStream should be explicit about supported and aspirational
 deployment models.
 
 Supported 1.0 target:
 
-- QIAB or an equivalent small single-host deployment profile.
+- `inabox-standard` as the simple QIAB profile.
+- `inabox-local` as the local distributed-shape validation profile.
 - Durable node data directories outside ephemeral process or container
   storage.
 - Documented clean shutdown, restart, backup, restore, and upgrade workflows.
 - Observable health and logs sufficient to diagnose real application issues.
 - Clear limits around host failure, node replacement, scaling, and regional
   availability.
-- Authentication and authorization are explicitly out of scope for the
-  supported 1.0 deployment target.
+- Simple MySQL-compatible account/password authentication is part of the core
+  1.0 path, with `quanta-admin` account and password administration.
+- The default public auth adapter must live in the public/core repository and
+  implement the built-in account/password path behind the MySQL auth/session
+  contract.
 
 Post-1.0 targets:
 
@@ -416,9 +451,10 @@ Post-1.0 targets:
 ## Repository Boundary
 
 This repository should remain focused on the open-source engine, QIAB,
-conformance workflows, and validated core deployment assets. QIAB and
-multi-node production deployment should be documented as separate operational
-models, not mixed together inside opaque Makefile or script behavior.
+conformance workflows, and validated core deployment assets. `inabox-standard`,
+`inabox-local`, and distributed deployment should be documented as separate
+operational models, not mixed together inside opaque Makefile or script
+behavior.
 
 Enterprise-grade packaging, orchestration, identity-provider integrations,
 managed deployment automation, and regional operations may eventually live in a
@@ -428,9 +464,9 @@ development-only.
 
 Docker and container orchestration artifacts should be treated as deployment
 research and future-state inputs unless a specific topology has validation
-coverage. QIAB does not depend on Docker. Container and multi-node orchestration
-may later move to enterprise or operations-focused repositories once the
-supported OSS deployment boundary is clear.
+coverage. `inabox-standard` does not depend on Docker. Container and
+multi-node orchestration may later move to enterprise or operations-focused
+repositories once the supported OSS deployment boundary is clear.
 
 Legacy build targets, Docker files, local scripts, and helper utilities should
 be inventoried before cleanup. They are not sacred, but they should not be
@@ -439,7 +475,9 @@ understood.
 
 ## Current Limitations
 
-- QIAB shares one process and one host lifecycle.
+- `inabox-standard` shares one process and one host lifecycle.
+- `inabox-local` still shares one host but exercises the distributed
+  node/proxy communication path.
 - Current Docker artifacts do not constitute a complete durable deployment.
 - Production storage mapping and node replacement are not formally specified.
 - Backup and restore are not formally validated.
