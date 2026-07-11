@@ -40,6 +40,18 @@ The query proxy:
 
 The proxy currently exposes a MySQL-compatible interface.
 
+### MySQL Wire Adapter Boundary
+
+`qsmysql` owns the MySQL wire-protocol byte model: packet framing, initial
+handshake payloads, and command packet decoding. It deliberately does not own
+SQL planning, bitmap execution, catalog access, authentication policy, or
+result-set production.
+
+`qsruntime` mounts this adapter readiness into the native proxy front door so
+the protocol surface can mature independently from the SQL engine. This keeps
+`qsbridge` protocol-neutral while still giving QuantaStream a MySQL-compatible
+network path.
+
 ---
 
 ## Logical Query Layer

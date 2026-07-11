@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
 func TestNativeProxyServerDefaultsToDirectQIABRoute(t *testing.T) {
@@ -84,6 +85,9 @@ func TestNativeProxyFrontDoorDefaultsToMySQLQIABWithoutClaimingWireReadiness(t *
 	if summary.Ready || summary.WireReady || summary.RuntimeReady {
 		t.Fatalf("summary readiness = %#v, want scaffold not network-ready", summary)
 	}
+	if !summary.AdapterReady {
+		t.Fatalf("summary = %#v, want byte-model adapter pieces ready", summary)
+	}
 	if summary.NextStep == "" {
 		t.Fatalf("summary = %#v, want next step", summary)
 	}
@@ -119,5 +123,25 @@ func TestNativeProxyFrontDoorCanRepresentMountedWireAdapter(t *testing.T) {
 	}
 	if summary.NextStep != "" {
 		t.Fatalf("summary = %#v, want no next step when ready", summary)
+	}
+}
+
+func TestNativeProxyFrontDoorMountsMySQLAdapterReadiness(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 1}, nil
+	})}
+	adapter := qsmysql.AdapterReadiness{
+		PacketCodec:    true,
+		Handshake:      true,
+		CommandDecoder: true,
+		PacketIO:       true,
+		Resultsets:     true,
+		Authentication: true,
+	}
+
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{MySQLAdapter: adapter})
+	summary := frontDoor.Summary()
+	if !summary.Ready || !summary.AdapterReady || !summary.WireReady || !summary.RuntimeReady {
+		t.Fatalf("summary = %#v, want mounted adapter and runtime ready", summary)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
 // NativeProxyFrontDoorConfig captures the first bounded MySQL proxy re-entry point.
@@ -13,6 +14,7 @@ type NativeProxyFrontDoorConfig struct {
 	BindAddress   string
 	Port          int
 	PacketIOReady bool
+	MySQLAdapter  qsmysql.AdapterReadiness
 }
 
 // WithDefaults returns a MySQL/QIAB front-door config without claiming packet IO is implemented.
@@ -34,6 +36,9 @@ func (c NativeProxyFrontDoorConfig) WithDefaults() NativeProxyFrontDoorConfig {
 	if c.Port == 0 {
 		c.Port = 4000
 	}
+	if c.MySQLAdapter == (qsmysql.AdapterReadiness{}) {
+		c.MySQLAdapter = qsmysql.ByteModelReadiness()
+	}
 	return c
 }
 
@@ -44,6 +49,7 @@ type NativeProxyFrontDoor struct {
 	BindAddress   string
 	Port          int
 	PacketIOReady bool
+	MySQLAdapter  qsmysql.AdapterReadiness
 }
 
 // NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native proxy server.
@@ -54,7 +60,8 @@ func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFront
 		Protocol:      config.Protocol.Clone(),
 		BindAddress:   config.BindAddress,
 		Port:          config.Port,
-		PacketIOReady: config.PacketIOReady,
+		PacketIOReady: config.PacketIOReady || config.MySQLAdapter.PacketIOReady(),
+		MySQLAdapter:  config.MySQLAdapter,
 	}
 }
 
@@ -83,6 +90,7 @@ type NativeProxyFrontDoorSummary struct {
 	RuntimeReady bool
 	WireReady    bool
 	Ready        bool
+	AdapterReady bool
 	NextStep     string
 }
 
@@ -97,9 +105,13 @@ func (f NativeProxyFrontDoor) Summary() NativeProxyFrontDoorSummary {
 		RuntimeReady: f.RuntimeReady(),
 		WireReady:    f.WireReady(),
 		Ready:        f.Ready(),
+		AdapterReady: f.MySQLAdapter.PacketCodec && f.MySQLAdapter.Handshake && f.MySQLAdapter.CommandDecoder,
 	}
 	if !summary.WireReady {
-		summary.NextStep = "implement MySQL packet IO adapter and command loop"
+		summary.NextStep = f.MySQLAdapter.NextStep()
+		if summary.NextStep == "" {
+			summary.NextStep = "implement MySQL packet IO adapter and command loop"
+		}
 	} else if !summary.RuntimeReady {
 		summary.NextStep = "attach ready native SQL runtime"
 	}
