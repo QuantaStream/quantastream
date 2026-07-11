@@ -2,6 +2,8 @@ package qsruntime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -111,6 +113,54 @@ func TestLegacyTableCacheCatalogFactoryReportsMissingCache(t *testing.T) {
 		t.Fatalf("catalog = %#v, want nil", catalog)
 	}
 	assertRuntimeDiagnosticCode(t, diagnostics, qsbridge.DiagnosticInternalInvariant)
+}
+
+func TestLegacyTableCacheCatalogFactoryLoadsMissingTableFromConfigPath(t *testing.T) {
+	baseDir := t.TempDir()
+	tableDir := filepath.Join(baseDir, "catalog_load_qa")
+	if err := os.Mkdir(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir table fixture: %v", err)
+	}
+	schema := []byte(`tableName: catalog_load_qa
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: id
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: city
+  sourceName: city
+  mappingStrategy: StringEnum
+  type: String
+`)
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), schema, 0644); err != nil {
+		t.Fatalf("write schema fixture: %v", err)
+	}
+	cache := core.NewTableCacheStruct()
+	catalog, diagnostics, err := LegacyTableCacheCatalogFactory{TableCache: cache}.NewRuntimeCatalog(
+		context.Background(),
+		NewDirectRuntimeConfig(baseDir, "", 0, 0),
+	)
+	if err != nil {
+		t.Fatalf("new runtime catalog: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("new runtime catalog diagnostics = %#v", diagnostics)
+	}
+
+	table, tableDiagnostics := catalog.Table("quanta", "catalog_load_qa")
+	if tableDiagnostics.BlocksNative() {
+		t.Fatalf("table diagnostics = %#v", tableDiagnostics)
+	}
+	if table.Name != "catalog_load_qa" {
+		t.Fatalf("table name = %q, want catalog_load_qa", table.Name)
+	}
+	if _, ok := table.Field("city"); !ok {
+		t.Fatalf("loaded table fields = %#v, want city", table.Fields)
+	}
+	if _, ok := cache.TableCache["catalog_load_qa"]; !ok {
+		t.Fatalf("catalog load-on-miss did not populate legacy table cache")
+	}
 }
 
 func TestLegacyTableCacheCatalogLoadsTableDefinitionsFromLegacyCache(t *testing.T) {

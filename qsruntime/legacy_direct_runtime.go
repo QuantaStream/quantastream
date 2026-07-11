@@ -116,6 +116,36 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	}, nil
 }
 
+func legacyDirectCatalogTableLoader(quantaSource *source.QuantaSource, baseDir string) LegacyTableLoader {
+	return func(tableCache *core.TableCacheStruct, name string) (*core.Table, error) {
+		if quantaSource == nil || quantaSource.GetConnection() == nil {
+			return core.LoadTable(tableCache, baseDir, nil, name, nil)
+		}
+		session, err := core.OpenSession(tableCache, baseDir, name, false, quantaSource.GetConnection())
+		if err != nil {
+			return nil, err
+		}
+		if session != nil {
+			defer session.CloseSession()
+		}
+		return legacyDirectCachedTable(tableCache, name), nil
+	}
+}
+
+func legacyDirectCachedTable(tableCache *core.TableCacheStruct, name string) *core.Table {
+	if tableCache == nil {
+		return nil
+	}
+	tableCache.TableCacheLock.RLock()
+	defer tableCache.TableCacheLock.RUnlock()
+	for tableName, table := range tableCache.TableCache {
+		if strings.EqualFold(tableName, name) || (table != nil && strings.EqualFold(table.Name, name)) {
+			return table
+		}
+	}
+	return nil
+}
+
 // NewNativeProxyRuntimeFromSource builds a SQL-facing runtime over an existing Quanta source.
 func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.QuantaSource, tableCache *core.TableCacheStruct, config NativeProxyRuntimeConfig) (NativeProxyRuntime, qsbridge.DiagnosticSet, error) {
 	config = config.WithDefaults()
@@ -146,6 +176,7 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 			Profile: config.Profile,
 			CatalogFactory: LegacyTableCacheCatalogFactory{
 				TableCache: tableCache,
+				LoadTable:  legacyDirectCatalogTableLoader(quantaSource, config.Direct.BaseDir),
 				Functions:  append([]qsbridge.FunctionDefinition(nil), config.Functions...),
 			},
 			DirectFactory: DirectRuntimeFactoryFunc(func(context.Context, DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {

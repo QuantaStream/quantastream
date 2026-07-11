@@ -9,19 +9,24 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+// LegacyTableLoader loads a missing core table into the shared table cache.
+type LegacyTableLoader func(tableCache *core.TableCacheStruct, name string) (*core.Table, error)
+
 // LegacyTableCacheCatalog adapts the legacy core table cache to qsbridge.Catalog.
 //
-// Legacy schema loading may still be backed by Consul through shared.LoadSchema,
-// but this adapter consumes the already-populated table cache instead of
-// importing Consul into qsbridge catalog code.
+// Legacy schema loading may still be backed by Consul, but this adapter only
+// receives a table-loader callback so Consul and KVStore details stay in the
+// runtime adapter island.
 type LegacyTableCacheCatalog struct {
 	TableCache *core.TableCacheStruct
+	LoadTable  LegacyTableLoader
 	Functions  []qsbridge.FunctionDefinition
 }
 
 // LegacyTableCacheCatalogFactory builds cached catalogs from the legacy table cache.
 type LegacyTableCacheCatalogFactory struct {
 	TableCache *core.TableCacheStruct
+	LoadTable  LegacyTableLoader
 	Functions  []qsbridge.FunctionDefinition
 }
 
@@ -36,8 +41,16 @@ func (f LegacyTableCacheCatalogFactory) NewRuntimeCatalog(ctx context.Context, c
 			),
 		}, nil
 	}
+	loader := f.LoadTable
+	if loader == nil && strings.TrimSpace(config.BaseDir) != "" {
+		baseDir := config.BaseDir
+		loader = func(tableCache *core.TableCacheStruct, name string) (*core.Table, error) {
+			return core.LoadTable(tableCache, baseDir, nil, name, nil)
+		}
+	}
 	return qsbridge.NewCachedCatalog(LegacyTableCacheCatalog{
 		TableCache: f.TableCache,
+		LoadTable:  loader,
 		Functions:  append([]qsbridge.FunctionDefinition(nil), f.Functions...),
 	}), nil, nil
 }
@@ -45,6 +58,18 @@ func (f LegacyTableCacheCatalogFactory) NewRuntimeCatalog(ctx context.Context, c
 // Table looks up a table definition from the legacy cache.
 func (c LegacyTableCacheCatalog) Table(schema string, name string) (qsbridge.TableDefinition, qsbridge.DiagnosticSet) {
 	table, ok := c.legacyTable(name)
+	if !ok {
+		loaded, err := c.loadLegacyTable(name)
+		if err != nil {
+			return qsbridge.TableDefinition{}, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogTableNotFound, qsbridge.PhaseBind, "table not found: "+qualifiedCatalogName(schema, name)+" ("+err.Error()+")"),
+			}
+		}
+		if loaded != nil {
+			table = loaded
+			ok = true
+		}
+	}
 	if !ok {
 		return qsbridge.TableDefinition{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogTableNotFound, qsbridge.PhaseBind, "table not found: "+qualifiedCatalogName(schema, name)),
@@ -77,6 +102,13 @@ func (c LegacyTableCacheCatalog) Function(name string) (qsbridge.FunctionDefinit
 	return qsbridge.FunctionDefinition{}, qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogFunctionNotFound, qsbridge.PhaseBind, "function not found: "+name),
 	}
+}
+
+func (c LegacyTableCacheCatalog) loadLegacyTable(name string) (*core.Table, error) {
+	if c.TableCache == nil || c.LoadTable == nil {
+		return nil, nil
+	}
+	return c.LoadTable(c.TableCache, name)
 }
 
 func (c LegacyTableCacheCatalog) legacyTable(name string) (*core.Table, bool) {
