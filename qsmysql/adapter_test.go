@@ -4,7 +4,7 @@ import "testing"
 
 func TestByteModelReadinessIsNotNetworkReady(t *testing.T) {
 	readiness := ByteModelReadiness()
-	if !readiness.PacketCodec || !readiness.Handshake || !readiness.CommandDecoder || !readiness.Resultsets || !readiness.StatementResponses || !readiness.CommandResponses || !readiness.ConnectionState || !readiness.PacketLoop {
+	if !readiness.PacketCodec || !readiness.Handshake || !readiness.HandshakeResponse || !readiness.CommandDecoder || !readiness.Resultsets || !readiness.Authentication || !readiness.StatementResponses || !readiness.CommandResponses || !readiness.ConnectionState || !readiness.PacketLoop {
 		t.Fatalf("readiness = %#v, want byte model pieces ready", readiness)
 	}
 	if readiness.PacketIOReady() {
@@ -19,6 +19,7 @@ func TestAdapterReadinessCanRepresentMountedAdapter(t *testing.T) {
 	readiness := AdapterReadiness{
 		PacketCodec:        true,
 		Handshake:          true,
+		HandshakeResponse:  true,
 		CommandDecoder:     true,
 		PacketIO:           true,
 		Resultsets:         true,

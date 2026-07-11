@@ -133,6 +133,7 @@ func TestNativeProxyFrontDoorMountsMySQLAdapterReadiness(t *testing.T) {
 	adapter := qsmysql.AdapterReadiness{
 		PacketCodec:        true,
 		Handshake:          true,
+		HandshakeResponse:  true,
 		CommandDecoder:     true,
 		PacketIO:           true,
 		Resultsets:         true,

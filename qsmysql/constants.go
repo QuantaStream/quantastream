@@ -27,6 +27,8 @@ const (
 	CapabilityLongPassword CapabilityFlag = 0x00000001
 	// CapabilityProtocol41 is CLIENT_PROTOCOL_41.
 	CapabilityProtocol41 CapabilityFlag = 0x00000200
+	// CapabilityConnectWithDB is CLIENT_CONNECT_WITH_DB.
+	CapabilityConnectWithDB CapabilityFlag = 0x00000008
 	// CapabilitySecureConnection is CLIENT_SECURE_CONNECTION.
 	CapabilitySecureConnection CapabilityFlag = 0x00008000
 	// CapabilityPluginAuth is CLIENT_PLUGIN_AUTH.

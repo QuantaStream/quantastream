@@ -4,6 +4,7 @@ package qsmysql
 type AdapterReadiness struct {
 	PacketCodec        bool
 	Handshake          bool
+	HandshakeResponse  bool
 	CommandDecoder     bool
 	PacketIO           bool
 	Resultsets         bool
@@ -19,8 +20,10 @@ func ByteModelReadiness() AdapterReadiness {
 	return AdapterReadiness{
 		PacketCodec:        true,
 		Handshake:          true,
+		HandshakeResponse:  true,
 		CommandDecoder:     true,
 		Resultsets:         true,
+		Authentication:     true,
 		StatementResponses: true,
 		CommandResponses:   true,
 		ConnectionState:    true,
@@ -30,7 +33,7 @@ func ByteModelReadiness() AdapterReadiness {
 
 // PacketIOReady reports whether the adapter can accept network clients.
 func (r AdapterReadiness) PacketIOReady() bool {
-	return r.PacketCodec && r.Handshake && r.CommandDecoder && r.PacketIO && r.Resultsets && r.Authentication && r.StatementResponses && r.CommandResponses && r.ConnectionState && r.PacketLoop
+	return r.PacketCodec && r.Handshake && r.HandshakeResponse && r.CommandDecoder && r.PacketIO && r.Resultsets && r.Authentication && r.StatementResponses && r.CommandResponses && r.ConnectionState && r.PacketLoop
 }
 
 // NextStep describes the first missing adapter milestone.
@@ -40,6 +43,8 @@ func (r AdapterReadiness) NextStep() string {
 		return "implement MySQL packet codec"
 	case !r.Handshake:
 		return "implement MySQL handshake model"
+	case !r.HandshakeResponse:
+		return "implement MySQL handshake response decoder"
 	case !r.CommandDecoder:
 		return "implement MySQL command decoder"
 	case !r.Resultsets:

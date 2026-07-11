@@ -1,6 +1,10 @@
 package qsmysql
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+)
 
 // ConnectionState names the socket-free MySQL session state.
 type ConnectionState string
@@ -20,8 +24,11 @@ const (
 
 // Connection tracks MySQL protocol state without owning a network socket.
 type Connection struct {
-	ID    uint32
-	State ConnectionState
+	ID             uint32
+	State          ConnectionState
+	Username       string
+	Database       string
+	AuthPluginName string
 }
 
 // NewConnection returns a new socket-free MySQL connection state.
@@ -56,6 +63,27 @@ func (c Connection) WithReady() (Connection, error) {
 	default:
 		return c, fmt.Errorf("cannot mark ready from state %s", c.State)
 	}
+}
+
+// AcceptHandshakeResponse records the decoded client handshake response.
+func (c Connection) AcceptHandshakeResponse(response HandshakeResponse41) (Connection, error) {
+	if c.State != ConnectionStateHandshakeSent {
+		return c, fmt.Errorf("cannot accept handshake response from state %s", c.State)
+	}
+	c.Username = response.Username
+	c.Database = response.Database
+	c.AuthPluginName = response.AuthPluginName
+	c.State = ConnectionStateAuthPending
+	return c, nil
+}
+
+// AcceptPermissiveAuth completes the current development-slice auth exchange with an OK response.
+func (c Connection) AcceptPermissiveAuth() (Connection, CommandResponse, error) {
+	if c.State != ConnectionStateAuthPending {
+		return c, CommandResponse{}, fmt.Errorf("cannot accept auth from state %s", c.State)
+	}
+	c.State = ConnectionStateReady
+	return c, StatementOKResponse(qsbridge.StatementResult{}), nil
 }
 
 // WithClosing moves a connection to closing state.
