@@ -31,7 +31,7 @@ type LegacyExecutionStepStatus string
 const (
 	// LegacyExecutionStepStatusPlanned means the step is designed but not wired to a concrete adapter yet.
 	LegacyExecutionStepStatusPlanned LegacyExecutionStepStatus = "planned"
-	// LegacyExecutionStepStatusConcrete means the legacy-direct path has a real adapter boundary for the step.
+	// LegacyExecutionStepStatusConcrete means the inabox-direct path has a real adapter boundary for the step.
 	LegacyExecutionStepStatusConcrete LegacyExecutionStepStatus = "concrete"
 	// LegacyExecutionStepStatusFixture means a fixture runtime simulates the step deterministically.
 	LegacyExecutionStepStatusFixture LegacyExecutionStepStatus = "fixture"

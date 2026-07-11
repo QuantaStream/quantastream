@@ -1,7 +1,7 @@
 version: 1
-name: legacy_direct_basic
+name: inabox_direct_basic
 tests:
-  - id: legacy_direct_basic.part_size_filter_count
+  - id: inabox_direct_basic.part_size_filter_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -13,7 +13,7 @@ tests:
       rows:
         - [112]
 
-  - id: legacy_direct_basic.part_type_filter_count
+  - id: inabox_direct_basic.part_type_filter_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -25,7 +25,7 @@ tests:
       rows:
         - [24]
 
-  - id: legacy_direct_basic.part_multi_column_projection
+  - id: inabox_direct_basic.part_multi_column_projection
     kind: query
     sql: |
       select p_size, p_type
@@ -39,7 +39,7 @@ tests:
         - [14, "SMALL PLATED BRASS"]
         - [14, "MEDIUM ANODIZED BRASS"]
 
-  - id: legacy_direct_basic.part_projection_limit_offset
+  - id: inabox_direct_basic.part_projection_limit_offset
     kind: query
     sql: |
       select p_size, p_type
@@ -52,7 +52,7 @@ tests:
       rows:
         - [45, "PROMO BURNISHED COPPER"]
 
-  - id: legacy_direct_basic.part_size_sum
+  - id: inabox_direct_basic.part_size_sum
     kind: query
     sql: |
       select sum(p_size) as size_sum
@@ -64,7 +64,7 @@ tests:
       rows:
         - [518]
 
-  - id: legacy_direct_basic.part_size_avg
+  - id: inabox_direct_basic.part_size_avg
     kind: query
     sql: |
       select avg(p_size) as avg_size

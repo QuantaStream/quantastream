@@ -15,7 +15,7 @@ import (
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
-// LegacyDirectRelationshipVectorJoinExecutor executes legacy-direct relationship-vector joins.
+// LegacyDirectRelationshipVectorJoinExecutor executes inabox-direct relationship-vector joins.
 type LegacyDirectRelationshipVectorJoinExecutor struct {
 	KernelAdapter   RelationshipVectorKernel
 	Source          *source.QuantaSource
@@ -294,7 +294,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoi
 	}, err
 }
 
-// Kernel returns the low-level kernel used by the legacy-direct relationship adapter.
+// Kernel returns the low-level kernel used by the inabox-direct relationship adapter.
 func (e LegacyDirectRelationshipVectorJoinExecutor) Kernel() RelationshipVectorKernel {
 	if e.KernelAdapter != nil {
 		return e.KernelAdapter
@@ -571,7 +571,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			break
 		}
 		if iterations > len(edges)+1 {
-			return ExecutionResult{Diagnostics: legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph reduction did not converge")}, nil
+			return ExecutionResult{Diagnostics: legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph reduction did not converge")}, nil
 		}
 	}
 	reductionElapsed := time.Since(reductionStart)
@@ -628,7 +628,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipMult
 	}
 	fields = legacyDirectRelationshipPostReductionFields(request, fields)
 	if len(fields) == 0 {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector multi-sink graph aggregate requires materialized aggregate input fields")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector multi-sink graph aggregate requires materialized aggregate input fields")...)
 		return result, nil
 	}
 	tupleRows, diagnostics := legacyDirectRelationshipTupleRowsFromReducedGraph(rootRole, rootRows, reduced)
@@ -713,7 +713,7 @@ func legacyDirectRelationshipGraphBestRoot(edges []legacyDirectRelationshipEdge,
 		}
 		return role, roleTables[role], nil
 	}
-	return "", "", legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution requires a non-empty root role")
+	return "", "", legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution requires a non-empty root role")
 }
 
 func legacyDirectRelationshipGraphRoot(edges []legacyDirectRelationshipEdge) (string, string, qsbridge.DiagnosticSet) {
@@ -730,13 +730,13 @@ func legacyDirectRelationshipGraphRoot(edges []legacyDirectRelationshipEdge) (st
 			continue
 		}
 		if rootRole != "" {
-			return "", "", legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution requires a single root table")
+			return "", "", legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution requires a single root table")
 		}
 		rootRole = role
 		rootTable = table
 	}
 	if rootRole == "" {
-		return "", "", legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution requires a root table")
+		return "", "", legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution requires a root table")
 	}
 	return rootRole, rootTable, nil
 }
@@ -755,7 +755,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSibl
 	}
 	fields = legacyDirectRelationshipPostReductionFields(request, fields)
 	if len(fields) == 0 {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector sibling-root aggregate requires materialized aggregate input fields")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector sibling-root aggregate requires materialized aggregate input fields")...)
 		return result, nil
 	}
 	tupleRows, diagnostics := legacyDirectRelationshipSiblingRootTupleRowsFromReducedEdges(shape, rootRows, reduced)
@@ -878,7 +878,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	}
 	fields = legacyDirectRelationshipPostReductionFields(request, fields)
 	if len(fields) == 0 {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph aggregate requires materialized aggregate input fields")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph aggregate requires materialized aggregate input fields")...)
 		return result, nil
 	}
 	alignmentStart := time.Now()
@@ -977,7 +977,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	}
 	fields = legacyDirectRelationshipPostReductionFields(request, fields)
 	if len(fields) == 0 {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph grouped aggregate requires materialized group or aggregate fields")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph grouped aggregate requires materialized group or aggregate fields")...)
 		return result, nil
 	}
 	materializationStart := time.Now()
@@ -1096,17 +1096,17 @@ func legacyDirectRelationshipChainShapeDiagnostics(request ExecutionRequest, vec
 		return nil
 	}
 	if len(request.GroupBy) > 0 {
-		return legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution does not support GROUP BY in this slice")
+		return legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution does not support GROUP BY in this slice")
 	}
 	if len(request.Memberships) > 0 {
-		return legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution does not support membership filters in this slice")
+		return legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution does not support membership filters in this slice")
 	}
 	if len(request.SQLAggregates) == 0 || !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) {
-		return legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution only supports count(*) in this slice")
+		return legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution only supports count(*) in this slice")
 	}
 	for _, edge := range vector.Edges {
 		if edge.SQLKind != qsbridge.JoinKindInner || edge.ExecutionKind != qsbridge.RelationshipJoinExecutionVector {
-			return legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution only supports inner relationship-vector joins in this slice")
+			return legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution only supports inner relationship-vector joins in this slice")
 		}
 	}
 	return nil
@@ -1117,11 +1117,11 @@ func legacyDirectRelationshipGraphShapeDiagnostics(request ExecutionRequest, vec
 		return nil
 	}
 	if len(request.Memberships) > 0 {
-		return legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution does not support membership filters in this slice")
+		return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution does not support membership filters in this slice")
 	}
 	for _, edge := range vector.Edges {
 		if edge.SQLKind != qsbridge.JoinKindInner || edge.ExecutionKind != qsbridge.RelationshipJoinExecutionVector {
-			return legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution only supports inner relationship-vector joins in this slice")
+			return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution only supports inner relationship-vector joins in this slice")
 		}
 	}
 	return nil
@@ -1576,7 +1576,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	if e.Source == nil {
 		return nil, false, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct relationship join has no source for relationship-vector projection"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join has no source for relationship-vector projection"),
 		}, nil
 	}
 	provider := LegacyQuantaSourceSessionProvider{Source: e.Source}
@@ -1593,14 +1593,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	if session == nil {
 		return nil, false, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct relationship join received nil child session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join received nil child session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return nil, false, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct relationship join has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join has no bitmap index"),
 		}, nil
 	}
 	bsiByField, _, err := legacySession.Session.BitIndex.Projection(edge.childTable, []string{edge.childField}, fromTime, toTime, childFoundSet, false)
@@ -2000,7 +2000,7 @@ func legacyDirectRelationshipSiblingRootTupleRows(shape legacyDirectRelationship
 func legacyDirectRelationshipSiblingRootBlockedResult(edges []legacyDirectRelationshipEdge, shape legacyDirectRelationshipSiblingRootGraph) ExecutionResult {
 	debug := legacyDirectRelationshipGraphSiblingRootDebug(shape)
 	return ExecutionResult{
-		Diagnostics: legacyDirectRelationshipDiagnostic("legacy direct relationship-vector sibling-root tuple execution is not wired in this slice: " + debug),
+		Diagnostics: legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector sibling-root tuple execution is not wired in this slice: " + debug),
 		Probes: []ExecutionProbe{
 			legacyDirectRelationshipProbe("graph_edges", strconv.Itoa(len(edges))),
 			legacyDirectRelationshipProbe("graph_shape", "sibling_root"),
@@ -2054,7 +2054,7 @@ func legacyDirectRelationshipSiblingRootGraphShape(edges []legacyDirectRelations
 		}
 		childRole := edge.childKey()
 		if _, ok := seenChildren[childRole]; ok {
-			return legacyDirectRelationshipSiblingRootGraph{}, false, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector sibling graph requires unique child roles")
+			return legacyDirectRelationshipSiblingRootGraph{}, false, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector sibling graph requires unique child roles")
 		}
 		seenChildren[childRole] = struct{}{}
 		shape.childRoles = append(shape.childRoles, childRole)
@@ -2089,13 +2089,13 @@ func legacyDirectRelationshipGraphSink(edges []legacyDirectRelationshipEdge) (st
 			continue
 		}
 		if sinkRole != "" {
-			return "", "", legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution requires a single sink table")
+			return "", "", legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution requires a single sink table")
 		}
 		sinkRole = key
 		sinkTable = childNameByRole[key]
 	}
 	if sinkRole == "" {
-		return "", "", legacyDirectRelationshipDiagnostic("legacy direct relationship-vector graph execution requires a sink table")
+		return "", "", legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution requires a sink table")
 	}
 	return sinkRole, sinkTable, nil
 }
@@ -2128,13 +2128,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipOrde
 	for i, edge := range edges {
 		if _, ok := childTables[strings.ToLower(edge.parentTable)]; !ok {
 			if start >= 0 {
-				return nil, legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution requires a single root parent table")
+				return nil, legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution requires a single root parent table")
 			}
 			start = i
 		}
 	}
 	if start < 0 {
-		return nil, legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution requires an acyclic parent-to-child chain")
+		return nil, legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution requires an acyclic parent-to-child chain")
 	}
 	ordered := make([]legacyDirectRelationshipEdge, 0, len(edges))
 	used := make([]bool, len(edges))
@@ -2149,7 +2149,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipOrde
 			}
 			if strings.EqualFold(edge.parentTable, current.childTable) {
 				if next >= 0 {
-					return nil, legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution does not support branching chains in this slice")
+					return nil, legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution does not support branching chains in this slice")
 				}
 				next = i
 			}
@@ -2161,28 +2161,28 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipOrde
 		current = edges[next]
 	}
 	if len(ordered) != len(edges) {
-		return nil, legacyDirectRelationshipDiagnostic("legacy direct chained relationship-vector execution requires connected parent-to-child edges")
+		return nil, legacyDirectRelationshipDiagnostic("inabox-direct chained relationship-vector execution requires connected parent-to-child edges")
 	}
 	return ordered, nil
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectSingleRelationshipEdge(vector RelationshipVectorJoinRequest) (legacyDirectRelationshipEdge, qsbridge.DiagnosticSet) {
 	if vector.EdgeCount() != 1 {
-		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution only supports one edge in this slice")
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution only supports one edge in this slice")
 	}
 	planned, _ := vector.FirstEdge()
 	if planned.ExecutionKind != qsbridge.RelationshipJoinExecutionVector {
-		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution only supports relationship-vector joins in this slice")
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution only supports relationship-vector joins in this slice")
 	}
 	if planned.SQLKind != qsbridge.JoinKindInner && planned.SQLKind != qsbridge.JoinKindLeftOuter {
-		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution only supports inner and left outer relationship-vector joins in this slice")
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution only supports inner and left outer relationship-vector joins in this slice")
 	}
 	edge, diagnostics := e.legacyDirectRelationshipEdge(planned)
 	if diagnostics.BlocksNative() {
 		return legacyDirectRelationshipEdge{}, diagnostics
 	}
 	if edge.sqlKind == qsbridge.JoinKindLeftOuter && !edge.leftOuterPreservesParent {
-		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("legacy direct left outer relationship-vector execution only supports preserving the relationship parent side in this slice")
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("inabox-direct left outer relationship-vector execution only supports preserving the relationship parent side in this slice")
 	}
 	return edge, nil
 }
@@ -2268,7 +2268,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAllR
 	}
 	if session == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct relationship join received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join received nil session"),
 		}, nil
 	}
 	bitmapResult, queryDiagnostics, queryErr := session.QueryBitmap(ctx, request)
@@ -2466,7 +2466,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRown
 	}
 	if session == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct relationship join received nil filtered session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join received nil filtered session"),
 		}, nil
 	}
 	bitmapResult, queryDiagnostics, queryErr := session.QueryBitmap(ctx, tableRequest)
@@ -2702,12 +2702,12 @@ func legacyDirectRelationshipLeftOuterPairs(parentRows []qsbridge.QuantaRownum, 
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipLeftOuterAggregateResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, parentRows []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult) (ExecutionResult, error) {
 	if !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct left outer relationship-vector execution only supports count(*) aggregates in this slice")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct left outer relationship-vector execution only supports count(*) aggregates in this slice")...)
 		return result, nil
 	}
 	whereResiduals := legacyDirectRelationshipResidualPredicatesForScope(request, qsbridge.PredicateScopeWhere)
 	if len(whereResiduals) > 0 {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("legacy direct left outer relationship-vector execution does not support residual WHERE predicates in this slice")...)
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct left outer relationship-vector execution does not support residual WHERE predicates in this slice")...)
 		return result, nil
 	}
 	onResiduals := legacyDirectRelationshipResidualPredicatesForScope(request, qsbridge.PredicateScopeOn)
@@ -3379,16 +3379,16 @@ func legacyDirectRelationshipProjectionFieldKey(field qsbridge.QuantaProjectionF
 
 func legacyDirectRelationshipShapeDiagnostics(request ExecutionRequest, vector RelationshipVectorJoinRequest) qsbridge.DiagnosticSet {
 	if vector.RootIndex == "" {
-		return legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution requires a root index")
+		return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution requires a root index")
 	}
 	if len(request.GroupBy) > 0 {
 		for _, groupExpr := range request.GroupBy {
 			if _, ok := directBitmapExprField(groupExpr); !ok {
-				return legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution only supports field GROUP BY in this slice")
+				return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution only supports field GROUP BY in this slice")
 			}
 		}
 		if len(request.SQLAggregates) == 0 {
-			return legacyDirectRelationshipDiagnostic("legacy direct relationship-vector execution requires aggregates for GROUP BY in this slice")
+			return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector execution requires aggregates for GROUP BY in this slice")
 		}
 	}
 	if len(request.SQLAggregates) == 0 {

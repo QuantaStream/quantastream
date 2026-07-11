@@ -339,7 +339,7 @@ the execution vocabulary for reduce, expand, semi, anti, and null-extension
 primitives while runtime and compatibility packages provide implementations.
 `relationship_vector_reader.go` contains the executor-neutral relationship
 vector reader contract used by filter-domain normalization plus a deterministic
-in-memory reader for native tests; legacy-direct vector-field derivation stays
+in-memory reader for native tests; inabox-direct vector-field derivation stays
 outside this package.
 `relationship_tuple_rowset.go` contains role-qualified tuple rows, tuple
 rowsets, relationship-vector graph expansion, row filtering by result indexes,

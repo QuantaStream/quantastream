@@ -97,20 +97,20 @@ func legacyDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config q
 	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
 		Direct:                    config,
 		DefaultSchema:             legacyDirectDefaultSchema(cfg.Database),
-		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-legacy-direct"),
+		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
 		Functions:                 legacyDirectSQLFunctions(),
 		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
 		EnableFilterExpressions:   true,
-		ApplyRecommendedEdgeOrder: os.Getenv("QUANTA_LEGACY_DIRECT_APPLY_EDGE_ORDER") == "1",
+		ApplyRecommendedEdgeOrder: os.Getenv("QUANTASTREAM_INABOX_DIRECT_APPLY_EDGE_ORDER") == "1",
 	})
 	return proxyRuntime.Runtime, diagnostics, err
 }
 func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheStruct, quantaSource *source.QuantaSource, tables []string) error {
 	if tableCache == nil {
-		return fmt.Errorf("legacy direct table cache is not initialized")
+		return fmt.Errorf("inabox-direct table cache is not initialized")
 	}
 	if quantaSource == nil || quantaSource.GetConnection() == nil || quantaSource.GetSessionPool() == nil {
-		return fmt.Errorf("legacy direct source is not initialized")
+		return fmt.Errorf("inabox-direct source is not initialized")
 	}
 	kvStore := shared.NewKVStore(quantaSource.GetConnection())
 	for _, table := range tables {
@@ -121,7 +121,7 @@ func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheS
 			if legacyDirectMissingTablePreloadError(table, err) {
 				continue
 			}
-			return fmt.Errorf("preload legacy table %s: %w", table, err)
+			return fmt.Errorf("preload inabox-direct table %s: %w", table, err)
 		}
 	}
 	return nil
@@ -304,7 +304,7 @@ func legacyDirectEnsureConfigBackedTables(tables []string) error {
 			continue
 		}
 		if err := legacyDirectExecuteAdmin("create " + table); err != nil {
-			return fmt.Errorf("bootstrap legacy-direct table %s: %w", table, err)
+			return fmt.Errorf("bootstrap inabox-direct table %s: %w", table, err)
 		}
 	}
 	return nil
@@ -407,7 +407,7 @@ func legacyDirectExecuteAdmin(command string) error {
 			}
 			defer func() {
 				if err := os.Chdir(workingDirectory); err != nil {
-					log.Printf("legacy-direct admin restore working directory failed: %v", err)
+					log.Printf("inabox-direct admin restore working directory failed: %v", err)
 				}
 			}()
 		}
@@ -422,7 +422,7 @@ func legacyDirectServicePort(port string) (int, error) {
 	}
 	servicePort, err := strconv.Atoi(port)
 	if err != nil || servicePort < 0 {
-		return 0, fmt.Errorf("legacy-direct port must be a non-negative integer: %q", port)
+		return 0, fmt.Errorf("inabox-direct port must be a non-negative integer: %q", port)
 	}
 	return servicePort, nil
 }

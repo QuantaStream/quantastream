@@ -30,11 +30,12 @@ func parseEngineDiff(value string) (engineDiffConfig, error) {
 
 func validateEngineForFlags(engine string, cfg runnerConfig) error {
 	switch engine {
-	case engineProxy:
+	case engineProxy, engineDistributed:
 		if cfg.Host == "" || cfg.User == "" {
-			return fmt.Errorf("host and user are required for proxy engine")
+			return fmt.Errorf("host and user are required for %s engine", engine)
 		}
-	case engineRuntime, engineRuntimeInspect, engineLegacyDirect:
+	case engineInaboxLocal:
+	case engineRuntime, engineRuntimeInspect, engineInaboxDirect:
 	case engineMySQLReference:
 		return mysqlReferenceConfig{Driver: cfg.MySQLDriver, DSN: cfg.MySQLDSN}.validate()
 	default:

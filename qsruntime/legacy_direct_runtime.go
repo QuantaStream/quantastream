@@ -477,7 +477,7 @@ func (h LegacyQuantaSessionHandle) ExecuteMutation(ctx context.Context, request 
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedMutation,
 				qsbridge.PhaseExecute,
-				"unsupported legacy direct mutation kind: "+string(request.Mutation.Kind),
+				"unsupported inabox-direct mutation kind: "+string(request.Mutation.Kind),
 			),
 		}, nil
 	}
@@ -499,7 +499,7 @@ func (h LegacyQuantaSessionHandle) InsertRows(ctx context.Context, request Execu
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedSQL,
 				qsbridge.PhaseExecute,
-				"legacy direct runtime only supports INSERT mutations in this slice",
+				"inabox-direct runtime only supports INSERT mutations in this slice",
 			),
 		}, nil
 	}
@@ -674,7 +674,7 @@ func legacyDirectInsertLiteralValue(expr qsbridge.Expr) (interface{}, qsbridge.D
 		qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			"legacy direct INSERT only supports literal row values in this slice",
+			"inabox-direct INSERT only supports literal row values in this slice",
 		),
 	}, false
 }
@@ -695,7 +695,7 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedMutation,
 				qsbridge.PhaseExecute,
-				"legacy direct update called for non-UPDATE mutation",
+				"inabox-direct update called for non-UPDATE mutation",
 			),
 		}, nil
 	}
@@ -704,7 +704,7 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticMutationMissingPredicate,
 				qsbridge.PhaseExecute,
-				"update requires a predicate before legacy direct execution",
+				"update requires a predicate before inabox-direct execution",
 			),
 		}, nil
 	}
@@ -759,7 +759,7 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedMutation,
 				qsbridge.PhaseExecute,
-				"legacy direct delete called for non-DELETE mutation",
+				"inabox-direct delete called for non-DELETE mutation",
 			),
 		}, nil
 	}
@@ -768,7 +768,7 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticMutationMissingPredicate,
 				qsbridge.PhaseExecute,
-				"delete requires a predicate before legacy direct execution",
+				"delete requires a predicate before inabox-direct execution",
 			),
 		}, nil
 	}

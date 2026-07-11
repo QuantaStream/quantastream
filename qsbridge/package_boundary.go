@@ -410,7 +410,7 @@ var defaultPackageBoundaries = []PackageBoundary{
 		Responsibilities: []string{
 			"legacy gRPC/proxy compatibility adapters",
 			"legacy source, core, shared, grpc, and server bridges needed only during migration",
-			"legacy direct session and projector shims that must not leak back into qsbridge",
+			"inabox-direct session and projector shims that must not leak back into qsbridge",
 		},
 		MayDependOn: []PackageBoundaryName{
 			PackageBoundaryCore,

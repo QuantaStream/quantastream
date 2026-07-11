@@ -32,7 +32,7 @@ const (
 //
 // This is the executor-side replacement vocabulary for the relationship BSI
 // work that legacy core.Projector kept internally. Runtime adapters can map it
-// to in-process bitmap calls, legacy direct calls, or future native execution
+// to in-process bitmap calls, inabox-direct calls, or future native execution
 // without making qsbridge import core.
 type ProjectorRelationshipVectorDependency struct {
 	ID          string

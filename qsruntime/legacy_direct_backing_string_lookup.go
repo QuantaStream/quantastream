@@ -28,7 +28,7 @@ func (r LegacyDirectBackingStringLookupReader) LookupProjectionBackingStrings(_ 
 	}
 	if r.Source == nil || r.Source.GetSessionPool() == nil {
 		return NativeProjectionBackingStringLookupResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct backing-string reader has no source session pool"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct backing-string reader has no source session pool"),
 		}, nil
 	}
 	table := legacyDirectRelationshipCachedTable(r.TableCache, index)
@@ -43,7 +43,7 @@ func (r LegacyDirectBackingStringLookupReader) LookupProjectionBackingStrings(_ 
 	defer pool.Return(index, session)
 	if session == nil || session.KVStore == nil {
 		return NativeProjectionBackingStringLookupResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct backing-string reader has no KVStore"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct backing-string reader has no KVStore"),
 		}, nil
 	}
 

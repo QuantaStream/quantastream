@@ -2,8 +2,8 @@
 
 SQLRunner executes YAML roadmap suites. It supports a proxy harness for the
 full product path, an in-memory runtime harness for qsbridge-only slices, and a
-legacy-direct harness for exercising the refactor stack against a running
-legacy Quanta cluster.
+inabox-direct harness for exercising the refactor stack against a running
+local QuantaStream node cluster.
 
 ## Roadmap Suites
 
@@ -54,7 +54,7 @@ and Quanta cluster. It is the compatibility path for existing integration and
 benchmark scripts.
 
 `-engine runtime` runs the in-process qsbridge/qsruntime path without the MySQL
-wire protocol or a legacy cluster. This mode is useful for parser, planner,
+wire protocol or a local node cluster. This mode is useful for parser, planner,
 executor, result-shape, and SQLRunner contract tests over fixture-backed native
 runtime data:
 
@@ -86,7 +86,7 @@ planner-relevant counts, including sources, joins, memberships, predicates,
 grouping, ordering, limits, aggregate functions, conditional aggregates,
 arithmetic aggregates, and distinct aggregates. The runtime inspection suite
 keeps small TPCH-shaped examples for these aggregate families so planner changes
-can be checked without needing a legacy cluster.
+can be checked without needing a local node cluster.
 
 Membership inspection rows describe SQL-level semi/anti membership edges such
 as `IN` and `NOT IN` subqueries. Relationship adapter rows describe runtime
@@ -95,53 +95,53 @@ TPC-H Q16 easier to reason about: the anti-membership may be a peer-value
 filter while the `part -> partsupp` relationship-vector join remains a separate
 execution boundary.
 
-`-engine legacy-direct` runs SQLRunner through the new qsbridge/qsruntime
+`-engine inabox-direct` runs SQLRunner through the new qsbridge/qsruntime
 planning path, then adapts the lowered Quanta intermediate query directly into
-legacy bitmap execution. It requires a running legacy local cluster and Consul,
+legacy bitmap execution. It requires a running local QuantaStream node cluster and Consul,
 but it bypasses the MySQL proxy and network wire path. This mode is the current
 vertical-slice bridge for proving simple SQL against real Quanta bitmap data:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_smoke.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_smoke.yaml \
   -consul 127.0.0.1:8500
 ```
 
-The legacy-direct smoke suite currently covers single-table `count(*)`
+The inabox-direct smoke suite currently covers single-table `count(*)`
 predicates over numeric BSI fields, StringEnum exact/`IN` predicates, and narrow
 projection materialization through the direct runtime path. It is not the
 compatibility route for general SQL; unsupported query shapes should stay in the
 proxy or in-memory runtime suites until the new planner/runtime grows the needed
 primitive.
 
-`sqltests/legacy_direct_qa_basic.yaml` is the portable QA-table checkpoint for
+`sqltests/inabox_direct_qa_basic.yaml` is the portable QA-table checkpoint for
 the direct path. It creates and loads `customers_qa` and `orders_qa`, including
 the simple multiplicity-set `phoneType` values used by later mutation and join
 coverage, then asserts the stable direct-read surface over the QA catalog:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_qa_basic.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_qa_basic.yaml \
   -consul 127.0.0.1:8500
 ```
 
-`sqltests/legacy_direct_basic.yaml` is the promoted legacy-direct contract for
+`sqltests/inabox_direct_basic.yaml` is the promoted inabox-direct contract for
 basic one-table execution. It keeps a smaller, deliberate set of supported
 cases: numeric and StringEnum filtering, multi-column projection,
 `LIMIT/OFFSET`, and simple global numeric aggregates. Use it when validating
-that a local legacy cluster can execute the current qsbridge/qsruntime vertical
+that a local local node cluster can execute the current qsbridge/qsruntime vertical
 slice:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_basic.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_basic.yaml \
   -consul 127.0.0.1:8500
 ```
 
-The legacy-direct joins suite is the QA-backed relationship-vector
+The inabox-direct joins suite is the QA-backed relationship-vector
 checkpoint. It creates and loads `customers_qa` and `orders_qa`, then validates
 join count, projection, filtering, grouped aggregate, and distinct aggregate
 cases over the customer-orders edge. Use it as the portable join regression
@@ -149,13 +149,13 @@ gate before reaching for TPC-H catalog data:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_joins.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_joins.yaml \
   -consul 127.0.0.1:8500
 ```
 
-`sqltests/legacy_direct_tpch_kernels.yaml` is the broad TPC-H kernel regression
-suite for the legacy-direct path. It does not run formal TPC-H verbatim end to
+`sqltests/inabox_direct_tpch_kernels.yaml` is the broad TPC-H kernel regression
+suite for the inabox-direct path. It does not run formal TPC-H verbatim end to
 end; instead it captures the staged kernels that proved the planner, relationship
 vector reductions, grouped materialization, searched CASE aggregates, membership
 subqueries, and physical time-shard windowing needed by the query roadmap. It
@@ -163,28 +163,28 @@ requires a loaded TPC-H catalog and is intentionally heavier than the QA suites:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_tpch_kernels.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_tpch_kernels.yaml \
   -consul 127.0.0.1:8500
 ```
 
 Because this suite can take several minutes, keep it out of fast package CI
-unless a dedicated legacy-direct integration job is created. Use it as a
-pre-retirement gate for the legacy proxy and as a performance watchpoint for
+unless a dedicated inabox-direct integration job is created. Use it as a
+pre-retirement gate for the old proxy and as a performance watchpoint for
 materialization-heavy cases such as Q19, Q18, Q21 late receipt, and Q5 graph
 revenue kernels.
 
-For the current proxy-retirement readiness gate, run the quick legacy-direct
+For the current proxy-retirement readiness gate, run the quick inabox-direct
 suites from the `sqlrunner` directory:
 
 ```bash
-./run-legacy-direct-readiness.sh
+./run-inabox-direct-readiness.sh
 ```
 
 The broad TPC-H kernel suite is opt-in:
 
 ```bash
-RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-legacy-direct-readiness.sh
+RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 ```
 
 ## Benchmark Report Mode
@@ -198,8 +198,8 @@ Benchmark Lab controls in `../docs/BENCHMARK_LAB.md`:
 
 ```bash
 go run . \
-  -engine legacy-direct \
-  -suite_file sqltests/legacy_direct_tpch_kernels.yaml \
+  -engine inabox-direct \
+  -suite_file sqltests/inabox_direct_tpch_kernels.yaml \
   -benchmark_profile developer-local \
   -benchmark_warmup 1 \
   -benchmark_runs 3 \
@@ -248,7 +248,7 @@ suite and should grow incrementally as Quanta's TPC-H query support matures.
 
 ## Connection Options
 
-- `engine`: execution harness; `proxy`, `runtime`, or `legacy-direct`, defaults
+- `engine`: execution harness; `proxy`, `runtime`, or `inabox-direct`, defaults
   to `proxy`.
 - `suite_file`: YAML roadmap suite to execute. Required.
 - `host`: Quanta proxy host. Required for `proxy`.
@@ -263,7 +263,7 @@ suite and should grow incrementally as Quanta's TPC-H query support matures.
 - `slow_threshold`: print a slow-case summary for cases at or above this
   duration, for example `10s`.
 
-The `proxy` and `legacy-direct` harnesses expect Consul and a green local
-cluster to be running. `proxy` talks through the MySQL proxy. `legacy-direct`
+The `proxy` and `inabox-direct` harnesses expect Consul and a green local
+cluster to be running. `proxy` talks through the MySQL proxy. `inabox-direct`
 uses the cluster catalog and bitmap sessions directly from the SQLRunner
 process.

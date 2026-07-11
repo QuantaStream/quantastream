@@ -23,7 +23,7 @@ type LegacyDirectBitIndexRelationshipVectorBackend struct {
 	ProjectionCache  *LegacyDirectRelationshipVectorProjectionCache
 }
 
-// LegacyDirectFilterTreeAdapter wires grouped-filter evaluation to legacy-direct relationship-vector normalization.
+// LegacyDirectFilterTreeAdapter wires grouped-filter evaluation to inabox-direct relationship-vector normalization.
 func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *source.QuantaSource, tableCache *core.TableCacheStruct, materializer ProjectionMaterializer, materialization ProjectionMaterializationKernel) DirectBitmapFilterTreeAdapter {
 	reader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
@@ -80,7 +80,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 				ProjectionElapsed:  projectionElapsed,
 				ProjectionCacheHit: projectionCacheHit,
 			}, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector projection returned nil BSI"),
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector projection returned nil BSI"),
 			}, nil
 	}
 	sourceValueResult, diagnostics, err := b.relationshipVectorSourceValues(ctx, read)
@@ -213,7 +213,7 @@ type legacyDirectBitIndexRelationshipVectorProjectionReader struct {
 func (r legacyDirectBitIndexRelationshipVectorProjectionReader) ReadRelationshipVectorProjection(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (*roaring64.BSI, qsbridge.DiagnosticSet, error) {
 	if r.Source == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector backend has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector backend has no source"),
 		}, nil
 	}
 	vectorRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -230,7 +230,7 @@ func (r legacyDirectBitIndexRelationshipVectorProjectionReader) ReadRelationship
 	}
 	if session == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector backend received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector backend received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
@@ -245,7 +245,7 @@ func (r legacyDirectBitIndexRelationshipVectorProjectionReader) ReadRelationship
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector backend has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector backend has no bitmap index"),
 		}, nil
 	}
 	fromTime, toTime := r.legacyDirectRelationshipVectorProjectionWindow(read)
@@ -374,13 +374,13 @@ func (r legacyDirectBitIndexRelationshipVectorSourceKeyReader) ReadRelationshipV
 	}
 	if r.Source == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector source-key reader has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector source-key reader has no source"),
 		}, nil
 	}
 	field, ok := legacyDirectRelationshipVectorSourceKeyField(read)
 	if !ok {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "legacy-direct relationship-vector source-key reader cannot find source key field"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "inabox-direct relationship-vector source-key reader cannot find source key field"),
 		}, nil
 	}
 	index := field.Table.Table
@@ -390,7 +390,7 @@ func (r legacyDirectBitIndexRelationshipVectorSourceKeyReader) ReadRelationshipV
 	}
 	if index == "" || physicalField == "" {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "legacy-direct relationship-vector source-key reader requires a source key table and field"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "inabox-direct relationship-vector source-key reader requires a source key table and field"),
 		}, nil
 	}
 	keyRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -407,14 +407,14 @@ func (r legacyDirectBitIndexRelationshipVectorSourceKeyReader) ReadRelationshipV
 	}
 	if session == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector source-key reader received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector source-key reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy-direct relationship-vector source-key reader has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship-vector source-key reader has no bitmap index"),
 		}, nil
 	}
 	fromTime, toTime := r.legacyDirectRelationshipVectorSourceKeyWindow(index)

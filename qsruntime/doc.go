@@ -4,8 +4,8 @@
 // owns the boundary where those neutral requests are routed to direct QIAB
 // execution or temporary legacy compatibility adapters.
 //
-// The legacy-direct adapters are intentionally narrow compatibility islands.
-// They let SQLRunner run the new SQL stack against a live legacy cluster by
+// The inabox-direct adapters are intentionally narrow compatibility islands.
+// They let SQLRunner run the new SQL stack against a live local node cluster by
 // borrowing core sessions, executing lowered bitmap fragments, and routing
 // projection work through explicit native materialization kernels. They should
 // not become a second planner or a place where legacy parser/proxy behavior
@@ -18,7 +18,7 @@
 //
 // Native projection and materialization semantics are qsbridge executor
 // boundary concepts. qsruntime may stage executable adapters while direct
-// storage and legacy cluster seams are still mixed, but durable field hydration,
+// storage and local node cluster seams are still mixed, but durable field hydration,
 // rehydration, row assembly, batching, and fallback inspection vocabulary should
 // migrate toward qsbridge-owned contracts rather than remain runtime folklore.
 //

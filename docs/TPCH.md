@@ -91,7 +91,7 @@ coverage in the broad suites under `sqlrunner/sqltests`. The benchmark suite
 should remain the TPC-H narrative; the broad suites should preserve reusable SQL
 engine contracts.
 
-For legacy-direct refactor work, keep the broad TPC-H kernel suite as a cross-query signal and place heavier query-family probes in focused suites such as `sqlrunner/sqltests/legacy_direct_tpch_q9.yaml`.
+For inabox-direct refactor work, keep the broad TPC-H kernel suite as a cross-query signal and place heavier query-family probes in focused suites such as `sqlrunner/sqltests/inabox_direct_tpch_q9.yaml`.
 
 ## Query Coverage Matrix
 
@@ -103,32 +103,32 @@ syntax or planner capability.
 
 | Query | Status | Current Notes |
 | --- | --- | --- |
-| Q1 | Supported | Legacy-direct covers the single-table `lineitem` grouped count shape with StringEnum group materialization. |
-| Q2 | Supported | Legacy-direct covers Europe/BRASS count, mixed-table graph projection, and fixed supply-cost filtering over the region/nation/supplier/partsupp graph; formal query still needs correlated scalar minimum supply-cost filtering. |
+| Q1 | Supported | Inabox-direct covers the single-table `lineitem` grouped count shape with StringEnum group materialization. |
+| Q2 | Supported | Inabox-direct covers Europe/BRASS count, mixed-table graph projection, and fixed supply-cost filtering over the region/nation/supplier/partsupp graph; formal query still needs correlated scalar minimum supply-cost filtering. |
 | Q3 | Supported | Staged/formal-compatible customer-orders-lineitem revenue, date filters, grouping, ordering, and limit are covered. |
-| Q4 | Supported | Legacy-direct covers staged order-date priority grouping; formal correlated `EXISTS` remains blocked. |
+| Q4 | Supported | Inabox-direct covers staged order-date priority grouping; formal correlated `EXISTS` remains blocked. |
 | Q5 | Supported | Regional revenue path is covered through staged probes and formal discounted revenue. |
-| Q6 | Supported | Single-table discounted revenue is covered in legacy-direct with time-range, numeric-range, and arithmetic aggregate predicates. |
+| Q6 | Supported | Single-table discounted revenue is covered in inabox-direct with time-range, numeric-range, and arithmetic aggregate predicates. |
 | Q7 | Supported | Staged single-role nation filters, one-role supplier/customer join paths, repeated `nation` aliases, France/Germany shipdate-window count, and one-direction revenue/year grouping are covered; formal query's bidirectional nation-pair OR is tracked as a grouped-boolean relationship-graph blocker. |
 | Q8 | Supported | Staged part-type filtering, America customer/order/lineitem count, repeated customer/supplier `nation` alias count, market-share aggregate inputs grouped by year, and final aggregate-ratio projection are covered. |
-| Q9 | Supported | Focused legacy-direct coverage includes `p_name LIKE '%green%'`, line/order graph counts, revenue arithmetic, supplier/nation grouped staging, sibling `lineitem`/`partsupp` profit tuples, and formal profit grouped by nation/year. |
+| Q9 | Supported | Focused inabox-direct coverage includes `p_name LIKE '%green%'`, line/order graph counts, revenue arithmetic, supplier/nation grouped staging, sibling `lineitem`/`partsupp` profit tuples, and formal profit grouped by nation/year. |
 | Q10 | Supported | Formal returned-item revenue by customer is covered, including customer account balance, nation, address, phone, and comment projection. |
 | Q11 | Supported | Staged German supplier value aggregation, ordering, alias-based and aggregate-expression fixed-threshold `HAVING` are covered; formal scalar subquery thresholds remain a parser/planner boundary. |
 | Q12 | Supported | Staged shipmode, receipt-date, joined date-comparison grouping, joined priority conditional aggregates, and the combined formal kernel are covered; formal query still needs parser cleanup for `OR`/`AND` inside `CASE`. |
 | Q13 | Supported | Base customer count, grouped customer-orders inner join counts, contains-style comment filtering, and left-outer join count are covered; formal query still needs projected null-extension and derived-table second-stage grouping. |
-| Q14 | Supported | Conditional promo and total revenue components plus final aggregate-ratio projection are covered in legacy-direct. |
+| Q14 | Supported | Conditional promo and total revenue components plus final aggregate-ratio projection are covered in inabox-direct. |
 | Q15 | Supported | Supplier-key revenue grouping, supplier projection, and max-revenue supplier selection over the lineitem date window are covered; formal query still needs view/temp-table materialization. |
 | Q16 | Supported | Staged part filters, part-partsupp filtered join count/projection/grouped count/grouped value/count-distinct, and supplier semi/anti subquery counts are covered; formal single-query shape is blocked by compound `WHERE` subquery parsing/planning. |
 | Q17 | Supported | Staged populated Brand/Container kernels cover part count, part-lineitem count, and joined yearly extended-price sum; formal constants are empty in this data load and formal correlated scalar aggregate remains a parser/planner boundary. |
 | Q18 | Supported | Direct child-FK and joined large-order quantity threshold grouping plus formal customer/order projection are covered. |
-| Q19 | Supported | Formal mixed-table OR discounted revenue is covered in legacy-direct with grouped boolean lowering and constrained child-domain branch evaluation. |
+| Q19 | Supported | Formal mixed-table OR discounted revenue is covered in inabox-direct with grouped boolean lowering and constrained child-domain branch evaluation. |
 | Q20 | Supported | Staged `forest%` part filtering, forest `part -> partsupp` join count, equivalent `IN (SELECT ...)` membership count, Canada supplier join, 1994 shipped-quantity grouping, and fixed-threshold shipped-quantity `HAVING` are covered; formal query remains blocked by scalar aggregate comparison, interval syntax, and compound subquery composition. |
-| Q21 | Supported | Legacy-direct covers Saudi supplier, F-status order, and late-receipt line counts; the Saudi/F/late grouped wait count remains an explicit XFAIL and formal query still needs correlated `EXISTS` / `NOT EXISTS`. |
-| Q22 | Supported | Legacy-direct covers seeded customer anti-membership and seeded phone-prefix function-OR count; formal scalar-threshold grouping remains blocked. |
+| Q21 | Supported | Inabox-direct covers Saudi supplier, F-status order, and late-receipt line counts; the Saudi/F/late grouped wait count remains an explicit XFAIL and formal query still needs correlated `EXISTS` / `NOT EXISTS`. |
+| Q22 | Supported | Inabox-direct covers seeded customer anti-membership and seeded phone-prefix function-OR count; formal scalar-threshold grouping remains blocked. |
 
-The legacy-direct TPCH kernel suite is now represented across Q1-Q22. As of the
-2026-07-04 checkpoint, `go run . -engine legacy-direct -suite_file
-sqltests/legacy_direct_tpch_kernels.yaml` from `sqlrunner/` completes with 84
+The inabox-direct TPCH kernel suite is now represented across Q1-Q22. As of the
+2026-07-04 checkpoint, `go run . -engine inabox-direct -suite_file
+sqltests/inabox_direct_tpch_kernels.yaml` from `sqlrunner/` completes with 84
 supported PASS cases and 1 intentional XFAIL case. The XFAIL set is the
 current refactor punch list rather than a suite failure.
 
@@ -137,7 +137,7 @@ projection work during multi-table join projection. A targeted per-projector
 parent projection cache now avoids re-reading stable parent-side fields across
 `Projector.Next` batches while keeping child-table projection streaming.
 
-TPC-H Q2 now has legacy-direct coverage for the Europe/BRASS five-table graph
+TPC-H Q2 now has inabox-direct coverage for the Europe/BRASS five-table graph
 count, mixed-table graph projection, and the fixed low-supply-cost count over
 `part -> partsupp -> supplier -> nation -> region`. The graph predicate path
 supports suffix `LIKE` over `p_type`, numeric part-size and supply-cost filters,
@@ -145,21 +145,21 @@ and region filtering. The projection path now aligns sink rows back to ancestor
 roles, materializes visible and residual-only fields, and applies projected
 residual predicates before producing visible output.
 
-TPC-H Q1 and Q4 now have legacy-direct coverage for single-table grouped
+TPC-H Q1 and Q4 now have inabox-direct coverage for single-table grouped
 count materialization. Q1 exercises full-window materialization on time-sharded
 `lineitem` plus StringEnum group rehydration, while Q4 exercises the aligned
 `orders` date-window priority grouping path. Count-only grouped aggregates must
 bypass the global bitmap-count fast path so they can materialize group fields
 before reducing rows.
 
-TPC-H Q21 now has legacy-direct coverage for the Saudi supplier dimension join,
+TPC-H Q21 now has inabox-direct coverage for the Saudi supplier dimension join,
 F-status order count, and raw late-receipt same-table date comparison. The
 late-receipt count is correct but still slow, and the grouped Saudi/F/late
 supplier wait count remains an XFAIL because the joined graph shape still
 undercounts. Correlated `EXISTS` / `NOT EXISTS` remains the formal query
 boundary.
 
-TPC-H Q22 now has legacy-direct coverage for seeded customer anti-membership
+TPC-H Q22 now has inabox-direct coverage for seeded customer anti-membership
 and seeded phone-prefix function `OR` filtering.
 `customer.c_custkey NOT IN (SELECT o_custkey FROM orders)` returns the expected
 500 customers when paired with a full-domain seed, and the seeded
@@ -207,7 +207,7 @@ ordering, alias-based fixed-threshold `HAVING` such as `having part_value >
 refactor work because HAVING currently accepts aggregate alias/literal
 comparisons, not subquery thresholds.
 
-The legacy-direct Q11 kernel is also a useful grouped-aggregate performance
+The inabox-direct Q11 kernel is also a useful grouped-aggregate performance
 checkpoint. Phase probes showed that bounded heap top-N ordering was not the
 active bottleneck: ordering was sub-millisecond while grouped aggregate
 construction took several seconds. Precomputing aggregate input vectors once
@@ -235,7 +235,7 @@ Those remaining parser/planner boundaries are tracked in
 [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md) rather than as noisy TPC-H XFAIL
 cases.
 
-The legacy-direct TPCH kernel suite now tracks the same boundary explicitly.
+The inabox-direct TPCH kernel suite now tracks the same boundary explicitly.
 The Q12 shipmode `IN`, receipt-date range, and combined shipmode/date count now
 match the proxy-path expected counts. The runtime adapter handles time-sharded
 single-table predicates by adding a synthetic full shard-key window when the SQL
@@ -251,7 +251,7 @@ comparisons and priority conditional counts yielding `MAIL=64/86` and
 `SHIP=61/96`. The remaining Q12 promotion gap is parser cleanup for the formal
 `OR`/`AND` spelling inside `CASE` predicates.
 
-TPC-H Q3 and Q5 are represented in the legacy-direct kernel suite as small
+TPC-H Q3 and Q5 are represented in the inabox-direct kernel suite as small
 frontier probes. Q3 currently supports the `customer` market-segment filter and
 the first `customer -> orders` projection after adding synthetic full-shard
 windows for unfiltered time-sharded child tables. The next Q3 hop,
@@ -260,7 +260,7 @@ supported with a count of `1464`. The old proxy path returned `32289` for this
 shape, but that value is the child-side `lineitem` date predicate cardinality,
 not the FK-reduced SQL intersection after applying the parent `orders`
 predicate. Q5 has green dimension coverage for the `ASIA` region filter and
-`region -> nation` relationship-vector join. The legacy-direct suite also now
+`region -> nation` relationship-vector join. The inabox-direct suite also now
 tracks the next one-edge Q5 fanouts, `nation -> supplier` and
 `nation -> customer`, with row counts of 27 and 309 respectively. Two-edge
 dimension chains are supported for `count(*)` as well:
@@ -272,7 +272,7 @@ covered and returns 16464, proving dimension filtering can flow into the
 linear chain is covered too: `region -> nation -> customer -> orders` returns
 2959 and `region -> nation -> customer -> orders -> lineitem` returns 11708. A
 direct `supplier -> lineitem` fact-side count is also supported, returning 2447
-for the single-nation supplier probe. The legacy-direct suite now has a first
+for the single-nation supplier probe. The inabox-direct suite now has a first
 relationship-graph reduction kernel as well: the Q5 supplier existence edge can
 converge on the customer/orders/lineitem chain and returns 11708. A follow-up
 graph projection kernel materializes the sink-table `lineitem` revenue inputs
@@ -318,14 +318,14 @@ path.
 Function coverage note: single-table computed grouping now supports expressions such as `year(date_field)` and `substr(string_field, ...)`, and joined projection can evaluate parent-side computed fields. Multi-table grouped joins now cover several count and aggregate-expression shapes, including two-table grouped count/value coverage in Q16. Q8/Q9-style year grouping and market-share work still need separate repeated-alias and profit-expression validation before formal promotion.
 
 TPC-H Q7/Q8 repeated-nation alias probing now preserves independent query roles
-for repeated uses of `nation`. The legacy-direct kernel suite promotes the Q7
+for repeated uses of `nation`. The inabox-direct kernel suite promotes the Q7
 France/Germany count without the shipdate window, proving supplier nation and
 customer nation filters no longer collapse into one physical `nation` foundset.
 The formal-shaped Q7/Q8 probes exposed a narrower time-sharded lineitem
 relationship-vector projection blocker: after a date window is applied, the
 executor must retrieve lineitem vectors and projected values for the filtered
 child set without losing rows from non-shard date predicates. The current
-legacy-direct adapter handles this with an explicit planner-visible projection
+inabox-direct adapter handles this with an explicit planner-visible projection
 scope and a shard-key rule: when a relationship-vector FK read already has a
 child foundset, that foundset is the row constraint and the adapter may broaden
 the physical time-shard window to retrieve the vector BSI; ordinary
@@ -338,15 +338,15 @@ relationship vector over an impossible join. These are intentionally temporary
 compatibility behaviors; remove or promote them out of the adapter layer once
 the new TPCH path owns relationship-vector execution directly.
 
-TPC-H Q13 now has staged legacy-direct coverage for base `customer` counts,
+TPC-H Q13 now has staged inabox-direct coverage for base `customer` counts,
 grouped `customer -> orders` inner join counts by customer, and contains-style
 comment filtering with `o_comment LIKE '%special%requests%'`. The formal query
 still depends on `LEFT OUTER JOIN` null-extension and derived-table second-stage
-grouping. The parser now preserves `LEFT OUTER JOIN`, but legacy-direct
+grouping. The parser now preserves `LEFT OUTER JOIN`, but inabox-direct
 relationship-vector execution is intentionally inner-join-only in this slice, so
 the left-outer count remains an explicit kernel XFAIL.
 
-TPC-H Q14 has legacy-direct coverage for the formal promo-revenue ratio:
+TPC-H Q14 has inabox-direct coverage for the formal promo-revenue ratio:
 the conditional promo numerator, total discounted-revenue denominator, and final
 scalar aggregate-ratio projection over `lineitem -> part`. This builds on the
 SQL `LIKE` kernel for left-anchored prefix matching over a `StringEnum` field
@@ -356,12 +356,12 @@ hidden aggregate inputs.
 TPC-H Q15 now has staged executable coverage for the lineitem revenue kernel:
 the `l_shipdate` window, supplier-key residual grouping over numeric
 `l_suppkey`, grouped `count(*)`, and grouped revenue arithmetic sum all execute
-correctly. The legacy-direct suite now also covers supplier projection and
+correctly. The inabox-direct suite now also covers supplier projection and
 max-revenue supplier selection with `ORDER BY total_revenue DESC LIMIT 1`.
 Formal Q15 remains blocked on expressing the supplier revenue view or temporary
 materialization.
 
-The legacy-direct Q15 grouped kernels now classify as sub-second, mostly
+The inabox-direct Q15 grouped kernels now classify as sub-second, mostly
 materialization/date-window work rather than grouped-reducer work. On the SF
 0.01 data, the lineitem supplier revenue kernel has roughly 2,284 candidates,
 100 supplier groups, a ~100ms materialization phase, and sub-millisecond
@@ -394,14 +394,14 @@ child row stream or the unreduced driver set; this is the distinction that keeps
 duplicate child matches from over-counting `IN` and keeps child-side `NOT IN`
 from returning the full outer table.
 
-The legacy-direct relationship executor also short-circuits empty membership
+The inabox-direct relationship executor also short-circuits empty membership
 right-hand sides: a semi-join with an empty RHS returns no outer rows, while an
 anti-join with an empty RHS keeps the already reduced outer pairs without
 materializing the left key column. This is intentionally small but important for
 Q16-style complaint-supplier predicates where the supplier subquery can be
 empty.
 
-The legacy-direct Q16 grouped kernels are also sub-second after grouped
+The inabox-direct Q16 grouped kernels are also sub-second after grouped
 aggregate input precomputation. The part-side grouped count is dominated by
 materialization plus residual `NOT LIKE` filtering, not grouping. The
 `part -> partsupp` grouped `count(distinct)` kernels have small grouped phases
@@ -442,7 +442,7 @@ membership predicate inside the larger joined/grouped Q16 `WHERE` chain
 currently fails parsing at the inner `SELECT`. Treat this as parser/planner
 refactor work rather than a Q16 execution-kernel bug.
 
-TPC-H Q17 has staged legacy-direct coverage for a populated Brand/Container
+TPC-H Q17 has staged inabox-direct coverage for a populated Brand/Container
 kernel using `Brand#45` / `MED JAR`: part filter count, `part -> lineitem`
 join count, and joined extended-price yearly sum. The formal `Brand#23` /
 `MED BOX` constants are empty in this data load, so exact formal-value staging
@@ -451,14 +451,14 @@ is not useful yet. The formal correlated scalar aggregate predicate
 parser/binder currently treats the parenthesized subquery as a field-like
 expression rather than preserving it as a scalar subquery node.
 
-TPC-H Q20 has staged legacy-direct coverage for the `forest%` part filter,
+TPC-H Q20 has staged inabox-direct coverage for the `forest%` part filter,
 the forest `part -> partsupp` relationship-vector join count, the
 `supplier -> nation` Canada filter join, and the single-table lineitem
 date-window grouping by `(l_partkey, l_suppkey)` with `sum(l_quantity)`,
 including a fixed-threshold alias-based `HAVING` predicate. The forest part
 filter uses an explicit full-domain `p_partkey >= 1` seed before applying the
 backing-string residual `p_name LIKE 'forest%'`; pure residual-only table scans
-remain outside this legacy-direct path. Exact `p_name` equality works for both
+remain outside this inabox-direct path. Exact `p_name` equality works for both
 count and projection, and residual backing-store `LIKE` now covers prefix and
 contains patterns such as `p_name LIKE 'green%'` and `p_name LIKE '%green%'`.
 Residual predicates such as `substr(p_name, 1, 7) = 'frosted'` or
@@ -481,7 +481,7 @@ TPC-H Q22 has staged executable coverage in `tpc-h-benchmark/sqltests/tpch_q22_p
 prefix set works when expanded as explicit `OR` predicates. Prefix grouping with
 `c_acctbal > 0` and `sum(c_acctbal)` also works, and standalone
 `customer.c_custkey NOT IN (SELECT o_custkey FROM orders)` returns the expected
-anti-membership count. In legacy-direct, the seeded phone-prefix `OR` count now
+anti-membership count. In inabox-direct, the seeded phone-prefix `OR` count now
 runs as a bitmap seed plus grouped residual boolean predicate. Remaining
 boundaries are `substr(...) IN (...)` misclassification, combined Q22-like
 grouped aggregate composition over prefix filtering plus `NOT IN`, and the
@@ -514,10 +514,10 @@ preserving expected results. Deeper `RANGE` kernel performance remains a future
 optimization target because the coalesced `l_quantity` predicates are still the
 largest remaining local predicate cost.
 
-TPC-H Q9 has focused legacy-direct coverage for the green-part filter over the
+TPC-H Q9 has focused inabox-direct coverage for the green-part filter over the
 `part -> lineitem` join and for the `part -> lineitem -> orders` count shape.
 This locks in backing-store `p_name LIKE '%green%'` inside joined count and
-limited projection shapes. The legacy-direct runtime applies the backing-string
+limited projection shapes. The inabox-direct runtime applies the backing-string
 residual predicate after relationship-vector reduction, covering the
 `part -> lineitem` count and the `part -> lineitem -> orders` graph count with
 the expected 3,223 matching lineitem rows. Focused Q9 coverage now also includes
@@ -528,7 +528,7 @@ multi-sink/bidirectional tuple-rowset executor: it expands `part -> lineitem` an
 `part -> partsupp`, applies `ps_suppkey = l_suppkey`, and follows `lineitem ->
 orders` plus `lineitem -> supplier -> nation` for grouping dimensions.
 
-TPC-H Q10 has formal legacy-direct coverage for returned-item revenue by
+TPC-H Q10 has formal inabox-direct coverage for returned-item revenue by
 customer using `customer -> orders -> lineitem -> nation`, `o_orderdate`
 filtering, `l_returnflag = 'R'`, discounted revenue arithmetic, grouping,
 ordering, and `LIMIT`. The promoted kernel verifies the full customer projection,
@@ -540,7 +540,7 @@ supplier/customer nation paths, repeated `nation` aliases without the shipdate
 window, the formal-shaped France/Germany shipdate-window count, and the
 one-direction France/Germany revenue grouped by supplier nation, customer
 nation, and ship year. Formal Q7's bidirectional nation-pair `OR` is now tracked
-as an explicit legacy-direct kernel XFAIL because grouped boolean execution must
+as an explicit inabox-direct kernel XFAIL because grouped boolean execution must
 be lowered across repeated table roles before relationship-graph reduction.
 
 TPC-H Q8 now has staged executable coverage for the formal part type filter,
@@ -560,7 +560,7 @@ execution model exist.
 
 TPC-H Q19 is covered by the legacy executable suite, including standalone
 brand/container/size probes, child-side discounted revenue, and the formal
-mixed-table `OR` branch shape over `lineitem -> part`. Legacy-direct now tracks
+mixed-table `OR` branch shape over `lineitem -> part`. Inabox-direct now tracks
 the same formal branch query as an explicit XFAIL because mixed-table top-level
 `OR` requires grouped boolean expression lowering before relationship-vector
 reduction. It remains worth profiling because the formal branch evaluation is a
@@ -761,13 +761,13 @@ The roadmap suites should retain unsupported formal queries as `xfail` cases.
 When a case starts passing, SQLRunner reports `XPASS` so the case can be
 reviewed and promoted intentionally.
 
-TPC-H Q18 now has legacy-direct coverage for the large-order
+TPC-H Q18 now has inabox-direct coverage for the large-order
 quantity-threshold kernel via `orders -> lineitem`: grouping by `o_orderkey`,
 applying alias-based `HAVING`, ordering by the aggregate, and limiting the
 result. The formal customer/orders/lineitem projection is also covered with the
 current SF0.01 data, returning the two orders above the `sum(l_quantity) > 300`
 threshold. Directly grouping on the child FK relationship column
-`lineitem.l_orderkey` still returns `NULL/NULL`, so that legacy-direct
+`lineitem.l_orderkey` still returns `NULL/NULL`, so that inabox-direct
 relationship-column grouping shape is tracked as an explicit XFAIL.
 
 TPC-H Q12 profiling is captured in `tpc-h-benchmark/sqltests/tpch_q12_profile.yaml`.

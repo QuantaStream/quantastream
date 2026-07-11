@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SUITE_FILE="${SUITE_FILE:-sqltests/legacy_direct_tpch_kernels.yaml}"
-ENGINE="${ENGINE:-legacy-direct}"
+SUITE_FILE="${SUITE_FILE:-sqltests/inabox_direct_tpch_kernels.yaml}"
+ENGINE="${ENGINE:-inabox-direct}"
 BENCHMARK_PROFILE="${BENCHMARK_PROFILE:-developer-local}"
 BENCHMARK_REPORT="${BENCHMARK_REPORT:-expected/local/benchmark-$(date -u +%Y%m%dT%H%M%SZ).json}"
 BENCHMARK_WARMUP="${BENCHMARK_WARMUP:-0}"

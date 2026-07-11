@@ -4,11 +4,11 @@ The broad suites in this directory are executable behavior contracts for the
 native refactor path. Keep reusable SQL semantics in the general suites, and use
 TPC-H suites as analytical shape coverage rather than as formal benchmark runs.
 
-`legacy_direct_tpch_kernels.yaml` is the broad legacy-direct TPC-H signal. It
+`inabox_direct_tpch_kernels.yaml` is the broad inabox-direct TPC-H signal. It
 should stay useful for cross-query regression checks and avoid absorbing every
 long-running probe discovered during TPC-H work.
 
-Focused per-query suites, such as `legacy_direct_tpch_q9.yaml`, may contain
+Focused per-query suites, such as `inabox_direct_tpch_q9.yaml`, may contain
 heavier staged kernels, explicit expected-error boundaries, and local wall-time
 notes. Use them when a query family needs deeper coverage without making the
 main kernel suite harder to run casually.
@@ -51,7 +51,7 @@ The same capture-and-run flow can be executed in one command when both engines
 are available:
 
 ```bash
-go run . -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'
+go run . -engine_diff mysql-reference,inabox-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'
 ```
 
 
@@ -63,5 +63,5 @@ available, `run-mysql-compat.sh` standardizes capture and diff commands from the
 
 ```bash
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' ./run-mysql-compat.sh
-MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=legacy-direct ./run-mysql-compat.sh
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-direct ./run-mysql-compat.sh
 ```

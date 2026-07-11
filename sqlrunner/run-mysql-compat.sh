@@ -5,14 +5,14 @@ usage() {
   cat <<'USAGE'
 Usage:
   MYSQL_DSN='user:pass@tcp(host:3306)/db' ./run-mysql-compat.sh
-  MYSQL_DSN='user:pass@tcp(host:3306)/db' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=legacy-direct ./run-mysql-compat.sh
+  MYSQL_DSN='user:pass@tcp(host:3306)/db' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-direct ./run-mysql-compat.sh
 
 Environment:
   MYSQL_DSN              Required database/sql DSN for the stock MySQL reference.
   MYSQL_COMPAT_SUITE     Suite path. Defaults to sqltests/mysql_compat_select.yaml.
   MYSQL_COMPAT_OUTPUT    Capture output path. Defaults to expected/local/<suite basename>.
   MYSQL_COMPAT_MODE      capture or diff. Defaults to capture.
-  TARGET_ENGINE          Diff target engine. Defaults to legacy-direct.
+  TARGET_ENGINE          Diff target engine. Defaults to inabox-direct.
   MYSQL_DRIVER           database/sql driver. Defaults to mysql.
   CONSUL                 Consul address for engines that need it. Defaults to 127.0.0.1:8500.
 USAGE
@@ -31,7 +31,7 @@ fi
 
 suite="${MYSQL_COMPAT_SUITE:-sqltests/mysql_compat_select.yaml}"
 mode="${MYSQL_COMPAT_MODE:-capture}"
-target="${TARGET_ENGINE:-legacy-direct}"
+target="${TARGET_ENGINE:-inabox-direct}"
 driver="${MYSQL_DRIVER:-mysql}"
 consul="${CONSUL:-127.0.0.1:8500}"
 base="$(basename "${suite}")"

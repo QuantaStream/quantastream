@@ -37,7 +37,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			},
 			RegressionCoverage: []string{
 				"qsruntime/sql_runtime_test.go correlated aggregate preflight trace and ExecuteSQL coverage",
-				"legacy-direct TPCH Q17-style probes when present in SQLRunner suites",
+				"inabox-direct TPCH Q17-style probes when present in SQLRunner suites",
 			},
 			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of rewriting SQL text.",
 		},
@@ -51,7 +51,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			},
 			RegressionCoverage: []string{
 				"qsruntime/sql_runtime_test.go scalar subquery preflight trace and ExecuteSQL coverage",
-				"legacy-direct TPCH Q11-style probes when present in SQLRunner suites",
+				"inabox-direct TPCH Q11-style probes when present in SQLRunner suites",
 			},
 			FutureIRReplacement: "Represent scalar subqueries as typed IR expressions and evaluate them as planner/executor scalar inputs without SQL text replacement.",
 		},

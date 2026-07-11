@@ -45,6 +45,16 @@ This mode is valuable because it exercises distributed node behavior while
 avoiding the historical proxy path. It is not the target user-facing QIAB
 experience.
 
+Local workflow:
+
+```bash
+cd ~/projects/quantastream/start-local
+./start-local.sh --nodes-only --dev-fast-start
+
+cd ~/projects/quantastream/sqlrunner
+go run . -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml
+```
+
 ### `inabox-standard`
 
 `inabox-standard` is the intended simple QIAB baseline for early adopters,
@@ -93,6 +103,16 @@ Required shape:
 This mode validates distributed boundaries without requiring multiple physical
 hosts. It is the right local place to test node addressing, service discovery,
 cluster startup, gRPC behavior, and distributed catalog assumptions.
+
+Local workflow:
+
+```bash
+cd ~/projects/quantastream/start-local
+./start-local.sh --dev-fast-start
+
+cd ~/projects/quantastream/sqlrunner
+go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
+```
 
 ### `distributed`
 

@@ -1,11 +1,11 @@
 version: 1
-name: legacy_direct_tpch_q9
+name: inabox_direct_tpch_q9
 
 tests:
-  - id: legacy_direct_tpch_q9.010.green_part_line_count
+  - id: inabox_direct_tpch_q9.010.green_part_line_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
     sql: |-
       select count(*) as green_part_line_count
       from part as p
@@ -16,10 +16,10 @@ tests:
       rows:
         - [3223]
 
-  - id: legacy_direct_tpch_q9.020.green_part_order_line_count
+  - id: inabox_direct_tpch_q9.020.green_part_order_line_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
     sql: |-
       select count(*) as green_part_order_line_count
       from part as p
@@ -31,11 +31,11 @@ tests:
       rows:
         - [3223]
 
-  - id: legacy_direct_tpch_q9.030.green_part_line_revenue
+  - id: inabox_direct_tpch_q9.030.green_part_line_revenue
     status: supported
     kind: query
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, aggregate, arithmetic]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, aggregate, arithmetic]
     # Q9 revenue-side arithmetic is supported over the single-sink part -> lineitem graph.
     # The live probe that introduced this case reported [19s] on the local laptop.
     sql: |-
@@ -48,12 +48,12 @@ tests:
       rows:
         - [1.0578082354430008e+08]
 
-  - id: legacy_direct_tpch_q9.035.green_supplier_nation_count
+  - id: inabox_direct_tpch_q9.035.green_supplier_nation_count
     status: supported
     kind: query
     order: rowsort
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-count, supplier-nation]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-count, supplier-nation]
     # Exercises the Q9 supplier/nation path without the partsupp profit term.
     # The live probe that introduced this case reported [16s] on the local laptop.
     sql: |-
@@ -80,12 +80,12 @@ tests:
         - ["VIETNAM", 156]
         - ["ETHIOPIA", 152]
 
-  - id: legacy_direct_tpch_q9.036.green_supplier_nation_revenue
+  - id: inabox_direct_tpch_q9.036.green_supplier_nation_revenue
     status: supported
     kind: query
     order: rowsort
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-aggregate, arithmetic, supplier-nation]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, grouped-aggregate, arithmetic, supplier-nation]
     # Stages Q9 revenue arithmetic through the supplier/nation dimension path.
     # The live probe that introduced this case reported [22s] on the local laptop.
     sql: |-
@@ -112,11 +112,11 @@ tests:
         - ["VIETNAM", 5.270173722799998e+06]
         - ["ETHIOPIA", 4.740642206699999e+06]
 
-  - id: legacy_direct_tpch_q9.040.full_profit_sibling_tuple_profit
+  - id: inabox_direct_tpch_q9.040.full_profit_sibling_tuple_profit
     status: supported
     kind: query
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, aggregate, arithmetic]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, aggregate, arithmetic]
     # Full Q9 profit kernel expands lineitem and partsupp sibling children under
     # part, applies the ps_suppkey = l_suppkey residual equality over the
     # late-materialized tuple rowset, and aggregates the profit expression.
@@ -133,12 +133,12 @@ tests:
       rows:
         - [6.496882846429994e+07]
 
-  - id: legacy_direct_tpch_q9.045.green_brand_profit_grouped
+  - id: inabox_direct_tpch_q9.045.green_brand_profit_grouped
     status: supported
     kind: query
     order: rowsort
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, grouped-aggregate, arithmetic]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, sibling-root, tuple-rowset, residual-join, grouped-aggregate, arithmetic]
     # Stages grouped Q9 profit over the sibling-root tuple rowset before adding
     # the formal nation/year dimensions. The live probe that introduced this
     # case reported [22s] on the local laptop.
@@ -166,12 +166,12 @@ tests:
         - ["Brand#31", 2.7820903646e+06]
         - ["Brand#14", 2.7499852423000014e+06]
 
-  - id: legacy_direct_tpch_q9.050.formal_profit_nation_year
+  - id: inabox_direct_tpch_q9.050.formal_profit_nation_year
     status: supported
     kind: query
     order: rowsort
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, multi-sink, bidirectional-tuple-rowset, computed-group-by, grouped-aggregate]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, multi-sink, bidirectional-tuple-rowset, computed-group-by, grouped-aggregate]
     # Formal Q9 expands a connected relationship graph in both FK directions:
     # part -> lineitem/partsupp for the profit tuple, then lineitem -> orders
     # and lineitem -> supplier -> nation for the grouping dimensions. The live

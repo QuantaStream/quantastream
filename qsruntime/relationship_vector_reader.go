@@ -16,12 +16,12 @@ type RelationshipVectorResultReader = qsbridge.RelationshipVectorResultReader
 // InMemoryRelationshipVectorIndex aliases the qsbridge deterministic test/vector reader.
 type InMemoryRelationshipVectorIndex = qsbridge.InMemoryRelationshipVectorIndex
 
-// LegacyDirectRelationshipVectorBackend executes a prepared legacy-direct vector read.
+// LegacyDirectRelationshipVectorBackend executes a prepared inabox-direct vector read.
 type LegacyDirectRelationshipVectorBackend interface {
 	ReadRelationshipVectorCandidates(context.Context, LegacyDirectRelationshipVectorReadRequest) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error)
 }
 
-// LegacyDirectRelationshipVectorResultBackend returns legacy-direct vector candidates with backend timing metadata.
+// LegacyDirectRelationshipVectorResultBackend returns inabox-direct vector candidates with backend timing metadata.
 type LegacyDirectRelationshipVectorResultBackend interface {
 	ReadRelationshipVectorCandidateResult(context.Context, LegacyDirectRelationshipVectorReadRequest) (qsbridge.FilterDomainRelationshipVectorResult, qsbridge.DiagnosticSet, error)
 }
@@ -39,14 +39,14 @@ type LegacyDirectRelationshipVectorReadRequest struct {
 	VectorField      string
 }
 
-// LegacyDirectRelationshipVectorReader is the future bridge into legacy-direct vector reads.
+// LegacyDirectRelationshipVectorReader is the future bridge into inabox-direct vector reads.
 type LegacyDirectRelationshipVectorReader struct {
 	Backend     LegacyDirectRelationshipVectorBackend
 	LastRequest qsbridge.FilterDomainRelationshipVectorRequest
 	LastRead    LegacyDirectRelationshipVectorReadRequest
 }
 
-// ReadRelatedCandidates records the request and delegates to the configured legacy-direct backend.
+// ReadRelatedCandidates records the request and delegates to the configured inabox-direct backend.
 func (r *LegacyDirectRelationshipVectorReader) ReadRelatedCandidates(ctx context.Context, request qsbridge.FilterDomainRelationshipVectorRequest) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
 	result, diagnostics, err := r.ReadRelatedCandidateResult(ctx, request)
 	return result.TargetCandidates, diagnostics, err
@@ -79,7 +79,7 @@ func (r *LegacyDirectRelationshipVectorReader) ReadRelatedCandidateResult(ctx co
 	}, diagnostics, err
 }
 
-// relationshipVectorReaderWithRequestProjectionCache wraps legacy-direct vector reads with one request-scoped projection cache.
+// relationshipVectorReaderWithRequestProjectionCache wraps inabox-direct vector reads with one request-scoped projection cache.
 func relationshipVectorReaderWithRequestProjectionCache(reader RelationshipVectorReader) RelationshipVectorReader {
 	cache := NewLegacyDirectRelationshipVectorProjectionCache()
 	switch r := reader.(type) {
@@ -135,7 +135,7 @@ func legacyDirectRelationshipVectorReaderBoundary(read LegacyDirectRelationshipV
 		qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			"legacy-direct relationship-vector reader is not wired yet: source="+read.SourceDomain+" target="+read.TargetDomain+" vector="+read.VectorIndex+"."+read.VectorField+" leaf="+read.SourceFragment.Index+"."+read.SourceFragment.Field,
+			"inabox-direct relationship-vector reader is not wired yet: source="+read.SourceDomain+" target="+read.TargetDomain+" vector="+read.VectorIndex+"."+read.VectorField+" leaf="+read.SourceFragment.Index+"."+read.SourceFragment.Field,
 		),
 	}
 }
@@ -153,7 +153,7 @@ func legacyDirectRelationshipVectorField(request qsbridge.FilterDomainRelationsh
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedSQL,
 				qsbridge.PhaseExecute,
-				"legacy-direct relationship-vector reader found ParentRelation metadata on both edge endpoints",
+				"inabox-direct relationship-vector reader found ParentRelation metadata on both edge endpoints",
 			),
 		}
 	}
@@ -177,7 +177,7 @@ func legacyDirectRelationshipVectorField(request qsbridge.FilterDomainRelationsh
 		qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			"legacy-direct relationship-vector reader cannot derive vector field for direction "+string(request.Direction),
+			"inabox-direct relationship-vector reader cannot derive vector field for direction "+string(request.Direction),
 		),
 	}
 }

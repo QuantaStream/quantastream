@@ -227,7 +227,7 @@ func (r NativeProjectionBSIFieldReader) readProjectionDirectBitmapIDs(ctx contex
 	}, nil, nil
 }
 
-// LegacyDirectProjectionBSIReader reads native projection BSIs through the legacy direct BitIndex.
+// LegacyDirectProjectionBSIReader reads native projection BSIs through the inabox-direct BitIndex.
 type LegacyDirectProjectionBSIReader struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
@@ -237,7 +237,7 @@ type LegacyDirectProjectionBSIReader struct {
 func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
 	if r.Source == nil {
 		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection BSI reader has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no source"),
 		}, nil
 	}
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -254,14 +254,14 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	}
 	if session == nil {
 		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection BSI reader received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection BSI reader has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no bitmap index"),
 		}, nil
 	}
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
@@ -272,7 +272,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	}
 	bsi := bsiByField[request.PhysicalField]
 	if bsi == nil {
-		return NativeProjectionBSIReadResult{}, nativeProjectionUnsupported("legacy direct projection returned no BSI for " + request.Index + "." + request.PhysicalField), nil
+		return NativeProjectionBSIReadResult{}, nativeProjectionUnsupported("inabox-direct projection returned no BSI for " + request.Index + "." + request.PhysicalField), nil
 	}
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
@@ -286,7 +286,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 }
 
 // LegacyDirectProjectionDictionaryIDReader reads StringEnum dictionary IDs
-// through the legacy direct BitIndex projection path.
+// through the inabox-direct BitIndex projection path.
 type LegacyDirectProjectionDictionaryIDReader struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
@@ -300,7 +300,7 @@ func (r LegacyDirectProjectionDictionaryIDReader) ReadProjectionDictionaryIDs(ct
 	}
 	if r.Source == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection dictionary reader has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader has no source"),
 		}, nil
 	}
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -317,14 +317,14 @@ func (r LegacyDirectProjectionDictionaryIDReader) ReadProjectionDictionaryIDs(ct
 	}
 	if session == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection dictionary reader received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "legacy direct projection dictionary reader has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader has no bitmap index"),
 		}, nil
 	}
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)

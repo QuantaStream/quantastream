@@ -1,13 +1,13 @@
 version: 1
-name: legacy_direct_tpch_kernels
+name: inabox_direct_tpch_kernels
 
 tests:
-  - id: legacy_direct_tpch_kernels.000a.q1_grouped_lineitem_shape
+  - id: inabox_direct_tpch_kernels.000a.q1_grouped_lineitem_shape
     status: supported
     kind: query
     order: exact
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q1, single-table, grouped-aggregate, count, grouped-materialization]
+    capabilities: [inabox-direct, tpch-q1, single-table, grouped-aggregate, count, grouped-materialization]
     sql: |-
       select l_returnflag, l_linestatus, count(*) as count_order
       from lineitem
@@ -21,12 +21,12 @@ tests:
         - ["N", "O", 30049]
         - ["R", "F", 14902]
 
-  - id: legacy_direct_tpch_kernels.000b.q4_orderdate_priority_group_count
+  - id: inabox_direct_tpch_kernels.000b.q4_orderdate_priority_group_count
     status: supported
     kind: query
     order: rowsort
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q4, single-table, time-range, grouped-aggregate, count, order-by, grouped-materialization]
+    capabilities: [inabox-direct, tpch-q4, single-table, time-range, grouped-aggregate, count, order-by, grouped-materialization]
     sql: |-
       select o_orderpriority, count(*) as order_count
       from orders
@@ -43,12 +43,12 @@ tests:
         - ["4-NOT SPECIFIED", 109]
         - ["5-LOW", 138]
 
-  - id: legacy_direct_tpch_kernels.000c.q2_europe_brass_part_count
+  - id: inabox_direct_tpch_kernels.000c.q2_europe_brass_part_count
     status: supported
     kind: query
     order: exact
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
+    capabilities: [inabox-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
     sql: |-
       select count(*) as europe_brass_part_count
       from part as p
@@ -64,11 +64,11 @@ tests:
       rows:
         - [5]
 
-  - id: legacy_direct_tpch_kernels.000d.q2_europe_brass_part_projection
+  - id: inabox_direct_tpch_kernels.000d.q2_europe_brass_part_projection
     status: supported
     kind: query
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, projection, graph-projection]
+    capabilities: [inabox-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, projection, graph-projection]
     # Verifies mixed-table graph projection after aligning sink rows back to
     # ancestor roles and applying residual projected predicates.
     sql: |-
@@ -84,12 +84,12 @@ tests:
     expect:
       row_count: 5
 
-  - id: legacy_direct_tpch_kernels.000e.q2_europe_brass_low_cost_count
+  - id: inabox_direct_tpch_kernels.000e.q2_europe_brass_low_cost_count
     status: supported
     kind: query
     order: exact
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
+    capabilities: [inabox-direct, tpch-q2, relationship-vector-graph, suffix-like, numeric-predicate, count]
     sql: |-
       select count(*) as europe_brass_low_cost_count
       from part as p
@@ -106,10 +106,10 @@ tests:
       rows:
         - [2]
 
-  - id: legacy_direct_tpch_kernels.001.q3_customer_building_filter
+  - id: inabox_direct_tpch_kernels.001.q3_customer_building_filter
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q3, string-filter, count]
+    capabilities: [inabox-direct, tpch-q3, string-filter, count]
     sql: |-
       select count(*) as building_customer_count
       from customer as c
@@ -119,10 +119,10 @@ tests:
       rows:
         - [337]
 
-  - id: legacy_direct_tpch_kernels.002.q3_customer_orders_building_projection
+  - id: inabox_direct_tpch_kernels.002.q3_customer_orders_building_projection
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q3, relationship-vector-join, string-filter, projection]
+    capabilities: [inabox-direct, tpch-q3, relationship-vector-join, string-filter, projection]
     # Time-sharded child tables need a synthetic shard window when the child
     # side has no local predicates.
     sql: |-
@@ -134,11 +134,11 @@ tests:
       columns: [c_custkey, o_orderkey]
       row_count: 3706
 
-  - id: legacy_direct_tpch_kernels.002a.q3_orders_lineitem_date_count
+  - id: inabox_direct_tpch_kernels.002a.q3_orders_lineitem_date_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q3, relationship-vector-join, time-range, count]
-    # The legacy proxy returned 32289 here, which is only the child-side
+    capabilities: [inabox-direct, tpch-q3, relationship-vector-join, time-range, count]
+    # The old proxy returned 32289 here, which is only the child-side
     # l_shipdate predicate count. The relationship-vector reducer returns the
     # SQL intersection after applying both parent and child date predicates.
     sql: |-
@@ -152,10 +152,10 @@ tests:
       rows:
         - [1464]
 
-  - id: legacy_direct_tpch_kernels.003.q5_asia_region_filter
+  - id: inabox_direct_tpch_kernels.003.q5_asia_region_filter
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, string-filter, dimension]
+    capabilities: [inabox-direct, tpch-q5, string-filter, dimension]
     sql: |-
       select r.r_name
       from region as r
@@ -165,10 +165,10 @@ tests:
       rows:
         - ["ASIA"]
 
-  - id: legacy_direct_tpch_kernels.004.q5_asia_nations
+  - id: inabox_direct_tpch_kernels.004.q5_asia_nations
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, string-filter, dimension]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-join, string-filter, dimension]
     order: rowsort
     sql: |-
       select n.n_name
@@ -184,10 +184,10 @@ tests:
         - ["JAPAN"]
         - ["VIETNAM"]
 
-  - id: legacy_direct_tpch_kernels.004a.q5_asia_supplier_count
+  - id: inabox_direct_tpch_kernels.004a.q5_asia_supplier_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, dimension, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-join, dimension, count]
     sql: |-
       select count(*) as asia_supplier_count
       from nation as n
@@ -198,10 +198,10 @@ tests:
       rows:
         - [27]
 
-  - id: legacy_direct_tpch_kernels.004b.q5_asia_customer_count
+  - id: inabox_direct_tpch_kernels.004b.q5_asia_customer_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, dimension, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-join, dimension, count]
     sql: |-
       select count(*) as asia_customer_count
       from nation as n
@@ -212,10 +212,10 @@ tests:
       rows:
         - [309]
 
-  - id: legacy_direct_tpch_kernels.004c.q5_supplier_lineitem_count
+  - id: inabox_direct_tpch_kernels.004c.q5_supplier_lineitem_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-join, fact-table, count, full-child-scan]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-join, fact-table, count, full-child-scan]
     # This proves the supplier -> lineitem fact-side vector shape. It is
     # intentionally preserved even though the current runtime scans the full
     # time-sharded lineitem child side when there is no local child predicate.
@@ -229,10 +229,10 @@ tests:
       rows:
         - [2447]
 
-  - id: legacy_direct_tpch_kernels.004d.q5_region_nation_supplier_chain_count
+  - id: inabox_direct_tpch_kernels.004d.q5_region_nation_supplier_chain_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, dimension, count]
     sql: |-
       select count(*) as asia_supplier_count
       from region as r
@@ -244,10 +244,10 @@ tests:
       rows:
         - [27]
 
-  - id: legacy_direct_tpch_kernels.004e.q5_region_nation_customer_chain_count
+  - id: inabox_direct_tpch_kernels.004e.q5_region_nation_customer_chain_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, dimension, count]
     sql: |-
       select count(*) as asia_customer_count
       from region as r
@@ -259,10 +259,10 @@ tests:
       rows:
         - [309]
 
-  - id: legacy_direct_tpch_kernels.004f.q5_region_nation_supplier_lineitem_chain_count
+  - id: inabox_direct_tpch_kernels.004f.q5_region_nation_supplier_lineitem_chain_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
     # This proves dimension filtering can flow through a three-edge chain into
     # the lineitem fact table. The final supplier -> lineitem hop still scans
     # the full time-sharded child side in this slice.
@@ -278,10 +278,10 @@ tests:
       rows:
         - [16464]
 
-  - id: legacy_direct_tpch_kernels.004g.q5_region_nation_customer_orders_chain_count
+  - id: inabox_direct_tpch_kernels.004g.q5_region_nation_customer_orders_chain_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, dimension, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, dimension, count]
     sql: |-
       select count(*) as asia_customer_order_count
       from region as r
@@ -294,10 +294,10 @@ tests:
       rows:
         - [2959]
 
-  - id: legacy_direct_tpch_kernels.004h.q5_region_nation_customer_orders_lineitem_chain_count
+  - id: inabox_direct_tpch_kernels.004h.q5_region_nation_customer_orders_lineitem_chain_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
     # This proves the customer/orders side can flow into lineitem. The final
     # orders -> lineitem hop still scans the full time-sharded child side in
     # this slice.
@@ -314,10 +314,10 @@ tests:
       rows:
         - [11708]
 
-  - id: legacy_direct_tpch_kernels.004i.q5_supplier_customer_converging_graph_count
+  - id: inabox_direct_tpch_kernels.004i.q5_supplier_customer_converging_graph_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, count]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, count]
     # This proves graph reduction can handle a supplier existence edge
     # converging on the customer/orders/lineitem chain.
     sql: |-
@@ -334,11 +334,11 @@ tests:
       rows:
         - [11708]
 
-  - id: legacy_direct_tpch_kernels.004j.q5_converging_graph_revenue_projection
+  - id: inabox_direct_tpch_kernels.004j.q5_converging_graph_revenue_projection
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, projection, limit]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, projection, limit]
     # This is the first graph projection slice. It intentionally materializes
     # sink-table lineitem revenue inputs only; ancestor-field projection needs
     # full joined-tuple reconstruction across the graph.
@@ -359,11 +359,11 @@ tests:
         - [22191.8, 0.07]
         - [33110.5, 0.04]
 
-  - id: legacy_direct_tpch_kernels.004k.q5_converging_graph_total_revenue
+  - id: inabox_direct_tpch_kernels.004k.q5_converging_graph_total_revenue
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, arithmetic-aggregate]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, arithmetic-aggregate]
     # Ungrouped graph aggregate over sink-table lineitem revenue inputs. This
     # proves graph aggregate input materialization before grouped nation revenue.
     sql: |-
@@ -380,11 +380,11 @@ tests:
       rows:
         - [3.97022970406798e+08]
 
-  - id: legacy_direct_tpch_kernels.004l.q5_converging_graph_grouped_revenue
+  - id: inabox_direct_tpch_kernels.004l.q5_converging_graph_grouped_revenue
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, grouped-aggregate]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, grouped-aggregate]
     # Grouped graph aggregate over an ancestor nation key and sink-table
     # lineitem revenue inputs. This still does not enforce the formal Q5
     # same-nation supplier/customer predicate.
@@ -410,11 +410,11 @@ tests:
         - ["INDIA", 7.257359374429998e+07]
         - ["CHINA", 6.265599248549995e+07]
 
-  - id: legacy_direct_tpch_kernels.004m.q5_same_nation_grouped_revenue
+  - id: inabox_direct_tpch_kernels.004m.q5_same_nation_grouped_revenue
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, fact-table, residual-join, grouped-aggregate]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, residual-join, grouped-aggregate]
     # Same-nation supplier/customer residual equality over the converged graph.
     # This is one rung short of formal Q5 because it does not include the
     # orders.o_orderdate [1994-01-01, 1995-01-01) window yet.
@@ -441,11 +441,11 @@ tests:
         - ["JAPAN", 3.955963255900001e+06]
         - ["INDIA", 3.069194983500001e+06]
 
-  - id: legacy_direct_tpch_kernels.004n.q5_orderdate_same_nation_grouped_revenue
+  - id: inabox_direct_tpch_kernels.004n.q5_orderdate_same_nation_grouped_revenue
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate]
     # Formal-shaped Q5 kernel: ASIA region, 1994 order date window,
     # same-nation supplier/customer residual equality, and grouped discounted
     # revenue. The simple parser expresses the same-nation predicate in WHERE.
@@ -477,11 +477,11 @@ tests:
         - ["INDONESIA", 566379.5275999999]
         - ["INDIA", 422874.6844]
 
-  - id: legacy_direct_tpch_kernels.004o.q5_orderdate_same_nation_join_on_grouped_revenue
+  - id: inabox_direct_tpch_kernels.004o.q5_orderdate_same_nation_join_on_grouped_revenue
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate, join-on-residual]
+    capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, time-range, residual-join, grouped-aggregate, join-on-residual]
     # Same kernel as .004n, but with the same-nation supplier/customer
     # residual equality expressed canonically as an additional JOIN ON
     # conjunct.
@@ -510,10 +510,10 @@ tests:
         - ["INDONESIA", 566379.5275999999]
         - ["INDIA", 422874.6844]
 
-  - id: legacy_direct_tpch_kernels.004o1.q6_discounted_revenue
+  - id: inabox_direct_tpch_kernels.004o1.q6_discounted_revenue
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q6, single-table, time-range, numeric-range, arithmetic-aggregate]
+    capabilities: [inabox-direct, tpch-q6, single-table, time-range, numeric-range, arithmetic-aggregate]
     sql: |-
       select sum(l.l_extendedprice * l.l_discount) as revenue
       from lineitem as l
@@ -527,10 +527,10 @@ tests:
       rows:
         - ["1.193053225300001e+06"]
 
-  - id: legacy_direct_tpch_kernels.004p.q7_repeated_nation_alias_count
+  - id: inabox_direct_tpch_kernels.004p.q7_repeated_nation_alias_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
+    capabilities: [inabox-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
     # Repeated nation roles are independent, and the shipdate predicate targets
     # lineitem's shard key, so the child foundset can drive broad relationship
     # vector reads without losing the FK BSI.
@@ -551,10 +551,10 @@ tests:
       rows:
         - [18]
 
-  - id: legacy_direct_tpch_kernels.004q.q7_repeated_nation_alias_count_without_shipdate
+  - id: inabox_direct_tpch_kernels.004q.q7_repeated_nation_alias_count_without_shipdate
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
+    capabilities: [inabox-direct, tpch-q7, repeated-alias, relationship-vector-graph, count]
     # Same repeated-alias frontier as .004p, without the shipdate window. This
     # proves role-keyed repeated-table filters can stay independent from
     # time-range relationship-vector projection.
@@ -573,10 +573,10 @@ tests:
       rows:
         - [57]
 
-  - id: legacy_direct_tpch_kernels.004q1.q7_france_germany_revenue_by_year
+  - id: inabox_direct_tpch_kernels.004q1.q7_france_germany_revenue_by_year
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, aggregate, computed-group-by]
+    capabilities: [inabox-direct, tpch-q7, repeated-alias, relationship-vector-graph, aggregate, computed-group-by]
     order: rowsort
     # Stages Q7's revenue/year grouped output for one nation-pair direction.
     # The formal bidirectional `(FRANCE, GERMANY) OR (GERMANY, FRANCE)` predicate
@@ -603,11 +603,11 @@ tests:
         - ["FRANCE", "GERMANY", 1995, 268068.57739999995]
         - ["FRANCE", "GERMANY", 1996, 303862.298]
 
-  - id: legacy_direct_tpch_kernels.004q2.q7_formal_bidirectional_revenue_by_year
+  - id: inabox_direct_tpch_kernels.004q2.q7_formal_bidirectional_revenue_by_year
     status: supported
     kind: query
     timeout: 30s
-    capabilities: [legacy-direct, tpch-q7, repeated-alias, relationship-vector-graph, boolean-or, aggregate, computed-group-by]
+    capabilities: [inabox-direct, tpch-q7, repeated-alias, relationship-vector-graph, boolean-or, aggregate, computed-group-by]
     # Formal Q7 validates bidirectional OR-branch residual evaluation across
     # repeated nation roles after relationship-vector graph reduction.
     sql: |-
@@ -634,10 +634,10 @@ tests:
         - ["GERMANY", "FRANCE", 1995, 621159.4881999999]
         - ["GERMANY", "FRANCE", 1996, 379095.8853999999]
 
-  - id: legacy_direct_tpch_kernels.004r.q8_repeated_nation_alias_count
+  - id: inabox_direct_tpch_kernels.004r.q8_repeated_nation_alias_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, string-filter, time-range, count]
+    capabilities: [inabox-direct, tpch-q8, repeated-alias, relationship-vector-graph, string-filter, time-range, count]
     # Q8 repeats nation as customer nation and supplier nation. The current
     # SF0.01 TPCH data has no matching Brazil/part/order rows, so this case
     # also protects graph reduction's empty-set short-circuit.
@@ -661,10 +661,10 @@ tests:
       rows:
         - [0]
 
-  - id: legacy_direct_tpch_kernels.004s.q8_market_share_revenue_inputs
+  - id: inabox_direct_tpch_kernels.004s.q8_market_share_revenue_inputs
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case]
+    capabilities: [inabox-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case]
     # Stages Q8's market-share numerator/denominator inputs without the final
     # year grouping or ratio projection. This protects role-aware
     # materialization for aggregate inputs from repeated table aliases.
@@ -690,10 +690,10 @@ tests:
       rows:
         - [0, 997854.8810000002]
 
-  - id: legacy_direct_tpch_kernels.004t.q8_market_share_revenue_inputs_by_year
+  - id: inabox_direct_tpch_kernels.004t.q8_market_share_revenue_inputs_by_year
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by]
+    capabilities: [inabox-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by]
     order: rowsort
     # Stages Q8's year grouping over the market-share numerator/denominator
     # inputs. The next case verifies final aggregate-ratio projection.
@@ -722,10 +722,10 @@ tests:
         - [1995, 0, 377808.4896]
         - [1996, 0, 620046.3914]
 
-  - id: legacy_direct_tpch_kernels.004u.q8_market_share_ratio_by_year
+  - id: inabox_direct_tpch_kernels.004u.q8_market_share_ratio_by_year
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by, aggregate-ratio]
+    capabilities: [inabox-direct, tpch-q8, repeated-alias, relationship-vector-graph, aggregate, searched-case, computed-group-by, aggregate-ratio]
     order: rowsort
     # Completes the Q8 market-share kernel by evaluating arithmetic over two
     # hidden aggregate slots in the grouped output projection.
@@ -753,10 +753,10 @@ tests:
         - [1995, 0]
         - [1996, 0]
 
-  - id: legacy_direct_tpch_kernels.004v.q9_green_part_line_count
+  - id: inabox_direct_tpch_kernels.004v.q9_green_part_line_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-join, contains-like, residual-filter, count]
     # Q9's `p_name LIKE '%green%'` is a backing-string residual predicate. This
     # case verifies it filters the parent `part` side before counting matching
     # lineitem children.
@@ -770,10 +770,10 @@ tests:
       rows:
         - [3223]
 
-  - id: legacy_direct_tpch_kernels.004w.q9_green_part_order_line_count
+  - id: inabox_direct_tpch_kernels.004w.q9_green_part_order_line_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
+    capabilities: [inabox-direct, tpch-q9, relationship-vector-graph, contains-like, residual-filter, count]
     # Extends the green-part residual filter through the Q9
     # part -> lineitem -> orders graph count.
     sql: |-
@@ -787,11 +787,11 @@ tests:
       rows:
         - [3223]
 
-  - id: legacy_direct_tpch_kernels.004x.q10_formal_revenue_by_customer_projection
+  - id: inabox_direct_tpch_kernels.004x.q10_formal_revenue_by_customer_projection
     status: supported
     kind: query
     order: rowsort
-    capabilities: [legacy-direct, tpch-q10, relationship-vector-graph, time-range, string-filter, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, formal-projection]
+    capabilities: [inabox-direct, tpch-q10, relationship-vector-graph, time-range, string-filter, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, formal-projection]
     # Formal Q10 projection over customer -> orders -> lineitem plus customer
     # nation now preserves grouped customer BSI and text fields, including
     # c_acctbal, c_address, c_phone, and c_comment.
@@ -828,10 +828,10 @@ tests:
         - [737, "Customer#000000737", 338185.33650000003, 2501.74, "CHINA", "NdjG1k243iCLSoy1lYqMIrpvuH1Uf75", "28-658-938-1102", "ding to the final platelets. regular packages against the carefully final ideas hag"]
         - [1118, "Customer#000001118", 319875.72799999994, 4130.18, "IRAQ", "QHg,DNvEVXaYoCdrywazjAJ", "21-583-715-8627", "y regular requests above the blithely ironic accounts use slyly bold packages: regular pinto beans eat carefully spe"]
 
-  - id: legacy_direct_tpch_kernels.005.q12_shipmode_in_count
+  - id: inabox_direct_tpch_kernels.005.q12_shipmode_in_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, string-filter, scalar-in, count]
+    capabilities: [inabox-direct, tpch-q12, string-filter, scalar-in, count]
     sql: |-
       select count(*) as line_count
       from lineitem as l
@@ -841,10 +841,10 @@ tests:
       rows:
         - [17151]
 
-  - id: legacy_direct_tpch_kernels.006.q12_receiptdate_count
+  - id: inabox_direct_tpch_kernels.006.q12_receiptdate_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, time-range, count]
+    capabilities: [inabox-direct, tpch-q12, time-range, count]
     sql: |-
       select count(*) as line_count
       from lineitem as l
@@ -855,10 +855,10 @@ tests:
       rows:
         - [9525]
 
-  - id: legacy_direct_tpch_kernels.007.q12_shipmode_receiptdate_count
+  - id: inabox_direct_tpch_kernels.007.q12_shipmode_receiptdate_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, string-filter, scalar-in, time-range, count]
+    capabilities: [inabox-direct, tpch-q12, string-filter, scalar-in, time-range, count]
     sql: |-
       select count(*) as line_count
       from lineitem as l
@@ -870,10 +870,10 @@ tests:
       rows:
         - [2764]
 
-  - id: legacy_direct_tpch_kernels.008.q12_orders_lineitem_shipmode_receipt_count
+  - id: inabox_direct_tpch_kernels.008.q12_orders_lineitem_shipmode_receipt_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, count]
+    capabilities: [inabox-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, count]
     sql: |-
       select count(*) as q12_join_count
       from orders as o
@@ -886,10 +886,10 @@ tests:
       rows:
         - [2764]
 
-  - id: legacy_direct_tpch_kernels.009.q12_orders_lineitem_shipmode_grouped_count
+  - id: inabox_direct_tpch_kernels.009.q12_orders_lineitem_shipmode_grouped_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, count]
+    capabilities: [inabox-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, count]
     # The date field comparisons mirror the formal Q12 lineitem predicate and
     # now run as post-reduction residual filters over the joined rowset.
     sql: |-
@@ -909,10 +909,10 @@ tests:
         - [MAIL, 150]
         - [SHIP, 157]
 
-  - id: legacy_direct_tpch_kernels.009a.q12_orders_lineitem_priority_case_counts
+  - id: inabox_direct_tpch_kernels.009a.q12_orders_lineitem_priority_case_counts
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, searched-case, conditional-aggregate]
+    capabilities: [inabox-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, grouped-aggregate, searched-case, conditional-aggregate]
     # This staged kernel uses IN/NOT IN inside searched CASE to avoid the known
     # parser corner around OR/AND inside aggregate CASE predicates.
     sql: |-
@@ -936,10 +936,10 @@ tests:
         - [MAIL, 547, 813]
         - [SHIP, 559, 845]
 
-  - id: legacy_direct_tpch_kernels.009b.q12_orders_lineitem_formal_kernel_counts
+  - id: inabox_direct_tpch_kernels.009b.q12_orders_lineitem_formal_kernel_counts
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, field-comparison, grouped-aggregate, searched-case, conditional-aggregate]
+    capabilities: [inabox-direct, tpch-q12, relationship-vector-join, string-filter, scalar-in, time-range, field-comparison, grouped-aggregate, searched-case, conditional-aggregate]
     # Combines the formal Q12 lineitem date-comparison predicates with the
     # priority conditional aggregates. This keeps the CASE predicates in
     # IN/NOT IN form; the exact formal OR/AND spelling remains a parser cleanup
@@ -967,11 +967,11 @@ tests:
         - [MAIL, 64, 86]
         - [SHIP, 61, 96]
 
-  - id: legacy_direct_tpch_kernels.009c.q13_customer_count
+  - id: inabox_direct_tpch_kernels.009c.q13_customer_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q13, count]
-    # Legacy-direct requires an explicit predicate for a table scan; c_custkey
+    capabilities: [inabox-direct, tpch-q13, count]
+    # Inabox-direct requires an explicit predicate for a table scan; c_custkey
     # covers the full customer key domain in the SF0.01 data.
     sql: |-
       select count(*) as customer_count
@@ -982,11 +982,11 @@ tests:
       rows:
         - [1500]
 
-  - id: legacy_direct_tpch_kernels.009d.q13_customer_orders_grouped_count
+  - id: inabox_direct_tpch_kernels.009d.q13_customer_orders_grouped_count
     status: supported
     kind: query
     order: rowsort
-    capabilities: [legacy-direct, tpch-q13, relationship-vector-join, grouped-aggregate, count, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q13, relationship-vector-join, grouped-aggregate, count, order-by-aggregate, limit]
     sql: |-
       select c.c_custkey, count(*) as order_count
       from customer as c
@@ -1008,10 +1008,10 @@ tests:
         - [1078, 30]
         - [1213, 30]
 
-  - id: legacy_direct_tpch_kernels.009e.q13_special_request_comment_count
+  - id: inabox_direct_tpch_kernels.009e.q13_special_request_comment_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q13, contains-like, residual-filter, count]
+    capabilities: [inabox-direct, tpch-q13, contains-like, residual-filter, count]
     sql: |-
       select count(*) as special_request_order_count
       from orders
@@ -1021,10 +1021,10 @@ tests:
       rows:
         - [0]
 
-  - id: legacy_direct_tpch_kernels.009f.q13_left_outer_join_count
+  - id: inabox_direct_tpch_kernels.009f.q13_left_outer_join_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q13, left-outer-join, null-extension, relationship-vector-join]
+    capabilities: [inabox-direct, tpch-q13, left-outer-join, null-extension, relationship-vector-join]
     # Verifies the left-parent-preserving relationship-vector count kernel.
     # Formal Q13 still needs projected null-extension and derived-table
     # second-stage grouping after this boundary.
@@ -1039,11 +1039,11 @@ tests:
       rows:
         - [15500]
 
-  - id: legacy_direct_tpch_kernels.009g.q14_conditional_promo_revenue_components
+  - id: inabox_direct_tpch_kernels.009g.q14_conditional_promo_revenue_components
     status: supported
     kind: query
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate]
+    capabilities: [inabox-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate]
     # Stages formal Q14 by verifying the conditional promo numerator and total
     # discounted-revenue denominator. The final ratio projection is tracked below.
     sql: |-
@@ -1062,11 +1062,11 @@ tests:
       rows:
         - ["3.7728624032e+06", "2.4362194442399982e+07"]
 
-  - id: legacy_direct_tpch_kernels.009h.q14_formal_promo_revenue_ratio
+  - id: inabox_direct_tpch_kernels.009h.q14_formal_promo_revenue_ratio
     status: supported
     kind: query
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate, aggregate-ratio]
+    capabilities: [inabox-direct, tpch-q14, relationship-vector-join, time-range, prefix-like, searched-case, conditional-aggregate, aggregate-ratio]
     # Verifies final scalar projection over hidden aggregate numerator and
     # denominator inputs for formal Q14.
     sql: |-
@@ -1085,10 +1085,10 @@ tests:
       rows:
         - ["15.486545812284083"]
 
-  - id: legacy_direct_tpch_kernels.010.q11_partsupp_grouped_value_topn
+  - id: inabox_direct_tpch_kernels.010.q11_partsupp_grouped_value_topn
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit, subsecond-kernel-expectation]
+    capabilities: [inabox-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit, subsecond-kernel-expectation]
     # Performance expectation: this kernel should remain sub-second on the
     # local SF 0.01 TPCH data. Regressions usually mean grouped aggregate input
     # vectors are being re-evaluated per group instead of precomputed once.
@@ -1115,11 +1115,11 @@ tests:
         - [197, 22485519.67]
         - [1312, 22472227.650000002]
 
-  - id: legacy_direct_tpch_kernels.011.q11_aggregate_expression_having
+  - id: inabox_direct_tpch_kernels.011.q11_aggregate_expression_having
     status: supported
     kind: query
     order: rowsort
-    capabilities: [legacy-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, aggregate-expression-having, order-by-aggregate, limit, subsecond-kernel-expectation]
+    capabilities: [inabox-direct, tpch-q11, grouped-aggregate, arithmetic-aggregate, aggregate-expression-having, order-by-aggregate, limit, subsecond-kernel-expectation]
     # Direct aggregate-expression HAVING now matches the alias HAVING shape.
     sql: |-
       select ps_partkey,
@@ -1144,12 +1144,12 @@ tests:
         - [197, 22485519.67]
         - [1312, 22472227.650000002]
 
-  - id: legacy_direct_tpch_kernels.012.q11_formal_scalar_subquery_threshold
+  - id: inabox_direct_tpch_kernels.012.q11_formal_scalar_subquery_threshold
     status: supported
     kind: query
     order: rowsort
     timeout: 30s
-    capabilities: [legacy-direct, tpch-q11, scalar-subquery, having, parser-boundary]
+    capabilities: [inabox-direct, tpch-q11, scalar-subquery, having, parser-boundary]
     # Uncorrelated scalar aggregate HAVING subqueries are evaluated once and
     # substituted as literal thresholds before the normal grouped aggregate path.
     sql: |-
@@ -1183,10 +1183,10 @@ tests:
         - ["124", "8.2032093e+06"]
         - ["1232", "8.11166334e+06"]
 
-  - id: legacy_direct_tpch_kernels.020.q15_grouped_supplier_revenue
+  - id: inabox_direct_tpch_kernels.020.q15_grouped_supplier_revenue
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q15, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q15, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
     sql: |-
       select l_suppkey,
              sum(l_extendedprice * (1 - l_discount)) as total_revenue
@@ -1210,10 +1210,10 @@ tests:
         - [7, 997177.6750000003]
         - [56, 984793.1773000001]
 
-  - id: legacy_direct_tpch_kernels.021.q15_supplier_join_grouped_revenue
+  - id: inabox_direct_tpch_kernels.021.q15_supplier_join_grouped_revenue
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, foundset-follow-up]
+    capabilities: [inabox-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, foundset-follow-up]
     sql: |-
       select s.s_suppkey, s.s_name,
              sum(l.l_extendedprice * (1 - l.l_discount)) as total_revenue
@@ -1238,10 +1238,10 @@ tests:
         - [7, "Supplier#000000007", 997177.6750000003]
         - [56, "Supplier#000000056", 984793.1773000001]
 
-  - id: legacy_direct_tpch_kernels.022.q15_max_supplier_revenue
+  - id: inabox_direct_tpch_kernels.022.q15_max_supplier_revenue
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, max-revenue]
+    capabilities: [inabox-direct, tpch-q15, relationship-vector-join, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit, max-revenue]
     # Stages the formal Q15 max-revenue supplier selection without requiring
     # view/temp-table materialization. The top supplier is the max grouped
     # revenue row for the lineitem date window.
@@ -1260,10 +1260,10 @@ tests:
       rows:
         - [21, "Supplier#000000021", 1161099.4635999997]
 
-  - id: legacy_direct_tpch_kernels.023.q17_brand_container_part_count
+  - id: inabox_direct_tpch_kernels.023.q17_brand_container_part_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q17, string-filter, count]
+    capabilities: [inabox-direct, tpch-q17, string-filter, count]
     sql: |-
       select count(*) as brand_container_part_count
       from part
@@ -1274,10 +1274,10 @@ tests:
       rows:
         - [8]
 
-  - id: legacy_direct_tpch_kernels.024.q17_brand_container_join_count
+  - id: inabox_direct_tpch_kernels.024.q17_brand_container_join_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q17, relationship-vector-join, string-filter, count]
+    capabilities: [inabox-direct, tpch-q17, relationship-vector-join, string-filter, count]
     sql: |-
       select count(*) as brand_container_join_count
       from part as p
@@ -1289,10 +1289,10 @@ tests:
       rows:
         - [235]
 
-  - id: legacy_direct_tpch_kernels.025.q17_joined_yearly_extended_price
+  - id: inabox_direct_tpch_kernels.025.q17_joined_yearly_extended_price
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q17, relationship-vector-join, string-filter, arithmetic-aggregate]
+    capabilities: [inabox-direct, tpch-q17, relationship-vector-join, string-filter, arithmetic-aggregate]
     sql: |-
       select sum(l.l_extendedprice) / 7.0 as avg_yearly
       from lineitem as l
@@ -1304,11 +1304,11 @@ tests:
       rows:
         - [1.2620656500000001e+06]
 
-  - id: legacy_direct_tpch_kernels.026.q17_formal_correlated_average_quantity
+  - id: inabox_direct_tpch_kernels.026.q17_formal_correlated_average_quantity
     status: supported
     kind: query
     timeout: 120s
-    capabilities: [legacy-direct, tpch-q17, correlated-scalar-subquery, aggregate-subquery, parser-boundary]
+    capabilities: [inabox-direct, tpch-q17, correlated-scalar-subquery, aggregate-subquery, parser-boundary]
     # Q17's correlated average predicate is rewritten into per-part residual
     # thresholds before the normal relationship-vector aggregate path.
     sql: |-
@@ -1327,12 +1327,12 @@ tests:
       rows:
         - ["10321.16857142857"]
 
-  - id: legacy_direct_tpch_kernels.026a.q18_direct_lineitem_orderkey_grouping
+  - id: inabox_direct_tpch_kernels.026a.q18_direct_lineitem_orderkey_grouping
     status: supported
     kind: query
     order: rowsort
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q18, relationship-column-grouping, grouped-aggregate, having, order-by-aggregate, limit, full-table-scan]
+    capabilities: [inabox-direct, tpch-q18, relationship-column-grouping, grouped-aggregate, having, order-by-aggregate, limit, full-table-scan]
     # Direct child-FK grouping now produces the same large-order keys as the
     # joined Q18 kernel below. It remains intentionally marked as a heavier
     # full-scan-style kernel because it groups all lineitem candidates.
@@ -1349,12 +1349,12 @@ tests:
         - [29158, 305]
         - [6882, 303]
 
-  - id: legacy_direct_tpch_kernels.026b.q18_joined_large_order_grouping
+  - id: inabox_direct_tpch_kernels.026b.q18_joined_large_order_grouping
     status: supported
     kind: query
     order: rowsort
     timeout: 45s
-    capabilities: [legacy-direct, tpch-q18, relationship-vector-join, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q18, relationship-vector-join, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
     sql: |-
       select o.o_orderkey, sum(l.l_quantity) as sum_quantity
       from orders as o
@@ -1369,12 +1369,12 @@ tests:
         - [29158, 305]
         - [6882, 303]
 
-  - id: legacy_direct_tpch_kernels.026c.q18_customer_large_order_projection
+  - id: inabox_direct_tpch_kernels.026c.q18_customer_large_order_projection
     status: supported
     kind: query
     order: rowsort
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q18, relationship-vector-graph, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, formal-projection, limit]
+    capabilities: [inabox-direct, tpch-q18, relationship-vector-graph, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, formal-projection, limit]
     sql: |-
       select c.c_name, c.c_custkey, o.o_orderkey, o.o_orderdate, o.o_totalprice,
              sum(l.l_quantity) as sum_quantity
@@ -1391,11 +1391,11 @@ tests:
         - ["Customer#000000667", 667, 29158, "1995-10-21T06:00:00Z", 439687.23, 305]
         - ["Customer#000000178", 178, 6882, "1997-04-09T06:00:00Z", 422359.65, 303]
 
-  - id: legacy_direct_tpch_kernels.026d.q19_formal_discounted_revenue
+  - id: inabox_direct_tpch_kernels.026d.q19_formal_discounted_revenue
     status: supported
     kind: query
     timeout: 180s
-    capabilities: [legacy-direct, tpch-q19, relationship-vector-join, mixed-table-or, scalar-in, arithmetic-aggregate, grouped-boolean-lowering]
+    capabilities: [inabox-direct, tpch-q19, relationship-vector-join, mixed-table-or, scalar-in, arithmetic-aggregate, grouped-boolean-lowering]
     # Q19 proves the formal mixed-table OR revenue shape. The grouped filter
     # tree now targets the lineitem child domain and uses constrained
     # branch-local evaluation so the final join materialization is narrow.
@@ -1441,10 +1441,10 @@ tests:
       rows:
         - ["22923.028"]
 
-  - id: legacy_direct_tpch_kernels.027.q20_canada_supplier_count
+  - id: inabox_direct_tpch_kernels.027.q20_canada_supplier_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q20, relationship-vector-join, string-filter, count]
+    capabilities: [inabox-direct, tpch-q20, relationship-vector-join, string-filter, count]
     sql: |-
       select count(*) as canada_supplier_count
       from supplier as s
@@ -1455,11 +1455,11 @@ tests:
       rows:
         - [3]
 
-  - id: legacy_direct_tpch_kernels.028.q20_forest_part_count
+  - id: inabox_direct_tpch_kernels.028.q20_forest_part_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q20, contains-like, residual-filter, full-domain-seed, count]
-    # The full-domain p_partkey predicate seeds legacy-direct execution before
+    capabilities: [inabox-direct, tpch-q20, contains-like, residual-filter, full-domain-seed, count]
+    # The full-domain p_partkey predicate seeds inabox-direct execution before
     # applying the backing-string residual p_name LIKE predicate.
     sql: |-
       select count(*) as forest_part_count
@@ -1471,10 +1471,10 @@ tests:
       rows:
         - [16]
 
-  - id: legacy_direct_tpch_kernels.029.q20_forest_partsupp_join_count
+  - id: inabox_direct_tpch_kernels.029.q20_forest_partsupp_join_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q20, relationship-vector-join, contains-like, residual-filter, full-domain-seed, count]
+    capabilities: [inabox-direct, tpch-q20, relationship-vector-join, contains-like, residual-filter, full-domain-seed, count]
     sql: |-
       select count(*) as forest_partsupp_count
       from part as p
@@ -1486,11 +1486,11 @@ tests:
       rows:
         - [64]
 
-  - id: legacy_direct_tpch_kernels.029a.q20_shipped_quantity_grouped
+  - id: inabox_direct_tpch_kernels.029a.q20_shipped_quantity_grouped
     status: supported
     kind: query
     order: rowsort
-    capabilities: [legacy-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, order-by-aggregate, limit]
     sql: |-
       select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
       from lineitem
@@ -1513,11 +1513,11 @@ tests:
         - [807, 74, 167]
         - [1033, 34, 164]
 
-  - id: legacy_direct_tpch_kernels.029b.q20_shipped_quantity_fixed_having
+  - id: inabox_direct_tpch_kernels.029b.q20_shipped_quantity_fixed_having
     status: supported
     kind: query
     order: rowsort
-    capabilities: [legacy-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q20, time-range, grouped-aggregate, arithmetic-aggregate, having, order-by-aggregate, limit]
     sql: |-
       select l_partkey, l_suppkey, sum(l_quantity) as shipped_qty
       from lineitem
@@ -1541,10 +1541,10 @@ tests:
         - [807, 74, 167]
         - [1033, 34, 164]
 
-  - id: legacy_direct_tpch_kernels.029c.q20_forest_partsupp_membership_subquery
+  - id: inabox_direct_tpch_kernels.029c.q20_forest_partsupp_membership_subquery
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q20, semi-membership, subquery-filter, parser, full-domain-seed, count]
+    capabilities: [inabox-direct, tpch-q20, semi-membership, subquery-filter, parser, full-domain-seed, count]
     # Verifies IN (SELECT ...) membership with an inner subquery AND predicate.
     sql: |-
       select count(*) as forest_partsupp_count
@@ -1560,11 +1560,11 @@ tests:
       rows:
         - [64]
 
-  - id: legacy_direct_tpch_kernels.029d.q21_saudi_supplier_count
+  - id: inabox_direct_tpch_kernels.029d.q21_saudi_supplier_count
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q21, relationship-vector-join, string-filter, count]
+    capabilities: [inabox-direct, tpch-q21, relationship-vector-join, string-filter, count]
     sql: |-
       select count(*) as saudi_supplier_count
       from supplier as s
@@ -1575,11 +1575,11 @@ tests:
       rows:
         - [1]
 
-  - id: legacy_direct_tpch_kernels.029e.q21_f_status_order_count
+  - id: inabox_direct_tpch_kernels.029e.q21_f_status_order_count
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q21, single-table, string-filter, count]
+    capabilities: [inabox-direct, tpch-q21, single-table, string-filter, count]
     sql: |-
       select count(*) as f_status_order_count
       from orders
@@ -1589,11 +1589,11 @@ tests:
       rows:
         - [7304]
 
-  - id: legacy_direct_tpch_kernels.029f.q21_late_receipt_line_count
+  - id: inabox_direct_tpch_kernels.029f.q21_late_receipt_line_count
     status: supported
     kind: query
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q21, single-table, field-comparison, count]
+    capabilities: [inabox-direct, tpch-q21, single-table, field-comparison, count]
     sql: |-
       select count(*) as late_receipt_line_count
       from lineitem
@@ -1603,12 +1603,12 @@ tests:
       rows:
         - [37897]
 
-  - id: legacy_direct_tpch_kernels.029g.q21_saudi_late_supplier_wait_count
+  - id: inabox_direct_tpch_kernels.029g.q21_saudi_late_supplier_wait_count
     status: supported
     kind: query
     order: rowsort
     timeout: 90s
-    capabilities: [legacy-direct, tpch-q21, relationship-vector-graph, field-comparison, string-filter, grouped-aggregate, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q21, relationship-vector-graph, field-comparison, string-filter, grouped-aggregate, order-by-aggregate, limit]
     # The graph produces 279 Saudi/F-order candidate rows before the lineitem
     # date residual; 182 rows satisfy l_receiptdate > l_commitdate.
     sql: |-
@@ -1628,11 +1628,11 @@ tests:
       rows:
         - ["Supplier#000000074", 182]
 
-  - id: legacy_direct_tpch_kernels.029h.q22_phone_prefix_or_count
+  - id: inabox_direct_tpch_kernels.029h.q22_phone_prefix_or_count
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q22, single-table, function-expression, residual-filter, or-predicate, full-domain-seed, grouped-boolean-lowering]
+    capabilities: [inabox-direct, tpch-q22, single-table, function-expression, residual-filter, or-predicate, full-domain-seed, grouped-boolean-lowering]
     # Seeded phone-prefix OR lowers as a bitmap seed plus grouped residual predicate.
     sql: |-
       select count(*) as phone_prefix_count
@@ -1652,11 +1652,11 @@ tests:
       rows:
         - [429]
 
-  - id: legacy_direct_tpch_kernels.029i.q22_customer_without_orders_count
+  - id: inabox_direct_tpch_kernels.029i.q22_customer_without_orders_count
     status: supported
     kind: query
     timeout: 60s
-    capabilities: [legacy-direct, tpch-q22, anti-membership, subquery-filter, full-domain-seed, count]
+    capabilities: [inabox-direct, tpch-q22, anti-membership, subquery-filter, full-domain-seed, count]
     sql: |-
       select count(*) as customer_without_orders_count
       from customer
@@ -1670,10 +1670,10 @@ tests:
       rows:
         - [500]
 
-  - id: legacy_direct_tpch_kernels.030.q16_part_filter_count
+  - id: inabox_direct_tpch_kernels.030.q16_part_filter_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, string-filter, residual-not-like, scalar-in, count]
+    capabilities: [inabox-direct, tpch-q16, string-filter, residual-not-like, scalar-in, count]
     sql: |-
       select count(*) as part_count
       from part
@@ -1685,10 +1685,10 @@ tests:
       rows:
         - [299]
 
-  - id: legacy_direct_tpch_kernels.040.q16_part_filter_grouped_count
+  - id: inabox_direct_tpch_kernels.040.q16_part_filter_grouped_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, string-filter, residual-not-like, scalar-in, grouped-aggregate, count, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q16, string-filter, residual-not-like, scalar-in, grouped-aggregate, count, order-by-aggregate, limit]
     sql: |-
       select p_brand, p_type, p_size, count(*) as part_count
       from part
@@ -1712,10 +1712,10 @@ tests:
         - [Brand#11, PROMO ANODIZED BRASS, 49, 1]
         - [Brand#11, PROMO ANODIZED TIN, 45, 1]
 
-  - id: legacy_direct_tpch_kernels.050.q16_part_partsupp_filtered_join_count
+  - id: inabox_direct_tpch_kernels.050.q16_part_partsupp_filtered_join_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, count]
+    capabilities: [inabox-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, count]
     sql: |-
       select count(*) as join_count
       from part as p
@@ -1728,10 +1728,10 @@ tests:
       rows:
         - [1196]
 
-  - id: legacy_direct_tpch_kernels.055.q16_part_partsupp_filtered_projection
+  - id: inabox_direct_tpch_kernels.055.q16_part_partsupp_filtered_projection
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, projection, limit]
+    capabilities: [inabox-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, projection, limit]
     sql: |-
       select p.p_brand, ps.ps_suppkey
       from part as p
@@ -1744,10 +1744,10 @@ tests:
       columns: [p_brand, ps_suppkey]
       row_count: 10
 
-  - id: legacy_direct_tpch_kernels.060.q16_part_partsupp_distinct_supplier_count
+  - id: inabox_direct_tpch_kernels.060.q16_part_partsupp_distinct_supplier_count
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, grouped-aggregate, count-distinct, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, grouped-aggregate, count-distinct, order-by-aggregate, limit]
     sql: |-
       select p.p_brand, p.p_type, p.p_size,
              count(distinct ps.ps_suppkey) as supplier_cnt
@@ -1773,10 +1773,10 @@ tests:
         - [Brand#11, PROMO ANODIZED BRASS, 49, 4]
         - [Brand#11, PROMO ANODIZED TIN, 45, 4]
 
-  - id: legacy_direct_tpch_kernels.070.q16_complaint_supplier_filter
+  - id: inabox_direct_tpch_kernels.070.q16_complaint_supplier_filter
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, anti-membership, subquery-filter, residual-like, count]
+    capabilities: [inabox-direct, tpch-q16, anti-membership, subquery-filter, residual-like, count]
     sql: |-
       select count(*) as clean_partsupp_count
       from partsupp as ps
@@ -1791,10 +1791,10 @@ tests:
       rows:
         - [8000]
 
-  - id: legacy_direct_tpch_kernels.080.q16_supplier_nation_partsupp_semi_membership
+  - id: inabox_direct_tpch_kernels.080.q16_supplier_nation_partsupp_semi_membership
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, semi-membership, subquery-filter, scalar-in, count]
+    capabilities: [inabox-direct, tpch-q16, semi-membership, subquery-filter, scalar-in, count]
     sql: |-
       select count(*) as supplier_nation_partsupp_count
       from partsupp as ps
@@ -1809,10 +1809,10 @@ tests:
       rows:
         - [640]
 
-  - id: legacy_direct_tpch_kernels.090.q16_supplier_nation_partsupp_anti_membership
+  - id: inabox_direct_tpch_kernels.090.q16_supplier_nation_partsupp_anti_membership
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, anti-membership, subquery-filter, scalar-in, count]
+    capabilities: [inabox-direct, tpch-q16, anti-membership, subquery-filter, scalar-in, count]
     sql: |-
       select count(*) as non_supplier_nation_partsupp_count
       from partsupp as ps
@@ -1827,10 +1827,10 @@ tests:
       rows:
         - [7360]
 
-  - id: legacy_direct_tpch_kernels.100.q16_distinct_supplier_count_without_complaints
+  - id: inabox_direct_tpch_kernels.100.q16_distinct_supplier_count_without_complaints
     status: supported
     kind: query
-    capabilities: [legacy-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, anti-membership, subquery-filter, grouped-aggregate, count-distinct, order-by-aggregate, limit]
+    capabilities: [inabox-direct, tpch-q16, relationship-vector-join, string-filter, residual-not-like, scalar-in, anti-membership, subquery-filter, grouped-aggregate, count-distinct, order-by-aggregate, limit]
     sql: |-
       select p.p_brand, p.p_type, p.p_size,
              count(distinct ps.ps_suppkey) as supplier_cnt

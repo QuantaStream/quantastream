@@ -13,7 +13,7 @@ import (
 	"github.com/QuantaStream/quantastream/source"
 )
 
-// LegacyDirectSameRowBSIComparisonKernel compares same-row BSI fields through legacy-direct storage reads.
+// LegacyDirectSameRowBSIComparisonKernel compares same-row BSI fields through inabox-direct storage reads.
 type LegacyDirectSameRowBSIComparisonKernel struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
@@ -40,7 +40,7 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			fmt.Sprintf("legacy-direct same-row comparison does not support kind %q", request.Kind),
+			fmt.Sprintf("inabox-direct same-row comparison does not support kind %q", request.Kind),
 		))
 		return result, nil
 	}
@@ -48,7 +48,7 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			"legacy-direct same-row comparison requires one table/role rownum domain",
+			"inabox-direct same-row comparison requires one table/role rownum domain",
 		))
 		return result, nil
 	}
@@ -64,7 +64,7 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticInternalInvariant,
 			qsbridge.PhaseExecute,
-			"legacy-direct same-row comparison has no BSI reader",
+			"inabox-direct same-row comparison has no BSI reader",
 		))
 		return result, nil
 	}
@@ -84,7 +84,7 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
 			qsbridge.PhaseExecute,
-			"legacy-direct same-row comparison requires both BSI projections",
+			"inabox-direct same-row comparison requires both BSI projections",
 		))
 		return result, nil
 	}
@@ -102,7 +102,7 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 			result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticUnsupportedSQL,
 				qsbridge.PhaseExecute,
-				fmt.Sprintf("legacy-direct same-row comparison does not support operator %q", request.Operator),
+				fmt.Sprintf("inabox-direct same-row comparison does not support operator %q", request.Operator),
 			))
 			return result, nil
 		}

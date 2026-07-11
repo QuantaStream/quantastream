@@ -1,68 +1,68 @@
 version: 1
-name: legacy_direct_joins
+name: inabox_direct_joins
 
 tests:
-  - id: legacy_direct_joins.001.drop_orders
+  - id: inabox_direct_joins.001.drop_orders
     status: supported
     kind: admin
     sql: |-
       drop orders_qa
 
-  - id: legacy_direct_joins.002.drop_customers
+  - id: inabox_direct_joins.002.drop_customers
     status: supported
     kind: admin
     sql: |-
       drop customers_qa
 
-  - id: legacy_direct_joins.003.create_customers
+  - id: inabox_direct_joins.003.create_customers
     status: supported
     kind: admin
     sql: |-
       create customers_qa
 
-  - id: legacy_direct_joins.004.create_orders
+  - id: inabox_direct_joins.004.create_orders
     status: supported
     kind: admin
     sql: |-
       create orders_qa
 
-  - id: legacy_direct_joins.005.insert_customer_abe
+  - id: inabox_direct_joins.005.insert_customer_abe
     status: supported
     kind: statement
     sql: |-
       insert into customers_qa (cust_id, first_name, city) values ('1', 'Abe', 'Seattle')
 
-  - id: legacy_direct_joins.006.insert_customer_abby
+  - id: inabox_direct_joins.006.insert_customer_abby
     status: supported
     kind: statement
     sql: |-
       insert into customers_qa (cust_id, first_name, city) values ('2', 'Abby', 'Tacoma')
 
-  - id: legacy_direct_joins.007.insert_order_1001
+  - id: inabox_direct_joins.007.insert_order_1001
     status: supported
     kind: statement
     sql: |-
       insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('1', '1001', '2023-06-01T01:00:00', 'UPS')
 
-  - id: legacy_direct_joins.008.insert_order_1002
+  - id: inabox_direct_joins.008.insert_order_1002
     status: supported
     kind: statement
     sql: |-
       insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('1', '1002', '2023-06-01T02:00:00', 'UPS')
 
-  - id: legacy_direct_joins.009.insert_order_2001
+  - id: inabox_direct_joins.009.insert_order_2001
     status: supported
     kind: statement
     sql: |-
       insert into orders_qa (cust_id, order_id, order_date, ship_via) values ('2', '2001', '2023-06-02T03:00:00', 'FEDEX')
 
-  - id: legacy_direct_joins.010.commit
+  - id: inabox_direct_joins.010.commit
     status: supported
     kind: statement
     sql: |-
       commit
 
-  - id: legacy_direct_joins.020.customer_orders_inner_join_boundary
+  - id: inabox_direct_joins.020.customer_orders_inner_join_boundary
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector]
@@ -74,7 +74,7 @@ tests:
       rows:
         - [3]
 
-  - id: legacy_direct_joins.021.customer_orders_inner_join_child_projection
+  - id: inabox_direct_joins.021.customer_orders_inner_join_child_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection]
@@ -88,7 +88,7 @@ tests:
         - [1002]
         - [2001]
 
-  - id: legacy_direct_joins.022.customer_orders_inner_join_parent_child_projection
+  - id: inabox_direct_joins.022.customer_orders_inner_join_parent_child_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection]
@@ -102,7 +102,7 @@ tests:
         - [Abe, 1002]
         - [Abby, 2001]
 
-  - id: legacy_direct_joins.023.customer_orders_inner_join_parent_filter_count
+  - id: inabox_direct_joins.023.customer_orders_inner_join_parent_filter_count
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, where]
@@ -115,7 +115,7 @@ tests:
       rows:
         - [2]
 
-  - id: legacy_direct_joins.024.orders_string_hash_filter_count
+  - id: inabox_direct_joins.024.orders_string_hash_filter_count
     status: supported
     kind: query
     capabilities: [where, string-hash-bsi]
@@ -127,7 +127,7 @@ tests:
       rows:
         - [1]
 
-  - id: legacy_direct_joins.025.customer_orders_inner_join_child_filter_projection
+  - id: inabox_direct_joins.025.customer_orders_inner_join_child_filter_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection, where, string-hash-bsi]
@@ -140,7 +140,7 @@ tests:
       rows:
         - [Abby, 2001]
 
-  - id: legacy_direct_joins.026.orders_string_hash_in_filter_count
+  - id: inabox_direct_joins.026.orders_string_hash_in_filter_count
     status: supported
     kind: query
     capabilities: [where, string-hash-bsi, in]
@@ -152,7 +152,7 @@ tests:
       rows:
         - [3]
 
-  - id: legacy_direct_joins.027.orders_string_hash_not_in_filter_count
+  - id: inabox_direct_joins.027.orders_string_hash_not_in_filter_count
     status: supported
     kind: query
     capabilities: [where, string-hash-bsi, not-in]
@@ -164,7 +164,7 @@ tests:
       rows:
         - [1]
 
-  - id: legacy_direct_joins.028.customer_orders_inner_join_child_in_filter_projection
+  - id: inabox_direct_joins.028.customer_orders_inner_join_child_in_filter_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection, where, string-hash-bsi, in]
@@ -177,7 +177,7 @@ tests:
       rows:
         - [Abby, 2001]
 
-  - id: legacy_direct_joins.029.customer_orders_inner_join_parent_child_filter_count
+  - id: inabox_direct_joins.029.customer_orders_inner_join_parent_child_filter_count
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, where, string-hash-bsi]
@@ -191,7 +191,7 @@ tests:
       rows:
         - [1]
 
-  - id: legacy_direct_joins.030.customer_orders_inner_join_parent_child_filter_projection
+  - id: inabox_direct_joins.030.customer_orders_inner_join_parent_child_filter_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection, where, string-hash-bsi]
@@ -205,7 +205,7 @@ tests:
       rows:
         - [Abby, 2001]
 
-  - id: legacy_direct_joins.031.orders_timestamp_filter_count
+  - id: inabox_direct_joins.031.orders_timestamp_filter_count
     status: supported
     kind: query
     capabilities: [where, timestamp-bsi]
@@ -217,7 +217,7 @@ tests:
       rows:
         - [1]
 
-  - id: legacy_direct_joins.032.customer_orders_inner_join_timestamp_filter_projection
+  - id: inabox_direct_joins.032.customer_orders_inner_join_timestamp_filter_projection
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, projection, where, timestamp-bsi]
@@ -230,7 +230,7 @@ tests:
       rows:
         - [Abby, 2001]
 
-  - id: legacy_direct_joins.033.customer_orders_inner_join_filtered_sum_child_aggregate
+  - id: inabox_direct_joins.033.customer_orders_inner_join_filtered_sum_child_aggregate
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, where]
@@ -243,7 +243,7 @@ tests:
       rows:
         - [2003]
 
-  - id: legacy_direct_joins.034.customer_orders_inner_join_grouped_count
+  - id: inabox_direct_joins.034.customer_orders_inner_join_grouped_count
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by]
@@ -258,7 +258,7 @@ tests:
         - [Abby, 1]
         - [Abe, 2]
 
-  - id: legacy_direct_joins.035.customer_orders_inner_join_grouped_sum_order_limit
+  - id: inabox_direct_joins.035.customer_orders_inner_join_grouped_sum_order_limit
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by, order-by, limit]
@@ -273,7 +273,7 @@ tests:
       rows:
         - [Abe, 2003]
 
-  - id: legacy_direct_joins.036.customer_orders_inner_join_grouped_avg_min_max
+  - id: inabox_direct_joins.036.customer_orders_inner_join_grouped_avg_min_max
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by]
@@ -291,7 +291,7 @@ tests:
         - [Abby, 2001, 2001, 2001]
         - [Abe, 1001.5, 1001, 1002]
 
-  - id: legacy_direct_joins.037.customer_orders_inner_join_grouped_having_sum
+  - id: inabox_direct_joins.037.customer_orders_inner_join_grouped_having_sum
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by, having]
@@ -306,7 +306,7 @@ tests:
       rows:
         - [Abe, 2003]
 
-  - id: legacy_direct_joins.038.customer_orders_inner_join_grouped_multi_order
+  - id: inabox_direct_joins.038.customer_orders_inner_join_grouped_multi_order
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by, order-by]
@@ -321,7 +321,7 @@ tests:
         - [Abe, 2]
         - [Abby, 1]
 
-  - id: legacy_direct_joins.039.customer_orders_inner_join_multi_grouped_count
+  - id: inabox_direct_joins.039.customer_orders_inner_join_multi_grouped_count
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by, order-by]
@@ -336,7 +336,7 @@ tests:
         - [Seattle, Abe, 2]
         - [Tacoma, Abby, 1]
 
-  - id: legacy_direct_joins.040.customer_orders_inner_join_grouped_count_distinct
+  - id: inabox_direct_joins.040.customer_orders_inner_join_grouped_count_distinct
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, group-by, distinct]
@@ -351,7 +351,7 @@ tests:
         - [Abby, 1]
         - [Abe, 1]
 
-  - id: legacy_direct_joins.041.customer_orders_inner_join_count_distinct
+  - id: inabox_direct_joins.041.customer_orders_inner_join_count_distinct
     status: supported
     kind: query
     capabilities: [inner-join, relationship-vector, aggregate, distinct]

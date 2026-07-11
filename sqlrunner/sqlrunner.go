@@ -21,9 +21,11 @@ import (
 
 const (
 	engineProxy          = "proxy"
+	engineDistributed    = "distributed"
+	engineInaboxLocal    = "inabox-local"
 	engineRuntime        = "runtime"
 	engineRuntimeInspect = "runtime-inspect"
-	engineLegacyDirect   = "legacy-direct"
+	engineInaboxDirect   = "inabox-direct"
 	engineMySQLReference = "mysql-reference"
 )
 
@@ -66,7 +68,7 @@ func main() {
 	shared.SetUTCdefault()
 
 	suiteFile := flag.String("suite_file", "", "Path to a SQL roadmap YAML suite to execute.")
-	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: proxy, runtime, runtime-inspect, legacy-direct, or mysql-reference.")
+	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: inabox-local, distributed, inabox-direct, proxy, runtime, runtime-inspect, or mysql-reference.")
 	host := flag.String("host", "", "Quanta host to connect to.")
 	user := flag.String("user", "", "The username that will connect to the database.")
 	password := flag.String("password", "", "The password to use to connect.")
@@ -115,6 +117,8 @@ func main() {
 		BenchmarkRuns:     *benchmarkRuns,
 		BenchmarkSummary:  strings.TrimSpace(*benchmarkSummary),
 	}
+	cfg = applyEngineDefaults(cfg)
+
 	if cfg.BenchmarkSummary != "" {
 		if err := printBenchmarkSummary(cfg.BenchmarkSummary); err != nil {
 			log.Printf("SQL benchmark summary failed: %v", err)
@@ -222,14 +226,15 @@ func printUsage(err error) {
 	u.Warn()
 	u.Warn(err.Error())
 	u.Warn()
-	u.Warn("Example: ./sqlrunner -engine proxy -suite_file sqltests/joins_sql.yaml -host 127.0.0.1 -user MOLIG004 -db quanta -port 4000")
+	u.Warn("Inabox-local example: ./sqlrunner -engine inabox-local -suite_file sqltests/joins_sql.yaml")
+	u.Warn("Distributed example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user MOLIG004 -db quanta -port 4000")
 	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
-	u.Warn("Legacy direct example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_smoke.yaml -consul 127.0.0.1:8500")
+	u.Warn("Inabox-direct example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500")
 	u.Warn("MySQL reference example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 	u.Warn("Capture example: ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test' -capture_expected expected/mysql_compat_select.yaml")
-	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,legacy-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
-	u.Warn("Benchmark example: ./sqlrunner -engine legacy-direct -suite_file sqltests/legacy_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
+	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,inabox-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
+	u.Warn("Benchmark example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
 	u.Warn("Benchmark summary example: ./sqlrunner -benchmark_summary expected/local/tpch.json")
 }
 
@@ -271,10 +276,11 @@ func filterSuiteCase(suite *roadmap.Suite, caseID string) error {
 }
 
 func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	cfg = applyEngineDefaults(cfg)
 	switch cfg.Engine {
-	case engineProxy:
+	case engineProxy, engineDistributed, engineInaboxLocal:
 		return buildProxyHarness(suite, cfg)
-	case engineLegacyDirect:
+	case engineInaboxDirect:
 		return buildLegacyDirectHarness(suite, cfg)
 	case engineRuntime, engineRuntimeInspect:
 		return buildRuntimeHarness(suite, cfg)
@@ -283,6 +289,25 @@ func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error)
 	default:
 		return runnerHarness{}, fmt.Errorf("unsupported engine %q", cfg.Engine)
 	}
+}
+
+func applyEngineDefaults(cfg runnerConfig) runnerConfig {
+	if cfg.Engine != engineInaboxLocal {
+		return cfg
+	}
+	if cfg.Host == "" {
+		cfg.Host = "127.0.0.1"
+	}
+	if cfg.User == "" {
+		cfg.User = "MOLIG004"
+	}
+	if cfg.Port == "" {
+		cfg.Port = "4000"
+	}
+	if cfg.Database == "" {
+		cfg.Database = "quanta"
+	}
+	return cfg
 }
 
 func buildProxyHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {

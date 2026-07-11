@@ -86,7 +86,7 @@ needs a follow-up artifact request for `lineitem.l_suppkey` constrained by that
 foundset, without treating the original time predicate as a second logical
 filter on the relationship vector. That request shape is legal and should become
 first-class IL vocabulary: "given this table foundset, return these physical
-vectors/materialization artifacts." The legacy direct path may issue this as a
+vectors/materialization artifacts." The inabox-direct path may issue this as a
 follow-up request for now, but the longer-term IL should make it explicit rather
 than relying on projector-specific behavior or repeated ad hoc projection calls.
 
@@ -148,7 +148,7 @@ children `lineitem` and `partsupp`, and the formal profit expression only
 becomes a valid row stream after expanding those siblings under the same parent
 and applying the residual equality `ps_suppkey = l_suppkey`.
 
-The current legacy-direct graph executor intentionally requires one sink table.
+The current inabox-direct graph executor intentionally requires one sink table.
 That is correct for chain and converged-graph shapes such as
 `region -> nation -> supplier -> lineitem`, where every participating role can
 be aligned one-to-one from the chosen sink row. It is not sufficient for sibling
@@ -200,7 +200,7 @@ The current Quanta intermediate layer is the temporary exception. Some IL
 connective tissue still has to cross core/shared/runtime boundaries while the
 legacy `qlbridge`-based query proxy exists. That exception should be narrow and
 have an explicit sunset plan: once the native qsbridge execution path covers the
-required TPC-H and SQLRunner surfaces, the legacy proxy-facing IL adapters
+required TPC-H and SQLRunner surfaces, the old proxy-facing IL adapters
 should be retired or rewritten as direct native runtime contracts.
 
 After that transition, the code that remains in `core` and `shared` should be
@@ -221,7 +221,7 @@ Implications:
 - Move semantics into qsbridge first, then let runtime adapters become thin and
   replaceable.
 
-Retiring the legacy proxy does not mean removing the proxy role from Quanta.
+Retiring the old proxy does not mean removing the proxy role from Quanta.
 The proxy remains the query coordination tier for SQL parsing, planning,
 optimization, cache coordination, result assembly, protocol adapters, and
 management surfaces. The target is to replace the legacy qlbridge-based proxy
@@ -234,7 +234,7 @@ Status: active guardrail.
 `core/session.go` and `core/session_pool.go` are not just legacy SQL proxy
 artifacts. They are also used by batch load and streaming ingest paths, so they
 should be refactored as runtime/session infrastructure rather than deleted as
-part of killing the legacy proxy. The long-term owner may not be `core`, but
+part of killing the old proxy. The long-term owner may not be `core`, but
 the capability itself survives because ingestion still needs session lifecycle,
 table access, and metadata-aware write coordination.
 
@@ -278,6 +278,6 @@ The target shape is:
   process.
 
 Generated protobuf code should not live in the main qsbridge package or shape
-the core engine. As legacy proxy code is retired, each gRPC artifact should
+the core engine. As old proxy code is retired, each gRPC artifact should
 either be deleted as proxy-only scaffolding or migrated into an adapter package
 that serializes qsbridge-native contracts.

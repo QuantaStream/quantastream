@@ -73,6 +73,6 @@ func TestLegacyDirectAdminChangesTableRecognizesLifecycleCommands(t *testing.T) 
 		}
 	}
 	if legacyDirectAdminChangesTable("commit") {
-		t.Fatalf("commit should not rebuild legacy-direct runtime")
+		t.Fatalf("commit should not rebuild inabox-direct runtime")
 	}
 }

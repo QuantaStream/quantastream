@@ -1,7 +1,7 @@
 version: 1
-name: legacy_direct_smoke
+name: inabox_direct_smoke
 tests:
-  - id: legacy_direct.part_count
+  - id: inabox_direct.part_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -13,7 +13,7 @@ tests:
       rows:
         - [2000]
 
-  - id: legacy_direct.part_size_eq_count
+  - id: inabox_direct.part_size_eq_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -25,7 +25,7 @@ tests:
       rows:
         - [37]
 
-  - id: legacy_direct.part_size_lt_count
+  - id: inabox_direct.part_size_lt_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -37,7 +37,7 @@ tests:
       rows:
         - [370]
 
-  - id: legacy_direct.part_size_gt_count
+  - id: inabox_direct.part_size_gt_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -49,7 +49,7 @@ tests:
       rows:
         - [395]
 
-  - id: legacy_direct.part_size_in_count
+  - id: inabox_direct.part_size_in_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -61,7 +61,7 @@ tests:
       rows:
         - [112]
 
-  - id: legacy_direct.part_type_eq_count
+  - id: inabox_direct.part_type_eq_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -73,7 +73,7 @@ tests:
       rows:
         - [12]
 
-  - id: legacy_direct.part_type_in_count
+  - id: inabox_direct.part_type_in_count
     kind: query
     sql: |
       select count(*) as part_count
@@ -85,7 +85,7 @@ tests:
       rows:
         - [24]
 
-  - id: legacy_direct.part_size_projection
+  - id: inabox_direct.part_size_projection
     kind: query
     sql: |
       select p_size
@@ -98,7 +98,7 @@ tests:
       rows:
         - [14]
 
-  - id: legacy_direct.part_type_projection
+  - id: inabox_direct.part_type_projection
     kind: query
     sql: |
       select p_type
@@ -111,7 +111,7 @@ tests:
       rows:
         - ["PROMO BURNISHED COPPER"]
 
-  - id: legacy_direct.part_multi_column_projection
+  - id: inabox_direct.part_multi_column_projection
     kind: query
     sql: |
       select p_size, p_type
@@ -125,7 +125,7 @@ tests:
         - [14, "SMALL PLATED BRASS"]
         - [14, "MEDIUM ANODIZED BRASS"]
 
-  - id: legacy_direct.part_projection_limit_offset
+  - id: inabox_direct.part_projection_limit_offset
     kind: query
     sql: |
       select p_size, p_type
@@ -138,7 +138,7 @@ tests:
       rows:
         - [45, "PROMO BURNISHED COPPER"]
 
-  - id: legacy_direct.part_size_sum
+  - id: inabox_direct.part_size_sum
     kind: query
     sql: |
       select sum(p_size) as size_sum
@@ -150,7 +150,7 @@ tests:
       rows:
         - [518]
 
-  - id: legacy_direct.part_size_min
+  - id: inabox_direct.part_size_min
     kind: query
     sql: |
       select min(p_size) as min_size
@@ -162,7 +162,7 @@ tests:
       rows:
         - [41]
 
-  - id: legacy_direct.part_size_max
+  - id: inabox_direct.part_size_max
     kind: query
     sql: |
       select max(p_size) as max_size
@@ -174,7 +174,7 @@ tests:
       rows:
         - [9]
 
-  - id: legacy_direct.part_size_avg
+  - id: inabox_direct.part_size_avg
     kind: query
     sql: |
       select avg(p_size) as avg_size

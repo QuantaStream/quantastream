@@ -45,7 +45,7 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 		},
 	}
 
-	report := buildBenchmarkReport("smoke", "legacy-direct", "inabox-standard", map[string]string{"commit": "abc"}, 1, runs, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
+	report := buildBenchmarkReport("smoke", "inabox-direct", "inabox-standard", map[string]string{"commit": "abc"}, 1, runs, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
 	if report.Profile != "inabox-standard" || report.WarmupRuns != 1 || report.MeasuredRuns != 2 {
 		t.Fatalf("report header = %#v", report)
 	}

@@ -17,11 +17,11 @@ func TestValidateFlagsAllowsRuntimeWithoutProxyConnectionFlags(t *testing.T) {
 	}
 }
 
-func TestValidateFlagsAllowsLegacyDirectWithoutProxyConnectionFlags(t *testing.T) {
-	cfg := runnerConfig{Engine: engineLegacyDirect}
+func TestValidateFlagsAllowsInaboxDirectWithoutProxyConnectionFlags(t *testing.T) {
+	cfg := runnerConfig{Engine: engineInaboxDirect}
 
-	if err := validateFlags("sqltests/legacy_direct_smoke.yaml", cfg); err != nil {
-		t.Fatalf("legacy-direct validation should not require proxy host/user: %v", err)
+	if err := validateFlags("sqltests/inabox_direct_smoke.yaml", cfg); err != nil {
+		t.Fatalf("inabox-direct validation should not require proxy host/user: %v", err)
 	}
 }
 
@@ -52,6 +52,14 @@ func TestValidateFlagsRequiresMySQLReferenceDSNInEngineDiff(t *testing.T) {
 
 	if err := validateFlags("sqltests/mysql_compat_select.yaml", cfg); err == nil {
 		t.Fatal("engine_diff validation should require DSN when mysql-reference is present")
+	}
+}
+
+func TestValidateFlagsAllowsInaboxLocalWithoutConnectionFlags(t *testing.T) {
+	cfg := runnerConfig{Engine: engineInaboxLocal}
+
+	if err := validateFlags("sqltests/basic_queries.yaml", cfg); err != nil {
+		t.Fatalf("inabox-local validation should default local proxy connection flags: %v", err)
 	}
 }
 
@@ -102,7 +110,7 @@ func TestFilterSuiteCaseRejectsMissingCase(t *testing.T) {
 	}
 }
 
-func TestLegacyDirectRawSQLTablesFindsNestedScalarSubquerySources(t *testing.T) {
+func TestInaboxDirectRawSQLTablesFindsNestedScalarSubquerySources(t *testing.T) {
 	sql := `select ps.ps_partkey,
        sum(ps.ps_supplycost * ps.ps_availqty) as part_value
 from partsupp as ps

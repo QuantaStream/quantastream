@@ -37,7 +37,7 @@ func TestPackageBoundaryForFileClassifiesFutureSplit(t *testing.T) {
 		{name: "runtime direct executor path", file: "qsruntime/direct_executor.go", want: PackageBoundaryRuntime},
 		{name: "runtime direct factory path", file: "qsruntime/direct_factory.go", want: PackageBoundaryRuntime},
 		{name: "runtime legacy catalog path", file: "qsruntime/legacy_catalog.go", want: PackageBoundaryRuntime},
-		{name: "runtime legacy direct path", file: "qsruntime/legacy_direct_runtime.go", want: PackageBoundaryRuntime},
+		{name: "runtime inabox-direct path", file: "qsruntime/legacy_direct_runtime.go", want: PackageBoundaryRuntime},
 		{name: "runtime environment path", file: "qsruntime/runtime_environment.go", want: PackageBoundaryRuntime},
 		{name: "runtime service path", file: "qsruntime/service.go", want: PackageBoundaryRuntime},
 		{name: "runtime sql facade path", file: "qsruntime/sql_runtime.go", want: PackageBoundaryRuntime},
