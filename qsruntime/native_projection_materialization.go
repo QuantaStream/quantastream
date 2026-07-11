@@ -261,6 +261,17 @@ type NativeProjectionDictionaryLabelRehydrator struct {
 	Labels   map[string]map[int64]string
 }
 
+// NewNativeProjectionDictionaryLabelRehydrator builds a dictionary-label rehydrator
+// with the process-local dictionary cache enabled by default.
+func NewNativeProjectionDictionaryLabelRehydrator(catalog qsbridge.QueryCatalogView, resolver qsbridge.DictionaryResolver) NativeProjectionDictionaryLabelRehydrator {
+	if resolver != nil {
+		if _, ok := resolver.(*qsbridge.CachedDictionaryResolver); !ok {
+			resolver = qsbridge.NewCachedDictionaryResolver(resolver)
+		}
+	}
+	return NativeProjectionDictionaryLabelRehydrator{Catalog: catalog, Resolver: resolver}
+}
+
 // NativeProjectionBackingStringLookupRequest asks for original strings by encoded backing-store ids.
 type NativeProjectionBackingStringLookupRequest struct {
 	Index     string
@@ -405,7 +416,10 @@ func nativeProjectionDictionaryRefFromCatalog(catalog qsbridge.QueryCatalogView,
 			if definition.Dictionary.Ref.Valid() {
 				return definition.Dictionary.Ref, true
 			}
-			return qsbridge.DictionaryRef{Schema: table.Schema, Table: table.Name, Field: definition.Name}, true
+			if definition.Encoding.Kind == qsbridge.EncodingStringEnum {
+				return qsbridge.DictionaryRef{Schema: table.Schema, Table: table.Name, Field: definition.Name}, true
+			}
+			return qsbridge.DictionaryRef{}, false
 		}
 	}
 	return qsbridge.DictionaryRef{}, false

@@ -218,6 +218,42 @@ func TestNativeProjectionMaterializationKernelRehydratesStringEnumIDsFromCatalog
 	}
 }
 
+func TestNewNativeProjectionDictionaryLabelRehydratorCachesResolverLookups(t *testing.T) {
+	ref := qsbridge.DictionaryRef{Table: "lineitem", Field: "l_shipmode"}
+	backend := &countingDictionaryResolver{
+		dictionary: qsbridge.DictionaryDefinition{Ref: ref},
+		entries: map[qsbridge.StringEnumID]string{
+			1: "AIR",
+			2: "TRUCK",
+		},
+	}
+	rehydrator := NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, backend)
+
+	result, diagnostics, err := rehydrator.RehydrateProjectionValues(context.Background(), NativeProjectionValueRehydrationRequest{
+		Index:      "lineitem",
+		Field:      qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_shipmode", Type: qsbridge.DataTypeString},
+		LookupKind: NativeProjectionLookupDictionary,
+		LookupRef:  "lineitem.l_shipmode",
+		Values: []qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: int64(1)},
+			{Kind: qsbridge.ValueInt, Value: int64(1)},
+			{Kind: qsbridge.ValueInt, Value: int64(2)},
+			{Kind: qsbridge.ValueInt, Value: int64(2)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RehydrateProjectionValues error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if got := backend.lookupIDCalls; got != 2 {
+		t.Fatalf("LookupID calls = %d, want one backend lookup per distinct id", got)
+	}
+	if result.Values[0].Value != "AIR" || result.Values[1].Value != "AIR" || result.Values[2].Value != "TRUCK" || result.Values[3].Value != "TRUCK" {
+		t.Fatalf("values = %#v, want cached AIR/AIR/TRUCK/TRUCK", result.Values)
+	}
+}
 func TestNativeProjectionCompositeRehydratorRoutesBackingStringLookups(t *testing.T) {
 	calledBackingStrings := false
 	rehydrator := NativeProjectionCompositeRehydrator{
@@ -337,4 +373,41 @@ func TestFallbackProjectionMaterializationKernelPreservesNativeDiagnosticsWithou
 	if got := result.Diagnostics[0].Message; !strings.Contains(got, "native projection materialization has no field reader") {
 		t.Fatalf("diagnostic message = %q, want native field-reader detail", got)
 	}
+}
+
+type countingDictionaryResolver struct {
+	dictionary    qsbridge.DictionaryDefinition
+	entries       map[qsbridge.StringEnumID]string
+	lookupIDCalls int
+}
+
+func (r *countingDictionaryResolver) Dictionary(ref qsbridge.DictionaryRef) (qsbridge.DictionaryDefinition, qsbridge.DiagnosticSet) {
+	if !strings.EqualFold(ref.Table, r.dictionary.Ref.Table) || !strings.EqualFold(ref.Field, r.dictionary.Ref.Field) {
+		return qsbridge.DictionaryDefinition{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryNotFound, qsbridge.PhaseExecute, "dictionary not found: "+ref.QualifiedName()),
+		}
+	}
+	return r.dictionary, nil
+}
+
+func (r *countingDictionaryResolver) LookupLabel(ref qsbridge.DictionaryRef, label string) (qsbridge.DictionaryEntry, qsbridge.DiagnosticSet) {
+	for id, entryLabel := range r.entries {
+		if entryLabel == label {
+			return qsbridge.DictionaryEntry{Ref: ref, Label: label, ID: id}, nil
+		}
+	}
+	return qsbridge.DictionaryEntry{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryLabelNotFound, qsbridge.PhaseExecute, "dictionary label not found: "+ref.QualifiedName()),
+	}
+}
+
+func (r *countingDictionaryResolver) LookupID(ref qsbridge.DictionaryRef, id qsbridge.StringEnumID) (qsbridge.DictionaryEntry, qsbridge.DiagnosticSet) {
+	r.lookupIDCalls++
+	label, ok := r.entries[id]
+	if !ok {
+		return qsbridge.DictionaryEntry{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryIDNotFound, qsbridge.PhaseExecute, "dictionary id not found: "+ref.QualifiedName()),
+		}
+	}
+	return qsbridge.DictionaryEntry{Ref: ref, Label: label, ID: id}, nil
 }

@@ -87,6 +87,43 @@ func TestProjectionMaterializationCapabilityReportUsesCatalogDictionaryForString
 	}
 }
 
+func TestProjectionMaterializationCapabilityReportUsesCatalogBackingStringForNativeKVRehydration(t *testing.T) {
+	catalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Name: "customer",
+		Fields: []qsbridge.FieldDefinition{{
+			Name: "c_name",
+			Type: qsbridge.DataTypeString,
+			Encoding: qsbridge.EncodingProfile{
+				Kind: qsbridge.EncodingBackingString,
+			},
+		}},
+	}}, nil, nil)
+	request := qsbridge.ProjectionMaterializationKernelRequest{
+		ID: "projection_materialization",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index: "customer",
+			ProjectionFields: []qsbridge.QuantaProjectionField{
+				{Index: "customer", Field: "c_name", Type: qsbridge.DataTypeString},
+			},
+		}},
+	}
+
+	report := ProjectionMaterializationCapabilityReportForRequestWithCatalog(request, qsbridge.ProjectionMaterializationKernelResult{}, catalog)
+
+	if report.NativeFieldCount != 1 || report.CompatFallbackFieldCount != 0 {
+		t.Fatalf("report = %#v, want backing string to be native", report)
+	}
+	if report.LegacyMaterializerReachable || report.LegacyMaterializerUsed {
+		t.Fatalf("legacy materializer visibility = reachable %v used %v, want no compatibility materializer path", report.LegacyMaterializerReachable, report.LegacyMaterializerUsed)
+	}
+	field := report.Fields[0]
+	if field.Encoding != qsbridge.EncodingBackingString || field.LookupKind != NativeProjectionLookupBackingString {
+		t.Fatalf("field capability = %#v, want backing-string lookup", field)
+	}
+	if field.Source != "backing_string_lookup_reader" || field.ReasonCode != ProjectionMaterializationReasonNativeBackingString {
+		t.Fatalf("field capability = %#v, want native backing-string KV/cache reason", field)
+	}
+}
 func TestProjectionMaterializationSelectionPlanSplitsNativeAndCompatFields(t *testing.T) {
 	dictionaryRef := qsbridge.DictionaryRef{Table: "orders", Field: "o_orderpriority"}
 	catalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
