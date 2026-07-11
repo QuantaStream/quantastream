@@ -56,7 +56,7 @@ func (h HandshakeV10) Payload() ([]byte, error) {
 		return nil, fmt.Errorf("mysql handshake auth plugin data length %d exceeds max 254", len(h.AuthPluginData))
 	}
 	authLength := byte(len(h.AuthPluginData) + 1)
-	part2Length := len(h.AuthPluginData) - 8
+	part2Length := int(authLength) - 8
 	if part2Length < 13 {
 		part2Length = 13
 	}
@@ -75,7 +75,6 @@ func (h HandshakeV10) Payload() ([]byte, error) {
 	payload = append(payload, authLength)
 	payload = append(payload, make([]byte, 10)...)
 	payload = append(payload, authPart2(h.AuthPluginData[8:], part2Length)...)
-	payload = append(payload, 0x00)
 	payload = append(payload, []byte(authPluginName)...)
 	payload = append(payload, 0x00)
 	return payload, nil

@@ -30,6 +30,42 @@ func TestHandshakePacketEncodesProtocol10Greeting(t *testing.T) {
 	}
 }
 
+func TestHandshakePayloadPlacesPluginNameAfterAdvertisedAuthData(t *testing.T) {
+	handshake := NewDefaultHandshake(42, []byte("12345678901234567890"))
+	payload, err := handshake.Payload()
+	if err != nil {
+		t.Fatalf("Payload failed: %v", err)
+	}
+
+	plugin, err := handshakePayloadPluginName(payload)
+	if err != nil {
+		t.Fatalf("parse handshake plugin: %v", err)
+	}
+	if plugin != defaultAuthPluginName {
+		t.Fatalf("plugin = %q, want %q", plugin, defaultAuthPluginName)
+	}
+}
+
+func handshakePayloadPluginName(payload []byte) (string, error) {
+	offset := 1
+	for offset < len(payload) && payload[offset] != 0 {
+		offset++
+	}
+	offset += 1 + 4 + 8 + 1 + 2 + 1 + 2 + 2
+	authLength := int(payload[offset])
+	offset += 1 + 10
+	part2Length := authLength - 8
+	if part2Length < 13 {
+		part2Length = 13
+	}
+	offset += part2Length
+	end := bytes.IndexByte(payload[offset:], 0)
+	if end < 0 {
+		return "", bytes.ErrTooLarge
+	}
+	return string(payload[offset : offset+end]), nil
+}
+
 func TestHandshakePayloadRejectsShortAuthPluginData(t *testing.T) {
 	handshake := NewDefaultHandshake(1, []byte("short"))
 	if _, err := handshake.Payload(); err == nil {
