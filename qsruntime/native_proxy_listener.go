@@ -15,10 +15,11 @@ var ErrNativeProxyListenerNotReady = errors.New("native proxy TCP listener scaff
 
 // NativeProxyListenConfig names the future TCP mounting point and accept-loop guard.
 type NativeProxyListenConfig struct {
-	Address          string
-	Listener         net.Listener
-	Options          qsbridge.ExecutionOptions
-	EnableAcceptLoop bool
+	Address           string
+	Listener          net.Listener
+	Options           qsbridge.ExecutionOptions
+	EnableAcceptLoop  bool
+	ConnectionIDStart uint32
 }
 
 // WithDefaults fills listener configuration from the front-door bootstrap settings.
@@ -54,6 +55,11 @@ func (f NativeProxyFrontDoor) ListenAndServe(ctx context.Context, config NativeP
 	if ownsListener {
 		defer listener.Close()
 	}
+	connectionID := config.ConnectionIDStart
+	if connectionID == 0 {
+		connectionID = 1
+	}
+
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
@@ -71,11 +77,16 @@ func (f NativeProxyFrontDoor) ListenAndServe(ctx context.Context, config NativeP
 			}
 			return err
 		}
-		go f.serveMySQLConn(ctx, conn, config.Options)
+		sessionConnectionID := connectionID
+		connectionID++
+		go f.serveMySQLConn(ctx, conn, config.Options, sessionConnectionID)
 	}
 }
 
-func (f NativeProxyFrontDoor) serveMySQLConn(ctx context.Context, conn net.Conn, options qsbridge.ExecutionOptions) {
+func (f NativeProxyFrontDoor) serveMySQLConn(ctx context.Context, conn net.Conn, options qsbridge.ExecutionOptions, connectionID uint32) {
 	defer conn.Close()
-	_ = f.ServeMySQLSession(ctx, qsmysql.NewStream(conn, conn), options)
+	_ = f.ServeMySQLSessionWithConfig(ctx, qsmysql.NewStream(conn, conn), NativeProxyMySQLSessionConfig{
+		Options:      options,
+		ConnectionID: connectionID,
+	})
 }

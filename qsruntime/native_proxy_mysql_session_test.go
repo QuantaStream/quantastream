@@ -26,6 +26,25 @@ func TestNativeProxyFrontDoorServesMySQLSessionUntilQuit(t *testing.T) {
 	}
 }
 
+func TestNativeProxyFrontDoorServesMySQLSessionWithConfiguredConnectionID(t *testing.T) {
+	var input bytes.Buffer
+	var output bytes.Buffer
+	input.Write(nativeProxyTestHandshakeResponsePacket(t))
+	input.Write(nativeProxyTestCommandPacket(t, qsmysql.CommandQuit))
+
+	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{}, NativeProxyFrontDoorConfig{})
+	err := frontDoor.ServeMySQLSessionWithConfig(context.Background(), qsmysql.NewStream(&input, &output), NativeProxyMySQLSessionConfig{
+		ConnectionID: 77,
+	})
+	if err != nil {
+		t.Fatalf("ServeMySQLSessionWithConfig failed: %v", err)
+	}
+	packets := nativeProxyReadOutputPackets(t, output.Bytes())
+	if got := nativeProxyHandshakeConnectionID(t, packets[0]); got != 77 {
+		t.Fatalf("handshake connection id = %d, want 77", got)
+	}
+}
+
 func TestNativeProxyFrontDoorServesRejectedAuthAsError(t *testing.T) {
 	var input bytes.Buffer
 	var output bytes.Buffer

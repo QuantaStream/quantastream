@@ -35,7 +35,7 @@ func TestNativeProxyFrontDoorListenAndServeAcceptsInjectedConnection(t *testing.
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- frontDoor.ListenAndServe(ctx, NativeProxyListenConfig{Listener: listener, EnableAcceptLoop: true})
+		errCh <- frontDoor.ListenAndServe(ctx, NativeProxyListenConfig{Listener: listener, EnableAcceptLoop: true, ConnectionIDStart: 41})
 	}()
 
 	client := qsmysql.NewStream(clientConn, clientConn)
@@ -45,6 +45,9 @@ func TestNativeProxyFrontDoorListenAndServeAcceptsInjectedConnection(t *testing.
 	}
 	if handshake.SequenceID != 0 || len(handshake.Payload) == 0 {
 		t.Fatalf("handshake = %#v", handshake)
+	}
+	if got := nativeProxyHandshakeConnectionID(t, handshake); got != 41 {
+		t.Fatalf("handshake connection id = %d, want 41", got)
 	}
 	response, err := qsmysql.DecodePacket(nativeProxyTestHandshakeResponsePacket(t))
 	if err != nil {
@@ -120,3 +123,26 @@ type nativeProxyTestAddr string
 func (a nativeProxyTestAddr) Network() string { return "test" }
 
 func (a nativeProxyTestAddr) String() string { return string(a) }
+
+func nativeProxyHandshakeConnectionID(t *testing.T, packet qsmysql.Packet) uint32 {
+	t.Helper()
+	payload := packet.Payload
+	if len(payload) < 6 || payload[0] != 0x0a {
+		t.Fatalf("handshake payload = %#v", payload)
+	}
+	versionEnd := -1
+	for i := 1; i < len(payload); i++ {
+		if payload[i] == 0 {
+			versionEnd = i
+			break
+		}
+	}
+	if versionEnd < 0 || versionEnd+5 > len(payload) {
+		t.Fatalf("handshake payload missing connection id: %#v", payload)
+	}
+	offset := versionEnd + 1
+	return uint32(payload[offset]) |
+		uint32(payload[offset+1])<<8 |
+		uint32(payload[offset+2])<<16 |
+		uint32(payload[offset+3])<<24
+}

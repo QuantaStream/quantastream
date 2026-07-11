@@ -34,6 +34,8 @@ var AcquirePort4000 sync.Mutex
 
 var ConsulAddress = "127.0.0.1:8500" // also used by sqlrunner main.
 
+const nodesOnlyEnvVar = "QUANTASTREAM_NODES_ONLY"
+
 // tests will time out so run like this:
 // go test -timeout 10m
 
@@ -137,6 +139,9 @@ type LocalProxyControl struct {
 	Stop            chan bool
 	Src             *source.QuantaSource
 	Runtime         qsruntime.NativeProxyRuntime
+	FrontDoor       qsruntime.NativeProxyFrontDoor
+	CancelListener  context.CancelFunc
+	ListenerDone    chan error
 	StopSchemaWatch func()
 }
 
@@ -228,12 +233,21 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 		u.Error(diagnostics)
 	}
 	localProxy.Runtime = proxyRuntime
+	localProxy.FrontDoor = qsruntime.NewNativeProxyFrontDoor(proxyRuntime, qsruntime.NativeProxyFrontDoorConfig{
+		BindAddress:   "127.0.0.1",
+		Port:          4000,
+		PacketIOReady: true,
+	})
+	listenerCtx, cancelListener := context.WithCancel(context.Background())
+	localProxy.CancelListener = cancelListener
+	localProxy.ListenerDone = make(chan error, 1)
+	go func() {
+		localProxy.ListenerDone <- localProxy.FrontDoor.ListenAndServe(listenerCtx, qsruntime.NativeProxyListenConfig{
+			EnableAcceptLoop: true,
+		})
+	}()
 
 	fmt.Println("Proxy startup. ")
-
-	// Start server endpoint
-
-	// TODO: Init and start
 
 	go func(localProxy *LocalProxyControl) {
 
@@ -242,8 +256,22 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 			if localProxy.StopSchemaWatch != nil {
 				localProxy.StopSchemaWatch()
 			}
-			// TODO: Shutdown code here
-			localProxy.Src.Close()
+			if localProxy.CancelListener != nil {
+				localProxy.CancelListener()
+			}
+			if localProxy.ListenerDone != nil {
+				select {
+				case err := <-localProxy.ListenerDone:
+					if err != nil {
+						u.Errorf("native proxy listener stopped with error: %s", err)
+					}
+				case <-time.After(2 * time.Second):
+					u.Errorf("native proxy listener did not stop before timeout")
+				}
+			}
+			if localProxy.Src != nil {
+				localProxy.Src.Close()
+			}
 		}
 
 	}(localProxy)
@@ -479,8 +507,10 @@ func WaitForPort(port int) {
 
 func (state *ClusterLocalState) Release() {
 	if state.weStartedTheCluster {
-		state.ProxyControl.Stop <- true
-		time.Sleep(100 * time.Millisecond)
+		if state.ProxyControl != nil && state.ProxyControl.Stop != nil {
+			state.ProxyControl.Stop <- true
+			time.Sleep(100 * time.Millisecond)
+		}
 		state.StopNodes()
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -544,6 +574,20 @@ func WaitForConsulPassingLocal(consulClient *api.Client, count int) {
 	}
 }
 
+// LocalNodesOnlyMode reports whether start-local should stand up nodes without the query proxy.
+func LocalNodesOnlyMode() bool {
+	return envTruthy(os.Getenv(nodesOnlyEnvVar))
+}
+
+func envTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func Ensure_this_cluster(count int, state *ClusterLocalState) {
 	local_Ensure_cluster(count, state)
 }
@@ -558,6 +602,7 @@ func Ensure_cluster(count int) *ClusterLocalState {
 // starts a local one as needed.
 // This depends on having consul on port 8500 in a terminal
 func local_Ensure_cluster(count int, state *ClusterLocalState) {
+	nodesOnly := LocalNodesOnlyMode()
 
 	var proxyConnect ProxyConnectStrings
 	proxyConnect.Host = "127.0.0.1"
@@ -586,18 +631,26 @@ func local_Ensure_cluster(count int, state *ClusterLocalState) {
 		WaitForLocalActive(state)
 		WaitForConsulPassingLocal(consulClient, count)
 
-		configDir := ""
-		state.ProxyControl = StartProxy(1, configDir)
+		if nodesOnly {
+			fmt.Println("QUANTASTREAM_NODES_ONLY enabled; skipping local query proxy startup")
+		} else {
+			configDir := ""
+			state.ProxyControl = StartProxy(1, configDir)
 
-		sharedKV := shared.NewKVStore(state.ProxyControl.Src.GetConnection())
+			sharedKV := shared.NewKVStore(state.ProxyControl.Src.GetConnection())
 
-		// need to sort this out and just have one
+			// need to sort this out and just have one
 
-		fmt.Println("consul status ", sharedKV.Consul.Status())
+			fmt.Println("consul status ", sharedKV.Consul.Status())
+		}
 
 		state.weStartedTheCluster = true
 	} else {
 		state.weStartedTheCluster = false
+	}
+
+	if nodesOnly {
+		return
 	}
 
 	state.Db, err = state.ProxyConnect.ProxyConnectConnect()
