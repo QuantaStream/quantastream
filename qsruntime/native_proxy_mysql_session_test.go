@@ -9,6 +9,13 @@ import (
 	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
+func TestNativeProxyMySQLSessionConfigDefaultsTwentyByteAuthSeed(t *testing.T) {
+	config := NativeProxyMySQLSessionConfig{}.WithDefaults()
+	if got := len(config.AuthPluginData); got != 20 {
+		t.Fatalf("default auth plugin data length = %d, want 20", got)
+	}
+}
+
 func TestNativeProxyFrontDoorServesMySQLSessionUntilQuit(t *testing.T) {
 	var input bytes.Buffer
 	var output bytes.Buffer

@@ -20,7 +20,7 @@ func (c NativeProxyMySQLSessionConfig) WithDefaults() NativeProxyMySQLSessionCon
 		c.ConnectionID = 1
 	}
 	if len(c.AuthPluginData) == 0 {
-		c.AuthPluginData = []byte("quantastream-auth-seed")
+		c.AuthPluginData = []byte("quantastream-auth-v1")
 	}
 	return c
 }
