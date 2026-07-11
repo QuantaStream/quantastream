@@ -48,10 +48,14 @@ func (f LegacyTableCacheCatalogFactory) NewRuntimeCatalog(ctx context.Context, c
 			return core.LoadTable(tableCache, baseDir, nil, name, nil)
 		}
 	}
+	functions := append([]qsbridge.FunctionDefinition(nil), f.Functions...)
+	if len(functions) == 0 {
+		functions = qsbridge.BuiltinSQLFunctionDefinitions()
+	}
 	return qsbridge.NewCachedCatalog(LegacyTableCacheCatalog{
 		TableCache: f.TableCache,
 		LoadTable:  loader,
-		Functions:  append([]qsbridge.FunctionDefinition(nil), f.Functions...),
+		Functions:  functions,
 	}), nil, nil
 }
 

@@ -103,6 +103,28 @@ func TestLegacyTableCacheCatalogFactoryReturnsCachedCatalog(t *testing.T) {
 	}
 }
 
+func TestLegacyTableCacheCatalogFactoryDefaultsSQLBuiltins(t *testing.T) {
+	catalog, diagnostics, err := LegacyTableCacheCatalogFactory{TableCache: legacyCatalogTestCache()}.NewRuntimeCatalog(
+		context.Background(),
+		NewDirectRuntimeConfig("", "", 0, 0),
+	)
+	if err != nil {
+		t.Fatalf("new runtime catalog: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	for _, name := range []string{"count", "todate"} {
+		function, functionDiagnostics := catalog.Function(name)
+		if functionDiagnostics.BlocksNative() {
+			t.Fatalf("Function(%q) diagnostics = %#v, want none", name, functionDiagnostics)
+		}
+		if !function.Matches(name) {
+			t.Fatalf("Function(%q) = %#v", name, function)
+		}
+	}
+}
+
 func TestLegacyTableCacheCatalogFactoryReportsMissingCache(t *testing.T) {
 	catalog, diagnostics, err := LegacyTableCacheCatalogFactory{}.NewRuntimeCatalog(context.Background(), DirectRuntimeConfig{})
 
