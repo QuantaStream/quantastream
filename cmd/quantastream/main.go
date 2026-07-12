@@ -1,20 +1,30 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/shared"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	os.Exit(runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithContext(context.Background(), args, stdout, stderr)
+}
+
+func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("quantastream", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -25,7 +35,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	database := flags.String("database", "quanta", "default database/schema name")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
-	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status")
+	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -42,26 +52,59 @@ func run(args []string, stdout, stderr io.Writer) int {
 		DataDir:     *dataDir,
 		Database:    *database,
 	}
-	services := shared.LocalNodeServices{}
-	if *mountLocalNode {
-		backend, err := qsinabox.MountStandardLocalBackend(config, nil)
-		if err != nil {
-			fmt.Fprintf(stderr, "mount inabox-standard local backend: %v\n", err)
-			return 2
+
+	if *statusOnly {
+		services := shared.LocalNodeServices{}
+		if *mountLocalNode {
+			backend, err := qsinabox.MountStandardLocalBackend(config, nil)
+			if err != nil {
+				fmt.Fprintf(stderr, "mount inabox-standard local backend: %v\n", err)
+				return 2
+			}
+			defer backend.Close()
+			services = backend.Services
 		}
-		defer backend.Close()
-		services = backend.Services
+		plan := qsinabox.NewStandardPlan(config, services)
+		for _, line := range plan.SummaryLines() {
+			fmt.Fprintln(stdout, line)
+		}
+		return 0
 	}
-	plan := qsinabox.NewStandardPlan(config, services)
+
+	process, diagnostics, err := qsinabox.MountStandardProcess(ctx, config)
+	if err != nil {
+		fmt.Fprintf(stderr, "mount inabox-standard process: %v\n", err)
+		return 2
+	}
+	if diagnostics.BlocksNative() {
+		fmt.Fprintf(stderr, "mount inabox-standard process: %s\n", diagnosticMessages(diagnostics))
+		return 2
+	}
+	defer process.Close()
+
+	plan := qsinabox.NewStandardPlan(config, process.Backend.Services)
 	for _, line := range plan.SummaryLines() {
 		fmt.Fprintln(stdout, line)
-	}
-	if *statusOnly {
-		return 0
 	}
 	if !plan.Ready {
 		fmt.Fprintln(stderr, "inabox-standard runtime is not ready; rerun with -status to inspect the current skeleton")
 		return 2
 	}
+	fmt.Fprintf(stdout, "listening=%s\n", config.WithDefaults().Address())
+	if err := process.ListenAndServe(ctx); err != nil {
+		fmt.Fprintf(stderr, "serve inabox-standard: %v\n", err)
+		return 1
+	}
 	return 0
+}
+
+func diagnosticMessages(diagnostics qsbridge.DiagnosticSet) string {
+	if len(diagnostics) == 0 {
+		return ""
+	}
+	messages := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		messages = append(messages, fmt.Sprintf("%s: %s", diagnostic.Code, diagnostic.Message))
+	}
+	return fmt.Sprint(messages)
 }

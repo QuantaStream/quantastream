@@ -97,6 +97,8 @@ Current implementation status:
   `BitmapIndex` and `KVStore` facades without gRPC.
 - The executable can print mode readiness with `-status` and can construct the
   local backend with `-mount-local-node`.
+- Without `-status`, the executable mounts the local backend, composes the
+  native SQL runtime, and starts the MySQL-compatible listener.
 
 Skeleton status command:
 
@@ -104,6 +106,7 @@ Skeleton status command:
 cd ~/projects/quantastream
 go run ./cmd/quantastream -status
 go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
+go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
 ```
 
 Known local-node streaming risks:
