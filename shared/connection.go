@@ -65,6 +65,7 @@ type Conn struct {
 	nodeStatusMap      sync.Map                     // Map of node ID to status message.
 	activeCount        int                          // Number of active nodes.
 	IsLocalCluster     bool                         // Is this a local cluster? For debugging.
+	LocalNodeServices  LocalNodeServices            // Optional in-process node services for inabox-standard.
 	owner              string                       // for debugging
 }
 
@@ -195,6 +196,9 @@ func (m *Conn) RegisterService(svc Service) {
 
 	m.registerLock.Lock()
 	defer m.registerLock.Unlock()
+	if m.registeredServices == nil {
+		m.registeredServices = make(map[string]Service)
+	}
 	n := reflect.TypeOf(svc).String()
 	name := strings.Split(n, ".")[1]
 	m.registeredServices[name] = svc

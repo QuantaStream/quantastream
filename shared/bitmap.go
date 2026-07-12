@@ -39,11 +39,17 @@ func formatShardTime(t time.Time) string {
 type BitmapIndex struct {
 	*Conn
 	client []pb.BitmapIndexClient
+	local  LocalBitmapIndexService
 }
 
 // NewBitmapIndex - Initializer for client side API wrappers.
 func NewBitmapIndex(conn *Conn) *BitmapIndex {
 
+	if conn.LocalNodeServices.BitmapIndex != nil {
+		c := &BitmapIndex{Conn: conn, local: conn.LocalNodeServices.BitmapIndex}
+		conn.RegisterService(c)
+		return c
+	}
 	clients := make([]pb.BitmapIndexClient, len(conn.ClientConnections()))
 	for i := 0; i < len(conn.ClientConnections()); i++ {
 		clients[i] = pb.NewBitmapIndexClient(conn.ClientConnections()[i])
@@ -487,9 +493,6 @@ func (c *BitmapIndex) sequencerClient(client pb.BitmapIndexClient, req *pb.Check
 func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime int64,
 	foundSet *roaring64.Bitmap, negate bool) (map[string]*roaring64.BSI, map[string]map[uint64]*roaring64.Bitmap, error) {
 
-	bsiResults := make(map[string][]*roaring64.BSI, 0)
-	bitmapResults := make(map[string]map[uint64][]*roaring64.Bitmap, 0)
-
 	var data []byte
 	if foundSet != nil {
 		var err error
@@ -501,6 +504,16 @@ func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime
 
 	req := &pb.ProjectionRequest{Index: index, Fields: fields, FromTime: fromTime,
 		ToTime: toTime, FoundSet: data, Negate: negate}
+
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.Projection(ctx, req)
+		if err != nil {
+			return nil, nil, err
+		}
+		return aggregateProjectionResponses([]*pb.ProjectionResponse{response})
+	}
 
 	resultChan := make(chan *pb.ProjectionResponse, 100)
 	var eg errgroup.Group
@@ -528,7 +541,17 @@ func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime
 	}
 	close(resultChan)
 
+	responses := make([]*pb.ProjectionResponse, 0)
 	for rs := range resultChan {
+		responses = append(responses, rs)
+	}
+	return aggregateProjectionResponses(responses)
+}
+
+func aggregateProjectionResponses(responses []*pb.ProjectionResponse) (map[string]*roaring64.BSI, map[string]map[uint64]*roaring64.Bitmap, error) {
+	bsiResults := make(map[string][]*roaring64.BSI, 0)
+	bitmapResults := make(map[string]map[uint64][]*roaring64.Bitmap, 0)
+	for _, rs := range responses {
 		for _, v := range rs.GetBsiResults() {
 			bsi, ok := bsiResults[v.Field]
 			if !ok {
@@ -611,6 +634,13 @@ func (c *BitmapIndex) TableOperation(table, operation string) error {
 	}
 	req := &pb.TableOperationRequest{Table: table, Operation: op}
 
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), OpDeadline)
+		defer cancel()
+		_, err := c.local.TableOperation(ctx, req)
+		return err
+	}
+
 	var eg errgroup.Group
 
 	// Send the same tableOperation request to each node.  They must be all Active
@@ -652,6 +682,13 @@ func (c *BitmapIndex) tableOperationClient(client pb.BitmapIndexClient, req *pb.
 
 // Commit - Send commitClient to all nodes. Wait for all to complete.
 func (c *BitmapIndex) Commit() error {
+
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), CommitDeadline)
+		defer cancel()
+		_, err := c.local.Commit(ctx, &empty.Empty{})
+		return err
+	}
 
 	clients := c.activeClientsSnapshot()
 	if len(clients) == 0 {

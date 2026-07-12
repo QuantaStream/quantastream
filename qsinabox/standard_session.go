@@ -1,0 +1,144 @@
+package qsinabox
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/shared"
+)
+
+// NewLocalConnection builds the client-side connection facade for the mounted
+// in-process node services.
+func (b StandardLocalBackend) NewLocalConnection() *shared.Conn {
+	conn := shared.NewDefaultConnection("inabox-standard")
+	conn.ServiceName = "quantastream"
+	conn.ServicePort = 0
+	conn.Quorum = 1
+	conn.Replicas = 1
+	conn.IsLocalCluster = true
+	conn.LocalNodeServices = b.Services
+	return conn
+}
+
+// ConfigBaseDir returns the schema catalog directory visible to sessions.
+func (b StandardLocalBackend) ConfigBaseDir(config StandardConfig) string {
+	config = config.WithDefaults()
+	return filepath.Join(config.DataDir, "config")
+}
+
+// NewSessionPool builds a session pool over the in-process local backend.
+func (b StandardLocalBackend) NewSessionPool(config StandardConfig, tableCache *core.TableCacheStruct, poolSize int) *core.SessionPool {
+	if tableCache == nil {
+		tableCache = core.NewTableCacheStruct()
+	}
+	return core.NewSessionPool(tableCache, b.NewLocalConnection(), b.ConfigBaseDir(config), poolSize)
+}
+
+// StandardDirectRuntimeMount owns a direct bitmap runtime and its local session
+// pool lifecycle.
+type StandardDirectRuntimeMount struct {
+	Runtime qsruntime.DirectBitmapRuntime
+	Pool    *core.SessionPool
+}
+
+// Close releases sessions owned by the runtime mount.
+func (m *StandardDirectRuntimeMount) Close() {
+	if m == nil || m.Pool == nil {
+		return
+	}
+	m.Pool.Shutdown()
+}
+
+// NewDirectRuntime builds the first in-process runtime surface for
+// inabox-standard. The mounted runtime supports direct bitmap reads; projection
+// materialization and mutation wiring remain explicit follow-up gates.
+func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache *core.TableCacheStruct, poolSize int) StandardDirectRuntimeMount {
+	pool := b.NewSessionPool(config, tableCache, poolSize)
+	return StandardDirectRuntimeMount{
+		Pool: pool,
+		Runtime: qsruntime.DirectBitmapRuntime{
+			Sessions: StandardDirectSessionProvider{Pool: pool},
+			Adapter:  qsruntime.BitmapQueryResultAdapter{},
+		},
+	}
+}
+
+// StandardDirectSessionProvider borrows table-scoped direct sessions from an
+// inabox-standard local session pool.
+type StandardDirectSessionProvider struct {
+	Pool *core.SessionPool
+}
+
+// BorrowDirectSession returns a direct session handle for the request root table.
+func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, request qsruntime.ExecutionRequest) (qsruntime.DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+	if p.Pool == nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-standard session pool is not initialized"),
+		}, nil
+	}
+	table, ok := request.RootIndex()
+	if !ok || table == "" {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhasePlan, "direct request has no root table"),
+		}, nil
+	}
+	session, err := p.Pool.Borrow(table)
+	if err != nil {
+		return nil, nil, fmt.Errorf("borrow inabox-standard session for %s: %w", table, err)
+	}
+	return StandardDirectSessionHandle{
+		Pool:    p.Pool,
+		Table:   table,
+		Session: session,
+		Query:   qsruntime.LegacyBitmapQueryAdapter{},
+		Result:  qsruntime.LegacyBitmapQueryResultAdapter{},
+	}, nil, nil
+}
+
+// StandardDirectSessionHandle executes direct bitmap calls through a local
+// core.Session without gRPC.
+type StandardDirectSessionHandle struct {
+	Pool    *core.SessionPool
+	Table   string
+	Session *core.Session
+	Query   qsruntime.LegacyBitmapQueryAdapter
+	Result  qsruntime.LegacyBitmapQueryResultAdapter
+}
+
+// QueryBitmap executes a lowered bitmap request through the local session.
+func (h StandardDirectSessionHandle) QueryBitmap(ctx context.Context, request qsruntime.ExecutionRequest) (qsruntime.BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsruntime.BitmapQueryResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-standard direct session is not initialized"),
+		}, nil
+	}
+	response, err := h.Session.BitIndex.Query(h.Query.ToBitmapQueryFromRequest(request))
+	return h.Result.ToBitmapQueryResult(response), nil, err
+}
+
+// ExecuteMutation currently preserves the read-only standard backend boundary.
+func (h StandardDirectSessionHandle) ExecuteMutation(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "inabox-standard local mutation execution is not mounted yet"),
+	}, nil
+}
+
+// InsertRows currently preserves the read-only standard backend boundary.
+func (h StandardDirectSessionHandle) InsertRows(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "inabox-standard local insert execution is not mounted yet"),
+	}, nil
+}
+
+// Release returns the local session to the pool.
+func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.DiagnosticSet {
+	if h.Pool == nil || h.Session == nil || h.Table == "" {
+		return nil
+	}
+	h.Pool.Return(h.Table, h.Session)
+	return nil
+}

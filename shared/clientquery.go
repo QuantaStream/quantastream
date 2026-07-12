@@ -201,6 +201,20 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 // Processing is parallelized across nodes.
 func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*IntermediateResult, error) {
 
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		result, err := c.local.Query(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		ir := NewIntermediateResult(index)
+		if err := ir.UnmarshalAndAdd(result); err != nil {
+			return nil, err
+		}
+		return ir, nil
+	}
+
 	resultChan := make(chan *pb.QueryResult, 100)
 	var eg errgroup.Group
 
@@ -410,6 +424,22 @@ func (c *BitmapIndex) Join(driverIndex string, fklist []string, fromTime, toTime
 
 	req := &pb.JoinRequest{DriverIndex: driverIndex, FkFields: fklist, FromTime: fromTime,
 		ToTime: toTime, FoundSet: foundData, FilterSets: fs, Negate: negate}
+
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.Join(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		ret := roaring64.NewDefaultBSI()
+		if response.Results != nil {
+			if err := ret.UnmarshalBinary(response.Results); err != nil {
+				return nil, fmt.Errorf("Error unmarshalling join results - %v", err)
+			}
+		}
+		return ret, nil
+	}
 
 	resultChan := make(chan *pb.JoinResponse, 100)
 	var eg errgroup.Group

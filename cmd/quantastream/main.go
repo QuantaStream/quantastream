@@ -25,6 +25,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	database := flags.String("database", "quanta", "default database/schema name")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
+	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -41,7 +42,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		DataDir:     *dataDir,
 		Database:    *database,
 	}
-	plan := qsinabox.NewStandardPlan(config, shared.LocalNodeServices{})
+	services := shared.LocalNodeServices{}
+	if *mountLocalNode {
+		backend, err := qsinabox.MountStandardLocalBackend(config, nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "mount inabox-standard local backend: %v\n", err)
+			return 2
+		}
+		defer backend.Close()
+		services = backend.Services
+	}
+	plan := qsinabox.NewStandardPlan(config, services)
 	for _, line := range plan.SummaryLines() {
 		fmt.Fprintln(stdout, line)
 	}

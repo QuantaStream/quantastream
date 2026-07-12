@@ -90,14 +90,20 @@ Current implementation status:
   observability vocabulary.
 - `server` exposes first in-process adapters around `BitmapIndex` and `KVStore`
   unary calls.
-- The executable can print mode readiness with `-status`; it intentionally does
-  not claim the local backend is ready until the storage/session path is mounted.
+- `qsinabox` can mount the in-process node backend, stage local schema
+  configuration into the data directory, and build a local `core.SessionPool`
+  over `shared.Conn.LocalNodeServices`.
+- The mounted read path can execute flat direct bitmap reads through local
+  `BitmapIndex` and `KVStore` facades without gRPC.
+- The executable can print mode readiness with `-status` and can construct the
+  local backend with `-mount-local-node`.
 
 Skeleton status command:
 
 ```bash
 cd ~/projects/quantastream
 go run ./cmd/quantastream -status
+go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
 ```
 
 Known local-node streaming risks:
@@ -115,6 +121,12 @@ Known local-node streaming risks:
 These are not conceptual blockers to `inabox-standard`; they are implementation
 gates where the current gRPC stream-shaped calls need direct local helpers or
 local stream shims.
+
+The first mounted backend is intentionally read-oriented and does not yet claim
+projection materialization. INSERT, UPDATE, DELETE, streaming ingestion,
+dictionary warmup, and text-search paths should be enabled only after the
+batch/streaming shims above are implemented and covered by SQLRunner or
+compatibility-lab tests.
 
 ### `inabox-local`
 

@@ -27,11 +27,17 @@ var (
 type KVStore struct {
 	*Conn
 	client []pb.KVStoreClient
+	local  LocalKVStoreService
 }
 
 // NewKVStore - Construct KVStore service endpoint.
 func NewKVStore(conn *Conn) *KVStore {
 
+	if conn.LocalNodeServices.KVStore != nil {
+		c := &KVStore{Conn: conn, local: conn.LocalNodeServices.KVStore}
+		conn.RegisterService(c)
+		return c
+	}
 	clients := make([]pb.KVStoreClient, len(conn.ClientConnections()))
 	for i := 0; i < len(conn.ClientConnections()); i++ {
 		clients[i] = pb.NewKVStoreClient(conn.ClientConnections()[i])
@@ -191,6 +197,16 @@ func (c *KVStore) Lookup(indexPath string, k interface{}, valueType reflect.Kind
 	key := k
 	if pathIsKey {
 		key, indexPath = checkAdjustKeyAndPath(indexPath)
+	}
+	if c.local != nil {
+		lookup, err := c.local.Lookup(ctx, &pb.IndexKVPair{IndexPath: indexPath, Key: ToBytes(k), Value: nil})
+		if err != nil {
+			return uint64(0), err
+		}
+		if lookup.Value != nil && len(lookup.Value) != 0 && len(lookup.Value[0]) != 0 {
+			return UnmarshalValue(valueType, lookup.Value[0]), nil
+		}
+		return nil, nil
 	}
 
 	indices, err := c.SelectNodes(key, ReadIntent)
@@ -391,6 +407,13 @@ func (c *KVStore) PutStringEnum(index, value string) (uint64, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
+	if c.local != nil {
+		rowID, err := c.local.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: value})
+		if err != nil {
+			return 0, err
+		}
+		return rowID.Value, nil
+	}
 	indices, err1 := c.SelectNodes(index, WriteIntentAll)
 	if err1 != nil {
 		return 0, fmt.Errorf("PutStringEnum: %v", err1)
