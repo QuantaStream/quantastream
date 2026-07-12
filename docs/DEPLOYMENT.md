@@ -113,11 +113,13 @@ SQLRunner can target that standalone process over the MySQL-compatible socket:
 
 ```bash
 cd ~/projects/quantastream/sqlrunner
-go run . -engine inabox-standard -suite_file sqltests/basic_queries.yaml
+./run-inabox-standard-smoke.sh
 ```
 
 This path validates the product-facing QIAB server process. It is intentionally
 different from `inabox-direct`, where SQLRunner embeds the query engine itself.
+The current smoke suite assumes TPCH data has already been staged; it does not
+attempt old admin bootstrap.
 
 Known local-node streaming risks:
 

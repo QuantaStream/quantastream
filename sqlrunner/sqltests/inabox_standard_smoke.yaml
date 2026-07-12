@@ -1,0 +1,51 @@
+version: 1
+name: inabox_standard_smoke
+
+tests:
+  - id: inabox_standard_smoke.001.part_count
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as part_count
+      from part
+      where p_size >= 1
+    expect:
+      columns: ["part_count"]
+      rows:
+        - [2000]
+
+  - id: inabox_standard_smoke.002.part_enum_filter
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as brass_count
+      from part
+      where p_type like '%BRASS'
+    expect:
+      columns: ["brass_count"]
+      rows:
+        - [376]
+
+  - id: inabox_standard_smoke.003.part_projection
+    status: supported
+    kind: query
+    sql: |-
+      select p_partkey, p_size, p_type
+      from part
+      where p_partkey = 35
+    expect:
+      columns: ["p_partkey", "p_size", "p_type"]
+      rows:
+        - [35, 14, "MEDIUM ANODIZED BRASS"]
+
+  - id: inabox_standard_smoke.004.part_aggregate
+    status: supported
+    kind: query
+    sql: |-
+      select sum(p_size) as size_sum
+      from part
+      where p_size = 14
+    expect:
+      columns: ["size_sum"]
+      rows:
+        - [518]

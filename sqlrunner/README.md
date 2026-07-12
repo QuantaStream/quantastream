@@ -193,7 +193,7 @@ RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 process owns its local in-process node adapter:
 
 ```bash
-go run . -engine inabox-standard -suite_file sqltests/basic_queries.yaml
+./run-inabox-standard-smoke.sh
 ```
 
 This is the default SQLRunner target for the simple QIAB product shape once
@@ -201,6 +201,14 @@ the `quantastream` process has been started separately.
 For now, run query/statement cases against already staged data; roadmap
 `admin` bootstrap cases remain owned by the local distributed harness until the
 new QuantaStream admin surface is available.
+
+The default standard smoke suite is `sqltests/inabox_standard_smoke.yaml`. It
+checks a small read-only TPCH slice over the MySQL socket. Override the target
+with `HOST`, `PORT`, `USER`, `DB`, `SUITE`, and optionally `CASE`:
+
+```bash
+HOST=127.0.0.1 PORT=4000 CASE=inabox_standard_smoke.001.part_count ./run-inabox-standard-smoke.sh
+```
 
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible
 server/proxy on port `4000` while a local distributed-shape harness is running.
