@@ -22,6 +22,7 @@ import (
 const (
 	engineProxy          = "proxy"
 	engineDistributed    = "distributed"
+	engineInaboxStandard = "inabox-standard"
 	engineInaboxLocal    = "inabox-local"
 	engineRuntime        = "runtime"
 	engineRuntimeInspect = "runtime-inspect"
@@ -68,7 +69,7 @@ func main() {
 	shared.SetUTCdefault()
 
 	suiteFile := flag.String("suite_file", "", "Path to a SQL roadmap YAML suite to execute.")
-	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: inabox-local, distributed, inabox-direct, proxy, runtime, runtime-inspect, or mysql-reference.")
+	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: inabox-standard, inabox-local, distributed, inabox-direct, proxy, runtime, runtime-inspect, or mysql-reference.")
 	host := flag.String("host", "", "Quanta host to connect to.")
 	user := flag.String("user", "", "The username that will connect to the database.")
 	password := flag.String("password", "", "The password to use to connect.")
@@ -226,6 +227,7 @@ func printUsage(err error) {
 	u.Warn()
 	u.Warn(err.Error())
 	u.Warn()
+	u.Warn("Inabox-standard example: ./sqlrunner -engine inabox-standard -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Inabox-local example: ./sqlrunner -engine inabox-local -suite_file sqltests/joins_sql.yaml")
 	u.Warn("Distributed example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user MOLIG004 -db quanta -port 4000")
 	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
@@ -280,6 +282,8 @@ func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error)
 	switch cfg.Engine {
 	case engineProxy, engineDistributed, engineInaboxLocal:
 		return buildProxyHarness(suite, cfg)
+	case engineInaboxStandard:
+		return buildInaboxStandardHarness(suite, cfg)
 	case engineInaboxDirect:
 		return buildLegacyDirectHarness(suite, cfg)
 	case engineRuntime, engineRuntimeInspect:
@@ -292,7 +296,7 @@ func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error)
 }
 
 func applyEngineDefaults(cfg runnerConfig) runnerConfig {
-	if cfg.Engine != engineInaboxLocal {
+	if cfg.Engine != engineInaboxLocal && cfg.Engine != engineInaboxStandard {
 		return cfg
 	}
 	if cfg.Host == "" {
@@ -308,6 +312,31 @@ func applyEngineDefaults(cfg runnerConfig) runnerConfig {
 		cfg.Database = "quanta"
 	}
 	return cfg
+}
+
+func buildInaboxStandardHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	var proxyConnect test.ProxyConnectStrings
+	proxyConnect.Host = cfg.Host
+	proxyConnect.User = cfg.User
+	proxyConnect.Password = cfg.Password
+	proxyConnect.Port = cfg.Port
+	proxyConnect.Database = cfg.Database
+	proxyConnect.Timeout = suite.MaxCaseTimeout()
+
+	db, err := proxyConnect.ProxyConnectConnect()
+	if err != nil {
+		return runnerHarness{}, err
+	}
+
+	return runnerHarness{
+		Runner: roadmap.Runner{
+			DB:         db,
+			Verbose:    cfg.Verbose,
+			DumpActual: cfg.DumpActual,
+			Logf:       log.Printf,
+		},
+		Close: db.Close,
+	}, nil
 }
 
 func buildProxyHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {

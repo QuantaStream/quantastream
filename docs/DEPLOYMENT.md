@@ -109,6 +109,16 @@ go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -d
 go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
 ```
 
+SQLRunner can target that standalone process over the MySQL-compatible socket:
+
+```bash
+cd ~/projects/quantastream/sqlrunner
+go run . -engine inabox-standard -suite_file sqltests/basic_queries.yaml
+```
+
+This path validates the product-facing QIAB server process. It is intentionally
+different from `inabox-direct`, where SQLRunner embeds the query engine itself.
+
 Known local-node streaming risks:
 
 - `BitmapIndex.BatchMutate`: required for insert, update, delete, and standard

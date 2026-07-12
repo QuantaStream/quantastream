@@ -34,7 +34,7 @@ func validateEngineForFlags(engine string, cfg runnerConfig) error {
 		if cfg.Host == "" || cfg.User == "" {
 			return fmt.Errorf("host and user are required for %s engine", engine)
 		}
-	case engineInaboxLocal:
+	case engineInaboxLocal, engineInaboxStandard:
 	case engineRuntime, engineRuntimeInspect, engineInaboxDirect:
 	case engineMySQLReference:
 		return mysqlReferenceConfig{Driver: cfg.MySQLDriver, DSN: cfg.MySQLDSN}.validate()

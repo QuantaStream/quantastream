@@ -1,9 +1,9 @@
 # SQLRunner
 
-SQLRunner executes YAML roadmap suites. It supports a proxy harness for the
-full product path, an in-memory runtime harness for qsbridge-only slices, and a
-inabox-direct harness for exercising the refactor stack against a running
-local QuantaStream node cluster.
+SQLRunner executes YAML roadmap suites. It supports MySQL socket harnesses for
+the product paths, an in-memory runtime harness for qsbridge-only slices, and an
+inabox-direct harness for exercising the query stack against a running local
+QuantaStream node cluster.
 
 ## Roadmap Suites
 
@@ -49,9 +49,9 @@ See [`roadmap/FORMAT.md`](roadmap/FORMAT.md) for the complete format.
 
 ## Harnesses
 
-`-engine proxy` is the default and runs suites through the current MySQL proxy
-and Quanta cluster. It is the compatibility path for existing integration and
-benchmark scripts.
+`-engine proxy` is the default and runs suites through an explicitly addressed
+MySQL-compatible QuantaStream endpoint. It requires `-host` and `-user`, and is
+kept for existing integration and benchmark scripts.
 
 `-engine runtime` runs the in-process qsbridge/qsruntime path without the MySQL
 wire protocol or a local node cluster. This mode is useful for parser, planner,
@@ -187,10 +187,26 @@ The broad TPC-H kernel suite is opt-in:
 RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 ```
 
+`-engine inabox-standard` runs SQLRunner through the standalone
+`cmd/quantastream` process on port `4000`. It defaults to `127.0.0.1`,
+`MOLIG004`, database `quanta`, and does not require Consul because the target
+process owns its local in-process node adapter:
+
+```bash
+go run . -engine inabox-standard -suite_file sqltests/basic_queries.yaml
+```
+
+This is the default SQLRunner target for the simple QIAB product shape once
+the `quantastream` process has been started separately.
+For now, run query/statement cases against already staged data; roadmap
+`admin` bootstrap cases remain owned by the local distributed harness until the
+new QuantaStream admin surface is available.
+
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible
-proxy on port `4000`. Use it when the local harness is running the proxy and
-you want to validate the socket/wire path rather than hosting the query engine
-inside SQLRunner:
+server/proxy on port `4000` while a local distributed-shape harness is running.
+Use it when the local harness is running the proxy and you want to validate the
+socket/wire path plus local Consul/gRPC/node boundaries rather than hosting the
+query engine inside SQLRunner:
 
 ```bash
 go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
