@@ -82,6 +82,40 @@ This profile deliberately does not validate distributed service discovery,
 multi-node recovery, rebalancing, rolling upgrades, or multiple proxy behavior.
 Those belong to `inabox-local`, `distributed`, or future operations profiles.
 
+Current implementation status:
+
+- `cmd/quantastream` owns the first executable skeleton for this mode.
+- `qsinabox` owns process-level mode/config/readiness planning.
+- `shared` owns transport-neutral local-node service contracts and local-node
+  observability vocabulary.
+- `server` exposes first in-process adapters around `BitmapIndex` and `KVStore`
+  unary calls.
+- The executable can print mode readiness with `-status`; it intentionally does
+  not claim the local backend is ready until the storage/session path is mounted.
+
+Skeleton status command:
+
+```bash
+cd ~/projects/quantastream
+go run ./cmd/quantastream -status
+```
+
+Known local-node streaming risks:
+
+- `BitmapIndex.BatchMutate`: required for insert, update, delete, and standard
+  bitmap mutation paths.
+- `BitmapIndex.BatchSetValue`: required for BSI writes, including numeric and
+  timestamp ingestion.
+- `KVStore.BatchPut`: required for dictionary and backing-string writes.
+- `KVStore.BatchLookup`: required for efficient backing-string materialization.
+- `KVStore.Items`: required for dictionary/cache warmup without gRPC.
+- `StringSearch.BatchIndex` and `StringSearch.Search`: required for searchable
+  text fields.
+
+These are not conceptual blockers to `inabox-standard`; they are implementation
+gates where the current gRPC stream-shaped calls need direct local helpers or
+local stream shims.
+
 ### `inabox-local`
 
 `inabox-local` is the local distributed-shape profile. As the new network layer

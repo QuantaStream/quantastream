@@ -1,0 +1,121 @@
+package qsinabox
+
+import (
+	"fmt"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsmysql"
+	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/shared"
+)
+
+// StandardMode is the single-process QIAB deployment mode name.
+const StandardMode = "inabox-standard"
+
+// StandardConfig captures the first process-level configuration surface for
+// the single-process QIAB executable.
+type StandardConfig struct {
+	BindAddress string
+	MySQLPort   int
+	ConfigDir   string
+	DataDir     string
+	Database    string
+}
+
+// WithDefaults fills stable local defaults for inabox-standard.
+func (c StandardConfig) WithDefaults() StandardConfig {
+	if c.BindAddress == "" {
+		c.BindAddress = "127.0.0.1"
+	}
+	if c.MySQLPort == 0 {
+		c.MySQLPort = 4000
+	}
+	if c.ConfigDir == "" {
+		c.ConfigDir = "configuration"
+	}
+	if c.DataDir == "" {
+		c.DataDir = "data"
+	}
+	if c.Database == "" {
+		c.Database = "quanta"
+	}
+	return c
+}
+
+// Address returns the MySQL bind address for the standard process.
+func (c StandardConfig) Address() string {
+	c = c.WithDefaults()
+	return fmt.Sprintf("%s:%d", c.BindAddress, c.MySQLPort)
+}
+
+// NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
+func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
+	c = c.WithDefaults()
+	return qsruntime.NativeProxyFrontDoorConfig{
+		BindAddress:   c.BindAddress,
+		Port:          c.MySQLPort,
+		PacketIOReady: true,
+		MySQLAdapter:  qsmysql.ByteModelReadiness(),
+		Protocol: qsbridge.NewProtocolProfile(
+			qsbridge.ProtocolMySQL,
+			"mysql-wire",
+			qsbridge.ProtocolCapabilityStatementResults,
+			qsbridge.ProtocolCapabilitySessionActions,
+			qsbridge.ProtocolCapabilityExplain,
+		),
+	}
+}
+
+// StandardPlan is a non-executing vertical skeleton of standard-mode process
+// composition. It keeps startup explicit while the local backend is mounted.
+type StandardPlan struct {
+	Mode          string
+	Config        StandardConfig
+	LocalNode     shared.LocalNodeReadiness
+	StreamingRisk []shared.LocalNodeStreamingRisk
+	Ready         bool
+	Blockers      []string
+	Warnings      []string
+}
+
+// NewStandardPlan summarizes the current standard-mode boundary readiness.
+func NewStandardPlan(config StandardConfig, services shared.LocalNodeServices) StandardPlan {
+	config = config.WithDefaults()
+	localReadiness := services.Readiness()
+	plan := StandardPlan{
+		Mode:          StandardMode,
+		Config:        config,
+		LocalNode:     localReadiness,
+		StreamingRisk: append([]shared.LocalNodeStreamingRisk(nil), localReadiness.StreamingRisks...),
+		Blockers:      append([]string(nil), localReadiness.Blockers...),
+		Warnings:      append([]string(nil), localReadiness.Warnings...),
+	}
+	if !localReadiness.Ready {
+		plan.Blockers = append(plan.Blockers, "inabox-standard local node backend is not ready")
+	}
+	plan.Ready = len(plan.Blockers) == 0
+	return plan
+}
+
+// SummaryLines returns stable human-readable startup status lines for the CLI.
+func (p StandardPlan) SummaryLines() []string {
+	config := p.Config.WithDefaults()
+	lines := []string{
+		fmt.Sprintf("mode=%s", p.Mode),
+		fmt.Sprintf("mysql=%s", config.Address()),
+		fmt.Sprintf("config_dir=%s", config.ConfigDir),
+		fmt.Sprintf("data_dir=%s", config.DataDir),
+		fmt.Sprintf("database=%s", config.Database),
+		fmt.Sprintf("local_node_ready=%t", p.LocalNode.Ready),
+	}
+	for _, blocker := range p.Blockers {
+		lines = append(lines, "blocker="+blocker)
+	}
+	for _, warning := range p.Warnings {
+		lines = append(lines, "warning="+warning)
+	}
+	for _, risk := range p.StreamingRisk {
+		lines = append(lines, fmt.Sprintf("streaming_risk=%s.%s: %s", risk.Service, risk.Method, risk.Gate))
+	}
+	return lines
+}

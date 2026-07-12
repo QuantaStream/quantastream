@@ -1,0 +1,57 @@
+package qsinabox
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/QuantaStream/quantastream/shared"
+)
+
+func TestStandardConfigAppliesStableDefaults(t *testing.T) {
+	config := (StandardConfig{}).WithDefaults()
+	if config.BindAddress != "127.0.0.1" {
+		t.Fatalf("BindAddress = %q, want loopback default", config.BindAddress)
+	}
+	if config.MySQLPort != 4000 {
+		t.Fatalf("MySQLPort = %d, want 4000", config.MySQLPort)
+	}
+	if config.ConfigDir == "" || config.DataDir == "" || config.Database != "quanta" {
+		t.Fatalf("config defaults = %+v", config)
+	}
+	if config.Address() != "127.0.0.1:4000" {
+		t.Fatalf("Address() = %q", config.Address())
+	}
+}
+
+func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
+	plan := NewStandardPlan(StandardConfig{}, shared.LocalNodeServices{})
+	if plan.Ready {
+		t.Fatalf("plan reported ready without local services")
+	}
+	if len(plan.Blockers) == 0 {
+		t.Fatalf("plan blockers were empty")
+	}
+	if len(plan.StreamingRisk) == 0 {
+		t.Fatalf("plan did not carry streaming risk assessment")
+	}
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	if !strings.Contains(lines, "mode=inabox-standard") {
+		t.Fatalf("summary lines missing mode: %s", lines)
+	}
+	if !strings.Contains(lines, "streaming_risk=") {
+		t.Fatalf("summary lines missing streaming risks: %s", lines)
+	}
+}
+
+func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
+	config := StandardConfig{BindAddress: "0.0.0.0", MySQLPort: 4400}.NativeProxyFrontDoorConfig().WithDefaults()
+	if config.BindAddress != "0.0.0.0" || config.Port != 4400 {
+		t.Fatalf("front door bind = %s:%d, want 0.0.0.0:4400", config.BindAddress, config.Port)
+	}
+	if !config.PacketIOReady {
+		t.Fatalf("front door packet IO should be ready for the existing MySQL adapter")
+	}
+	if !config.MySQLAdapter.PacketLoop {
+		t.Fatalf("front door should use current MySQL byte-model readiness")
+	}
+}
