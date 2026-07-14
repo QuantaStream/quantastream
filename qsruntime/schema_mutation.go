@@ -6,10 +6,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/source"
 	"github.com/hashicorp/consul/api"
 )
+
+// NewLegacySchemaMutationHandle creates a short-lived handle for schema mutations
+// that must read YAML before the target table is active in the runtime catalog.
+func NewLegacySchemaMutationHandle(quantaSource *source.QuantaSource, tableName, schemaDir string) (LegacyQuantaSessionHandle, error) {
+	if quantaSource == nil || quantaSource.GetConnection() == nil {
+		return LegacyQuantaSessionHandle{}, fmt.Errorf("schema mutation source is not initialized")
+	}
+	conn := quantaSource.GetConnection()
+	session := &core.Session{
+		BasePath:     strings.TrimSpace(schemaDir),
+		BitIndex:     shared.NewBitmapIndex(conn),
+		KVStore:      shared.NewKVStore(conn),
+		StringIndex:  shared.NewStringSearch(conn, 1000),
+		TableBuffers: map[string]*core.TableBuffer{},
+		CreatedAt:    time.Now().UTC(),
+	}
+	return LegacyQuantaSessionHandle{
+		TableName: strings.TrimSpace(tableName),
+		Pool:      quantaSource.GetSessionPool(),
+		Session:   session,
+		Synthetic: true,
+	}, nil
+}
 
 // CreateTable activates and deploys a YAML-backed table schema.
 func (h LegacyQuantaSessionHandle) CreateTable(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {

@@ -66,13 +66,16 @@ func TestLegacyDirectMissingTablePreloadErrorRecognizesNegativeCaseTables(t *tes
 	}
 }
 
-func TestLegacyDirectAdminChangesTableRecognizesLifecycleCommands(t *testing.T) {
-	for _, command := range []string{"create customers_qa", "drop customers_qa", "truncate customers_qa"} {
-		if !legacyDirectAdminChangesTable(command) {
-			t.Fatalf("expected %q to change table lifecycle", command)
-		}
-	}
-	if legacyDirectAdminChangesTable("commit") {
-		t.Fatalf("commit should not rebuild inabox-direct runtime")
+func TestLegacyDirectSuiteTablesExtractsDeprecatedAdminShorthand(t *testing.T) {
+	suite := &roadmap.Suite{Tests: []roadmap.TestCase{
+		{ID: "admin-create", Kind: "admin", SQL: "create customers_qa"},
+		{ID: "admin-drop", Kind: "admin", SQL: "drop orders_qa"},
+		{ID: "admin-truncate", Kind: "admin", SQL: "truncate lineitems_qa"},
+	}}
+
+	got := legacyDirectSuiteTables(suite)
+	want := []string{"customers_qa", "lineitems_qa", "orders_qa"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacyDirectSuiteTables = %v, want %v", got, want)
 	}
 }

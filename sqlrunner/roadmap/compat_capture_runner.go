@@ -44,11 +44,12 @@ func (r Runner) CaptureCompatibilityExpected(ctx context.Context, suite *Suite, 
 		if aware, ok := engine.(caseAwareEngine); ok {
 			caseEngine = aware.WithTestCase(test)
 		}
+		sql := executableSQL(test)
 
 		var details string
 		switch test.Kind {
 		case "query":
-			actual, err := caseEngine.Query(caseCtx, test.SQL)
+			actual, err := caseEngine.Query(caseCtx, sql)
 			if err != nil {
 				details = "unexpected error: " + err.Error()
 				captured = append(captured, CaptureCompatibilityErrorCase(test, "query", err))
@@ -56,13 +57,11 @@ func (r Runner) CaptureCompatibilityExpected(ctx context.Context, suite *Suite, 
 				captured = append(captured, CaptureCompatibilityQueryCase(test, actual, canonical))
 			}
 		case "admin":
-			if r.Admin == nil {
-				details = "admin executor is not configured"
-			} else if err := r.Admin(caseCtx, test.SQL); err != nil {
+			if _, err := caseEngine.Exec(caseCtx, sql); err != nil {
 				details = "unexpected error: " + err.Error()
 			}
 		default:
-			affected, err := caseEngine.Exec(caseCtx, test.SQL)
+			affected, err := caseEngine.Exec(caseCtx, sql)
 			if err != nil {
 				details = "unexpected error: " + err.Error()
 				captured = append(captured, CaptureCompatibilityErrorCase(test, "statement", err))

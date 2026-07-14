@@ -198,9 +198,9 @@ process owns its local in-process node adapter:
 
 This is the default SQLRunner target for the simple QIAB product shape once
 the `quantastream` process has been started separately.
-For now, run query/statement cases against already staged data; roadmap
-`admin` bootstrap cases remain owned by the local distributed harness until the
-new QuantaStream admin surface is available.
+Roadmap `admin` bootstrap cases are accepted as deprecated shorthand and run
+through the SQL engine as `CREATE TABLE`, `DROP TABLE`, or `TRUNCATE TABLE`
+statements. New suites should prefer `kind: statement` with SQL DDL directly.
 
 The default standard smoke suite is `sqltests/inabox_standard_smoke.yaml`. It
 checks a small read-only TPCH slice over the MySQL socket. Override the target

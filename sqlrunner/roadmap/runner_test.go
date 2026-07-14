@@ -48,6 +48,12 @@ func TestRunnerUsesConfiguredEngineForQueryAndStatement(t *testing.T) {
 				SQL:    "insert into orders values (1)",
 				Expect: Expected{AffectedRows: &affectedRows},
 			},
+			{
+				ID:     "admin.one",
+				Status: CaseSupported,
+				Kind:   "admin",
+				SQL:    "create customers_qa",
+			},
 		},
 	}
 	engine := &fakeEngine{}
@@ -63,11 +69,14 @@ func TestRunnerUsesConfiguredEngineForQueryAndStatement(t *testing.T) {
 	if engine.queries[0] != "select id from orders" {
 		t.Fatalf("query = %q", engine.queries[0])
 	}
-	if len(engine.execs) != 1 {
-		t.Fatalf("execs = %v, want one exec", engine.execs)
+	if len(engine.execs) != 2 {
+		t.Fatalf("execs = %v, want two execs", engine.execs)
 	}
 	if engine.execs[0] != "insert into orders values (1)" {
 		t.Fatalf("exec = %q", engine.execs[0])
+	}
+	if engine.execs[1] != "create table customers_qa" {
+		t.Fatalf("admin exec = %q", engine.execs[1])
 	}
 }
 
@@ -187,18 +196,14 @@ func TestRunnerCaptureExecutesAdminWithoutCapturingExpectedCase(t *testing.T) {
 			{ID: "capture.002.query", Status: CaseSupported, Kind: "query", SQL: "select id from t"},
 		},
 	}
-	adminCalls := 0
+	engine := &fakeEngine{}
 
 	result := (Runner{
-		Engine: &fakeEngine{},
-		Admin: func(context.Context, string) error {
-			adminCalls++
-			return nil
-		},
+		Engine: engine,
 	}).CaptureCompatibilityExpected(context.Background(), suite, CompatibilityCaptureOptions{})
 
-	if adminCalls != 1 {
-		t.Fatalf("admin calls = %d, want 1", adminCalls)
+	if len(engine.execs) != 1 || engine.execs[0] != "create table t" {
+		t.Fatalf("admin execs = %#v, want normalized create table", engine.execs)
 	}
 	if len(result.Expected.Cases) != 1 || result.Expected.Cases[0].ID != "capture.002.query" {
 		t.Fatalf("captured cases = %#v, want only query", result.Expected.Cases)

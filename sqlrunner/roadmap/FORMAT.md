@@ -54,8 +54,9 @@ queries remain visible.
 
 - `query`: validates complete rows and optional column names and database types.
 - `statement`: validates success, an expected error, or `affected_rows`.
-- `admin`: invokes a Quanta administration command through an executor supplied
-  by the launcher.
+- `admin`: deprecated bootstrap shorthand. SQLRunner normalizes `create name`,
+  `drop name`, and `truncate name` into SQL DDL and executes them as statements.
+  New suites should use `statement` with SQL directly.
 
 `kind` may be omitted for statements beginning with `select` or `show`.
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -44,7 +43,6 @@ func buildMySQLReferenceHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarne
 	return runnerHarness{
 		Runner: roadmap.Runner{
 			Engine:     engine,
-			Admin:      func(context.Context, string) error { return nil },
 			Verbose:    cfg.Verbose,
 			DumpActual: cfg.DumpActual,
 			Logf:       log.Printf,

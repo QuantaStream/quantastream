@@ -13,7 +13,6 @@ import (
 type Runner struct {
 	DB         *sql.DB
 	Engine     Engine
-	Admin      func(context.Context, string) error
 	Verbose    bool
 	DumpActual bool
 	Logf       func(string, ...interface{})
@@ -56,20 +55,15 @@ func (r Runner) Run(ctx context.Context, suite *Suite) Summary {
 		if aware, ok := engine.(caseAwareEngine); ok {
 			caseEngine = aware.WithTestCase(test)
 		}
+		sql := executableSQL(test)
 		if test.Kind == "query" {
-			actual, err := caseEngine.Query(caseCtx, test.SQL)
+			actual, err := caseEngine.Query(caseCtx, sql)
 			details = evaluateQuery(test, actual, err)
 			if details != "" && r.DumpActual {
 				r.logf("ACTUAL %s columns=%v rows=%s", test.ID, actual.Columns, formatRows(actual.Rows))
 			}
-		} else if test.Kind == "admin" {
-			if r.Admin == nil {
-				details = "admin executor is not configured"
-			} else {
-				details = evaluateAdmin(test, r.Admin(caseCtx, test.SQL))
-			}
 		} else {
-			affected, err := caseEngine.Exec(caseCtx, test.SQL)
+			affected, err := caseEngine.Exec(caseCtx, sql)
 			details = evaluateStatement(test, affected, err)
 		}
 		result := classify(test, details)
@@ -191,16 +185,6 @@ func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 	}
 	if details := compareRows(expectedRows, actualRows); details != "" {
 		return details
-	}
-	return ""
-}
-
-func evaluateAdmin(test TestCase, adminErr error) string {
-	if test.Expect.Error != "" {
-		return evaluateExpectedError(test.Expect.Error, adminErr)
-	}
-	if adminErr != nil {
-		return "unexpected error: " + adminErr.Error()
 	}
 	return ""
 }

@@ -30,6 +30,7 @@ func (r NativeProxyRuntime) InspectSQL(sql string, options qsbridge.ExecutionOpt
 type NativeProxyRuntimeConfig struct {
 	Direct                    DirectRuntimeConfig
 	DefaultSchema             string
+	SchemaDir                 string
 	CatalogVersion            qsbridge.CatalogVersion
 	Functions                 []qsbridge.FunctionDefinition
 	Profile                   RuntimeInspectionProfile

@@ -364,7 +364,6 @@ func buildProxyHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, e
 	return runnerHarness{
 		Runner: roadmap.Runner{
 			DB:         db,
-			Admin:      func(_ context.Context, command string) error { return test.ExecuteAdminCommandAndWait(command) },
 			Verbose:    cfg.Verbose,
 			DumpActual: cfg.DumpActual,
 			Logf:       log.Printf,
@@ -388,7 +387,6 @@ func buildRuntimeHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarness, err
 	return runnerHarness{
 		Runner: roadmap.Runner{
 			Engine:     engine,
-			Admin:      func(context.Context, string) error { return nil },
 			Verbose:    cfg.Verbose,
 			DumpActual: cfg.DumpActual,
 			Logf:       log.Printf,
@@ -532,15 +530,6 @@ func formatCaseDuration(duration time.Duration, verbose bool) string {
 	}
 	return fmt.Sprintf(" [%s]", rounded)
 }
-
-func logAdminOutput(command string, output []byte) {
-	log.Print("-------------------------------------------------------------------------------")
-	log.Printf("%s", command)
-	log.Print("Output:")
-	log.Printf("%v", string(output[:]))
-}
-
-var _ = logAdminOutput // fixme: (atw) unused
 
 func check(err error) {
 	if err != nil {

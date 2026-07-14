@@ -210,6 +210,7 @@ func StartProxy(count int, testConfigPath string) *LocalProxyControl {
 	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(context.Background(), localProxy.Src, tableCache, qsruntime.NativeProxyRuntimeConfig{
 		Direct:                  qsruntime.NewDirectRuntimeConfig(configDir, "127.0.0.1:8500", 4010, sessionPoolSize),
 		DefaultSchema:           "quanta",
+		SchemaDir:               configDir,
 		CatalogVersion:          qsbridge.CatalogVersion("inabox-native-proxy"),
 		Profile:                 qsruntime.LegacyDirectRuntimeProfile(),
 		EnableFilterExpressions: true,

@@ -42,6 +42,7 @@ func (f LegacyQuantaSourceFactory) NewDirectRuntime(ctx context.Context, config 
 // LegacyDirectRuntimeOptions controls compatibility adapter wiring while the direct runtime is split out.
 type LegacyDirectRuntimeOptions struct {
 	DefaultSchema             string
+	SchemaDir                 string
 	ApplyRecommendedEdgeOrder bool
 }
 
@@ -57,7 +58,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "direct runtime table cache is not initialized"),
 		}
 	}
-	sessions := LegacyQuantaSourceSessionProvider{Source: quantaSource}
+	sessions := LegacyQuantaSourceSessionProvider{
+		Source:    quantaSource,
+		SchemaDir: options.SchemaDir,
+	}
 	bsiReader := LegacyDirectProjectionBSIReader{
 		Source:     quantaSource,
 		TableCache: tableCache,
@@ -182,6 +186,7 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 			DirectFactory: DirectRuntimeFactoryFunc(func(context.Context, DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {
 				runtime, diagnostics := NewLegacyDirectBitmapRuntimeFromSource(quantaSource, tableCache, LegacyDirectRuntimeOptions{
 					DefaultSchema:             config.DefaultSchema,
+					SchemaDir:                 config.SchemaDir,
 					ApplyRecommendedEdgeOrder: config.ApplyRecommendedEdgeOrder,
 				})
 				return runtime, diagnostics, nil
@@ -213,7 +218,8 @@ func (f LegacyQuantaSourceFactory) ensureTableCache() qsbridge.DiagnosticSet {
 
 // LegacyQuantaSourceSessionProvider borrows direct sessions from a legacy Quanta source.
 type LegacyQuantaSourceSessionProvider struct {
-	Source *source.QuantaSource
+	Source    *source.QuantaSource
+	SchemaDir string
 }
 
 // BorrowDirectSession borrows a table-scoped session from the source session pool.
@@ -247,6 +253,13 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 			),
 		}, nil
 	}
+	if request.Mutation.Kind == qsbridge.MutationCreateTable && strings.TrimSpace(p.SchemaDir) != "" {
+		handle, err := NewLegacySchemaMutationHandle(p.Source, tableName, p.SchemaDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		return handle, nil, nil
+	}
 	session, err := pool.Borrow(tableName)
 	if err != nil {
 		return nil, nil, err
@@ -265,6 +278,7 @@ type LegacyQuantaSessionHandle struct {
 	Session   *core.Session
 	Query     LegacyBitmapQueryAdapter
 	Result    LegacyBitmapQueryResultAdapter
+	Synthetic bool
 }
 
 // QueryBitmap executes a neutral request through the legacy session BitmapIndex.
@@ -1038,6 +1052,9 @@ func (h LegacyQuantaSessionHandle) updatePartitionTime(request ExecutionRequest,
 
 // Release returns the borrowed session to the legacy session pool.
 func (h LegacyQuantaSessionHandle) Release(ctx context.Context) qsbridge.DiagnosticSet {
+	if h.Synthetic {
+		return nil
+	}
 	if h.Pool == nil || h.Session == nil {
 		return qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(

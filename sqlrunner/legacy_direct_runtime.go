@@ -14,7 +14,6 @@ import (
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
-	"github.com/QuantaStream/quantastream/test"
 )
 
 type legacyDirectHarnessState struct {
@@ -30,13 +29,14 @@ func buildLegacyDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHar
 		return runnerHarness{}, err
 	}
 	tables := legacyDirectSuiteTables(suite)
-	if err := legacyDirectEnsureConfigBackedTables(tables); err != nil {
+	config := qsruntime.NewDirectRuntimeConfig("", cfg.Consul, servicePort, 1)
+	if err := legacyDirectEnsureConfigBackedTables(context.Background(), tables, config, legacyDirectDefaultSchema(cfg.Database)); err != nil {
 		return runnerHarness{}, err
 	}
 	state := &legacyDirectHarnessState{
 		cfg:     cfg,
 		tables:  tables,
-		config:  qsruntime.NewDirectRuntimeConfig("", cfg.Consul, servicePort, 1),
+		config:  config,
 		runtime: &runtimeRoadmapEngine{},
 	}
 	if cfg.Verbose {
@@ -48,22 +48,11 @@ func buildLegacyDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHar
 	return runnerHarness{
 		Runner: roadmap.Runner{
 			Engine:     state.runtime,
-			Admin:      state.admin,
 			Verbose:    cfg.Verbose,
 			DumpActual: cfg.DumpActual,
 			Logf:       log.Printf,
 		},
 	}, nil
-}
-
-func (s *legacyDirectHarnessState) admin(ctx context.Context, command string) error {
-	if err := legacyDirectExecuteAdmin(command); err != nil {
-		return err
-	}
-	if !legacyDirectAdminChangesTable(command) {
-		return nil
-	}
-	return s.rebuild(ctx)
 }
 
 func (s *legacyDirectHarnessState) rebuild(ctx context.Context) error {
@@ -97,6 +86,7 @@ func legacyDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config q
 	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
 		Direct:                    config,
 		DefaultSchema:             legacyDirectDefaultSchema(cfg.Database),
+		SchemaDir:                 legacyDirectConfigDir(),
 		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
 		Functions:                 legacyDirectSQLFunctions(),
 		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
@@ -207,10 +197,7 @@ func legacyDirectSuiteTables(suite *roadmap.Suite) []string {
 			continue
 		}
 		if test.Kind == "admin" {
-			if table := legacyDirectAdminCreateTable(test.SQL); table != "" {
-				seen[strings.ToLower(table)] = struct{}{}
-			}
-			continue
+			test.SQL = roadmap.AdminStatementSQL(test.SQL)
 		}
 		statement, diagnostics := parser.Parse(test.SQL)
 		if diagnostics.BlocksNative() {
@@ -233,6 +220,12 @@ func legacyDirectSuiteTables(suite *roadmap.Suite) []string {
 			rememberTable(statement.Update.Table)
 		case qsbridge.QueryKindDelete:
 			rememberTable(statement.Delete.Table)
+		case qsbridge.QueryKindCreateTable:
+			rememberTable(statement.Create.Table)
+		case qsbridge.QueryKindDropTable:
+			rememberTable(statement.Drop.Table)
+		case qsbridge.QueryKindTruncate:
+			rememberTable(statement.Truncate.Table)
 		}
 	}
 	tables := make([]string, 0, len(seen))
@@ -270,32 +263,16 @@ func legacyDirectRawSQLTables(sql string) []string {
 	return tables
 }
 
-func legacyDirectAdminCreateTable(sql string) string {
-	fields := strings.Fields(sql)
-	if len(fields) < 2 {
-		return ""
-	}
-	if strings.EqualFold(fields[0], "create") {
-		return strings.Trim(fields[1], "`")
-	}
-	return ""
-}
-
-func legacyDirectAdminChangesTable(sql string) bool {
-	fields := strings.Fields(sql)
-	if len(fields) < 2 {
-		return false
-	}
-	switch strings.ToLower(strings.Trim(fields[0], "`")) {
-	case "create", "drop", "truncate":
-		return true
-	default:
-		return false
-	}
-}
-
-func legacyDirectEnsureConfigBackedTables(tables []string) error {
+func legacyDirectEnsureConfigBackedTables(ctx context.Context, tables []string, config qsruntime.DirectRuntimeConfig, schemaName string) error {
 	ordered, err := legacyDirectConfigBackedTablesInDependencyOrder(tables)
+	if err != nil {
+		return err
+	}
+	if len(ordered) == 0 {
+		return nil
+	}
+	config = config.WithDefaults()
+	quantaSource, err := source.NewQuantaSource(core.NewTableCacheStruct(), config.BaseDir, config.ConsulAddress, config.ServicePort, config.SessionPoolSize)
 	if err != nil {
 		return err
 	}
@@ -303,9 +280,32 @@ func legacyDirectEnsureConfigBackedTables(tables []string) error {
 		if !legacyDirectHasConfigSchema(table) {
 			continue
 		}
-		if err := legacyDirectExecuteAdmin("create " + table); err != nil {
+		if err := legacyDirectCreateConfigBackedTable(ctx, quantaSource, table, schemaName); err != nil {
 			return fmt.Errorf("bootstrap inabox-direct table %s: %w", table, err)
 		}
+	}
+	return nil
+}
+
+func legacyDirectCreateConfigBackedTable(ctx context.Context, quantaSource *source.QuantaSource, table, schemaName string) error {
+	handle, err := qsruntime.NewLegacySchemaMutationHandle(quantaSource, table, legacyDirectConfigDir())
+	if err != nil {
+		return err
+	}
+	request := qsruntime.NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Mutation = qsbridge.MutationShape{
+		Kind: qsbridge.MutationCreateTable,
+		Target: qsbridge.TableInstance{
+			Schema: schemaName,
+			Table:  table,
+		},
+	}
+	_, diagnostics, err := handle.CreateTable(ctx, request)
+	if err != nil {
+		return err
+	}
+	if diagnostics.BlocksNative() {
+		return diagnosticsError(diagnostics)
 	}
 	return nil
 }
@@ -352,6 +352,15 @@ func legacyDirectHasConfigSchema(table string) bool {
 	return ok
 }
 
+func legacyDirectConfigDir() string {
+	for _, path := range []string{"config", "sqlrunner/config"} {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
 func legacyDirectConfigSchemaPath(table string) (string, bool) {
 	if table == "" {
 		return "", false
@@ -393,26 +402,6 @@ func legacyDirectConfigSchemaForeignKeys(table string) ([]string, error) {
 	}
 	sort.Strings(keys)
 	return keys, nil
-}
-
-func legacyDirectExecuteAdmin(command string) error {
-	workingDirectory, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat("config"); os.IsNotExist(err) {
-		if _, sqlrunnerErr := os.Stat("sqlrunner/config"); sqlrunnerErr == nil {
-			if err := os.Chdir("sqlrunner"); err != nil {
-				return err
-			}
-			defer func() {
-				if err := os.Chdir(workingDirectory); err != nil {
-					log.Printf("inabox-direct admin restore working directory failed: %v", err)
-				}
-			}()
-		}
-	}
-	return test.ExecuteAdminCommandAndWait(command)
 }
 
 func legacyDirectServicePort(port string) (int, error) {
