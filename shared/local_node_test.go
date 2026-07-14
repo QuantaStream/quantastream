@@ -24,22 +24,22 @@ func TestLocalNodeServicesReadinessRequiresBitmapAndKV(t *testing.T) {
 	}
 }
 
-func TestDefaultLocalNodeStreamingRisksNamesMutationAndLookupGates(t *testing.T) {
+func TestDefaultLocalNodeStreamingRisksNamesLookupAndSearchGates(t *testing.T) {
 	risks := DefaultLocalNodeStreamingRisks()
-	var sawBatchMutate, sawBatchLookup bool
+	var sawBatchLookup, sawSearch bool
 	for _, risk := range risks {
 		switch risk.Method {
-		case "BatchMutate":
-			sawBatchMutate = true
 		case "BatchLookup":
 			sawBatchLookup = true
+		case "BatchIndex/Search":
+			sawSearch = true
 		}
-	}
-	if !sawBatchMutate {
-		t.Fatalf("BatchMutate risk missing from %+v", risks)
 	}
 	if !sawBatchLookup {
 		t.Fatalf("BatchLookup risk missing from %+v", risks)
+	}
+	if !sawSearch {
+		t.Fatalf("BatchIndex/Search risk missing from %+v", risks)
 	}
 }
 

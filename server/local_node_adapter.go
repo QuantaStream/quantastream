@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/golang/protobuf/ptypes/wrappers"
+	"google.golang.org/grpc/metadata"
 )
 
 // LocalNodeAdapter exposes server node services through the in-process
@@ -124,6 +126,25 @@ func (a LocalBitmapIndexAdapter) Commit(ctx context.Context, req *empty.Empty) (
 	return result, err
 }
 
+// BatchMutate forwards bitmap and BSI batch writes through the existing server
+// stream implementation without a gRPC hop.
+func (a LocalBitmapIndexAdapter) BatchMutate(ctx context.Context, reqs []*pb.IndexKVPair) (*empty.Empty, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	stream := &localIndexKVBatchStream{ctx: ctx, items: reqs}
+	err := a.Index.BatchMutate(stream)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "BatchMutate", start, err)
+	if err != nil {
+		return nil, err
+	}
+	if stream.closed != nil {
+		return stream.closed, nil
+	}
+	return &empty.Empty{}, nil
+}
+
 // LocalKVStoreAdapter forwards unary KV calls directly to KVStore.
 type LocalKVStoreAdapter struct {
 	Store    *KVStore
@@ -161,6 +182,71 @@ func (a LocalKVStoreAdapter) PutStringEnum(ctx context.Context, req *pb.StringEn
 	result, err := a.Store.PutStringEnum(ctx, req)
 	observeLocalNodeCall(a.Observer, "KVStore", "PutStringEnum", start, err)
 	return result, err
+}
+
+// BatchPut forwards KV batch writes through the existing server stream
+// implementation without a gRPC hop.
+func (a LocalKVStoreAdapter) BatchPut(ctx context.Context, reqs []*pb.IndexKVPair) (*empty.Empty, error) {
+	if a.Store == nil {
+		return nil, fmt.Errorf("local KVStore adapter is not mounted")
+	}
+	start := time.Now()
+	stream := &localIndexKVBatchStream{ctx: ctx, items: reqs}
+	err := a.Store.BatchPut(stream)
+	observeLocalNodeCall(a.Observer, "KVStore", "BatchPut", start, err)
+	if err != nil {
+		return nil, err
+	}
+	if stream.closed != nil {
+		return stream.closed, nil
+	}
+	return &empty.Empty{}, nil
+}
+
+type localIndexKVBatchStream struct {
+	ctx    context.Context
+	items  []*pb.IndexKVPair
+	offset int
+	closed *empty.Empty
+}
+
+func (s *localIndexKVBatchStream) SendAndClose(result *empty.Empty) error {
+	s.closed = result
+	return nil
+}
+
+func (s *localIndexKVBatchStream) Recv() (*pb.IndexKVPair, error) {
+	if s.offset >= len(s.items) {
+		return nil, io.EOF
+	}
+	item := s.items[s.offset]
+	s.offset++
+	return item, nil
+}
+
+func (s *localIndexKVBatchStream) SetHeader(metadata.MD) error {
+	return nil
+}
+
+func (s *localIndexKVBatchStream) SendHeader(metadata.MD) error {
+	return nil
+}
+
+func (s *localIndexKVBatchStream) SetTrailer(metadata.MD) {}
+
+func (s *localIndexKVBatchStream) Context() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
+func (s *localIndexKVBatchStream) SendMsg(interface{}) error {
+	return nil
+}
+
+func (s *localIndexKVBatchStream) RecvMsg(interface{}) error {
+	return nil
 }
 
 func observeLocalNodeCall(observer shared.LocalNodeObserver, service, method string, startedAt time.Time, err error) {

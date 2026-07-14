@@ -93,8 +93,13 @@ Current implementation status:
 - `qsinabox` can mount the in-process node backend, stage local schema
   configuration into the data directory, and build a local `core.SessionPool`
   over `shared.Conn.LocalNodeServices`.
-- The mounted read path can execute flat direct bitmap reads through local
-  `BitmapIndex` and `KVStore` facades without gRPC.
+- The mounted execution path can execute flat direct bitmap reads, native
+  projection materialization, file-backed `CREATE TABLE`/`DROP TABLE`, and
+  simple insert/commit/select flows through local `BitmapIndex` and `KVStore`
+  facades without gRPC.
+- Local `BitmapIndex` batch mutation, BSI batch set, sequence checkout, and
+  local `KVStore` batch put now reuse the existing node write logic through
+  in-process stream shims.
 - The executable can print mode readiness with `-status` and can construct the
   local backend with `-mount-local-node`.
 - Without `-status`, the executable mounts the local backend, composes the
@@ -123,11 +128,6 @@ attempt old admin bootstrap.
 
 Known local-node streaming risks:
 
-- `BitmapIndex.BatchMutate`: required for insert, update, delete, and standard
-  bitmap mutation paths.
-- `BitmapIndex.BatchSetValue`: required for BSI writes, including numeric and
-  timestamp ingestion.
-- `KVStore.BatchPut`: required for dictionary and backing-string writes.
 - `KVStore.BatchLookup`: required for efficient backing-string materialization.
 - `KVStore.Items`: required for dictionary/cache warmup without gRPC.
 - `StringSearch.BatchIndex` and `StringSearch.Search`: required for searchable
@@ -137,9 +137,9 @@ These are not conceptual blockers to `inabox-standard`; they are implementation
 gates where the current gRPC stream-shaped calls need direct local helpers or
 local stream shims.
 
-The first mounted backend is intentionally read-oriented and does not yet claim
-projection materialization. INSERT, UPDATE, DELETE, streaming ingestion,
-dictionary warmup, and text-search paths should be enabled only after the
+The first mounted backend now covers the essential local read, DDL, and insert
+write path. UPDATE, DELETE, streaming ingestion, broad dictionary warmup, and
+text-search paths should be promoted only after the remaining local
 batch/streaming shims above are implemented and covered by SQLRunner or
 compatibility-lab tests.
 

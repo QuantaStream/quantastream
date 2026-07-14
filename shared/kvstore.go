@@ -120,6 +120,14 @@ func (c *KVStore) splitBatch(batch map[interface{}]interface{}, op OpType) []map
 // BatchPut - Insert a batch of attributes.
 func (c *KVStore) BatchPut(indexPath string, batch map[interface{}]interface{}, pathIsKey bool) error {
 
+	if c.local != nil {
+		local, ok := c.local.(LocalKVStoreBatchService)
+		if !ok {
+			return fmt.Errorf("local KVStore adapter does not support BatchPut")
+		}
+		return c.batchPutLocal(local, indexPath, batch, pathIsKey)
+	}
+
 	batches := make([]map[interface{}]interface{}, len(c.client))
 	for i := range batches {
 		batches[i] = make(map[interface{}]interface{}, 0)
@@ -158,6 +166,24 @@ func (c *KVStore) BatchPut(indexPath string, batch map[interface{}]interface{}, 
 		}
 	}
 	return nil
+}
+
+func (c *KVStore) batchPutLocal(local LocalKVStoreBatchService, indexPath string, batch map[interface{}]interface{}, pathIsKey bool) error {
+	if pathIsKey {
+		_, indexPath = checkAdjustKeyAndPath(indexPath)
+	}
+	kvs := make([]*pb.IndexKVPair, 0, len(batch))
+	for k, v := range batch {
+		kvs = append(kvs, &pb.IndexKVPair{
+			IndexPath: indexPath,
+			Key:       ToBytes(k),
+			Value:     [][]byte{ToBytes(v)},
+		})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	_, err := local.BatchPut(ctx, kvs)
+	return err
 }
 
 // BatchPutNode - Put a batch of keys on a single node.

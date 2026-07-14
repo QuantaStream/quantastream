@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -54,15 +56,59 @@ func (m *StandardDirectRuntimeMount) Close() {
 }
 
 // NewDirectRuntime builds the first in-process runtime surface for
-// inabox-standard. The mounted runtime supports direct bitmap reads; projection
-// materialization and mutation wiring remain explicit follow-up gates.
+// inabox-standard. The mounted runtime supports local bitmap reads, native
+// projection materialization, file-backed DDL, and the essential insert path.
 func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache *core.TableCacheStruct, poolSize int) StandardDirectRuntimeMount {
+	if tableCache == nil {
+		tableCache = core.NewTableCacheStruct()
+	}
 	pool := b.NewSessionPool(config, tableCache, poolSize)
+	sessions := StandardDirectSessionProvider{
+		Pool:      pool,
+		SchemaDir: b.ConfigBaseDir(config),
+		Conn:      b.NewLocalConnection(),
+	}
+	bsiReader := StandardProjectionBSIReader{
+		Pool:       pool,
+		TableCache: tableCache,
+	}
+	dictionaryIDReader := StandardProjectionDictionaryIDReader{
+		Pool:       pool,
+		TableCache: tableCache,
+	}
+	backingStringReader := StandardBackingStringLookupReader{
+		Pool:       pool,
+		TableCache: tableCache,
+	}
+	dictionaryResolver := qsruntime.LegacyTableCacheDictionaryResolver{
+		TableCache: tableCache,
+		Schema:     config.WithDefaults().Database,
+	}
+	materialization := qsruntime.FallbackProjectionMaterializationKernel{
+		Preferred: qsruntime.NativeProjectionMaterializationKernel{
+			Reader: qsruntime.NativeProjectionBSIFieldReader{
+				TableCache:       tableCache,
+				Reader:           bsiReader,
+				DictionaryReader: dictionaryIDReader,
+			},
+			Rehydrator: qsruntime.NativeProjectionCompositeRehydrator{
+				Dictionary:     qsruntime.NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, dictionaryResolver),
+				BackingStrings: backingStringReader,
+			},
+		},
+	}
+	sameRowComparison := qsruntime.LegacyDirectSameRowBSIComparisonKernel{
+		TableCache: tableCache,
+		Reader:     bsiReader,
+	}
 	return StandardDirectRuntimeMount{
 		Pool: pool,
 		Runtime: qsruntime.DirectBitmapRuntime{
-			Sessions: StandardDirectSessionProvider{Pool: pool},
-			Adapter:  qsruntime.BitmapQueryResultAdapter{},
+			Sessions:          sessions,
+			Adapter:           qsruntime.BitmapQueryResultAdapter{},
+			FilterAdapter:     qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization},
+			Materialization:   materialization,
+			SameRowComparison: sameRowComparison,
 		},
 	}
 }
@@ -70,7 +116,9 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 // StandardDirectSessionProvider borrows table-scoped direct sessions from an
 // inabox-standard local session pool.
 type StandardDirectSessionProvider struct {
-	Pool *core.SessionPool
+	Pool      *core.SessionPool
+	SchemaDir string
+	Conn      *shared.Conn
 }
 
 // BorrowDirectSession returns a direct session handle for the request root table.
@@ -86,6 +134,16 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhasePlan, "direct request has no root table"),
 		}, nil
 	}
+	if request.Mutation.Kind == qsbridge.MutationCreateTable && strings.TrimSpace(p.SchemaDir) != "" {
+		return StandardDirectSessionHandle{
+			Pool:      p.Pool,
+			Table:     table,
+			Session:   p.syntheticSchemaMutationSession(),
+			Query:     qsruntime.LegacyBitmapQueryAdapter{},
+			Result:    qsruntime.LegacyBitmapQueryResultAdapter{},
+			Synthetic: true,
+		}, nil, nil
+	}
 	session, err := p.Pool.Borrow(table)
 	if err != nil {
 		return nil, nil, fmt.Errorf("borrow inabox-standard session for %s: %w", table, err)
@@ -99,6 +157,17 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 	}, nil, nil
 }
 
+func (p StandardDirectSessionProvider) syntheticSchemaMutationSession() *core.Session {
+	return &core.Session{
+		BasePath:     strings.TrimSpace(p.SchemaDir),
+		BitIndex:     shared.NewBitmapIndex(p.Conn),
+		KVStore:      shared.NewKVStore(p.Conn),
+		StringIndex:  shared.NewStringSearch(p.Conn, 1000),
+		TableBuffers: map[string]*core.TableBuffer{},
+		CreatedAt:    time.Now().UTC(),
+	}
+}
+
 // StandardDirectSessionHandle executes direct bitmap calls through a local
 // core.Session without gRPC.
 type StandardDirectSessionHandle struct {
@@ -107,6 +176,8 @@ type StandardDirectSessionHandle struct {
 	Session *core.Session
 	Query   qsruntime.LegacyBitmapQueryAdapter
 	Result  qsruntime.LegacyBitmapQueryResultAdapter
+	// Synthetic handles schema mutations for tables that are not active yet.
+	Synthetic bool
 }
 
 // QueryBitmap executes a lowered bitmap request through the local session.
@@ -132,6 +203,9 @@ func (h StandardDirectSessionHandle) InsertRows(ctx context.Context, request qsr
 
 // Release returns the local session to the pool.
 func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.DiagnosticSet {
+	if h.Synthetic {
+		return nil
+	}
 	if h.Pool == nil || h.Session == nil || h.Table == "" {
 		return nil
 	}
@@ -146,5 +220,6 @@ func (h StandardDirectSessionHandle) legacyHandle() qsruntime.LegacyQuantaSessio
 		Session:   h.Session,
 		Query:     h.Query,
 		Result:    h.Result,
+		Synthetic: h.Synthetic,
 	}
 }

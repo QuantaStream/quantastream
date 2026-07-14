@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -106,6 +107,38 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	}
 	if process.Backend.Adapter.BitmapIndex.GetTable("sample") == nil {
 		t.Fatalf("sample should be deployed into the local bitmap index after CREATE TABLE")
+	}
+
+	insertResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "insert into sample (id, city) values (1, 'Seattle')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INSERT error = %v", err)
+	}
+	if insertResult.Diagnostics.BlocksNative() || insertResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("INSERT diagnostics = %#v runtime=%#v", insertResult.Diagnostics, insertResult.Runtime.Diagnostics)
+	}
+	commitResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "commit", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("COMMIT error = %v", err)
+	}
+	if commitResult.Diagnostics.BlocksNative() || commitResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("COMMIT diagnostics = %#v runtime=%#v", commitResult.Diagnostics, commitResult.Runtime.Diagnostics)
+	}
+	selectResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "select id, city from sample where id = 1", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT after INSERT error = %v", err)
+	}
+	if selectResult.Diagnostics.BlocksNative() || selectResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("SELECT after INSERT diagnostics = %#v runtime=%#v", selectResult.Diagnostics, selectResult.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := selectResult.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("SELECT chunk diagnostics = %#v", chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("SELECT chunk rows = %#v, want one projected row", chunk.Rows)
+	}
+	if fmt.Sprint(chunk.Rows[0][0].Value) != "1" || fmt.Sprint(chunk.Rows[0][1].Value) != "Seattle" {
+		t.Fatalf("SELECT row = %#v, want [1 Seattle]", chunk.Rows[0])
 	}
 
 	dropResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "drop table sample", qsbridge.ExecutionOptions{})

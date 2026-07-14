@@ -131,6 +131,14 @@ func (c *BitmapIndex) Client(index int) pb.BitmapIndexClient {
 func (c *BitmapIndex) BatchMutate(batch map[string]map[string]map[uint64]map[int64]*Bitmap,
 	clear bool) error {
 
+	if c.local != nil {
+		local, ok := c.local.(LocalBitmapIndexBatchService)
+		if !ok {
+			return fmt.Errorf("local BitmapIndex adapter does not support BatchMutate")
+		}
+		return c.batchMutateLocal(local, clear, batch)
+	}
+
 	clients, batches, err := c.splitBitmapBatch(batch)
 	if err != nil {
 		return err
@@ -201,6 +209,37 @@ func (c *BitmapIndex) BatchMutateNode(clear bool, client pb.BitmapIndexClient,
 	return err
 }
 
+func (c *BitmapIndex) batchMutateLocal(local LocalBitmapIndexBatchService, clear bool,
+	batch map[string]map[string]map[uint64]map[int64]*Bitmap) error {
+
+	kvs := make([]*pb.IndexKVPair, 0)
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for rowID, ts := range field {
+				for t, bitmap := range ts {
+					buf, err := bitmap.Bits.ToBytes()
+					if err != nil {
+						u.Errorf("bitmap.Bits.ToBytes: %v", err)
+						return err
+					}
+					kvs = append(kvs, &pb.IndexKVPair{
+						IndexPath: indexName + "/" + fieldName,
+						Key:       ToBytes(int64(rowID)),
+						Value:     [][]byte{buf},
+						Time:      t,
+						IsClear:   clear,
+						IsUpdate:  bitmap.IsUpdate,
+					})
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	_, err := local.BatchMutate(ctx, kvs)
+	return err
+}
+
 // splitBitmapBatch - For a given batch of standard bitmap mutations, separate them into
 // sub-batches based upon a consistently hashed shard key so that they can be send to their
 // respective nodes.  For standard bitmaps, this shard key consists of [index/field/rowid/timestamp].
@@ -267,6 +306,14 @@ func (c *BitmapIndex) splitBitmapBatch(batch map[string]map[string]map[uint64]ma
 // BatchSetValueNode in parallel for optimal throughput.
 func (c *BitmapIndex) BatchSetValue(batch map[string]map[string]map[int64]*roaring64.BSI) error {
 
+	if c.local != nil {
+		local, ok := c.local.(LocalBitmapIndexBatchService)
+		if !ok {
+			return fmt.Errorf("local BitmapIndex adapter does not support BatchSetValue")
+		}
+		return c.batchSetValueLocal(local, batch)
+	}
+
 	clients, batches, err := c.splitBSIBatch(batch)
 	if err != nil {
 		return err
@@ -283,6 +330,41 @@ func (c *BitmapIndex) BatchSetValue(batch map[string]map[string]map[int64]*roari
 		return err
 	}
 	return nil
+}
+
+func (c *BitmapIndex) batchSetValueLocal(local LocalBitmapIndexBatchService,
+	batch map[string]map[string]map[int64]*roaring64.BSI) error {
+
+	kvs := make([]*pb.IndexKVPair, 0)
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, bsi := range field {
+				if bsi.GetCardinality() == 0 {
+					u.Debugf("BSI for %s - %s is empty.", indexName, fieldName)
+					continue
+				}
+				bitCount := bsi.BitCount()
+				if bitCount == 0 {
+					bitCount = 1
+				}
+				ba, err := bsi.MarshalBinary()
+				if err != nil {
+					u.Errorf("BSI.MarshalBinary: %v", err)
+					return err
+				}
+				kvs = append(kvs, &pb.IndexKVPair{
+					IndexPath: indexName + "/" + fieldName,
+					Key:       ToBytes(int64(bitCount * -1)),
+					Value:     ba,
+					Time:      t,
+				})
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	_, err := local.BatchMutate(ctx, kvs)
+	return err
 }
 
 // BatchSetValueNode - Send a batch of BSI values to a specific node.
@@ -454,6 +536,16 @@ func (c *BitmapIndex) CheckoutSequence(indexName, pkField string, ts time.Time,
 
 	req := &pb.CheckoutSequenceRequest{Index: indexName, PkField: pkField, Time: ts.UnixNano(),
 		ReservationSize: uint32(reservationSize)}
+
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		res, err := c.local.CheckoutSequence(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("CheckoutSequence: %v", err)
+		}
+		return NewSequencer(res.Start, int(res.Count)), nil
+	}
 
 	// We are checking out a sequence with the intent to write, but we only want the Active primary hence ReadIntent
 	indices, err1 := c.SelectNodes(fmt.Sprintf("%s/%s/%s", indexName, pkField, formatShardTime(ts)), ReadIntent)

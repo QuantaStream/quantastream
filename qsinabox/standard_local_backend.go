@@ -23,8 +23,9 @@ type StandardLocalBackend struct {
 }
 
 // MountStandardLocalBackend constructs and initializes the first in-process
-// node backend for inabox-standard. It intentionally mounts only the read-path
-// critical node services until streaming/batch shims are implemented.
+// node backend for inabox-standard. It mounts the local bitmap/KV surfaces
+// needed for the current read, DDL, and insert path; searchable text and broad
+// warmup iteration remain explicit follow-up gates.
 func MountStandardLocalBackend(config StandardConfig, observer shared.LocalNodeObserver) (StandardLocalBackend, error) {
 	config = config.WithDefaults()
 	if err := prepareStandardLocalStorage(config); err != nil {

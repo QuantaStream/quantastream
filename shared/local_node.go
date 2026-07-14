@@ -53,12 +53,25 @@ type LocalBitmapIndexService interface {
 	Commit(context.Context, *empty.Empty) (*empty.Empty, error)
 }
 
+// LocalBitmapIndexBatchService is the in-process equivalent of the current
+// BitmapIndex streaming write path. It remains optional so read-only local
+// adapters can still satisfy LocalBitmapIndexService.
+type LocalBitmapIndexBatchService interface {
+	BatchMutate(context.Context, []*pb.IndexKVPair) (*empty.Empty, error)
+}
+
 // LocalKVStoreService is the in-process semantic equivalent of the unary KVStore
-// node API. Batch and item iteration calls are tracked as streaming risks.
+// node API. Batch lookup and item iteration remain tracked as streaming risks.
 type LocalKVStoreService interface {
 	Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error)
 	Lookup(context.Context, *pb.IndexKVPair) (*pb.IndexKVPair, error)
 	PutStringEnum(context.Context, *pb.StringEnum) (*wrappers.UInt64Value, error)
+}
+
+// LocalKVStoreBatchService is the in-process equivalent of the current KVStore
+// streaming batch write path.
+type LocalKVStoreBatchService interface {
+	BatchPut(context.Context, []*pb.IndexKVPair) (*empty.Empty, error)
 }
 
 // LocalStringSearchService names the desired local string-search semantic API.
@@ -117,8 +130,8 @@ type LocalNodeReadiness struct {
 	StreamingRisks []LocalNodeStreamingRisk
 }
 
-// LocalNodeStreamingRisk tracks gRPC streaming APIs that need local equivalents
-// before inabox-standard can own the full ingest/mutation/search path.
+// LocalNodeStreamingRisk tracks gRPC streaming APIs that still need local
+// equivalents before inabox-standard can own the full ingest/search path.
 type LocalNodeStreamingRisk struct {
 	Service string
 	Method  string
@@ -130,27 +143,9 @@ type LocalNodeStreamingRisk struct {
 func DefaultLocalNodeStreamingRisks() []LocalNodeStreamingRisk {
 	return []LocalNodeStreamingRisk{
 		{
-			Service: "BitmapIndex",
-			Method:  "BatchMutate",
-			Risk:    "insert, update, delete, and bitmap mutation paths currently use gRPC stream mechanics",
-			Gate:    "provide a local batch mutation helper or stream shim before mutation suites can run fully in-process",
-		},
-		{
-			Service: "BitmapIndex",
-			Method:  "BatchSetValue",
-			Risk:    "BSI writes currently use gRPC stream mechanics",
-			Gate:    "provide a local BSI batch helper or stream shim before numeric/time ingestion can run fully in-process",
-		},
-		{
-			Service: "KVStore",
-			Method:  "BatchPut",
-			Risk:    "dictionary and backing-string writes currently use gRPC stream mechanics",
-			Gate:    "provide local KV batch writes before StringEnum and StringHash mutation paths are complete",
-		},
-		{
 			Service: "KVStore",
 			Method:  "BatchLookup",
-			Risk:    "backing-string materialization currently relies on gRPC stream mechanics for efficient lookup",
+			Risk:    "broad backing-string materialization still lacks an efficient local batch lookup path",
 			Gate:    "provide local KV batch lookup before broad StringHashBSI projections are production-ready",
 		},
 		{
