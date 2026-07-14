@@ -188,26 +188,35 @@ RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 ```
 
 `-engine inabox-standard` runs SQLRunner through the standalone
-`cmd/quantastream` process on port `4000`. It defaults to `127.0.0.1`,
-`MOLIG004`, database `quanta`, and does not require Consul because the target
-process owns its local in-process node adapter:
+`cmd/quantastream` process. It defaults to `127.0.0.1`, `MOLIG004`,
+database `quanta`, and does not require Consul because the target process owns
+its local in-process node adapter:
 
 ```bash
 ./run-inabox-standard-smoke.sh
 ```
 
-This is the default SQLRunner target for the simple QIAB product shape once
-the `quantastream` process has been started separately.
+The helper starts a temporary `quantastream` process on port `4400` by default,
+stages a tiny file-backed catalog, runs CREATE/INSERT/COMMIT/SELECT/DROP over
+the MySQL socket, and then removes the temporary data directory. Use
+`START_SERVER=0` to target an already running process, which defaults back to
+port `4000`.
 Roadmap `admin` bootstrap cases are accepted as deprecated shorthand and run
 through the SQL engine as `CREATE TABLE`, `DROP TABLE`, or `TRUNCATE TABLE`
 statements. New suites should prefer `kind: statement` with SQL DDL directly.
 
-The default standard smoke suite is `sqltests/inabox_standard_smoke.yaml`. It
-checks a small read-only TPCH slice over the MySQL socket. Override the target
-with `HOST`, `PORT`, `USER`, `DB`, `SUITE`, and optionally `CASE`:
+The default standard smoke suite is `sqltests/inabox_standard_qa_smoke.yaml`.
+It checks a self-contained QA slice over the MySQL socket. Override the target
+with `HOST`, `PORT`, `SQL_USER`, `DB`, `SUITE`, and optionally `CASE`:
 
 ```bash
-HOST=127.0.0.1 PORT=4000 CASE=inabox_standard_smoke.001.part_count ./run-inabox-standard-smoke.sh
+HOST=127.0.0.1 PORT=4000 START_SERVER=0 CASE=inabox_standard_qa_smoke.006.customer_city_count ./run-inabox-standard-smoke.sh
+```
+
+The older read-only TPCH smoke remains available for already staged data:
+
+```bash
+START_SERVER=0 SUITE=inabox_standard_smoke.yaml CASE=inabox_standard_smoke.001.part_count ./run-inabox-standard-smoke.sh
 ```
 
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible

@@ -1,0 +1,75 @@
+version: 1
+name: inabox_standard_qa_smoke
+
+tests:
+  - id: inabox_standard_qa_smoke.001.create_smoke_table
+    status: supported
+    kind: admin
+    sql: |-
+      create standard_smoke_qa
+
+  - id: inabox_standard_qa_smoke.002.insert_customer_abe
+    status: supported
+    kind: statement
+    sql: |-
+      insert into standard_smoke_qa (cust_id, first_name, city, age) values('1','Abe','Seattle',50)
+
+  - id: inabox_standard_qa_smoke.003.insert_customer_abby
+    status: supported
+    kind: statement
+    sql: |-
+      insert into standard_smoke_qa (cust_id, first_name, city, age) values('2','Abby','Tacoma',40)
+
+  - id: inabox_standard_qa_smoke.004.insert_customer_annie
+    status: supported
+    kind: statement
+    sql: |-
+      insert into standard_smoke_qa (cust_id, first_name, city, age) values('3','Annie','Seattle',50)
+
+  - id: inabox_standard_qa_smoke.005.commit
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: inabox_standard_qa_smoke.006.customer_city_count
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as seattle_count
+      from standard_smoke_qa
+      where city = 'Seattle'
+    expect:
+      rows:
+        - [2]
+
+  - id: inabox_standard_qa_smoke.007.customer_city_projection
+    status: supported
+    kind: query
+    order: rowsort
+    sql: |-
+      select first_name
+      from standard_smoke_qa
+      where city = 'Seattle'
+    expect:
+      columns: [first_name]
+      rows:
+        - ["Abe"]
+        - ["Annie"]
+
+  - id: inabox_standard_qa_smoke.008.default_bool_count
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as active_count
+      from standard_smoke_qa
+      where isActive = true
+    expect:
+      rows:
+        - [3]
+
+  - id: inabox_standard_qa_smoke.009.drop_smoke_table
+    status: supported
+    kind: admin
+    sql: |-
+      drop standard_smoke_qa

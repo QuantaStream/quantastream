@@ -123,8 +123,16 @@ cd ~/projects/quantastream/sqlrunner
 
 This path validates the product-facing QIAB server process. It is intentionally
 different from `inabox-direct`, where SQLRunner embeds the query engine itself.
-The current smoke suite assumes TPCH data has already been staged; it does not
-attempt old admin bootstrap.
+The default smoke helper starts a temporary `quantastream` process on port
+`4400`, stages a small file-backed QA catalog with an empty `CATALOG_OBJECTS`
+manifest, and validates CREATE/INSERT/COMMIT/SELECT/DROP over the MySQL socket.
+Use `START_SERVER=0` to target an already running process, which defaults back
+to port `4000`.
+
+The older read-only TPCH smoke suite can still be selected with
+`SUITE=inabox_standard_smoke.yaml` when TPCH data has already been staged. The
+self-contained QA smoke intentionally avoids `StringEnum` fields until the
+local-node `KVStore.Items` dictionary warmup shim is promoted.
 
 Known local-node streaming risks:
 
