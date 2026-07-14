@@ -260,6 +260,38 @@ func (c *KVStore) Lookup(indexPath string, k interface{}, valueType reflect.Kind
 // BatchLookup of multiple keys.
 func (c *KVStore) BatchLookup(indexPath string, batch map[interface{}]interface{}, pathIsKey bool) (map[interface{}]interface{}, error) {
 
+	if c.local != nil {
+		if pathIsKey {
+			_, indexPath = checkAdjustKeyAndPath(indexPath)
+		}
+		results := make(map[interface{}]interface{}, len(batch))
+		if len(batch) == 0 {
+			return results, nil
+		}
+		var keyType, valueType reflect.Kind
+		reqs := make([]*pb.IndexKVPair, 0, len(batch))
+		for k, v := range batch {
+			if keyType == reflect.Invalid {
+				keyType = reflect.ValueOf(k).Kind()
+				valueType = reflect.ValueOf(v).Kind()
+			}
+			reqs = append(reqs, &pb.IndexKVPair{IndexPath: indexPath, Key: ToBytes(k), Value: [][]byte{ToBytes(v)}})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		items, err := c.local.BatchLookup(ctx, reqs)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if item == nil || len(item.Value) == 0 {
+				continue
+			}
+			results[UnmarshalValue(keyType, item.Key)] = UnmarshalValue(valueType, item.Value[0])
+		}
+		return results, nil
+	}
+
 	if pathIsKey {
 		var key string
 		key, indexPath = checkAdjustKeyAndPath(indexPath)

@@ -65,6 +65,7 @@ type LocalBitmapIndexBatchService interface {
 type LocalKVStoreService interface {
 	Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error)
 	Lookup(context.Context, *pb.IndexKVPair) (*pb.IndexKVPair, error)
+	BatchLookup(context.Context, []*pb.IndexKVPair) ([]*pb.IndexKVPair, error)
 	Items(context.Context, string) ([]*pb.IndexKVPair, error)
 	PutStringEnum(context.Context, *pb.StringEnum) (*wrappers.UInt64Value, error)
 }
@@ -143,12 +144,6 @@ type LocalNodeStreamingRisk struct {
 // DefaultLocalNodeStreamingRisks returns the known stream-shaped node calls.
 func DefaultLocalNodeStreamingRisks() []LocalNodeStreamingRisk {
 	return []LocalNodeStreamingRisk{
-		{
-			Service: "KVStore",
-			Method:  "BatchLookup",
-			Risk:    "broad backing-string materialization still lacks an efficient local batch lookup path",
-			Gate:    "provide local KV batch lookup before broad StringHashBSI projections are production-ready",
-		},
 		{
 			Service: "StringSearch",
 			Method:  "BatchIndex/Search",

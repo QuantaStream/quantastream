@@ -3,7 +3,6 @@ package qsinabox
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -164,11 +163,13 @@ func (r StandardBackingStringLookupReader) LookupProjectionBackingStrings(ctx co
 		Values: make([]qsbridge.ResultCell, len(request.Values)),
 		Probes: []qsruntime.ExecutionProbe{{
 			Section: "native_projection_materialization",
-			Name:    "standard_backing_string_lookup_values",
+			Name:    "standard_backing_string_batch_lookup_values",
 			Value:   strconv.Itoa(len(request.Values)),
 			Detail:  index + "." + field,
 		}},
 	}
+	batches := make(map[string]map[interface{}]interface{})
+	positions := make(map[string]map[uint64][]int)
 	for i, value := range request.Values {
 		if err := ctx.Err(); err != nil {
 			return result, nil, err
@@ -179,13 +180,34 @@ func (r StandardBackingStringLookupReader) LookupProjectionBackingStrings(ctx co
 			continue
 		}
 		path := standardBackingStringPath(table, field, time.Unix(0, int64(rownum)))
-		visible, err := session.KVStore.Lookup(path, rownum, reflect.String, true)
-		if err != nil {
-			return result, nil, fmt.Errorf("backing-string lookup %s[%d]: %w", path, rownum, err)
+		if batches[path] == nil {
+			batches[path] = make(map[interface{}]interface{})
 		}
-		text, ok := visible.(string)
-		if ok && text != "" && text != "<nil>" {
-			result.Values[i] = qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: text}
+		batches[path][rownum] = ""
+		if positions[path] == nil {
+			positions[path] = make(map[uint64][]int)
+		}
+		positions[path][rownum] = append(positions[path][rownum], i)
+	}
+
+	paths := make([]string, 0, len(batches))
+	for path := range batches {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		lookup, err := session.KVStore.BatchLookup(path, batches[path], true)
+		if err != nil {
+			return result, nil, fmt.Errorf("backing-string BatchLookup error for [%s] - %w", path, err)
+		}
+		for rownum, outputPositions := range positions[path] {
+			visible, ok := standardBackingStringLookupValue(lookup, rownum)
+			if !ok || visible == "" {
+				continue
+			}
+			for _, outputPosition := range outputPositions {
+				result.Values[outputPosition] = qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: visible}
+			}
 		}
 	}
 	return result, nil, nil
@@ -270,6 +292,19 @@ func standardProjectionRowKey(value qsbridge.ResultCell) (uint64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func standardBackingStringLookupValue(values map[interface{}]interface{}, rownum uint64) (string, bool) {
+	for _, key := range []interface{}{rownum, int64(rownum), int(rownum)} {
+		if value, ok := values[key]; ok {
+			text, ok := value.(string)
+			if !ok || text == "" || text == "<nil>" {
+				return "", false
+			}
+			return text, true
+		}
+	}
+	return "", false
 }
 
 func standardBackingStringLookupTarget(request qsruntime.NativeProjectionBackingStringLookupRequest) (string, string) {

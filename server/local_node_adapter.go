@@ -173,6 +173,22 @@ func (a LocalKVStoreAdapter) Lookup(ctx context.Context, req *pb.IndexKVPair) (*
 	return result, err
 }
 
+// BatchLookup forwards KV batch reads through the existing server stream
+// implementation without a gRPC hop.
+func (a LocalKVStoreAdapter) BatchLookup(ctx context.Context, reqs []*pb.IndexKVPair) ([]*pb.IndexKVPair, error) {
+	if a.Store == nil {
+		return nil, fmt.Errorf("local KVStore adapter is not mounted")
+	}
+	start := time.Now()
+	stream := &localIndexKVBatchStream{ctx: ctx, items: reqs}
+	err := a.Store.BatchLookup(stream)
+	observeLocalNodeCall(a.Observer, "KVStore", "BatchLookup", start, err)
+	if err != nil {
+		return nil, err
+	}
+	return stream.responses, nil
+}
+
 // PutStringEnum forwards a StringEnum dictionary write without a gRPC client hop.
 func (a LocalKVStoreAdapter) PutStringEnum(ctx context.Context, req *pb.StringEnum) (*wrappers.UInt64Value, error) {
 	if a.Store == nil {
@@ -220,14 +236,20 @@ func (a LocalKVStoreAdapter) Items(ctx context.Context, index string) ([]*pb.Ind
 }
 
 type localIndexKVBatchStream struct {
-	ctx    context.Context
-	items  []*pb.IndexKVPair
-	offset int
-	closed *empty.Empty
+	ctx       context.Context
+	items     []*pb.IndexKVPair
+	responses []*pb.IndexKVPair
+	offset    int
+	closed    *empty.Empty
 }
 
 func (s *localIndexKVBatchStream) SendAndClose(result *empty.Empty) error {
 	s.closed = result
+	return nil
+}
+
+func (s *localIndexKVBatchStream) Send(item *pb.IndexKVPair) error {
+	s.responses = append(s.responses, item)
 	return nil
 }
 

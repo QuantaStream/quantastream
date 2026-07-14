@@ -24,7 +24,7 @@ func TestLocalNodeServicesReadinessRequiresBitmapAndKV(t *testing.T) {
 	}
 }
 
-func TestDefaultLocalNodeStreamingRisksNamesLookupAndSearchGates(t *testing.T) {
+func TestDefaultLocalNodeStreamingRisksNamesRemainingSearchGate(t *testing.T) {
 	risks := DefaultLocalNodeStreamingRisks()
 	var sawBatchLookup, sawSearch bool
 	for _, risk := range risks {
@@ -35,8 +35,8 @@ func TestDefaultLocalNodeStreamingRisksNamesLookupAndSearchGates(t *testing.T) {
 			sawSearch = true
 		}
 	}
-	if !sawBatchLookup {
-		t.Fatalf("BatchLookup risk missing from %+v", risks)
+	if sawBatchLookup {
+		t.Fatalf("BatchLookup risk should be promoted out of streaming risks: %+v", risks)
 	}
 	if !sawSearch {
 		t.Fatalf("BatchIndex/Search risk missing from %+v", risks)
@@ -70,6 +70,28 @@ func TestKVStoreLookupUsesLocalService(t *testing.T) {
 	}
 	if value != "local-value" {
 		t.Fatalf("value = %#v, want local-value", value)
+	}
+}
+
+func TestKVStoreBatchLookupUsesLocalService(t *testing.T) {
+	local := &recordingLocalKVStoreService{}
+	store := NewKVStore(&Conn{LocalNodeServices: LocalNodeServices{KVStore: local}})
+	lookup := map[interface{}]interface{}{
+		"row-1": "",
+		"row-2": "",
+	}
+	values, err := store.BatchLookup("sample/name", lookup, false)
+	if err != nil {
+		t.Fatalf("BatchLookup() error = %v", err)
+	}
+	if local.batchLookupCalls != 1 {
+		t.Fatalf("local batch lookup calls = %d, want 1", local.batchLookupCalls)
+	}
+	if got := values["row-1"]; got != "value-row-1" {
+		t.Fatalf("row-1 value = %#v, want value-row-1", got)
+	}
+	if got := values["row-2"]; got != "value-row-2" {
+		t.Fatalf("row-2 value = %#v, want value-row-2", got)
 	}
 }
 
@@ -132,8 +154,9 @@ func (s *recordingLocalBitmapIndexService) Commit(context.Context, *empty.Empty)
 }
 
 type recordingLocalKVStoreService struct {
-	lookupCalls int
-	itemsCalls  int
+	lookupCalls      int
+	batchLookupCalls int
+	itemsCalls       int
 }
 
 func (s *recordingLocalKVStoreService) Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error) {
@@ -143,6 +166,20 @@ func (s *recordingLocalKVStoreService) Put(context.Context, *pb.IndexKVPair) (*e
 func (s *recordingLocalKVStoreService) Lookup(context.Context, *pb.IndexKVPair) (*pb.IndexKVPair, error) {
 	s.lookupCalls++
 	return &pb.IndexKVPair{Value: [][]byte{ToBytes("local-value")}}, nil
+}
+
+func (s *recordingLocalKVStoreService) BatchLookup(_ context.Context, reqs []*pb.IndexKVPair) ([]*pb.IndexKVPair, error) {
+	s.batchLookupCalls++
+	results := make([]*pb.IndexKVPair, 0, len(reqs))
+	for _, req := range reqs {
+		key := UnmarshalValue(reflect.String, req.Key).(string)
+		results = append(results, &pb.IndexKVPair{
+			IndexPath: req.IndexPath,
+			Key:       req.Key,
+			Value:     [][]byte{ToBytes("value-" + key)},
+		})
+	}
+	return results, nil
 }
 
 func (s *recordingLocalKVStoreService) PutStringEnum(context.Context, *pb.StringEnum) (*wrappers.UInt64Value, error) {

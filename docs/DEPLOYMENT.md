@@ -137,7 +137,6 @@ and StringHashBSI materialization through the MySQL socket.
 
 Known local-node streaming risks:
 
-- `KVStore.BatchLookup`: required for efficient backing-string materialization.
 - `StringSearch.BatchIndex` and `StringSearch.Search`: required for searchable
   text fields.
 
@@ -146,11 +145,10 @@ gates where the current gRPC stream-shaped calls need direct local helpers or
 local stream shims.
 
 The first mounted backend now covers the essential local read, DDL, insert
-write, StringEnum dictionary warmup, and default-expression path. UPDATE,
-DELETE, streaming ingestion, broad backing-string batch materialization, and
-text-search paths should be promoted only after the remaining local
-batch/streaming shims above are implemented and covered by SQLRunner or
-compatibility-lab tests.
+write, StringEnum dictionary warmup, StringHashBSI batch materialization, and
+default-expression path. UPDATE, DELETE, streaming ingestion, and text-search
+paths should be promoted only after the remaining local batch/streaming shims
+above are implemented and covered by SQLRunner or compatibility-lab tests.
 
 ### `inabox-local`
 
