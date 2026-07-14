@@ -388,11 +388,12 @@ func TestNewSQLExecutionRequestCarriesDatetimeRangeForMaterialization(t *testing
 
 	request := NewSQLExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: []qsbridge.QuantaQueryFragment{{
-			Index: "lineitem",
-			Field: "l_shipdate",
-			BSIOp: qsbridge.QuantaBSIOpRange,
-			Begin: big.NewInt(820454400000),
-			End:   big.NewInt(828316799999),
+			Index:       "lineitem",
+			Field:       "l_shipdate",
+			BSIOp:       qsbridge.QuantaBSIOpRange,
+			Begin:       big.NewInt(820454400000),
+			End:         big.NewInt(828316799999),
+			ShardWindow: true,
 		}},
 	}, executionRequest)
 

@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,6 +48,22 @@ func TestMapperFactory(t *testing.T) {
 	value, err2 := mapper.MapValue(attr, true, nil, false)
 	assert.Nil(t, err2)
 	assert.Equal(t, big.NewInt(1), value)
+}
+
+func TestTimestampMapperStringRespectsExplicitUTC(t *testing.T) {
+	parsed, err := parseTimestampMapperString("2010-01-03 00:00:00.000Z")
+	require.NoError(t, err)
+
+	expected := time.Date(2010, 1, 3, 0, 0, 0, 0, time.UTC)
+	assert.True(t, parsed.UTC().Equal(expected), "parsed timestamp = %s", parsed.UTC())
+}
+
+func TestTimestampMapperStringTreatsTimezoneLessSQLLiteralAsUTC(t *testing.T) {
+	parsed, err := parseTimestampMapperString("2023-06-01T01:00:00")
+	require.NoError(t, err)
+
+	expected := time.Date(2023, 6, 1, 1, 0, 0, 0, time.UTC)
+	assert.True(t, parsed.UTC().Equal(expected), "parsed timestamp = %s", parsed.UTC())
 }
 
 func TestBuiltinMappers(t *testing.T) {

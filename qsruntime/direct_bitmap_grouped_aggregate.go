@@ -919,10 +919,20 @@ func directBitmapGroupCellsKey(cells []qsbridge.ResultCell) string {
 }
 
 func directBitmapCellEqual(left qsbridge.ResultCell, right qsbridge.ResultCell) bool {
+	leftTime, leftTimeOK := directBitmapTimeCellValue(left)
+	rightTime, rightTimeOK := directBitmapTimeCellValue(right)
+	if leftTimeOK && rightTimeOK {
+		return leftTime.UTC().Equal(rightTime.UTC())
+	}
 	return left.Kind == right.Kind && fmt.Sprint(left.Value) == fmt.Sprint(right.Value)
 }
 
 func directBitmapCellLess(left qsbridge.ResultCell, right qsbridge.ResultCell) bool {
+	leftTime, leftTimeOK := directBitmapTimeCellValue(left)
+	rightTime, rightTimeOK := directBitmapTimeCellValue(right)
+	if leftTimeOK && rightTimeOK {
+		return leftTime.UTC().Before(rightTime.UTC())
+	}
 	leftNumber, leftOK := directBitmapNumericCellValue(left)
 	rightNumber, rightOK := directBitmapNumericCellValue(right)
 	if leftOK && rightOK {

@@ -149,7 +149,7 @@ func materializationRequestFromPreparedQuery(runtimeRequest ExecutionRequest, pr
 		if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
 			continue
 		}
-		if !legacyRequestFragmentIsTimeField(timeWindowRequest, fragment) {
+		if !fragment.ShardWindow {
 			continue
 		}
 		materialization.FromEpochMillis = fragment.Begin.Int64()

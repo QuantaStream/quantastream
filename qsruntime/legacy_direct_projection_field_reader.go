@@ -272,7 +272,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	}
 	bsi := bsiByField[request.PhysicalField]
 	if bsi == nil {
-		return NativeProjectionBSIReadResult{}, nativeProjectionUnsupported("inabox-direct projection returned no BSI for " + request.Index + "." + request.PhysicalField), nil
+		bsi = roaring64.NewDefaultBSI()
 	}
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
@@ -511,7 +511,7 @@ func nativeProjectionWindowNanos(cache *core.TableCacheStruct, request NativePro
 		return nativeProjectionTimeWindowNanos(request.FromEpochMillis, request.ToEpochMillis)
 	}
 	table := legacyDirectRelationshipCachedTable(cache, request.Index)
-	if legacyDirectRelationshipTimeQuantumField(table) == "" {
+	if !legacyDirectTableHasPhysicalShardWindow(table) {
 		return 0, 0
 	}
 	return legacyDirectRelationshipFullTimeRangeBeginMillis * int64(time.Millisecond),
@@ -520,7 +520,7 @@ func nativeProjectionWindowNanos(cache *core.TableCacheStruct, request NativePro
 
 func nativeProjectionDictionaryWindowNanos(cache *core.TableCacheStruct, request NativeProjectionDictionaryIDReadRequest) (int64, int64) {
 	table := legacyDirectRelationshipCachedTable(cache, request.Index)
-	if legacyDirectRelationshipTimeQuantumField(table) == "" {
+	if !legacyDirectTableHasPhysicalShardWindow(table) {
 		return 0, 0
 	}
 	return legacyDirectRelationshipFullTimeRangeBeginMillis * int64(time.Millisecond),

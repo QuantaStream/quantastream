@@ -198,6 +198,11 @@ func TestLegacyBitmapQueryAdapterAddsLegacyTimeWindowForDatetimeRange(t *testing
 	if diagnostics.BlocksNative() {
 		t.Fatalf("lower diagnostics: %#v", diagnostics)
 	}
+	for i := range intermediate.Fragments {
+		if intermediate.Fragments[i].Field == "l_shipdate" {
+			intermediate.Fragments[i].ShardWindow = true
+		}
+	}
 
 	proto := LegacyBitmapQueryAdapter{}.ToProtoFromRequest(NewSQLExecutionRequest(intermediate, request))
 	if got, want := proto.FromTime, time.Date(1996, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(); got != want {
@@ -205,6 +210,33 @@ func TestLegacyBitmapQueryAdapterAddsLegacyTimeWindowForDatetimeRange(t *testing
 	}
 	if got, want := proto.ToTime, time.Date(1996, 3, 31, 23, 0, 0, 0, time.UTC).UnixNano(); got != want {
 		t.Fatalf("to time = %d, want %d", got, want)
+	}
+}
+
+func TestLegacyBitmapQueryAdapterDoesNotUseProjectedNonShardTimestampAsWindow(t *testing.T) {
+	query := qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "customers_qa",
+			Field:     "timestamp_micro",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpRange,
+			Begin:     big.NewInt(time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()),
+			End:       big.NewInt(time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()),
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index:        "customers_qa",
+			Field:        "timestamp_micro",
+			PhysicalName: "timestamp_micro",
+			Type:         qsbridge.DataTypeTime,
+		}},
+	}
+
+	proto := LegacyBitmapQueryAdapter{}.ToProtoFromRequest(NewExecutionRequest(query))
+	if proto.FromTime != 0 {
+		t.Fatalf("from time = %d, want unix-zero shard for non-physical timestamp predicate", proto.FromTime)
+	}
+	if proto.ToTime != 0 {
+		t.Fatalf("to time = %d, want unix-zero shard for non-physical timestamp predicate", proto.ToTime)
 	}
 }
 

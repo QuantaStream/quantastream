@@ -182,13 +182,7 @@ type StandardDirectSessionHandle struct {
 
 // QueryBitmap executes a lowered bitmap request through the local session.
 func (h StandardDirectSessionHandle) QueryBitmap(ctx context.Context, request qsruntime.ExecutionRequest) (qsruntime.BitmapQueryResult, qsbridge.DiagnosticSet, error) {
-	if h.Session == nil || h.Session.BitIndex == nil {
-		return qsruntime.BitmapQueryResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-standard direct session is not initialized"),
-		}, nil
-	}
-	response, err := h.Session.BitIndex.Query(h.Query.ToBitmapQueryFromRequest(request))
-	return h.Result.ToBitmapQueryResult(response), nil, err
+	return h.legacyHandle().QueryBitmap(ctx, request)
 }
 
 // ExecuteMutation dispatches in-process SQL mutations through the local session.

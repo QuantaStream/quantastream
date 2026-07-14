@@ -41,9 +41,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	}
 	bsi := bsiByField[request.PhysicalField]
 	if bsi == nil {
-		return qsruntime.NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "inabox-standard projection returned no BSI for "+request.Index+"."+request.PhysicalField),
-		}, nil
+		bsi = roaring64.NewDefaultBSI()
 	}
 	return qsruntime.NativeProjectionBSIReadResult{
 		BSI: bsi,
@@ -226,7 +224,7 @@ func standardProjectionWindowNanos(cache *core.TableCacheStruct, index string, f
 		return fromEpochMillis * int64(time.Millisecond), toEpochMillis * int64(time.Millisecond)
 	}
 	table := standardCachedTable(cache, index)
-	if standardProjectionTimeQuantumField(table) == "" {
+	if table == nil || table.TimeQuantumType == "" || standardProjectionTimeQuantumField(table) == "" {
 		return 0, 0
 	}
 	return standardProjectionFullTimeRangeBeginMillis * int64(time.Millisecond),

@@ -885,7 +885,7 @@ func directBitmapEvaluateMaterializedTimePartCall(call qsbridge.CallExpr, materi
 	case "yymm":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Year()*100 + int(value.Month()))}, nil
 	case "dayofweek":
-		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Weekday())}, nil
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Weekday()) + 1}, nil
 	case "hourofday":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Hour())}, nil
 	case "hourofweek":
@@ -1231,7 +1231,13 @@ func directBitmapTimeCellValue(cell qsbridge.ResultCell) (time.Time, bool) {
 	case time.Time:
 		return typed, true
 	case string:
-		for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02"} {
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			"2006-01-02 15:04:05.999999999Z",
+			"2006-01-02 15:04:05.000Z",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+		} {
 			parsed, err := time.Parse(layout, strings.TrimSpace(typed))
 			if err == nil {
 				return parsed, true

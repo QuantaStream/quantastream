@@ -356,12 +356,13 @@ func legacyDirectExecutionWithFullTableScanSeed(request ExecutionRequest, table 
 		begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, timeField)
 		request.Query = cloneIntermediateQuery(request.Query)
 		request.Query.Fragments = append([]qsbridge.QuantaQueryFragment{{
-			Index:     index,
-			Field:     timeField,
-			Operation: qsbridge.QuantaOperationIntersect,
-			BSIOp:     qsbridge.QuantaBSIOpRange,
-			Begin:     big.NewInt(begin),
-			End:       big.NewInt(end),
+			Index:       index,
+			Field:       timeField,
+			Operation:   qsbridge.QuantaOperationIntersect,
+			BSIOp:       qsbridge.QuantaBSIOpRange,
+			Begin:       big.NewInt(begin),
+			End:         big.NewInt(end),
+			ShardWindow: true,
 		}}, request.Query.Fragments...)
 		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 		return request
@@ -427,6 +428,7 @@ func legacyDirectExecutionWithShardWindow(request ExecutionRequest, table *core.
 
 	request.Query = cloneIntermediateQuery(request.Query)
 	if legacyDirectRequestHasShardRange(request, timeField) {
+		request.Query.Fragments = legacyDirectMarkShardRange(request.Query.Fragments, timeField)
 		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 		return request
 	}
@@ -439,12 +441,13 @@ func legacyDirectExecutionWithShardWindow(request ExecutionRequest, table *core.
 	}
 
 	shardRange := qsbridge.QuantaQueryFragment{
-		Index:     index,
-		Field:     timeField,
-		Operation: qsbridge.QuantaOperationIntersect,
-		BSIOp:     qsbridge.QuantaBSIOpRange,
-		Begin:     big.NewInt(legacyDirectRelationshipFullTimeRangeBeginMillis),
-		End:       big.NewInt(legacyDirectRelationshipFullTimeRangeEndMillis),
+		Index:       index,
+		Field:       timeField,
+		Operation:   qsbridge.QuantaOperationIntersect,
+		BSIOp:       qsbridge.QuantaBSIOpRange,
+		Begin:       big.NewInt(legacyDirectRelationshipFullTimeRangeBeginMillis),
+		End:         big.NewInt(legacyDirectRelationshipFullTimeRangeEndMillis),
+		ShardWindow: true,
 	}
 	request.Query.Fragments = append([]qsbridge.QuantaQueryFragment{shardRange}, request.Query.Fragments...)
 	request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
@@ -477,6 +480,17 @@ func legacyDirectRequestHasShardRange(request ExecutionRequest, timeField string
 		}
 	}
 	return false
+}
+
+func legacyDirectMarkShardRange(fragments []qsbridge.QuantaQueryFragment, timeField string) []qsbridge.QuantaQueryFragment {
+	marked := make([]qsbridge.QuantaQueryFragment, len(fragments))
+	copy(marked, fragments)
+	for i := range marked {
+		if marked[i].BSIOp == qsbridge.QuantaBSIOpRange && legacyDirectFragmentFieldMatches(marked[i], timeField) {
+			marked[i].ShardWindow = true
+		}
+	}
+	return marked
 }
 
 func legacyDirectFragmentFieldMatches(fragment qsbridge.QuantaQueryFragment, field string) bool {

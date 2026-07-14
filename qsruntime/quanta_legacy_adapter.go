@@ -86,7 +86,7 @@ func (a LegacyBitmapQueryAdapter) applyTimeWindow(query *legacy.BitmapQuery, req
 		if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
 			continue
 		}
-		if !legacyRequestFragmentIsTimeField(request, fragment) {
+		if !fragment.ShardWindow {
 			continue
 		}
 		query.FromTime = legacyBitmapQueryTimeWindowValue(fragment.Begin.Int64())

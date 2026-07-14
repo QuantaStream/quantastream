@@ -30,6 +30,46 @@ func TestDirectBitmapSeedMembershipOnlyRequestUsesLeftFieldExistence(t *testing.
 	}
 }
 
+func TestDirectBitmapCellEqualCoercesSQLTimestampLiteral(t *testing.T) {
+	cellTime := time.Date(2010, 1, 3, 0, 0, 0, 0, time.UTC)
+	cell := qsbridge.ResultCell{Kind: qsbridge.ValueTime, Value: cellTime}
+	literal := qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "2010-01-03 00:00:00.000Z"}
+
+	if !directBitmapCellEqual(cell, literal) {
+		t.Fatalf("timestamp cell did not equal SQL timestamp literal")
+	}
+}
+
+func TestDirectBitmapMaterializedDayOfWeekUsesMySQLConvention(t *testing.T) {
+	orderDate := qsbridge.FieldRef{
+		Table:        qsbridge.TableInstance{Table: "orders_qa"},
+		Name:         "order_date",
+		PhysicalName: "order_date",
+		Type:         qsbridge.DataTypeTime,
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{Index: "orders_qa", Field: "order_date"},
+			Values: []qsbridge.ResultCell{{
+				Kind:  qsbridge.ValueTime,
+				Value: time.Date(2023, 6, 10, 3, 0, 0, 0, time.UTC),
+			}},
+		}},
+	}
+
+	cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(
+		qsbridge.Call("dayofweek", qsbridge.Field(orderDate)),
+		rowSet,
+		0,
+	)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if cell.Kind != qsbridge.ValueInt || cell.Value != int64(7) {
+		t.Fatalf("dayofweek = %#v, want MySQL Saturday value 7", cell)
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}

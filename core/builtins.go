@@ -579,6 +579,22 @@ func bigIntToSecondsAndNanos(big *big.Int) (seconds, nanos int64) {
 	return
 }
 
+func parseTimestampMapperString(value string) (time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999Z",
+		"2006-01-02 15:04:05.000Z",
+	} {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			return parsed, nil
+		}
+	}
+	return dateparse.ParseIn(trimmed, time.UTC)
+}
+
 // SysMillisBSIMapper - Maps millisecond granularity timestamps to a BSI.
 type SysMillisBSIMapper struct {
 	DefaultMapper
@@ -623,9 +639,8 @@ func (m SysMillisBSIMapper) MapValue(attr *Attribute, val interface{},
 			result = big.NewInt(0)
 			return
 		}
-		loc, _ := time.LoadLocation("Local")
 		var t time.Time
-		t, err = dateparse.ParseIn(strVal, loc)
+		t, err = parseTimestampMapperString(strVal)
 		if err == nil {
 			result = big.NewInt(t.UnixNano() / 1000000)
 		}
@@ -720,9 +735,8 @@ func (m SysMicroBSIMapper) MapValue(attr *Attribute, val interface{},
 			result = big.NewInt(0)
 			return
 		}
-		loc, _ := time.LoadLocation("Local")
 		var t time.Time
-		t, err = dateparse.ParseIn(strVal, loc)
+		t, err = parseTimestampMapperString(strVal)
 		if err == nil {
 			result = big.NewInt(t.UnixNano() / 1000)
 		}
@@ -793,10 +807,11 @@ func (m SysSecBSIMapper) MapValue(attr *Attribute, val interface{},
 			result = big.NewInt(0)
 			return
 		}
-		loc, _ := time.LoadLocation("Local")
 		var t time.Time
-		t, err = dateparse.ParseIn(strVal, loc)
-		result = big.NewInt(t.Unix())
+		t, err = parseTimestampMapperString(strVal)
+		if err == nil {
+			result = big.NewInt(t.Unix())
+		}
 	case []byte:
 		t := time.Now()
 		err = t.UnmarshalBinary(val.([]byte))

@@ -368,8 +368,12 @@ type QuantaQueryFragment struct {
 	EndLiteral      LiteralExpr
 	HasLiteralRange bool
 	HasLiteral      bool
-	Negate          bool
-	NullCheck       bool
+	// ShardWindow marks a physical time-shard window fragment. Ordinary
+	// timestamp predicates compare encoded BSI values but must not move the
+	// legacy global FromTime/ToTime window.
+	ShardWindow bool
+	Negate      bool
+	NullCheck   bool
 }
 
 // QuantaFilterOperation names one node in a grouped bitmap filter tree.
@@ -851,6 +855,7 @@ func (f QuantaQueryFragment) cacheArgs() []string {
 		"literal:" + quantaFragmentLiteralString(f.Literal, f.HasLiteral),
 		"begin_literal:" + quantaFragmentLiteralString(f.BeginLiteral, f.HasLiteralRange),
 		"end_literal:" + quantaFragmentLiteralString(f.EndLiteral, f.HasLiteralRange),
+		"shard_window:" + boolCacheValue(f.ShardWindow),
 		"negate:" + boolCacheValue(f.Negate),
 		"null_check:" + boolCacheValue(f.NullCheck),
 	}

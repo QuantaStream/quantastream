@@ -520,9 +520,9 @@ tests:
     expect:
       columns: [order_id, order_year, order_month, order_month_alias, order_dow, order_hour]
       rows:
-        - ['1001', 2023, 6, 6, 4, 1]
-        - ['1002', 2023, 6, 6, 5, 2]
-        - ['1003', 2023, 6, 6, 6, 3]
+        - ['1001', 2023, 6, 6, 5, 1]
+        - ['1002', 2023, 6, 6, 6, 2]
+        - ['1003', 2023, 6, 6, 7, 3]
 
   - id: "function_expressions.140.aggregate_expression_argument"
     status: supported
