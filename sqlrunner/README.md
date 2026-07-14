@@ -221,6 +221,28 @@ The older read-only TPCH smoke remains available for already staged data:
 START_SERVER=0 SUITE=inabox_standard_smoke.yaml CASE=inabox_standard_smoke.001.part_count ./run-inabox-standard-smoke.sh
 ```
 
+For the current inabox-standard readiness gate, run the socket-based suites
+against temporary `cmd/quantastream` processes from the `sqlrunner` directory:
+
+```bash
+./run-inabox-standard-readiness.sh
+```
+
+The readiness runner stages a temporary file-backed catalog per suite and
+pre-activates only the tables needed for that suite's existing drop/create
+bootstrap. Portable suites are opt-in while standard-mode coverage is still
+expanding:
+
+```bash
+RUN_PORTABLE=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
+```
+
+The extended portable suites are also opt-in:
+
+```bash
+RUN_PORTABLE=1 RUN_EXTENDED=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
+```
+
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible
 server/proxy on port `4000` while a local distributed-shape harness is running.
 Use it when the local harness is running the proxy and you want to validate the
