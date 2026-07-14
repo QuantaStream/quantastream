@@ -66,6 +66,16 @@ func (c *CachedCatalog) Function(name string) (FunctionDefinition, DiagnosticSet
 	return cloneFunctionDefinition(function), cloneDiagnosticSet(diagnostics)
 }
 
+// DependentRelationships returns child dependencies from a backend that can enumerate them.
+func (c *CachedCatalog) DependentRelationships(schema string, parentTable string) ([]RelationshipDefinition, DiagnosticSet) {
+	backend, ok := c.backend.(DependentRelationshipCatalog)
+	if !ok {
+		return nil, nil
+	}
+	relationships, diagnostics := backend.DependentRelationships(schema, parentTable)
+	return cloneRelationshipDefinitions(relationships), cloneDiagnosticSet(diagnostics)
+}
+
 // InvalidateTable removes one cached table entry.
 func (c *CachedCatalog) InvalidateTable(schema string, name string) {
 	c.tables.Delete(catalogTableCacheKey(schema, name))
@@ -120,7 +130,7 @@ func cloneTableDefinition(table TableDefinition) TableDefinition {
 	for _, field := range table.Fields {
 		cloned.Fields = append(cloned.Fields, cloneFieldDefinition(field))
 	}
-	cloned.Relationships = append([]RelationshipDefinition(nil), table.Relationships...)
+	cloned.Relationships = cloneRelationshipDefinitions(table.Relationships)
 	return cloned
 }
 

@@ -80,6 +80,8 @@ const (
 	DiagnosticMutationProtectedField DiagnosticCode = "mutation_protected_field"
 	// DiagnosticUnsupportedMutation marks mutation semantics outside the initial native legality model.
 	DiagnosticUnsupportedMutation DiagnosticCode = "unsupported_mutation"
+	// DiagnosticTruncateChildDataExists rejects truncating a parent before dependent child tables are empty.
+	DiagnosticTruncateChildDataExists DiagnosticCode = "truncate_child_data_exists"
 	// DiagnosticRouteRejected marks a native-only route rejected by policy.
 	DiagnosticRouteRejected DiagnosticCode = "route_rejected"
 	// DiagnosticAccessDenied marks an authorization decision that denied access.

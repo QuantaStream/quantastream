@@ -364,6 +364,72 @@ func TestUnboundStatementBindDelete(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindTruncate(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "truncate table orders",
+		Kind: QueryKindTruncate,
+		Truncate: UnboundTruncate{
+			Table:  UnboundTable{Name: "orders"},
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindTruncate {
+		t.Fatalf("Kind = %q, want truncate", query.Kind)
+	}
+	if query.Result.Kind != ResultStatement {
+		t.Fatalf("Result.Kind = %q, want statement", query.Result.Kind)
+	}
+	if query.Mutation.Kind != MutationTruncate {
+		t.Fatalf("Mutation.Kind = %q, want truncate", query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "orders" {
+		t.Fatalf("Mutation target = %#v, want orders", query.Mutation.Target)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessTruncate, "orders") {
+		t.Fatalf("RequiredAccess = %#v, want truncate on orders", access)
+	}
+}
+
+func TestUnboundStatementBindTruncateTracksChildDependencies(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "truncate table customer",
+		Kind: QueryKindTruncate,
+		Truncate: UnboundTruncate{
+			Table:  UnboundTable{Name: "customer"},
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if len(query.Mutation.DependentRelationships) != 1 {
+		t.Fatalf("dependent relationships = %#v, want orders_customer", query.Mutation.DependentRelationships)
+	}
+	relationship := query.Mutation.DependentRelationships[0]
+	if relationship.Name != "orders_customer" || relationship.ChildTable() != "orders" || relationship.ParentTable() != "customer" {
+		t.Fatalf("relationship = %#v, want orders child of customer", relationship)
+	}
+}
+
+func hasAccessRequirement(requirements []AccessRequirement, privilege AccessPrivilege, table string) bool {
+	for _, requirement := range requirements {
+		if requirement.Privilege == privilege && requirement.Table.Table == table {
+			return true
+		}
+	}
+	return false
+}
+
 func TestUnboundStatementBindUnsupportedKind(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{Kind: QueryKindDDL}

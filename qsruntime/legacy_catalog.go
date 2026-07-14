@@ -96,6 +96,27 @@ func (c LegacyTableCacheCatalog) Relationship(name string) (qsbridge.Relationshi
 	}
 }
 
+// DependentRelationships returns child relationships that reference parentTable.
+func (c LegacyTableCacheCatalog) DependentRelationships(schema string, parentTable string) ([]qsbridge.RelationshipDefinition, qsbridge.DiagnosticSet) {
+	_ = schema
+	seen := make(map[string]struct{})
+	dependencies := make([]qsbridge.RelationshipDefinition, 0)
+	for _, table := range c.cachedTables() {
+		for _, relationship := range c.relationshipsForTable(table) {
+			if !relationship.ReferencesParentTable(parentTable) {
+				continue
+			}
+			key := strings.ToLower(relationship.Name) + "\x00" + strings.ToLower(relationship.ChildTable()) + "\x00" + strings.ToLower(relationship.ParentTable())
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			dependencies = append(dependencies, relationship)
+		}
+	}
+	return dependencies, nil
+}
+
 // Function looks up an adapter-supplied function definition.
 func (c LegacyTableCacheCatalog) Function(name string) (qsbridge.FunctionDefinition, qsbridge.DiagnosticSet) {
 	for _, function := range c.Functions {
@@ -219,6 +240,9 @@ func legacyPhysicalFieldName(fieldName string, sourceName string) string {
 }
 
 func (c LegacyTableCacheCatalog) relationshipsForTable(table *core.Table) []qsbridge.RelationshipDefinition {
+	if table == nil {
+		return nil
+	}
 	relationships := make([]qsbridge.RelationshipDefinition, 0)
 	for _, attribute := range table.Attributes {
 		if !strings.EqualFold(attribute.MappingStrategy, "ParentRelation") || attribute.ForeignKey == "" {

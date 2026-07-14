@@ -286,6 +286,23 @@ func TestLegacyTableCacheCatalogDerivesParentRelationMetadata(t *testing.T) {
 	}
 }
 
+func TestLegacyTableCacheCatalogFindsDependentRelationshipsForParent(t *testing.T) {
+	catalog := LegacyTableCacheCatalog{TableCache: legacyCatalogTestCache()}
+
+	relationships, diagnostics := catalog.DependentRelationships("quanta", "orders")
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("dependent relationship diagnostics = %#v, want none", diagnostics)
+	}
+	if len(relationships) != 1 {
+		t.Fatalf("relationships = %#v, want one lineitem dependency", relationships)
+	}
+	relationship := relationships[0]
+	if relationship.ChildTable() != "lineitem" || relationship.ParentTable() != "orders" || relationship.FromField != "l_orderkey" {
+		t.Fatalf("relationship = %#v, want lineitem child of orders", relationship)
+	}
+}
+
 func TestLegacyTableCacheCatalogReportsCatalogMisses(t *testing.T) {
 	catalog := LegacyTableCacheCatalog{}
 

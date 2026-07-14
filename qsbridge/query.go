@@ -12,6 +12,8 @@ const (
 	QueryKindUpdate QueryKind = "update"
 	// QueryKindDelete identifies a DELETE statement.
 	QueryKindDelete QueryKind = "delete"
+	// QueryKindTruncate identifies a TRUNCATE statement.
+	QueryKindTruncate QueryKind = "truncate"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
 	QueryKindSession QueryKind = "session"
 	// QueryKindDDL identifies schema-changing statements.

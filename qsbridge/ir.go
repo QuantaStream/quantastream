@@ -523,6 +523,8 @@ const (
 	MutationUpdate MutationKind = "update"
 	// MutationDelete describes a DELETE target and predicates.
 	MutationDelete MutationKind = "delete"
+	// MutationTruncate describes a whole-table TRUNCATE target.
+	MutationTruncate MutationKind = "truncate"
 )
 
 // MutationRow describes one parser-neutral row of values for INSERT planning.
@@ -543,10 +545,11 @@ type MutationAssignment struct {
 // planner work can advance without wiring runtime mutation behavior into
 // qsbridge yet.
 type MutationShape struct {
-	Kind        MutationKind
-	Target      TableInstance
-	Columns     []FieldRef
-	Rows        []MutationRow
-	Assignments []MutationAssignment
-	Predicates  []Predicate
+	Kind                   MutationKind
+	Target                 TableInstance
+	Columns                []FieldRef
+	Rows                   []MutationRow
+	Assignments            []MutationAssignment
+	Predicates             []Predicate
+	DependentRelationships []RelationshipDefinition
 }

@@ -40,10 +40,13 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "delete"); ok {
 		return parseSimpleDelete(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "truncate"); ok {
+		return parseSimpleTruncate(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -272,6 +275,38 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 			Table:      table,
 			Predicates: predicates,
 			Result:     ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleTruncate(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	truncateBody, ok := consumeKeyword(trimmed, "truncate")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only TRUNCATE statements are supported"), false
+	}
+	if remaining, ok := consumeKeyword(truncateBody, "table"); ok {
+		truncateBody = remaining
+	}
+	if strings.TrimSpace(truncateBody) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("TRUNCATE must include a table"), false
+	}
+	if hasAnyKeyword(truncateBody, "where", "partition", "cascade", "restrict") {
+		return UnboundStatement{}, simpleParserDiagnostic("TRUNCATE only supports one table name"), false
+	}
+	table, diagnostic, ok := parseSimpleTable(truncateBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("TRUNCATE table aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindTruncate,
+		Truncate: UnboundTruncate{
+			Table:  table,
+			Result: ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
 }
@@ -2352,7 +2387,7 @@ func splitProjectionField(name string) (string, string) {
 }
 
 func simpleParserDiagnostic(message string) Diagnostic {
-	return ErrorDiagnostic(DiagnosticParserBoundary, PhaseParse, "simple parser supports SELECT field[, field...] or * FROM table [WHERE field comparison literal|field BETWEEN lower AND upper|field IN (literal[, ...]) [AND ...]] [ORDER BY field ASC|DESC] [LIMIT n [OFFSET m]], INSERT ... VALUES, and COMMIT: "+message)
+	return ErrorDiagnostic(DiagnosticParserBoundary, PhaseParse, "simple parser supports SELECT field[, field...] or * FROM table [WHERE field comparison literal|field BETWEEN lower AND upper|field IN (literal[, ...]) [AND ...]] [ORDER BY field ASC|DESC] [LIMIT n [OFFSET m]], INSERT ... VALUES, UPDATE, DELETE, TRUNCATE, and COMMIT: "+message)
 }
 
 func mixedBooleanPredicateDiagnostic(message string) Diagnostic {

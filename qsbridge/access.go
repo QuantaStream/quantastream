@@ -12,6 +12,8 @@ const (
 	AccessUpdate AccessPrivilege = "update"
 	// AccessDelete permits deleting rows from a table.
 	AccessDelete AccessPrivilege = "delete"
+	// AccessTruncate permits clearing all rows from a table.
+	AccessTruncate AccessPrivilege = "truncate"
 )
 
 // AccessRequirement describes one authorization check required by a plan.
@@ -37,6 +39,8 @@ func (q QueryIR) RequiredAccess() []AccessRequirement {
 		collector.addFields(AccessUpdate, q.Mutation.Target, q.Mutation.Columns)
 	case MutationDelete:
 		collector.ensureTable(AccessDelete, q.Mutation.Target)
+	case MutationTruncate:
+		collector.ensureTable(AccessTruncate, q.Mutation.Target)
 	}
 	return collector.requirements
 }

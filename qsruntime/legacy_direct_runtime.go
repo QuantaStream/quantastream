@@ -503,6 +503,8 @@ func (h LegacyQuantaSessionHandle) ExecuteMutation(ctx context.Context, request 
 		return h.UpdateRows(ctx, request)
 	case qsbridge.MutationDelete:
 		return h.DeleteRows(ctx, request)
+	case qsbridge.MutationTruncate:
+		return h.TruncateTable(ctx, request)
 	default:
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(
@@ -512,6 +514,133 @@ func (h LegacyQuantaSessionHandle) ExecuteMutation(ctx context.Context, request 
 			),
 		}, nil
 	}
+}
+
+// TruncateTable clears all bitmap-backed data for the target table through the table operation API.
+func (h LegacyQuantaSessionHandle) TruncateTable(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"legacy quanta session has no bitmap index",
+			),
+		}, nil
+	}
+	if request.Mutation.Kind != qsbridge.MutationTruncate {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticUnsupportedMutation,
+				qsbridge.PhaseExecute,
+				"inabox-direct truncate called for non-TRUNCATE mutation",
+			),
+		}, nil
+	}
+	tableName := h.TableName
+	if request.Mutation.Target.Table != "" {
+		tableName = request.Mutation.Target.Table
+	}
+	if tableName == "" {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInvalidExecutionOption,
+				qsbridge.PhaseExecute,
+				"truncate mutation has no target table",
+			),
+		}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if diagnostics, err := h.ensureTruncateChildTablesEmpty(ctx, tableName, request.Mutation.DependentRelationships); err != nil || diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, err
+	}
+	if err := h.Session.BitIndex.TableOperation(tableName, "truncate"); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	return qsbridge.StatementResult{
+		AffectedRows: 0,
+		Status:       fmt.Sprintf("Table %s truncated", tableName),
+	}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) ensureTruncateChildTablesEmpty(ctx context.Context, parentTable string, relationships []qsbridge.RelationshipDefinition) (qsbridge.DiagnosticSet, error) {
+	childTables := legacyDirectTruncateChildTables(parentTable, relationships)
+	if len(childTables) == 0 {
+		return nil, nil
+	}
+	if h.Pool == nil {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"truncate dependency check requires a session pool",
+			),
+		}, nil
+	}
+	for _, childTable := range childTables {
+		count, diagnostics, err := h.truncateChildTableCount(ctx, childTable)
+		if err != nil || diagnostics.BlocksNative() {
+			return diagnostics, err
+		}
+		if count > 0 {
+			return qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticTruncateChildDataExists,
+					qsbridge.PhaseExecute,
+					fmt.Sprintf("cannot truncate parent table %s while child table %s contains %d row(s); truncate child tables first", parentTable, childTable, count),
+				),
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) truncateChildTableCount(ctx context.Context, childTable string) (uint64, qsbridge.DiagnosticSet, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
+	session, err := h.Pool.Borrow(childTable)
+	if err != nil {
+		return 0, nil, err
+	}
+	childHandle := LegacyQuantaSessionHandle{
+		TableName: childTable,
+		Pool:      h.Pool,
+		Session:   session,
+		Query:     h.Query,
+		Result:    h.Result,
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SourceIndexes = []string{childTable}
+	result, diagnostics, queryErr := childHandle.QueryBitmap(ctx, request)
+	releaseDiagnostics := childHandle.Release(ctx)
+	diagnostics = append(diagnostics, releaseDiagnostics...)
+	if queryErr != nil || diagnostics.BlocksNative() {
+		return 0, diagnostics, queryErr
+	}
+	return result.Count, nil, nil
+}
+
+func legacyDirectTruncateChildTables(parentTable string, relationships []qsbridge.RelationshipDefinition) []string {
+	seen := make(map[string]struct{})
+	tables := make([]string, 0, len(relationships))
+	for _, relationship := range relationships {
+		if !relationship.ReferencesParentTable(parentTable) {
+			continue
+		}
+		childTable := strings.TrimSpace(relationship.ChildTable())
+		if childTable == "" {
+			continue
+		}
+		key := strings.ToLower(childTable)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		tables = append(tables, childTable)
+	}
+	return tables
 }
 
 // InsertRows writes bound literal INSERT rows through the borrowed legacy session.

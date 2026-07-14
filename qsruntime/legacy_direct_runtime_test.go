@@ -260,6 +260,21 @@ func TestLegacyDirectExecuteDeleteReportsMissingBitmapIndex(t *testing.T) {
 	}
 }
 
+func TestLegacyDirectTruncateChildTablesDeduplicatesParentDependencies(t *testing.T) {
+	relationships := []qsbridge.RelationshipDefinition{
+		{Name: "lineitem.orders", FromTable: "lineitem", ToTable: "orders", Direction: qsbridge.JoinChildToParent},
+		{Name: "lineitem.orders.duplicate", FromTable: "lineitem", ToTable: "orders", Direction: qsbridge.JoinChildToParent},
+		{Name: "orders.customer", FromTable: "orders", ToTable: "customer", Direction: qsbridge.JoinChildToParent},
+		{Name: "deliveries.lineitem", FromTable: "lineitem", ToTable: "deliveries", Direction: qsbridge.JoinParentToChild},
+	}
+
+	children := legacyDirectTruncateChildTables("orders", relationships)
+
+	if len(children) != 1 || children[0] != "lineitem" {
+		t.Fatalf("children = %#v, want only lineitem", children)
+	}
+}
+
 func TestLegacyDirectMutationBitmapCopiesRownums(t *testing.T) {
 	bitmap := legacyDirectMutationBitmap([]qsbridge.QuantaRownum{3, 5, 5})
 	if bitmap.GetCardinality() != 2 || !bitmap.Contains(3) || !bitmap.Contains(5) {

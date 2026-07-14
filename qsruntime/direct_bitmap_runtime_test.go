@@ -399,6 +399,42 @@ func TestDirectBitmapRuntimeExecutesMutationThroughSession(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeExecutesTruncateMutationThroughSession(t *testing.T) {
+	called := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			if request.Mutation.Target.Table != "customers_qa" {
+				t.Fatalf("session request target = %#v, want customers_qa", request.Mutation.Target)
+			}
+			return DirectSessionHandleFunc{
+				MutationFunc: func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+					called = true
+					if request.Mutation.Kind != qsbridge.MutationTruncate {
+						t.Fatalf("mutation kind = %q, want truncate", request.Mutation.Kind)
+					}
+					return qsbridge.StatementResult{Status: "Table customers_qa truncated"}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationTruncate,
+			Target: qsbridge.TableInstance{Table: "customers_qa"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !called {
+		t.Fatalf("mutation handler was not called")
+	}
+	if result.Statement.Status != "Table customers_qa truncated" {
+		t.Fatalf("status = %q, want truncate status", result.Statement.Status)
+	}
+}
+
 func TestDirectBitmapProjectedValuesUsesRoleForRepeatedAliases(t *testing.T) {
 	rowSet := qsbridge.QuantaProjectedRowSet{
 		ProjectionVectors: []qsbridge.QuantaProjectionVector{

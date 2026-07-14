@@ -13,13 +13,14 @@ type ParserBridge interface {
 
 // UnboundStatement is a parser-neutral statement before catalog binding.
 type UnboundStatement struct {
-	SQL     string
-	Kind    QueryKind
-	Select  UnboundSelect
-	Insert  UnboundInsert
-	Update  UnboundUpdate
-	Delete  UnboundDelete
-	Session UnboundSession
+	SQL      string
+	Kind     QueryKind
+	Select   UnboundSelect
+	Insert   UnboundInsert
+	Update   UnboundUpdate
+	Delete   UnboundDelete
+	Truncate UnboundTruncate
+	Session  UnboundSession
 }
 
 // Bind binds the statement using context and returns a QueryIR when possible.
@@ -33,6 +34,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindUpdate(context, s.Update)
 	case QueryKindDelete:
 		return BindDelete(context, s.Delete)
+	case QueryKindTruncate:
+		return BindTruncate(context, s.Truncate)
 	case QueryKindSession:
 		return BindSession(context, s.Session)
 	default:
@@ -88,6 +91,13 @@ type UnboundDelete struct {
 	Predicates []UnboundPredicate
 	Result     ResultShape
 	Blockers   []NativeBlocker
+}
+
+// UnboundTruncate describes a TRUNCATE shape before catalog binding.
+type UnboundTruncate struct {
+	Table    UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
 }
 
 // UnboundSession describes a session-affecting statement before binding.
@@ -460,6 +470,37 @@ func BindDelete(context *BindContext, deleteStmt UnboundDelete) (QueryIR, Diagno
 		Predicates: predicates,
 	}
 	return query, diagnostics
+}
+
+// BindTruncate binds parser-neutral TRUNCATE metadata into QueryIR.
+func BindTruncate(context *BindContext, truncateStmt UnboundTruncate) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindMutationTarget(context, QueryKindTruncate, truncateStmt.Table, truncateStmt.Result, truncateStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	dependencies, dependencyDiagnostics := bindTruncateDependentRelationships(context, target.Instance)
+	if dependencyDiagnostics.BlocksNative() {
+		diagnostics = append(diagnostics, dependencyDiagnostics...)
+		return query, diagnostics
+	}
+
+	query.Mutation = MutationShape{
+		Kind:                   MutationTruncate,
+		Target:                 target.Instance,
+		DependentRelationships: dependencies,
+	}
+	return query, diagnostics
+}
+
+func bindTruncateDependentRelationships(context *BindContext, target TableInstance) ([]RelationshipDefinition, DiagnosticSet) {
+	if context == nil || context.Catalog == nil || target.Table == "" {
+		return nil, nil
+	}
+	catalog, ok := context.Catalog.(DependentRelationshipCatalog)
+	if !ok {
+		return nil, nil
+	}
+	return catalog.DependentRelationships(target.Schema, target.Table)
 }
 
 // BindJoin binds one parser-neutral equality join edge.

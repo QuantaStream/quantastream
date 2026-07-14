@@ -80,7 +80,7 @@ const (
 // PhysicalIntentForQueryKind maps SQL statement kind to physical read/write intent.
 func PhysicalIntentForQueryKind(kind QueryKind) PhysicalAccessIntent {
 	switch kind {
-	case QueryKindInsert, QueryKindUpdate, QueryKindDelete, QueryKindDDL:
+	case QueryKindInsert, QueryKindUpdate, QueryKindDelete, QueryKindTruncate, QueryKindDDL:
 		return PhysicalAccessWrite
 	default:
 		return PhysicalAccessRead

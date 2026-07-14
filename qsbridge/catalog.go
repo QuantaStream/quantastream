@@ -94,6 +94,41 @@ type RelationshipDefinition struct {
 	Encoding    RelationshipEncodingProfile
 }
 
+// ParentTable returns the referenced side of the relationship.
+func (r RelationshipDefinition) ParentTable() string {
+	switch r.Direction {
+	case JoinParentToChild:
+		return r.FromTable
+	case JoinChildToParent:
+		return r.ToTable
+	default:
+		if r.ToTable != "" {
+			return r.ToTable
+		}
+		return r.FromTable
+	}
+}
+
+// ChildTable returns the dependent side of the relationship.
+func (r RelationshipDefinition) ChildTable() string {
+	switch r.Direction {
+	case JoinParentToChild:
+		return r.ToTable
+	case JoinChildToParent:
+		return r.FromTable
+	default:
+		if r.FromTable != "" {
+			return r.FromTable
+		}
+		return r.ToTable
+	}
+}
+
+// ReferencesParentTable reports whether relationship depends on parentTable.
+func (r RelationshipDefinition) ReferencesParentTable(parentTable string) bool {
+	return strings.EqualFold(r.ParentTable(), parentTable)
+}
+
 // Edge binds the relationship definition to query-local field references.
 func (r RelationshipDefinition) Edge(left FieldRef, right FieldRef) JoinEdge {
 	return JoinEdge{
@@ -245,6 +280,11 @@ type Catalog interface {
 	Function(name string) (FunctionDefinition, DiagnosticSet)
 }
 
+// DependentRelationshipCatalog can enumerate child relationships for parent-table operations.
+type DependentRelationshipCatalog interface {
+	DependentRelationships(schema string, parentTable string) ([]RelationshipDefinition, DiagnosticSet)
+}
+
 // MemoryCatalog is a small in-memory Catalog useful for tests and scaffolding.
 type MemoryCatalog struct {
 	Schemas       []CatalogSchemaDefinition
@@ -280,6 +320,35 @@ func (c MemoryCatalog) Relationship(name string) (RelationshipDefinition, Diagno
 	}
 }
 
+// DependentRelationships returns relationships whose dependent child points at parentTable.
+func (c MemoryCatalog) DependentRelationships(schema string, parentTable string) ([]RelationshipDefinition, DiagnosticSet) {
+	seen := make(map[string]struct{})
+	dependencies := make([]RelationshipDefinition, 0)
+	add := func(relationship RelationshipDefinition) {
+		if !relationship.ReferencesParentTable(parentTable) {
+			return
+		}
+		key := strings.ToLower(relationship.Name) + "\x00" + strings.ToLower(relationship.ChildTable()) + "\x00" + strings.ToLower(relationship.ParentTable())
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		dependencies = append(dependencies, cloneRelationshipDefinition(relationship))
+	}
+	for _, relationship := range c.Relationships {
+		add(relationship)
+	}
+	for _, table := range c.Tables {
+		if schema != "" && table.Schema != "" && !strings.EqualFold(table.Schema, schema) {
+			continue
+		}
+		for _, relationship := range table.Relationships {
+			add(relationship)
+		}
+	}
+	return dependencies, nil
+}
+
 // Function looks up a function definition by name or alias.
 func (c MemoryCatalog) Function(name string) (FunctionDefinition, DiagnosticSet) {
 	for _, function := range c.Functions {
@@ -303,5 +372,14 @@ func qualifiedCatalogName(schema string, name string) string {
 func cloneRelationshipDefinition(relationship RelationshipDefinition) RelationshipDefinition {
 	cloned := relationship
 	cloned.Encoding = cloneRelationshipEncodingProfile(relationship.Encoding)
+	return cloned
+}
+
+// cloneRelationshipDefinitions copies relationship metadata for caller-owned mutation.
+func cloneRelationshipDefinitions(relationships []RelationshipDefinition) []RelationshipDefinition {
+	cloned := make([]RelationshipDefinition, 0, len(relationships))
+	for _, relationship := range relationships {
+		cloned = append(cloned, cloneRelationshipDefinition(relationship))
+	}
 	return cloned
 }

@@ -81,6 +81,22 @@ func TestSimpleParserBridgeParsesDeleteWithoutWhereForValidation(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTruncateStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("truncate table customers_qa;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindTruncate {
+		t.Fatalf("kind = %q, want truncate", statement.Kind)
+	}
+	if statement.Truncate.Table.Name != "customers_qa" {
+		t.Fatalf("table = %#v, want customers_qa", statement.Truncate.Table)
+	}
+	if statement.Truncate.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Truncate.Result.Kind)
+	}
+}
+
 func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id, o.o_totalprice total_price from orders as o where o.o_totalprice >= 101 and o.o_orderkey <= 8 order by o.o_totalprice desc limit 2")
 	if diagnostics.BlocksNative() {

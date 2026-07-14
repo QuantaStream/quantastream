@@ -308,6 +308,7 @@ func cloneMutationShape(mutation qsbridge.MutationShape) qsbridge.MutationShape 
 	}
 	cloned.Assignments = append([]qsbridge.MutationAssignment(nil), mutation.Assignments...)
 	cloned.Predicates = append([]qsbridge.Predicate(nil), mutation.Predicates...)
+	cloned.DependentRelationships = append([]qsbridge.RelationshipDefinition(nil), mutation.DependentRelationships...)
 	return cloned
 }
 

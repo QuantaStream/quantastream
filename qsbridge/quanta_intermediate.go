@@ -949,7 +949,7 @@ func quantaIntermediateMutationPredicateQuery(query QueryIR) (QueryIR, bool) {
 		mutationQuery.Predicates = append([]Predicate(nil), query.Mutation.Predicates...)
 		mutationQuery.WhereExpr = nil
 		return mutationQuery, true
-	case MutationInsert:
+	case MutationInsert, MutationTruncate:
 		return QueryIR{}, false
 	default:
 		return QueryIR{}, false
