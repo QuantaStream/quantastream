@@ -69,41 +69,8 @@ if [[ "${START_SERVER}" == "1" ]]; then
   runtime_data="${WORK_DIR}/data"
   log_file="${WORK_DIR}/quantastream.log"
 
-  mkdir -p "${runtime_config}/standard_smoke_qa"
-  cat >"${runtime_config}/standard_smoke_qa/schema.yaml" <<'YAML'
-tableName: standard_smoke_qa
-primaryKey: cust_id
-attributes:
-- fieldName: cust_id
-  sourceName: cust_id
-  mappingStrategy: StringHashBSI
-  type: String
-- fieldName: first_name
-  sourceName: first_name
-  mappingStrategy: StringHashBSI
-  type: String
-- fieldName: city
-  sourceName: city
-  mappingStrategy: StringHashBSI
-  type: String
-- fieldName: age
-  sourceName: age
-  mappingStrategy: IntBSI
-  defaultValue: 0
-  type: Integer
-- fieldName: createdAtTimestamp
-  mappingStrategy: SysMillisBSI
-  defaultValue: now()
-  type: DateTime
-- fieldName: hashedCustId
-  mappingStrategy: StringHashBSI
-  type: String
-  defaultValue: hash.sha256(cust_id)
-- fieldName: isActive
-  mappingStrategy: BoolDirect
-  defaultValue: 1
-  type: Boolean
-YAML
+  mkdir -p "${runtime_config}"
+  cp -R "${script_dir}/config/customers_qa" "${runtime_config}/customers_qa"
   printf "objects: []\n" > "${runtime_config}/CATALOG_OBJECTS"
 
   echo "starting temporary quantastream process"

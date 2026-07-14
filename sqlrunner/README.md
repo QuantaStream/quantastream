@@ -206,8 +206,10 @@ through the SQL engine as `CREATE TABLE`, `DROP TABLE`, or `TRUNCATE TABLE`
 statements. New suites should prefer `kind: statement` with SQL DDL directly.
 
 The default standard smoke suite is `sqltests/inabox_standard_qa_smoke.yaml`.
-It checks a self-contained QA slice over the MySQL socket. Override the target
-with `HOST`, `PORT`, `SQL_USER`, `DB`, `SUITE`, and optionally `CASE`:
+It checks a self-contained `customers_qa` slice over the MySQL socket,
+including StringEnum dictionary loading, multiplicity-set inserts, default
+expressions, and StringHashBSI materialization. Override the target with
+`HOST`, `PORT`, `SQL_USER`, `DB`, `SUITE`, and optionally `CASE`:
 
 ```bash
 HOST=127.0.0.1 PORT=4000 START_SERVER=0 CASE=inabox_standard_qa_smoke.006.customer_city_count ./run-inabox-standard-smoke.sh

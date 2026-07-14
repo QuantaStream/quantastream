@@ -73,6 +73,24 @@ func TestKVStoreLookupUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestKVStoreItemsUsesLocalService(t *testing.T) {
+	local := &recordingLocalKVStoreService{}
+	store := NewKVStore(&Conn{LocalNodeServices: LocalNodeServices{KVStore: local}})
+	items, err := store.Items("sample/city.StringEnum", reflect.String, reflect.Uint64)
+	if err != nil {
+		t.Fatalf("Items() error = %v", err)
+	}
+	if local.itemsCalls != 1 {
+		t.Fatalf("local items calls = %d, want 1", local.itemsCalls)
+	}
+	if got := items["Seattle"]; got != uint64(1) {
+		t.Fatalf("Seattle item = %#v, want 1", got)
+	}
+	if got := items["Tacoma"]; got != uint64(2) {
+		t.Fatalf("Tacoma item = %#v, want 2", got)
+	}
+}
+
 type recordingLocalBitmapIndexService struct {
 	queryCalls int
 }
@@ -115,6 +133,7 @@ func (s *recordingLocalBitmapIndexService) Commit(context.Context, *empty.Empty)
 
 type recordingLocalKVStoreService struct {
 	lookupCalls int
+	itemsCalls  int
 }
 
 func (s *recordingLocalKVStoreService) Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error) {
@@ -128,4 +147,12 @@ func (s *recordingLocalKVStoreService) Lookup(context.Context, *pb.IndexKVPair) 
 
 func (s *recordingLocalKVStoreService) PutStringEnum(context.Context, *pb.StringEnum) (*wrappers.UInt64Value, error) {
 	return &wrappers.UInt64Value{Value: 1}, nil
+}
+
+func (s *recordingLocalKVStoreService) Items(context.Context, string) ([]*pb.IndexKVPair, error) {
+	s.itemsCalls++
+	return []*pb.IndexKVPair{
+		{Key: ToBytes("Seattle"), Value: [][]byte{ToBytes(uint64(1))}},
+		{Key: ToBytes("Tacoma"), Value: [][]byte{ToBytes(uint64(2))}},
+	}, nil
 }

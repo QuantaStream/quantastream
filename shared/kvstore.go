@@ -364,6 +364,22 @@ func (c *KVStore) BatchLookupNode(client pb.KVStoreClient, index string,
 func (c *KVStore) Items(index string, keyType, valueType reflect.Kind) (map[interface{}]interface{}, error) {
 
 	results := make(map[interface{}]interface{}, 0)
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		items, err := c.local.Items(ctx, index)
+		if err != nil {
+			return results, err
+		}
+		for _, item := range items {
+			if item == nil || len(item.Value) == 0 {
+				continue
+			}
+			results[UnmarshalValue(keyType, item.Key)] = UnmarshalValue(valueType, item.Value[0])
+		}
+		return results, nil
+	}
+
 	rchan := make(chan map[interface{}]interface{}, len(c.client))
 
 	var eg errgroup.Group

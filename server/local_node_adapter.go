@@ -203,6 +203,22 @@ func (a LocalKVStoreAdapter) BatchPut(ctx context.Context, reqs []*pb.IndexKVPai
 	return &empty.Empty{}, nil
 }
 
+// Items forwards full-index KV iteration through the existing server stream
+// implementation without a gRPC hop.
+func (a LocalKVStoreAdapter) Items(ctx context.Context, index string) ([]*pb.IndexKVPair, error) {
+	if a.Store == nil {
+		return nil, fmt.Errorf("local KVStore adapter is not mounted")
+	}
+	start := time.Now()
+	stream := &localIndexKVItemsStream{ctx: ctx}
+	err := a.Store.Items(&wrappers.StringValue{Value: index}, stream)
+	observeLocalNodeCall(a.Observer, "KVStore", "Items", start, err)
+	if err != nil {
+		return nil, err
+	}
+	return stream.items, nil
+}
+
 type localIndexKVBatchStream struct {
 	ctx    context.Context
 	items  []*pb.IndexKVPair
@@ -246,6 +262,41 @@ func (s *localIndexKVBatchStream) SendMsg(interface{}) error {
 }
 
 func (s *localIndexKVBatchStream) RecvMsg(interface{}) error {
+	return nil
+}
+
+type localIndexKVItemsStream struct {
+	ctx   context.Context
+	items []*pb.IndexKVPair
+}
+
+func (s *localIndexKVItemsStream) Send(item *pb.IndexKVPair) error {
+	s.items = append(s.items, item)
+	return nil
+}
+
+func (s *localIndexKVItemsStream) SetHeader(metadata.MD) error {
+	return nil
+}
+
+func (s *localIndexKVItemsStream) SendHeader(metadata.MD) error {
+	return nil
+}
+
+func (s *localIndexKVItemsStream) SetTrailer(metadata.MD) {}
+
+func (s *localIndexKVItemsStream) Context() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
+func (s *localIndexKVItemsStream) SendMsg(interface{}) error {
+	return nil
+}
+
+func (s *localIndexKVItemsStream) RecvMsg(interface{}) error {
 	return nil
 }
 

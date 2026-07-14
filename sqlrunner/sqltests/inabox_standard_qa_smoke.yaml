@@ -2,29 +2,29 @@ version: 1
 name: inabox_standard_qa_smoke
 
 tests:
-  - id: inabox_standard_qa_smoke.001.create_smoke_table
+  - id: inabox_standard_qa_smoke.001.create_customers
     status: supported
     kind: admin
     sql: |-
-      create standard_smoke_qa
+      create customers_qa
 
   - id: inabox_standard_qa_smoke.002.insert_customer_abe
     status: supported
     kind: statement
     sql: |-
-      insert into standard_smoke_qa (cust_id, first_name, city, age) values('1','Abe','Seattle',50)
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('1','Abe','123 Main','Seattle','WA','98072','425-232-4323','cell;home')
 
   - id: inabox_standard_qa_smoke.003.insert_customer_abby
     status: supported
     kind: statement
     sql: |-
-      insert into standard_smoke_qa (cust_id, first_name, city, age) values('2','Abby','Tacoma',40)
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('2','Abby','234 Main','Tacoma','WA','98011','425-333-2222','cell;business')
 
   - id: inabox_standard_qa_smoke.004.insert_customer_annie
     status: supported
     kind: statement
     sql: |-
-      insert into standard_smoke_qa (cust_id, first_name, city, age) values('3','Annie','Seattle',50)
+      insert into customers_qa (cust_id, first_name, address, city, state, zip, phone, phoneType) values('3','Annie','345 Main','Seattle','WA','98072','425-333-2233','cell;home')
 
   - id: inabox_standard_qa_smoke.005.commit
     status: supported
@@ -37,7 +37,7 @@ tests:
     kind: query
     sql: |-
       select count(*) as seattle_count
-      from standard_smoke_qa
+      from customers_qa
       where city = 'Seattle'
     expect:
       rows:
@@ -49,7 +49,7 @@ tests:
     order: rowsort
     sql: |-
       select first_name
-      from standard_smoke_qa
+      from customers_qa
       where city = 'Seattle'
     expect:
       columns: [first_name]
@@ -62,14 +62,14 @@ tests:
     kind: query
     sql: |-
       select count(*) as active_count
-      from standard_smoke_qa
+      from customers_qa
       where isActive = true
     expect:
       rows:
         - [3]
 
-  - id: inabox_standard_qa_smoke.009.drop_smoke_table
+  - id: inabox_standard_qa_smoke.009.drop_customers
     status: supported
     kind: admin
     sql: |-
-      drop standard_smoke_qa
+      drop customers_qa

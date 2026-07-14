@@ -61,10 +61,11 @@ type LocalBitmapIndexBatchService interface {
 }
 
 // LocalKVStoreService is the in-process semantic equivalent of the unary KVStore
-// node API. Batch lookup and item iteration remain tracked as streaming risks.
+// node API. Batch lookup remains tracked as a streaming risk.
 type LocalKVStoreService interface {
 	Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error)
 	Lookup(context.Context, *pb.IndexKVPair) (*pb.IndexKVPair, error)
+	Items(context.Context, string) ([]*pb.IndexKVPair, error)
 	PutStringEnum(context.Context, *pb.StringEnum) (*wrappers.UInt64Value, error)
 }
 
@@ -147,12 +148,6 @@ func DefaultLocalNodeStreamingRisks() []LocalNodeStreamingRisk {
 			Method:  "BatchLookup",
 			Risk:    "broad backing-string materialization still lacks an efficient local batch lookup path",
 			Gate:    "provide local KV batch lookup before broad StringHashBSI projections are production-ready",
-		},
-		{
-			Service: "KVStore",
-			Method:  "Items",
-			Risk:    "dictionary/cache warmup iteration currently uses server-streaming semantics",
-			Gate:    "provide local iteration before catalog/dictionary warmup can avoid gRPC entirely",
 		},
 		{
 			Service: "StringSearch",

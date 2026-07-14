@@ -130,14 +130,14 @@ Use `START_SERVER=0` to target an already running process, which defaults back
 to port `4000`.
 
 The older read-only TPCH smoke suite can still be selected with
-`SUITE=inabox_standard_smoke.yaml` when TPCH data has already been staged. The
-self-contained QA smoke intentionally avoids `StringEnum` fields until the
-local-node `KVStore.Items` dictionary warmup shim is promoted.
+`SUITE=inabox_standard_smoke.yaml` when TPCH data has already been staged.
+The self-contained QA smoke uses `customers_qa` so the local path exercises
+StringEnum dictionary loading, multiplicity-set inserts, default expressions,
+and StringHashBSI materialization through the MySQL socket.
 
 Known local-node streaming risks:
 
 - `KVStore.BatchLookup`: required for efficient backing-string materialization.
-- `KVStore.Items`: required for dictionary/cache warmup without gRPC.
 - `StringSearch.BatchIndex` and `StringSearch.Search`: required for searchable
   text fields.
 
@@ -145,8 +145,9 @@ These are not conceptual blockers to `inabox-standard`; they are implementation
 gates where the current gRPC stream-shaped calls need direct local helpers or
 local stream shims.
 
-The first mounted backend now covers the essential local read, DDL, and insert
-write path. UPDATE, DELETE, streaming ingestion, broad dictionary warmup, and
+The first mounted backend now covers the essential local read, DDL, insert
+write, StringEnum dictionary warmup, and default-expression path. UPDATE,
+DELETE, streaming ingestion, broad backing-string batch materialization, and
 text-search paths should be promoted only after the remaining local
 batch/streaming shims above are implemented and covered by SQLRunner or
 compatibility-lab tests.
