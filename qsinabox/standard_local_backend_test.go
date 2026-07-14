@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/shared"
 )
 
 func TestMountStandardLocalBackendStagesConfigAndMountsReadServices(t *testing.T) {
@@ -160,11 +162,19 @@ func TestStandardDirectRuntimeExecutesFlatBitmapReadLocally(t *testing.T) {
 
 func writeStandardTestSchema(t *testing.T, configDir, table string) {
 	t.Helper()
+	writeStandardDraftTestSchema(t, configDir, table)
+	if err := shared.ActivateCatalogTable(configDir, "quanta", table, time.Now().UTC()); err != nil {
+		t.Fatalf("activate catalog object: %v", err)
+	}
+}
+
+func writeStandardDraftTestSchema(t *testing.T, configDir, table string) {
+	t.Helper()
 	tableDir := filepath.Join(configDir, table)
 	if err := os.MkdirAll(tableDir, 0755); err != nil {
 		t.Fatalf("mkdir schema dir: %v", err)
 	}
-	schema := `tableName: sample
+	schema := `tableName: ` + table + `
 primaryKey: id
 attributes:
 - fieldName: id

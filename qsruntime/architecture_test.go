@@ -98,6 +98,9 @@ func TestQSRuntimeLegacyImportsStayInAdapterIslands(t *testing.T) {
 		"legacy_metadata_invalidation.go": {
 			"github.com/QuantaStream/quantastream/shared": "github.com/QuantaStream/quantastream/shared",
 		},
+		"schema_mutation.go": {
+			"github.com/QuantaStream/quantastream/shared": "github.com/QuantaStream/quantastream/shared",
+		},
 		"quanta_legacy_adapter.go": {
 			"github.com/QuantaStream/quantastream/grpc":   "github.com/QuantaStream/quantastream/grpc",
 			"github.com/QuantaStream/quantastream/shared": "github.com/QuantaStream/quantastream/shared",

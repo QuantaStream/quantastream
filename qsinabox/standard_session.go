@@ -120,18 +120,14 @@ func (h StandardDirectSessionHandle) QueryBitmap(ctx context.Context, request qs
 	return h.Result.ToBitmapQueryResult(response), nil, err
 }
 
-// ExecuteMutation currently preserves the read-only standard backend boundary.
+// ExecuteMutation dispatches in-process SQL mutations through the local session.
 func (h StandardDirectSessionHandle) ExecuteMutation(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
-	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "inabox-standard local mutation execution is not mounted yet"),
-	}, nil
+	return h.legacyHandle().ExecuteMutation(ctx, request)
 }
 
-// InsertRows currently preserves the read-only standard backend boundary.
+// InsertRows writes bound literal rows through the local session.
 func (h StandardDirectSessionHandle) InsertRows(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
-	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "inabox-standard local insert execution is not mounted yet"),
-	}, nil
+	return h.legacyHandle().InsertRows(ctx, request)
 }
 
 // Release returns the local session to the pool.
@@ -141,4 +137,14 @@ func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.Diagn
 	}
 	h.Pool.Return(h.Table, h.Session)
 	return nil
+}
+
+func (h StandardDirectSessionHandle) legacyHandle() qsruntime.LegacyQuantaSessionHandle {
+	return qsruntime.LegacyQuantaSessionHandle{
+		TableName: h.Table,
+		Pool:      h.Pool,
+		Session:   h.Session,
+		Query:     h.Query,
+		Result:    h.Result,
+	}
 }

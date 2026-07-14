@@ -97,6 +97,45 @@ func TestSimpleParserBridgeParsesTruncateStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create table customers_qa;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable {
+		t.Fatalf("kind = %q, want create table", statement.Kind)
+	}
+	if statement.Create.Table.Name != "customers_qa" {
+		t.Fatalf("table = %#v, want customers_qa", statement.Create.Table)
+	}
+	if statement.Create.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Create.Result.Kind)
+	}
+}
+
+func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop table customers_qa;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropTable {
+		t.Fatalf("kind = %q, want drop table", statement.Kind)
+	}
+	if statement.Drop.Table.Name != "customers_qa" {
+		t.Fatalf("table = %#v, want customers_qa", statement.Drop.Table)
+	}
+	if statement.Drop.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Drop.Result.Kind)
+	}
+}
+
+func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
+	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_qa (id int)")
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("expected parser diagnostic for inline CREATE TABLE definition")
+	}
+}
+
 func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id, o.o_totalprice total_price from orders as o where o.o_totalprice >= 101 and o.o_orderkey <= 8 order by o.o_totalprice desc limit 2")
 	if diagnostics.BlocksNative() {

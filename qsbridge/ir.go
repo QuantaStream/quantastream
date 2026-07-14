@@ -525,6 +525,10 @@ const (
 	MutationDelete MutationKind = "delete"
 	// MutationTruncate describes a whole-table TRUNCATE target.
 	MutationTruncate MutationKind = "truncate"
+	// MutationCreateTable describes activating a YAML-backed table schema.
+	MutationCreateTable MutationKind = "create_table"
+	// MutationDropTable describes dropping an active table schema and data.
+	MutationDropTable MutationKind = "drop_table"
 )
 
 // MutationRow describes one parser-neutral row of values for INSERT planning.

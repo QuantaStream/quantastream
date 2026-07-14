@@ -20,6 +20,8 @@ type UnboundStatement struct {
 	Update   UnboundUpdate
 	Delete   UnboundDelete
 	Truncate UnboundTruncate
+	Create   UnboundCreateTable
+	Drop     UnboundDropTable
 	Session  UnboundSession
 }
 
@@ -36,6 +38,10 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindDelete(context, s.Delete)
 	case QueryKindTruncate:
 		return BindTruncate(context, s.Truncate)
+	case QueryKindCreateTable:
+		return BindCreateTable(context, s.Create)
+	case QueryKindDropTable:
+		return BindDropTable(context, s.Drop)
 	case QueryKindSession:
 		return BindSession(context, s.Session)
 	default:
@@ -95,6 +101,20 @@ type UnboundDelete struct {
 
 // UnboundTruncate describes a TRUNCATE shape before catalog binding.
 type UnboundTruncate struct {
+	Table    UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundCreateTable describes a YAML-backed CREATE TABLE activation before binding.
+type UnboundCreateTable struct {
+	Table    UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundDropTable describes a DROP TABLE operation before binding.
+type UnboundDropTable struct {
 	Table    UnboundTable
 	Result   ResultShape
 	Blockers []NativeBlocker
@@ -490,6 +510,70 @@ func BindTruncate(context *BindContext, truncateStmt UnboundTruncate) (QueryIR, 
 		DependentRelationships: dependencies,
 	}
 	return query, diagnostics
+}
+
+// BindCreateTable binds parser-neutral CREATE TABLE metadata into QueryIR.
+func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindSchemaOperationTarget(context, QueryKindCreateTable, createStmt.Table, createStmt.Result, createStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Mutation = MutationShape{
+		Kind:   MutationCreateTable,
+		Target: target,
+	}
+	return query, diagnostics
+}
+
+// BindDropTable binds parser-neutral DROP TABLE metadata into QueryIR.
+func BindDropTable(context *BindContext, dropStmt UnboundDropTable) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindSchemaOperationTarget(context, QueryKindDropTable, dropStmt.Table, dropStmt.Result, dropStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	dependencies, dependencyDiagnostics := bindTruncateDependentRelationships(context, target)
+	if dependencyDiagnostics.BlocksNative() {
+		diagnostics = append(diagnostics, dependencyDiagnostics...)
+		return query, diagnostics
+	}
+	query.Mutation = MutationShape{
+		Kind:                   MutationDropTable,
+		Target:                 target,
+		DependentRelationships: dependencies,
+	}
+	return query, diagnostics
+}
+
+func bindSchemaOperationTarget(context *BindContext, kind QueryKind, table UnboundTable, result ResultShape, blockers []NativeBlocker) (QueryIR, TableInstance, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     kind,
+		Result:   result,
+		Blockers: append([]NativeBlocker(nil), blockers...),
+	}
+	if context == nil {
+		return query, TableInstance{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	table.Name = strings.TrimSpace(table.Name)
+	if table.Name == "" {
+		return query, TableInstance{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "schema operation target table is empty"),
+		}
+	}
+	schema := strings.TrimSpace(table.Schema)
+	if schema == "" {
+		schema = context.DefaultSchema
+	}
+	target := TableInstance{
+		ID:     TableInstanceID(table.Name),
+		Schema: schema,
+		Table:  table.Name,
+		Alias:  table.Alias,
+		Role:   table.Name,
+	}
+	query.Sources = []TableInstance{target}
+	return query, target, nil
 }
 
 func bindTruncateDependentRelationships(context *BindContext, target TableInstance) ([]RelationshipDefinition, DiagnosticSet) {

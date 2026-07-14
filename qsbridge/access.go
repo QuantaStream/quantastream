@@ -14,6 +14,10 @@ const (
 	AccessDelete AccessPrivilege = "delete"
 	// AccessTruncate permits clearing all rows from a table.
 	AccessTruncate AccessPrivilege = "truncate"
+	// AccessCreate permits activating a table schema.
+	AccessCreate AccessPrivilege = "create"
+	// AccessDrop permits dropping a table schema and its data.
+	AccessDrop AccessPrivilege = "drop"
 )
 
 // AccessRequirement describes one authorization check required by a plan.
@@ -41,6 +45,10 @@ func (q QueryIR) RequiredAccess() []AccessRequirement {
 		collector.ensureTable(AccessDelete, q.Mutation.Target)
 	case MutationTruncate:
 		collector.ensureTable(AccessTruncate, q.Mutation.Target)
+	case MutationCreateTable:
+		collector.ensureTable(AccessCreate, q.Mutation.Target)
+	case MutationDropTable:
+		collector.ensureTable(AccessDrop, q.Mutation.Target)
 	}
 	return collector.requirements
 }

@@ -126,7 +126,8 @@ func runtimeOwnershipPreflightScaffoldFile(file string) bool {
 func runtimeOwnershipMetadataBridgeFile(file string) bool {
 	switch file {
 	case "dictionary_invalidation.go",
-		"metadata_invalidation.go":
+		"metadata_invalidation.go",
+		"schema_mutation.go":
 		return true
 	default:
 		return false

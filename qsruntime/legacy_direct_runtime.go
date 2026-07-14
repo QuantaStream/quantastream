@@ -505,6 +505,10 @@ func (h LegacyQuantaSessionHandle) ExecuteMutation(ctx context.Context, request 
 		return h.DeleteRows(ctx, request)
 	case qsbridge.MutationTruncate:
 		return h.TruncateTable(ctx, request)
+	case qsbridge.MutationCreateTable:
+		return h.CreateTable(ctx, request)
+	case qsbridge.MutationDropTable:
+		return h.DropTable(ctx, request)
 	default:
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(

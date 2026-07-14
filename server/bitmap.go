@@ -108,26 +108,20 @@ func NewBitmapIndex(node *Node) *BitmapIndex {
 	schemaPath := ""        // this is normally an empty string forcing schema to come from Consul
 	if e.ServicePort == 0 { // In-memory test harness
 		schemaPath = configPath // read schema from local config yaml
-		_ = filepath.Walk(configPath,
-			func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				if info.IsDir() {
-					index := info.Name()
-					if _, err := os.Stat(path + sep + "schema.yaml"); err != nil {
-						return nil
-					}
-					if table, err := shared.LoadSchema(schemaPath, index, nil); err != nil {
-						u.Errorf("ERROR: Could not load schema for %s - %v", index, err)
-						os.Exit(1)
-					} else {
-						e.tableCache[index] = table
-						u.Infof("Index %s initialized.", index)
-					}
-				}
-				return nil
-			})
+		tables, err := shared.ActiveOrDiscoveredSchemaTables(configPath, "")
+		if err != nil {
+			u.Errorf("ERROR: Could not discover active schema tables - %v", err)
+			os.Exit(1)
+		}
+		for _, index := range tables {
+			if table, err := shared.LoadSchema(schemaPath, index, nil); err != nil {
+				u.Errorf("ERROR: Could not load schema for %s - %v", index, err)
+				os.Exit(1)
+			} else {
+				e.tableCache[index] = table
+				u.Infof("Index %s initialized.", index)
+			}
+		}
 	} else { // Normal (from Consul) initialization
 		fmt.Println("Bitmap server Normal (from Consul) initialization", e.hashKey)
 		var tables []string
@@ -1343,9 +1337,13 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 
 	switch req.Operation {
 	case pb.TableOperationRequest_DEPLOY:
-		if table, err := shared.LoadSchema("", req.Table, m.consul); err != nil {
+		schemaPath := ""
+		if m.consul == nil || m.ServicePort == 0 {
+			schemaPath = filepath.Join(m.dataDir, "config")
+		}
+		if table, err := shared.LoadSchema(schemaPath, req.Table, m.consul); err != nil {
 			u.Errorf("could not load schema for %s - %v", req.Table, err)
-			os.Exit(1)
+			return &empty.Empty{}, err
 		} else {
 			m.tableCacheLock.Lock()
 			defer m.tableCacheLock.Unlock()

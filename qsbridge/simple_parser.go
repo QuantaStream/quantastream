@@ -43,10 +43,16 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "truncate"); ok {
 		return parseSimpleTruncate(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "create"); ok {
+		return parseSimpleCreateTable(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "drop"); ok {
+		return parseSimpleDropTable(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, DROP TABLE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -305,6 +311,71 @@ func parseSimpleTruncate(sql string) (UnboundStatement, Diagnostic, bool) {
 		SQL:  sql,
 		Kind: QueryKindTruncate,
 		Truncate: UnboundTruncate{
+			Table:  table,
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleCreateTable(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	createBody, ok := consumeKeyword(trimmed, "create")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only CREATE statements are supported"), false
+	}
+	createBody, ok = consumeKeyword(createBody, "table")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE must include TABLE"), false
+	}
+	if strings.TrimSpace(createBody) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE must include a table"), false
+	}
+	if hasAnyKeyword(createBody, "if", "exists", "like", "as", "select", "temporary", "where", "partition") || strings.Contains(createBody, "(") {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE only supports one YAML-backed table name"), false
+	}
+	table, diagnostic, ok := parseSimpleTable(createBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindCreateTable,
+		Create: UnboundCreateTable{
+			Table:  table,
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleDropTable(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	dropBody, ok := consumeKeyword(trimmed, "drop")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only DROP statements are supported"), false
+	}
+	if remaining, ok := consumeKeyword(dropBody, "table"); ok {
+		dropBody = remaining
+	}
+	if strings.TrimSpace(dropBody) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
+	}
+	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE only supports one table name"), false
+	}
+	table, diagnostic, ok := parseSimpleTable(dropBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindDropTable,
+		Drop: UnboundDropTable{
 			Table:  table,
 			Result: ResultShape{Kind: ResultStatement},
 		},

@@ -397,6 +397,66 @@ func TestUnboundStatementBindTruncate(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateTable(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "create table orders",
+		Kind: QueryKindCreateTable,
+		Create: UnboundCreateTable{
+			Table:  UnboundTable{Name: "orders"},
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindCreateTable {
+		t.Fatalf("Kind = %q, want create_table", query.Kind)
+	}
+	if query.Mutation.Kind != MutationCreateTable {
+		t.Fatalf("Mutation.Kind = %q, want create_table", query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "orders" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("Mutation target = %#v, want quanta.orders", query.Mutation.Target)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessCreate, "orders") {
+		t.Fatalf("RequiredAccess = %#v, want create on orders", access)
+	}
+}
+
+func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "drop table customer",
+		Kind: QueryKindDropTable,
+		Drop: UnboundDropTable{
+			Table:  UnboundTable{Name: "customer"},
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindDropTable {
+		t.Fatalf("Kind = %q, want drop_table", query.Kind)
+	}
+	if query.Mutation.Kind != MutationDropTable {
+		t.Fatalf("Mutation.Kind = %q, want drop_table", query.Mutation.Kind)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessDrop, "customer") {
+		t.Fatalf("RequiredAccess = %#v, want drop on customer", access)
+	}
+	if len(query.Mutation.DependentRelationships) != 1 {
+		t.Fatalf("dependent relationships = %#v, want orders_customer", query.Mutation.DependentRelationships)
+	}
+}
+
 func TestUnboundStatementBindTruncateTracksChildDependencies(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

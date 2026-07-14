@@ -14,6 +14,10 @@ const (
 	QueryKindDelete QueryKind = "delete"
 	// QueryKindTruncate identifies a TRUNCATE statement.
 	QueryKindTruncate QueryKind = "truncate"
+	// QueryKindCreateTable identifies a YAML-backed CREATE TABLE activation statement.
+	QueryKindCreateTable QueryKind = "create_table"
+	// QueryKindDropTable identifies a DROP TABLE deactivation statement.
+	QueryKindDropTable QueryKind = "drop_table"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
 	QueryKindSession QueryKind = "session"
 	// QueryKindDDL identifies schema-changing statements.
