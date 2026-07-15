@@ -11,7 +11,7 @@ Run from the `sqlrunner` directory:
 
 ```bash
 go run . \
-  -engine proxy \
+  -engine distributed \
   -suite_file sqltests/joins_sql.yaml \
   -host 127.0.0.1 \
   -user MOLIG004 \
@@ -49,9 +49,10 @@ See [`roadmap/FORMAT.md`](roadmap/FORMAT.md) for the complete format.
 
 ## Harnesses
 
-`-engine proxy` is the default and runs suites through an explicitly addressed
-MySQL-compatible QuantaStream endpoint. It requires `-host` and `-user`, and is
-kept for existing integration and benchmark scripts.
+`-engine distributed` runs suites through an explicitly addressed
+MySQL-compatible QuantaStream endpoint. It requires `-host` and `-user`.
+`-engine proxy` is accepted as a compatibility alias for existing integration
+and benchmark scripts, but new commands should prefer `distributed`.
 
 `-engine runtime` runs the in-process qsbridge/qsruntime path without the MySQL
 wire protocol or a local node cluster. This mode is useful for parser, planner,
@@ -112,8 +113,8 @@ The inabox-direct smoke suite currently covers single-table `count(*)`
 predicates over numeric BSI fields, StringEnum exact/`IN` predicates, and narrow
 projection materialization through the direct runtime path. It is not the
 compatibility route for general SQL; unsupported query shapes should stay in the
-proxy or in-memory runtime suites until the new planner/runtime grows the needed
-primitive.
+endpoint or in-memory runtime suites until the new planner/runtime grows the
+needed primitive.
 
 `sqltests/inabox_direct_qa_basic.yaml` is the core QA-table checkpoint for
 the direct path. It creates and loads `customers_qa` and `orders_qa`, including
@@ -256,7 +257,7 @@ go run . -engine inabox-local -suite_file sqltests/inabox_direct_joins.yaml
 go run . -engine inabox-local -suite_file sqltests/mutate_tests_body.yaml
 ```
 
-These suites mirror the current proxy smoke checkpoint: basic SQL,
+These suites mirror the current local wire-path smoke checkpoint: basic SQL,
 relationship-vector joins, and mutation coverage over the new MySQL protocol
 front door.
 
@@ -300,7 +301,7 @@ TPC-H-specific suites live with the benchmark assets under
 
 ```bash
 go run . \
-  -engine proxy \
+  -engine distributed \
   -suite_file ../tpc-h-benchmark/sqltests/tpch_smoke.yaml \
   -host 127.0.0.1 \
   -user MOLIG004 \
@@ -317,19 +318,21 @@ duration on each result line.
 
 `tpch_smoke.yaml` validates that a generated/load TPC-H fixture is complete and
 relationship traversal is sane. `tpch_queries.yaml` is the formal query roadmap
-suite and should grow incrementally as Quanta's TPC-H query support matures.
+suite and should grow incrementally as QuantaStream's TPC-H query support
+matures.
 
 ## Connection Options
 
-- `engine`: execution harness; `proxy`, `distributed`, `inabox-local`,
+- `engine`: execution harness; `distributed`, `inabox-local`,
   `inabox-standard`, `inabox-direct`, `runtime`, `runtime-inspect`, or
-  `mysql-reference`; defaults to `proxy`.
+  `mysql-reference`; `proxy` remains accepted as a compatibility alias and is
+  still the default for existing scripts.
 - `suite_file`: YAML roadmap suite to execute. Required.
-- `host`: MySQL-compatible endpoint host. Required for `proxy` and
-  `distributed`.
-- `user`: MySQL-compatible endpoint user. Required for `proxy` and
-  `distributed`.
-- `password`: Quanta password.
+- `host`: MySQL-compatible endpoint host. Required for `distributed` and
+  `proxy`.
+- `user`: MySQL-compatible endpoint user. Required for `distributed` and
+  `proxy`.
+- `password`: QuantaStream password.
 - `db`: database name; defaults to `quanta`.
 - `port`: MySQL-compatible endpoint port; defaults to `4000`.
 - `consul`: Consul address; defaults to `127.0.0.1:8500`.
@@ -339,8 +342,9 @@ suite and should grow incrementally as Quanta's TPC-H query support matures.
 - `slow_threshold`: print a slow-case summary for cases at or above this
   duration, for example `10s`.
 
-`proxy` and `distributed` target an explicitly addressed MySQL-compatible
-endpoint. `inabox-local` targets the local distributed-shape harness.
+`distributed` targets an explicitly addressed MySQL-compatible endpoint;
+`proxy` is a compatibility alias for the same endpoint harness. `inabox-local`
+targets the local distributed-shape harness.
 `inabox-standard` starts or targets the standalone single-process product path.
 `inabox-direct` expects Consul and a green local node cluster, then uses the
 cluster catalog and bitmap sessions directly from the SQLRunner process.

@@ -69,9 +69,9 @@ func main() {
 	shared.SetUTCdefault()
 
 	suiteFile := flag.String("suite_file", "", "Path to a SQL roadmap YAML suite to execute.")
-	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: inabox-standard, inabox-local, distributed, inabox-direct, proxy, runtime, runtime-inspect, or mysql-reference.")
-	host := flag.String("host", "", "Quanta host to connect to.")
-	user := flag.String("user", "", "The username that will connect to the database.")
+	engine := flag.String("engine", engineProxy, "SQLRunner execution harness: inabox-standard, inabox-local, distributed, inabox-direct, runtime, runtime-inspect, mysql-reference, or proxy as a compatibility alias.")
+	host := flag.String("host", "", "QuantaStream MySQL-compatible endpoint host.")
+	user := flag.String("user", "", "MySQL-compatible endpoint username.")
 	password := flag.String("password", "", "The password to use to connect.")
 	database := flag.String("db", "quanta", "The database to connect to.")
 	port := flag.String("port", "4000", "Port to connect to.")
@@ -229,7 +229,7 @@ func printUsage(err error) {
 	u.Warn()
 	u.Warn("Inabox-standard example: ./sqlrunner -engine inabox-standard -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Inabox-local example: ./sqlrunner -engine inabox-local -suite_file sqltests/joins_sql.yaml")
-	u.Warn("Distributed example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user MOLIG004 -db quanta -port 4000")
+	u.Warn("Distributed endpoint example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user MOLIG004 -db quanta -port 4000")
 	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
 	u.Warn("Inabox-direct example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500")
@@ -433,7 +433,7 @@ func initializeCluster(consul string) (*shared.KVStore, error) {
 func grantSQLRunnerRoles(_ *shared.KVStore) error {
 	// The historical KVStore-backed RBAC seed path is quarantined.
 	// MySQL-compatible authentication and authorization will be owned by
-	// the qsbridge session and protocol stack instead of this proxy-era hook.
+	// the qsbridge session and protocol stack instead of this historical hook.
 	return nil
 }
 

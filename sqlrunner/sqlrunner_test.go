@@ -9,19 +9,19 @@ import (
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
 )
 
-func TestValidateFlagsAllowsRuntimeWithoutProxyConnectionFlags(t *testing.T) {
+func TestValidateFlagsAllowsRuntimeWithoutEndpointConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineRuntime}
 
 	if err := validateFlags("sqltests/basic_queries.yaml", cfg); err != nil {
-		t.Fatalf("runtime validation should not require proxy host/user: %v", err)
+		t.Fatalf("runtime validation should not require endpoint host/user: %v", err)
 	}
 }
 
-func TestValidateFlagsAllowsInaboxDirectWithoutProxyConnectionFlags(t *testing.T) {
+func TestValidateFlagsAllowsInaboxDirectWithoutEndpointConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineInaboxDirect}
 
 	if err := validateFlags("sqltests/inabox_direct_smoke.yaml", cfg); err != nil {
-		t.Fatalf("inabox-direct validation should not require proxy host/user: %v", err)
+		t.Fatalf("inabox-direct validation should not require endpoint host/user: %v", err)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestValidateFlagsAllowsInaboxLocalWithoutConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineInaboxLocal}
 
 	if err := validateFlags("sqltests/basic_queries.yaml", cfg); err != nil {
-		t.Fatalf("inabox-local validation should default local proxy connection flags: %v", err)
+		t.Fatalf("inabox-local validation should default local endpoint connection flags: %v", err)
 	}
 }
 
@@ -79,11 +79,11 @@ func TestApplyEngineDefaultsSetsInaboxStandardConnection(t *testing.T) {
 	}
 }
 
-func TestValidateFlagsRequiresProxyConnectionFlags(t *testing.T) {
+func TestValidateFlagsRequiresEndpointConnectionFlags(t *testing.T) {
 	cfg := runnerConfig{Engine: engineProxy}
 
 	if err := validateFlags("sqltests/basic_queries.yaml", cfg); err == nil {
-		t.Fatal("proxy validation should require host and user")
+		t.Fatal("endpoint validation should require host and user")
 	}
 }
 

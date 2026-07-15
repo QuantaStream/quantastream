@@ -32,7 +32,7 @@ func validateEngineForFlags(engine string, cfg runnerConfig) error {
 	switch engine {
 	case engineProxy, engineDistributed:
 		if cfg.Host == "" || cfg.User == "" {
-			return fmt.Errorf("host and user are required for %s engine", engine)
+			return fmt.Errorf("host and user are required for %s MySQL endpoint engine", engine)
 		}
 	case engineInaboxLocal, engineInaboxStandard:
 	case engineRuntime, engineRuntimeInspect, engineInaboxDirect:
