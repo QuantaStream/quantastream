@@ -31,9 +31,9 @@ tpc-h-benchmark/local/data/sf-0.01
 
 Generated data is intentionally ignored by git.
 
-## Load Data Directly Into Quanta
+## Load Data Directly Into A Cluster
 
-Start QIAB/Consul first, create the TPC-H tables, then run:
+Start the Consul-backed local cluster first, create the TPC-H tables, then run:
 
 ```bash
 cd tpc-h-benchmark
@@ -49,6 +49,49 @@ tpch-direct.sh <tpch-data-dir> [workers] [batch-size]
 
 The direct loader uses the same record envelope as the Kinesis producer but
 routes records directly into Quanta sessions through `core.SessionRouter`.
+
+The existing cluster direct path remains the default for `tpch-direct.sh`:
+
+```bash
+TPCH_LOAD_MODE=cluster ./tpch-direct.sh local/data/sf-0.01 3 1000
+```
+
+## Load Data Into Inabox-Standard Storage
+
+`inabox-standard` can load TPC-H data into a local data directory without a
+Consul cluster or gRPC node hop. This is an offline/in-process load: do not run
+the standalone `quantastream` server against the same data directory while the
+loader is writing.
+
+```bash
+cd tpc-h-benchmark
+rm -rf local/standard-data
+TPCH_LOAD_MODE=standard \
+TPCH_STANDARD_CONFIG_DIR=config \
+TPCH_STANDARD_DATA_DIR=local/standard-data \
+  ./tpch-direct.sh local/data/sf-0.01 3 1000
+```
+
+After the load completes, start `inabox-standard` against the same schema and
+data directories:
+
+```bash
+cd ..
+go run ./cmd/quantastream \
+  -config-dir tpc-h-benchmark/config \
+  -data-dir tpc-h-benchmark/local/standard-data \
+  -bind 127.0.0.1 \
+  -mysql-port 4000 \
+  -database quanta
+```
+
+The schema lifecycle scripts can use either the historical admin path or SQL
+DDL through the query engine:
+
+```bash
+TPCH_DDL_MODE=admin ./create-tpch.sh
+TPCH_DDL_MODE=sql QUANTA_PORT=4000 ./create-tpch.sh
+```
 
 ## Validate Loaded Data
 
@@ -210,4 +253,3 @@ and cache hit/miss counts. Projector-local relationship and child payload BSI
 reuse are expected to remove repeated `lineitem` relationship/payload projection
 groups from the focused SF 0.05 profile; shared cross-query fragment caching is
 deferred to the proxy-cache roadmap.
-

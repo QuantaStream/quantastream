@@ -1032,7 +1032,7 @@ func (m *BitmapIndex) truncateCaches(index string) {
 // Iterate standard bitmap cache looking for potential writes (dirty data)
 func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, error) {
 
-	if m.ServicePort == 0 {
+	if m.persistenceDisabled() {
 		return 0, 0, nil // test mode, persistence disabled
 	}
 
@@ -1082,7 +1082,7 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 // Iterate BSI cache looking for potential writes (dirty data)
 func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) {
 
-	if m.ServicePort == 0 {
+	if m.persistenceDisabled() {
 		return 0, 0, nil // test mode persistence disabled
 	}
 
@@ -1125,6 +1125,10 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 		}
 	}
 	return bsiCount, writeCount, nil
+}
+
+func (m *BitmapIndex) persistenceDisabled() bool {
+	return m.ServicePort == 0 && (m.Conn == nil || !m.IsLocalCluster)
 }
 
 // BulkClear - Batch "delete".

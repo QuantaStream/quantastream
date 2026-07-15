@@ -325,6 +325,46 @@ func TestCommitPersistSkipsCleanCaches(t *testing.T) {
 	}
 }
 
+func TestLocalClusterZeroPortPersistsDirtyBSI(t *testing.T) {
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	values.SetValue(2, 20)
+	conn := shared.NewDefaultConnection("local-cluster")
+	conn.IsLocalCluster = true
+
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    conn,
+			dataDir: t.TempDir(),
+		},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"orders": {
+				"o_orderkey": {
+					now.UnixNano(): {
+						BSI:         values,
+						ModTime:     now,
+						PersistTime: now.Add(-time.Second),
+					},
+				},
+			},
+		},
+	}
+
+	bsiCount, bsiWrites, err := index.checkPersistBSICache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBSICache returned error: %v", err)
+	}
+	if bsiCount != 1 || bsiWrites != 1 {
+		t.Fatalf("expected local zero-port BSI persistence, got count=%d writes=%d", bsiCount, bsiWrites)
+	}
+
+	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected local zero-port BSI persist to write %s: %v", path, err)
+	}
+}
+
 func TestCalculateMemoryUsageCountsStandardBitmapAndBSI(t *testing.T) {
 	now := time.Unix(100, 0)
 	values := roaring64.NewDefaultBSI()

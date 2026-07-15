@@ -8,6 +8,10 @@ ADMIN_BIN=${ADMIN_BIN:-./quanta-admin}
 WAIT_SECONDS=${WAIT_SECONDS:-120}
 LOG_DIR=${LOG_DIR:-local/logs}
 LOG_FILE=${LOG_FILE:-"${LOG_DIR}/tpch-direct-$(date +%Y%m%d-%H%M%S).log"}
+TPCH_LOAD_MODE=${TPCH_LOAD_MODE:-cluster}
+TPCH_STANDARD_CONFIG_DIR=${TPCH_STANDARD_CONFIG_DIR:-config}
+TPCH_STANDARD_DATA_DIR=${TPCH_STANDARD_DATA_DIR:-local/standard-data}
+TPCH_STANDARD_DB=${TPCH_STANDARD_DB:-quanta}
 
 if [[ ! -d "${DATA_DIR}" ]]; then
   echo "TPC-H data directory not found: ${DATA_DIR}" >&2
@@ -31,8 +35,11 @@ TABLES=(
 )
 
 start_epoch=$(date +%s)
-echo "TPC-H direct load starting data_dir=${DATA_DIR} workers=${WORKERS} batch_size=${BATCH_SIZE}"
+echo "TPC-H direct load starting mode=${TPCH_LOAD_MODE} data_dir=${DATA_DIR} workers=${WORKERS} batch_size=${BATCH_SIZE}"
 echo "TPC-H direct load log=${LOG_FILE}"
+if [[ "${TPCH_LOAD_MODE}" == "standard" ]]; then
+  echo "TPC-H standard load config_dir=${TPCH_STANDARD_CONFIG_DIR} data_dir=${TPCH_STANDARD_DATA_DIR} db=${TPCH_STANDARD_DB}"
+fi
 
 wait_for_cluster() {
   if [[ ! -x "${ADMIN_BIN}" ]]; then
@@ -56,14 +63,32 @@ wait_for_cluster() {
   done
 }
 
-wait_for_cluster
+if [[ "${TPCH_LOAD_MODE}" == "cluster" ]]; then
+  wait_for_cluster
+elif [[ "${TPCH_LOAD_MODE}" != "standard" ]]; then
+  echo "unsupported TPCH_LOAD_MODE=${TPCH_LOAD_MODE}; expected cluster or standard" >&2
+  exit 2
+fi
 
 for table in "${TABLES[@]}"; do
   table_start=$(date +%s)
-  wait_for_cluster
+  if [[ "${TPCH_LOAD_MODE}" == "cluster" ]]; then
+    wait_for_cluster
+  fi
   expected_rows=$(wc -l < "${DATA_DIR}/${table}.tbl")
   echo "Loading ${table} expected_rows=${expected_rows}..."
-  go run . "${DATA_DIR}" "${table}" --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}"
+  if [[ "${TPCH_LOAD_MODE}" == "standard" ]]; then
+    go run . "${DATA_DIR}" "${table}" \
+      --direct \
+      --direct-mode standard \
+      --config-dir "${TPCH_STANDARD_CONFIG_DIR}" \
+      --data-dir "${TPCH_STANDARD_DATA_DIR}" \
+      --database "${TPCH_STANDARD_DB}" \
+      --workers "${WORKERS}" \
+      --batch-size "${BATCH_SIZE}"
+  else
+    go run . "${DATA_DIR}" "${table}" --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}"
+  fi
   table_end=$(date +%s)
   echo "Loaded ${table} elapsed=$((table_end - table_start))s"
 done

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -62,7 +63,13 @@ type Main struct {
 	lock         *api.Lock
 	shardCols    []*shared.BasicAttribute
 	Direct       bool
+	DirectMode   string
 	Workers      int
+	ConfigDir    string
+	DataDir      string
+	Database     string
+	BasePath     string
+	stdBackend   *qsinabox.StandardLocalBackend
 }
 
 type LoadSummary struct {
@@ -95,7 +102,11 @@ func main() {
 	region := app.Flag("aws-region", "AWS region.").Default("us-east-1").String()
 	batchSize := app.Flag("batch-size", "PutRecords batch size").Default("100").Int32()
 	direct := app.Flag("direct", "Load directly into Quanta sessions instead of writing to Kinesis.").Bool()
+	directMode := app.Flag("direct-mode", "Direct load target: cluster uses Consul/gRPC nodes; standard writes an inabox-standard local data directory.").Default("cluster").Enum("cluster", "standard")
 	workers := app.Flag("workers", "Direct-load session worker count.").Default("3").Int()
+	configDir := app.Flag("config-dir", "Schema config directory for inabox-standard direct loads.").Default("config").String()
+	dataDir := app.Flag("data-dir", "Data directory for inabox-standard direct loads.").Default("local/standard-data").String()
+	database := app.Flag("database", "Database/schema name for inabox-standard direct loads.").Default("quanta").String()
 	environment := app.Flag("env", "Environment [DEV, QA, STG, VAL, PROD]").Default("DEV").String()
 	consul := app.Flag("consul-endpoint", "Consul agent address/port").Default("127.0.0.1:8500").String()
 
@@ -110,7 +121,11 @@ func main() {
 	main.Stream = *stream
 	main.ConsulAddr = *consul
 	main.Direct = *direct
+	main.DirectMode = *directMode
 	main.Workers = *workers
+	main.ConfigDir = *configDir
+	main.DataDir = *dataDir
+	main.Database = *database
 	if !main.Direct && main.Stream == "" {
 		log.Fatal("stream is required unless --direct is set")
 	}
@@ -119,7 +134,10 @@ func main() {
 	log.Printf("Batch size %d.\n", main.BatchSize)
 	log.Printf("AWS region %s\n", main.AWSRegion)
 	if main.Direct {
-		log.Printf("Direct load workers %d.\n", main.Workers)
+		log.Printf("Direct load mode %s workers %d.\n", main.DirectMode, main.Workers)
+		if main.DirectMode == "standard" {
+			log.Printf("Direct standard config_dir=%s data_dir=%s database=%s\n", main.ConfigDir, main.DataDir, main.Database)
+		}
 	} else {
 		log.Printf("Kinesis stream  %s.\n", main.Stream)
 	}
@@ -128,6 +146,7 @@ func main() {
 	if err := main.Init(); err != nil {
 		log.Fatal(err)
 	}
+	defer main.Close()
 
 	main.Path = *filePath
 
@@ -327,6 +346,10 @@ func (m *Main) Init() error {
 
 	var err error
 
+	if m.Direct && m.DirectMode == "standard" {
+		return m.initStandardDirect()
+	}
+
 	m.ConsulClient, err = api.NewClient(&api.Config{Address: m.ConsulAddr})
 	if err != nil {
 		return err
@@ -380,6 +403,52 @@ func (m *Main) initDirect() error {
 	}
 	router, err := core.NewSessionRouter(core.SessionRouterConfig{
 		TableCache:    m.tableCache,
+		BasePath:      m.BasePath,
+		Conn:          m.conn,
+		ShardCount:    m.Workers,
+		ChannelSize:   m.BatchSize * m.Workers,
+		FlushInterval: time.Second,
+		OnError: func(err error) {
+			m.failedRecs.Add(1)
+			log.Printf("direct load error %v", err)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	m.router = router
+	return nil
+}
+
+func (m *Main) initStandardDirect() error {
+	config := qsinabox.StandardConfig{
+		ConfigDir: m.ConfigDir,
+		DataDir:   m.DataDir,
+		Database:  m.Database,
+	}
+	backend, err := qsinabox.MountStandardLocalBackend(config, nil)
+	if err != nil {
+		return err
+	}
+	m.stdBackend = &backend
+	m.BasePath = backend.ConfigBaseDir(config)
+	m.Table, err = shared.LoadSchema(m.BasePath, m.Index, nil)
+	if err != nil {
+		return err
+	}
+	pkInfo, err := m.Table.GetPrimaryKeyInfo()
+	if err != nil {
+		return err
+	}
+	m.shardCols = pkInfo
+	m.tableCache = core.NewTableCacheStruct()
+	m.conn = backend.NewLocalConnection()
+	if m.Workers <= 0 {
+		m.Workers = 3
+	}
+	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+		TableCache:    m.tableCache,
+		BasePath:      m.BasePath,
 		Conn:          m.conn,
 		ShardCount:    m.Workers,
 		ChannelSize:   m.BatchSize * m.Workers,
@@ -420,15 +489,19 @@ func (m *Main) commitDirectLoad() error {
 	if !m.Direct || m.conn == nil {
 		return nil
 	}
-	state, activeCount, targetSize := m.conn.GetClusterState()
-	clientCount := len(m.conn.ClientConnections())
-	log.Printf("TPC-H direct load commit cluster table=%s state=%s active=%d target=%d clients=%d",
-		m.Index, state, activeCount, targetSize, clientCount)
-	if state != shared.Green || targetSize <= 0 || activeCount < targetSize || clientCount < targetSize {
-		return fmt.Errorf("direct load commit requires green cluster table=%s state=%s active=%d target=%d clients=%d",
+	if m.DirectMode != "standard" {
+		state, activeCount, targetSize := m.conn.GetClusterState()
+		clientCount := len(m.conn.ClientConnections())
+		log.Printf("TPC-H direct load commit cluster table=%s state=%s active=%d target=%d clients=%d",
 			m.Index, state, activeCount, targetSize, clientCount)
+		if state != shared.Green || targetSize <= 0 || activeCount < targetSize || clientCount < targetSize {
+			return fmt.Errorf("direct load commit requires green cluster table=%s state=%s active=%d target=%d clients=%d",
+				m.Index, state, activeCount, targetSize, clientCount)
+		}
+	} else {
+		log.Printf("TPC-H direct load commit standard table=%s data_dir=%s config_dir=%s", m.Index, m.DataDir, m.BasePath)
 	}
-	session, err := core.OpenSession(m.tableCache, "", m.Index, true, m.conn)
+	session, err := core.OpenSession(m.tableCache, m.BasePath, m.Index, true, m.conn)
 	if err != nil {
 		return err
 	}
@@ -437,6 +510,13 @@ func (m *Main) commitDirectLoad() error {
 		return err
 	}
 	return session.CloseSession()
+}
+
+func (m *Main) Close() {
+	if m.stdBackend != nil {
+		m.stdBackend.Close()
+		m.stdBackend = nil
+	}
 }
 
 // printStats outputs to Log current status of loader
