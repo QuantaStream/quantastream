@@ -142,7 +142,7 @@ having part_value > (
   where n2.n_name = 'GERMANY'
 )`
 
-	got := legacyDirectRawSQLTables(sql)
+	got := inaboxDirectRawSQLTables(sql)
 	want := []string{"nation", "partsupp", "supplier"}
 	if len(got) != len(want) {
 		t.Fatalf("tables = %#v, want %#v", got, want)

@@ -8,7 +8,7 @@ import (
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
 )
 
-func TestLegacyDirectSuiteTablesExtractsSimpleQueryTables(t *testing.T) {
+func TestInaboxDirectSuiteTablesExtractsSimpleQueryTables(t *testing.T) {
 	suite := &roadmap.Suite{Tests: []roadmap.TestCase{
 		{ID: "part-count", Kind: "query", SQL: "select count(*) from part where p_partkey >= 1"},
 		{ID: "orders-count", Kind: "query", SQL: "select count(*) from orders"},
@@ -19,27 +19,27 @@ func TestLegacyDirectSuiteTablesExtractsSimpleQueryTables(t *testing.T) {
 		{ID: "delete", Kind: "statement", SQL: "delete from lineitems_qa where order_id = 1001"},
 	}}
 
-	got := legacyDirectSuiteTables(suite)
+	got := inaboxDirectSuiteTables(suite)
 	want := []string{"lineitems_qa", "orders", "part", "partsupp", "supplier"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacyDirectSuiteTables = %v, want %v", got, want)
+		t.Fatalf("inaboxDirectSuiteTables = %v, want %v", got, want)
 	}
 }
 
-func TestLegacyDirectServicePortDefaultsAndValidates(t *testing.T) {
-	if got, err := legacyDirectServicePort(""); err != nil || got != 4000 {
+func TestInaboxDirectServicePortDefaultsAndValidates(t *testing.T) {
+	if got, err := inaboxDirectServicePort(""); err != nil || got != 4000 {
 		t.Fatalf("default port = %d, %v; want 4000, nil", got, err)
 	}
-	if got, err := legacyDirectServicePort("4100"); err != nil || got != 4100 {
+	if got, err := inaboxDirectServicePort("4100"); err != nil || got != 4100 {
 		t.Fatalf("explicit port = %d, %v; want 4100, nil", got, err)
 	}
-	if _, err := legacyDirectServicePort("bad"); err == nil {
+	if _, err := inaboxDirectServicePort("bad"); err == nil {
 		t.Fatalf("expected invalid port error")
 	}
 }
 
-func TestLegacyDirectConfigBackedTablesInDependencyOrder(t *testing.T) {
-	got, err := legacyDirectConfigBackedTablesInDependencyOrder([]string{
+func TestInaboxDirectConfigBackedTablesInDependencyOrder(t *testing.T) {
+	got, err := inaboxDirectConfigBackedTablesInDependencyOrder([]string{
 		"deliveries_qa",
 		"lineitems_qa",
 		"orders_qa",
@@ -54,28 +54,28 @@ func TestLegacyDirectConfigBackedTablesInDependencyOrder(t *testing.T) {
 	}
 }
 
-func TestLegacyDirectMissingTablePreloadErrorRecognizesNegativeCaseTables(t *testing.T) {
-	if !legacyDirectMissingTablePreloadError("puke", errors.New("Error UnmarshalConsul: table puke not found")) {
+func TestInaboxDirectMissingTablePreloadErrorRecognizesNegativeCaseTables(t *testing.T) {
+	if !inaboxDirectMissingTablePreloadError("puke", errors.New("Error UnmarshalConsul: table puke not found")) {
 		t.Fatalf("expected missing table preload error to be recognized")
 	}
-	if legacyDirectMissingTablePreloadError("puke", errors.New("permission denied")) {
+	if inaboxDirectMissingTablePreloadError("puke", errors.New("permission denied")) {
 		t.Fatalf("unexpected non-table preload error match")
 	}
-	if legacyDirectMissingTablePreloadError("orders", nil) {
+	if inaboxDirectMissingTablePreloadError("orders", nil) {
 		t.Fatalf("nil error should not match")
 	}
 }
 
-func TestLegacyDirectSuiteTablesExtractsDeprecatedAdminShorthand(t *testing.T) {
+func TestInaboxDirectSuiteTablesExtractsDeprecatedAdminShorthand(t *testing.T) {
 	suite := &roadmap.Suite{Tests: []roadmap.TestCase{
 		{ID: "admin-create", Kind: "admin", SQL: "create customers_qa"},
 		{ID: "admin-drop", Kind: "admin", SQL: "drop orders_qa"},
 		{ID: "admin-truncate", Kind: "admin", SQL: "truncate lineitems_qa"},
 	}}
 
-	got := legacyDirectSuiteTables(suite)
+	got := inaboxDirectSuiteTables(suite)
 	want := []string{"customers_qa", "lineitems_qa", "orders_qa"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacyDirectSuiteTables = %v, want %v", got, want)
+		t.Fatalf("inaboxDirectSuiteTables = %v, want %v", got, want)
 	}
 }

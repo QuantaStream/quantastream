@@ -16,24 +16,24 @@ import (
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
 )
 
-type legacyDirectHarnessState struct {
+type inaboxDirectHarnessState struct {
 	cfg     runnerConfig
 	tables  []string
 	config  qsruntime.DirectRuntimeConfig
 	runtime *runtimeRoadmapEngine
 }
 
-func buildLegacyDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
-	servicePort, err := legacyDirectServicePort(cfg.Port)
+func buildInaboxDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error) {
+	servicePort, err := inaboxDirectServicePort(cfg.Port)
 	if err != nil {
 		return runnerHarness{}, err
 	}
-	tables := legacyDirectSuiteTables(suite)
+	tables := inaboxDirectSuiteTables(suite)
 	config := qsruntime.NewDirectRuntimeConfig("", cfg.Consul, servicePort, 1)
-	if err := legacyDirectEnsureConfigBackedTables(context.Background(), tables, config, legacyDirectDefaultSchema(cfg.Database)); err != nil {
+	if err := inaboxDirectEnsureConfigBackedTables(context.Background(), tables, config, inaboxDirectDefaultSchema(cfg.Database)); err != nil {
 		return runnerHarness{}, err
 	}
-	state := &legacyDirectHarnessState{
+	state := &inaboxDirectHarnessState{
 		cfg:     cfg,
 		tables:  tables,
 		config:  config,
@@ -55,7 +55,7 @@ func buildLegacyDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHar
 	}, nil
 }
 
-func (s *legacyDirectHarnessState) rebuild(ctx context.Context) error {
+func (s *inaboxDirectHarnessState) rebuild(ctx context.Context) error {
 	catalogTableCache := core.NewTableCacheStruct()
 	runtimeTableCache := core.NewTableCacheStruct()
 	quantaSource, err := source.NewQuantaSource(
@@ -68,10 +68,10 @@ func (s *legacyDirectHarnessState) rebuild(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := preloadLegacyDirectTables(ctx, catalogTableCache, quantaSource, s.tables); err != nil {
+	if err := preloadInaboxDirectTables(ctx, catalogTableCache, quantaSource, s.tables); err != nil {
 		return err
 	}
-	runtime, diagnostics, err := legacyDirectBuildSQLRuntime(ctx, s.cfg, s.config, catalogTableCache, quantaSource)
+	runtime, diagnostics, err := inaboxDirectBuildSQLRuntime(ctx, s.cfg, s.config, catalogTableCache, quantaSource)
 	if err != nil {
 		return err
 	}
@@ -82,20 +82,20 @@ func (s *legacyDirectHarnessState) rebuild(ctx context.Context) error {
 	return nil
 }
 
-func legacyDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config qsruntime.DirectRuntimeConfig, catalogTableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) (qsruntime.SQLRuntime, qsbridge.DiagnosticSet, error) {
+func inaboxDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config qsruntime.DirectRuntimeConfig, catalogTableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) (qsruntime.SQLRuntime, qsbridge.DiagnosticSet, error) {
 	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
 		Direct:                    config,
-		DefaultSchema:             legacyDirectDefaultSchema(cfg.Database),
-		SchemaDir:                 legacyDirectConfigDir(),
+		DefaultSchema:             inaboxDirectDefaultSchema(cfg.Database),
+		SchemaDir:                 inaboxDirectConfigDir(),
 		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
-		Functions:                 legacyDirectSQLFunctions(),
+		Functions:                 inaboxDirectSQLFunctions(),
 		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
 		EnableFilterExpressions:   true,
 		ApplyRecommendedEdgeOrder: os.Getenv("QUANTASTREAM_INABOX_DIRECT_APPLY_EDGE_ORDER") == "1",
 	})
 	return proxyRuntime.Runtime, diagnostics, err
 }
-func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheStruct, quantaSource *source.QuantaSource, tables []string) error {
+func preloadInaboxDirectTables(ctx context.Context, tableCache *core.TableCacheStruct, quantaSource *source.QuantaSource, tables []string) error {
 	if tableCache == nil {
 		return fmt.Errorf("inabox-direct table cache is not initialized")
 	}
@@ -108,7 +108,7 @@ func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheS
 			return err
 		}
 		if _, err := core.LoadTable(tableCache, "", kvStore, table, quantaSource.GetConnection().Consul); err != nil {
-			if legacyDirectMissingTablePreloadError(table, err) {
+			if inaboxDirectMissingTablePreloadError(table, err) {
 				continue
 			}
 			return fmt.Errorf("preload inabox-direct table %s: %w", table, err)
@@ -117,7 +117,7 @@ func preloadLegacyDirectTables(ctx context.Context, tableCache *core.TableCacheS
 	return nil
 }
 
-func legacyDirectMissingTablePreloadError(table string, err error) bool {
+func inaboxDirectMissingTablePreloadError(table string, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -128,7 +128,7 @@ func legacyDirectMissingTablePreloadError(table string, err error) bool {
 		strings.Contains(message, "unmarshalconsul")
 }
 
-func legacyDirectDictionaryResolver(tableCache *core.TableCacheStruct, schema string) qsbridge.MemoryDictionaryResolver {
+func inaboxDirectDictionaryResolver(tableCache *core.TableCacheStruct, schema string) qsbridge.MemoryDictionaryResolver {
 	resolver := qsbridge.MemoryDictionaryResolver{}
 	if tableCache == nil {
 		return resolver
@@ -181,7 +181,7 @@ func legacyDirectDictionaryResolver(tableCache *core.TableCacheStruct, schema st
 	return resolver
 }
 
-func legacyDirectSuiteTables(suite *roadmap.Suite) []string {
+func inaboxDirectSuiteTables(suite *roadmap.Suite) []string {
 	if suite == nil {
 		return nil
 	}
@@ -201,7 +201,7 @@ func legacyDirectSuiteTables(suite *roadmap.Suite) []string {
 		}
 		statement, diagnostics := parser.Parse(test.SQL)
 		if diagnostics.BlocksNative() {
-			for _, table := range legacyDirectRawSQLTables(test.SQL) {
+			for _, table := range inaboxDirectRawSQLTables(test.SQL) {
 				seen[strings.ToLower(table)] = struct{}{}
 			}
 			continue
@@ -236,7 +236,7 @@ func legacyDirectSuiteTables(suite *roadmap.Suite) []string {
 	return tables
 }
 
-func legacyDirectRawSQLTables(sql string) []string {
+func inaboxDirectRawSQLTables(sql string) []string {
 	fields := strings.Fields(sql)
 	tables := make([]string, 0)
 	seen := make(map[string]struct{})
@@ -263,8 +263,8 @@ func legacyDirectRawSQLTables(sql string) []string {
 	return tables
 }
 
-func legacyDirectEnsureConfigBackedTables(ctx context.Context, tables []string, config qsruntime.DirectRuntimeConfig, schemaName string) error {
-	ordered, err := legacyDirectConfigBackedTablesInDependencyOrder(tables)
+func inaboxDirectEnsureConfigBackedTables(ctx context.Context, tables []string, config qsruntime.DirectRuntimeConfig, schemaName string) error {
+	ordered, err := inaboxDirectConfigBackedTablesInDependencyOrder(tables)
 	if err != nil {
 		return err
 	}
@@ -277,18 +277,18 @@ func legacyDirectEnsureConfigBackedTables(ctx context.Context, tables []string, 
 		return err
 	}
 	for _, table := range ordered {
-		if !legacyDirectHasConfigSchema(table) {
+		if !inaboxDirectHasConfigSchema(table) {
 			continue
 		}
-		if err := legacyDirectCreateConfigBackedTable(ctx, quantaSource, table, schemaName); err != nil {
+		if err := inaboxDirectCreateConfigBackedTable(ctx, quantaSource, table, schemaName); err != nil {
 			return fmt.Errorf("bootstrap inabox-direct table %s: %w", table, err)
 		}
 	}
 	return nil
 }
 
-func legacyDirectCreateConfigBackedTable(ctx context.Context, quantaSource *source.QuantaSource, table, schemaName string) error {
-	handle, err := qsruntime.NewLegacySchemaMutationHandle(quantaSource, table, legacyDirectConfigDir())
+func inaboxDirectCreateConfigBackedTable(ctx context.Context, quantaSource *source.QuantaSource, table, schemaName string) error {
+	handle, err := qsruntime.NewLegacySchemaMutationHandle(quantaSource, table, inaboxDirectConfigDir())
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func legacyDirectCreateConfigBackedTable(ctx context.Context, quantaSource *sour
 	return nil
 }
 
-func legacyDirectConfigBackedTablesInDependencyOrder(tables []string) ([]string, error) {
+func inaboxDirectConfigBackedTablesInDependencyOrder(tables []string) ([]string, error) {
 	ordered := make([]string, 0, len(tables))
 	visiting := map[string]bool{}
 	visited := map[string]bool{}
@@ -318,14 +318,14 @@ func legacyDirectConfigBackedTablesInDependencyOrder(tables []string) ([]string,
 	visit = func(table string) error {
 		table = strings.TrimSpace(table)
 		key := strings.ToLower(table)
-		if key == "" || !legacyDirectHasConfigSchema(table) || visited[key] {
+		if key == "" || !inaboxDirectHasConfigSchema(table) || visited[key] {
 			return nil
 		}
 		if visiting[key] {
 			return fmt.Errorf("cycle in config-backed table dependencies at %s", table)
 		}
 		visiting[key] = true
-		dependencies, err := legacyDirectConfigSchemaForeignKeys(table)
+		dependencies, err := inaboxDirectConfigSchemaForeignKeys(table)
 		if err != nil {
 			return err
 		}
@@ -347,12 +347,12 @@ func legacyDirectConfigBackedTablesInDependencyOrder(tables []string) ([]string,
 	return ordered, nil
 }
 
-func legacyDirectHasConfigSchema(table string) bool {
-	_, ok := legacyDirectConfigSchemaPath(table)
+func inaboxDirectHasConfigSchema(table string) bool {
+	_, ok := inaboxDirectConfigSchemaPath(table)
 	return ok
 }
 
-func legacyDirectConfigDir() string {
+func inaboxDirectConfigDir() string {
 	for _, path := range []string{"config", "sqlrunner/config"} {
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			return path
@@ -361,7 +361,7 @@ func legacyDirectConfigDir() string {
 	return ""
 }
 
-func legacyDirectConfigSchemaPath(table string) (string, bool) {
+func inaboxDirectConfigSchemaPath(table string) (string, bool) {
 	if table == "" {
 		return "", false
 	}
@@ -376,8 +376,8 @@ func legacyDirectConfigSchemaPath(table string) (string, bool) {
 	return "", false
 }
 
-func legacyDirectConfigSchemaForeignKeys(table string) ([]string, error) {
-	path, ok := legacyDirectConfigSchemaPath(table)
+func inaboxDirectConfigSchemaForeignKeys(table string) ([]string, error) {
+	path, ok := inaboxDirectConfigSchemaPath(table)
 	if !ok {
 		return nil, nil
 	}
@@ -404,7 +404,7 @@ func legacyDirectConfigSchemaForeignKeys(table string) ([]string, error) {
 	return keys, nil
 }
 
-func legacyDirectServicePort(port string) (int, error) {
+func inaboxDirectServicePort(port string) (int, error) {
 	port = strings.TrimSpace(port)
 	if port == "" {
 		return qsruntime.DefaultDirectServicePort, nil
@@ -416,7 +416,7 @@ func legacyDirectServicePort(port string) (int, error) {
 	return servicePort, nil
 }
 
-func legacyDirectDefaultSchema(schema string) string {
+func inaboxDirectDefaultSchema(schema string) string {
 	schema = strings.TrimSpace(schema)
 	if schema == "" {
 		return "quanta"
@@ -424,6 +424,6 @@ func legacyDirectDefaultSchema(schema string) string {
 	return schema
 }
 
-func legacyDirectSQLFunctions() []qsbridge.FunctionDefinition {
+func inaboxDirectSQLFunctions() []qsbridge.FunctionDefinition {
 	return qsbridge.BuiltinSQLFunctionDefinitions()
 }

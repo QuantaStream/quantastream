@@ -46,7 +46,7 @@ func TestLegacyProjectionMaterializerReachabilityIsExplicit(t *testing.T) {
 	concreteConstructors := map[string]int{
 		"qsruntime/legacy_direct_relationship_join.go": 0,
 		"qsruntime/legacy_direct_runtime.go":           0,
-		"sqlrunner/legacy_direct_runtime.go":           0,
+		"sqlrunner/inabox_direct_runtime.go":           0,
 	}
 	for file, want := range concreteConstructors {
 		body := readRepoFileForProjectorQuarantine(t, file)

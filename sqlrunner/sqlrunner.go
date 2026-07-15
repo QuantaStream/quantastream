@@ -285,7 +285,7 @@ func buildHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, error)
 	case engineInaboxStandard:
 		return buildInaboxStandardHarness(suite, cfg)
 	case engineInaboxDirect:
-		return buildLegacyDirectHarness(suite, cfg)
+		return buildInaboxDirectHarness(suite, cfg)
 	case engineRuntime, engineRuntimeInspect:
 		return buildRuntimeHarness(suite, cfg)
 	case engineMySQLReference:
