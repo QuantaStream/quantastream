@@ -12,6 +12,7 @@ HOST="${QUANTA_HOST:-127.0.0.1}"
 PORT="${QUANTA_PORT:-4000}"
 USER="${QUANTA_USER:-MOLIG004}"
 DB="${QUANTA_DB:-quanta}"
+ENGINE="${QUANTA_ENGINE:-distributed}"
 
 if ! [[ "${RUNS}" =~ ^[0-9]+$ ]] || [ "${RUNS}" -lt 1 ]; then
   echo "usage: $0 [runs] [suite-file]" >&2
@@ -37,6 +38,7 @@ LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${RUNS}x-${STAMP}.log"
   echo "timestamp_utc=${STAMP}"
   echo "repo=${REPO_ROOT}"
   echo "suite=${SUITE_FILE}"
+  echo "engine=${ENGINE}"
   echo "runs=${RUNS}"
   echo "host=${HOST}"
   echo "port=${PORT}"
@@ -57,6 +59,7 @@ for run in $(seq 1 "${RUNS}"); do
   (
     cd "${SQLRUNNER_DIR}" &&
       go run . \
+        -engine "${ENGINE}" \
         -suite_file "${SUITE_ARG}" \
         -host "${HOST}" \
         -user "${USER}" \

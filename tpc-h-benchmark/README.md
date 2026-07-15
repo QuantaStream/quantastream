@@ -230,6 +230,26 @@ cd tpc-h-benchmark
 ./run-tpch-suite.sh 3
 ```
 
+Set `QUANTA_ENGINE` to capture the same suite through a specific SQLRunner
+engine. This is useful for apples-to-apples profiling across execution modes:
+
+```bash
+QUANTA_ENGINE=inabox-direct ./run-tpch-suite.sh 1 sqltests/tpch_profile.yaml
+QUANTA_ENGINE=inabox-standard QUANTA_PORT=4400 ./run-tpch-suite.sh 1 sqltests/tpch_profile.yaml
+```
+
+Compare two or more captured suite logs, including logs with known FAIL/XFAIL
+results, with:
+
+```bash
+./compare-tpch-suite.py \
+  local/logs/tpch_profile-1x-direct.log \
+  local/logs/tpch_profile-1x-standard.log
+```
+
+This comparison is a profiling flashlight rather than a correctness gate. Use
+the JSON benchmark report mode for green, repeatable benchmark artifacts.
+
 The default suite is `sqltests/tpch_queries.yaml`. Logs are written under:
 
 ```text
