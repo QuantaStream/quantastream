@@ -16,7 +16,7 @@ LOG_DIR="${SCRIPT_DIR}/local/logs"
 mkdir -p "${LOG_DIR}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 LOG_FILE="${LOG_DIR}/tpch-benchmark-${STAMP}.log"
-START_LOCAL_LOG="${START_LOCAL_LOG:-${REPO_ROOT}/start-local/.local/logs/start-local.log}"
+START_LOCAL_LOG="${START_LOCAL_LOG:-${REPO_ROOT}/startup-scripts/.local/logs/start-local.log}"
 JOIN_DRIVER_LOG="${LOG_DIR}/join-driver-${STAMP}.log"
 PROJECTOR_TIMING_LOG="${LOG_DIR}/projector-timing-${STAMP}.log"
 START_LOCAL_LINE=0

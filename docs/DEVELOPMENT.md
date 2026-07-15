@@ -23,8 +23,8 @@ make test
 Start Quanta-in-a-Box:
 
 ```bash
-cd start-local
-go run .
+cd startup-scripts
+./start-local.sh --dev-fast-start
 ```
 
 Then run SQLRunner:
@@ -173,8 +173,8 @@ data samples and proposing Quanta schemas. See [`ANALYZER.md`](ANALYZER.md).
 make build_all
 make test
 
-cd start-local
-go run .
+cd startup-scripts
+./start-local.sh --dev-fast-start
 
 cd sqlrunner
 go run . -suite_file sqltests/joins_sql.yaml \

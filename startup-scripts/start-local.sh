@@ -18,6 +18,9 @@ Options:
                     Use only for local development with trusted local data.
   --nodes-only      Set QUANTASTREAM_NODES_ONLY=1 to start local Consul-backed
                     nodes without starting the MySQL query proxy.
+
+Environment:
+  QUANTASTREAM_SKIP_CONSUL_START=1  Do not start the bundled local Consul helper.
 EOF
 }
 
@@ -40,6 +43,10 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [[ ! "${QUANTASTREAM_SKIP_CONSUL_START:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+  ./start-consul.sh
+fi
 
 echo "Starting local cluster; logging to $log_file"
 if [[ "${QUANTA_DEV_SKIP_SYNC:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then

@@ -1,20 +1,22 @@
 
 ## How to start a cluster locally
 
-Start Consul first:
-
-```sh
-./start-consul.sh
-```
-
-The script runs a single-node Consul server with durable state under
-`.local/consul/data`. This keeps local schema metadata available across Consul
-process restarts and WSL restarts, as long as `.local` is not deleted.
-
-Then start the local cluster:
+`start-local.sh` starts the Consul-backed local distributed-shape harness:
+local nodes plus the MySQL query front door.
 
 ```sh
 ./start-local.sh
+```
+
+The script starts the bundled single-node Consul helper automatically unless
+`QUANTASTREAM_SKIP_CONSUL_START=1` is set. Consul uses durable state under
+`.local/consul/data`. This keeps local schema metadata available across Consul
+process restarts and WSL restarts, as long as `.local` is not deleted.
+
+You can still start Consul explicitly:
+
+```sh
+./start-consul.sh
 ```
 
 For fast local code iteration, you can skip cross-node startup synchronization:
@@ -26,6 +28,18 @@ For fast local code iteration, you can skip cross-node startup synchronization:
 This sets `QUANTA_DEV_SKIP_SYNC=1`, marks nodes active without the normal sync
 push/verification phase, and logs a warning. Use it only with trusted local data;
 do not use it for QIAB or production-like runs.
+
+## How to start direct mode locally
+
+`start-direct.sh` starts the same Consul-backed local nodes, but skips the MySQL
+query front door. Use it when SQLRunner owns the query engine in `inabox-direct`
+mode.
+
+```sh
+./start-direct.sh --dev-fast-start
+```
+
+Then run direct-mode SQLRunner suites from `../sqlrunner`.
 
 Or, use a debugger or `go run .` directly.
 

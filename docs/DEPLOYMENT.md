@@ -48,8 +48,8 @@ experience.
 Local workflow:
 
 ```bash
-cd ~/projects/quantastream/start-local
-./start-local.sh --nodes-only --dev-fast-start
+cd ~/projects/quantastream/startup-scripts
+./start-direct.sh --dev-fast-start
 
 cd ~/projects/quantastream/sqlrunner
 go run . -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500
@@ -115,6 +115,22 @@ go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -d
 go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
 ```
 
+Convenience startup command:
+
+```bash
+cd ~/projects/quantastream
+./startup-scripts/start-standard.sh
+```
+
+For an already loaded TPC-H standard data directory:
+
+```bash
+cd ~/projects/quantastream
+QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
+QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+  ./startup-scripts/start-standard.sh
+```
+
 SQLRunner can target that standalone process over the MySQL-compatible socket:
 
 ```bash
@@ -173,7 +189,7 @@ above are implemented and covered by SQLRunner or compatibility-lab tests.
 
 `inabox-local` is the local distributed-shape profile. As the new network layer
 comes online, this is the expected result of running the local harness such as
-`start-local`: the new MySQL-compatible query processor runs locally and
+`startup-scripts/start-local.sh`: the new MySQL-compatible query processor runs locally and
 talks to local data nodes through the distributed communication path.
 
 Required shape:
@@ -194,7 +210,7 @@ cluster startup, gRPC behavior, and distributed catalog assumptions.
 Local workflow:
 
 ```bash
-cd ~/projects/quantastream/start-local
+cd ~/projects/quantastream/startup-scripts
 ./start-local.sh --dev-fast-start
 
 cd ~/projects/quantastream/sqlrunner

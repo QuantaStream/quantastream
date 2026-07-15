@@ -305,7 +305,7 @@ Quanta-in-a-Box (QIAB) provides:
 
 The current implementation uses:
 
-- start-local
+- startup-scripts/start-local.sh
 - Ensure_Cluster
 - in-process node startup
 

@@ -36,15 +36,15 @@ consul agent -dev -client=0.0.0.0
 # Start QuantaStream-In-A-Box
 
 ```bash
-cd start-local
-go run .
+cd startup-scripts
+./start-standard.sh
 ```
 
 This starts:
 
-- 3 local QuantaStream data nodes
 - MySQL-compatible query front door
-- Local cluster services
+- in-process local storage adapter
+- file-backed local catalog/data directories
 
 ---
 
