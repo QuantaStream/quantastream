@@ -1,21 +1,18 @@
 # qsbridge
 
-`qsbridge` is the native SQL planning vocabulary for Quanta. It is intentionally
-separate from the existing `qlbridge` fork so refactor work can be read,
-reviewed, and enabled independently.
+`qsbridge` is the native SQL planning vocabulary for QuantaStream. It is the
+active home for SQL planning contracts, query classification, and native
+execution vocabulary.
 
-The package is currently scaffold-only. It defines typed SQL engine concepts and
-tests their behavior. It includes a deliberately tiny parser for one-table
-SELECT slices with direct-field and simple arithmetic projections, aggregate
-calls, optional AND-combined comparison predicates, single-field grouping,
-direct-field or aggregate-alias ordering, and limits, but it does not provide
-general SQL parsing, storage execution, or replacement of the legacy runtime
-path.
+The package defines typed SQL engine concepts and tests their behavior. It
+includes the parser and planning surfaces used by SQLRunner, inabox-direct, and
+inabox-standard. Storage execution still lives behind runtime and protocol
+boundaries rather than inside `qsbridge`.
 
-`architecture_test.go` enforces this boundary by failing if qsbridge imports
-legacy or runtime packages such as `qlbridge`, `source`, `server`, `shared`,
-`grpc`, `core`, or `qsruntime`. The package should describe handoff contracts to
-those layers, not silently grow a runtime dependency on them.
+`architecture_test.go` enforces this boundary by failing if `qsbridge` imports
+runtime or storage packages such as `source`, `server`, `shared`, `grpc`,
+`core`, or `qsruntime`. The package should describe handoff contracts to those
+layers, not silently grow a runtime dependency on them.
 
 ## Goals
 
@@ -63,12 +60,13 @@ execution covers the required SQL surface.
 Compatibility code must not become the place where SQL meaning or bitmap
 algebra is corrected. Query semantics belong in `qsbridge`; durable runtime
 contracts belong in the runtime/executor layer; compatibility adapters only
-translate between the new contracts and temporary legacy surfaces. For example,
+translate between the new contracts and temporary compatibility surfaces. For
+example,
 negated bitmap predicates should be lowered as explicit bitmap `DIFFERENCE`
-operations before they reach legacy adapters, rather than relying on adapter
-rewrites or legacy `Negate` side flags. Once the native path no longer depends
-on the old qlbridge proxy, `qscompat` and the proxy-facing compatibility code
-should be deleted rather than treated as long-lived infrastructure.
+operations before they reach compatibility adapters, rather than relying on
+adapter rewrites or historical `Negate` side flags. Once temporary
+compatibility surfaces become unused, they should be deleted rather than
+treated as long-lived infrastructure.
 
 ## Current Flow
 
@@ -137,17 +135,17 @@ placement is preserved for special cases such as sampling.
 `catalog_expression.go` contains schema-owned expression metadata for
 blind-column INSERT defaults and streaming ingest table selectors. It records
 raw expression text, purpose, and row or payload dependencies without importing
-the legacy qlbridge expression VM.
+the historical qlbridge expression VM.
 
 `catalog_view.go` contains node-facing and query-facing projections of the
 catalog. Node views carry lean physical storage, BSI, bitmap, and relationship
 metadata; query views preserve semantic planner/runtime metadata such as
 dictionary, rehydration, multiplicity, function, and relationship definitions.
-This keeps legacy node metadata needs expressible without making
+This keeps node metadata needs expressible without making
 `core.BasicTable` or `shared.Table` authoritative in the refactor.
 
 `bridge.go` contains parser-neutral unbound statement and expression shapes that
-can be populated by `qlbridge` or a replacement parser before binding, including
+can be populated by SQL parsers before binding, including
 projection, inner/outer join, semi/anti membership, predicate, aggregate,
 grouping, having, and ordering shapes. Predicate scopes preserve `ON`, `WHERE`,
 and `HAVING` boundaries for later outer-join-safe planning.
@@ -287,7 +285,7 @@ optimization metadata.
 `client_sql_driver.go` adapts qsbridge planning and execution contracts to
 Go's `database/sql/driver` connector surface. It is connector-based rather
 than globally registered, so tests and future adapters can exercise the path
-without importing the legacy qlbridge SQL driver.
+without importing the historical qlbridge SQL driver.
 `inmemory_native_executor.go` provides a storage-neutral native executor for
 one-table direct SELECT projections and flat AND-combined field-to-literal or
 field-to-parameter comparison predicates.
@@ -1530,12 +1528,10 @@ often the SQL surface for relation-backed bitmap set operations.
 
 ## Boundaries
 
-`qlbridge` remains the default compatibility engine until a future feature flag
-explicitly routes selected SQL through `qsbridge`.
-
-Do not import `qlbridge` packages into `qsbridge` without a deliberate bridge
-layer. The refactor package should describe Quanta's native model first, then
-adapt parser and runtime details at package boundaries.
+`qsbridge` owns SQL semantics, planning vocabulary, and planner diagnostics.
+Runtime packages own execution, storage adapters, and protocol boundaries. The
+package should describe QuantaStream's native model first, then adapt parser
+and runtime details at package boundaries.
 
 New `qsbridge` code should use standard Go APIs. If logging becomes necessary,
 use `log/slog`; do not introduce new `gou` usage in this package.

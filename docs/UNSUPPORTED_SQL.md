@@ -219,8 +219,8 @@ date '1994-01-01' + interval '1' year
 ```
 
 MySQL-style helper functions such as `year(date_field)` are supported in
-covered projection and grouping shapes. Some registered qlbridge date/time
-helpers are not currently supported through Quanta SQL source planning. Probes
+covered projection and grouping shapes. Some historical/custom date/time
+helpers are not currently supported through QuantaStream SQL planning. Probes
 for `yy(date_field)`, `yymm(date_field)`, `hourofweek(date_field)`, and
 `seconds(date_field)` fail during planning with:
 

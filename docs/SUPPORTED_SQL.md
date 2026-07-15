@@ -37,8 +37,8 @@ coverage if Quanta chooses to expose them.
 
 ## Type Coercion Helpers
 
-Quanta supports a focused set of qlbridge type-coercion helpers in covered
-select-list and predicate shapes:
+QuantaStream supports a focused set of compatibility type-coercion helpers in
+covered select-list and predicate shapes:
 
 - `tostring(value)` coerces a value to string.
 - `toint(value)` coerces a value to integer.

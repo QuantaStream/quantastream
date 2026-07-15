@@ -124,8 +124,9 @@ rather than:
 hydrate receiptdate values + hydrate commitdate values -> row loop compare
 ```
 
-The legacy `core.Projector.Next` path is useful as a compatibility reference,
-but it is intentionally not the desired center of the native engine. It hides
+The historical `core.Projector.Next` path is useful as a compatibility
+reference, but it is intentionally not the desired center of the native engine.
+It hides
 backend retrievals, transport/serialization costs, and row hydration behavior
 behind a broad materialization API. Native planner and executor work should
 make these boundaries visible:
@@ -214,7 +215,7 @@ database view of accumulated state.
 
 Schemas may define selector expressions that identify which table shape an
 incoming record belongs to. This is a durable ingestion concept and should not
-depend on the legacy `qlbridge` expression VM.
+depend on the historical `qlbridge` expression VM.
 
 The future selector engine should provide a small, deterministic expression
 surface for decoded payloads:

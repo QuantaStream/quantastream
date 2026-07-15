@@ -123,9 +123,12 @@ record to one internal shard channel/session owner.
 
 ---
 
-## qlbridge
+## Historical SQL Bridge
 
-Quanta currently contains a modified/forked qlbridge implementation.
+The old qlbridge proxy path has been retired from the active QuantaStream
+engine. Some historical notes, package names, and migration documents may still
+refer to it, but new SQL work should target the native `qsbridge`, `qsmysql`,
+`qsinabox`, `qsruntime`, and SQLRunner inabox paths.
 
 Known technical debt areas include:
 
@@ -134,7 +137,8 @@ Known technical debt areas include:
 - GROUP BY behavior
 - query edge cases
 
-Stabilization is preferred over broad refactoring.
+Stabilization is preferred over broad refactoring, but newly eligible dead code
+should be deleted instead of preserved as compatibility scaffolding.
 
 ---
 
@@ -159,7 +163,7 @@ data samples and proposing Quanta schemas. See [`ANALYZER.md`](ANALYZER.md).
 - startup ergonomics
 - ingestion abstraction cleanup
 - SQL planner complexity
-- qlbridge maintenance burden
+- retired SQL bridge terminology and compatibility cleanup
 
 ---
 
@@ -279,18 +283,17 @@ appear correct.
 The likely incremental direction is to select the grouping implementation
 according to query capabilities:
 
-- use the native `core.Projector.AggregateAndGroup` path when grouping
+- use the native bitmap grouping path when grouping
   expressions are simple columns, every grouping column is backed by a
   standard bitmap, and all requested aggregates and result semantics are
   supported
-- otherwise retain the normal qlbridge grouping and `HAVING` processing as a
-  correctness fallback, even when that path is less performant
-- reject a query only when neither path can preserve its SQL semantics
+- otherwise use an explicit materialized grouping path or reject with a clear
+  planner diagnostic when no path can preserve SQL semantics
 
 Native-path eligibility must eventually account for aliases, projection order,
 null behavior, aggregate expressions, `DISTINCT`, joins, `HAVING`, and result
-ordering rather than checking storage type alone. Quanta should suppress the
-qlbridge group task only after the complete query has been classified as
+ordering rather than checking storage type alone. QuantaStream should choose a
+bitmap grouping path only after the complete query has been classified as
 native-capable.
 
 TPC-H queries should be used to evaluate and expand this boundary. Their
@@ -399,7 +402,8 @@ Grouping by BSI-backed fields is a planner boundary rather than only a storage
 type question. The native bitmap grouping path is strongest when every grouping
 expression is backed by a standard bitmap. When a query groups by BSI fields,
 or mixes standard bitmap and BSI grouping expressions, a future optimizer should
-be able to choose the generic qlbridge grouping task as a correctness fallback.
+be able to choose an explicit materialized grouping path as a correctness
+fallback.
 
 That fallback may be slower, but it avoids rejecting otherwise valid SQL while
 native bitmap support remains incomplete. The planner should make this decision
