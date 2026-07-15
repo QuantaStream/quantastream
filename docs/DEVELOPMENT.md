@@ -96,11 +96,11 @@ shape instead of adding another special case to `JoinMerge`.
 
 ### MySQL Database/Schema Compatibility
 
-Quanta currently treats the MySQL database name mostly as a connection/schema
+QuantaStream currently treats the MySQL database name mostly as a connection/schema
 grouping and only partially implements MySQL database semantics. This is enough
-for the current proxy and SQLRunner paths, but some MySQL-compatible tools issue
-database commands during connect or startup and report noisy errors even though
-queries can still run.
+for the current MySQL front-door and SQLRunner paths, but some MySQL-compatible
+tools issue database commands during connect or startup and report noisy errors
+even though queries can still run.
 
 Roadmap work should make database/schema handling explicit and tool-friendly:
 

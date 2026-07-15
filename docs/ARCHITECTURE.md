@@ -29,16 +29,16 @@ Data nodes are shard-aware and coordinated through Consul.
 
 ---
 
-## Query Proxy
+## Query Front Door And Processor
 
-The query proxy:
+The MySQL-compatible query front door and query processor:
 
 - accepts SQL requests
 - performs SQL parsing/planning
 - generates logical query plans
 - coordinates distributed query execution
 
-The proxy currently exposes a MySQL-compatible interface.
+The current product-facing network surface exposes a MySQL-compatible interface.
 
 ### MySQL Wire Adapter Boundary
 
@@ -47,7 +47,7 @@ handshake payloads, and command packet decoding. It deliberately does not own
 SQL planning, bitmap execution, catalog access, authentication policy, or
 result-set production.
 
-`qsruntime` mounts this adapter readiness into the native proxy front door so
+`qsruntime` mounts this adapter readiness into the native MySQL front door so
 the protocol surface can mature independently from the SQL engine. This keeps
 `qsbridge` protocol-neutral while still giving QuantaStream a MySQL-compatible
 network path.
@@ -72,7 +72,7 @@ predicates, dictionary predicates, projection reads, and local aggregate work
 that can be evaluated against that table's shards.
 
 The broader SQL meaning of a query belongs above that boundary. The planner and
-query proxy must understand the full query graph before issuing node work:
+query processor must understand the full query graph before issuing node work:
 
 - table instances and aliases
 - join relationships and join type
@@ -298,7 +298,7 @@ Result assembly
 Quanta-in-a-Box (QIAB) provides:
 
 - local 3-node cluster startup
-- local proxy startup
+- local MySQL-compatible front-door startup
 - integration test environment
 - reproducible development workflows
 

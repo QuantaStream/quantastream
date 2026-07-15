@@ -1,6 +1,6 @@
 # QUICKSTART.md
 
-# Quanta Quick Start
+# QuantaStream Quick Start
 
 ## Requirements
 
@@ -17,7 +17,7 @@ Recommended minimum memory:
 
 ---
 
-# Build Quanta
+# Build QuantaStream
 
 ```bash
 make build_all
@@ -33,7 +33,7 @@ consul agent -dev -client=0.0.0.0
 
 ---
 
-# Start Quanta-in-a-Box
+# Start QuantaStream-In-A-Box
 
 ```bash
 cd start-local
@@ -42,8 +42,8 @@ go run .
 
 This starts:
 
-- 3 local Quanta data nodes
-- Query proxy
+- 3 local QuantaStream data nodes
+- MySQL-compatible query front door
 - Local cluster services
 
 ---
@@ -86,7 +86,7 @@ This performs:
 # Connect with MySQL Client
 
 ```bash
-mysql -h 127.0.0.1 -P <proxy-port> -u root
+mysql -h 127.0.0.1 -P 4000 -u root
 ```
 
 ---

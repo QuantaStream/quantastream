@@ -21,7 +21,7 @@ modes:
   server, query engine, and one lightweight in-process node adapter in one
   process.
 - `inabox-local`: the local distributed-shape profile, with the new
-  MySQL-compatible proxy/server talking to local nodes through the normal
+  MySQL-compatible front door talking to local nodes through the normal
   service-discovery and gRPC path.
 - `distributed`: the multi-host architecture with independently deployed query
   processors, nodes, and loaders.
@@ -42,7 +42,7 @@ In this mode:
 - StringEnum dictionary data is persisted through KVStore.
 
 This mode is valuable because it exercises distributed node behavior while
-avoiding the historical proxy path. It is not the target user-facing QIAB
+avoiding the historical qlbridge proxy path. It is not the target user-facing QIAB
 experience.
 
 Local workflow:
@@ -79,7 +79,8 @@ define durable local storage, restart behavior, backup and restore, health
 checks, log rotation, upgrade steps, and operational limits.
 
 This profile deliberately does not validate distributed service discovery,
-multi-node recovery, rebalancing, rolling upgrades, or multiple proxy behavior.
+multi-node recovery, rebalancing, rolling upgrades, or multiple query-front-door
+behavior.
 Those belong to `inabox-local`, `distributed`, or future operations profiles.
 
 Current implementation status:
@@ -164,13 +165,13 @@ above are implemented and covered by SQLRunner or compatibility-lab tests.
 
 `inabox-local` is the local distributed-shape profile. As the new network layer
 comes online, this is the expected result of running the local harness such as
-`start-local`: the new MySQL-compatible query processor/proxy runs locally and
+`start-local`: the new MySQL-compatible query processor runs locally and
 talks to local data nodes through the distributed communication path.
 
 Required shape:
 
 - one local host
-- local query processor/proxy with the new MySQL-compatible network layer
+- local query processor with the new MySQL-compatible network layer
 - local data nodes managed by the development harness
 - Consul/service discovery in the path
 - gRPC in the query-processor-to-node path
@@ -194,7 +195,7 @@ go run . -engine inabox-local -suite_file sqltests/inabox_direct_joins.yaml
 go run . -engine inabox-local -suite_file sqltests/mutate_tests_body.yaml
 ```
 
-These suites validate the MySQL wire path through the native proxy while still
+These suites validate the MySQL wire path through the native front door while still
 using the local node cluster.
 
 Schema-change propagation note:
@@ -252,13 +253,13 @@ The main runtime services are:
 
 - Consul for discovery and cluster coordination
 - QuantaStream data nodes for shards, bitmap data, and BSI data
-- Query processor/proxy for the MySQL-compatible SQL endpoint
+- MySQL-compatible query front door and processor for the SQL endpoint
 - ingestion processes as required by the deployment
 
 Development defaults currently include:
 
 - Consul HTTP API on port `8500`
-- MySQL-compatible proxy on port `4000`
+- MySQL-compatible SQL endpoint on port `4000`
 
 Additional Consul, node, metrics, profiling, and ingestion ports must be
 inventoried before publishing a production firewall specification.
@@ -350,11 +351,11 @@ The `inabox-local` and distributed startup order is:
 1. Start Consul.
 2. Start QuantaStream data nodes.
 3. Wait for the nodes to become active and the cluster to become healthy.
-4. Start or expose the query proxy.
+4. Start or expose the MySQL-compatible query front door.
 5. Start ingestion and client workloads.
 
 Shutdown should stop writes and ingestion before stopping nodes. `inabox-local`
-performs node and proxy shutdown through its local harness, but production
+performs node and query-front-door shutdown through its local harness, but production
 shutdown and drain semantics require further validation. `inabox-standard`
 should provide a simpler single-process lifecycle.
 
@@ -397,7 +398,7 @@ Validation is needed for:
 - adding a node
 - removing a node
 - shard redistribution
-- proxy scaling
+- query-front-door scaling
 - ingestion behavior during topology changes
 - query correctness while the cluster converges
 
@@ -421,7 +422,7 @@ A backup is not considered valid until a restore test has succeeded.
 Production deployment should capture:
 
 - structured logs from each data node
-- proxy logs
+- query-front-door logs
 - Consul health and membership
 - cluster state and active-node count
 - shard distribution
@@ -441,7 +442,7 @@ Production security work must include:
 
 - Consul ACLs and transport security
 - network exposure and firewall rules
-- proxy authentication and authorization
+- query-front-door authentication and authorization
 - secret distribution and rotation
 - least-privilege filesystem permissions
 - TLS requirements for client and service communication
@@ -462,15 +463,15 @@ integrations should plug into the same auth/session contract without becoming
 hard-coded behavior in the core MySQL protocol path.
 
 The historical Quanta authentication design used OpenID Connect JWT tokens to
-gate access to the proxy service. In that model, an external identity provider
-such as AWS Cognito manages user accounts, issues valid tokens, and owns user
-policy and governance.
+gate access to the old query service. In that model, an external identity
+provider such as AWS Cognito manages user accounts, issues valid tokens, and
+owns user policy and governance.
 
 JWT tokens were expected to be used in two ways:
 
 1. Database-driver connections such as JDBC or Python connectors submit the
    access token as the `userName` value and use an empty `password`.
-2. MySQL-compatible tools use a separate proxy web endpoint, typically port
+2. MySQL-compatible tools use a separate token-exchange web endpoint, typically port
    `4001`, to redeem an access token for a temporary MySQL-compatible username
    and password. Those credentials expire according to the access-token TTL.
 
@@ -483,14 +484,14 @@ supported provider.
 Example token exchange request:
 
 ```bash
-curl -v -H "Content-Type: application/text" -d "<jwt-access-token>" http://<proxy-host>:4001/
+curl -v -H "Content-Type: application/text" -d "<jwt-access-token>" http://<query-host>:4001/
 ```
 
 Before this capability can be considered supported, QuantaStream needs validated
 configuration, TLS guidance, token validation behavior, authorization/RBAC
 semantics, audit logging, secret rotation, and operational tests.
 
-The current proxy authentication and RBAC code should be treated as historical
+The quarantined authentication and RBAC code should be treated as historical
 implementation context rather than the target design. QuantaStream's
 MySQL-compatible network protocol is intended to work across a broad range of
 standard client drivers and tools, including currently used Node.js, Python,
@@ -511,13 +512,13 @@ broad MySQL client compatibility:
   identity providers, credential validation, and role lookup
 - manage built-in account/password state through `quanta-admin`
 - keep enterprise identity integration pluggable, with JWT/OIDC/OAuth-style
-  providers as future adapters rather than hard-coded proxy behavior
+  providers as future adapters rather than hard-coded query-front-door behavior
 - cache small authorization metadata in memory after loading it from the
   authoritative metadata store
 
 The historical RBAC implementation has been quarantined under `_quarantine/rbac`
 for short-term reference and is no longer part of the active core build. Role
-concepts may inform the replacement, but the role store, proxy handshake, token
+concepts may inform the replacement, but the role store, handshake, token
 exchange, and MySQL session semantics should be reworked together in the
 qsbridge-based MySQL-compatible auth path. Avoid papering over historical
 behavior with more hard-coded usernames, passwords, or `database()` responses.
@@ -563,7 +564,10 @@ Post-1.0 targets:
 - automated node replacement and recovery
 - rolling restart and rolling upgrade
 - online scaling and rebalance workflows
-- multiple proxy deployment patterns
+- multiple query-front-door deployment patterns
+- a small standalone launcher command for running the query front door as its
+  own process when deployments want a concise operational entry point, similar
+  to a `proxy` command, without making that name the public engine concept
 - cross-region active/active or equivalent regional availability strategy
 
 ## Repository Boundary
@@ -595,7 +599,7 @@ understood.
 
 - `inabox-standard` shares one process and one host lifecycle.
 - `inabox-local` still shares one host but exercises the distributed
-  node/proxy communication path.
+  query-front-door-to-node communication path.
 - Current Docker artifacts do not constitute a complete durable deployment.
 - Production storage mapping and node replacement are not formally specified.
 - Backup and restore are not formally validated.
