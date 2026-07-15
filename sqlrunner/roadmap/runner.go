@@ -193,6 +193,10 @@ func evaluateStatement(test TestCase, affected int64, execErr error) string {
 	if test.Expect.Error != "" {
 		return evaluateExpectedError(test.Expect.Error, execErr)
 	}
+	if AdminDropMissingTableOK(test, execErr) {
+		execErr = nil
+		affected = 0
+	}
 	if execErr != nil {
 		return "unexpected error: " + execErr.Error()
 	}

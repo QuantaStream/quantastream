@@ -1,6 +1,9 @@
 package roadmap
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // AdminStatementSQL converts the deprecated roadmap admin shorthand into SQL.
 //
@@ -30,6 +33,28 @@ func AdminStatementSQL(sql string) string {
 		}
 	}
 	return sql
+}
+
+// AdminDropMissingTableOK preserves the old roadmap admin bootstrap behavior
+// for clean clusters while keeping user-visible DROP TABLE semantics strict.
+func AdminDropMissingTableOK(test TestCase, err error) bool {
+	if err == nil || test.Kind != "admin" {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(test.SQL))
+	if len(fields) < 2 {
+		return false
+	}
+	keyword := strings.ToLower(strings.Trim(fields[0], "`"))
+	second := strings.ToLower(strings.Trim(fields[1], "`"))
+	if keyword != "drop" || second == "table" {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		message = strings.ToLower(unwrapped.Error())
+	}
+	return strings.Contains(message, "doesn't exist") || strings.Contains(message, "does not exist")
 }
 
 func executableSQL(test TestCase) string {

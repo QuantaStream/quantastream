@@ -35,6 +35,7 @@ var AcquirePort4000 sync.Mutex
 var ConsulAddress = "127.0.0.1:8500" // also used by sqlrunner main.
 
 const nodesOnlyEnvVar = "QUANTASTREAM_NODES_ONLY"
+const localSchemaDirEnvVar = "QUANTASTREAM_SCHEMA_DIR"
 
 // tests will time out so run like this:
 // go test -timeout 10m
@@ -585,6 +586,25 @@ func LocalNodesOnlyMode() bool {
 	return envTruthy(os.Getenv(nodesOnlyEnvVar))
 }
 
+// LocalSchemaConfigDir returns the YAML schema directory used by the local
+// MySQL front door for CREATE TABLE activation.
+func LocalSchemaConfigDir() string {
+	if value := strings.TrimSpace(os.Getenv(localSchemaDirEnvVar)); value != "" {
+		return value
+	}
+	for _, path := range []string{
+		"../sqlrunner/config",
+		"sqlrunner/config",
+		"config",
+		"configuration",
+	} {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
 func envTruthy(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
@@ -640,7 +660,7 @@ func local_Ensure_cluster(count int, state *ClusterLocalState) {
 		if nodesOnly {
 			fmt.Println("QUANTASTREAM_NODES_ONLY enabled; skipping local query proxy startup")
 		} else {
-			configDir := ""
+			configDir := LocalSchemaConfigDir()
 			state.ProxyControl = StartProxy(1, configDir)
 
 			sharedKV := shared.NewKVStore(state.ProxyControl.Src.GetConnection())

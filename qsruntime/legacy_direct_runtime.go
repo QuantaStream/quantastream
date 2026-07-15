@@ -44,6 +44,8 @@ type LegacyDirectRuntimeOptions struct {
 	DefaultSchema             string
 	SchemaDir                 string
 	ApplyRecommendedEdgeOrder bool
+	DictionaryResolver        qsbridge.DictionaryResolver
+	DictionaryInvalidator     RuntimeDictionaryInvalidator
 }
 
 // NewLegacyDirectBitmapRuntimeFromSource builds the direct bitmap runtime around an existing Quanta source.
@@ -59,8 +61,9 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		}
 	}
 	sessions := LegacyQuantaSourceSessionProvider{
-		Source:    quantaSource,
-		SchemaDir: options.SchemaDir,
+		Source:                quantaSource,
+		SchemaDir:             options.SchemaDir,
+		DictionaryInvalidator: options.DictionaryInvalidator,
 	}
 	bsiReader := LegacyDirectProjectionBSIReader{
 		Source:     quantaSource,
@@ -79,6 +82,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		FallbackTableCaches: []*core.TableCacheStruct{tableCache},
 		Schema:              options.DefaultSchema,
 	}
+	resolver := options.DictionaryResolver
+	if resolver == nil {
+		resolver = dictionaryResolver
+	}
 	materialization := FallbackProjectionMaterializationKernel{
 		Preferred: NativeProjectionMaterializationKernel{
 			Reader: NativeProjectionBSIFieldReader{
@@ -87,7 +94,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 				DictionaryReader: dictionaryIDReader,
 			},
 			Rehydrator: NativeProjectionCompositeRehydrator{
-				Dictionary:     NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, dictionaryResolver),
+				Dictionary:     NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, resolver),
 				BackingStrings: backingStringReader,
 			},
 		},
@@ -168,10 +175,11 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 		FallbackTableCaches: []*core.TableCacheStruct{tableCache},
 		Schema:              config.DefaultSchema,
 	}
+	cachedDictionaryResolver := qsbridge.NewCachedDictionaryResolver(dictionaryResolver)
 	runtime, diagnostics, err := SQLRuntimeBuilder{
 		Parser: qsbridge.SimpleParserBridge{},
 		Lowerer: qsbridge.QuantaIntermediateLowerer{
-			Dictionaries: dictionaryResolver,
+			Dictionaries: cachedDictionaryResolver,
 		},
 		DefaultSchema:  config.DefaultSchema,
 		CatalogVersion: config.CatalogVersion,
@@ -188,6 +196,11 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 					DefaultSchema:             config.DefaultSchema,
 					SchemaDir:                 config.SchemaDir,
 					ApplyRecommendedEdgeOrder: config.ApplyRecommendedEdgeOrder,
+					DictionaryResolver:        cachedDictionaryResolver,
+					DictionaryInvalidator: RuntimeDictionaryInvalidator{
+						Dictionaries:  cachedDictionaryResolver,
+						DefaultSchema: config.DefaultSchema,
+					},
 				})
 				return runtime, diagnostics, nil
 			}),
@@ -218,8 +231,9 @@ func (f LegacyQuantaSourceFactory) ensureTableCache() qsbridge.DiagnosticSet {
 
 // LegacyQuantaSourceSessionProvider borrows direct sessions from a legacy Quanta source.
 type LegacyQuantaSourceSessionProvider struct {
-	Source    *source.QuantaSource
-	SchemaDir string
+	Source                *source.QuantaSource
+	SchemaDir             string
+	DictionaryInvalidator RuntimeDictionaryInvalidator
 }
 
 // BorrowDirectSession borrows a table-scoped session from the source session pool.
@@ -258,6 +272,7 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		if err != nil {
 			return nil, nil, err
 		}
+		handle.DictionaryInvalidator = p.DictionaryInvalidator
 		return handle, nil, nil
 	}
 	session, err := pool.Borrow(tableName)
@@ -265,20 +280,22 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		return nil, nil, err
 	}
 	return LegacyQuantaSessionHandle{
-		TableName: tableName,
-		Pool:      pool,
-		Session:   session,
+		TableName:             tableName,
+		Pool:                  pool,
+		Session:               session,
+		DictionaryInvalidator: p.DictionaryInvalidator,
 	}, nil, nil
 }
 
 // LegacyQuantaSessionHandle adapts a borrowed core.Session to DirectSessionHandle.
 type LegacyQuantaSessionHandle struct {
-	TableName string
-	Pool      *core.SessionPool
-	Session   *core.Session
-	Query     LegacyBitmapQueryAdapter
-	Result    LegacyBitmapQueryResultAdapter
-	Synthetic bool
+	TableName             string
+	Pool                  *core.SessionPool
+	Session               *core.Session
+	Query                 LegacyBitmapQueryAdapter
+	Result                LegacyBitmapQueryResultAdapter
+	Synthetic             bool
+	DictionaryInvalidator RuntimeDictionaryInvalidator
 }
 
 // QueryBitmap executes a neutral request through the legacy session BitmapIndex.

@@ -41,6 +41,10 @@ func (i RuntimeDictionaryInvalidator) InvalidateValueChange(change DictionaryVal
 		return
 	}
 	i.Dictionaries.InvalidateDictionary(ref)
+	if ref.Schema != "" {
+		ref.Schema = ""
+		i.Dictionaries.InvalidateDictionary(ref)
+	}
 }
 
 // DictionaryRef returns the field-level dictionary identity touched by change.

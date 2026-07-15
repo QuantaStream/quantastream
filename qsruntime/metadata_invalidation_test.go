@@ -3,7 +3,9 @@ package qsruntime
 import (
 	"testing"
 
+	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/shared"
 )
 
 func TestRuntimeMetadataInvalidatorAppliesMetadataChange(t *testing.T) {
@@ -39,8 +41,37 @@ func TestRuntimeDictionaryInvalidatorInvalidatesStringEnumField(t *testing.T) {
 		ID:    1,
 	})
 
-	if len(dictionaries.refs) != 1 || dictionaries.refs[0].QualifiedName() != "quanta.customers_qa.city" {
-		t.Fatalf("invalidated dictionaries = %#v, want quanta.customers_qa.city", dictionaries.refs)
+	if len(dictionaries.refs) != 2 ||
+		dictionaries.refs[0] != (qsbridge.DictionaryRef{Schema: "quanta", Table: "customers_qa", Field: "city"}) ||
+		dictionaries.refs[1] != (qsbridge.DictionaryRef{Table: "customers_qa", Field: "city"}) {
+		t.Fatalf("invalidated dictionaries = %#v, want schema-qualified and unqualified customers_qa.city", dictionaries.refs)
+	}
+}
+
+func TestSchemaMutationInvalidatesStringEnumDictionariesForCachedTable(t *testing.T) {
+	dictionaries := &recordingDictionaryCache{}
+	cache := core.NewTableCacheStruct()
+	cache.TableCache["customers_qa"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "customers_qa"},
+		Attributes: []core.Attribute{
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "city", MappingStrategy: "StringEnum"}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "state", MappingStrategy: "StringHashBSI"}},
+		},
+	}
+	handle := LegacyQuantaSessionHandle{
+		Pool: &core.SessionPool{TableCache: cache},
+		DictionaryInvalidator: RuntimeDictionaryInvalidator{
+			Dictionaries:  dictionaries,
+			DefaultSchema: "quanta",
+		},
+	}
+
+	handle.invalidateSchemaMutationDictionaries("quanta", "customers_qa")
+
+	if len(dictionaries.refs) != 2 ||
+		dictionaries.refs[0] != (qsbridge.DictionaryRef{Schema: "quanta", Table: "customers_qa", Field: "city"}) ||
+		dictionaries.refs[1] != (qsbridge.DictionaryRef{Table: "customers_qa", Field: "city"}) {
+		t.Fatalf("invalidated dictionaries = %#v, want only schema-qualified and unqualified customers_qa.city", dictionaries.refs)
 	}
 }
 

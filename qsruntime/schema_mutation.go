@@ -71,7 +71,7 @@ func (h LegacyQuantaSessionHandle) DropTable(ctx context.Context, request Execut
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if consul := h.schemaMutationConsul(); consul != nil {
-		return h.dropConsulCatalogTable(ctx, consul, tableName)
+		return h.dropConsulCatalogTable(ctx, consul, schemaName, tableName)
 	}
 	return h.dropFileCatalogTable(ctx, schemaName, tableName)
 }
@@ -147,6 +147,7 @@ func (h LegacyQuantaSessionHandle) dropFileCatalogTable(ctx context.Context, sch
 		_ = shared.ActivateCatalogTable(configDir, schemaName, tableName, time.Now().UTC())
 		return qsbridge.StatementResult{}, nil, err
 	}
+	h.invalidateSchemaMutationDictionaries(schemaName, tableName)
 	h.invalidateSchemaMutationTable(tableName)
 	return qsbridge.StatementResult{
 		Status: fmt.Sprintf("Table %s dropped", tableName),
@@ -230,7 +231,7 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogTable(ctx context.Context,
 	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s created", tableName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, consul *api.Client, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, consul *api.Client, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil || h.Session.BitIndex == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
@@ -269,6 +270,7 @@ func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, c
 			return qsbridge.StatementResult{}, nil, err
 		}
 	}
+	h.invalidateSchemaMutationDictionaries(schemaName, tableName)
 	h.invalidateSchemaMutationTable(tableName)
 	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s dropped", tableName)}, nil, nil
 }
@@ -304,4 +306,65 @@ func (h LegacyQuantaSessionHandle) invalidateSchemaMutationTable(tableName strin
 	if h.Pool != nil {
 		h.Pool.InvalidateTable(tableName)
 	}
+}
+
+func (h LegacyQuantaSessionHandle) invalidateSchemaMutationDictionaries(schemaName, tableName string) {
+	if h.DictionaryInvalidator.Dictionaries == nil {
+		return
+	}
+	for _, attribute := range h.schemaMutationStringEnumAttributes(tableName) {
+		fieldName := strings.TrimSpace(attribute.FieldName)
+		if fieldName == "" {
+			fieldName = strings.TrimSpace(attribute.SourceName)
+		}
+		if fieldName == "" {
+			continue
+		}
+		h.DictionaryInvalidator.InvalidateValueChange(DictionaryValueChange{
+			Schema: schemaName,
+			Table:  tableName,
+			Field:  fieldName,
+		})
+	}
+}
+
+func (h LegacyQuantaSessionHandle) schemaMutationStringEnumAttributes(tableName string) []core.Attribute {
+	table := h.schemaMutationCachedTable(tableName)
+	if table == nil {
+		return nil
+	}
+	attributes := make([]core.Attribute, 0)
+	for _, attribute := range table.Attributes {
+		if qsbridge.LegacyEncodingProfile(attribute.MappingStrategy, qsbridge.LegacyEncodingOptions{}).Kind == qsbridge.EncodingStringEnum {
+			attributes = append(attributes, attribute)
+		}
+	}
+	return attributes
+}
+
+func (h LegacyQuantaSessionHandle) schemaMutationCachedTable(tableName string) *core.Table {
+	if h.Session != nil {
+		for name, buffer := range h.Session.TableBuffers {
+			if buffer == nil || buffer.Table == nil {
+				continue
+			}
+			if strings.EqualFold(name, tableName) || strings.EqualFold(buffer.Table.Name, tableName) {
+				return buffer.Table
+			}
+		}
+	}
+	if h.Pool == nil || h.Pool.TableCache == nil {
+		return nil
+	}
+	h.Pool.TableCache.TableCacheLock.RLock()
+	defer h.Pool.TableCache.TableCacheLock.RUnlock()
+	for name, table := range h.Pool.TableCache.TableCache {
+		if table == nil {
+			continue
+		}
+		if strings.EqualFold(name, tableName) || strings.EqualFold(table.Name, tableName) {
+			return table
+		}
+	}
+	return nil
 }
