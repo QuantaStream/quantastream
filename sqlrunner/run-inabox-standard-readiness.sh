@@ -11,7 +11,7 @@ BASE_PORT="${PORT:-4400}"
 SQL_USER="${SQL_USER:-MOLIG004}"
 DB="${DB:-quanta}"
 CLEANUP="${CLEANUP:-1}"
-RUN_PORTABLE="${RUN_PORTABLE:-0}"
+RUN_CORE="${RUN_CORE:-${RUN_PORTABLE:-0}}"
 RUN_EXTENDED="${RUN_EXTENDED:-0}"
 ALLOW_FAILURES="${ALLOW_FAILURES:-0}"
 SLOW_THRESHOLD="${SLOW_THRESHOLD:-10s}"
@@ -147,14 +147,15 @@ run_suite() {
 
 run_suite inabox_standard_qa_smoke.yaml
 
-if [[ "${RUN_PORTABLE}" == "1" ]]; then
+if [[ "${RUN_CORE}" == "1" ]]; then
   run_suite basic_queries.yaml orders_qa customers_qa
   run_suite insert_tests.yaml orders_qa customers_qa
   run_suite function_expressions.yaml deliveries_qa lineitems_qa orders_qa customers_qa
 else
   echo
-  echo "===== inabox-standard portable suites skipped ====="
-  echo "Set RUN_PORTABLE=1 to run basic_queries, insert_tests, and function_expressions."
+  echo "===== inabox-standard core suites skipped ====="
+  echo "Set RUN_CORE=1 to run basic_queries, insert_tests, and function_expressions."
+  echo "RUN_PORTABLE=1 is accepted as a temporary compatibility alias."
   echo "Use ALLOW_FAILURES=1 for discovery while these suites are being promoted."
 fi
 

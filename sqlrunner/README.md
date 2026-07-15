@@ -230,18 +230,20 @@ against temporary `cmd/quantastream` processes from the `sqlrunner` directory:
 
 The readiness runner stages a temporary file-backed catalog per suite and
 pre-activates only the tables needed for that suite's existing drop/create
-bootstrap. Portable suites are opt-in while standard-mode coverage is still
+bootstrap. Core suites are opt-in while standard-mode coverage is still
 expanding:
 
 ```bash
-RUN_PORTABLE=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
+RUN_CORE=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
 ```
 
-The extended portable suites are also opt-in:
+The extended suites are also opt-in:
 
 ```bash
-RUN_PORTABLE=1 RUN_EXTENDED=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
+RUN_CORE=1 RUN_EXTENDED=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
 ```
+
+`RUN_PORTABLE=1` is accepted as a temporary compatibility alias for `RUN_CORE=1`.
 
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible
 server/proxy on port `4000` while a local distributed-shape harness is running.
