@@ -25,6 +25,9 @@ func (a LegacyBitmapQueryAdapter) ValidateExecutionRequest(request ExecutionRequ
 // ValidateIntermediateQuery reports adapter-shape blockers before legacy conversion.
 func (a LegacyBitmapQueryAdapter) ValidateIntermediateQuery(query qsbridge.QuantaIntermediateQuery) qsbridge.DiagnosticSet {
 	var diagnostics qsbridge.DiagnosticSet
+	for i, seed := range query.Seeds {
+		diagnostics = append(diagnostics, a.validateSeed(i, seed)...)
+	}
 	for i, fragment := range query.Fragments {
 		diagnostics = append(diagnostics, a.validateFragment(i, fragment)...)
 	}
@@ -34,6 +37,9 @@ func (a LegacyBitmapQueryAdapter) ValidateIntermediateQuery(query qsbridge.Quant
 // ToBitmapQuery converts a neutral Quanta intermediate query to legacy shared.BitmapQuery.
 func (a LegacyBitmapQueryAdapter) ToBitmapQuery(query qsbridge.QuantaIntermediateQuery) *legacy.BitmapQuery {
 	bitmap := legacy.NewBitmapQuery()
+	for _, seed := range query.Seeds {
+		bitmap.AddFragment(a.toQueryFragment(bitmap, a.seedFragment(seed)))
+	}
 	for _, fragment := range query.Fragments {
 		bitmap.AddFragment(a.toQueryFragment(bitmap, fragment))
 	}
@@ -82,6 +88,14 @@ func (a LegacyBitmapQueryAdapter) applyDefaultTimeWindow(query *legacy.BitmapQue
 	}
 }
 func (a LegacyBitmapQueryAdapter) applyTimeWindow(query *legacy.BitmapQuery, request ExecutionRequest) {
+	for _, seed := range request.Query.Seeds {
+		if seed.Kind != qsbridge.QuantaSeedTableExistence || !seed.ShardWindow || seed.Begin == nil || seed.End == nil {
+			continue
+		}
+		query.FromTime = legacyBitmapQueryTimeWindowValue(seed.Begin.Int64())
+		query.ToTime = legacyBitmapQueryTimeWindowValue(seed.End.Int64())
+		return
+	}
 	for _, fragment := range request.Query.Fragments {
 		if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
 			continue
@@ -93,6 +107,46 @@ func (a LegacyBitmapQueryAdapter) applyTimeWindow(query *legacy.BitmapQuery, req
 		query.ToTime = legacyBitmapQueryTimeWindowValue(fragment.End.Int64())
 		return
 	}
+}
+
+func (a LegacyBitmapQueryAdapter) seedFragment(seed qsbridge.QuantaSeed) qsbridge.QuantaQueryFragment {
+	return qsbridge.QuantaQueryFragment{
+		Index:       seed.Index,
+		Role:        seed.Role,
+		Field:       seed.Field,
+		Operation:   qsbridge.QuantaOperationUnion,
+		NullCheck:   true,
+		Negate:      true,
+		Begin:       cloneBigInt(seed.Begin),
+		End:         cloneBigInt(seed.End),
+		ShardWindow: seed.ShardWindow,
+	}
+}
+
+func (a LegacyBitmapQueryAdapter) validateSeed(index int, seed qsbridge.QuantaSeed) qsbridge.DiagnosticSet {
+	var diagnostics qsbridge.DiagnosticSet
+	if seed.Kind != qsbridge.QuantaSeedTableExistence {
+		diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+			qsbridge.DiagnosticUnsupportedSQL,
+			qsbridge.PhaseExecute,
+			fmt.Sprintf("seed %d has unsupported kind %q", index, seed.Kind),
+		))
+	}
+	if seed.Index == "" {
+		diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+			qsbridge.DiagnosticInvalidExecutionOption,
+			qsbridge.PhaseExecute,
+			fmt.Sprintf("seed %d has no index", index),
+		))
+	}
+	if seed.Field == "" {
+		diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+			qsbridge.DiagnosticInvalidExecutionOption,
+			qsbridge.PhaseExecute,
+			fmt.Sprintf("seed %d has no field", index),
+		))
+	}
+	return diagnostics
 }
 
 func legacyRequestFragmentIsTimeField(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {

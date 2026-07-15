@@ -397,10 +397,6 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 
 // Walk the time range and assemble a union of all BSI esistence
 func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, error) {
-
-	m.bsiCacheLock.RLock()
-	defer m.bsiCacheLock.RUnlock()
-
 	attr, err := m.getFieldConfig(index, field)
 	if err != nil {
 		return nil, err
@@ -408,6 +404,13 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 	tq := attr.TimeQuantumType
 	fromTime = truncateTime(fromTime, tq)
 	toTime = truncateTime(toTime, tq)
+	if cached, ok := m.cachedSeedBitmap(index, field, fromTime, toTime); ok {
+		return cached, nil
+	}
+
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+
 	results := make([]*roaring64.Bitmap, 0)
 	yr, mn, da := fromTime.Date()
 	lookupTime := time.Date(yr, mn, da, 0, 0, 0, 0, time.UTC)
@@ -417,12 +420,17 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 		if !m.Member(hashKey) {
 			return roaring64.ParOr(0, results...), nil
 		}
-		if bm, ok := m.bsiCache[index][field][0]; ok {
-			results = append(results, bm.BSI.GetExistenceBitmap())
+		if fm, ok := m.bsiCache[index]; ok {
+			if tm, ok := fm[field]; ok {
+				if bm, ok := tm[0]; ok {
+					results = append(results, bm.BSI.GetExistenceBitmap())
+				}
+			}
 		}
 		u.Debugf("timeRangeExistence No Quantum selecting %s", hashKey)
 	} else {
-		if tm, ok := m.bsiCache[index][field]; ok {
+		if fm, ok := m.bsiCache[index]; ok {
+			tm := fm[field]
 			for ts, bm := range tm {
 				rts := truncateTime(time.Unix(0, ts).UTC(), tq).UnixNano()
 				if rts < fromTime.UnixNano() || rts > toTime.UnixNano() {
@@ -437,7 +445,9 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 			}
 		}
 	}
-	return roaring64.ParOr(0, results...), nil
+	result := roaring64.ParOr(0, results...)
+	m.storeSeedBitmap(index, field, fromTime, toTime, result)
+	return result.Clone(), nil
 }
 
 // Join - Once the client has mapreduced the initial query fragment results, A followup call is made to

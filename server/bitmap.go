@@ -67,6 +67,8 @@ type BitmapIndex struct {
 	bitmapCacheLock sync.RWMutex
 	bsiCache        map[string]map[string]map[int64]*BSIBitmap
 	bsiCacheLock    sync.RWMutex
+	seedCache       map[string]*SeedBitmap
+	seedCacheLock   sync.RWMutex
 	fragQueue       chan *BitmapFragment
 	workersCount    int
 	fragFileLock    sync.Mutex
@@ -92,6 +94,15 @@ type BitmapIndex struct {
 type WorkerThread struct {
 	index int
 	aux   chan *BitmapFragment
+}
+
+// SeedBitmap caches a set-producing existence seed for a table/field/time window.
+type SeedBitmap struct {
+	Index    string
+	Field    string
+	FromNano int64
+	ToNano   int64
+	Bits     *roaring64.Bitmap
 }
 
 func NewWorkerThread(index int) *WorkerThread {
@@ -174,6 +185,7 @@ func (m *BitmapIndex) Init() error {
 	m.fragQueue = make(chan *BitmapFragment, 10000000)
 	m.bitmapCache = make(map[string]map[string]map[uint64]map[int64]*StandardBitmap)
 	m.bsiCache = make(map[string]map[string]map[int64]*BSIBitmap)
+	m.seedCache = make(map[string]*SeedBitmap)
 	m.workersCount = 20
 	m.writeSignal = make(chan bool, 1)
 	m.setBitThreads = NewCountTrigger(m.writeSignal)
@@ -778,6 +790,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		existBm.ModTime = f.ModTime
 		existBm.AccessTime = f.ModTime
 		existBm.Lock.Unlock()
+		m.updateSeedCacheForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), nil, clearSet)
 		return
 	}
 
@@ -826,6 +839,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		}
 		existBm.Lock.Unlock()
 	}
+	m.updateSeedCacheForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), newBSI.GetExistenceBitmap(), nil)
 	elapsed := time.Since(start)
 	m.updBSITime.Store(uint64(elapsed.Milliseconds()))
 	if elapsed.Nanoseconds() > (1000000 * 75) {
@@ -841,6 +855,7 @@ func (m *BitmapIndex) Truncate(index string) {
 	m.bsiCacheLock.Lock()
 	defer m.bitmapCacheLock.Unlock()
 	defer m.bsiCacheLock.Unlock()
+	m.clearSeedCacheForIndex(index)
 
 	fm := m.bitmapCache[index]
 	for _, rm := range fm {
@@ -854,6 +869,68 @@ func (m *BitmapIndex) Truncate(index string) {
 	for _, tm := range bm {
 		for ts := range tm {
 			delete(tm, ts)
+		}
+	}
+}
+
+func seedCacheKey(index, field string, fromTime, toTime time.Time) string {
+	return fmt.Sprintf("%s/%s/%d/%d", index, field, fromTime.UnixNano(), toTime.UnixNano())
+}
+
+func (m *BitmapIndex) cachedSeedBitmap(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, bool) {
+	key := seedCacheKey(index, field, fromTime, toTime)
+	m.seedCacheLock.RLock()
+	defer m.seedCacheLock.RUnlock()
+	if entry, ok := m.seedCache[key]; ok && entry != nil && entry.Bits != nil {
+		return entry.Bits.Clone(), true
+	}
+	return nil, false
+}
+
+func (m *BitmapIndex) storeSeedBitmap(index, field string, fromTime, toTime time.Time, bits *roaring64.Bitmap) {
+	if bits == nil {
+		return
+	}
+	key := seedCacheKey(index, field, fromTime, toTime)
+	m.seedCacheLock.Lock()
+	defer m.seedCacheLock.Unlock()
+	if m.seedCache == nil {
+		m.seedCache = make(map[string]*SeedBitmap)
+	}
+	m.seedCache[key] = &SeedBitmap{
+		Index:    index,
+		Field:    field,
+		FromNano: fromTime.UnixNano(),
+		ToNano:   toTime.UnixNano(),
+		Bits:     bits.Clone(),
+	}
+}
+
+func (m *BitmapIndex) updateSeedCacheForBSIFragment(index, field string, shardNano int64, added *roaring64.Bitmap, removed *roaring64.Bitmap) {
+	m.seedCacheLock.Lock()
+	defer m.seedCacheLock.Unlock()
+	for _, entry := range m.seedCache {
+		if entry == nil || entry.Bits == nil || entry.Index != index || entry.Field != field {
+			continue
+		}
+		if shardNano < entry.FromNano || shardNano > entry.ToNano {
+			continue
+		}
+		if removed != nil {
+			entry.Bits.AndNot(removed)
+		}
+		if added != nil {
+			entry.Bits = roaring64.ParOr(0, entry.Bits, added)
+		}
+	}
+}
+
+func (m *BitmapIndex) clearSeedCacheForIndex(index string) {
+	m.seedCacheLock.Lock()
+	defer m.seedCacheLock.Unlock()
+	for key, entry := range m.seedCache {
+		if entry != nil && entry.Index == index {
+			delete(m.seedCache, key)
 		}
 	}
 }

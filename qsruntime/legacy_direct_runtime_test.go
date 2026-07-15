@@ -356,15 +356,15 @@ func TestLegacyDirectFullTableScanSeedPrefersPrimaryKeyExistence(t *testing.T) {
 
 	seeded := legacyDirectExecutionWithFullTableScanSeed(request, table)
 
-	if len(seeded.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence seed", seeded.Query.Fragments)
+	if len(seeded.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want one existence seed", seeded.Query.Seeds)
 	}
-	fragment := seeded.Query.Fragments[0]
-	if fragment.Index != "customers_qa" || fragment.Field != "cust_id" {
-		t.Fatalf("fragment target = %s.%s, want customers_qa.cust_id", fragment.Index, fragment.Field)
+	seed := seeded.Query.Seeds[0]
+	if seed.Index != "customers_qa" || seed.Field != "cust_id" || seed.Kind != qsbridge.QuantaSeedTableExistence {
+		t.Fatalf("seed = %#v, want customers_qa.cust_id table existence", seed)
 	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence seed", fragment)
+	if len(seeded.Query.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want no synthetic fragments", seeded.Query.Fragments)
 	}
 }
 
@@ -382,15 +382,15 @@ func TestLegacyDirectFullTableScanSeedUsesPrimaryKeyForNonPhysicalTimestampTable
 
 	seeded := legacyDirectExecutionWithFullTableScanSeed(request, table)
 
-	if len(seeded.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence seed", seeded.Query.Fragments)
+	if len(seeded.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want one existence seed", seeded.Query.Seeds)
 	}
-	fragment := seeded.Query.Fragments[0]
-	if fragment.Index != "customers_qa" || fragment.Field != "cust_id" {
-		t.Fatalf("fragment target = %s.%s, want customers_qa.cust_id", fragment.Index, fragment.Field)
+	seed := seeded.Query.Seeds[0]
+	if seed.Index != "customers_qa" || seed.Field != "cust_id" || seed.Kind != qsbridge.QuantaSeedTableExistence {
+		t.Fatalf("seed = %#v, want customers_qa.cust_id table existence", seed)
 	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence seed", fragment)
+	if len(seeded.Query.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want no synthetic fragments", seeded.Query.Fragments)
 	}
 	if len(seeded.Query.ProjectionFields) != 0 {
 		t.Fatalf("projection fields = %#v, want no shard time projection metadata", seeded.Query.ProjectionFields)
@@ -409,15 +409,15 @@ func TestLegacyDirectFullTableScanSeedFallsBackToRownumWithoutPrimaryKey(t *test
 
 	seeded := legacyDirectExecutionWithFullTableScanSeed(request, table)
 
-	if len(seeded.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence seed", seeded.Query.Fragments)
+	if len(seeded.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want one existence seed", seeded.Query.Seeds)
 	}
-	fragment := seeded.Query.Fragments[0]
-	if fragment.Index != "customers_qa" || fragment.Field != "rownum" {
-		t.Fatalf("fragment target = %s.%s, want customers_qa.rownum", fragment.Index, fragment.Field)
+	seed := seeded.Query.Seeds[0]
+	if seed.Index != "customers_qa" || seed.Field != "rownum" || seed.Kind != qsbridge.QuantaSeedTableExistence {
+		t.Fatalf("seed = %#v, want customers_qa.rownum table existence", seed)
 	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence seed", fragment)
+	if len(seeded.Query.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want no synthetic fragments", seeded.Query.Fragments)
 	}
 }
 
@@ -433,22 +433,22 @@ func TestLegacyDirectFullTableScanSeedUsesTimeRangeForTimeShardedTable(t *testin
 
 	seeded := legacyDirectExecutionWithFullTableScanSeed(request, table)
 
-	if len(seeded.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one time range seed", seeded.Query.Fragments)
+	if len(seeded.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want one time range seed", seeded.Query.Seeds)
 	}
-	fragment := seeded.Query.Fragments[0]
-	if fragment.Index != "lineitem" || fragment.Field != "l_shipdate" {
-		t.Fatalf("fragment target = %s.%s, want lineitem.l_shipdate", fragment.Index, fragment.Field)
+	seed := seeded.Query.Seeds[0]
+	if seed.Index != "lineitem" || seed.Field != "l_shipdate" || seed.Kind != qsbridge.QuantaSeedTableExistence {
+		t.Fatalf("seed = %#v, want lineitem.l_shipdate table existence", seed)
 	}
-	if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
-		t.Fatalf("fragment = %#v, want two-sided time range seed", fragment)
+	if seed.Begin == nil || seed.End == nil || !seed.ShardWindow {
+		t.Fatalf("seed = %#v, want two-sided shard-window seed", seed)
 	}
 	begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, "l_shipdate")
-	if fragment.Begin.Int64() != begin || fragment.End.Int64() != end {
-		t.Fatalf("range = %d..%d, want %d..%d", fragment.Begin.Int64(), fragment.End.Int64(), begin, end)
+	if seed.Begin.Int64() != begin || seed.End.Int64() != end {
+		t.Fatalf("range = %d..%d, want %d..%d", seed.Begin.Int64(), seed.End.Int64(), begin, end)
 	}
-	if fragment.NullCheck || fragment.Negate {
-		t.Fatalf("fragment = %#v, did not expect null-check seed", fragment)
+	if len(seeded.Query.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want no synthetic fragments", seeded.Query.Fragments)
 	}
 	if len(seeded.Query.ProjectionFields) != 1 || seeded.Query.ProjectionFields[0].Field != "l_shipdate" || seeded.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
 		t.Fatalf("projection fields = %#v, want shard time projection metadata", seeded.Query.ProjectionFields)

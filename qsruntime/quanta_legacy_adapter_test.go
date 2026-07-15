@@ -63,6 +63,49 @@ func TestLegacyBitmapQueryAdapterConvertsBSIFragmentToProto(t *testing.T) {
 	}
 }
 
+func TestLegacyBitmapQueryAdapterConvertsSeedToExistenceFragment(t *testing.T) {
+	query := qsbridge.QuantaIntermediateQuery{
+		Seeds: []qsbridge.QuantaSeed{{
+			Index: "lineitem",
+			Field: "l_shipdate",
+			Kind:  qsbridge.QuantaSeedTableExistence,
+		}},
+	}
+
+	proto := LegacyBitmapQueryAdapter{}.ToProto(query)
+	if len(proto.Query) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(proto.Query))
+	}
+	fragment := proto.Query[0]
+	if fragment.Index != "lineitem" || fragment.Field != "l_shipdate" {
+		t.Fatalf("fragment = %#v, want lineitem.l_shipdate", fragment)
+	}
+	if fragment.Operation != pb.QueryFragment_UNION || !fragment.NullCheck || !fragment.Negate {
+		t.Fatalf("fragment = %#v, want UNION not-null existence fragment", fragment)
+	}
+}
+
+func TestLegacyBitmapQueryAdapterAppliesSeedShardWindow(t *testing.T) {
+	query := qsbridge.QuantaIntermediateQuery{
+		Seeds: []qsbridge.QuantaSeed{{
+			Index:       "lineitem",
+			Field:       "l_shipdate",
+			Kind:        qsbridge.QuantaSeedTableExistence,
+			Begin:       big.NewInt(1685577600000),
+			End:         big.NewInt(1685664000000),
+			ShardWindow: true,
+		}},
+	}
+
+	proto := LegacyBitmapQueryAdapter{}.ToProtoFromRequest(NewExecutionRequest(query))
+	if got, want := time.Unix(0, proto.FromTime).UTC().Format(shared.YMDHTimeFmt), "2023-06-01T00"; got != want {
+		t.Fatalf("from time = %q, want %q", got, want)
+	}
+	if got, want := time.Unix(0, proto.ToTime).UTC().Format(shared.YMDHTimeFmt), "2023-06-02T00"; got != want {
+		t.Fatalf("to time = %q, want %q", got, want)
+	}
+}
+
 func TestLegacyBitmapQueryAdapterPassesThroughDifferenceFragment(t *testing.T) {
 	query := qsbridge.QuantaIntermediateQuery{
 		Fragments: []qsbridge.QuantaQueryFragment{{

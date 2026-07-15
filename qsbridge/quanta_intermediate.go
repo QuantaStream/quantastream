@@ -376,6 +376,29 @@ type QuantaQueryFragment struct {
 	NullCheck   bool
 }
 
+// QuantaSeedKind names a set-producing physical seed request.
+type QuantaSeedKind string
+
+const (
+	// QuantaSeedTableExistence asks the runtime for the table rownum existence set.
+	QuantaSeedTableExistence QuantaSeedKind = "table_existence"
+)
+
+// QuantaSeed is an explicit set-producing request in the physical Quanta dialect.
+//
+// Seeds are not user predicates. They describe planner/runtime intent such as
+// "start this scan from the table existence bitmap" so adapters can choose a
+// cheap backend primitive instead of manufacturing an all-range predicate.
+type QuantaSeed struct {
+	Index       string
+	Role        TableInstanceID
+	Field       string
+	Kind        QuantaSeedKind
+	Begin       *big.Int
+	End         *big.Int
+	ShardWindow bool
+}
+
 // QuantaFilterOperation names one node in a grouped bitmap filter tree.
 type QuantaFilterOperation string
 
@@ -921,6 +944,7 @@ func quantaFragmentLiteralString(value LiteralExpr, ok bool) string {
 // primitives while still abstracting away legacy gRPC/runtime packages.
 type QuantaIntermediateQuery struct {
 	Fragments        []QuantaQueryFragment
+	Seeds            []QuantaSeed
 	Filter           QuantaFilterExpression
 	ProjectionFields []QuantaProjectionField
 }

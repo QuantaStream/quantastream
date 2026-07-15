@@ -501,9 +501,11 @@ func (m *BitmapIndex) purgePartition(aop *Partition) {
 	} else {
 		m.bsiCacheLock.Lock()
 		defer m.bsiCacheLock.Unlock()
-		_, ok := m.bsiCache[aop.Index][aop.Field][t]
+		bsi, ok := m.bsiCache[aop.Index][aop.Field][t]
 		if ok {
+			removed := bsi.GetExistenceBitmap().Clone()
 			delete(m.bsiCache[aop.Index][aop.Field], t)
+			m.updateSeedCacheForBSIFragment(aop.Index, aop.Field, t, nil, removed)
 			u.Infof("Purged BSI %s.%s, ts = %v", aop.Index, aop.Field, aop.Time.Format(timeFmt))
 		}
 	}

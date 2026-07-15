@@ -359,7 +359,7 @@ func (h LegacyQuantaSessionHandle) cachedRootTable(request ExecutionRequest) *co
 }
 
 func legacyDirectExecutionWithFullTableScanSeed(request ExecutionRequest, table *core.Table) ExecutionRequest {
-	if table == nil || request.HasCandidateSet || len(request.Query.Fragments) > 0 || !request.Query.Filter.Empty() {
+	if table == nil || request.HasCandidateSet || len(request.Query.Seeds) > 0 || len(request.Query.Fragments) > 0 || !request.Query.Filter.Empty() {
 		return request
 	}
 	index, _ := request.RootIndex()
@@ -372,15 +372,14 @@ func legacyDirectExecutionWithFullTableScanSeed(request ExecutionRequest, table 
 	if timeField := legacyDirectRelationshipTimeQuantumField(table); legacyDirectTableHasPhysicalShardWindow(table) && timeField != "" {
 		begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, timeField)
 		request.Query = cloneIntermediateQuery(request.Query)
-		request.Query.Fragments = append([]qsbridge.QuantaQueryFragment{{
+		request.Query.Seeds = append([]qsbridge.QuantaSeed{{
 			Index:       index,
 			Field:       timeField,
-			Operation:   qsbridge.QuantaOperationIntersect,
-			BSIOp:       qsbridge.QuantaBSIOpRange,
+			Kind:        qsbridge.QuantaSeedTableExistence,
 			Begin:       big.NewInt(begin),
 			End:         big.NewInt(end),
 			ShardWindow: true,
-		}}, request.Query.Fragments...)
+		}}, request.Query.Seeds...)
 		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 		return request
 	}
@@ -389,13 +388,11 @@ func legacyDirectExecutionWithFullTableScanSeed(request ExecutionRequest, table 
 		return request
 	}
 	request.Query = cloneIntermediateQuery(request.Query)
-	request.Query.Fragments = append([]qsbridge.QuantaQueryFragment{{
-		Index:     index,
-		Field:     field,
-		Operation: qsbridge.QuantaOperationIntersect,
-		NullCheck: true,
-		Negate:    true,
-	}}, request.Query.Fragments...)
+	request.Query.Seeds = append([]qsbridge.QuantaSeed{{
+		Index: index,
+		Field: field,
+		Kind:  qsbridge.QuantaSeedTableExistence,
+	}}, request.Query.Seeds...)
 	return request
 }
 

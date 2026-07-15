@@ -279,6 +279,7 @@ type ExecutionProbe = qsbridge.ProjectionProbe
 func cloneIntermediateQuery(query qsbridge.QuantaIntermediateQuery) qsbridge.QuantaIntermediateQuery {
 	return qsbridge.QuantaIntermediateQuery{
 		Fragments:        cloneQueryFragments(query.Fragments),
+		Seeds:            cloneQuantaSeeds(query.Seeds),
 		Filter:           cloneQuantaFilterExpression(query.Filter),
 		ProjectionFields: append([]qsbridge.QuantaProjectionField(nil), query.ProjectionFields...),
 	}
@@ -330,6 +331,14 @@ func cloneQueryFragments(fragments []qsbridge.QuantaQueryFragment) []qsbridge.Qu
 	return cloned
 }
 
+func cloneQuantaSeeds(seeds []qsbridge.QuantaSeed) []qsbridge.QuantaSeed {
+	cloned := make([]qsbridge.QuantaSeed, len(seeds))
+	for i, seed := range seeds {
+		cloned[i] = cloneQuantaSeed(seed)
+	}
+	return cloned
+}
+
 func cloneQuantaFilterExpression(filter qsbridge.QuantaFilterExpression) qsbridge.QuantaFilterExpression {
 	cloned := filter
 	cloned.Fragment = cloneQueryFragment(filter.Fragment)
@@ -346,5 +355,12 @@ func cloneQueryFragment(fragment qsbridge.QuantaQueryFragment) qsbridge.QuantaQu
 	cloned.Values = cloneBigIntSlice(fragment.Values)
 	cloned.Begin = cloneBigInt(fragment.Begin)
 	cloned.End = cloneBigInt(fragment.End)
+	return cloned
+}
+
+func cloneQuantaSeed(seed qsbridge.QuantaSeed) qsbridge.QuantaSeed {
+	cloned := seed
+	cloned.Begin = cloneBigInt(seed.Begin)
+	cloned.End = cloneBigInt(seed.End)
 	return cloned
 }
