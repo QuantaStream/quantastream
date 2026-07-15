@@ -139,11 +139,11 @@ and StringHashBSI materialization through the MySQL socket.
 The readiness runner starts a fresh temporary `quantastream` process per suite,
 copies the SQLRunner schema config, writes a suite-specific `CATALOG_OBJECTS`
 manifest, and runs SQLRunner through the product-facing socket path. Set
-`RUN_CORE=1 ALLOW_FAILURES=1` to discover the current standard-mode gap map
-against `basic_queries`, `insert_tests`, and `function_expressions`.
-`RUN_PORTABLE=1` remains a temporary alias for `RUN_CORE=1`. Set
-`RUN_EXTENDED=1` to include broader group-by, join, subquery, multi-table join,
-and mutation suites while standard-mode coverage is still being expanded.
+`RUN_CORE=1` to run the standard smoke plus the core `basic_queries`,
+`insert_tests`, and `function_expressions` suites. `RUN_PORTABLE=1` remains a
+temporary alias for `RUN_CORE=1`. Set `RUN_EXTENDED=1` to include broader
+group-by, join, subquery, multi-table join, and mutation suites. Use
+`ALLOW_FAILURES=1` only when intentionally discovering the current gap map.
 
 Known local-node streaming risks:
 

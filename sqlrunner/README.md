@@ -1,8 +1,8 @@
 # SQLRunner
 
 SQLRunner executes YAML roadmap suites. It supports MySQL socket harnesses for
-the product paths, an in-memory runtime harness for qsbridge-only slices, and an
-inabox-direct harness for exercising the query stack against a running local
+the product paths, in-process runtime harnesses for qsbridge slices, and direct
+bitmap harnesses for exercising the query stack against a running local
 QuantaStream node cluster.
 
 ## Roadmap Suites
@@ -115,7 +115,7 @@ compatibility route for general SQL; unsupported query shapes should stay in the
 proxy or in-memory runtime suites until the new planner/runtime grows the needed
 primitive.
 
-`sqltests/inabox_direct_qa_basic.yaml` is the portable QA-table checkpoint for
+`sqltests/inabox_direct_qa_basic.yaml` is the core QA-table checkpoint for
 the direct path. It creates and loads `customers_qa` and `orders_qa`, including
 the simple multiplicity-set `phoneType` values used by later mutation and join
 coverage, then asserts the stable direct-read surface over the QA catalog:
@@ -144,7 +144,7 @@ go run . \
 The inabox-direct joins suite is the QA-backed relationship-vector
 checkpoint. It creates and loads `customers_qa` and `orders_qa`, then validates
 join count, projection, filtering, grouped aggregate, and distinct aggregate
-cases over the customer-orders edge. Use it as the portable join regression
+cases over the customer-orders edge. Use it as the direct join regression
 gate before reaching for TPC-H catalog data:
 
 ```bash
@@ -170,11 +170,10 @@ go run . \
 
 Because this suite can take several minutes, keep it out of fast package CI
 unless a dedicated inabox-direct integration job is created. Use it as a
-pre-retirement gate for the old proxy and as a performance watchpoint for
-materialization-heavy cases such as Q19, Q18, Q21 late receipt, and Q5 graph
-revenue kernels.
+direct-path regression and performance watchpoint for materialization-heavy
+cases such as Q19, Q18, Q21 late receipt, and Q5 graph revenue kernels.
 
-For the current proxy-retirement readiness gate, run the quick inabox-direct
+For the current direct readiness gate, run the quick inabox-direct
 suites from the `sqlrunner` directory:
 
 ```bash
@@ -230,14 +229,14 @@ against temporary `cmd/quantastream` processes from the `sqlrunner` directory:
 
 The readiness runner stages a temporary file-backed catalog per suite and
 pre-activates only the tables needed for that suite's existing drop/create
-bootstrap. Core suites are opt-in while standard-mode coverage is still
-expanding:
+bootstrap. Core suites are opt-in and are intended to stay green in CI:
 
 ```bash
-RUN_CORE=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
+RUN_CORE=1 ./run-inabox-standard-readiness.sh
 ```
 
-The extended suites are also opt-in:
+The extended suites are also opt-in for broader local validation. Use
+`ALLOW_FAILURES=1` only when intentionally discovering the current gap map:
 
 ```bash
 RUN_CORE=1 RUN_EXTENDED=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
@@ -246,10 +245,10 @@ RUN_CORE=1 RUN_EXTENDED=1 ALLOW_FAILURES=1 ./run-inabox-standard-readiness.sh
 `RUN_PORTABLE=1` is accepted as a temporary compatibility alias for `RUN_CORE=1`.
 
 `-engine inabox-local` runs SQLRunner through the native MySQL-compatible
-server/proxy on port `4000` while a local distributed-shape harness is running.
-Use it when the local harness is running the proxy and you want to validate the
-socket/wire path plus local Consul/gRPC/node boundaries rather than hosting the
-query engine inside SQLRunner:
+front door on port `4000` while a local distributed-shape harness is running.
+Use it when the local harness is running the network path and you want to
+validate the socket/wire path plus local Consul/gRPC/node boundaries rather
+than hosting the query engine inside SQLRunner:
 
 ```bash
 go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
@@ -322,14 +321,17 @@ suite and should grow incrementally as Quanta's TPC-H query support matures.
 
 ## Connection Options
 
-- `engine`: execution harness; `proxy`, `runtime`, or `inabox-direct`, defaults
-  to `proxy`.
+- `engine`: execution harness; `proxy`, `distributed`, `inabox-local`,
+  `inabox-standard`, `inabox-direct`, `runtime`, `runtime-inspect`, or
+  `mysql-reference`; defaults to `proxy`.
 - `suite_file`: YAML roadmap suite to execute. Required.
-- `host`: Quanta proxy host. Required for `proxy`.
-- `user`: Quanta user. Required for `proxy`.
+- `host`: MySQL-compatible endpoint host. Required for `proxy` and
+  `distributed`.
+- `user`: MySQL-compatible endpoint user. Required for `proxy` and
+  `distributed`.
 - `password`: Quanta password.
 - `db`: database name; defaults to `quanta`.
-- `port`: proxy port; defaults to `4000`.
+- `port`: MySQL-compatible endpoint port; defaults to `4000`.
 - `consul`: Consul address; defaults to `127.0.0.1:8500`.
 - `log_level`: use `DEBUG` for verbose logging.
 - `verbose`: print roadmap case SQL and detailed per-case timing.
@@ -337,7 +339,9 @@ suite and should grow incrementally as Quanta's TPC-H query support matures.
 - `slow_threshold`: print a slow-case summary for cases at or above this
   duration, for example `10s`.
 
-The `proxy` and `inabox-direct` harnesses expect Consul and a green local
-cluster to be running. `proxy` talks through the MySQL proxy. `inabox-direct`
-uses the cluster catalog and bitmap sessions directly from the SQLRunner
-process.
+`proxy` and `distributed` target an explicitly addressed MySQL-compatible
+endpoint. `inabox-local` targets the local distributed-shape harness.
+`inabox-standard` starts or targets the standalone single-process product path.
+`inabox-direct` expects Consul and a green local node cluster, then uses the
+cluster catalog and bitmap sessions directly from the SQLRunner process.
+`runtime` and `runtime-inspect` need no cluster.

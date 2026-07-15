@@ -25,3 +25,24 @@ jobs:
 
       - name: Test all packages
         run: go test ./... -count=1
+
+  inabox-standard-core-readiness:
+    name: inabox-standard core readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: refactor-unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+
+      - name: Run inabox-standard smoke and core suites
+        working-directory: sqlrunner
+        env:
+          RUN_CORE: "1"
+        run: ./run-inabox-standard-readiness.sh
