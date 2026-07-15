@@ -3,7 +3,9 @@ package qsinabox
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -157,5 +159,155 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	}
 	if process.Backend.Adapter.BitmapIndex.GetTable("sample") != nil {
 		t.Fatalf("sample should be removed from the local bitmap index after DROP TABLE")
+	}
+}
+
+func TestStandardProcessCatalogLifecycleEnforcesRelationships(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardDraftRelationshipSchemas(t, configDir)
+	if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
+		t.Fatalf("write empty catalog objects: %v", err)
+	}
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	requireStandardProcessSQLFailure(t, process, "create table orders", "missing parent FK constraint dependency", "")
+	dataConfigDir := filepath.Join(config.DataDir, "config")
+	active, err := shared.CatalogTableActive(dataConfigDir, "quanta", "orders")
+	if err != nil {
+		t.Fatalf("CatalogTableActive(orders) error = %v", err)
+	}
+	if active {
+		t.Fatalf("orders should not be active after rejected child-before-parent CREATE TABLE")
+	}
+
+	requireStandardProcessSQLSuccess(t, process, "create table customers")
+	requireStandardProcessSQLSuccess(t, process, "create table orders")
+	requireStandardProcessSQLSuccess(t, process, "insert into customers (id, city) values ('C1', 'Seattle')")
+	requireStandardProcessSQLSuccess(t, process, "insert into orders (order_id, cust_id) values ('O1', 'C1')")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+
+	requireStandardProcessSQLFailure(t, process, "drop table customers", "cannot drop table with dependencies: orders", "")
+	active, err = shared.CatalogTableActive(dataConfigDir, "quanta", "customers")
+	if err != nil {
+		t.Fatalf("CatalogTableActive(customers) error = %v", err)
+	}
+	if !active {
+		t.Fatalf("customers should remain active after rejected parent DROP TABLE")
+	}
+
+	requireStandardProcessSQLFailure(
+		t,
+		process,
+		"truncate table customers",
+		"cannot truncate parent table customers while child table orders contains 1 row(s)",
+		qsbridge.DiagnosticTruncateChildDataExists,
+	)
+}
+
+func requireStandardProcessSQLSuccess(t *testing.T, process StandardProcess, sql string) {
+	t.Helper()
+	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("%s error = %v", sql, err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("%s diagnostics = %#v runtime=%#v, want none", sql, result.Diagnostics, result.Runtime.Diagnostics)
+	}
+}
+
+func requireStandardProcessSQLFailure(t *testing.T, process StandardProcess, sql string, wantMessage string, wantCode qsbridge.DiagnosticCode) {
+	t.Helper()
+	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+	if err != nil {
+		if wantMessage != "" && !strings.Contains(err.Error(), wantMessage) {
+			t.Fatalf("%s error = %v, want message containing %q", sql, err, wantMessage)
+		}
+		return
+	}
+	diagnostics := append(qsbridge.DiagnosticSet(nil), result.Diagnostics...)
+	diagnostics = append(diagnostics, result.Runtime.Diagnostics...)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("%s unexpectedly succeeded: result=%#v", sql, result)
+	}
+	if wantMessage != "" {
+		found := false
+		for _, diagnostic := range diagnostics {
+			if strings.Contains(diagnostic.Message, wantMessage) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s diagnostics = %#v, want message containing %q", sql, diagnostics, wantMessage)
+		}
+	}
+	if wantCode != "" {
+		found := false
+		for _, code := range diagnostics.Codes() {
+			if code == wantCode {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s diagnostic codes = %#v, want %s", sql, diagnostics.Codes(), wantCode)
+		}
+	}
+}
+
+func writeStandardDraftRelationshipSchemas(t *testing.T, configDir string) {
+	t.Helper()
+	writeStandardRelationshipSchema(t, configDir, "customers", "")
+	writeStandardRelationshipSchema(t, configDir, "orders", "customers")
+}
+
+func writeStandardRelationshipSchema(t *testing.T, configDir, table, foreignKey string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	schema := `tableName: ` + table + `
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: StringHashBSI
+  type: String
+- fieldName: city
+  sourceName: /city
+  mappingStrategy: StringHashBSI
+  type: String
+`
+	if foreignKey != "" {
+		schema = `tableName: ` + table + `
+primaryKey: order_id
+attributes:
+- fieldName: order_id
+  sourceName: /order_id
+  mappingStrategy: StringHashBSI
+  type: String
+- fieldName: cust_id
+  sourceName: /cust_id
+  mappingStrategy: ParentRelation
+  type: String
+  foreignKey: ` + foreignKey + `
+`
+	}
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
 	}
 }
