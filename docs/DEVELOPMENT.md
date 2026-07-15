@@ -185,8 +185,8 @@ The goal is to maintain:
 
 The YAML suites under `sqlrunner/sqltests` are the SQL behavior map. Supported
 cases protect current behavior; `xfail` cases retain roadmap goals without
-blocking incremental engine work. The older line-oriented scripts remain for
-compatibility with lower-level test fragments.
+blocking incremental engine work. SQLRunner now executes YAML roadmap suites
+only; the older line-oriented script loader has been retired.
 
 TPC-H is a benchmark roadmap, but core SQL behavior discovered while working on
 TPC-H should be backfilled into the broader SQLRunner suites. The TPC-H suites
@@ -446,20 +446,17 @@ projection error resolving the deepest `deliveries_qa` relationship,
 indicating that the current projection path does not traverse an arbitrary
 parent-relation chain.
 
-## Line-Oriented SQLRunner Compatibility Debt
+## Retired Line-Oriented SQLRunner Scripts
 
-Some retention, restart, topology, and Docker integration tests still use the
-older line-oriented scripts under `sqlrunner/sqlscripts`. In particular, they
-depend on reusable load, body, and bug-reproduction fragments that are separate
-from the primary SQL conformance suites.
+The older line-oriented SQLRunner scripts under `sqlrunner/sqlscripts` have
+been removed. SQLRunner no longer discovers or parses those files; executable
+SQL coverage should live in YAML roadmap suites under `sqlrunner/sqltests`.
 
-For now:
+Going forward:
 
 - new SQL behavior and roadmap coverage must use YAML suites
-- existing line-oriented fragments should remain until their owning tests are revised
 - new line-oriented scripts should not be added
-- line-oriented parser and script removal should happen as part of a focused topology
-  or test-infrastructure refactor
-
-This is intentional compatibility debt. Migrating these specialized fixtures
-now would add risk without materially improving the SQL implementation roadmap.
+- any missing lower-level fixture behavior should be recreated as focused YAML
+  suites or Go unit tests
+- the deprecated roadmap `kind: admin` shorthand may remain temporarily because
+  it is converted to SQL DDL before execution; it is not a script-file loader
