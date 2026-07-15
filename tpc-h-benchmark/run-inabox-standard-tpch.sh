@@ -23,6 +23,7 @@ CLEAN_DATA="${CLEAN_DATA:-1}"
 START_SERVER="${START_SERVER:-1}"
 KEEP_SERVER="${KEEP_SERVER:-0}"
 SMOKE_SUITE="${SMOKE_SUITE:-sqltests/tpch_smoke.yaml}"
+READY_TIMEOUT_SECONDS="${READY_TIMEOUT_SECONDS:-240}"
 SERVER_PID=""
 
 TABLES=(
@@ -75,7 +76,9 @@ on_exit() {
 trap on_exit EXIT
 
 wait_for_server() {
-  for _ in $(seq 1 120); do
+  local attempts
+  attempts=$((READY_TIMEOUT_SECONDS * 4))
+  for _ in $(seq 1 "${attempts}"); do
     if [[ -n "${SERVER_PID}" ]] && ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
       echo "quantastream exited before readiness"
       cat "${SERVER_LOG}" || true
@@ -157,6 +160,7 @@ echo "run_smoke=${RUN_SMOKE}"
 echo "clean_data=${CLEAN_DATA}"
 echo "start_server=${START_SERVER}"
 echo "keep_server=${KEEP_SERVER}"
+echo "ready_timeout_seconds=${READY_TIMEOUT_SECONDS}"
 if git -C "${REPO_ROOT}" rev-parse --short HEAD >/dev/null 2>&1; then
   echo "git_commit=$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
   echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"

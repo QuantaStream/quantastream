@@ -243,12 +243,25 @@ results, with:
 
 ```bash
 ./compare-tpch-suite.py \
-  local/logs/tpch_profile-1x-direct.log \
-  local/logs/tpch_profile-1x-standard.log
+  local/logs/tpch_profile-inabox-direct-1x-*.log \
+  local/logs/tpch_profile-inabox-standard-1x-*.log
 ```
 
 This comparison is a profiling flashlight rather than a correctness gate. Use
 the JSON benchmark report mode for green, repeatable benchmark artifacts.
+
+To run and compare modes in one pass, use:
+
+```bash
+MODES="inabox-direct inabox-standard" ./run-tpch-mode-compare.sh 1 sqltests/tpch_profile.yaml
+```
+
+`inabox-standard` is started automatically against
+`TPCH_STANDARD_DATA_DIR`/`TPCH_STANDARD_CONFIG_DIR`. Other modes assume their
+normal environment is already running, for example the local cluster for
+`inabox-direct` or `inabox-local`. The wrapper continues through known profile
+suite failures by default so timing comparisons can still be generated; set
+`EXIT_ON_FAILURE=1` when using only green suites.
 
 The default suite is `sqltests/tpch_queries.yaml`. Logs are written under:
 

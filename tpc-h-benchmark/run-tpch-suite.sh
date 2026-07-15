@@ -31,7 +31,8 @@ fi
 LOG_DIR="${SCRIPT_DIR}/local/logs"
 mkdir -p "${LOG_DIR}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
-LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${RUNS}x-${STAMP}.log"
+ENGINE_LABEL="$(printf '%s' "${ENGINE}" | tr -c '[:alnum:]_.-' '-')"
+LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${RUNS}x-${STAMP}.log"
 
 {
   echo "TPC-H suite baseline"
