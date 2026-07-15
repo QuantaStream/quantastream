@@ -138,7 +138,7 @@ tests:
     status: supported
     kind: query
     capabilities: [inabox-direct, tpch-q3, relationship-vector-join, time-range, count]
-    # The old proxy returned 32289 here, which is only the child-side
+    # The obsolete qlbridge proxy result was 32289 here, which is only the child-side
     # l_shipdate predicate count. The relationship-vector reducer returns the
     # SQL intersection after applying both parent and child date predicates.
     sql: |-

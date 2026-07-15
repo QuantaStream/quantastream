@@ -7,7 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
-// NativeProxyFrontDoorConfig captures the first bounded MySQL proxy re-entry point.
+// NativeProxyFrontDoorConfig captures the bounded MySQL-compatible front-door entry point.
 type NativeProxyFrontDoorConfig struct {
 	Server        NativeProxyServerConfig
 	Protocol      qsbridge.ProtocolProfile
@@ -54,7 +54,7 @@ type NativeProxyFrontDoor struct {
 	Authenticator qsmysql.Authenticator
 }
 
-// NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native proxy server.
+// NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native SQL server.
 func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFrontDoorConfig) NativeProxyFrontDoor {
 	config = config.WithDefaults()
 	authenticator := config.Authenticator
@@ -87,7 +87,7 @@ func (f NativeProxyFrontDoor) Ready() bool {
 	return f.RuntimeReady() && f.WireReady()
 }
 
-// NativeProxyFrontDoorSummary is a small status row for the MySQL proxy re-entry milestone.
+// NativeProxyFrontDoorSummary is a small status row for the MySQL-compatible front-door milestone.
 type NativeProxyFrontDoorSummary struct {
 	Protocol     qsbridge.ProtocolKind
 	Driver       string

@@ -250,9 +250,10 @@ discovery commands, is tracked separately from analytical query support.
 
 The MySQL client can send `KILL QUERY <connection_id>` after `Ctrl+C`, but
 long-running Quanta queries can still leave the client waiting until the
-server/proxy is bounced. Query cancellation should become an explicit execution
-contract in the native engine: every long-running scan, projection, join,
-aggregate, and remote shard request needs a cancellation-aware context.
+MySQL front door or query process is bounced. Query cancellation should become
+an explicit execution contract in the native engine: every long-running scan,
+projection, join, aggregate, and remote shard request needs a
+cancellation-aware context.
 
 ## Full SQL Compatibility
 

@@ -63,7 +63,7 @@ demos, local development, and single-process benchmark comparisons.
 Required shape:
 
 - one QuantaStream process on one host
-- the new MySQL-compatible server/proxy in process
+- the MySQL-compatible front door in process
 - the query engine in process
 - one lightweight in-process node adapter around the storage/node package
 - no Consul requirement
@@ -201,16 +201,16 @@ Schema-change propagation note:
 
 Current Consul-backed schema operations rely on `shared/watch.go` listeners to
 notice table create, drop, truncate, and modification events. The historical
-admin path introduced fixed multi-second sleeps after drop/truncate so proxies
-and pooled sessions had time to observe the change before node data was
-removed. That delay is a distributed watcher-barrier hack, not a durable
+admin path introduced fixed multi-second sleeps after drop/truncate so query
+front doors and pooled sessions had time to observe the change before node data
+was removed. That delay is a distributed watcher-barrier hack, not a durable
 correctness mechanism.
 
 `inabox-standard` should not need this delay because schema mutation and cache
 invalidation happen in one process. `inabox-local` and `distributed` should
 eventually replace fixed sleeps with explicit catalog-version or Consul-index
-barriers, direct proxy invalidation, or stale-session rejection/reload. Track
-this as V2.0 technical debt for distributed catalog consistency.
+barriers, direct front-door invalidation, or stale-session rejection/reload.
+Track this as V2.0 technical debt for distributed catalog consistency.
 
 ### `distributed`
 

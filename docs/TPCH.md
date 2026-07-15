@@ -256,13 +256,14 @@ frontier probes. Q3 currently supports the `customer` market-segment filter and
 the first `customer -> orders` projection after adding synthetic full-shard
 windows for unfiltered time-sharded child tables. The next Q3 hop,
 `orders -> lineitem` with date predicates on both time-sharded tables, is also
-supported with a count of `1464`. The old proxy path returned `32289` for this
-shape, but that value is the child-side `lineitem` date predicate cardinality,
-not the FK-reduced SQL intersection after applying the parent `orders`
-predicate. Q5 has green dimension coverage for the `ASIA` region filter and
-`region -> nation` relationship-vector join. The inabox-direct suite also now
-tracks the next one-edge Q5 fanouts, `nation -> supplier` and
-`nation -> customer`, with row counts of 27 and 309 respectively. Two-edge
+supported with a count of `1464`. The obsolete qlbridge proxy result was
+`32289` for this shape, but that value is the child-side `lineitem` date
+predicate cardinality, not the FK-reduced SQL intersection after applying the
+parent `orders` predicate. Q5 has green dimension coverage for the `ASIA`
+region filter and `region -> nation` relationship-vector join. The
+inabox-direct suite also now tracks the next one-edge Q5 fanouts,
+`nation -> supplier` and `nation -> customer`, with row counts of 27 and 309
+respectively. Two-edge
 dimension chains are supported for `count(*)` as well:
 `region -> nation -> supplier` returns 27 and
 `region -> nation -> customer` returns 309 for the `ASIA` probe. The
@@ -376,8 +377,9 @@ before revisiting grouped aggregate reduction.
 Relationship materialization detail probes distinguish join-pair fanout from
 actual materializer input. The Q15 supplier join sees 2,284 joined child rows,
 but parent-side materialization collapses to 100 unique supplier rows before the
-legacy materializer call. That means the remaining work is field materialization
-and legacy materializer cost, not duplicate parent-row fetches.
+compatibility materializer call. That means the remaining work is field
+materialization and compatibility materializer cost, not duplicate parent-row
+fetches.
 
 TPC-H Q16 now has staged executable coverage for the part-side Brand/Type/Size
 filter kernel and the filtered `part -> partsupp` join count, projection,
@@ -558,7 +560,7 @@ tables, and named SQL views are not supported yet. Track that capability in
 [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md) until a view/temp-table catalog and
 execution model exist.
 
-TPC-H Q19 is covered by the legacy executable suite, including standalone
+TPC-H Q19 is covered by the inabox-direct executable suite, including standalone
 brand/container/size probes, child-side discounted revenue, and the formal
 mixed-table `OR` branch shape over `lineitem -> part`. Inabox-direct now tracks
 the same formal branch query as an explicit XFAIL because mixed-table top-level

@@ -185,8 +185,8 @@ The goal is to maintain:
 
 The YAML suites under `sqlrunner/sqltests` are the SQL behavior map. Supported
 cases protect current behavior; `xfail` cases retain roadmap goals without
-blocking incremental engine work. The legacy scripts remain for compatibility
-with lower-level test fragments.
+blocking incremental engine work. The older line-oriented scripts remain for
+compatibility with lower-level test fragments.
 
 TPC-H is a benchmark roadmap, but core SQL behavior discovered while working on
 TPC-H should be backfilled into the broader SQLRunner suites. The TPC-H suites
@@ -198,9 +198,9 @@ Grouped join execution currently has two important paths. The newer
 multi-table grouped path is for non-outer grouped joins with `count(*)` and
 `sum(...)` aggregates, and is used by the staged Q15/Q16-style kernels. Grouped
 joins with outer semantics or reducers such as `min`, `max`, and `avg` must
-continue to fall back to the legacy weighted aggregate path until the fast path
-has explicit reducer support. SQLRunner broad coverage should protect both
-routes.
+continue to fall back to the compatibility weighted aggregate path until the
+fast path has explicit reducer support. SQLRunner broad coverage should protect
+both routes.
 
 Projector-local caches are acceptable when their lifetime is bounded to one
 query/projector and they preserve normal projection semantics for missing
@@ -208,26 +208,26 @@ fields. Server-side query-local caches are also acceptable for immutable
 fragments assembled more than once during one bitmap query, such as repeated
 `timeRangeBSI` assembly for the same `index/field/fromTime/toTime` window.
 Those caches must stay scoped to a single request unless they carry explicit
-invalidation metadata. Any cache that crosses query, session, proxy, shard sync,
-or mutation boundaries should be inventoried here and treated as part of a
+invalidation metadata. Any cache that crosses query, session, front-door, shard
+sync, or mutation boundaries should be inventoried here and treated as part of a
 future coherent cache layer.
 
 Cross-query or cross-session reusable fragments should not be added to the
-projector layer; they belong in a future proxy-managed fragment cache with
+projector layer; they belong in a future query-front-door fragment cache with
 explicit versioning and invalidation.
 
 ### Query Cancellation Roadmap
 
 The MySQL client sends `KILL QUERY <connection_id>` after `Ctrl+C`, but
 long-running Quanta queries can remain hung with no prompt. Bouncing the
-server/proxy releases the client, which indicates that cancellation is not yet
-propagating from the MySQL protocol/session layer into the active planner and
-executor contexts.
+MySQL front door or query process releases the client, which indicates that
+cancellation is not yet propagating from the MySQL protocol/session layer into
+the active planner and executor contexts.
 
 Cancellation support should map connection/query ids to active execution
 contexts and make residual scans, grouped aggregation, subquery membership, and
 join/projector loops observe cancellation. Until that exists, hung analytical
-queries may require a proxy or cluster bounce as the operational recovery.
+queries may require a front-door or cluster bounce as the operational recovery.
 
 ### Function Expression Roadmap
 
@@ -446,19 +446,19 @@ projection error resolving the deepest `deliveries_qa` relationship,
 indicating that the current projection path does not traverse an arbitrary
 parent-relation chain.
 
-## Legacy SQLRunner Compatibility Debt
+## Line-Oriented SQLRunner Compatibility Debt
 
 Some retention, restart, topology, and Docker integration tests still use the
-legacy line-oriented scripts under `sqlrunner/sqlscripts`. In particular, they
+older line-oriented scripts under `sqlrunner/sqlscripts`. In particular, they
 depend on reusable load, body, and bug-reproduction fragments that are separate
 from the primary SQL conformance suites.
 
 For now:
 
 - new SQL behavior and roadmap coverage must use YAML suites
-- existing legacy fragments should remain until their owning tests are revised
-- new legacy scripts should not be added
-- legacy parser and script removal should happen as part of a focused topology
+- existing line-oriented fragments should remain until their owning tests are revised
+- new line-oriented scripts should not be added
+- line-oriented parser and script removal should happen as part of a focused topology
   or test-infrastructure refactor
 
 This is intentional compatibility debt. Migrating these specialized fixtures

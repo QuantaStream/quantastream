@@ -98,7 +98,7 @@ execution boundary.
 `-engine inabox-direct` runs SQLRunner through the new qsbridge/qsruntime
 planning path, then adapts the lowered Quanta intermediate query into the
 direct bitmap/node execution path. It requires a running local QuantaStream
-node cluster and Consul, but it bypasses the MySQL proxy and network wire path.
+node cluster and Consul, but it bypasses the MySQL socket and network wire path.
 This mode proves SQL against real QuantaStream bitmap data without the MySQL socket:
 
 ```bash
