@@ -169,7 +169,7 @@ tests:
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
     expect:
-      row_count: 5000
+      row_count: 15000
 
   - id: "tpch_smoke.031.customer_orders_lineitem_projection"
     status: supported
@@ -181,7 +181,7 @@ tests:
       inner join orders as o on o.o_custkey = c.c_custkey
       inner join lineitem as l on l.l_orderkey = o.o_orderkey
     expect:
-      row_count: 5000
+      row_count: 60175
 
   - id: "tpch_smoke.040.region_nation_projection"
     status: supported
@@ -240,6 +240,7 @@ tests:
     status: supported
     kind: query
     capabilities: [tpch-q3, three-table-join, group-by, order-by, limit]
+    timeout: 120s
     sql: |-
       select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
       from customer as c
@@ -249,3 +250,5 @@ tests:
       group by l.l_orderkey, o.o_orderdate, o.o_shippriority
       order by revenue desc, o.o_orderdate
       limit 10
+    expect:
+      row_count: 10

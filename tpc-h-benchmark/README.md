@@ -85,8 +85,12 @@ rm -rf local/standard-data
 TPCH_LOAD_MODE=standard \
 TPCH_STANDARD_CONFIG_DIR=config \
 TPCH_STANDARD_DATA_DIR=local/standard-data \
-  ./tpch-direct.sh local/data/sf-0.01 3 1000
+  ./tpch-direct.sh local/data/sf-0.01 1 1000
 ```
+
+Use one worker for `inabox-standard` loads for now. Cluster-direct loads can use
+multiple workers; the local standard storage path is intentionally serialized
+until the multi-session write path is validated.
 
 After the load completes, start `inabox-standard` against the same schema and
 data directories:
@@ -99,6 +103,26 @@ go run ./cmd/quantastream \
   -bind 127.0.0.1 \
   -mysql-port 4000 \
   -database quanta
+```
+
+To run the full offline load, start a temporary `quantastream` process, compare
+table counts to the `.tbl` files, and run the TPC-H smoke suite:
+
+```bash
+cd tpc-h-benchmark
+./run-inabox-standard-tpch.sh local/data/sf-0.01 1 1000
+```
+
+The helper uses port `4400` by default so it does not collide with a local
+cluster on `4000`. Useful environment variables:
+
+```bash
+PORT=4000                         # MySQL-compatible validation port
+TPCH_STANDARD_DATA_DIR=local/tpch  # target inabox-standard data directory
+RUN_LOAD=0                        # validate an already-loaded data directory
+RUN_COUNTS=0                      # skip table-count validation
+RUN_SMOKE=0                       # skip SQLRunner smoke validation
+KEEP_SERVER=1                     # leave the temporary server running
 ```
 
 The schema lifecycle scripts can use either the historical admin path or SQL

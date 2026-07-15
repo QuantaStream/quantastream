@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 DATA_DIR=${1:-local/data/sf-0.01}
 WORKERS=${2:-3}
 BATCH_SIZE=${3:-1000}
@@ -78,16 +81,17 @@ for table in "${TABLES[@]}"; do
   expected_rows=$(wc -l < "${DATA_DIR}/${table}.tbl")
   echo "Loading ${table} expected_rows=${expected_rows}..."
   if [[ "${TPCH_LOAD_MODE}" == "standard" ]]; then
-    go run . "${DATA_DIR}" "${table}" \
+    go run . \
       --direct \
       --direct-mode standard \
       --config-dir "${TPCH_STANDARD_CONFIG_DIR}" \
       --data-dir "${TPCH_STANDARD_DATA_DIR}" \
       --database "${TPCH_STANDARD_DB}" \
       --workers "${WORKERS}" \
-      --batch-size "${BATCH_SIZE}"
+      --batch-size "${BATCH_SIZE}" \
+      "${DATA_DIR}" "${table}"
   else
-    go run . "${DATA_DIR}" "${table}" --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}"
+    go run . --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}" "${DATA_DIR}" "${table}"
   fi
   table_end=$(date +%s)
   echo "Loaded ${table} elapsed=$((table_end - table_start))s"
