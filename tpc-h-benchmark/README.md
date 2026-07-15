@@ -56,12 +56,28 @@ The existing cluster direct path remains the default for `tpch-direct.sh`:
 TPCH_LOAD_MODE=cluster ./tpch-direct.sh local/data/sf-0.01 3 1000
 ```
 
+In cluster mode, the loader process does not host storage itself. It connects to
+the running Consul-backed local cluster and writes through the normal session
+path.
+
 ## Load Data Into Inabox-Standard Storage
 
 `inabox-standard` can load TPC-H data into a local data directory without a
 Consul cluster or gRPC node hop. This is an offline/in-process load: do not run
 the standalone `quantastream` server against the same data directory while the
 loader is writing.
+
+This loader mode is intentionally a little different from the SQLRunner
+`inabox-direct` mode:
+
+- SQLRunner `inabox-direct` hosts the query engine inside SQLRunner and talks to
+  local clustered nodes.
+- TPC-H `TPCH_LOAD_MODE=standard` hosts the lightweight local storage backend
+  inside the loader process and writes directly to an `inabox-standard` data
+  directory.
+- The loader does not start the MySQL server. After the load finishes, start
+  `cmd/quantastream` against the same config and data directories to query the
+  data over the MySQL-compatible endpoint.
 
 ```bash
 cd tpc-h-benchmark

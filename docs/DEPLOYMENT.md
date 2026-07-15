@@ -133,6 +133,12 @@ to port `4000`.
 
 The older read-only TPCH smoke suite can still be selected with
 `SUITE=inabox_standard_smoke.yaml` when TPCH data has already been staged.
+
+TPC-H loading has its own direct path. `TPCH_LOAD_MODE=standard` does not start
+the MySQL-compatible server; it hosts the lightweight local storage backend
+inside the loader process and writes directly into an `inabox-standard` data
+directory. After that offline load completes, start `cmd/quantastream` against
+the same config and data directories to query the data.
 The self-contained QA smoke uses `customers_qa` so the local path exercises
 StringEnum dictionary loading, multiplicity-set inserts, default expressions,
 and StringHashBSI materialization through the MySQL socket.
