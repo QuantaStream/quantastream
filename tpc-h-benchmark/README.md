@@ -238,6 +238,14 @@ QUANTA_ENGINE=inabox-direct ./run-tpch-suite.sh 1 sqltests/tpch_profile.yaml
 QUANTA_ENGINE=inabox-standard QUANTA_PORT=4400 ./run-tpch-suite.sh 1 sqltests/tpch_profile.yaml
 ```
 
+Set `CASES` to run one or more exact roadmap case IDs without cloning a suite:
+
+```bash
+CASES=tpch_q12_profile.020_shipmode_receiptdate_group_count \
+  QUANTA_ENGINE=inabox-standard QUANTA_PORT=4400 \
+  ./run-tpch-suite.sh 3 sqltests/tpch_q12_profile.yaml
+```
+
 Compare two or more captured suite logs, including logs with known FAIL/XFAIL
 results, with:
 
@@ -253,7 +261,9 @@ the JSON benchmark report mode for green, repeatable benchmark artifacts.
 To run and compare modes in one pass, use:
 
 ```bash
-MODES="inabox-direct inabox-standard" ./run-tpch-mode-compare.sh 1 sqltests/tpch_profile.yaml
+CASES=tpch_q12_profile.020_shipmode_receiptdate_group_count \
+  MODES="inabox-direct inabox-standard" \
+  ./run-tpch-mode-compare.sh 1 sqltests/tpch_q12_profile.yaml
 ```
 
 `inabox-standard` is started automatically against

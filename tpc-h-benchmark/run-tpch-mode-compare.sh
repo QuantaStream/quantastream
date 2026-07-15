@@ -8,6 +8,7 @@ LOG_DIR="${SCRIPT_DIR}/local/logs"
 RUNS="${1:-1}"
 SUITE_FILE="${2:-sqltests/tpch_profile.yaml}"
 MODES="${MODES:-inabox-direct inabox-standard}"
+CASES="${CASES:-}"
 
 HOST="${QUANTA_HOST:-127.0.0.1}"
 USER="${QUANTA_USER:-MOLIG004}"
@@ -39,10 +40,14 @@ latest_suite_log() {
   local suite="$1"
   local runs="$2"
   local mode="$3"
-  local name label
+  local name label case_label
   name="$(suite_name "${suite}")"
   label="$(printf '%s' "${mode}" | tr -c '[:alnum:]_.-' '-')"
-  ls -t "${LOG_DIR}/${name}-${label}-${runs}x-"*.log 2>/dev/null | head -1 || true
+  case_label="all"
+  if [[ -n "${CASES}" ]]; then
+    case_label="$(printf '%s' "${CASES}" | tr ', ' '__' | tr -c '[:alnum:]_.-' '-')"
+  fi
+  ls -t "${LOG_DIR}/${name}-${label}-${case_label}-${runs}x-"*.log 2>/dev/null | head -1 || true
 }
 
 mode_list_contains() {
@@ -144,6 +149,7 @@ run_mode() {
       QUANTA_PORT="${port}" \
       QUANTA_USER="${USER}" \
       QUANTA_DB="${DB}" \
+      CASES="${CASES}" \
       ./run-tpch-suite.sh "${RUNS}" "${SUITE_FILE}"
   )
 }
@@ -151,6 +157,7 @@ run_mode() {
 echo "TPC-H mode comparison"
 echo "repo=${REPO_ROOT}"
 echo "suite=${SUITE_FILE}"
+echo "cases=${CASES:-all}"
 echo "runs=${RUNS}"
 echo "modes=${MODES}"
 echo "host=${HOST}"

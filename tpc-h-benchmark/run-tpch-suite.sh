@@ -13,6 +13,7 @@ PORT="${QUANTA_PORT:-4000}"
 USER="${QUANTA_USER:-MOLIG004}"
 DB="${QUANTA_DB:-quanta}"
 ENGINE="${QUANTA_ENGINE:-distributed}"
+CASES="${CASES:-}"
 
 if ! [[ "${RUNS}" =~ ^[0-9]+$ ]] || [ "${RUNS}" -lt 1 ]; then
   echo "usage: $0 [runs] [suite-file]" >&2
@@ -32,7 +33,11 @@ LOG_DIR="${SCRIPT_DIR}/local/logs"
 mkdir -p "${LOG_DIR}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 ENGINE_LABEL="$(printf '%s' "${ENGINE}" | tr -c '[:alnum:]_.-' '-')"
-LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${RUNS}x-${STAMP}.log"
+CASE_LABEL="all"
+if [[ -n "${CASES}" ]]; then
+  CASE_LABEL="$(printf '%s' "${CASES}" | tr ', ' '__' | tr -c '[:alnum:]_.-' '-')"
+fi
+LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${CASE_LABEL}-${RUNS}x-${STAMP}.log"
 
 {
   echo "TPC-H suite baseline"
@@ -40,6 +45,7 @@ LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${RUNS}x-${STAMP}.log"
   echo "repo=${REPO_ROOT}"
   echo "suite=${SUITE_FILE}"
   echo "engine=${ENGINE}"
+  echo "cases=${CASES:-all}"
   echo "runs=${RUNS}"
   echo "host=${HOST}"
   echo "port=${PORT}"
@@ -59,13 +65,25 @@ for run in $(seq 1 "${RUNS}"); do
 
   (
     cd "${SQLRUNNER_DIR}" &&
-      go run . \
+      for case_id in ${CASES//,/ }; do
+        go run . \
         -engine "${ENGINE}" \
         -suite_file "${SUITE_ARG}" \
         -host "${HOST}" \
         -user "${USER}" \
         -db "${DB}" \
-        -port "${PORT}"
+          -port "${PORT}" \
+          -case "${case_id}" || exit "$?"
+      done
+      if [[ -z "${CASES}" ]]; then
+        go run . \
+          -engine "${ENGINE}" \
+          -suite_file "${SUITE_ARG}" \
+          -host "${HOST}" \
+          -user "${USER}" \
+          -db "${DB}" \
+          -port "${PORT}"
+      fi
   ) 2>&1 | tee -a "${LOG_FILE}"
   status="${PIPESTATUS[0]}"
 
