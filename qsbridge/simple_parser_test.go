@@ -392,28 +392,15 @@ func TestSimpleParserBridgeParsesJoinOnResidualConjuncts(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeParsesChainedAntiJoinDifferenceMarker(t *testing.T) {
-	statement, diagnostics := SimpleParserBridge{}.Parse(`
+func TestSimpleParserBridgeRejectsNonEqualityJoinEdge(t *testing.T) {
+	_, diagnostics := SimpleParserBridge{}.Parse(`
 		select c.first_name, o.order_id
 		from customers_qa as c
 		inner join orders_qa as o on o.cust_id = c.cust_id
 		inner join lineitems_qa as l on l.order_id != o.order_id
 	`)
-	if diagnostics.BlocksNative() {
-		t.Fatalf("parse diagnostics: %#v", diagnostics)
-	}
-	if len(statement.Select.Tables) != 3 {
-		t.Fatalf("tables = %d, want 3", len(statement.Select.Tables))
-	}
-	if len(statement.Select.Joins) != 2 {
-		t.Fatalf("joins = %d, want 2", len(statement.Select.Joins))
-	}
-	join := statement.Select.Joins[1]
-	if join.Unsupported != UnsupportedJoinAntiDifference {
-		t.Fatalf("unsupported marker = %q, want %q", join.Unsupported, UnsupportedJoinAntiDifference)
-	}
-	if join.LeftQualifier != "l" || join.LeftField != "order_id" || join.RightQualifier != "o" || join.RightField != "order_id" {
-		t.Fatalf("join = %#v, want l.order_id != o.order_id", join)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("expected parser diagnostic for non-equality join edge")
 	}
 }
 

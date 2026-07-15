@@ -415,12 +415,12 @@ general join aggregation planner. Current limitations include:
 - aggregate expressions, `DISTINCT`, `HAVING`, and broader multi-join grouping
   remain roadmap work
 
-`sqlrunner/sqltests/subqueries.yaml` owns subquery and anti-join behavior.
-Quanta currently rewrites single-column `IN` and `NOT IN` subqueries as joins;
-`NOT IN` becomes the same inequality join form used by explicit anti-joins.
-The suite preserves currently supported subquery behavior, including filtered
-single-column `IN` subqueries. Direct anti-join projection, scalar `COUNT(*)`,
-and grouping are supported.
+`sqlrunner/sqltests/subqueries.yaml` owns subquery and membership behavior.
+Quanta currently rewrites single-column `IN` and `NOT IN` subqueries as
+semi/anti membership operations. The old `JOIN ... ON a != b` anti-join
+shorthand is intentionally not a supported SQL surface; use `NOT IN` or
+correlated `NOT EXISTS` instead. The suite preserves currently supported
+subquery behavior, including filtered single-column `IN` subqueries.
 
 The next subquery implementation phase should remain explicit about SQL
 semantics. `IN` rewriting now uses membership-oriented semi-join behavior
@@ -434,7 +434,7 @@ verify SQL null semantics.
 execution independently of subquery rewriting. Its deterministic
 `customers -> orders -> lineitems -> deliveries` fixture exercises
 three-table projection, multiplicity, grouping, table order, mixed outer joins,
-final-position anti-joins, and four-table composition. Cases remain `xfail`
+and four-table composition. Cases remain `xfail`
 until their behavior is both correct and understood; this suite should guide
 localized fixes before any broad join-engine reorganization.
 

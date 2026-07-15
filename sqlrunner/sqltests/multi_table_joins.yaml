@@ -255,22 +255,6 @@ tests:
     expect:
       row_count: 6
 
-  - id: "multi_table_joins.105.final_anti_join"
-    status: xfail
-    issue: "The legacy ON a != b anti-join shorthand is not MySQL-compatible; prefer NOT IN or correlated NOT EXISTS until this custom shorthand is retired or redefined."
-    kind: query
-    order: rowsort
-    capabilities: [three-table-join, anti-join, join-composition]
-    sql: |-
-      select c.first_name, o.order_id
-      from customers_qa as c
-      inner join orders_qa as o on o.cust_id = c.cust_id
-      inner join lineitems_qa as l on l.order_id != o.order_id
-    expect:
-      columns: [first_name, order_id]
-      rows:
-        - ["Carl", "401"]
-
   - id: "multi_table_joins.110.four_table_projection"
     status: supported
     kind: query

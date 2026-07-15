@@ -937,9 +937,6 @@ func (s *runtimeFixtureStore) applyJoinEdge(ctx context.Context, current []runti
 	if !ok {
 		return nil, fmt.Errorf("runtime fixture unsupported join table: %s", newSide.Table)
 	}
-	if join.Unsupported == qsbridge.UnsupportedJoinAntiDifference {
-		return runtimeFixtureApplyAntiJoinDifference(ctx, current, newSide, newRows, join)
-	}
 	rows := make([]runtimeFixtureRow, 0)
 	for _, currentRow := range current {
 		if err := ctx.Err(); err != nil {
@@ -967,33 +964,6 @@ func (s *runtimeFixtureStore) applyJoinEdge(ctx context.Context, current []runti
 			}
 		}
 		if !matchedCurrent && join.Kind == qsbridge.JoinKindLeftOuter {
-			rows = append(rows, currentRow)
-		}
-	}
-	return rows, nil
-}
-
-func runtimeFixtureApplyAntiJoinDifference(ctx context.Context, current []runtimeFixtureRow, newSide qsbridge.TableInstance, newRows []runtimeFixtureRow, join qsbridge.JoinEdge) ([]runtimeFixtureRow, error) {
-	rows := make([]runtimeFixtureRow, 0, len(current))
-	for _, currentRow := range current {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		matched := false
-		for _, newRow := range newRows {
-			joined := make(runtimeFixtureRow, len(currentRow)+len(newRow))
-			for name, cell := range currentRow {
-				joined[name] = cell
-			}
-			runtimeFixtureCopyQualifiedRow(joined, newSide, newRow)
-			leftCell, leftOK := runtimeFixtureQualifiedFieldCell(joined, join.Left)
-			rightCell, rightOK := runtimeFixtureQualifiedFieldCell(joined, join.Right)
-			if leftOK && rightOK && runtimeFixtureCellEqual(leftCell, rightCell) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
 			rows = append(rows, currentRow)
 		}
 	}

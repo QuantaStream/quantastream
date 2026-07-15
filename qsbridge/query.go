@@ -482,5 +482,5 @@ func (c *parameterCollector) addMutation(mutation MutationShape) {
 
 // Supported reports whether the join edge can be used by the native path.
 func (e JoinEdge) Supported() bool {
-	return e.Legal && (e.Unsupported == "" || e.Unsupported == UnsupportedJoinAntiDifference)
+	return e.Legal && e.Unsupported == ""
 }

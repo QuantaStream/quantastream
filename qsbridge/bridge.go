@@ -147,14 +147,6 @@ type UnboundJoin struct {
 	Unsupported    string
 }
 
-const (
-	// UnsupportedJoinAntiDifference marks a narrow anti-join-difference edge.
-	//
-	// The simple SQLRunner parser uses this for fixture anti-join probes that
-	// spell the edge as ON a != b. It is not a general SQL non-equality join.
-	UnsupportedJoinAntiDifference = "anti_join_difference"
-)
-
 // UnboundMembership describes one semi/anti membership edge before binding.
 type UnboundMembership struct {
 	LeftQualifier  string

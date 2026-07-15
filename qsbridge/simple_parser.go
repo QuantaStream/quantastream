@@ -701,13 +701,10 @@ func parseSimpleJoinOn(text string, kind JoinKind) (UnboundJoin, Diagnostic, boo
 	if !ok {
 		return UnboundJoin{}, simpleParserDiagnostic("JOIN ON must be an equality between fields"), false
 	}
-	unsupported := ""
 	switch op {
 	case BinaryOpEqual:
-	case BinaryOpNotEqual:
-		unsupported = UnsupportedJoinAntiDifference
 	default:
-		return UnboundJoin{}, simpleParserDiagnostic("JOIN ON only supports equality and anti-join inequality probes"), false
+		return UnboundJoin{}, simpleParserDiagnostic("JOIN ON only supports equality between fields"), false
 	}
 	leftQualifier, leftField := splitProjectionField(leftText)
 	rightQualifier, rightField := splitProjectionField(rightText)
@@ -734,7 +731,6 @@ func parseSimpleJoinOn(text string, kind JoinKind) (UnboundJoin, Diagnostic, boo
 		RightField:     rightField,
 		Kind:           kind,
 		Predicates:     predicates,
-		Unsupported:    unsupported,
 	}, Diagnostic{}, true
 }
 
