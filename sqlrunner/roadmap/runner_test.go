@@ -110,6 +110,50 @@ func TestRunnerPassesCaseMetadataToAwareEngine(t *testing.T) {
 	}
 }
 
+func TestEvaluateQueryAcceptsMySQLTinyIntBooleanTextForExpectedBool(t *testing.T) {
+	test := TestCase{
+		ID:     "query.bool_wire",
+		Status: CaseSupported,
+		Kind:   "query",
+		Expect: Expected{
+			Rows: [][]interface{}{
+				{false, int64(4)},
+				{true, int64(6)},
+			},
+		},
+	}
+	actual := QueryResult{
+		Types: []string{"TINYINT", "BIGINT"},
+		Rows: [][]Cell{
+			{{Text: "0"}, {Text: "4"}},
+			{{Text: "1"}, {Text: "6"}},
+		},
+	}
+
+	if details := evaluateQuery(test, actual, nil); details != "" {
+		t.Fatalf("details = %q, want bool-compatible pass", details)
+	}
+}
+
+func TestEvaluateQueryKeepsBoolTextForBoolTypedResults(t *testing.T) {
+	test := TestCase{
+		ID:     "query.bool_direct",
+		Status: CaseSupported,
+		Kind:   "query",
+		Expect: Expected{
+			Rows: [][]interface{}{{true}},
+		},
+	}
+	actual := QueryResult{
+		Types: []string{"BOOL"},
+		Rows:  [][]Cell{{{Text: "true"}}},
+	}
+
+	if details := evaluateQuery(test, actual, nil); details != "" {
+		t.Fatalf("details = %q, want bool text pass", details)
+	}
+}
+
 type caseAwareRecorder struct {
 	seen *[]TestCase
 	test TestCase

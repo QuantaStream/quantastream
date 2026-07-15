@@ -91,9 +91,9 @@ func prepareStandardLocalStorage(config StandardConfig) error {
 	}
 
 	dataConfigDir := filepath.Join(config.DataDir, "config")
-	if _, err := os.Stat(dataConfigDir); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
+	if info, err := os.Stat(dataConfigDir); err == nil && !info.IsDir() {
+		return fmt.Errorf("inabox-standard config path %s is not a directory", dataConfigDir)
+	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("inspect inabox-standard config directory %s: %w", dataConfigDir, err)
 	}
 

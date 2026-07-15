@@ -101,14 +101,32 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		TableCache: tableCache,
 		Reader:     bsiReader,
 	}
+	relationshipProjectionReader := StandardRelationshipVectorProjectionReader{
+		Pool:       pool,
+		TableCache: tableCache,
+	}
+	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
+		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
+			TableCache:       tableCache,
+			ProjectionReader: relationshipProjectionReader,
+		},
+	}
 	return StandardDirectRuntimeMount{
 		Pool: pool,
 		Runtime: qsruntime.DirectBitmapRuntime{
-			Sessions:          sessions,
-			Adapter:           qsruntime.BitmapQueryResultAdapter{},
-			FilterAdapter:     qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization},
-			Materialization:   materialization,
-			SameRowComparison: sameRowComparison,
+			Sessions:           sessions,
+			Adapter:            qsruntime.BitmapQueryResultAdapter{},
+			FilterAdapter:      qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
+			Materialization:    materialization,
+			SameRowComparison:  sameRowComparison,
+			RelationshipReader: relationshipReader,
+			RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
+				Sessions:                     sessions,
+				TableCache:                   tableCache,
+				Materialization:              materialization,
+				SameRowComparison:            sameRowComparison,
+				RelationshipProjectionReader: relationshipProjectionReader,
+			},
 		},
 	}
 }

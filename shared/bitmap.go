@@ -492,6 +492,17 @@ func (c *BitmapIndex) BulkClear(index, fromTime, toTime string,
 		return err
 	}
 
+	if c.local != nil {
+		local, ok := c.local.(LocalBitmapIndexService)
+		if !ok {
+			return fmt.Errorf("local BitmapIndex adapter does not support BulkClear")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		_, err := local.BulkClear(ctx, req)
+		return err
+	}
+
 	var eg errgroup.Group
 
 	// Send the same clear request to each node
@@ -960,6 +971,14 @@ func (c *BitmapIndex) OfflinePartitions(before time.Time, index string) error {
 // BatchClearValue - Send a batch of requests to clear BSI values.
 func (c *BitmapIndex) BatchClearValue(batch map[string]map[string]map[int64]*roaring64.Bitmap) error {
 
+	if c.local != nil {
+		local, ok := c.local.(LocalBitmapIndexBatchService)
+		if !ok {
+			return fmt.Errorf("local BitmapIndex adapter does not support BatchClearValue")
+		}
+		return c.batchClearValueLocal(local, batch)
+	}
+
 	batches := c.splitBSIClearBatch(batch)
 	var eg errgroup.Group
 	for i, v := range batches {
@@ -973,6 +992,34 @@ func (c *BitmapIndex) BatchClearValue(batch map[string]map[string]map[int64]*roa
 		return err
 	}
 	return nil
+}
+
+func (c *BitmapIndex) batchClearValueLocal(local LocalBitmapIndexBatchService,
+	batch map[string]map[string]map[int64]*roaring64.Bitmap) error {
+
+	kvs := make([]*pb.IndexKVPair, 0)
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, ebm := range field {
+				buf, err := ebm.ToBytes()
+				if err != nil {
+					u.Errorf("bitmap.ToBytes: %v", err)
+					return err
+				}
+				kvs = append(kvs, &pb.IndexKVPair{
+					IndexPath: indexName + "/" + fieldName,
+					Key:       ToBytes(int64(-1)),
+					Value:     [][]byte{buf},
+					Time:      t,
+					IsClear:   true,
+				})
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	_, err := local.BatchMutate(ctx, kvs)
+	return err
 }
 
 // BatchClearValueNode - Send a batch of BSI clear operations to a specific node.

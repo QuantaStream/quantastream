@@ -2,7 +2,9 @@ package qsruntime
 
 import (
 	"context"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -75,6 +77,51 @@ func TestLegacyQuantaSessionHandleReportsMissingReleaseState(t *testing.T) {
 	}
 	if got := diagnostics.Codes()[0]; got != qsbridge.DiagnosticInternalInvariant {
 		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticInternalInvariant)
+	}
+}
+
+func TestLegacyQuantaSessionHandleUpdatePartitionTimeUsesZeroShardForUnpartitionedTable(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{
+		TableName: "customers_qa",
+		Session: &core.Session{TableBuffers: map[string]*core.TableBuffer{
+			"customers_qa": {Table: &core.Table{BasicTable: &shared.BasicTable{Name: "customers_qa"}}},
+		}},
+	}
+	got := handle.updatePartitionTime(NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}), 42)
+	if want := time.Unix(0, 0); !got.Equal(want) {
+		t.Fatalf("partition = %v, want %v", got, want)
+	}
+}
+
+func TestLegacyQuantaSessionHandleUpdatePartitionTimeUsesShardWindowForPartitionedTable(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{
+		TableName: "orders",
+		Session: &core.Session{TableBuffers: map[string]*core.TableBuffer{
+			"orders": {Table: &core.Table{BasicTable: &shared.BasicTable{
+				Name:            "orders",
+				TimeQuantumType: "YMDH",
+			}}},
+		}},
+	}
+	shard := time.Date(2026, 7, 14, 17, 33, 12, 0, time.UTC)
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "orders",
+			Field: "created_at",
+			Type:  qsbridge.DataTypeTime,
+		}},
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:       "orders",
+			Field:       "created_at",
+			BSIOp:       qsbridge.QuantaBSIOpRange,
+			Begin:       big.NewInt(shard.UnixMilli()),
+			ShardWindow: true,
+		}},
+	})
+	got := handle.updatePartitionTime(request, 42)
+	want := time.Date(2026, 7, 14, 17, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("partition = %v, want %v", got, want)
 	}
 }
 

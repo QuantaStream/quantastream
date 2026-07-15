@@ -1051,8 +1051,22 @@ const (
 )
 
 func (h LegacyQuantaSessionHandle) updatePartitionTime(request ExecutionRequest, rownum qsbridge.QuantaRownum) time.Time {
+	table := h.cachedRootTable(request)
+	if table == nil || table.TimeQuantumType == "" {
+		return time.Unix(0, 0)
+	}
+	for _, fragment := range request.Query.Fragments {
+		if !fragment.ShardWindow || fragment.Begin == nil {
+			continue
+		}
+		if !legacyRequestFragmentIsTimeField(request, fragment) {
+			continue
+		}
+		partition := time.UnixMilli(legacyBitmapQueryEpochValueMillis(fragment.Begin.Int64()))
+		return legacyDirectTruncatePartition(partition, table.TimeQuantumType)
+	}
 	timeFmt := legacyDirectYMDHTimeFmt
-	if table := h.cachedRootTable(request); table != nil && table.TimeQuantumType == "YMD" {
+	if table.TimeQuantumType == "YMD" {
 		timeFmt = legacyDirectYMDTimeFmt
 	}
 	partition := time.Unix(0, int64(rownum))
@@ -1062,6 +1076,18 @@ func (h LegacyQuantaSessionHandle) updatePartitionTime(request ExecutionRequest,
 		return partition
 	}
 	return parsed
+}
+
+func legacyDirectTruncatePartition(partition time.Time, quantum string) time.Time {
+	partition = partition.UTC()
+	switch quantum {
+	case "YMD":
+		return time.Date(partition.Year(), partition.Month(), partition.Day(), 0, 0, 0, 0, time.UTC)
+	case "YMDH":
+		return time.Date(partition.Year(), partition.Month(), partition.Day(), partition.Hour(), 0, 0, 0, time.UTC)
+	default:
+		return partition
+	}
 }
 
 // Release returns the borrowed session to the legacy session pool.

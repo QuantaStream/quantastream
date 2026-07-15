@@ -19,6 +19,7 @@ import (
 type LegacyDirectRelationshipVectorJoinExecutor struct {
 	KernelAdapter   RelationshipVectorKernel
 	Source          *source.QuantaSource
+	Sessions        DirectSessionProvider
 	TableCache      *core.TableCacheStruct
 	Materializer    ProjectionMaterializer
 	Materialization ProjectionMaterializationKernel
@@ -26,6 +27,8 @@ type LegacyDirectRelationshipVectorJoinExecutor struct {
 	SameRowComparison SameRowComparisonKernel
 	// ProjectionCache reuses relationship-vector FK BSI projections during one execution request.
 	ProjectionCache *LegacyDirectRelationshipVectorProjectionCache
+	// RelationshipProjectionReader projects relationship-vector FK BSIs without a source-backed session.
+	RelationshipProjectionReader legacyDirectRelationshipVectorProjectionReader
 	// ApplyRecommendedEdgeOrder enables experimental dependency-ordered graph reduction.
 	ApplyRecommendedEdgeOrder bool
 }
@@ -278,7 +281,7 @@ func legacyDirectRelationshipSyntheticEndpointProjection(field qsbridge.QuantaPr
 
 // ExecuteRelationshipVectorJoin executes a supported direct relationship-vector shape or reports the explicit boundary.
 func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoin(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {
-	if e.Source != nil && e.TableCache != nil {
+	if (e.Source != nil || e.RelationshipProjectionReader != nil) && e.TableCache != nil {
 		if e.ProjectionCache == nil {
 			e.ProjectionCache = NewLegacyDirectRelationshipVectorProjectionCache()
 		}
@@ -1560,7 +1563,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	if fkBSI, ok := e.ProjectionCache.Get(cacheKey); ok {
 		return fkBSI, true, nil, nil
 	}
-	if e.Source == nil {
+	if e.Source == nil && e.RelationshipProjectionReader == nil {
 		return nil, false, nil, nil
 	}
 	return e.legacyDirectRelationshipProjectedFKBSIForFoundSet(ctx, request, edge, nil, fromTime, toTime)
@@ -1574,10 +1577,24 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	if fullFKBSI, ok := e.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, childFoundSet); ok {
 		return fullFKBSI, true, nil, nil
 	}
-	if e.Source == nil {
+	if e.Source == nil && e.RelationshipProjectionReader == nil {
 		return nil, false, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join has no source for relationship-vector projection"),
 		}, nil
+	}
+	if e.RelationshipProjectionReader != nil {
+		read := e.legacyDirectRelationshipVectorReadRequest(edge, childFoundSet)
+		fkBSI, diagnostics, err := e.RelationshipProjectionReader.ReadRelationshipVectorProjection(ctx, read)
+		if err != nil || diagnostics.BlocksNative() {
+			return nil, false, diagnostics, err
+		}
+		if fkBSI == nil {
+			return nil, false, legacyDirectRelationshipDiagnostic(
+				fmt.Sprintf("relationship-vector projection did not return %s.%s", edge.childTable, edge.childField),
+			), nil
+		}
+		e.ProjectionCache.Put(cacheKey, fkBSI)
+		return fkBSI, false, nil, nil
 	}
 	provider := LegacyQuantaSourceSessionProvider{Source: e.Source}
 	childFKRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -1618,6 +1635,44 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	e.ProjectionCache.Put(cacheKey, fkBSI)
 	return fkBSI, false, nil, nil
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipVectorReadRequest(edge legacyDirectRelationshipEdge, childFoundSet *roaring64.Bitmap) LegacyDirectRelationshipVectorReadRequest {
+	sourceRows := legacyDirectRelationshipRownums(childFoundSet)
+	planEdge := qsbridge.RelationshipJoinPlanEdge{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{
+				Table: edge.childTable,
+				Alias: edge.childRole,
+			},
+			Name:         edge.childField,
+			PhysicalName: edge.childField,
+		},
+		LeftRole: qsbridge.TableInstanceID(edge.childRole),
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{
+				Table: edge.parentTable,
+				Alias: edge.parentRole,
+			},
+			Name:         edge.parentField,
+			PhysicalName: edge.parentField,
+		},
+		RightRole:       qsbridge.TableInstanceID(edge.parentRole),
+		SQLKind:         edge.sqlKind,
+		ProjectionScope: edge.projectionScope,
+	}
+	return LegacyDirectRelationshipVectorReadRequest{
+		SourceCandidates: qsbridge.QuantaCandidateSet{
+			Index:   edge.childTable,
+			Rownums: sourceRows,
+		},
+		SourceDomain: edge.childTable,
+		TargetDomain: edge.parentTable,
+		Edge:         planEdge,
+		Direction:    qsbridge.FilterDomainRelationshipVectorDirectionLeftToRight,
+		VectorIndex:  edge.childTable,
+		VectorField:  edge.childField,
+	}
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCachedFullFKBSI(edge legacyDirectRelationshipEdge, fromTime, toTime int64, childFoundSet *roaring64.Bitmap) (*roaring64.BSI, bool) {
@@ -2245,6 +2300,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectCachedTable(name
 	return legacyDirectRelationshipCachedTable(e.Source.GetSessionPool().TableCache, name)
 }
 
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSessionProvider() DirectSessionProvider {
+	if e.Sessions != nil {
+		return e.Sessions
+	}
+	if e.Source != nil {
+		return LegacyQuantaSourceSessionProvider{Source: e.Source}
+	}
+	return nil
+}
+
 func legacyDirectRelationshipCachedTable(cache *core.TableCacheStruct, name string) *core.Table {
 	if cache == nil {
 		return nil
@@ -2260,7 +2325,12 @@ func legacyDirectRelationshipCachedTable(cache *core.TableCacheStruct, name stri
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAllRownums(ctx context.Context, table string, field string) ([]qsbridge.QuantaRownum, qsbridge.DiagnosticSet, error) {
-	provider := LegacyQuantaSourceSessionProvider{Source: e.Source}
+	provider := e.legacyDirectRelationshipSessionProvider()
+	if provider == nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join has no session provider"),
+		}, nil
+	}
 	request := e.legacyDirectRelationshipAllRownumRequest(table, field)
 	session, diagnostics, err := provider.BorrowDirectSession(ctx, request)
 	if err != nil || diagnostics.BlocksNative() {
@@ -2460,7 +2530,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRown
 	tableRequest := NewExecutionRequest(query)
 	tableRequest.Sources = append([]qsbridge.TableInstance(nil), request.Sources...)
 	tableRequest.Materialization = e.legacyDirectRelationshipTimeMaterializationForRole(request, table, role)
-	session, diagnostics, err := (LegacyQuantaSourceSessionProvider{Source: e.Source}).BorrowDirectSession(ctx, tableRequest)
+	provider := e.legacyDirectRelationshipSessionProvider()
+	if provider == nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct relationship join has no session provider"),
+		}, nil
+	}
+	session, diagnostics, err := provider.BorrowDirectSession(ctx, tableRequest)
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, diagnostics, err
 	}
@@ -3619,6 +3695,9 @@ func legacyDirectRelationshipSignedIDs(rownums []qsbridge.QuantaRownum) []int64 
 }
 
 func legacyDirectRelationshipRownums(bitmap *roaring64.Bitmap) []qsbridge.QuantaRownum {
+	if bitmap == nil {
+		return nil
+	}
 	values := bitmap.ToArray()
 	rownums := make([]qsbridge.QuantaRownum, len(values))
 	for i, value := range values {

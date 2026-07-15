@@ -39,6 +39,32 @@ func TestMountStandardLocalBackendStagesConfigAndMountsReadServices(t *testing.T
 	if _, err := os.Stat(filepath.Join(root, "data", "config")); err != nil {
 		t.Fatalf("data/config was not staged: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(root, "data", "config", "sample", "schema.yaml")); err != nil {
+		t.Fatalf("sample schema was not staged: %v", err)
+	}
+}
+
+func TestMountStandardLocalBackendRefreshesExistingStagedConfig(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	dataConfigDir := filepath.Join(root, "data", "config")
+	if err := os.MkdirAll(dataConfigDir, 0755); err != nil {
+		t.Fatalf("mkdir existing data/config: %v", err)
+	}
+
+	backend, err := MountStandardLocalBackend(StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("MountStandardLocalBackend() error = %v", err)
+	}
+	defer backend.Close()
+
+	if _, err := os.Stat(filepath.Join(dataConfigDir, "sample", "schema.yaml")); err != nil {
+		t.Fatalf("existing data/config was not refreshed with sample schema: %v", err)
+	}
 }
 
 func TestStandardLocalBackendBuildsLocalSessionPool(t *testing.T) {

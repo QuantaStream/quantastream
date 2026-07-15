@@ -49,6 +49,7 @@ type LocalBitmapIndexService interface {
 	Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error)
 	Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error)
 	CheckoutSequence(context.Context, *pb.CheckoutSequenceRequest) (*pb.CheckoutSequenceResponse, error)
+	BulkClear(context.Context, *pb.BulkClearRequest) (*empty.Empty, error)
 	TableOperation(context.Context, *pb.TableOperationRequest) (*empty.Empty, error)
 	Commit(context.Context, *empty.Empty) (*empty.Empty, error)
 }

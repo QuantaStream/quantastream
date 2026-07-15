@@ -58,6 +58,62 @@ func TestBitmapIndexQueryGroupUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexBatchClearValueUsesLocalBatchService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	bitmap := roaring64.NewBitmap()
+	bitmap.Add(42)
+	err := index.BatchClearValue(map[string]map[string]map[int64]*roaring64.Bitmap{
+		"customers_qa": {
+			"age": {
+				123: bitmap,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BatchClearValue() error = %v", err)
+	}
+	if local.batchMutateCalls != 1 {
+		t.Fatalf("batch mutate calls = %d, want 1", local.batchMutateCalls)
+	}
+	if len(local.batchMutateItems) != 1 {
+		t.Fatalf("batch mutate items = %d, want 1", len(local.batchMutateItems))
+	}
+	item := local.batchMutateItems[0]
+	if item.IndexPath != "customers_qa/age" || !item.IsClear || item.Time != 123 {
+		t.Fatalf("batch mutate item = %#v, want clear customers_qa/age at 123", item)
+	}
+	if got := UnmarshalValue(reflect.Int, item.Key); got != int(-1) {
+		t.Fatalf("clear key = %#v, want -1", got)
+	}
+}
+
+func TestBitmapIndexBulkClearUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	bitmap := roaring64.NewBitmap()
+	bitmap.Add(42)
+	if err := index.BulkClear("customers_qa", "1970-01-01T00", "1970-01-01T00", bitmap); err != nil {
+		t.Fatalf("BulkClear() error = %v", err)
+	}
+	if local.bulkClearCalls != 1 {
+		t.Fatalf("bulk clear calls = %d, want 1", local.bulkClearCalls)
+	}
+	if local.bulkClearRequest == nil {
+		t.Fatalf("bulk clear request was not captured")
+	}
+	if local.bulkClearRequest.Index != "customers_qa" {
+		t.Fatalf("bulk clear index = %q, want customers_qa", local.bulkClearRequest.Index)
+	}
+	foundSet := roaring64.NewBitmap()
+	if err := foundSet.UnmarshalBinary(local.bulkClearRequest.FoundSet); err != nil {
+		t.Fatalf("unmarshal bulk clear found set: %v", err)
+	}
+	if !foundSet.Contains(42) {
+		t.Fatalf("bulk clear found set missing rownum 42")
+	}
+}
+
 func TestKVStoreLookupUsesLocalService(t *testing.T) {
 	local := &recordingLocalKVStoreService{}
 	store := NewKVStore(&Conn{LocalNodeServices: LocalNodeServices{KVStore: local}})
@@ -114,7 +170,11 @@ func TestKVStoreItemsUsesLocalService(t *testing.T) {
 }
 
 type recordingLocalBitmapIndexService struct {
-	queryCalls int
+	queryCalls       int
+	bulkClearCalls   int
+	bulkClearRequest *pb.BulkClearRequest
+	batchMutateCalls int
+	batchMutateItems []*pb.IndexKVPair
 }
 
 func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error) {
@@ -145,11 +205,23 @@ func (s *recordingLocalBitmapIndexService) CheckoutSequence(context.Context, *pb
 	return &pb.CheckoutSequenceResponse{}, nil
 }
 
+func (s *recordingLocalBitmapIndexService) BulkClear(_ context.Context, req *pb.BulkClearRequest) (*empty.Empty, error) {
+	s.bulkClearCalls++
+	s.bulkClearRequest = req
+	return &empty.Empty{}, nil
+}
+
 func (s *recordingLocalBitmapIndexService) TableOperation(context.Context, *pb.TableOperationRequest) (*empty.Empty, error) {
 	return &empty.Empty{}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) Commit(context.Context, *empty.Empty) (*empty.Empty, error) {
+	return &empty.Empty{}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) BatchMutate(_ context.Context, items []*pb.IndexKVPair) (*empty.Empty, error) {
+	s.batchMutateCalls++
+	s.batchMutateItems = append([]*pb.IndexKVPair(nil), items...)
 	return &empty.Empty{}, nil
 }
 

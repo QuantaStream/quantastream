@@ -104,6 +104,17 @@ func (a LocalBitmapIndexAdapter) CheckoutSequence(ctx context.Context, req *pb.C
 	return result, err
 }
 
+// BulkClear forwards a table-wide rownum clear without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) BulkClear(ctx context.Context, req *pb.BulkClearRequest) (*empty.Empty, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.BulkClear(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "BulkClear", start, err)
+	return result, err
+}
+
 // TableOperation forwards a table operation without a gRPC client hop.
 func (a LocalBitmapIndexAdapter) TableOperation(ctx context.Context, req *pb.TableOperationRequest) (*empty.Empty, error) {
 	if a.Index == nil {

@@ -177,7 +177,7 @@ func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 	if test.Expect.Rows == nil {
 		return ""
 	}
-	expectedRows := expectedCells(test.Expect.Rows)
+	expectedRows := expectedCellsForTypes(test.Expect.Rows, actual.Types)
 	actualRows := cloneRows(actual.Rows)
 	if test.Order == "rowsort" {
 		sortRows(expectedRows)
@@ -241,6 +241,10 @@ func actualCell(value interface{}) Cell {
 }
 
 func expectedCells(rows [][]interface{}) [][]Cell {
+	return expectedCellsForTypes(rows, nil)
+}
+
+func expectedCellsForTypes(rows [][]interface{}, types []string) [][]Cell {
 	result := make([][]Cell, len(rows))
 	for i, row := range rows {
 		result[i] = make([]Cell, len(row))
@@ -248,11 +252,39 @@ func expectedCells(rows [][]interface{}) [][]Cell {
 			if value == nil {
 				result[i][j] = Cell{Null: true}
 			} else {
-				result[i][j] = Cell{Text: fmt.Sprint(value)}
+				typeName := ""
+				if j < len(types) {
+					typeName = types[j]
+				}
+				result[i][j] = expectedCell(value, typeName)
 			}
 		}
 	}
 	return result
+}
+
+func expectedCell(value interface{}, typeName string) Cell {
+	switch typed := value.(type) {
+	case bool:
+		if expectedBoolAsMySQLInteger(typeName) {
+			if typed {
+				return Cell{Text: "1"}
+			}
+			return Cell{Text: "0"}
+		}
+	}
+	return Cell{Text: fmt.Sprint(value)}
+}
+
+func expectedBoolAsMySQLInteger(typeName string) bool {
+	switch strings.ToUpper(strings.TrimSpace(typeName)) {
+	case "BIT", "BOOL", "BOOLEAN":
+		return false
+	case "TINYINT", "INT", "INTEGER", "BIGINT", "SMALLINT", "MEDIUMINT":
+		return true
+	default:
+		return false
+	}
 }
 
 func compareRows(expected, actual [][]Cell) string {

@@ -26,6 +26,12 @@ func TestLegacyDirectRelationshipFragmentTargetsTableRoleRequiresMatchingRole(t 
 	}
 }
 
+func TestLegacyDirectRelationshipRownumsAllowsNilBitmap(t *testing.T) {
+	if rownums := legacyDirectRelationshipRownums(nil); len(rownums) != 0 {
+		t.Fatalf("rownums = %#v, want empty for nil bitmap", rownums)
+	}
+}
+
 func TestLegacyDirectRelationshipAggregateResultMaterializesJoinedRows(t *testing.T) {
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
 	orderID := qsbridge.FieldRef{Table: orders, Name: "order_id", Type: qsbridge.DataTypeInt}
