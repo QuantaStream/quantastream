@@ -339,6 +339,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	if diagnostics = legacyDirectRelationshipShapeDiagnostics(request, vector); diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, nil
 	}
+	if result, handled, err := e.legacyDirectRelationshipCountFromVectorExistence(ctx, request, edge); handled || err != nil {
+		return result, err
+	}
 	parentStart := time.Now()
 	parentRows, childRows, joined, pairs, usedChildCandidateSet, diagnostics, err := e.legacyDirectRelationshipRowsFromChildCandidateSet(ctx, request, edge)
 	parentElapsed := time.Since(parentStart)
@@ -421,6 +424,55 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		return e.legacyDirectRelationshipLeftOuterAggregateResult(ctx, request, edge, parentRows, pairs, result)
 	}
 	return e.legacyDirectRelationshipAggregateResult(ctx, request, edge, joined, pairs, result)
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCountFromVectorExistence(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge) (ExecutionResult, bool, error) {
+	if !legacyDirectRelationshipCanCountFromVectorExistence(request, edge) {
+		return ExecutionResult{}, false, nil
+	}
+	projectionStart := time.Now()
+	fkBSI, cacheHit, diagnostics, err := e.legacyDirectRelationshipProjectedFullFKBSI(ctx, request, edge)
+	projectionElapsed := time.Since(projectionStart)
+	result := ExecutionResult{Diagnostics: diagnostics}
+	if err != nil || diagnostics.BlocksNative() {
+		return result, true, err
+	}
+	if fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic(
+			fmt.Sprintf("relationship-vector count fast path did not return existence bitmap for %s.%s", edge.childTable, edge.childField),
+		)...)
+		return result, true, nil
+	}
+	existence := fkBSI.GetExistenceBitmap()
+	result.Count = existence.GetCardinality()
+	result.Probes = append(result.Probes,
+		legacyDirectRelationshipProbe("count_fast_path", "relationship_vector_existence"),
+		legacyDirectRelationshipProbe("count_fast_path_child_table", edge.childTable),
+		legacyDirectRelationshipProbe("count_fast_path_child_field", edge.childField),
+		legacyDirectRelationshipProbe("count_fast_path_rows", strconv.FormatUint(result.Count, 10)),
+		legacyDirectRelationshipProbe("count_fast_path_projection_cache_hit", strconv.FormatBool(cacheHit)),
+		legacyDirectRelationshipProbe("phase_count_fast_path_projection_elapsed", projectionElapsed.String()),
+	)
+	return directBitmapCountAggregateResult(request, result), true, nil
+}
+
+func legacyDirectRelationshipCanCountFromVectorExistence(request ExecutionRequest, edge legacyDirectRelationshipEdge) bool {
+	if edge.sqlKind != qsbridge.JoinKindInner {
+		return false
+	}
+	if len(request.GroupBy) > 0 || len(request.SQLAggregates) == 0 || !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) {
+		return false
+	}
+	if directBitmapHasResidualScanPredicates(request) || len(request.Memberships) > 0 {
+		return false
+	}
+	if request.HasCandidateSet || request.CandidateSet.Index != "" || len(request.CandidateSet.Rownums) > 0 {
+		return false
+	}
+	if len(request.Query.Fragments) > 0 || len(request.Query.Seeds) > 0 || !request.Query.Filter.Empty() {
+		return false
+	}
+	return edge.childTable != "" && edge.childField != ""
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelationshipVectorJoinChain(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {

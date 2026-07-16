@@ -626,6 +626,69 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIPreservesDuplicateChildFKVa
 	}
 }
 
+func TestLegacyDirectRelationshipCountFastPathUsesVectorExistence(t *testing.T) {
+	calls := 0
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SourceIndexes = []string{"lineitem"}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "order_line_count", Type: qsbridge.DataTypeInt}}
+	request.Predicates = []qsbridge.Predicate{{
+		Expr: qsbridge.Binary(
+			qsbridge.BinaryOpEqual,
+			qsbridge.Field(qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"}, Name: "l_orderkey", Type: qsbridge.DataTypeInt}),
+			qsbridge.Field(qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "orders", Alias: "o"}, Name: "o_orderkey", Type: qsbridge.DataTypeInt}),
+		),
+		Placement: qsbridge.PredicatePushdown,
+		Scope:     qsbridge.PredicateScopeOn,
+	}}
+	cache := core.NewTableCacheStruct()
+	cache.TableCache["lineitem"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "lineitem"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"l_orderkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "l_orderkey", SourceName: "l_orderkey", Type: "Integer", MappingStrategy: "ParentRelation", ForeignKey: "orders.o_orderkey"}},
+		},
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+		TableCache:      cache,
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				101: 1,
+				102: 1,
+				103: 2,
+			}),
+			Calls: &calls,
+		},
+	}
+	vector := RelationshipVectorJoinRequest{RootIndex: "lineitem", Edges: []qsbridge.RelationshipJoinPlanEdge{{
+		Left:          qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"}, Name: "l_orderkey", Type: qsbridge.DataTypeInt},
+		LeftRole:      "l",
+		Right:         qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "orders", Alias: "o"}, Name: "o_orderkey", Type: qsbridge.DataTypeInt},
+		RightRole:     "o",
+		SQLKind:       qsbridge.JoinKindInner,
+		ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+	}}}
+
+	result, err := executor.ExecuteRelationshipVectorJoin(context.Background(), request, vector)
+	if err != nil {
+		t.Fatalf("relationship join: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls = %d, want 1", calls)
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "count_fast_path", "relationship_vector_existence")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "count_fast_path_rows", "3")
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 || chunk.Rows[0][0].Value != int64(3) {
+		t.Fatalf("rows = %#v, want count 3", chunk.Rows)
+	}
+}
+
 func TestLegacyDirectRelationshipParentKeyRowsUsesParentRownumDomain(t *testing.T) {
 	executor := LegacyDirectRelationshipVectorJoinExecutor{}
 
