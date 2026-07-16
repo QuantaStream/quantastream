@@ -1742,10 +1742,22 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCach
 	if !ok || fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
 		return nil, false
 	}
-	if childFoundSet.Equals(fkBSI.GetExistenceBitmap()) {
+	if legacyDirectRelationshipBitmapCovers(fkBSI.GetExistenceBitmap(), childFoundSet) {
 		return fkBSI, true
 	}
 	return nil, false
+}
+
+func legacyDirectRelationshipBitmapCovers(container *roaring64.Bitmap, subset *roaring64.Bitmap) bool {
+	if subset == nil {
+		return true
+	}
+	if container == nil {
+		return subset.GetCardinality() == 0
+	}
+	overlap := subset.Clone()
+	overlap.And(container)
+	return overlap.GetCardinality() == subset.GetCardinality()
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectionRowsForGraphReduce(request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, scratchpad legacyDirectRelationshipGraphScratchpad, policy legacyDirectRelationshipProjectionPolicyResult) ([]qsbridge.QuantaRownum, legacyDirectRelationshipProjectionPolicyResult) {

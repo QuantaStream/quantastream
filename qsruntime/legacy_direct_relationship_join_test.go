@@ -1399,7 +1399,7 @@ func TestLegacyDirectRelationshipInitialRownumsForRoleUsesRelationshipVectorExis
 	assertExecutionProbe(t, seedProbes, "relationship_join", "relationship_vector_projection_cache_hit", "true")
 }
 
-func TestLegacyDirectRelationshipCachedFullFKBSIReusesEqualFoundSet(t *testing.T) {
+func TestLegacyDirectRelationshipCachedFullFKBSIReusesCoveredFoundSet(t *testing.T) {
 	edge := legacyDirectRelationshipEdge{
 		childTable: "lineitem",
 		childField: "l_orderkey",
@@ -1422,8 +1422,15 @@ func TestLegacyDirectRelationshipCachedFullFKBSIReusesEqualFoundSet(t *testing.T
 	if got != full {
 		t.Fatalf("cached BSI pointer changed")
 	}
-	if _, ok := executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11)); ok {
-		t.Fatalf("full FK BSI cache hit = true, want false for narrowed foundset")
+	got, ok = executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11))
+	if !ok {
+		t.Fatalf("full FK BSI cache hit = false, want true for covered narrowed foundset")
+	}
+	if got != full {
+		t.Fatalf("covered foundset cached BSI pointer changed")
+	}
+	if _, ok := executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11, 13)); ok {
+		t.Fatalf("full FK BSI cache hit = true, want false for uncovered foundset")
 	}
 }
 
