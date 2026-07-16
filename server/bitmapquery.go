@@ -392,10 +392,9 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 				}
 			}
 			u.Debugf("timeRangeBSI No Quantum selecting %s", hashKey)
-			//result.BSI.ParOr(0, a...)
 			mergeStart := time.Now()
-			for _, v := range a {
-				result.BSI.ParOr(0, v)
+			if len(a) > 0 {
+				result.BSI.ParOr(0, a...)
 			}
 			if stat != nil {
 				stat.MergeElapsed += time.Since(mergeStart)
@@ -461,10 +460,9 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 				}
 			}
 		}
-		//result.BSI.ParOr(0, a...)
 		mergeStart := time.Now()
-		for _, v := range a {
-			result.BSI.ParOr(0, v)
+		if len(a) > 0 {
+			result.BSI.ParOr(0, a...)
 		}
 		if stat != nil {
 			stat.MergeElapsed += time.Since(mergeStart)
