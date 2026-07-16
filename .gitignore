@@ -1,5 +1,6 @@
 /test/localClusterData/
 /local/
+/start-local
 /tpc-h-benchmark/local/logs/
 /tpc-h-benchmark/local/standard-data/
 /sqlrunner/expected/local/
