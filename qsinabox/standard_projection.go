@@ -33,26 +33,28 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	foundSet := standardProjectionBitmap(request.Rownums)
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
 	if r.Direct != nil {
-		bsi, err := r.Direct.ProjectBSI(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
+		bsi, stats, err := r.Direct.ProjectBSIWithStats(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
 		if err != nil {
 			return qsruntime.NativeProjectionBSIReadResult{}, nil, err
 		}
-		return qsruntime.NativeProjectionBSIReadResult{
-			BSI: bsi,
-			Probes: []qsruntime.ExecutionProbe{
-				{
-					Section: "native_projection_materialization",
-					Name:    "standard_bsi_projection_rows",
-					Value:   strconv.Itoa(len(request.Rownums)),
-					Detail:  request.Index + "." + request.PhysicalField,
-				},
-				{
-					Section: "native_projection_materialization",
-					Name:    "standard_bsi_projection_transport",
-					Value:   "local_direct",
-					Detail:  request.Index + "." + request.PhysicalField,
-				},
+		probes := []qsruntime.ExecutionProbe{
+			{
+				Section: "native_projection_materialization",
+				Name:    "standard_bsi_projection_rows",
+				Value:   strconv.Itoa(len(request.Rownums)),
+				Detail:  request.Index + "." + request.PhysicalField,
 			},
+			{
+				Section: "native_projection_materialization",
+				Name:    "standard_bsi_projection_transport",
+				Value:   "local_direct",
+				Detail:  request.Index + "." + request.PhysicalField,
+			},
+		}
+		probes = append(probes, standardProjectionBSIStatsProbes(request.Index, request.PhysicalField, stats)...)
+		return qsruntime.NativeProjectionBSIReadResult{
+			BSI:    bsi,
+			Probes: probes,
 		}, nil, nil
 	}
 	session, diagnostics, err := r.borrow(ctx, request.Index)
@@ -77,6 +79,54 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			Detail:  request.Index + "." + request.PhysicalField,
 		}},
 	}, nil, nil
+}
+
+func standardProjectionBSIStatsProbes(index, field string, stats server.ProjectBSIStats) []qsruntime.ExecutionProbe {
+	detail := index + "." + field
+	return []qsruntime.ExecutionProbe{
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_shards_visited",
+			Value:   strconv.Itoa(stats.ShardsVisited),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_shards_in_window",
+			Value:   strconv.Itoa(stats.ShardsInWindow),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_shards_local",
+			Value:   strconv.Itoa(stats.ShardsLocal),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_shards_retained",
+			Value:   strconv.Itoa(stats.ShardsRetained),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_rows_retained",
+			Value:   strconv.FormatUint(stats.RetainedRows, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_retain_elapsed",
+			Value:   stats.RetainElapsed.String(),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_merge_elapsed",
+			Value:   stats.MergeElapsed.String(),
+			Detail:  detail,
+		},
+	}
 }
 
 func (r StandardProjectionBSIReader) borrow(ctx context.Context, table string) (*core.Session, qsbridge.DiagnosticSet, error) {

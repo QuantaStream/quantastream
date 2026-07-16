@@ -314,12 +314,28 @@ func (m *BitmapIndex) listAllRowIDs(index, field string) []uint64 {
 	return rowIDs
 }
 
+// ProjectBSIStats captures in-process BSI projection work for runtime probes.
+type ProjectBSIStats struct {
+	ShardsVisited  int
+	ShardsInWindow int
+	ShardsLocal    int
+	ShardsRetained int
+	RetainedRows   uint64
+	RetainElapsed  time.Duration
+	MergeElapsed   time.Duration
+}
+
 // Walk the time range and assemble a union of all BSI fields.
 func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Time,
-	foundSet *roaring64.Bitmap, negate bool) (*BSIBitmap, error) {
+	foundSet *roaring64.Bitmap, negate bool, stats ...*ProjectBSIStats) (*BSIBitmap, error) {
 
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
+
+	var stat *ProjectBSIStats
+	if len(stats) > 0 {
+		stat = stats[0]
+	}
 
 	attr, err := m.getFieldConfig(index, field)
 	if err != nil {
@@ -340,33 +356,73 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 			return result, nil
 		}
 		if bm, ok := m.bsiCache[index][field][0]; ok {
+			if stat != nil {
+				stat.ShardsVisited++
+				stat.ShardsInWindow++
+				stat.ShardsLocal++
+			}
 			if foundSet != nil {
+				retainStart := time.Now()
+				var retainSet *roaring64.Bitmap
 				if negate {
-					a = append(a, bm.BSI.NewBSIRetainSet(roaring64.AndNot(bm.BSI.GetExistenceBitmap(), foundSet)))
+					retainSet = roaring64.AndNot(bm.BSI.GetExistenceBitmap(), foundSet)
 				} else {
-					a = append(a, bm.BSI.NewBSIRetainSet(foundSet))
+					retainSet = roaring64.And(bm.BSI.GetExistenceBitmap(), foundSet)
+				}
+				if retainSet.GetCardinality() != 0 {
+					x := bm.BSI.NewBSIRetainSet(retainSet)
+					if stat != nil {
+						stat.RetainElapsed += time.Since(retainStart)
+					}
+					if x.GetCardinality() != 0 {
+						a = append(a, x)
+						if stat != nil {
+							stat.ShardsRetained++
+							stat.RetainedRows += x.GetCardinality()
+						}
+					}
+				} else if stat != nil {
+					stat.RetainElapsed += time.Since(retainStart)
 				}
 			} else {
 				a = append(a, bm.BSI)
+				if stat != nil {
+					stat.ShardsRetained++
+					stat.RetainedRows += bm.BSI.GetCardinality()
+				}
 			}
 			u.Debugf("timeRangeBSI No Quantum selecting %s", hashKey)
 			//result.BSI.ParOr(0, a...)
+			mergeStart := time.Now()
 			for _, v := range a {
 				result.BSI.ParOr(0, v)
+			}
+			if stat != nil {
+				stat.MergeElapsed += time.Since(mergeStart)
 			}
 		}
 	} else {
 		if tm, ok := m.bsiCache[index][field]; ok {
 			for ts, bsi := range tm {
+				if stat != nil {
+					stat.ShardsVisited++
+				}
 				rts := truncateTime(time.Unix(0, ts).UTC(), tq).UnixNano()
 				if rts < fromTime.UnixNano() || rts > toTime.UnixNano() {
 					continue
+				}
+				if stat != nil {
+					stat.ShardsInWindow++
 				}
 				hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, ts)))
 				if !m.Member(hashKey) {
 					continue
 				}
+				if stat != nil {
+					stat.ShardsLocal++
+				}
 				if foundSet != nil {
+					retainStart := time.Now()
 					var retainSet *roaring64.Bitmap
 					if negate {
 						retainSet = roaring64.AndNot(bsi.BSI.GetExistenceBitmap(), foundSet)
@@ -374,26 +430,44 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 						retainSet = roaring64.And(bsi.BSI.GetExistenceBitmap(), foundSet)
 					}
 					if retainSet.GetCardinality() == 0 {
+						if stat != nil {
+							stat.RetainElapsed += time.Since(retainStart)
+						}
 						continue
 					}
 					x := bsi.BSI.NewBSIRetainSet(retainSet)
+					if stat != nil {
+						stat.RetainElapsed += time.Since(retainStart)
+					}
 					if x.GetCardinality() == 0 {
 						continue
 					}
 					a = append(a, x)
+					if stat != nil {
+						stat.ShardsRetained++
+						stat.RetainedRows += x.GetCardinality()
+					}
 					u.Debugf("timeRangeBSI %s selecting %s with foundSet = %d", tq, hashKey, foundSet.GetCardinality())
 				} else {
 					if bsi.BSI.GetCardinality() == 0 {
 						continue
 					}
 					a = append(a, bsi.BSI)
+					if stat != nil {
+						stat.ShardsRetained++
+						stat.RetainedRows += bsi.BSI.GetCardinality()
+					}
 					u.Debugf("timeRangeBSI %s selecting %s", tq, hashKey)
 				}
 			}
 		}
 		//result.BSI.ParOr(0, a...)
+		mergeStart := time.Now()
 		for _, v := range a {
 			result.BSI.ParOr(0, v)
+		}
+		if stat != nil {
+			stat.MergeElapsed += time.Since(mergeStart)
 		}
 	}
 	return result, nil
@@ -604,18 +678,26 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 // client wrappers immediately unmarshal it again. Inabox-standard can avoid that
 // local serialization tax while preserving the same time-range/foundset rules.
 func (m *BitmapIndex) ProjectBSI(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, error) {
+	bsi, _, err := m.ProjectBSIWithStats(index, field, fromTime, toTime, foundSet, negate)
+	return bsi, err
+}
+
+// ProjectBSIWithStats returns a projected BSI and local execution stats for
+// in-process callers that need to diagnose projection cost.
+func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, ProjectBSIStats, error) {
 	if index == "" {
-		return nil, fmt.Errorf("index not specified for projection criteria")
+		return nil, ProjectBSIStats{}, fmt.Errorf("index not specified for projection criteria")
 	}
 	if field == "" {
-		return nil, fmt.Errorf("field not specified for projection criteria")
+		return nil, ProjectBSIStats{}, fmt.Errorf("field not specified for projection criteria")
 	}
-	bsi, err := m.timeRangeBSI(index, field, time.Unix(0, fromTime).UTC(), time.Unix(0, toTime).UTC(), foundSet, negate)
+	stats := ProjectBSIStats{}
+	bsi, err := m.timeRangeBSI(index, field, time.Unix(0, fromTime).UTC(), time.Unix(0, toTime).UTC(), foundSet, negate, &stats)
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 	if bsi == nil || bsi.BSI == nil {
-		return roaring64.NewDefaultBSI(), nil
+		return roaring64.NewDefaultBSI(), stats, nil
 	}
-	return bsi.BSI, nil
+	return bsi.BSI, stats, nil
 }

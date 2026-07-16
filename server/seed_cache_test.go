@@ -55,7 +55,7 @@ func TestProjectBSIReturnsDirectFoundSetProjection(t *testing.T) {
 		2: 20000,
 	})
 
-	bsi, err := index.ProjectBSI("lineitem", field, day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(2), false)
+	bsi, stats, err := index.ProjectBSIWithStats("lineitem", field, day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(2), false)
 	if err != nil {
 		t.Fatalf("ProjectBSI returned error: %v", err)
 	}
@@ -71,6 +71,13 @@ func TestProjectBSIReturnsDirectFoundSetProjection(t *testing.T) {
 	value, ok := bsi.GetValue(2)
 	if !ok || value != 20000 {
 		t.Fatalf("rownum 2 value = %d ok=%t, want 20000 true", value, ok)
+	}
+	if stats.ShardsVisited != 1 || stats.ShardsInWindow != 1 || stats.ShardsLocal != 1 || stats.ShardsRetained != 1 {
+		t.Fatalf("stats shards = visited:%d window:%d local:%d retained:%d, want all 1",
+			stats.ShardsVisited, stats.ShardsInWindow, stats.ShardsLocal, stats.ShardsRetained)
+	}
+	if stats.RetainedRows != 1 {
+		t.Fatalf("stats retained rows = %d, want 1", stats.RetainedRows)
 	}
 }
 
