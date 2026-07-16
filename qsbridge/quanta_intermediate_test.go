@@ -155,7 +155,7 @@ func TestQuantaIntermediateLowererCarriesProjectionFields(t *testing.T) {
 	}
 }
 
-func TestQuantaIntermediateLowererCoalescesExclusiveDateWindow(t *testing.T) {
+func TestQuantaIntermediateLowererKeepsExclusiveDateWindowBoundsSeparate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
 		PlanRequest{SQL: "select o_orderkey from orders where o_orderdate >= '1996-01-01' and o_orderdate < '1996-04-01'"},
@@ -166,20 +166,16 @@ func TestQuantaIntermediateLowererCoalescesExclusiveDateWindow(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("lower diagnostics: %#v", diagnostics)
 	}
-	if len(intermediate.Fragments) != 1 {
-		t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
-	}
-	fragment := intermediate.Fragments[0]
-	if fragment.Index != "orders" || fragment.Field != "o_orderdate" {
-		t.Fatalf("fragment field = %s.%s, want orders.o_orderdate", fragment.Index, fragment.Field)
-	}
-	if fragment.BSIOp != QuantaBSIOpRange {
-		t.Fatalf("bsi op = %s, want %s: %#v", fragment.BSIOp, QuantaBSIOpRange, fragment)
+	if len(intermediate.Fragments) != 2 {
+		t.Fatalf("fragments = %d, want separate GE/LT datetime bounds: %#v", len(intermediate.Fragments), intermediate.Fragments)
 	}
 	wantBegin := big.NewInt(time.Date(1996, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	wantEnd := big.NewInt(time.Date(1996, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1)
-	if fragment.Begin.Cmp(wantBegin) != 0 || fragment.End.Cmp(wantEnd) != 0 {
-		t.Fatalf("range = [%s, %s], want [%s, %s]", fragment.Begin, fragment.End, wantBegin, wantEnd)
+	wantEnd := big.NewInt(time.Date(1996, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+	if intermediate.Fragments[0].BSIOp != QuantaBSIOpGE || intermediate.Fragments[0].Value.Cmp(wantBegin) != 0 {
+		t.Fatalf("lower bound = %#v, want GE %s", intermediate.Fragments[0], wantBegin)
+	}
+	if intermediate.Fragments[1].BSIOp != QuantaBSIOpLT || intermediate.Fragments[1].Value.Cmp(wantEnd) != 0 {
+		t.Fatalf("upper bound = %#v, want LT %s", intermediate.Fragments[1], wantEnd)
 	}
 }
 
@@ -799,6 +795,55 @@ func TestQuantaIntermediateLowererCoalescesInclusiveBSIRange(t *testing.T) {
 	}
 	if got := fragment.End.Int64(); got != 12 {
 		t.Fatalf("end = %d, want 12", got)
+	}
+}
+
+func TestQuantaIntermediateNormalizeDiscreteTimeComparisonUsesNextBoundary(t *testing.T) {
+	field := FieldRef{Encoding: LegacyEncodingProfile("SysMillisBSI", LegacyEncodingOptions{})}
+	encoded := Literal(ValueInt, int64(1000))
+	op, value := quantaIntermediateNormalizeDiscreteTimeComparison(BinaryOpLessEqual, field, Literal(ValueTime, time.UnixMilli(1000).UTC()), encoded)
+	if op != BinaryOpLess || value.Value.(int64) != 1001 {
+		t.Fatalf("<= normalized to %s %#v, want < 1001", op, value)
+	}
+	op, value = quantaIntermediateNormalizeDiscreteTimeComparison(BinaryOpGreater, field, Literal(ValueTime, time.UnixMilli(1000).UTC()), encoded)
+	if op != BinaryOpGreaterEqual || value.Value.(int64) != 1001 {
+		t.Fatalf("> normalized to %s %#v, want >= 1001", op, value)
+	}
+
+	dateLiteral := Literal(ValueString, "1996-12-31")
+	dateEncoded := Literal(ValueInt, time.Date(1996, 12, 31, 0, 0, 0, 0, time.UTC).UnixMilli())
+	op, value = quantaIntermediateNormalizeDiscreteTimeComparison(BinaryOpLessEqual, field, dateLiteral, dateEncoded)
+	wantNextDay := time.Date(1997, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if op != BinaryOpLess || value.Value.(int64) != wantNextDay {
+		t.Fatalf("date <= normalized to %s %#v, want < %d", op, value, wantNextDay)
+	}
+}
+
+func TestQuantaIntermediateLowererKeepsDatetimeBoundsSeparate(t *testing.T) {
+	service := simpleRunnerPlanningService()
+	_, request := service.PrepareExecutionRequest(
+		PlanRequest{SQL: "select o.o_orderkey as order_id from orders as o where o.o_orderdate >= '1995-01-01' and o.o_orderdate <= '1996-12-31'"},
+		ExecutionOptions{},
+	)
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerExecutionRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics: %#v", diagnostics)
+	}
+	if len(intermediate.Fragments) != 2 {
+		t.Fatalf("fragments = %d, want separate GE/LT datetime bounds: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	}
+	if intermediate.Fragments[0].BSIOp != QuantaBSIOpGE || intermediate.Fragments[1].BSIOp != QuantaBSIOpLT {
+		t.Fatalf("bsi ops = %s/%s, want GE/LT normalized datetime bounds", intermediate.Fragments[0].BSIOp, intermediate.Fragments[1].BSIOp)
+	}
+	wantUpper := time.Date(1997, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := intermediate.Fragments[1].Value.Int64(); got != wantUpper {
+		t.Fatalf("upper value = %d, want next encoded tick %d", got, wantUpper)
+	}
+	for _, fragment := range intermediate.Fragments {
+		if fragment.RangeCoalesceAllowed {
+			t.Fatalf("datetime fragment allows range coalescing: %#v", fragment)
+		}
 	}
 }
 

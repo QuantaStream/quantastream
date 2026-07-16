@@ -439,6 +439,147 @@ func TestLegacyDirectRelationshipProjectionResultPushesUnorderedLimitBeforeMater
 	}
 }
 
+func TestLegacyDirectRelationshipProjectionResultOrdersBeforeLimit(t *testing.T) {
+	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
+	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
+	pPartkey := qsbridge.FieldRef{Table: part, Name: "p_partkey", Type: qsbridge.DataTypeInt}
+	psSuppkey := qsbridge.FieldRef{Table: partsupp, Name: "ps_suppkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.ProjectionOrder = []qsbridge.FieldRef{pPartkey, psSuppkey}
+	request.OrderBy = []qsbridge.SortSpec{
+		{Expr: qsbridge.Field(pPartkey), Direction: qsbridge.SortAscending},
+		{Expr: qsbridge.Field(psSuppkey), Direction: qsbridge.SortAscending},
+	}
+	request.Result = qsbridge.ResultShape{Offset: 0, Limit: 2}
+	var materializations []qsbridge.QuantaMaterializationRequest
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materializations = append(materializations, request)
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "p_partkey":
+						values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum)})
+					case "ps_suppkey":
+						suppkeys := map[qsbridge.QuantaRownum]int64{11: 80, 12: 8, 13: 5, 14: 30}
+						values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: suppkeys[rownum]})
+					default:
+						t.Fatalf("unexpected materialized field %s.%s", field.Index, field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+					Field:  field,
+					Values: values,
+				})
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	result, err := executor.legacyDirectRelationshipProjectionResult(
+		context.Background(),
+		request,
+		legacyDirectRelationshipEdge{childTable: "partsupp", parentTable: "part"},
+		[]qsbridge.QuantaRownum{11, 12, 13, 14},
+		[]legacyDirectRelationshipPair{{child: 11, parent: 4}, {child: 12, parent: 7}, {child: 13, parent: 4}, {child: 14, parent: 4}},
+		ExecutionResult{Count: 4},
+	)
+	if err != nil {
+		t.Fatalf("projection result: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "projection_limit_pushed", "false")
+	assertLegacyDirectRelationshipMaterializationRownums(t, materializations, "partsupp", []qsbridge.QuantaRownum{11, 12, 13, 14})
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two ordered rows", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != int64(4) || chunk.Rows[0][1].Value != int64(5) {
+		t.Fatalf("first row = %#v, want part 4 suppkey 5", chunk.Rows[0])
+	}
+	if chunk.Rows[1][0].Value != int64(4) || chunk.Rows[1][1].Value != int64(30) {
+		t.Fatalf("second row = %#v, want part 4 suppkey 30", chunk.Rows[1])
+	}
+}
+
+func TestLegacyDirectRelationshipProjectionResultFiltersResidualsBeforeLimit(t *testing.T) {
+	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
+	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
+	pPartkey := qsbridge.FieldRef{Table: part, Name: "p_partkey", Type: qsbridge.DataTypeInt}
+	pType := qsbridge.FieldRef{Table: part, Name: "p_type", Type: qsbridge.DataTypeString}
+	psSuppkey := qsbridge.FieldRef{Table: partsupp, Name: "ps_suppkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.ProjectionOrder = []qsbridge.FieldRef{pPartkey, pType, psSuppkey}
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpNotLike, qsbridge.Field(pType), qsbridge.Literal(qsbridge.ValueString, "MEDIUM POLISHED%")),
+		Placement: qsbridge.PredicateResidualScan,
+	}}
+	request.Result = qsbridge.ResultShape{Offset: 0, Limit: 1}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "p_partkey":
+						values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum)})
+					case "p_type":
+						types := map[qsbridge.QuantaRownum]string{1: "MEDIUM POLISHED BRASS", 2: "SMALL PLATED BRASS"}
+						values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: types[rownum]})
+					case "ps_suppkey":
+						values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(100 + rownum)})
+					default:
+						t.Fatalf("unexpected materialized field %s.%s", field.Index, field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+					Field:  field,
+					Values: values,
+				})
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	result, err := executor.legacyDirectRelationshipProjectionResult(
+		context.Background(),
+		request,
+		legacyDirectRelationshipEdge{childTable: "partsupp", parentTable: "part"},
+		[]qsbridge.QuantaRownum{11, 12},
+		[]legacyDirectRelationshipPair{{child: 11, parent: 1}, {child: 12, parent: 2}},
+		ExecutionResult{Count: 2},
+	)
+	if err != nil {
+		t.Fatalf("projection result: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "projection_limit_pushed", "false")
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 1 {
+		t.Fatalf("rows = %#v, want one surviving row", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != int64(2) || chunk.Rows[0][1].Value != "SMALL PLATED BRASS" {
+		t.Fatalf("row = %#v, want residual survivor for part 2", chunk.Rows[0])
+	}
+}
+
 func TestLegacyDirectRelationshipPostReductionFieldsIncludeJoinOnResiduals(t *testing.T) {
 	supplier := qsbridge.TableInstance{Table: "supplier", Alias: "s"}
 	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}

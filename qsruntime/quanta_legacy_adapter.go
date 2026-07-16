@@ -107,6 +107,40 @@ func (a LegacyBitmapQueryAdapter) applyTimeWindow(query *legacy.BitmapQuery, req
 		query.ToTime = legacyBitmapQueryTimeWindowValue(fragment.End.Int64())
 		return
 	}
+	if from, to, ok := legacyBitmapQueryTimeWindowFromShardBounds(request); ok {
+		query.FromTime = legacyBitmapQueryTimeWindowValue(from)
+		query.ToTime = legacyBitmapQueryTimeWindowValue(to)
+	}
+}
+
+func legacyBitmapQueryTimeWindowFromShardBounds(request ExecutionRequest) (int64, int64, bool) {
+	lower := big.NewInt(legacyDirectRelationshipFullTimeRangeBeginMillis)
+	upper := big.NewInt(legacyDirectRelationshipFullTimeRangeEndMillis)
+	found := false
+	for _, fragment := range request.Query.Fragments {
+		if !fragment.ShardWindow || fragment.Value == nil {
+			continue
+		}
+		switch fragment.BSIOp {
+		case qsbridge.QuantaBSIOpGE, qsbridge.QuantaBSIOpGT:
+			if !found || fragment.Value.Cmp(lower) > 0 {
+				lower = new(big.Int).Set(fragment.Value)
+			}
+			found = true
+		case qsbridge.QuantaBSIOpLE:
+			if !found || fragment.Value.Cmp(upper) < 0 {
+				upper = new(big.Int).Set(fragment.Value)
+			}
+			found = true
+		case qsbridge.QuantaBSIOpLT:
+			exclusiveUpper := new(big.Int).Sub(fragment.Value, big.NewInt(1))
+			if !found || exclusiveUpper.Cmp(upper) < 0 {
+				upper = exclusiveUpper
+			}
+			found = true
+		}
+	}
+	return lower.Int64(), upper.Int64(), found
 }
 
 func (a LegacyBitmapQueryAdapter) seedFragment(seed qsbridge.QuantaSeed) qsbridge.QuantaQueryFragment {

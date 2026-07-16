@@ -441,8 +441,8 @@ func legacyDirectExecutionWithShardWindow(request ExecutionRequest, table *core.
 	}
 
 	request.Query = cloneIntermediateQuery(request.Query)
-	if legacyDirectRequestHasShardRange(request, timeField) {
-		request.Query.Fragments = legacyDirectMarkShardRange(request.Query.Fragments, timeField)
+	if legacyDirectRequestHasShardTimePredicate(request, timeField) {
+		request.Query.Fragments = legacyDirectMarkShardTimePredicates(request.Query.Fragments, timeField)
 		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 		return request
 	}
@@ -484,27 +484,36 @@ func legacyDirectTableHasPhysicalShardWindow(table *core.Table) bool {
 	return table != nil && table.TimeQuantumType != "" && legacyDirectRelationshipTimeQuantumField(table) != ""
 }
 
-func legacyDirectRequestHasShardRange(request ExecutionRequest, timeField string) bool {
+func legacyDirectRequestHasShardTimePredicate(request ExecutionRequest, timeField string) bool {
 	for _, fragment := range request.Query.Fragments {
-		if fragment.BSIOp != qsbridge.QuantaBSIOpRange {
-			continue
-		}
-		if legacyDirectFragmentFieldMatches(fragment, timeField) {
+		if legacyDirectShardTimePredicate(fragment, timeField) {
 			return true
 		}
 	}
 	return false
 }
 
-func legacyDirectMarkShardRange(fragments []qsbridge.QuantaQueryFragment, timeField string) []qsbridge.QuantaQueryFragment {
+func legacyDirectMarkShardTimePredicates(fragments []qsbridge.QuantaQueryFragment, timeField string) []qsbridge.QuantaQueryFragment {
 	marked := make([]qsbridge.QuantaQueryFragment, len(fragments))
 	copy(marked, fragments)
 	for i := range marked {
-		if marked[i].BSIOp == qsbridge.QuantaBSIOpRange && legacyDirectFragmentFieldMatches(marked[i], timeField) {
+		if legacyDirectShardTimePredicate(marked[i], timeField) {
 			marked[i].ShardWindow = true
 		}
 	}
 	return marked
+}
+
+func legacyDirectShardTimePredicate(fragment qsbridge.QuantaQueryFragment, timeField string) bool {
+	if !legacyDirectFragmentFieldMatches(fragment, timeField) {
+		return false
+	}
+	switch fragment.BSIOp {
+	case qsbridge.QuantaBSIOpRange, qsbridge.QuantaBSIOpGE, qsbridge.QuantaBSIOpGT, qsbridge.QuantaBSIOpLE, qsbridge.QuantaBSIOpLT:
+		return true
+	default:
+		return false
+	}
 }
 
 func legacyDirectFragmentFieldMatches(fragment qsbridge.QuantaQueryFragment, field string) bool {

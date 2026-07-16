@@ -551,7 +551,7 @@ tests:
         and l.l_shipdate <= '1996-12-31'
     expect:
       rows:
-        - [17958]
+        - [17973]
 
   - id: "tpch_queries.q7.040_france_supplier_path_count"
     status: supported
@@ -589,7 +589,7 @@ tests:
         and l.l_shipdate <= '1996-12-31'
     expect:
       rows:
-        - [613]
+        - [614]
 
   - id: "tpch_queries.q8.010_economy_anodized_steel_part_count"
     status: supported

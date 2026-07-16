@@ -2768,7 +2768,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	joined, pairs = legacyDirectRelationshipProjectionOuterRows(edge, joined, pairs, parentRows)
 	var limitPushed bool
-	joined, pairs, limitPushed = legacyDirectRelationshipPushProjectionLimit(request, joined, pairs)
+	if len(request.OrderBy) == 0 && !directBitmapHasResidualScanPredicates(request) && !request.Result.Distinct {
+		joined, pairs, limitPushed = legacyDirectRelationshipPushProjectionLimit(request, joined, pairs)
+	}
 	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("projection_limit_pushed", strconv.FormatBool(limitPushed)))
 	materialization := e.projectionMaterializationKernel()
 	childFields := legacyDirectRelationshipFieldsForIndex(projectionFields, edge.childTable)
@@ -2800,8 +2802,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	if result.Diagnostics.BlocksNative() {
 		return result, nil
 	}
-	if !limitPushed {
-		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+	residualStart := time.Now()
+	rowSet, diagnostics = directBitmapFilterResidualScanPredicates(request, rowSet)
+	residualElapsed := time.Since(residualStart)
+	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("phase_projection_residual_filter_elapsed", residualElapsed.String()))
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, nil
 	}
 	rowSet, orderDiagnostics := directBitmapOrderProjectedRows(request, rowSet)
 	result.Diagnostics = append(result.Diagnostics, orderDiagnostics...)
@@ -2812,6 +2819,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	result.Diagnostics = append(result.Diagnostics, projectionDiagnostics...)
 	if result.Diagnostics.BlocksNative() {
 		return result, nil
+	}
+	if request.Result.Distinct {
+		rowSet = directBitmapDistinctProjectedRowSet(rowSet)
+	}
+	if !limitPushed {
+		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
 	}
 	if len(request.Projection) == 0 {
 		rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)

@@ -353,21 +353,22 @@ func (r QuantaProjectedRowSet) visibleProjectionVectors() []QuantaProjectionVect
 // adapters can translate this shape into in-process, gRPC, or future transport
 // payloads without making qsbridge depend on those implementations.
 type QuantaQueryFragment struct {
-	Index           string
-	Role            TableInstanceID
-	Field           string
-	Operation       QuantaFragmentOperation
-	BSIOp           QuantaBSIOp
-	Value           *big.Int
-	Values          []*big.Int
-	Begin           *big.Int
-	End             *big.Int
-	Literal         LiteralExpr
-	Literals        []LiteralExpr
-	BeginLiteral    LiteralExpr
-	EndLiteral      LiteralExpr
-	HasLiteralRange bool
-	HasLiteral      bool
+	Index                string
+	Role                 TableInstanceID
+	Field                string
+	Operation            QuantaFragmentOperation
+	BSIOp                QuantaBSIOp
+	Value                *big.Int
+	Values               []*big.Int
+	Begin                *big.Int
+	End                  *big.Int
+	Literal              LiteralExpr
+	Literals             []LiteralExpr
+	BeginLiteral         LiteralExpr
+	EndLiteral           LiteralExpr
+	HasLiteralRange      bool
+	HasLiteral           bool
+	RangeCoalesceAllowed bool
 	// ShardWindow marks a physical time-shard window fragment. Ordinary
 	// timestamp predicates compare encoded BSI values but must not move the
 	// legacy global FromTime/ToTime window.
@@ -1099,6 +1100,7 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		if !ok {
 			return QuantaQueryFragment{}, diagnostics, false
 		}
+		op, normalized = quantaIntermediateNormalizeDiscreteTimeComparison(op, field, value, normalized)
 		value = normalized
 	}
 	if field.Encoding.Scale > 0 {
@@ -1121,14 +1123,15 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 	}
 
 	fragment := QuantaQueryFragment{
-		Index:      field.Table.Table,
-		Role:       quantaIntermediateTableRole(field.Table),
-		Field:      quantaIntermediateFieldName(field),
-		Operation:  QuantaOperationIntersect,
-		BSIOp:      quantaIntermediateBSIOp(op),
-		Value:      bigValue,
-		Literal:    literalValue,
-		HasLiteral: true,
+		Index:                field.Table.Table,
+		Role:                 quantaIntermediateTableRole(field.Table),
+		Field:                quantaIntermediateFieldName(field),
+		Operation:            QuantaOperationIntersect,
+		BSIOp:                quantaIntermediateBSIOp(op),
+		Value:                bigValue,
+		Literal:              literalValue,
+		HasLiteral:           true,
+		RangeCoalesceAllowed: field.Index != IndexDateTime,
 	}
 	if op == BinaryOpNotEqual {
 		fragment.BSIOp = QuantaBSIOpEQ
@@ -1748,6 +1751,47 @@ func quantaIntermediateNormalizeTimeValue(field FieldRef, value LiteralExpr) (Li
 	return Literal(ValueInt, encoded), nil, true
 }
 
+func quantaIntermediateNormalizeDiscreteTimeComparison(op BinaryOp, field FieldRef, literal LiteralExpr, value LiteralExpr) (BinaryOp, LiteralExpr) {
+	intValue, ok := value.Value.(int64)
+	if !ok {
+		return op, value
+	}
+	nextValue := quantaIntermediateNextEncodedTimeValue(field, literal, intValue)
+	switch op {
+	case BinaryOpLessEqual:
+		return BinaryOpLess, Literal(ValueInt, nextValue)
+	case BinaryOpGreater:
+		return BinaryOpGreaterEqual, Literal(ValueInt, nextValue)
+	default:
+		return op, value
+	}
+}
+
+func quantaIntermediateNextEncodedTimeValue(field FieldRef, literal LiteralExpr, encoded int64) int64 {
+	if parsed, ok := quantaIntermediateDateOnlyLiteral(literal); ok {
+		if next, ok := quantaIntermediateEncodeTimeValue(field.Encoding.Granularity, parsed.AddDate(0, 0, 1)); ok {
+			return next
+		}
+	}
+	return encoded + 1
+}
+
+func quantaIntermediateDateOnlyLiteral(literal LiteralExpr) (time.Time, bool) {
+	text, ok := literal.Value.(string)
+	if !ok {
+		return time.Time{}, false
+	}
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) != len("2006-01-02") {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed.UTC(), true
+}
+
 func quantaIntermediateNormalizeBoolValue(value LiteralExpr) (LiteralExpr, DiagnosticSet, bool) {
 	switch value.Kind {
 	case ValueBool:
@@ -2031,7 +2075,9 @@ func quantaIntermediateSameRangeField(left QuantaQueryFragment, right QuantaQuer
 		!left.NullCheck &&
 		!right.NullCheck &&
 		left.Value != nil &&
-		right.Value != nil
+		right.Value != nil &&
+		left.RangeCoalesceAllowed &&
+		right.RangeCoalesceAllowed
 }
 
 func quantaIntermediateRangeFragment(left QuantaQueryFragment, right QuantaQueryFragment) QuantaQueryFragment {

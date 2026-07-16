@@ -208,6 +208,31 @@ func TestLegacyBitmapQueryAdapterConvertsLoweredRangeExecutionRequest(t *testing
 	}
 }
 
+func TestLegacyBitmapQueryAdapterKeepsLogicalRangeInclusiveBeforeRuntimeAdaptation(t *testing.T) {
+	service := qsbridge.NewPlanningService(qsbridge.Planner{
+		Parser:        qsbridge.SimpleParserBridge{},
+		Catalog:       runtimeAdapterCatalog(),
+		DefaultSchema: "quanta",
+		Scope:         qsbridge.PhysicalScope{Placement: qsbridge.PlacementLocal},
+	}, nil)
+
+	_, request := service.PrepareExecutionRequest(
+		qsbridge.PlanRequest{SQL: "select o.o_orderkey as order_id from orders as o where o.o_orderkey >= ? and o.o_orderkey <= ?"},
+		qsbridge.ExecutionOptions{},
+		qsbridge.IndexedParameterValue(1, qsbridge.ValueInt, int64(8)),
+		qsbridge.IndexedParameterValue(2, qsbridge.ValueInt, int64(12)),
+	)
+	intermediate, diagnostics := qsbridge.QuantaIntermediateLowerer{}.LowerExecutionRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics: %#v", diagnostics)
+	}
+
+	fragment := intermediate.Fragments[0]
+	if got := fragment.End.Int64(); got != 12 {
+		t.Fatalf("logical range end = %d, want inclusive SQL end 12", got)
+	}
+}
+
 func TestLegacyBitmapQueryAdapterDefaultsRequestWindowToUnixZero(t *testing.T) {
 	query := qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     "customers_qa",
@@ -546,7 +571,7 @@ func TestLegacyDirectExecutionWithShardWindowPrependsShardRangeForNonShardTimePr
 	}
 }
 
-func TestLegacyDirectExecutionWithShardWindowPrependsShardRangeForOneSidedShardTimePredicate(t *testing.T) {
+func TestLegacyDirectExecutionWithShardWindowMarksOneSidedShardTimePredicate(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem"},
 		Attributes: []core.Attribute{
@@ -566,19 +591,15 @@ func TestLegacyDirectExecutionWithShardWindowPrependsShardRangeForOneSidedShardT
 
 	adapted := legacyDirectExecutionWithShardWindow(request, table)
 
-	if len(adapted.Query.Fragments) != 2 {
-		t.Fatalf("fragments = %#v, want shard range plus one-sided shipdate predicate", adapted.Query.Fragments)
+	if len(adapted.Query.Fragments) != 1 {
+		t.Fatalf("fragments = %#v, want original one-sided shipdate predicate", adapted.Query.Fragments)
 	}
-	shard := adapted.Query.Fragments[0]
-	if shard.Index != "lineitem" || shard.Field != "l_shipdate" || shard.BSIOp != qsbridge.QuantaBSIOpRange {
-		t.Fatalf("synthetic fragment = %#v, want lineitem.l_shipdate range", shard)
-	}
-	if shard.Begin.Int64() != legacyDirectRelationshipFullTimeRangeBeginMillis || shard.End.Int64() != legacyDirectRelationshipFullTimeRangeEndMillis {
-		t.Fatalf("synthetic range = %d..%d, want full shard window", shard.Begin.Int64(), shard.End.Int64())
-	}
-	predicate := adapted.Query.Fragments[1]
+	predicate := adapted.Query.Fragments[0]
 	if predicate.Field != "l_shipdate" || predicate.BSIOp != qsbridge.QuantaBSIOpGT || predicate.Value.Int64() != 795398400000 {
 		t.Fatalf("predicate fragment = %#v, want original one-sided shipdate predicate preserved", predicate)
+	}
+	if !predicate.ShardWindow {
+		t.Fatalf("predicate fragment = %#v, want shard window marker", predicate)
 	}
 	if len(adapted.Query.ProjectionFields) == 0 || adapted.Query.ProjectionFields[0].Field != "l_shipdate" || adapted.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
 		t.Fatalf("projection fields = %#v, want shard time metadata", adapted.Query.ProjectionFields)

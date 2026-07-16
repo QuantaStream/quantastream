@@ -29,3 +29,26 @@ func TestBitmapBatchPredicateSerializesValues(t *testing.T) {
 		t.Fatalf("expected second value 13, got %d", got)
 	}
 }
+
+func TestBitmapQueryToProtoPreservesRangeEnd(t *testing.T) {
+	query := NewBitmapQuery()
+	fragment := query.NewQueryFragment()
+	begin := big.NewInt(8)
+	end := big.NewInt(12)
+	fragment.SetBSIRangePredicate("orders", "o_orderkey", begin, end)
+	query.AddFragment(fragment)
+
+	proto := query.ToProto()
+	if len(proto.Query) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(proto.Query))
+	}
+	if got := new(big.Int).SetBytes(proto.Query[0].Begin).Int64(); got != 8 {
+		t.Fatalf("begin = %d, want 8", got)
+	}
+	if got := new(big.Int).SetBytes(proto.Query[0].End).Int64(); got != 12 {
+		t.Fatalf("wire end = %d, want 12", got)
+	}
+	if got := end.Int64(); got != 12 {
+		t.Fatalf("source end mutated to %d, want 12", got)
+	}
+}
