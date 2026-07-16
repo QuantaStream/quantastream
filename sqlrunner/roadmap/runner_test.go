@@ -154,6 +154,33 @@ func TestEvaluateQueryKeepsBoolTextForBoolTypedResults(t *testing.T) {
 	}
 }
 
+func TestCompareRowsTreatsEquivalentNumericTextAsEqual(t *testing.T) {
+	expected := [][]Cell{{{Text: "1.193053225300001e+06"}}}
+	actual := [][]Cell{{{Text: "1193053.225300001"}}}
+
+	if details := compareRows(expected, actual); details != "" {
+		t.Fatalf("details = %q, want numeric-text match", details)
+	}
+}
+
+func TestCompareRowsRejectsDifferentNumericValues(t *testing.T) {
+	expected := [][]Cell{{{Text: "108715630.20"}}}
+	actual := [][]Cell{{{Text: "23582877.890000008"}}}
+
+	if details := compareRows(expected, actual); details == "" {
+		t.Fatal("expected numeric mismatch to be reported")
+	}
+}
+
+func TestCompareRowsRejectsDifferentTextValues(t *testing.T) {
+	expected := [][]Cell{{{Text: "BUILDING"}}}
+	actual := [][]Cell{{{Text: "AUTOMOBILE"}}}
+
+	if details := compareRows(expected, actual); details == "" {
+		t.Fatal("expected text mismatch to be reported")
+	}
+}
+
 type caseAwareRecorder struct {
 	seen *[]TestCase
 	test TestCase

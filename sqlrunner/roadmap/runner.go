@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,13 +301,30 @@ func compareRows(expected, actual [][]Cell) string {
 			return fmt.Sprintf("row %d column count differs: expected %d, actual %d", row+1, len(expected[row]), len(actual[row]))
 		}
 		for column := range expected[row] {
-			if expected[row][column] != actual[row][column] {
+			if !cellsEqual(expected[row][column], actual[row][column]) {
 				return fmt.Sprintf("row %d column %d differs: expected %s, actual %s",
 					row+1, column+1, formatCell(expected[row][column]), formatCell(actual[row][column]))
 			}
 		}
 	}
 	return ""
+}
+
+func cellsEqual(expected, actual Cell) bool {
+	if expected == actual {
+		return true
+	}
+	if expected.Null || actual.Null {
+		return false
+	}
+	expectedNumber, expectedErr := strconv.ParseFloat(strings.TrimSpace(expected.Text), 64)
+	actualNumber, actualErr := strconv.ParseFloat(strings.TrimSpace(actual.Text), 64)
+	if expectedErr != nil || actualErr != nil {
+		return false
+	}
+	diff := math.Abs(expectedNumber - actualNumber)
+	scale := math.Max(1, math.Max(math.Abs(expectedNumber), math.Abs(actualNumber)))
+	return diff <= scale*1e-9
 }
 
 func formatRows(rows [][]Cell) string {
