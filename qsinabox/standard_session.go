@@ -71,6 +71,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	bsiReader := StandardProjectionBSIReader{
 		Pool:       pool,
 		TableCache: tableCache,
+		Direct:     b.Adapter.BitmapIndex,
 	}
 	dictionaryIDReader := StandardProjectionDictionaryIDReader{
 		Pool:       pool,
@@ -104,6 +105,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	relationshipProjectionReader := StandardRelationshipVectorProjectionReader{
 		Pool:       pool,
 		TableCache: tableCache,
+		Direct:     b.Adapter.BitmapIndex,
 	}
 	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
 		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{

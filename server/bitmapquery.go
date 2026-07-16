@@ -593,3 +593,25 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 	u.Debugf("Projection retrieval elapsed time %v", elapsed)
 	return &pb.ProjectionResponse{BitmapResults: bitmapResults, BsiResults: bsiResults}, nil
 }
+
+// ProjectBSI returns a projected BSI directly for in-process callers.
+//
+// The gRPC-shaped Projection API must marshal the BSI into protobuf bytes and
+// client wrappers immediately unmarshal it again. Inabox-standard can avoid that
+// local serialization tax while preserving the same time-range/foundset rules.
+func (m *BitmapIndex) ProjectBSI(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, error) {
+	if index == "" {
+		return nil, fmt.Errorf("index not specified for projection criteria")
+	}
+	if field == "" {
+		return nil, fmt.Errorf("field not specified for projection criteria")
+	}
+	bsi, err := m.timeRangeBSI(index, field, time.Unix(0, fromTime).UTC(), time.Unix(0, toTime).UTC(), foundSet, negate)
+	if err != nil {
+		return nil, err
+	}
+	if bsi == nil || bsi.BSI == nil {
+		return roaring64.NewDefaultBSI(), nil
+	}
+	return bsi.BSI, nil
+}

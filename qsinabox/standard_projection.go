@@ -11,6 +11,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/server"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -24,17 +25,41 @@ const (
 type StandardProjectionBSIReader struct {
 	Pool       *core.SessionPool
 	TableCache *core.TableCacheStruct
+	Direct     *server.BitmapIndex
 }
 
 // ReadProjectionBSI projects one BSI-backed field through the local BitmapIndex.
 func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request qsruntime.NativeProjectionBSIReadRequest) (qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	foundSet := standardProjectionBitmap(request.Rownums)
+	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
+	if r.Direct != nil {
+		bsi, err := r.Direct.ProjectBSI(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
+		if err != nil {
+			return qsruntime.NativeProjectionBSIReadResult{}, nil, err
+		}
+		return qsruntime.NativeProjectionBSIReadResult{
+			BSI: bsi,
+			Probes: []qsruntime.ExecutionProbe{
+				{
+					Section: "native_projection_materialization",
+					Name:    "standard_bsi_projection_rows",
+					Value:   strconv.Itoa(len(request.Rownums)),
+					Detail:  request.Index + "." + request.PhysicalField,
+				},
+				{
+					Section: "native_projection_materialization",
+					Name:    "standard_bsi_projection_transport",
+					Value:   "local_direct",
+					Detail:  request.Index + "." + request.PhysicalField,
+				},
+			},
+		}, nil, nil
+	}
 	session, diagnostics, err := r.borrow(ctx, request.Index)
 	if err != nil || diagnostics.BlocksNative() {
 		return qsruntime.NativeProjectionBSIReadResult{}, diagnostics, err
 	}
 	defer r.release(request.Index, session)
-	foundSet := standardProjectionBitmap(request.Rownums)
-	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
 	bsiByField, _, err := session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, foundSet, false)
 	if err != nil {
 		return qsruntime.NativeProjectionBSIReadResult{}, nil, err

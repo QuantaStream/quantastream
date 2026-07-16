@@ -7,6 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/server"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -15,6 +16,7 @@ import (
 type StandardRelationshipVectorProjectionReader struct {
 	Pool       *core.SessionPool
 	TableCache *core.TableCacheStruct
+	Direct     *server.BitmapIndex
 }
 
 // ReadRelationshipVectorProjection returns the requested relationship-vector BSI.
@@ -29,6 +31,24 @@ func (r StandardRelationshipVectorProjectionReader) ReadRelationshipVectorProjec
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-standard relationship-vector projection has no session pool"),
 		}, nil
 	}
+	foundSet := standardRelationshipVectorProjectionFoundSet(read)
+	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.VectorIndex, 0, 0)
+	if r.Direct != nil {
+		fkBSI, err := r.Direct.ProjectBSI(read.VectorIndex, read.VectorField, fromTime, toTime, foundSet, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		if fkBSI == nil {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticInternalInvariant,
+					qsbridge.PhaseExecute,
+					fmt.Sprintf("inabox-standard relationship-vector projection did not return %s.%s", read.VectorIndex, read.VectorField),
+				),
+			}, nil
+		}
+		return fkBSI, nil, nil
+	}
 	session, err := r.Pool.Borrow(read.VectorIndex)
 	if err != nil {
 		return nil, nil, err
@@ -39,8 +59,6 @@ func (r StandardRelationshipVectorProjectionReader) ReadRelationshipVectorProjec
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-standard relationship-vector projection has no bitmap index"),
 		}, nil
 	}
-	foundSet := standardRelationshipVectorProjectionFoundSet(read)
-	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.VectorIndex, 0, 0)
 	bsiByField, _, err := session.BitIndex.Projection(read.VectorIndex, []string{read.VectorField}, fromTime, toTime, foundSet, false)
 	if err != nil {
 		return nil, nil, err

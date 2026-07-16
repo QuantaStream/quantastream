@@ -1,7 +1,6 @@
 package server
 
 import (
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,6 +46,34 @@ func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
 	}
 }
 
+func TestProjectBSIReturnsDirectFoundSetProjection(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_extendedprice"
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 10000,
+		2: 20000,
+	})
+
+	bsi, err := index.ProjectBSI("lineitem", field, day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(2), false)
+	if err != nil {
+		t.Fatalf("ProjectBSI returned error: %v", err)
+	}
+	if bsi == nil {
+		t.Fatal("ProjectBSI returned nil BSI")
+	}
+	if got, want := bsi.GetExistenceBitmap().GetCardinality(), uint64(1); got != want {
+		t.Fatalf("projected cardinality = %d, want %d", got, want)
+	}
+	if _, ok := bsi.GetValue(1); ok {
+		t.Fatalf("rownum 1 should not be retained by foundset")
+	}
+	value, ok := bsi.GetValue(2)
+	if !ok || value != 20000 {
+		t.Fatalf("rownum 2 value = %d ok=%t, want 20000 true", value, ok)
+	}
+}
+
 func newSeedCacheTestIndex(t *testing.T) *BitmapIndex {
 	t.Helper()
 	root := t.TempDir()
@@ -63,6 +90,10 @@ attributes:
   sourceName: /data/l_shipdate
   mappingStrategy: SysMillisBSI
   type: DateTime
+- fieldName: l_extendedprice
+  sourceName: /data/l_extendedprice
+  mappingStrategy: FloatScaleBSI
+  type: Float
 `)
 	if err := os.WriteFile(filepath.Join(configDir, "schema.yaml"), schema, 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
@@ -73,7 +104,7 @@ attributes:
 	}
 	return &BitmapIndex{
 		Node:      &Node{},
-		bsiCache:  map[string]map[string]map[int64]*BSIBitmap{"lineitem": {"l_shipdate": {}}},
+		bsiCache:  map[string]map[string]map[int64]*BSIBitmap{"lineitem": {"l_shipdate": {}, "l_extendedprice": {}}},
 		seedCache: make(map[string]*SeedBitmap),
 		tableCache: map[string]*shared.BasicTable{
 			"lineitem": table,
@@ -84,7 +115,7 @@ attributes:
 func seedCacheTestBSI(values map[uint64]int64) *BSIBitmap {
 	bsi := roaring64.NewDefaultBSI()
 	for rownum, value := range values {
-		bsi.SetBigValue(rownum, big.NewInt(value))
+		bsi.SetValue(rownum, value)
 	}
 	return &BSIBitmap{BSI: bsi}
 }
