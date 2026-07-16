@@ -716,6 +716,59 @@ func TestLegacyDirectRelationshipParentKeyRowsUsesParentRownumDomain(t *testing.
 	}
 }
 
+func TestLegacyDirectRelationshipReduceTimingIncludesParentKeyAndMatchMetrics(t *testing.T) {
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				101: 1,
+				102: 1,
+				103: 2,
+				104: 4,
+			}),
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+		sqlKind:     qsbridge.JoinKindInner,
+	}
+
+	joined, pairs, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithTiming(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		edge,
+		[]qsbridge.QuantaRownum{1, 2},
+		[]qsbridge.QuantaRownum{101, 102, 103, 104},
+	)
+
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if got := len(joined); got != 3 {
+		t.Fatalf("joined rows = %d, want 3", got)
+	}
+	if got := len(pairs); got != 3 {
+		t.Fatalf("pairs = %d, want 3", got)
+	}
+	if timing.parentKeyRows != 2 {
+		t.Fatalf("parent key rows = %d, want 2", timing.parentKeyRows)
+	}
+	if timing.parentKeyMaterialization {
+		t.Fatalf("parent key materialization = true, want false for rownum-domain parent keys")
+	}
+	if timing.matchedRows != 3 {
+		t.Fatalf("matched rows = %d, want 3", timing.matchedRows)
+	}
+	if timing.projectionRows != 4 || timing.fkProjectionRows != 4 {
+		t.Fatalf("projection rows = %d fk rows = %d, want 4/4", timing.projectionRows, timing.fkProjectionRows)
+	}
+}
+
 func TestLegacyDirectRelationshipVectorProjectionWindowUsesChildTimePredicate(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem", TimeQuantumField: "l_shipdate"},
