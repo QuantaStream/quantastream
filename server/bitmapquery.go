@@ -367,12 +367,16 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 					continue
 				}
 				if foundSet != nil {
-					var x *roaring64.BSI
+					var retainSet *roaring64.Bitmap
 					if negate {
-						x = bsi.BSI.NewBSIRetainSet(roaring64.AndNot(bsi.BSI.GetExistenceBitmap(), foundSet))
+						retainSet = roaring64.AndNot(bsi.BSI.GetExistenceBitmap(), foundSet)
 					} else {
-						x = bsi.BSI.NewBSIRetainSet(foundSet)
+						retainSet = roaring64.And(bsi.BSI.GetExistenceBitmap(), foundSet)
 					}
+					if retainSet.GetCardinality() == 0 {
+						continue
+					}
+					x := bsi.BSI.NewBSIRetainSet(retainSet)
 					if x.GetCardinality() == 0 {
 						continue
 					}
