@@ -22,7 +22,7 @@ import (
 
 var (
 	// Ensure KVStore implements NodeService
-	_ NodeService = (*BitmapIndex)(nil)
+	_ NodeService = (*KVStore)(nil)
 )
 
 const (
@@ -36,6 +36,7 @@ type KVStore struct {
 	storeCacheLock sync.RWMutex
 	enumGuard      singleflight.Group
 	exit           chan bool
+	shutdownOnce   sync.Once
 	cleanupLatency int64 // current cleanup thread duration (Prometheus)
 }
 
@@ -95,10 +96,8 @@ func (m *KVStore) cleanupProcessLoop() {
 
 	for {
 		select {
-		case _, open := <-m.exit:
-			if !open {
-				return
-			}
+		case <-m.exit:
+			return
 		default:
 		}
 		select {
@@ -135,17 +134,33 @@ func (m *KVStore) cleanup() {
 // Shutdown service.
 func (m *KVStore) Shutdown() {
 
-	u.Debug(m.hashKey, " KVStore Shutdown")
+	m.shutdownOnce.Do(func() {
+		if m.exit != nil {
+			close(m.exit)
+		}
+		hashKey := ""
+		if m.Node != nil {
+			hashKey = m.hashKey
+		}
+		u.Debug(hashKey, " KVStore Shutdown")
 
-	m.storeCacheLock.Lock()
-	defer m.storeCacheLock.Unlock()
-	for k, v := range m.storeCache {
-		u.Infof("%s Sync and close [%s]", m.hashKey, k)
-		v.db.Sync() // waitGroup?
-		v.db.Close()
-	}
-	m.exit <- true
-	// ?? close(m.exit)
+		m.storeCacheLock.Lock()
+		defer m.storeCacheLock.Unlock()
+		for k, v := range m.storeCache {
+			u.Infof("%s Sync and close [%s]", hashKey, k)
+			if v == nil || v.db == nil {
+				delete(m.storeCache, k)
+				continue
+			}
+			if err := v.db.Sync(); err != nil {
+				u.Errorf("%s KVStore sync [%s] failed: %v", hashKey, k, err)
+			}
+			if err := v.db.Close(); err != nil {
+				u.Errorf("%s KVStore close [%s] failed: %v", hashKey, k, err)
+			}
+			delete(m.storeCache, k)
+		}
+	})
 }
 
 // JoinCluster - Join the cluster
