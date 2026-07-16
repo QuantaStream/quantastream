@@ -7,6 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/shared"
+	log "github.com/sirupsen/logrus"
 )
 
 // StandardMode is the single-process QIAB deployment mode name.
@@ -15,11 +16,12 @@ const StandardMode = "inabox-standard"
 // StandardConfig captures the first process-level configuration surface for
 // the single-process QIAB executable.
 type StandardConfig struct {
-	BindAddress string
-	MySQLPort   int
-	ConfigDir   string
-	DataDir     string
-	Database    string
+	BindAddress         string
+	MySQLPort           int
+	ConfigDir           string
+	DataDir             string
+	Database            string
+	RuntimeProbeLogging bool
 }
 
 // WithDefaults fills stable local defaults for inabox-standard.
@@ -51,7 +53,14 @@ func (c StandardConfig) Address() string {
 // NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
 func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
 	c = c.WithDefaults()
+	serverConfig := qsruntime.NativeProxyServerConfig{}
+	if c.RuntimeProbeLogging {
+		serverConfig.ProbeLogger = qsruntime.RuntimeProbeLoggerFunc(func(probe qsruntime.ExecutionProbe) {
+			log.Infof("RUNTIME probe section=%s name=%s value=%s detail=%s", probe.Section, probe.Name, probe.Value, probe.Detail)
+		})
+	}
 	return qsruntime.NativeProxyFrontDoorConfig{
+		Server:        serverConfig,
 		BindAddress:   c.BindAddress,
 		Port:          c.MySQLPort,
 		PacketIOReady: true,

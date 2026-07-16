@@ -11,6 +11,7 @@ DATA_DIR="${QUANTASTREAM_DATA_DIR:-data}"
 BIND_ADDRESS="${QUANTASTREAM_BIND:-127.0.0.1}"
 MYSQL_PORT="${QUANTASTREAM_MYSQL_PORT:-4000}"
 DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
+RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 
 usage() {
   cat <<'EOF'
@@ -22,6 +23,8 @@ Environment:
   QUANTASTREAM_BIND         MySQL bind address. Defaults to 127.0.0.1.
   QUANTASTREAM_MYSQL_PORT   MySQL listen port. Defaults to 4000.
   QUANTASTREAM_DATABASE     Default database/schema. Defaults to quanta.
+  QUANTASTREAM_RUNTIME_PROBES
+                           Set to true to log runtime execution probes.
 
 Examples:
   ./start-standard.sh
@@ -51,6 +54,7 @@ echo "config_dir=${CONFIG_DIR}"
 echo "data_dir=${DATA_DIR}"
 echo "mysql=${BIND_ADDRESS}:${MYSQL_PORT}"
 echo "database=${DATABASE}"
+echo "runtime_probes=${RUNTIME_PROBES}"
 
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/quantastream-standard.XXXXXX")"
 server_bin="${build_dir}/quantastream"
@@ -87,6 +91,7 @@ go build -o "${server_bin}" ./cmd/quantastream
   -data-dir "$DATA_DIR" \
   -bind "$BIND_ADDRESS" \
   -mysql-port "$MYSQL_PORT" \
-  -database "$DATABASE" &
+  -database "$DATABASE" \
+  -runtime-probes="${RUNTIME_PROBES}" &
 server_pid="$!"
 wait "${server_pid}"

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -34,6 +35,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	configDir := flags.String("config-dir", "configuration", "schema/catalog configuration directory")
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	database := flags.String("database", "quanta", "default database/schema name")
+	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
 
@@ -46,11 +48,12 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 
 	config := qsinabox.StandardConfig{
-		BindAddress: *bindAddress,
-		MySQLPort:   *mysqlPort,
-		ConfigDir:   *configDir,
-		DataDir:     *dataDir,
-		Database:    *database,
+		BindAddress:         *bindAddress,
+		MySQLPort:           *mysqlPort,
+		ConfigDir:           *configDir,
+		DataDir:             *dataDir,
+		Database:            *database,
+		RuntimeProbeLogging: *runtimeProbes,
 	}
 
 	if *statusOnly {
@@ -107,4 +110,13 @@ func diagnosticMessages(diagnostics qsbridge.DiagnosticSet) string {
 		messages = append(messages, fmt.Sprintf("%s: %s", diagnostic.Code, diagnostic.Message))
 	}
 	return fmt.Sprint(messages)
+}
+
+func envBool(name string) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return false
+	}
+	parsed, err := strconv.ParseBool(value)
+	return err == nil && parsed
 }

@@ -69,6 +69,33 @@ func TestNativeProxyServerDelegatesExecutionAndInspection(t *testing.T) {
 	}
 }
 
+func TestNativeProxyServerLogsRuntimeProbesWhenConfigured(t *testing.T) {
+	var probes []ExecutionProbe
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 1, Probes: []ExecutionProbe{{
+			Section: "relationship_join",
+			Name:    "graph_iter_1_edge_1_batch_equal_elapsed",
+			Value:   "12ms",
+		}}}, nil
+	})}
+	server := NewNativeProxyServer(runtime, NativeProxyServerConfig{
+		ProbeLogger: RuntimeProbeLoggerFunc(func(probe ExecutionProbe) {
+			probes = append(probes, probe)
+		}),
+	})
+
+	result, err := server.ExecuteSQL(context.Background(), "select count(*) from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if len(probes) != 1 || probes[0].Name != "graph_iter_1_edge_1_batch_equal_elapsed" {
+		t.Fatalf("probes = %#v, want configured runtime probe", probes)
+	}
+}
+
 func TestNativeProxyFrontDoorDefaultsToMySQLQIABWithoutClaimingWireReadiness(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{}, NativeProxyFrontDoorConfig{})
 	summary := frontDoor.Summary()

@@ -55,3 +55,11 @@ func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
 		t.Fatalf("front door should use current MySQL byte-model readiness")
 	}
 }
+
+func TestStandardFrontDoorConfigCanEnableRuntimeProbeLogging(t *testing.T) {
+	config := StandardConfig{RuntimeProbeLogging: true}.NativeProxyFrontDoorConfig().WithDefaults()
+
+	if config.Server.ProbeLogger == nil {
+		t.Fatalf("ProbeLogger = nil, want runtime probe logger when enabled")
+	}
+}
