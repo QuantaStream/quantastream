@@ -52,9 +52,41 @@ echo "data_dir=${DATA_DIR}"
 echo "mysql=${BIND_ADDRESS}:${MYSQL_PORT}"
 echo "database=${DATABASE}"
 
-exec go run ./cmd/quantastream \
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/quantastream-standard.XXXXXX")"
+server_bin="${build_dir}/quantastream"
+server_pid=""
+
+cleanup() {
+  local exit_code=$?
+  if [[ -n "${server_pid}" ]] && kill -0 "${server_pid}" >/dev/null 2>&1; then
+    kill "${server_pid}" >/dev/null 2>&1 || true
+    wait "${server_pid}" >/dev/null 2>&1 || true
+  fi
+  rm -rf "${build_dir}"
+  exit "${exit_code}"
+}
+
+terminate() {
+  local signal="$1"
+  if [[ -n "${server_pid}" ]] && kill -0 "${server_pid}" >/dev/null 2>&1; then
+    kill "-${signal}" "${server_pid}" >/dev/null 2>&1 || true
+    wait "${server_pid}" >/dev/null 2>&1 || true
+  fi
+  rm -rf "${build_dir}"
+  exit 0
+}
+
+trap cleanup EXIT
+trap 'terminate TERM' TERM
+trap 'terminate INT' INT
+
+go build -o "${server_bin}" ./cmd/quantastream
+
+"${server_bin}" \
   -config-dir "$CONFIG_DIR" \
   -data-dir "$DATA_DIR" \
   -bind "$BIND_ADDRESS" \
   -mysql-port "$MYSQL_PORT" \
-  -database "$DATABASE"
+  -database "$DATABASE" &
+server_pid="$!"
+wait "${server_pid}"

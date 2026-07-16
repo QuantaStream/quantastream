@@ -205,7 +205,14 @@ func (m *KVStore) closeStore(index string) {
 	var ok bool
 	var ce *cacheEntry
 	if ce, ok = m.storeCache[index]; ok {
-		ce.db.Close()
+		if ce != nil && ce.db != nil {
+			if err := ce.db.Sync(); err != nil {
+				u.Errorf("%s KVStore sync [%s] failed: %v", m.hashKey, index, err)
+			}
+			if err := ce.db.Close(); err != nil {
+				u.Errorf("%s KVStore close [%s] failed: %v", m.hashKey, index, err)
+			}
+		}
 		delete(m.storeCache, index)
 	}
 }
