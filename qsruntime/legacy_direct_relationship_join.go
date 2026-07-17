@@ -2423,17 +2423,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAllR
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAllRownumRequest(tableName string, fallbackField string) ExecutionRequest {
 	if table := e.legacyDirectCachedTable(tableName); table != nil {
-		field, isTime := legacyDirectRelationshipAllRownumSeedField(table, fallbackField)
-		if isTime {
+		field, shardWindow := legacyDirectRelationshipAllRownumSeedField(table, fallbackField)
+		if shardWindow {
 			begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, field)
 			return NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
-				Fragments: []qsbridge.QuantaQueryFragment{{
-					Index:     tableName,
-					Field:     field,
-					Operation: qsbridge.QuantaOperationIntersect,
-					BSIOp:     qsbridge.QuantaBSIOpRange,
-					Begin:     big.NewInt(begin),
-					End:       big.NewInt(end),
+				Seeds: []qsbridge.QuantaSeed{{
+					Index:       tableName,
+					Field:       field,
+					Kind:        qsbridge.QuantaSeedTableExistence,
+					Begin:       big.NewInt(begin),
+					End:         big.NewInt(end),
+					ShardWindow: true,
 				}},
 				ProjectionFields: []qsbridge.QuantaProjectionField{{
 					Index: tableName,
@@ -2443,24 +2443,34 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAllR
 			})
 		}
 		if field != "" {
-			fallbackField = field
+			return NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Seeds: []qsbridge.QuantaSeed{{
+				Index: tableName,
+				Field: field,
+				Kind:  qsbridge.QuantaSeedTableExistence,
+			}}})
 		}
 	}
-	return NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
-		Index:     tableName,
-		Field:     fallbackField,
-		Operation: qsbridge.QuantaOperationIntersect,
-		NullCheck: true,
-		Negate:    true,
+	if fallbackField == "" {
+		return NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	}
+	return NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Seeds: []qsbridge.QuantaSeed{{
+		Index: tableName,
+		Field: fallbackField,
+		Kind:  qsbridge.QuantaSeedTableExistence,
 	}}})
 }
 
 func legacyDirectRelationshipAllRownumSeedField(table *core.Table, fallbackField string) (string, bool) {
-	if fallbackField != "" {
-		return fallbackField, false
-	}
 	if table == nil {
 		return "", false
+	}
+	if timeField := legacyDirectRelationshipTimeQuantumField(table); timeField != "" && legacyDirectTableHasPhysicalShardWindow(table) {
+		return timeField, true
+	}
+	for _, part := range strings.Split(table.PrimaryKey, "+") {
+		if field := strings.TrimSpace(part); field != "" {
+			return field, false
+		}
 	}
 	for _, attribute := range table.Attributes {
 		if strings.EqualFold(attribute.FieldName, "rownum") {
@@ -2470,16 +2480,11 @@ func legacyDirectRelationshipAllRownumSeedField(table *core.Table, fallbackField
 			return attribute.SourceName, false
 		}
 	}
-	for _, part := range strings.Split(table.PrimaryKey, "+") {
-		if field := strings.TrimSpace(part); field != "" {
-			return field, false
-		}
-	}
-	if table != nil && table.TimeQuantumType != "" && table.TimeQuantumField != "" {
-		return table.TimeQuantumField, true
+	if fallbackField != "" {
+		return fallbackField, false
 	}
 	if timeField := legacyDirectRelationshipTimeQuantumField(table); timeField != "" {
-		return timeField, true
+		return timeField, false
 	}
 	for _, attribute := range table.Attributes {
 		if attribute.FieldName != "" && !strings.EqualFold(attribute.FieldName, "rownum") {

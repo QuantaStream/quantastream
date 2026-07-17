@@ -1266,7 +1266,7 @@ func TestLegacyDirectRelationshipTimeMaterializationUsesSyntheticTimeRange(t *te
 	}
 }
 
-func TestLegacyDirectRelationshipAllRownumRequestPrefersRelationshipEndpointField(t *testing.T) {
+func TestLegacyDirectRelationshipAllRownumRequestPrefersCatalogIdentityOverEndpointField(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{
 			Name:             "customers_qa",
@@ -1283,21 +1283,9 @@ func TestLegacyDirectRelationshipAllRownumRequestPrefersRelationshipEndpointFiel
 		TableCache: &core.TableCacheStruct{TableCache: map[string]*core.Table{"customers_qa": table}},
 	}
 
-	request := executor.legacyDirectRelationshipAllRownumRequest("customers_qa", "cust_id")
+	request := executor.legacyDirectRelationshipAllRownumRequest("customers_qa", "phoneType")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one relationship endpoint existence fallback", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "customers_qa" || fragment.Field != "cust_id" {
-		t.Fatalf("fragment target = %s.%s, want customers_qa.cust_id", fragment.Index, fragment.Field)
-	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null endpoint existence fallback", fragment)
-	}
-	if fragment.BSIOp != "" || fragment.Value != nil {
-		t.Fatalf("fragment = %#v, did not expect time BSI fallback", fragment)
-	}
+	assertAllRownumSeed(t, request, "customers_qa", "cust_id", false)
 }
 
 func TestLegacyDirectRelationshipAllRownumRequestUsesTimeQuantumField(t *testing.T) {
@@ -1314,32 +1302,21 @@ func TestLegacyDirectRelationshipAllRownumRequestUsesTimeQuantumField(t *testing
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("orders", "")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one synthetic full time range", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "orders" || fragment.Field != "o_orderdate" {
-		t.Fatalf("fragment target = %s.%s, want orders.o_orderdate", fragment.Index, fragment.Field)
-	}
-	if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
-		t.Fatalf("fragment = %#v, want synthetic full time range", fragment)
-	}
+	seed := assertAllRownumSeed(t, request, "orders", "o_orderdate", true)
 	begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, "o_orderdate")
-	if fragment.Begin.Int64() != begin || fragment.End.Int64() != end {
-		t.Fatalf("range = %d..%d, want %d..%d", fragment.Begin.Int64(), fragment.End.Int64(), begin, end)
-	}
-	if fragment.NullCheck || fragment.Negate {
-		t.Fatalf("fragment = %#v, did not expect null-check fallback", fragment)
+	if seed.Begin == nil || seed.End == nil || seed.Begin.Int64() != begin || seed.End.Int64() != end {
+		t.Fatalf("seed range = %#v..%#v, want %d..%d", seed.Begin, seed.End, begin, end)
 	}
 	if len(request.Query.ProjectionFields) != 1 || request.Query.ProjectionFields[0].Field != "o_orderdate" || request.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
 		t.Fatalf("projection fields = %#v, want time-window metadata", request.Query.ProjectionFields)
 	}
 }
 
-func TestLegacyDirectRelationshipAllRownumRequestPrefersPrimaryKeyFallbackOverTimeQuantum(t *testing.T) {
+func TestLegacyDirectRelationshipAllRownumRequestUsesPhysicalTimeShardSeedOverPrimaryKeyFallback(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{
 			Name:             "orders",
+			PrimaryKey:       "o_orderkey",
 			TimeQuantumType:  "YMD",
 			TimeQuantumField: "o_orderdate",
 		},
@@ -1353,19 +1330,10 @@ func TestLegacyDirectRelationshipAllRownumRequestPrefersPrimaryKeyFallbackOverTi
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("orders", "o_orderkey")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence fallback", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "orders" || fragment.Field != "o_orderkey" {
-		t.Fatalf("fragment target = %s.%s, want primary key fallback instead of full time seed", fragment.Index, fragment.Field)
-	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence fallback", fragment)
-	}
+	assertAllRownumSeed(t, request, "orders", "o_orderdate", true)
 }
 
-func TestLegacyDirectRelationshipAllRownumRequestPrefersParentRelationFallbackOverTimeQuantum(t *testing.T) {
+func TestLegacyDirectRelationshipAllRownumRequestUsesPhysicalTimeShardSeedOverParentRelationFallback(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{
 			Name:             "orders",
@@ -1382,19 +1350,10 @@ func TestLegacyDirectRelationshipAllRownumRequestPrefersParentRelationFallbackOv
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("orders", "o_custkey")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence fallback", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "orders" || fragment.Field != "o_custkey" {
-		t.Fatalf("fragment target = %s.%s, want parent relation fallback instead of full time seed", fragment.Index, fragment.Field)
-	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence fallback", fragment)
-	}
+	assertAllRownumSeed(t, request, "orders", "o_orderdate", true)
 }
 
-func TestLegacyDirectRelationshipAllRownumRequestDerivedTimeDoesNotOverrideEndpointFallback(t *testing.T) {
+func TestLegacyDirectRelationshipAllRownumRequestUsesEndpointFallbackWhenCatalogHasNoIdentitySeed(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "orders_qa"},
 		Attributes: []core.Attribute{
@@ -1408,19 +1367,10 @@ func TestLegacyDirectRelationshipAllRownumRequestDerivedTimeDoesNotOverrideEndpo
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("orders_qa", "cust_id")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want endpoint fallback", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "orders_qa" || fragment.Field != "cust_id" {
-		t.Fatalf("fragment target = %s.%s, want endpoint fallback instead of derived time", fragment.Index, fragment.Field)
-	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want endpoint existence fallback", fragment)
-	}
+	assertAllRownumSeed(t, request, "orders_qa", "cust_id", false)
 }
 
-func TestLegacyDirectRelationshipAllRownumRequestDerivesTimeQuantumField(t *testing.T) {
+func TestLegacyDirectRelationshipAllRownumRequestDerivesNonShardTimeSeedField(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{
 			Name: "lineitem",
@@ -1436,22 +1386,9 @@ func TestLegacyDirectRelationshipAllRownumRequestDerivesTimeQuantumField(t *test
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("lineitem", "")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one synthetic full time range", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "lineitem" || fragment.Field != "l_shipdate" {
-		t.Fatalf("fragment target = %s.%s, want lineitem.l_shipdate", fragment.Index, fragment.Field)
-	}
-	if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
-		t.Fatalf("fragment = %#v, want synthetic full time range", fragment)
-	}
-	begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, "l_shipdate")
-	if fragment.Begin.Int64() != begin || fragment.End.Int64() != end {
-		t.Fatalf("range = %d..%d, want %d..%d", fragment.Begin.Int64(), fragment.End.Int64(), begin, end)
-	}
-	if len(request.Query.ProjectionFields) != 1 || request.Query.ProjectionFields[0].Field != "l_shipdate" || request.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
-		t.Fatalf("projection fields = %#v, want derived time-window metadata", request.Query.ProjectionFields)
+	seed := assertAllRownumSeed(t, request, "lineitem", "l_shipdate", false)
+	if seed.Begin != nil || seed.End != nil {
+		t.Fatalf("seed = %#v, did not expect non-physical derived time seed bounds", seed)
 	}
 }
 
@@ -1468,36 +1405,36 @@ func TestLegacyDirectRelationshipAllRownumRequestUsesTimeFieldGranularity(t *tes
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("orders_qa", "")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one synthetic full time range", request.Query.Fragments)
-	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "orders_qa" || fragment.Field != "order_date" {
-		t.Fatalf("fragment target = %s.%s, want orders_qa.order_date", fragment.Index, fragment.Field)
-	}
-	if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil || fragment.End == nil {
-		t.Fatalf("fragment = %#v, want synthetic full time range", fragment)
-	}
-	begin, end := legacyDirectRelationshipFullTimeRangeEncoded(table, "order_date")
-	if fragment.Begin.Int64() != begin || fragment.End.Int64() != end {
-		t.Fatalf("range = %d..%d, want %d..%d", fragment.Begin.Int64(), fragment.End.Int64(), begin, end)
+	seed := assertAllRownumSeed(t, request, "orders_qa", "order_date", false)
+	if seed.Begin != nil || seed.End != nil {
+		t.Fatalf("seed = %#v, did not expect non-physical time seed bounds", seed)
 	}
 }
+
 func TestLegacyDirectRelationshipAllRownumRequestFallsBackToExistence(t *testing.T) {
 	executor := LegacyDirectRelationshipVectorJoinExecutor{}
 
 	request := executor.legacyDirectRelationshipAllRownumRequest("nation", "n_regionkey")
 
-	if len(request.Query.Fragments) != 1 {
-		t.Fatalf("fragments = %#v, want one existence fallback", request.Query.Fragments)
+	assertAllRownumSeed(t, request, "nation", "n_regionkey", false)
+}
+
+func assertAllRownumSeed(t *testing.T, request ExecutionRequest, index string, field string, shardWindow bool) qsbridge.QuantaSeed {
+	t.Helper()
+	if len(request.Query.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want all-rownum table seed instead", request.Query.Fragments)
 	}
-	fragment := request.Query.Fragments[0]
-	if fragment.Index != "nation" || fragment.Field != "n_regionkey" {
-		t.Fatalf("fragment target = %s.%s, want nation.n_regionkey", fragment.Index, fragment.Field)
+	if len(request.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want one table existence seed", request.Query.Seeds)
 	}
-	if !fragment.NullCheck || !fragment.Negate {
-		t.Fatalf("fragment = %#v, want not-null existence fallback", fragment)
+	seed := request.Query.Seeds[0]
+	if seed.Index != index || seed.Field != field || seed.Kind != qsbridge.QuantaSeedTableExistence {
+		t.Fatalf("seed = %#v, want %s.%s table existence seed", seed, index, field)
 	}
+	if seed.ShardWindow != shardWindow {
+		t.Fatalf("seed shard window = %t, want %t for %#v", seed.ShardWindow, shardWindow, seed)
+	}
+	return seed
 }
 
 func TestLegacyDirectRelationshipInitialRownumsForRoleUsesRelationshipVectorExistence(t *testing.T) {

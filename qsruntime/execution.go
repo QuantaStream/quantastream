@@ -254,6 +254,11 @@ func (r ExecutionRequest) RootIndex() (string, bool) {
 			return fragment.Index, true
 		}
 	}
+	for _, seed := range r.Query.Seeds {
+		if seed.Index != "" {
+			return seed.Index, true
+		}
+	}
 	for _, projection := range r.Query.ProjectionFields {
 		if projection.Index != "" {
 			return projection.Index, true

@@ -220,6 +220,24 @@ func TestExecutionRequestReportsRootIndex(t *testing.T) {
 	}
 }
 
+func TestExecutionRequestFallsBackToSeedRootIndex(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Seeds: []qsbridge.QuantaSeed{{
+			Index: "orders",
+			Field: "o_orderdate",
+			Kind:  qsbridge.QuantaSeedTableExistence,
+		}},
+	})
+
+	index, ok := request.RootIndex()
+	if !ok {
+		t.Fatalf("root index not found")
+	}
+	if index != "orders" {
+		t.Fatalf("root index = %q, want orders", index)
+	}
+}
+
 func TestExecutionRequestFallsBackToProjectionRootIndex(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		ProjectionFields: []qsbridge.QuantaProjectionField{{
