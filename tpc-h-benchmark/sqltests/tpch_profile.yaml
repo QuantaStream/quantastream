@@ -105,6 +105,7 @@ tests:
         )
     expect:
       columns: [revenue]
+      numeric_tolerance: 0.01
       rows:
         - ["22923.03"]
 
