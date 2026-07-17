@@ -52,8 +52,8 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	if len(query.Query) == 0 {
 		return nil, fmt.Errorf("query fragment array must not be empty")
 	}
-	fromTime := time.Unix(0, query.FromTime)
-	toTime := time.Unix(0, query.ToTime)
+	fromTime := time.Unix(0, query.FromTime).UTC()
+	toTime := time.Unix(0, query.ToTime).UTC()
 
 	dataMap := make(map[string]*roaring64.Bitmap)
 	samples := make([]*shared.RowBitmap, 0)
@@ -80,7 +80,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		if v.Field == "" {
 			return nil, fmt.Errorf("Field not specified for query fragment %#v", v)
 		}
-		if v.NullCheck || !foundUnion {
+		if (v.NullCheck && !isExistenceSeedFragment(v)) || !foundUnion {
 			ei, found := globalExistence[v.Index]
 			if found {
 				continue
@@ -107,7 +107,9 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		var bm *roaring64.Bitmap
 		var err error
 		if v.NullCheck {
-			if v.Negate {
+			if isExistenceSeedFragment(v) {
+				v.Operation = pb.QueryFragment_UNION
+			} else if v.Negate {
 				v.Operation = pb.QueryFragment_INTERSECT
 			} else {
 				v.Operation = pb.QueryFragment_DIFFERENCE
@@ -212,6 +214,13 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		ir.AddExistence(ge)
 	}
 	return ir.MarshalQueryResult()
+}
+
+func isExistenceSeedFragment(fragment *pb.QueryFragment) bool {
+	return fragment != nil &&
+		fragment.NullCheck &&
+		fragment.Negate &&
+		fragment.Operation == pb.QueryFragment_UNION
 }
 
 func truncateTime(tr time.Time, tq string) time.Time {
@@ -491,11 +500,7 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 	yr, mn, da := fromTime.Date()
 	lookupTime := time.Date(yr, mn, da, 0, 0, 0, 0, time.UTC)
 	if tq == "" { // No time quantum
-		// Verify that the data shard is primary here, skip if not.
 		hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(lookupTime))
-		if !m.Member(hashKey) {
-			return roaring64.ParOr(0, results...), nil
-		}
 		if fm, ok := m.bsiCache[index]; ok {
 			if tm, ok := fm[field]; ok {
 				if bm, ok := tm[0]; ok {
@@ -513,9 +518,6 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 					continue
 				}
 				hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, ts)))
-				if !m.Member(hashKey) {
-					continue
-				}
 				u.Debugf("timeRangeExistence %s selecting %s", tq, hashKey)
 				results = append(results, bm.BSI.GetExistenceBitmap())
 			}

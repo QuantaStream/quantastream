@@ -221,7 +221,8 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 	gr := NewIntermediateResult(index)
 
 	// Send the same query to each active node from one connection/status snapshot.
-	for _, n := range c.activeClientsSnapshot() {
+	activeClients := c.activeClientsSnapshot()
+	for _, n := range activeClients {
 		client := n.client
 		clientIndex := n.index
 		eg.Go(func() error {

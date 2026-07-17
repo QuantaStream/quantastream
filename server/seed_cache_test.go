@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/hashicorp/consul/api"
+	"github.com/stvp/rendezvous"
 )
 
 func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
@@ -43,6 +47,78 @@ func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
 	}
 	if !cached.Contains(3) {
 		t.Fatalf("cached seed does not include rownum 3 after update: %#v", cached.ToArray())
+	}
+}
+
+func TestTimeRangeExistenceReadsLocalBSIWithoutOwnershipFiltering(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	index.Node.consul = &api.Client{}
+	index.Node.hashKey = "not-the-rendezvous-owner"
+	index.Node.Conn.HashTable = rendezvous.New([]string{"different-owner"})
+	field := "l_shipdate"
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		10: 20230601,
+		11: 20230601,
+	})
+
+	seed, err := index.timeRangeExistence("lineitem", field, day, day)
+	if err != nil {
+		t.Fatalf("timeRangeExistence returned error: %v", err)
+	}
+	if got, want := seed.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("seed cardinality = %d, want %d", got, want)
+	}
+	if !seed.Contains(10) || !seed.Contains(11) {
+		t.Fatalf("seed does not contain local BSI rownums: %#v", seed.ToArray())
+	}
+}
+
+func TestQueryExistenceSeedReturnsUnionWithoutGlobalExistenceCap(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_shipdate"
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		21: 20230601,
+		22: 20230601,
+	})
+	if !index.isBSI("lineitem", field) {
+		attr, err := index.getFieldConfig("lineitem", field)
+		t.Fatalf("fixture field is not classified as BSI; attr=%#v err=%v", attr, err)
+	}
+	protoQuery := &pb.BitmapQuery{
+		FromTime: day.UnixNano(),
+		ToTime:   day.UnixNano(),
+		Query: []*pb.QueryFragment{{
+			Id:        "seed",
+			Index:     "lineitem",
+			Field:     field,
+			Operation: pb.QueryFragment_UNION,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	}
+
+	result, err := index.Query(context.Background(), protoQuery)
+	if err != nil {
+		t.Fatalf("Query returned error: %v", err)
+	}
+	union := roaring64.NewBitmap()
+	if err := union.UnmarshalBinary(result.GetUnions()); err != nil {
+		t.Fatalf("unmarshal union: %v", err)
+	}
+	if got, want := union.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("union cardinality = %d, want %d", got, want)
+	}
+	existence := roaring64.NewBitmap()
+	if err := existence.UnmarshalBinary(result.GetExistences()); err != nil {
+		t.Fatalf("unmarshal existence: %v", err)
+	}
+	if got := existence.GetCardinality(); got != 0 {
+		t.Fatalf("existence cardinality = %d, want 0", got)
+	}
+	if got := len(result.GetIntersects()); got != 0 {
+		t.Fatalf("intersect count = %d, want 0", got)
 	}
 }
 
@@ -110,7 +186,7 @@ attributes:
 		t.Fatalf("load schema: %v", err)
 	}
 	return &BitmapIndex{
-		Node:      &Node{},
+		Node:      &Node{Conn: shared.NewDefaultConnection("seed-cache-test")},
 		bsiCache:  map[string]map[string]map[int64]*BSIBitmap{"lineitem": {"l_shipdate": {}, "l_extendedprice": {}}},
 		seedCache: make(map[string]*SeedBitmap),
 		tableCache: map[string]*shared.BasicTable{
