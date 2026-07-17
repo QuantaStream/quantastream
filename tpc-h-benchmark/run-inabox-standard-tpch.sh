@@ -18,11 +18,16 @@ STANDARD_DATA_DIR="${TPCH_STANDARD_DATA_DIR:-${SCRIPT_DIR}/local/standard-data}"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/local/logs}"
 RUN_LOAD="${RUN_LOAD:-1}"
 RUN_COUNTS="${RUN_COUNTS:-1}"
-RUN_SMOKE="${RUN_SMOKE:-1}"
+RUN_SUITE="${RUN_SUITE:-${RUN_SMOKE:-1}}"
 CLEAN_DATA="${CLEAN_DATA:-1}"
 START_SERVER="${START_SERVER:-1}"
 KEEP_SERVER="${KEEP_SERVER:-0}"
-SMOKE_SUITE="${SMOKE_SUITE:-sqltests/tpch_smoke.yaml}"
+SUITE="${SUITE:-${SMOKE_SUITE:-sqltests/tpch_smoke.yaml}}"
+CASE="${CASE:-}"
+VERBOSE="${VERBOSE:-0}"
+DUMP_ACTUAL="${DUMP_ACTUAL:-0}"
+SLOW_THRESHOLD="${SLOW_THRESHOLD:-}"
+RUNTIME_PROBES="${RUNTIME_PROBES:-0}"
 READY_TIMEOUT_SECONDS="${READY_TIMEOUT_SECONDS:-240}"
 SERVER_PID=""
 
@@ -116,6 +121,48 @@ run_step() {
   fi
 }
 
+is_enabled() {
+  case "${1}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_sqlrunner_suite() {
+  local suite_arg="${SUITE}"
+  if [[ "${suite_arg}" != /* ]]; then
+    suite_arg="../tpc-h-benchmark/${suite_arg}"
+  fi
+
+  local args=(
+    go run .
+    -engine inabox-standard
+    -suite_file "${suite_arg}"
+    -host "${HOST}"
+    -user "${SQL_USER}"
+    -db "${DB}"
+    -port "${PORT}"
+  )
+
+  if [[ -n "${CASE}" ]]; then
+    args+=(-case "${CASE}")
+  fi
+  if is_enabled "${VERBOSE}"; then
+    args+=(-verbose)
+  fi
+  if is_enabled "${DUMP_ACTUAL}"; then
+    args+=(-dump_actual)
+  fi
+  if [[ -n "${SLOW_THRESHOLD}" ]]; then
+    args+=(-slow_threshold "${SLOW_THRESHOLD}")
+  fi
+
+  (
+    cd "${SQLRUNNER_DIR}"
+    "${args[@]}"
+  )
+}
+
 validate_counts() {
   local failures=0
   for table in "${TABLES[@]}"; do
@@ -156,7 +203,13 @@ echo "workers=${WORKERS}"
 echo "batch_size=${BATCH_SIZE}"
 echo "run_load=${RUN_LOAD}"
 echo "run_counts=${RUN_COUNTS}"
-echo "run_smoke=${RUN_SMOKE}"
+echo "run_suite=${RUN_SUITE}"
+echo "suite=${SUITE}"
+echo "case=${CASE:-all}"
+echo "verbose=${VERBOSE}"
+echo "dump_actual=${DUMP_ACTUAL}"
+echo "slow_threshold=${SLOW_THRESHOLD:-none}"
+echo "runtime_probes=${RUNTIME_PROBES}"
 echo "clean_data=${CLEAN_DATA}"
 echo "start_server=${START_SERVER}"
 echo "keep_server=${KEEP_SERVER}"
@@ -169,7 +222,7 @@ echo "log=${LOG_FILE}"
 echo "server_log=${SERVER_LOG}"
 echo
 
-if [[ ! -d "${DATA_DIR}" ]]; then
+if [[ ( "${RUN_LOAD}" == "1" || "${RUN_COUNTS}" == "1" ) && ! -d "${DATA_DIR}" ]]; then
   echo "TPC-H data directory not found: ${DATA_DIR}" >&2
   echo "usage: $0 [tpch-data-dir] [workers] [batch-size]" >&2
   echo "generate data first, for example: ./generate-data.sh /path/to/dbgen 0.01" >&2
@@ -204,29 +257,24 @@ if [[ "${START_SERVER}" == "1" ]]; then
       -data-dir "${STANDARD_DATA_DIR}" \
       -bind "${HOST}" \
       -mysql-port "${PORT}" \
-      -database "${DB}"
+      -database "${DB}" \
+      -runtime-probes="${RUNTIME_PROBES}"
   ) >"${SERVER_LOG}" 2>&1 &
   SERVER_PID="$!"
   wait_for_server
 else
   echo "using already running quantastream server target=${HOST}:${PORT}"
+  if [[ "${PORT}" == "4000" ]]; then
+    echo "warning: START_SERVER=0 PORT=4000 targets whatever is already listening on the local harness port"
+  fi
 fi
 
 if [[ "${RUN_COUNTS}" == "1" ]]; then
   run_step "validate_counts" validate_counts
 fi
 
-if [[ "${RUN_SMOKE}" == "1" ]]; then
-  run_step "smoke_suite" bash -lc "
-    cd '${SQLRUNNER_DIR}' &&
-    go run . \
-      -engine inabox-standard \
-      -suite_file '../tpc-h-benchmark/${SMOKE_SUITE}' \
-      -host '${HOST}' \
-      -user '${SQL_USER}' \
-      -db '${DB}' \
-      -port '${PORT}'
-  "
+if [[ "${RUN_SUITE}" == "1" ]]; then
+  run_step "sqlrunner_suite" run_sqlrunner_suite
 fi
 
 echo "TPC-H inabox-standard validation complete"

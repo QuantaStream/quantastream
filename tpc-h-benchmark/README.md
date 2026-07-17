@@ -121,9 +121,30 @@ PORT=4000                         # MySQL-compatible validation port
 TPCH_STANDARD_DATA_DIR=local/tpch  # target inabox-standard data directory
 RUN_LOAD=0                        # validate an already-loaded data directory
 RUN_COUNTS=0                      # skip table-count validation
-RUN_SMOKE=0                       # skip SQLRunner smoke validation
+RUN_SUITE=0                       # skip SQLRunner suite validation
+SUITE=sqltests/tpch_queries.yaml   # run a different TPC-H SQLRunner suite
+CASE=tpch_queries.q7.030_supplier_line_order_shipdate_count
+VERBOSE=1                         # print SQLRunner case SQL and timings
+DUMP_ACTUAL=1                     # print rows for failing query cases
+SLOW_THRESHOLD=10s                # summarize cases at or above this duration
 KEEP_SERVER=1                     # leave the temporary server running
 ```
+
+For an already-loaded `inabox-standard` data directory, use the same helper to
+run the formal TPC-H roadmap suite through an isolated temporary server:
+
+```bash
+cd tpc-h-benchmark
+RUN_LOAD=0 RUN_COUNTS=0 \
+SUITE=sqltests/tpch_queries.yaml \
+VERBOSE=1 \
+  ./run-inabox-standard-tpch.sh
+```
+
+Prefer this helper over raw SQLRunner commands for `inabox-standard` TPC-H
+validation. A raw command pointed at port `4000` targets whatever local harness
+is already listening there, which can accidentally test a cluster or data root
+that does not match the intended `inabox-standard` fixture.
 
 The schema lifecycle scripts can use either the historical admin path or SQL
 DDL through the query engine:

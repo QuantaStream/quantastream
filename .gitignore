@@ -1,4 +1,5 @@
 /test/localClusterData/
+/data/
 /local/
 /start-local
 /tpc-h-benchmark/local/logs/

@@ -321,6 +321,24 @@ relationship traversal is sane. `tpch_queries.yaml` is the formal query roadmap
 suite and should grow incrementally as QuantaStream's TPC-H query support
 matures.
 
+For `inabox-standard`, prefer the TPC-H helper in the benchmark directory
+instead of a raw SQLRunner command. The helper starts `cmd/quantastream` on an
+isolated port, points it at `tpc-h-benchmark/config` and
+`tpc-h-benchmark/local/standard-data`, and then runs SQLRunner against that
+known target:
+
+```bash
+cd ../tpc-h-benchmark
+RUN_LOAD=0 RUN_COUNTS=0 \
+SUITE=sqltests/tpch_queries.yaml \
+VERBOSE=1 \
+  ./run-inabox-standard-tpch.sh
+```
+
+When using `-engine inabox-standard` directly, remember that SQLRunner only
+connects to an already running standalone server. A command pointed at port
+`4000` tests whatever local harness is currently listening there.
+
 ## Connection Options
 
 - `engine`: execution harness; `distributed`, `inabox-local`,
