@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"google.golang.org/grpc"
 )
 
 func TestBatchMutateRequiresBitmapClients(t *testing.T) {
@@ -42,5 +44,24 @@ func TestBatchSetValueRequiresBitmapClients(t *testing.T) {
 	err := index.BatchSetValue(batch)
 	if err == nil || !strings.Contains(err.Error(), "no bitmap clients available") {
 		t.Fatalf("expected no-client batch set value error, got %v", err)
+	}
+}
+
+func TestActiveClientsSnapshotKeepsNodesWithMissingCachedStatus(t *testing.T) {
+	conn := NewDefaultConnection("missing-status")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = []*grpc.ClientConn{{}, {}, {}}
+	conn.nodeStatusMap.Store("node-2", &pb.StatusMessage{NodeState: "Active"})
+
+	index := NewBitmapIndex(conn)
+	snapshot := index.activeClientsSnapshot()
+	if got, want := len(snapshot), 3; got != want {
+		t.Fatalf("active client snapshot len = %d, want %d", got, want)
+	}
+	for i, client := range snapshot {
+		if client.index != i {
+			t.Fatalf("snapshot[%d].index = %d, want %d", i, client.index, i)
+		}
 	}
 }

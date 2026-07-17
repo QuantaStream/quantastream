@@ -71,6 +71,8 @@ type BitmapQueryResponse struct {
 	Results      *roaring64.Bitmap
 }
 
+const QueryResultCountField = "__quantastream_query_count"
+
 // IntermediateResult - Container for query results returned from individual server nodes.
 // Aggregated results are stored in this structure for further processing on the client.
 // Also serves as a 'scratch pad' for query processing.
@@ -87,6 +89,8 @@ type IntermediateResult struct {
 	joinFkList     []FK
 	union          *roaring64.Bitmap
 	existence      *roaring64.Bitmap
+	count          uint64
+	countSet       bool
 }
 
 // FK - Foreign key container.
@@ -210,6 +214,41 @@ func (r *IntermediateResult) GetFinalExistence() *roaring64.Bitmap {
 	return r.existence
 }
 
+// SetCount records a row cardinality that is independent of the collapsed
+// bitmap cardinality. Distributed node-local rownum domains can overlap after
+// OR-reduction, so row count must be preserved separately.
+func (r *IntermediateResult) SetCount(count uint64) {
+	r.count = count
+	r.countSet = true
+}
+
+// AddCount accumulates row cardinality across independently reduced result
+// domains.
+func (r *IntermediateResult) AddCount(count uint64) {
+	r.count += count
+	r.countSet = true
+}
+
+// Count returns the preserved row cardinality when present, falling back to
+// collapsed bitmap cardinality for older/simple call paths.
+func (r *IntermediateResult) Count() uint64 {
+	if r.countSet {
+		return r.count
+	}
+	if r.union != nil && r.union.GetCardinality() > 0 {
+		return r.union.GetCardinality()
+	}
+	if r.existence != nil {
+		return r.existence.GetCardinality()
+	}
+	return 0
+}
+
+// CountSet reports whether Count carries an explicit row cardinality.
+func (r *IntermediateResult) CountSet() bool {
+	return r.countSet
+}
+
 // AddFK - Add foreign key for join.
 func (r *IntermediateResult) AddFK(index, fk string) {
 	r.joinFkList = append(r.joinFkList, FK{JoinIndex: index, Field: fk})
@@ -260,6 +299,9 @@ func (r *IntermediateResult) MarshalQueryResult() (qr *pb.QueryResult, err error
 			return nil, fmt.Errorf("Cannot marshal intermediate sample result bitmap - %v", err)
 		}
 		sampleRows[i] = &pb.BitmapResult{Field: rb.Field, RowId: rb.RowID, Bitmap: sampleBuf}
+	}
+	if r.countSet {
+		sampleRows = append(sampleRows, &pb.BitmapResult{Field: QueryResultCountField, RowId: r.count})
 	}
 
 	differenceBuf = make([][]byte, len(r.andDifferences)+len(r.orDifferences))
@@ -316,6 +358,10 @@ func (r *IntermediateResult) UnmarshalAndAdd(rs *pb.QueryResult) error {
 	}
 
 	for _, b := range rs.GetSamples() {
+		if b.Field == QueryResultCountField && len(b.Bitmap) == 0 {
+			r.SetCount(b.RowId)
+			continue
+		}
 		bm = roaring64.NewBitmap()
 		if err := bm.UnmarshalBinary(b.Bitmap); err != nil {
 			return fmt.Errorf("Error unmarshalling query result samples - %v", err)

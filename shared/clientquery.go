@@ -7,6 +7,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	pb "github.com/QuantaStream/quantastream/grpc"
@@ -15,14 +16,15 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Main processing flow for bitmap queries.  Returns a bitmap.  Processing is parallelized.
-func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
+// Main processing flow for bitmap queries.  Returns a bitmap plus row
+// cardinality. Processing is parallelized.
+func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, error) {
 
 	//c.Conn.nodeMapLock.RLock()
 	//defer c.Conn.nodeMapLock.RUnlock()
 
 	if len(query.Query) == 0 {
-		return nil, fmt.Errorf("query must have at least 1 predicate")
+		return nil, 0, fmt.Errorf("query must have at least 1 predicate")
 	}
 
 	// Query should have at least 1 union predicate.  If not, make the first intersect a union.
@@ -76,7 +78,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 	}
 
 	if err := eg.Wait(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	close(resultChan)
 
@@ -87,6 +89,9 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 			ir = rs
 			resultsMap[rs.Index] = ir
 		} else {
+			if rs.CountSet() {
+				ir.AddCount(rs.Count())
+			}
 			for _, v := range rs.GetIntersects() {
 				ir.AddIntersect(v)
 			}
@@ -115,9 +120,16 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 	andDifferences := make([]*roaring64.Bitmap, 0)
 	orDifferences := make([]*roaring64.Bitmap, 0)
 	existences := make([]*roaring64.Bitmap, 0)
+	var distributedCount uint64
+	distributedCountValid := len(resultsMap) == 1
 
 	for _, v := range resultsMap {
 		v.Collapse()
+		if distributedCountValid && v.CountSet() {
+			distributedCount = v.Count()
+		} else {
+			distributedCountValid = false
+		}
 		//differences = append(differences, v.GetFinalDifference())
 		for _, x := range v.GetAndDifferences() {
 			andDifferences = append(andDifferences, x)
@@ -127,7 +139,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 		}
 		if v.FKCount() == 0 {
 			if driver != "" {
-				return nil, fmt.Errorf("Must specify at least 1 join for index %s", v.Index)
+				return nil, 0, fmt.Errorf("Must specify at least 1 join for index %s", v.Index)
 			}
 			driver = v.Index
 		}
@@ -144,7 +156,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 			// Get the results of the FK table
 			fki, ok := resultsMap[fk.JoinIndex]
 			if !ok {
-				return nil, fmt.Errorf("Can't find FK %s", fk.JoinIndex)
+				return nil, 0, fmt.Errorf("Can't find FK %s", fk.JoinIndex)
 			}
 			// Perform the join transpose using local results
 			r := v.GetFinalUnion()
@@ -154,7 +166,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 			start := time.Now()
 			rs, err := c.Join(v.Index, []string{fk.Field}, query.FromTime, query.ToTime, r, nil, false)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			fki.AddIntersect(rs.GetExistenceBitmap())
 			elapsed := time.Since(start)
@@ -194,7 +206,11 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, error) {
 		intersects = append(intersects, result)
 		result = roaring64.FastAnd(intersects...)
 	}
-	return result, nil
+	count := result.GetCardinality()
+	if distributedCountValid {
+		count = distributedCount
+	}
+	return result, count, nil
 }
 
 // Perform query processing for a group of query predicates (fragments) for a given index.
@@ -212,6 +228,8 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 		if err := ir.UnmarshalAndAdd(result); err != nil {
 			return nil, err
 		}
+		ir.Collapse()
+		ir.SetCount(intermediateResultFinalBitmap(ir).GetCardinality())
 		return ir, nil
 	}
 
@@ -229,6 +247,9 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 			qr, err := c.queryClient(client, query, clientIndex)
 			if err != nil {
 				return err
+			}
+			if os.Getenv("QUANTASTREAM_QUERY_FANOUT_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "QUERY_FANOUT_RESULT index=%s node=%d %s\n", index, clientIndex, queryResultCardinalityDebug(qr))
 			}
 			resultChan <- qr
 			return nil
@@ -326,6 +347,58 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 	return gr, nil
 }
 
+func queryResultCardinalityDebug(result *pb.QueryResult) string {
+	if result == nil {
+		return "nil_result=true"
+	}
+	union := roaring64.NewBitmap()
+	_ = union.UnmarshalBinary(result.GetUnions())
+	existence := roaring64.NewBitmap()
+	_ = existence.UnmarshalBinary(result.GetExistences())
+	var count uint64
+	for _, sample := range result.GetSamples() {
+		if sample.Field == QueryResultCountField && len(sample.Bitmap) == 0 {
+			count = sample.RowId
+			break
+		}
+	}
+	return fmt.Sprintf("union=%d existence=%d count=%d intersects=%d differences=%d", union.GetCardinality(), existence.GetCardinality(), count, len(result.GetIntersects()), len(result.GetDifferences()))
+}
+
+func intermediateResultFinalBitmap(result *IntermediateResult) *roaring64.Bitmap {
+	if result == nil {
+		return roaring64.NewBitmap()
+	}
+	union := result.GetFinalUnion()
+	existence := result.GetFinalExistence()
+	final := roaring64.NewBitmap()
+	if union != nil {
+		final = union.Clone()
+	}
+	if final.GetCardinality() == 0 && existence != nil {
+		final = existence.Clone()
+	}
+
+	if len(result.GetOrDifferences()) > 0 {
+		diff := make([]*roaring64.Bitmap, 0, len(result.GetOrDifferences()))
+		for _, x := range result.GetOrDifferences() {
+			diff = append(diff, roaring64.AndNot(final, x))
+		}
+		final = roaring64.ParOr(0, diff...)
+	}
+
+	if len(result.GetAndDifferences()) > 0 {
+		diff := roaring64.ParOr(0, result.GetAndDifferences()...)
+		final.AndNot(diff)
+	}
+
+	if len(result.GetIntersects()) > 0 {
+		intersects := append([]*roaring64.Bitmap{final}, result.GetIntersects()...)
+		final = roaring64.FastAnd(intersects...)
+	}
+	return final
+}
+
 // Break up a query and group all of the predicate fragments by index.  Queries that span multiple
 // indices must include the relevant join criteria.  This function returns a map of the predicates
 // keyed by index name.
@@ -376,10 +449,9 @@ func (c *BitmapIndex) Query(query *BitmapQuery) (*BitmapQueryResponse, error) {
 
 	response := &BitmapQueryResponse{}
 	var err error
-	if response.Results, err = c.query(query.ToProto()); err != nil {
+	if response.Results, response.Count, err = c.query(query.ToProto()); err != nil {
 		response.ErrorMessage = fmt.Sprintf("%v", err)
 	} else {
-		response.Count = response.Results.GetCardinality()
 		response.Success = true
 	}
 
@@ -389,7 +461,7 @@ func (c *BitmapIndex) Query(query *BitmapQuery) (*BitmapQueryResponse, error) {
 // ResultsQuery - Entrypoint for queries where result is returned as a list of column IDs
 func (c *BitmapIndex) ResultsQuery(query *pb.BitmapQuery, limit uint64) ([]uint64, error) {
 
-	result, err := c.query(query)
+	result, _, err := c.query(query)
 	if err != nil {
 		return []uint64{}, err
 	}

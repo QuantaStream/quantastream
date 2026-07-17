@@ -103,6 +103,7 @@ type SeedBitmap struct {
 	FromNano int64
 	ToNano   int64
 	Bits     *roaring64.Bitmap
+	Count    uint64
 }
 
 func NewWorkerThread(index int) *WorkerThread {
@@ -407,6 +408,13 @@ func newBitmapFragment(index, field string, rowIDOrBits int64, ts time.Time, f [
 	return res
 }
 
+func fragmentApplyTime(f *BitmapFragment, startedAt time.Time) time.Time {
+	if f.IsInit {
+		return f.ModTime
+	}
+	return startedAt
+}
+
 // Lookup field metadata (time quantum, exclusivity)
 func (m *BitmapIndex) getFieldConfig(index, field string) (*shared.BasicAttribute, error) {
 
@@ -618,11 +626,12 @@ func (m *BitmapIndex) updateBitmapCache(f *BitmapFragment) {
 
 	// If the rowID exists then merge in the new set of bits
 	start := time.Now()
+	applyTime := fragmentApplyTime(f, start)
 	newBm := m.newStandardBitmap(f.IndexName, f.FieldName)
-	newBm.ModTime = f.ModTime
-	newBm.AccessTime = f.ModTime
+	newBm.ModTime = applyTime
+	newBm.AccessTime = applyTime
 	if f.IsInit {
-		newBm.PersistTime = f.ModTime
+		newBm.PersistTime = applyTime
 	}
 	if len(f.BitData) != 1 {
 		u.Errorf("updateBitmapCache - Index out of range %d, Index = %s, Field = %s",
@@ -672,10 +681,10 @@ func (m *BitmapIndex) updateBitmapCache(f *BitmapFragment) {
 		} else {
 			existBm.Bits = roaring64.ParOr(0, existBm.Bits, newBm.Bits)
 		}
-		existBm.ModTime = f.ModTime
-		existBm.AccessTime = f.ModTime
+		existBm.ModTime = applyTime
+		existBm.AccessTime = applyTime
 		if f.IsInit {
-			existBm.PersistTime = f.ModTime
+			existBm.PersistTime = applyTime
 		}
 		existBm.Lock.Unlock()
 	}
@@ -766,6 +775,7 @@ func (m *BitmapIndex) clearAll(index string, start, end int64, nbm *roaring64.Bi
 func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 
 	start := time.Now()
+	applyTime := fragmentApplyTime(f, start)
 
 	// This is a special case handling of a "clear" of an existing value.  Must already exist.
 	if f.IsClear {
@@ -787,18 +797,18 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		existBm.Lock.Lock()
 		clearSet := roaring64.FastAnd(existBm.GetExistenceBitmap(), ebm)
 		existBm.ClearValues(clearSet)
-		existBm.ModTime = f.ModTime
-		existBm.AccessTime = f.ModTime
+		existBm.ModTime = applyTime
+		existBm.AccessTime = applyTime
 		existBm.Lock.Unlock()
 		m.updateSeedCacheForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), nil, clearSet)
 		return
 	}
 
 	newBSI := m.newBSIBitmap(f.IndexName, f.FieldName)
-	newBSI.ModTime = f.ModTime
-	newBSI.AccessTime = f.ModTime
+	newBSI.ModTime = applyTime
+	newBSI.AccessTime = applyTime
 	if f.IsInit {
-		newBSI.PersistTime = f.ModTime
+		newBSI.PersistTime = applyTime
 	}
 
 	if err := newBSI.UnmarshalBinary(f.BitData); err != nil {
@@ -832,10 +842,10 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		clearSet := roaring64.FastAnd(existBm.GetExistenceBitmap(), newBSI.GetExistenceBitmap())
 		existBm.ClearValues(clearSet)
 		existBm.ParOr(0, newBSI.BSI)
-		existBm.ModTime = f.ModTime
-		existBm.AccessTime = f.ModTime
+		existBm.ModTime = applyTime
+		existBm.AccessTime = applyTime
 		if f.IsInit {
-			existBm.PersistTime = f.ModTime
+			existBm.PersistTime = applyTime
 		}
 		existBm.Lock.Unlock()
 	}
@@ -877,17 +887,17 @@ func seedCacheKey(index, field string, fromTime, toTime time.Time) string {
 	return fmt.Sprintf("%s/%s/%d/%d", index, field, fromTime.UnixNano(), toTime.UnixNano())
 }
 
-func (m *BitmapIndex) cachedSeedBitmap(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, bool) {
+func (m *BitmapIndex) cachedSeedBitmap(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, uint64, bool) {
 	key := seedCacheKey(index, field, fromTime, toTime)
 	m.seedCacheLock.RLock()
 	defer m.seedCacheLock.RUnlock()
 	if entry, ok := m.seedCache[key]; ok && entry != nil && entry.Bits != nil {
-		return entry.Bits.Clone(), true
+		return entry.Bits.Clone(), entry.Count, true
 	}
-	return nil, false
+	return nil, 0, false
 }
 
-func (m *BitmapIndex) storeSeedBitmap(index, field string, fromTime, toTime time.Time, bits *roaring64.Bitmap) {
+func (m *BitmapIndex) storeSeedBitmap(index, field string, fromTime, toTime time.Time, bits *roaring64.Bitmap, count uint64) {
 	if bits == nil {
 		return
 	}
@@ -903,6 +913,7 @@ func (m *BitmapIndex) storeSeedBitmap(index, field string, fromTime, toTime time
 		FromNano: fromTime.UnixNano(),
 		ToNano:   toTime.UnixNano(),
 		Bits:     bits.Clone(),
+		Count:    count,
 	}
 }
 
@@ -918,9 +929,16 @@ func (m *BitmapIndex) updateSeedCacheForBSIFragment(index, field string, shardNa
 		}
 		if removed != nil {
 			entry.Bits.AndNot(removed)
+			removedCount := removed.GetCardinality()
+			if removedCount > entry.Count {
+				entry.Count = 0
+			} else {
+				entry.Count -= removedCount
+			}
 		}
 		if added != nil {
 			entry.Bits = roaring64.ParOr(0, entry.Bits, added)
+			entry.Count += added.GetCardinality()
 		}
 	}
 }

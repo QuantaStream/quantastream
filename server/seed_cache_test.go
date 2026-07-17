@@ -38,15 +38,86 @@ func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
 	fragment := newBitmapFragment("lineitem", field, -1, day2, mustMarshalSeedCacheBSI(t, update.BSI), true, false, true)
 	index.updateBSICache(fragment)
 
-	cached, ok := index.cachedSeedBitmap("lineitem", field, day1, day2)
+	cached, count, ok := index.cachedSeedBitmap("lineitem", field, day1, day2)
 	if !ok {
 		t.Fatal("expected cached seed after update")
 	}
 	if got, want := cached.GetCardinality(), uint64(3); got != want {
 		t.Fatalf("cached seed cardinality = %d, want %d", got, want)
 	}
+	if got, want := count, uint64(3); got != want {
+		t.Fatalf("cached seed row count = %d, want %d", got, want)
+	}
 	if !cached.Contains(3) {
 		t.Fatalf("cached seed does not include rownum 3 after update: %#v", cached.ToArray())
+	}
+}
+
+func TestLiveBSIUpdateUsesApplyTimeForDirtyTracking(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_shipdate"
+	day := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
+	persistedAt := time.Now().Add(-time.Second)
+	existing := seedCacheTestBSI(map[uint64]int64{1: 20230602})
+	existing.ModTime = persistedAt
+	existing.PersistTime = persistedAt
+	index.bsiCache["lineitem"][field][day.UnixNano()] = existing
+
+	update := seedCacheTestBSI(map[uint64]int64{2: 20230602})
+	fragment := newBitmapFragment("lineitem", field, -1, day, mustMarshalSeedCacheBSI(t, update.BSI), true, false, false)
+	fragment.ModTime = persistedAt.Add(-time.Hour)
+
+	index.updateBSICache(fragment)
+
+	updated := index.bsiCache["lineitem"][field][day.UnixNano()]
+	if got, want := updated.GetExistenceBitmap().GetCardinality(), uint64(2); got != want {
+		t.Fatalf("updated BSI cardinality = %d, want %d", got, want)
+	}
+	if !updated.ModTime.After(updated.PersistTime) {
+		t.Fatalf("live update should mark shard dirty: mod=%s persist=%s fragment=%s",
+			updated.ModTime, updated.PersistTime, fragment.ModTime)
+	}
+}
+
+func TestLiveBitmapUpdateUsesApplyTimeForDirtyTracking(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_returnflag"
+	rowID := uint64(1)
+	day := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
+	persistedAt := time.Now().Add(-time.Second)
+	existing := &StandardBitmap{
+		Bits:        roaring64.BitmapOf(1),
+		ModTime:     persistedAt,
+		PersistTime: persistedAt,
+		AccessTime:  persistedAt,
+	}
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"lineitem": {
+			field: {
+				rowID: {
+					day.UnixNano(): existing,
+				},
+			},
+		},
+	}
+
+	bits := roaring64.BitmapOf(2)
+	data, err := bits.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal bitmap: %v", err)
+	}
+	fragment := newBitmapFragment("lineitem", field, int64(rowID), day, [][]byte{data}, false, false, false)
+	fragment.ModTime = persistedAt.Add(-time.Hour)
+
+	index.updateBitmapCache(fragment)
+
+	updated := index.bitmapCache["lineitem"][field][rowID][day.UnixNano()]
+	if got, want := updated.Bits.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("updated bitmap cardinality = %d, want %d", got, want)
+	}
+	if !updated.ModTime.After(updated.PersistTime) {
+		t.Fatalf("live update should mark standard bitmap dirty: mod=%s persist=%s fragment=%s",
+			updated.ModTime, updated.PersistTime, fragment.ModTime)
 	}
 }
 
@@ -122,6 +193,49 @@ func TestQueryExistenceSeedReturnsUnionWithoutGlobalExistenceCap(t *testing.T) {
 	}
 }
 
+func TestQueryExistenceSeedPreservesRowCountAcrossCollapsedShards(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_shipdate"
+	day1 := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	day2 := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day1.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230601,
+		2: 20230601,
+	})
+	index.bsiCache["lineitem"][field][day2.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230602,
+		2: 20230602,
+	})
+	protoQuery := &pb.BitmapQuery{
+		FromTime: day1.UnixNano(),
+		ToTime:   day2.UnixNano(),
+		Query: []*pb.QueryFragment{{
+			Id:        "seed",
+			Index:     "lineitem",
+			Field:     field,
+			Operation: pb.QueryFragment_UNION,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	}
+
+	result, err := index.Query(context.Background(), protoQuery)
+	if err != nil {
+		t.Fatalf("Query returned error: %v", err)
+	}
+	ir := shared.NewIntermediateResult("lineitem")
+	if err := ir.UnmarshalAndAdd(result); err != nil {
+		t.Fatalf("unmarshal intermediate result: %v", err)
+	}
+	ir.Collapse()
+	if got, want := ir.GetFinalUnion().GetCardinality(), uint64(2); got != want {
+		t.Fatalf("collapsed union cardinality = %d, want %d", got, want)
+	}
+	if got, want := ir.Count(), uint64(4); got != want {
+		t.Fatalf("preserved row count = %d, want %d", got, want)
+	}
+}
+
 func TestProjectBSIReturnsDirectFoundSetProjection(t *testing.T) {
 	index := newSeedCacheTestIndex(t)
 	field := "l_extendedprice"
@@ -164,7 +278,8 @@ func newSeedCacheTestIndex(t *testing.T) *BitmapIndex {
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	schema := []byte(`tableName: lineitem
+	schema := []byte(`
+tableName: lineitem
 primaryKey: l_shipdate
 timeQuantumType: YMD
 timeQuantumField: l_shipdate
@@ -177,6 +292,10 @@ attributes:
   sourceName: /data/l_extendedprice
   mappingStrategy: FloatScaleBSI
   type: Float
+- fieldName: l_returnflag
+  sourceName: /data/l_returnflag
+  mappingStrategy: StringEnum
+  type: String
 `)
 	if err := os.WriteFile(filepath.Join(configDir, "schema.yaml"), schema, 0644); err != nil {
 		t.Fatalf("write schema: %v", err)

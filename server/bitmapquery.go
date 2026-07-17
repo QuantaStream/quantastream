@@ -94,7 +94,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 				return nil, fmt.Errorf("timeRangeExistence GetPK info failed for %s - %v", v.Index, err)
 			}
 			var errx error
-			ei, errx = m.timeRangeExistence(v.Index, pka[0].FieldName, fromTime, toTime)
+			ei, _, errx = m.timeRangeExistenceWithCount(v.Index, pka[0].FieldName, fromTime, toTime)
 			if errx != nil {
 				return nil, fmt.Errorf("timeRangeExistence failed for %s - %v", v.Index, errx)
 			}
@@ -102,6 +102,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		}
 	}
 
+	countsByFragment := make(map[string]uint64)
 	// Main query flow loop
 	for _, v := range query.Query {
 		var bm *roaring64.Bitmap
@@ -116,10 +117,12 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			}
 		}
 		if v.NullCheck && m.isBSI(v.Index, v.Field) {
-			bm, err = m.timeRangeExistence(v.Index, v.Field, fromTime, toTime)
+			var count uint64
+			bm, count, err = m.timeRangeExistenceWithCount(v.Index, v.Field, fromTime, toTime)
 			if err != nil {
 				return nil, fmt.Errorf("timeRangeExistence failed for %s - %v", v.Index, err)
 			}
+			countsByFragment[v.Id] = count
 		} else if v.BsiOp > 0 {
 			values := make([]*big.Int, len(v.Values))
 			for i, v := range v.Values {
@@ -207,6 +210,11 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	}
 
 	ir := shared.FromProto(query, dataMap).Reduce()
+	if len(countsByFragment) == 1 && len(query.Query) == 1 {
+		if count, ok := countsByFragment[query.Query[0].Id]; ok {
+			ir.SetCount(count)
+		}
+	}
 	if len(samples) > 0 {
 		ir.AddSamples(samples)
 	}
@@ -482,29 +490,37 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 
 // Walk the time range and assemble a union of all BSI esistence
 func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, error) {
+	result, _, err := m.timeRangeExistenceWithCount(index, field, fromTime, toTime)
+	return result, err
+}
+
+func (m *BitmapIndex) timeRangeExistenceWithCount(index, field string, fromTime, toTime time.Time) (*roaring64.Bitmap, uint64, error) {
 	attr, err := m.getFieldConfig(index, field)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tq := attr.TimeQuantumType
 	fromTime = truncateTime(fromTime, tq)
 	toTime = truncateTime(toTime, tq)
-	if cached, ok := m.cachedSeedBitmap(index, field, fromTime, toTime); ok {
-		return cached, nil
+	if cached, count, ok := m.cachedSeedBitmap(index, field, fromTime, toTime); ok {
+		return cached, count, nil
 	}
 
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
 
 	results := make([]*roaring64.Bitmap, 0)
+	var count uint64
 	yr, mn, da := fromTime.Date()
 	lookupTime := time.Date(yr, mn, da, 0, 0, 0, 0, time.UTC)
 	if tq == "" { // No time quantum
 		hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(lookupTime))
 		if fm, ok := m.bsiCache[index]; ok {
 			if tm, ok := fm[field]; ok {
-				if bm, ok := tm[0]; ok {
-					results = append(results, bm.BSI.GetExistenceBitmap())
+				for _, bm := range tm {
+					existence := bm.BSI.GetExistenceBitmap()
+					count += existence.GetCardinality()
+					results = append(results, existence)
 				}
 			}
 		}
@@ -519,13 +535,15 @@ func (m *BitmapIndex) timeRangeExistence(index, field string, fromTime, toTime t
 				}
 				hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, ts)))
 				u.Debugf("timeRangeExistence %s selecting %s", tq, hashKey)
-				results = append(results, bm.BSI.GetExistenceBitmap())
+				existence := bm.BSI.GetExistenceBitmap()
+				count += existence.GetCardinality()
+				results = append(results, existence)
 			}
 		}
 	}
 	result := roaring64.ParOr(0, results...)
-	m.storeSeedBitmap(index, field, fromTime, toTime, result)
-	return result.Clone(), nil
+	m.storeSeedBitmap(index, field, fromTime, toTime, result, count)
+	return result.Clone(), count, nil
 }
 
 // Join - Once the client has mapreduced the initial query fragment results, A followup call is made to

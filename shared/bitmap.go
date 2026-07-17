@@ -87,6 +87,13 @@ func (c *BitmapIndex) activeClientsSnapshot() []bitmapClientSnapshot {
 			}
 			pbStat, found := c.Conn.nodeStatusMap.Load(c.Conn.ids[i])
 			if !found {
+				// Missing cached status during startup/refresh should not silently
+				// narrow all-node fanout. Prefer a loud query error from an
+				// unreachable node over a partial, incorrect answer.
+				clients = append(clients, bitmapClientSnapshot{
+					index:  i,
+					client: pb.NewBitmapIndexClient(conn),
+				})
 				continue
 			}
 			status := pbStat.(*pb.StatusMessage)

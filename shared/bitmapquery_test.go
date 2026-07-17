@@ -3,6 +3,8 @@ package shared
 import (
 	"math/big"
 	"testing"
+
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
 func TestBitmapBatchPredicateSerializesValues(t *testing.T) {
@@ -50,5 +52,36 @@ func TestBitmapQueryToProtoPreservesRangeEnd(t *testing.T) {
 	}
 	if got := end.Int64(); got != 12 {
 		t.Fatalf("source end mutated to %d, want 12", got)
+	}
+}
+
+func TestIntermediateResultCountCanExceedCollapsedBitmapCardinality(t *testing.T) {
+	result := NewIntermediateResult("lineitem")
+	result.AddUnion(roaring64.BitmapOf(1, 2))
+	result.AddUnion(roaring64.BitmapOf(1, 2))
+	result.Collapse()
+	result.SetCount(4)
+
+	if got, want := result.GetFinalUnion().GetCardinality(), uint64(2); got != want {
+		t.Fatalf("collapsed bitmap cardinality = %d, want %d", got, want)
+	}
+	if got, want := result.Count(), uint64(4); got != want {
+		t.Fatalf("distributed count = %d, want %d", got, want)
+	}
+}
+
+func TestIntermediateResultFinalBitmapAppliesLocalPredicates(t *testing.T) {
+	result := NewIntermediateResult("lineitem")
+	result.AddUnion(roaring64.BitmapOf(1, 2, 3, 4))
+	result.AddIntersect(roaring64.BitmapOf(2, 3, 4))
+	result.AddAndDifference(roaring64.BitmapOf(4))
+	result.Collapse()
+
+	final := intermediateResultFinalBitmap(result)
+	if got, want := final.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("final bitmap cardinality = %d, want %d", got, want)
+	}
+	if !final.Contains(2) || !final.Contains(3) || final.Contains(1) || final.Contains(4) {
+		t.Fatalf("final bitmap = %#v, want only 2 and 3", final.ToArray())
 	}
 }
