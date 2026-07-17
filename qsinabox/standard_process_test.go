@@ -68,6 +68,57 @@ func TestStandardProcessExecutesSQLThroughLocalFrontDoor(t *testing.T) {
 	}
 }
 
+func TestStandardProcessExecutesGroupedBooleanFilterThroughLocalFrontDoor(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	for _, sql := range []string{
+		"insert into sample (id) values (1)",
+		"insert into sample (id) values (2)",
+		"commit",
+	} {
+		result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+		if err != nil {
+			t.Fatalf("%s error = %v", sql, err)
+		}
+		if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+			t.Fatalf("%s diagnostics = %#v runtime=%#v, want none", sql, result.Diagnostics, result.Runtime.Diagnostics)
+		}
+	}
+
+	result, err := process.FrontDoor.Server.ExecuteSQL(
+		context.Background(),
+		"select count(*) as row_count from sample where (id = 1 and id >= 1) or (id = 2 and id >= 2)",
+		qsbridge.ExecutionOptions{},
+	)
+	if err != nil {
+		t.Fatalf("grouped boolean SELECT error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("grouped boolean SELECT diagnostics = %#v runtime=%#v, want none", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("grouped boolean SELECT chunk diagnostics = %#v", chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 || fmt.Sprint(chunk.Rows[0][0].Value) != "2" {
+		t.Fatalf("grouped boolean SELECT rows = %#v, want count 2", chunk.Rows)
+	}
+}
 func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

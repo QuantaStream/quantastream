@@ -96,6 +96,7 @@ func buildStandardNativeProxyRuntime(ctx context.Context, config StandardConfig,
 				return direct, nil, nil
 			}),
 		},
+		EnableFilterExpressions: true,
 	}.Build(ctx)
 	if err != nil || diagnostics.BlocksNative() {
 		return qsruntime.NativeProxyRuntime{}, diagnostics, err
