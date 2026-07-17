@@ -155,6 +155,13 @@ func (e SQLEngine) Exec(ctx context.Context, statement string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const defaultNumericRelativeTolerance = 1e-9
+
+type rowComparisonOptions struct {
+	NumericTolerance         float64
+	NumericRelativeTolerance float64
+}
+
 func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 	if test.Expect.Error != "" {
 		return evaluateExpectedError(test.Expect.Error, queryErr)
@@ -184,10 +191,21 @@ func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 		sortRows(expectedRows)
 		sortRows(actualRows)
 	}
-	if details := compareRows(expectedRows, actualRows); details != "" {
+	if details := compareRowsWithOptions(expectedRows, actualRows, rowComparisonOptionsFromExpected(test.Expect)); details != "" {
 		return details
 	}
 	return ""
+}
+
+func rowComparisonOptionsFromExpected(expected Expected) rowComparisonOptions {
+	options := rowComparisonOptions{NumericRelativeTolerance: defaultNumericRelativeTolerance}
+	if expected.NumericTolerance != nil {
+		options.NumericTolerance = *expected.NumericTolerance
+	}
+	if expected.NumericRelativeTolerance != nil {
+		options.NumericRelativeTolerance = *expected.NumericRelativeTolerance
+	}
+	return options
 }
 
 func evaluateStatement(test TestCase, affected int64, execErr error) string {
@@ -293,6 +311,10 @@ func expectedBoolAsMySQLInteger(typeName string) bool {
 }
 
 func compareRows(expected, actual [][]Cell) string {
+	return compareRowsWithOptions(expected, actual, rowComparisonOptions{NumericRelativeTolerance: defaultNumericRelativeTolerance})
+}
+
+func compareRowsWithOptions(expected, actual [][]Cell, options rowComparisonOptions) string {
 	if len(expected) != len(actual) {
 		return fmt.Sprintf("row count differs: expected %d, actual %d", len(expected), len(actual))
 	}
@@ -301,7 +323,7 @@ func compareRows(expected, actual [][]Cell) string {
 			return fmt.Sprintf("row %d column count differs: expected %d, actual %d", row+1, len(expected[row]), len(actual[row]))
 		}
 		for column := range expected[row] {
-			if !cellsEqual(expected[row][column], actual[row][column]) {
+			if !cellsEqual(expected[row][column], actual[row][column], options) {
 				return fmt.Sprintf("row %d column %d differs: expected %s, actual %s",
 					row+1, column+1, formatCell(expected[row][column]), formatCell(actual[row][column]))
 			}
@@ -310,7 +332,7 @@ func compareRows(expected, actual [][]Cell) string {
 	return ""
 }
 
-func cellsEqual(expected, actual Cell) bool {
+func cellsEqual(expected, actual Cell, options rowComparisonOptions) bool {
 	if expected == actual {
 		return true
 	}
@@ -323,8 +345,11 @@ func cellsEqual(expected, actual Cell) bool {
 		return false
 	}
 	diff := math.Abs(expectedNumber - actualNumber)
+	if diff <= options.NumericTolerance {
+		return true
+	}
 	scale := math.Max(1, math.Max(math.Abs(expectedNumber), math.Abs(actualNumber)))
-	return diff <= scale*1e-9
+	return diff <= scale*options.NumericRelativeTolerance
 }
 
 func formatRows(rows [][]Cell) string {

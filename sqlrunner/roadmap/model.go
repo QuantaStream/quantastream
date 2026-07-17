@@ -44,12 +44,14 @@ type TestCase struct {
 }
 
 type Expected struct {
-	Columns      []string        `yaml:"columns"`
-	Types        []string        `yaml:"types"`
-	Rows         [][]interface{} `yaml:"rows"`
-	RowCount     *int            `yaml:"row_count"`
-	AffectedRows *int64          `yaml:"affected_rows"`
-	Error        string          `yaml:"error_contains"`
+	Columns                  []string        `yaml:"columns"`
+	Types                    []string        `yaml:"types"`
+	Rows                     [][]interface{} `yaml:"rows"`
+	RowCount                 *int            `yaml:"row_count"`
+	AffectedRows             *int64          `yaml:"affected_rows"`
+	Error                    string          `yaml:"error_contains"`
+	NumericTolerance         *float64        `yaml:"numeric_tolerance"`
+	NumericRelativeTolerance *float64        `yaml:"numeric_relative_tolerance"`
 }
 
 type Cell struct {
@@ -151,6 +153,15 @@ func normalizeTestCase(test *TestCase) error {
 	}
 	if test.Kind != "query" && (len(test.Expect.Rows) > 0 || test.Expect.RowCount != nil) {
 		return fmt.Errorf("%s statement cannot expect rows", test.ID)
+	}
+	if test.Kind != "query" && (test.Expect.NumericTolerance != nil || test.Expect.NumericRelativeTolerance != nil) {
+		return fmt.Errorf("%s statement cannot expect numeric tolerance", test.ID)
+	}
+	if test.Expect.NumericTolerance != nil && *test.Expect.NumericTolerance < 0 {
+		return fmt.Errorf("%s has invalid numeric_tolerance %v", test.ID, *test.Expect.NumericTolerance)
+	}
+	if test.Expect.NumericRelativeTolerance != nil && *test.Expect.NumericRelativeTolerance < 0 {
+		return fmt.Errorf("%s has invalid numeric_relative_tolerance %v", test.ID, *test.Expect.NumericRelativeTolerance)
 	}
 	if test.Compatibility != "" {
 		switch test.Compatibility {

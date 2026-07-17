@@ -1373,8 +1373,7 @@ tests:
         - ["79919609.29"]
 
   - id: "tpch_queries.q19.formal_discounted_revenue"
-    status: xfail
-    issue: "mixed grouped AND/OR predicate lowering is not implemented yet"
+    status: supported
     kind: query
     timeout: 60s
     capabilities: [tpch-q19, two-table-join, mixed-table-or, joined-predicate-pushdown, child-side-joined-aggregate-expression]
@@ -1417,6 +1416,7 @@ tests:
         )
     expect:
       columns: [revenue]
+      numeric_tolerance: 0.01
       rows:
         - ["22923.03"]
 

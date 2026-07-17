@@ -88,6 +88,23 @@ expect:
 `row_count` preserves existing coverage but is weaker than `rows`. New and
 expanded tests should prefer complete expected rows.
 
+Numeric cells are parsed and compared numerically when both expected and actual
+values are valid numbers. By default SQLRunner allows a small relative
+tolerance to avoid formatting-only differences such as scientific notation. A
+query case may opt into an absolute tolerance when the expected value is rounded
+or when equivalent engines expose slightly different floating-point precision:
+
+```yaml
+expect:
+  numeric_tolerance: 0.01
+  rows:
+    - ["22923.03"]
+```
+
+`numeric_relative_tolerance` may also be set for cases that need a custom
+scale-relative threshold. These tolerances only apply to numeric cells; text and
+`NULL` comparisons remain exact.
+
 ## Expected diagnostics
 
 Inspection-oriented engines may expose internal planner or runtime diagnostics

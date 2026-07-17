@@ -163,6 +163,42 @@ func TestCompareRowsTreatsEquivalentNumericTextAsEqual(t *testing.T) {
 	}
 }
 
+func TestEvaluateQueryAllowsConfiguredNumericTolerance(t *testing.T) {
+	tolerance := 0.01
+	test := TestCase{
+		ID:     "query.numeric_tolerance",
+		Status: CaseSupported,
+		Kind:   "query",
+		Expect: Expected{
+			NumericTolerance: &tolerance,
+			Rows:             [][]interface{}{{"22923.03"}},
+		},
+	}
+	actual := QueryResult{Rows: [][]Cell{{{Text: "22923.028"}}}}
+
+	if details := evaluateQuery(test, actual, nil); details != "" {
+		t.Fatalf("details = %q, want numeric tolerance match", details)
+	}
+}
+
+func TestEvaluateQueryRejectsValuesOutsideConfiguredNumericTolerance(t *testing.T) {
+	tolerance := 0.01
+	test := TestCase{
+		ID:     "query.numeric_tolerance_reject",
+		Status: CaseSupported,
+		Kind:   "query",
+		Expect: Expected{
+			NumericTolerance: &tolerance,
+			Rows:             [][]interface{}{{"22923.03"}},
+		},
+	}
+	actual := QueryResult{Rows: [][]Cell{{{Text: "22923.00"}}}}
+
+	if details := evaluateQuery(test, actual, nil); details == "" {
+		t.Fatal("expected numeric mismatch outside tolerance to be reported")
+	}
+}
+
 func TestCompareRowsRejectsDifferentNumericValues(t *testing.T) {
 	expected := [][]Cell{{{Text: "108715630.20"}}}
 	actual := [][]Cell{{{Text: "23582877.890000008"}}}
