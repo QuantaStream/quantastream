@@ -115,8 +115,7 @@ func runtimeOwnershipPreflightScaffoldFile(file string) bool {
 	switch file {
 	case "correlated_subquery_rewrite.go",
 		"native_preflight_step.go",
-		"native_subquery_step_executor.go",
-		"scalar_subquery_rewrite.go":
+		"native_subquery_step_executor.go":
 		return true
 	default:
 		return false

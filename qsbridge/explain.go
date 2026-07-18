@@ -438,6 +438,8 @@ func explainLogicalNode(id int, parentID int, depth int, node LogicalNode) PlanN
 		base.Source = n.Source.RefName()
 		base.Fields = qualifiedFieldNames(n.Fields)
 		base.Summary = fmt.Sprintf("scan(%s,fields=%d)", scanSourceName(n.Source), len(n.Fields))
+	case ConstantNode:
+		base.Summary = fmt.Sprintf("constant(rows=%d)", n.Rows)
 	case FilterNode:
 		base.Predicates = summarizePredicates(n.Predicates)
 		base.Summary = fmt.Sprintf(
@@ -527,6 +529,8 @@ func explainPhysicalNode(id int, parentID int, depth int, node PhysicalNode) Phy
 		base.Source = n.Source.RefName()
 		base.Fields = qualifiedFieldNames(n.Fields)
 		base.Summary = fmt.Sprintf("physical_scan(%s,fields=%d,%s)", scanSourceName(n.Source), len(n.Fields), scopeText)
+	case PhysicalConstantNode:
+		base.Summary = fmt.Sprintf("physical_constant(rows=%d,%s)", n.Rows, scopeText)
 	case PhysicalUnaryNode:
 		base.Strategies = append([]PhysicalStrategy(nil), n.Strategies...)
 		base.Summary = fmt.Sprintf("%s(%s)", n.Kind, scopeText)

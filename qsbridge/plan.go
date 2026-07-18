@@ -8,6 +8,8 @@ const (
 	PlanNodeStatement PlanNodeKind = "statement"
 	// PlanNodeScan reads one table instance.
 	PlanNodeScan PlanNodeKind = "scan"
+	// PlanNodeConstant produces one synthetic row for projection-only SELECTs.
+	PlanNodeConstant PlanNodeKind = "constant"
 	// PlanNodeFilter applies predicates to input rows.
 	PlanNodeFilter PlanNodeKind = "filter"
 	// PlanNodeMembership applies semi/anti membership edges to input rows.
@@ -86,6 +88,27 @@ func (ScanNode) ChildNodes() []LogicalNode {
 
 // NodeDiagnostics returns diagnostics attached to the scan node.
 func (n ScanNode) NodeDiagnostics() DiagnosticSet {
+	return n.Diags
+}
+
+// ConstantNode produces synthetic rows for SELECT statements without a table source.
+type ConstantNode struct {
+	Rows  int
+	Diags DiagnosticSet
+}
+
+// NodeKind reports that ConstantNode is a constant source.
+func (ConstantNode) NodeKind() PlanNodeKind {
+	return PlanNodeConstant
+}
+
+// ChildNodes returns no children for a constant source.
+func (ConstantNode) ChildNodes() []LogicalNode {
+	return nil
+}
+
+// NodeDiagnostics returns diagnostics attached to the constant source.
+func (n ConstantNode) NodeDiagnostics() DiagnosticSet {
 	return n.Diags
 }
 
@@ -439,11 +462,7 @@ func correlatedAggregateSubqueryIntents(intents []SubqueryPlanIntent) []Subquery
 
 func buildSourcePlan(query QueryIR, fields []FieldRef) LogicalNode {
 	if len(query.Sources) == 0 {
-		return UnsupportedNode{
-			Diags: DiagnosticSet{
-				ErrorDiagnostic(DiagnosticParserBoundary, PhasePlan, "query has no sources"),
-			},
-		}
+		return ConstantNode{Rows: 1}
 	}
 
 	root := LogicalNode(ScanNode{Source: query.Sources[0], Fields: fieldsForSource(fields, query.Sources[0])})

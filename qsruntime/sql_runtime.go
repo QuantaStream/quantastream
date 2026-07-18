@@ -128,6 +128,12 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, err
 	}
 
+	if runtimeResult, diagnostics, ok := constantProjectionExecutionResult(request); ok {
+		result.Runtime = runtimeResult
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		return result, nil
+	}
+
 	intermediate, diagnostics := r.Lowerer.LowerExecutionRequest(request)
 	result.Intermediate = intermediate
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -139,6 +145,52 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	result.Runtime = runtimeResult
 	result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 	return result, err
+}
+
+func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {
+	query := request.Bound.Prepared.Query
+	if query.Kind != qsbridge.QueryKindSelect ||
+		len(query.Sources) != 0 ||
+		len(query.Joins) != 0 ||
+		len(query.Memberships) != 0 ||
+		len(query.Predicates) != 0 ||
+		query.WhereExpr != nil ||
+		len(query.GroupBy) != 0 ||
+		len(query.Having) != 0 ||
+		len(query.Aggregates) != 0 ||
+		len(query.Projection) == 0 {
+		return ExecutionResult{}, nil, false
+	}
+
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Rownums:           []qsbridge.QuantaRownum{1},
+		ProjectionVectors: make([]qsbridge.QuantaProjectionVector, 0, len(query.Projection)),
+	}
+	for _, projection := range query.Projection {
+		literal, ok := projection.Expr.(qsbridge.LiteralExpr)
+		if !ok {
+			return ExecutionResult{}, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticUnsupportedSQL,
+					qsbridge.PhaseExecute,
+					"projection-only SELECT requires literal projections after scalar materialization",
+				),
+			}, true
+		}
+		column := projection.ResultColumn()
+		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+			Field: qsbridge.QuantaProjectionField{
+				Field:   column.Name,
+				Type:    column.Type,
+				Visible: true,
+			},
+			Values: []qsbridge.ResultCell{{Kind: literal.Kind, Value: literal.Value}},
+		})
+	}
+	return ExecutionResult{
+		RowSet: rowSet,
+		Count:  1,
+	}, nil, true
 }
 
 // InspectSQL prepares, lowers, and inspects runtime routing without executing SQL.

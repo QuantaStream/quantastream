@@ -15,10 +15,10 @@ architecture.
 ## Native Promotion Order
 
 `scalar_subquery` is the first promoted shape. Scalar subqueries in `WHERE` and
-`HAVING` are now parsed as typed expression nodes and materialized into literals
-inside the runtime before bitmap lowering. The parent SQL text is no longer
-rewritten for those shapes. Scalar subqueries in the SELECT list remain future
-work.
+`HAVING`, plus projection-only scalar subqueries in the `SELECT` list, are now
+parsed as typed expression nodes and materialized into literals inside the
+runtime before bitmap lowering. The parent SQL text is no longer rewritten for
+those shapes, and the old scalar SQL-text rewrite scanner has been deleted.
 
 `parent_key_lookup` and `aggregate_threshold_lookup` still have native-ready
 contracts under `correlated_aggregate_preflight`. Both still delegate to the

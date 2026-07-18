@@ -318,10 +318,9 @@ tests:
         - [0]
 
   - id: "subqueries.045.scalar_subquery_select_list"
-    status: xfail
+    status: supported
     kind: query
     capabilities: [subquery, scalar-subquery, select-list, aggregate]
-    issue: "Scalar SELECT-list subqueries require parser support plus a scalar-subquery execution step that materializes one value for projection."
     sql: |-
       select (select avg(age) from customers_qa) as average_age
     expect:

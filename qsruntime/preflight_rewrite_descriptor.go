@@ -157,11 +157,6 @@ func (p PreflightRewriteHelperPlanDescriptor) CompletenessReport() PreflightRewr
 
 func preflightRewriteDescriptor(rule qsbridge.RewriteRuleID, sql string) (*PreflightRewriteDescriptorSummary, bool) {
 	switch rule {
-	case qsbridge.RewriteScalarSubqueryPreflight:
-		if descriptor, ok := findUncorrelatedHavingScalarSubquery(sql); ok {
-			summary := descriptor.descriptorSummary()
-			return &summary, true
-		}
 	case qsbridge.RewriteCorrelatedAggregatePreflight:
 		if descriptor, ok := findCorrelatedAverageQuantityPredicate(sql); ok {
 			summary := descriptor.descriptorSummary()
@@ -169,66 +164,6 @@ func preflightRewriteDescriptor(rule qsbridge.RewriteRuleID, sql string) (*Prefl
 		}
 	}
 	return nil, false
-}
-
-func (d scalarHavingSubqueryDescriptor) descriptorSummary() PreflightRewriteDescriptorSummary {
-	return PreflightRewriteDescriptorSummary{
-		Rule:                qsbridge.RewriteScalarSubqueryPreflight,
-		SourceSQLShape:      "having(comparison(scalar_subquery))",
-		ReplacementSQLShape: "having(comparison(literal))",
-		Range: PreflightRewriteTextRange{
-			Start: d.ReplacementStart,
-			End:   d.ReplacementEnd,
-		},
-		Attributes: []PreflightRewriteDescriptorAttribute{
-			{Name: "comparison_sql", Value: d.ComparisonSQL},
-			{Name: "subquery_sql", Value: d.SubquerySQL},
-		},
-		HelperPlans:    []PreflightRewriteHelperPlanDescriptor{d.scalarHelperPlan()},
-		NativeSteps:    []qsbridge.NativeSubqueryStep{d.scalarNativeStep()},
-		SubqueryIntent: ptrSubqueryPlanIntent(d.subqueryPlanIntent()),
-	}
-}
-
-func (d scalarHavingSubqueryDescriptor) subqueryPlanIntent() qsbridge.SubqueryPlanIntent {
-	return qsbridge.SubqueryPlanIntent{
-		Kind:       qsbridge.SubqueryIntentScalar,
-		Capability: qsbridge.CapabilityScalarSubquery,
-		Scalar: &qsbridge.ScalarSubqueryIntent{
-			SubquerySQL: d.SubquerySQL,
-			OutputName:  "scalar_subquery_value",
-			Scope:       qsbridge.PredicateScopeHaving,
-		},
-		HelperIntents: []qsbridge.SubqueryHelperIntent{helperPlanIntent(d.scalarHelperPlan())},
-	}
-}
-
-func (d scalarHavingSubqueryDescriptor) scalarHelperPlan() PreflightRewriteHelperPlanDescriptor {
-	step := d.scalarNativeStep()
-	return PreflightRewriteHelperPlanDescriptor{
-		Name:               "scalar_subquery_value",
-		Kind:               PreflightHelperPlanScalarSubquery,
-		Purpose:            "evaluate the uncorrelated scalar subquery once and feed the result into the outer HAVING predicate",
-		SQL:                aliasScalarSubqueryProjection(d.SubquerySQL),
-		Outputs:            []string{"scalar_subquery_value"},
-		Materialization:    "one-row single-cell scalar",
-		BitmapNativeTarget: "planner scalar expression input evaluated without SQL text replacement",
-		Lifecycle:          qsbridge.SubqueryStepNativeReady,
-		NativeStep:         &step,
-	}
-}
-
-func (d scalarHavingSubqueryDescriptor) scalarNativeStep() qsbridge.NativeSubqueryStep {
-	return qsbridge.NativeSubqueryStep{
-		Name:               "scalar_subquery_value",
-		Kind:               qsbridge.NativeSubqueryStepScalarMaterialization,
-		Lifecycle:          qsbridge.SubqueryStepNativeReady,
-		SubqueryKind:       qsbridge.SubqueryIntentScalar,
-		Outputs:            []string{"scalar_subquery_value"},
-		Materialization:    "one-row single-cell scalar",
-		BitmapNativeTarget: "planner scalar expression input evaluated without SQL text replacement",
-		ExecutionMode:      "sql_backed_until_bitmap_native_executor_exists",
-	}
 }
 
 func correlatedParentKeyHelperPlan(partAlias string, sql string) PreflightRewriteHelperPlanDescriptor {

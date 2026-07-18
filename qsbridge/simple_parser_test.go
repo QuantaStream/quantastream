@@ -196,6 +196,33 @@ func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Tables) != 0 {
+		t.Fatalf("tables = %#v, want projection-only select", statement.Select.Tables)
+	}
+	if got, want := len(statement.Select.Projection), 1; got != want {
+		t.Fatalf("projection count = %d, want %d", got, want)
+	}
+	projection := statement.Select.Projection[0]
+	if projection.Alias != "average_age" {
+		t.Fatalf("alias = %q, want average_age", projection.Alias)
+	}
+	scalar, ok := projection.Expr.(UnboundScalarSubqueryExpr)
+	if !ok {
+		t.Fatalf("projection expr = %T, want scalar subquery", projection.Expr)
+	}
+	if scalar.Scope != PredicateScopeProjection || scalar.SQL != "select avg(age) from customers_qa" {
+		t.Fatalf("scalar subquery = %#v", scalar)
+	}
+}
+
 func TestSimpleParserBridgeParsesLimitOffset(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id from orders as o order by o.o_orderkey limit 1 offset 2")
 	if diagnostics.BlocksNative() {

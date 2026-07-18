@@ -186,6 +186,8 @@ const (
 	PredicateScopeOn PredicateScope = "on"
 	// PredicateScopeHaving means the predicate came from the HAVING clause.
 	PredicateScopeHaving PredicateScope = "having"
+	// PredicateScopeProjection means the expression came from the SELECT list.
+	PredicateScopeProjection PredicateScope = "projection"
 )
 
 // PredicateCombinator records how a predicate combines with its siblings.

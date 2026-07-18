@@ -31,6 +31,18 @@ func (r SQLRuntime) materializeScalarSubqueries(ctx context.Context, request qsb
 func (r SQLRuntime) materializeScalarSubqueriesInQuery(ctx context.Context, query qsbridge.QueryIR, options qsbridge.ExecutionOptions) (qsbridge.QueryIR, qsbridge.DiagnosticSet, bool, error) {
 	diagnostics := qsbridge.DiagnosticSet(nil)
 	changed := false
+	for i := range query.Projection {
+		expr, exprDiagnostics, exprChanged, err := r.materializeScalarSubqueriesInExpr(ctx, query.Projection[i].Expr, options)
+		diagnostics = append(diagnostics, exprDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return query, diagnostics, changed, err
+		}
+		if exprChanged {
+			query.Projection[i].Expr = expr
+			query.Projection[i].Type = qsbridge.ExprDataType(expr)
+			changed = true
+		}
+	}
 	for i := range query.Predicates {
 		expr, exprDiagnostics, exprChanged, err := r.materializeScalarSubqueriesInExpr(ctx, query.Predicates[i].Expr, options)
 		diagnostics = append(diagnostics, exprDiagnostics...)
@@ -187,4 +199,14 @@ func (r SQLRuntime) materializeScalarSubqueryLiteral(ctx context.Context, expr q
 		return qsbridge.Literal(qsbridge.ValueUnknown, nil), diagnostics, nil
 	}
 	return qsbridge.Literal(cell.Kind, cell.Value), diagnostics, nil
+}
+
+func scalarSubqueryResultCell(rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if rowSet.CandidateCount() != 1 || len(rowSet.ProjectionVectors) != 1 || len(rowSet.ProjectionVectors[0].Values) != 1 {
+		return qsbridge.ResultCell{}, helperExecutionDiagnostic(PreflightHelperPlanScalarSubquery, "scalar subquery must return exactly one row and one column")
+	}
+	return rowSet.ProjectionVectors[0].Values[0], nil
 }

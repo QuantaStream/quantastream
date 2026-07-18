@@ -2,7 +2,6 @@ package qsruntime
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -42,76 +41,6 @@ where p.p_brand = 'Brand#45'
 	}
 }
 
-func TestAliasScalarSubqueryProjectionAddsStableAlias(t *testing.T) {
-	sql := `select sum(ps2.ps_supplycost * ps2.ps_availqty) * 0.0001
-from partsupp as ps2
-where ps2.ps_partkey >= 1`
-	got := aliasScalarSubqueryProjection(sql)
-	if !strings.Contains(got, "as scalar_subquery_value from partsupp as ps2") {
-		t.Fatalf("aliased SQL = %q", got)
-	}
-}
-
-func TestFindUncorrelatedHavingScalarSubqueryExtractsQ11Shape(t *testing.T) {
-	sql := `select ps.ps_partkey,
-       sum(ps.ps_supplycost * ps.ps_availqty) as part_value
-from partsupp as ps
-inner join supplier as s on s.s_suppkey = ps.ps_suppkey
-inner join nation as n on n.n_nationkey = s.s_nationkey
-where n.n_name = 'GERMANY'
-group by ps.ps_partkey
-having part_value > (
-  select sum(ps2.ps_supplycost * ps2.ps_availqty) * 0.0001
-  from partsupp as ps2
-  inner join supplier as s2 on s2.s_suppkey = ps2.ps_suppkey
-  inner join nation as n2 on n2.n_nationkey = s2.s_nationkey
-  where n2.n_name = 'GERMANY'
-)
-order by part_value desc
-limit 10`
-
-	descriptor, ok := findUncorrelatedHavingScalarSubquery(sql)
-	if !ok {
-		t.Fatalf("scalar HAVING subquery not found")
-	}
-	if !strings.HasPrefix(descriptor.SubquerySQL, "select sum(ps2.ps_supplycost") || !strings.Contains(descriptor.SubquerySQL, "from partsupp as ps2") || !strings.Contains(descriptor.SubquerySQL, "where n2.n_name = 'GERMANY'") {
-		t.Fatalf("subquery = %q", descriptor.SubquerySQL)
-	}
-	if !strings.Contains(descriptor.ComparisonSQL, "part_value >") {
-		t.Fatalf("comparison = %q, want HAVING comparison", descriptor.ComparisonSQL)
-	}
-	rewritten := descriptor.rewriteWithLiteral(sql, "95025.42544399995")
-	if strings.Contains(rewritten, "select sum(ps2") {
-		t.Fatalf("rewritten still contains subquery: %s", rewritten)
-	}
-	if !strings.Contains(rewritten, "having part_value > 95025.42544399995") {
-		t.Fatalf("rewritten HAVING missing literal: %s", rewritten)
-	}
-}
-
-func TestFindUncorrelatedHavingScalarSubquery(t *testing.T) {
-	sql := `select ps_partkey, sum(ps_supplycost * ps_availqty) as part_value
-from partsupp
-group by ps_partkey
-having part_value > (
-  select sum(ps2.ps_supplycost * ps2.ps_availqty) * 0.0001
-  from partsupp as ps2
-  where ps2.ps_partkey >= 1
-)
-order by part_value desc`
-
-	descriptor, ok := findUncorrelatedHavingScalarSubquery(sql)
-	if !ok {
-		t.Fatalf("scalar HAVING subquery not found")
-	}
-	if got := descriptor.SubquerySQL; got != "select sum(ps2.ps_supplycost * ps2.ps_availqty) * 0.0001\n  from partsupp as ps2\n  where ps2.ps_partkey >= 1" {
-		t.Fatalf("subquery = %q", got)
-	}
-	if got := descriptor.rewriteWithLiteral(sql, "42"); !strings.Contains(got, "having part_value > 42") {
-		t.Fatalf("rewritten = %q, want literal replacement", got)
-	}
-}
-
 func TestScalarSubqueryResultCellReadsUnnamedProjectionVector(t *testing.T) {
 	cell, diagnostics := scalarSubqueryResultCell(qsbridge.QuantaProjectedRowSet{
 		Rownums: []qsbridge.QuantaRownum{1},
@@ -124,59 +53,6 @@ func TestScalarSubqueryResultCellReadsUnnamedProjectionVector(t *testing.T) {
 	}
 	if cell.Value != 95025.42544399995 {
 		t.Fatalf("cell = %#v", cell)
-	}
-}
-
-func TestScalarSubqueryLiteralFormatsNumericCells(t *testing.T) {
-	literal, diagnostics := scalarSubqueryLiteral(qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 95025.425444})
-	if diagnostics.BlocksNative() {
-		t.Fatalf("diagnostics = %#v", diagnostics)
-	}
-	if literal != "95025.425444" {
-		t.Fatalf("literal = %q, want 95025.425444", literal)
-	}
-}
-
-func TestRewriteUncorrelatedHavingScalarSubqueryReturnsOptimizationTrace(t *testing.T) {
-	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
-		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
-			Rownums: []qsbridge.QuantaRownum{1},
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
-				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: 7}},
-			}},
-		}}, nil
-	})
-
-	query := `select o_orderpriority, count(*) as c
-from orders
-group by o_orderpriority
-having c > (
-  select o_orderkey
-  from orders
-  where o_orderkey >= 1
-)`
-	rewritten, diagnostics, trace, reports, err, ok := runtime.rewriteUncorrelatedHavingScalarSubquery(context.Background(), query, qsbridge.ExecutionOptions{})
-
-	if err != nil {
-		t.Fatalf("rewrite: %v", err)
-	}
-	if !ok {
-		t.Fatalf("rewrite ok = false, want true")
-	}
-	if diagnostics.BlocksNative() {
-		t.Fatalf("diagnostics = %#v, want none", diagnostics)
-	}
-	if got, want := len(reports), 1; got != want || reports[0].Plan.Kind != PreflightHelperPlanScalarSubquery {
-		t.Fatalf("helper reports = %#v, want one scalar report", reports)
-	}
-	if !strings.Contains(rewritten, "having c > 7") {
-		t.Fatalf("rewritten SQL = %q, want scalar literal", rewritten)
-	}
-	if got, want := len(trace.Rewrites), 1; got != want {
-		t.Fatalf("rewrite count = %d, want %d: %#v", got, want, trace.Rewrites)
-	}
-	if trace.Rewrites[0].Rule != qsbridge.RewriteScalarSubqueryPreflight || trace.Rewrites[0].Status != qsbridge.RewriteApplied {
-		t.Fatalf("rewrite trace = %#v, want scalar preflight applied", trace.Rewrites[0])
 	}
 }
 
@@ -256,20 +132,16 @@ having c > (
 
 func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
 	trace := qsbridge.NewOptimizationTrace()
-	trace = mergeRuntimeOptimizationTrace(trace, scalarSubqueryRewriteTrace())
 	trace = mergeRuntimeOptimizationTrace(trace, correlatedAverageRewriteTrace())
 
 	if !trace.Supported {
 		t.Fatalf("trace supported = false, want true")
 	}
-	if got, want := len(trace.Rewrites), 2; got != want {
+	if got, want := len(trace.Rewrites), 1; got != want {
 		t.Fatalf("rewrite count = %d, want %d: %#v", got, want, trace.Rewrites)
 	}
-	if trace.Rewrites[0].Rule != qsbridge.RewriteScalarSubqueryPreflight || trace.Rewrites[0].Status != qsbridge.RewriteApplied {
-		t.Fatalf("first rewrite = %#v, want scalar preflight applied", trace.Rewrites[0])
-	}
-	if trace.Rewrites[1].Rule != qsbridge.RewriteCorrelatedAggregatePreflight || trace.Rewrites[1].Status != qsbridge.RewriteApplied {
-		t.Fatalf("second rewrite = %#v, want correlated aggregate preflight applied", trace.Rewrites[1])
+	if trace.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight || trace.Rewrites[0].Status != qsbridge.RewriteApplied {
+		t.Fatalf("rewrite = %#v, want correlated aggregate preflight applied", trace.Rewrites[0])
 	}
 
 	runtime := newTestSQLRuntime(t)
@@ -283,10 +155,10 @@ func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
 		t.Fatalf("request diagnostics = %#v, want none", request.Diagnostics)
 	}
 	rewrites := prepared.Inspection.Optimization.Rewrites
-	if got, want := len(rewrites), 2; got != want {
+	if got, want := len(rewrites), 1; got != want {
 		t.Fatalf("prepared rewrites = %d, want %d: %#v", got, want, rewrites)
 	}
-	if rewrites[0].Rule != qsbridge.RewriteScalarSubqueryPreflight || rewrites[1].Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
+	if rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
 		t.Fatalf("prepared rewrite rules = %#v", rewrites)
 	}
 }

@@ -69,9 +69,12 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		selectBody = remaining
 		distinct = true
 	}
-	projectionText, sourceText, ok := splitBeforeKeyword(selectBody, "from")
-	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SELECT must include FROM"), false
+	projectionText, sourceText, hasSource := splitBeforeTopLevelKeyword(selectBody, "from")
+	if !hasSource {
+		if _, _, found := findTopLevelSimpleKeyword(selectBody, "from"); found {
+			return UnboundStatement{}, simpleParserDiagnostic("SELECT must include a projection list and FROM source"), false
+		}
+		projectionText = strings.TrimSpace(selectBody)
 	}
 	sourceText, limit, offset, diagnostic, ok := parseSimpleLimitClause(sourceText)
 	if !ok {
@@ -84,6 +87,20 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 	projections, aggregates, diagnostic, ok := parseSimpleProjections(projectionText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
+	}
+	if !hasSource {
+		if hasAnyTopLevelKeyword(projectionText, "where", "join", "group", "having", "order", "limit") {
+			return UnboundStatement{}, simpleParserDiagnostic("projection-only SELECT only supports a SELECT list"), false
+		}
+		return UnboundStatement{
+			SQL:  sql,
+			Kind: QueryKindSelect,
+			Select: UnboundSelect{
+				Projection: projections,
+				Aggregates: aggregates,
+				Result:     ResultShape{Kind: ResultQuery, Limit: limit, Offset: offset, Distinct: distinct},
+			},
+		}, Diagnostic{}, true
 	}
 	sourceText, having, hasHaving, diagnostic, ok := parseSimpleHavingClause(sourceText, projections, aggregates)
 	if !ok {
@@ -810,6 +827,12 @@ func parseSimpleProjection(text string, aggregateIndex int) (UnboundProjection, 
 		}, nil, Diagnostic{}, true
 	}
 	if expr, ok := parseSimpleScalarCallExpression(exprText); ok {
+		return UnboundProjection{
+			Expr:  expr,
+			Alias: alias,
+		}, nil, Diagnostic{}, true
+	}
+	if expr, ok := parseSimpleScalarSubqueryExpression(exprText, PredicateScopeProjection); ok {
 		return UnboundProjection{
 			Expr:  expr,
 			Alias: alias,
@@ -2433,6 +2456,16 @@ func isSimpleSQLWhitespace(ch byte) bool {
 
 func splitBeforeKeyword(text string, keyword string) (string, string, bool) {
 	index, end, ok := findSimpleKeyword(text, keyword)
+	if !ok {
+		return "", "", false
+	}
+	left := strings.TrimSpace(text[:index])
+	right := strings.TrimSpace(text[end:])
+	return left, right, left != "" && right != ""
+}
+
+func splitBeforeTopLevelKeyword(text string, keyword string) (string, string, bool) {
+	index, end, ok := findTopLevelSimpleKeyword(text, keyword)
 	if !ok {
 		return "", "", false
 	}

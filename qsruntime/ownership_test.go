@@ -64,7 +64,6 @@ func TestRuntimeOwnershipForFileMarksPreflightHelpersAsScaffold(t *testing.T) {
 		"native_preflight_step.go",
 		"native_subquery_step_executor.go",
 		"correlated_subquery_rewrite.go",
-		"scalar_subquery_rewrite.go",
 	} {
 		ownership := RuntimeOwnershipForFile(file)
 		if ownership.Category != RuntimeOwnershipPreflightScaffold || ownership.Target != "native planner/executor subquery steps" {

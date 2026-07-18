@@ -150,6 +150,8 @@ const (
 	PhysicalNodeStatement PhysicalNodeKind = "physical_statement"
 	// PhysicalNodeScan reads table data using a physical scope.
 	PhysicalNodeScan PhysicalNodeKind = "physical_scan"
+	// PhysicalNodeConstant produces one synthetic row for projection-only SELECTs.
+	PhysicalNodeConstant PhysicalNodeKind = "physical_constant"
 	// PhysicalNodeFilter applies a physical predicate operation.
 	PhysicalNodeFilter PhysicalNodeKind = "physical_filter"
 	// PhysicalNodeMembership applies physical semi/anti membership operations.
@@ -282,6 +284,33 @@ func (n PhysicalScanNode) PhysicalDiagnostics() DiagnosticSet {
 	return n.Diags
 }
 
+// PhysicalConstantNode produces synthetic rows for projection-only SELECTs.
+type PhysicalConstantNode struct {
+	Rows  int
+	Scope PhysicalScope
+	Diags DiagnosticSet
+}
+
+// PhysicalKind reports that PhysicalConstantNode is a physical constant source.
+func (PhysicalConstantNode) PhysicalKind() PhysicalNodeKind {
+	return PhysicalNodeConstant
+}
+
+// PhysicalChildren returns no children for a physical constant source.
+func (PhysicalConstantNode) PhysicalChildren() []PhysicalNode {
+	return nil
+}
+
+// PhysicalScope returns the physical scope for the constant source.
+func (n PhysicalConstantNode) PhysicalScope() PhysicalScope {
+	return n.Scope
+}
+
+// PhysicalDiagnostics returns diagnostics attached to the constant source.
+func (n PhysicalConstantNode) PhysicalDiagnostics() DiagnosticSet {
+	return n.Diags
+}
+
 // PhysicalUnaryNode represents a physical unary operation.
 type PhysicalUnaryNode struct {
 	Kind       PhysicalNodeKind
@@ -406,6 +435,12 @@ func buildPhysicalNode(node LogicalNode, defaultScope PhysicalScope) PhysicalNod
 			Fields: n.Fields,
 			Scope:  defaultScope,
 			Diags:  n.Diags,
+		}
+	case ConstantNode:
+		return PhysicalConstantNode{
+			Rows:  n.Rows,
+			Scope: defaultScope,
+			Diags: n.Diags,
 		}
 	case FilterNode:
 		return PhysicalUnaryNode{
