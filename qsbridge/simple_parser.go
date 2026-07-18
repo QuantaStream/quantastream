@@ -101,7 +101,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 	if hasAnyKeyword(sourceOnlyText, "having") {
 		return UnboundStatement{}, simpleParserDiagnostic("unexpected HAVING in table source"), false
 	}
-	if hasWhere && hasAnyKeyword(whereText, "join", "group", "having", "order", "limit") {
+	if hasWhere && hasAnyTopLevelKeyword(whereText, "join", "group", "having", "order", "limit") {
 		return UnboundStatement{}, simpleParserDiagnostic("only AND-combined comparison predicates are supported"), false
 	}
 	if hasOrderBy {
@@ -1903,7 +1903,7 @@ func simpleComparisonPredicatePlacement(left UnboundExpr, right UnboundExpr) Pre
 		return PredicateResidualScan
 	}
 	switch right.(type) {
-	case UnboundLiteralExpr, UnboundParameterExpr, UnboundCallExpr:
+	case UnboundLiteralExpr, UnboundParameterExpr, UnboundCallExpr, UnboundScalarSubqueryExpr:
 		return PredicatePushdown
 	default:
 		return PredicateResidualScan
@@ -1958,6 +1958,9 @@ func parseSimpleBetweenPredicate(text string, parameterIndex *int) ([]UnboundPre
 }
 
 func parseSimpleComparisonValue(text string, parameterIndex *int) (UnboundExpr, Diagnostic, bool) {
+	if subquery, ok := parseSimpleScalarSubqueryExpression(text, PredicateScopeWhere); ok {
+		return subquery, Diagnostic{}, true
+	}
 	if text == "?" {
 		if parameterIndex == nil {
 			return UnboundParameter(1, DataTypeUnknown), Diagnostic{}, true
@@ -1970,6 +1973,21 @@ func parseSimpleComparisonValue(text string, parameterIndex *int) (UnboundExpr, 
 		return call, Diagnostic{}, true
 	}
 	return parseSimpleLiteral(text)
+}
+
+func parseSimpleScalarSubqueryExpression(text string, scope PredicateScope) (UnboundScalarSubqueryExpr, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") || !strings.HasSuffix(trimmed, ")") {
+		return UnboundScalarSubqueryExpr{}, false
+	}
+	body, ok := simpleStripBalancedParens(trimmed)
+	if !ok {
+		return UnboundScalarSubqueryExpr{}, false
+	}
+	if _, ok := consumeKeyword(body, "select"); !ok {
+		return UnboundScalarSubqueryExpr{}, false
+	}
+	return UnboundScalarSubquery(strings.TrimSpace(body), scope), true
 }
 
 func parseSimpleLiteral(text string) (UnboundLiteralExpr, Diagnostic, bool) {
@@ -2197,7 +2215,7 @@ func parseSimpleHavingClause(text string, projections []UnboundProjection, aggre
 	if !ok {
 		return text, nil, false, Diagnostic{}, true
 	}
-	if hasAnyKeyword(right, "where", "join", "group", "having", "order", "limit", "and", "or") {
+	if hasAnyTopLevelKeyword(right, "where", "join", "group", "having", "order", "limit", "and", "or") {
 		return "", nil, false, simpleParserDiagnostic("HAVING supports one aggregate alias comparison literal"), false
 	}
 	op, aliasText, literalText, ok := splitBeforeComparisonOperator(right)
@@ -2213,7 +2231,7 @@ func parseSimpleHavingClause(text string, projections []UnboundProjection, aggre
 		}
 		leftExpr = scalarExpr
 	}
-	literal, diagnostic, ok := parseSimpleLiteral(strings.TrimSpace(literalText))
+	literal, diagnostic, ok := parseSimpleComparisonValueWithScope(strings.TrimSpace(literalText), nil, PredicateScopeHaving)
 	if !ok {
 		return "", nil, false, diagnostic, false
 	}
@@ -2222,6 +2240,13 @@ func parseSimpleHavingClause(text string, projections []UnboundProjection, aggre
 		Placement: PredicateResidualScan,
 		Scope:     PredicateScopeHaving,
 	}}, true, Diagnostic{}, true
+}
+
+func parseSimpleComparisonValueWithScope(text string, parameterIndex *int, scope PredicateScope) (UnboundExpr, Diagnostic, bool) {
+	if subquery, ok := parseSimpleScalarSubqueryExpression(text, scope); ok {
+		return subquery, Diagnostic{}, true
+	}
+	return parseSimpleComparisonValue(text, parameterIndex)
 }
 
 func resolveSimpleHavingAggregateRef(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, Diagnostic, bool) {
@@ -2459,13 +2484,45 @@ func splitBeforeComparisonOperator(text string) (BinaryOp, string, string, bool)
 }
 
 func splitBeforeOperator(text string, operator string) (string, string, bool) {
-	index := strings.Index(text, operator)
+	index := topLevelSimpleOperatorIndex(text, operator)
 	if index < 0 {
 		return "", "", false
 	}
 	left := strings.TrimSpace(text[:index])
 	right := strings.TrimSpace(text[index+len(operator):])
 	return left, right, left != "" && right != ""
+}
+
+func topLevelSimpleOperatorIndex(text string, operator string) int {
+	depth := 0
+	inString := false
+	for i := 0; i <= len(text)-len(operator); i++ {
+		if text[i] == '\'' {
+			if inString && i+1 < len(text) && text[i+1] == '\'' {
+				i++
+				continue
+			}
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch text[i] {
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth == 0 && strings.HasPrefix(text[i:], operator) {
+			return i
+		}
+	}
+	return -1
 }
 
 func hasAnyKeyword(text string, keywords ...string) bool {
@@ -2477,6 +2534,54 @@ func hasAnyKeyword(text string, keywords ...string) bool {
 		}
 	}
 	return false
+}
+
+func hasAnyTopLevelKeyword(text string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if _, _, ok := findTopLevelSimpleKeyword(text, keyword); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func findTopLevelSimpleKeyword(text string, keyword string) (int, int, bool) {
+	lowered := strings.ToLower(text)
+	loweredKeyword := strings.ToLower(keyword)
+	depth := 0
+	inString := false
+	for i := 0; i < len(lowered); i++ {
+		if text[i] == '\'' {
+			if inString && i+1 < len(text) && text[i+1] == '\'' {
+				i++
+				continue
+			}
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch text[i] {
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		end := i + len(loweredKeyword)
+		if depth == 0 &&
+			end <= len(lowered) &&
+			strings.HasPrefix(lowered[i:], loweredKeyword) &&
+			isSimpleKeywordBoundary(text, i-1) &&
+			isSimpleKeywordBoundary(text, end) {
+			return i, end, true
+		}
+	}
+	return 0, 0, false
 }
 
 func splitQualifiedName(name string) (string, string) {

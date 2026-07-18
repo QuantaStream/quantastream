@@ -146,6 +146,8 @@ const (
 	ExprSearchedCase ExprKind = "searched_case"
 	// ExprAggregateRef is a reference to an aggregate slot.
 	ExprAggregateRef ExprKind = "aggregate_ref"
+	// ExprScalarSubquery is a scalar subquery expression awaiting materialization.
+	ExprScalarSubquery ExprKind = "scalar_subquery"
 )
 
 // ParameterRef identifies one prepared-statement placeholder.

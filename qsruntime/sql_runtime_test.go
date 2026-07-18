@@ -181,14 +181,7 @@ having c > (
 }
 
 func TestSQLRuntimeApplyPreflightRewritesRunsOrderedBoundary(t *testing.T) {
-	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
-		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
-			Rownums: []qsbridge.QuantaRownum{1},
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
-				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: 7}},
-			}},
-		}}, nil
-	})
+	runtime := newTestSQLRuntime(t)
 
 	query := `select o_orderpriority, count(*) as c
 from orders
@@ -206,27 +199,21 @@ having c > (
 	if result.Diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
 	}
-	if !strings.Contains(result.SQL, "having c > 7") {
-		t.Fatalf("rewritten SQL = %q, want scalar literal", result.SQL)
+	if result.SQL != query {
+		t.Fatalf("preflight SQL = %q, want original scalar SQL", result.SQL)
 	}
-	if got, want := len(result.Optimization.Rewrites), 1; got != want {
+	if got, want := len(result.Optimization.Rewrites), 0; got != want {
 		t.Fatalf("rewrite count = %d, want %d: %#v", got, want, result.Optimization.Rewrites)
 	}
-	if result.Optimization.Rewrites[0].Rule != qsbridge.RewriteScalarSubqueryPreflight {
-		t.Fatalf("rewrite = %#v, want scalar preflight", result.Optimization.Rewrites[0])
-	}
-	if result.Preflight.Total != 2 || result.Preflight.Applied != 1 || result.Preflight.Skipped != 1 {
-		t.Fatalf("preflight summary = %#v, want one applied and one skipped", result.Preflight)
+	if result.Preflight.Total != 1 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 1 {
+		t.Fatalf("preflight summary = %#v, want one skipped correlated rewrite", result.Preflight)
 	}
 	if result.Preflight.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight || result.Preflight.Rewrites[0].Applied {
 		t.Fatalf("first preflight inspection = %#v, want skipped correlated rewrite", result.Preflight.Rewrites[0])
 	}
-	if result.Preflight.Rewrites[1].Rule != qsbridge.RewriteScalarSubqueryPreflight || !result.Preflight.Rewrites[1].Applied {
-		t.Fatalf("second preflight inspection = %#v, want applied scalar rewrite", result.Preflight.Rewrites[1])
-	}
 }
 
-func TestSQLRuntimeExecuteSQLExposesPreflightSummary(t *testing.T) {
+func TestSQLRuntimeExecuteSQLMaterializesScalarSubqueryInBoundQuery(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
 			Rownums: []qsbridge.QuantaRownum{1},
@@ -248,15 +235,22 @@ having c > (
 	if err != nil {
 		t.Fatalf("execute sql: %v", err)
 	}
-	if result.Preflight.Total != 2 || result.Preflight.Applied != 1 || result.Preflight.Skipped != 1 {
-		t.Fatalf("preflight summary = %#v, want one applied and one skipped", result.Preflight)
+	if result.Preflight.Total != 1 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 1 {
+		t.Fatalf("preflight summary = %#v, want scalar materialization outside preflight", result.Preflight)
 	}
-	helperReports := result.Preflight.HelperExecutionReports()
-	if got, want := len(helperReports), 1; got != want {
-		t.Fatalf("helper reports = %d, want %d: %#v", got, want, helperReports)
+	if got := result.Preflight.HelperExecutionReports(); len(got) != 0 {
+		t.Fatalf("helper reports = %#v, want none for typed scalar materialization", got)
 	}
-	if helperReports[0].Plan.Kind != PreflightHelperPlanScalarSubquery || helperReports[0].Payload.Scalar == nil {
-		t.Fatalf("helper report = %#v, want scalar payload report", helperReports[0])
+	if got, want := len(result.Request.Bound.Prepared.Query.Having), 1; got != want {
+		t.Fatalf("having predicates = %d, want %d", got, want)
+	}
+	binary, ok := result.Request.Bound.Prepared.Query.Having[0].Expr.(qsbridge.BinaryExpr)
+	if !ok {
+		t.Fatalf("having expr = %T, want binary", result.Request.Bound.Prepared.Query.Having[0].Expr)
+	}
+	literal, ok := binary.Right.(qsbridge.LiteralExpr)
+	if !ok || literal.Kind != qsbridge.ValueInt || scalarSubqueryTestIntLiteralValue(literal) != 7 {
+		t.Fatalf("having right = %#v, want materialized int literal 7", binary.Right)
 	}
 }
 

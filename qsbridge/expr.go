@@ -227,6 +227,26 @@ func TypedAggregateRef(alias string, index int, resultType DataType) AggregateRe
 	return ref
 }
 
+// ScalarSubqueryExpr records a scalar subquery that must be evaluated once
+// before the parent query can be lowered to bitmap primitives.
+type ScalarSubqueryExpr struct {
+	SQL    string
+	Scope  PredicateScope
+	Type   DataType
+	Alias  string
+	Source string
+}
+
+// ExpressionKind reports that ScalarSubqueryExpr is a scalar subquery.
+func (ScalarSubqueryExpr) ExpressionKind() ExprKind {
+	return ExprScalarSubquery
+}
+
+// ScalarSubquery creates a scalar subquery expression.
+func ScalarSubquery(sql string, scope PredicateScope) ScalarSubqueryExpr {
+	return ScalarSubqueryExpr{SQL: sql, Scope: scope}
+}
+
 // ExprDataType returns the SQL-facing data type carried by a bound expression.
 func ExprDataType(expr Expr) DataType {
 	switch n := expr.(type) {
@@ -278,6 +298,12 @@ func ExprDataType(expr Expr) DataType {
 		if n != nil {
 			return n.Type
 		}
+	case ScalarSubqueryExpr:
+		return n.Type
+	case *ScalarSubqueryExpr:
+		if n != nil {
+			return n.Type
+		}
 	}
 	return DataTypeUnknown
 }
@@ -302,6 +328,10 @@ func ExprNullable(expr Expr) bool {
 	case SearchedCaseExpr:
 		return true
 	case *SearchedCaseExpr:
+		return true
+	case ScalarSubqueryExpr:
+		return true
+	case *ScalarSubqueryExpr:
 		return true
 	}
 	return true

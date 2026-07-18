@@ -144,7 +144,8 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 		"native_projection_capability.go",
 		"native_projection_materialization.go",
 		"relationship_tuple_rowset.go",
-		"relationship_vector_reader.go":
+		"relationship_vector_reader.go",
+		"scalar_subquery_materialization.go":
 		return true
 	case "same_row_comparison.go":
 		return true

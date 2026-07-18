@@ -76,6 +76,16 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: preflight.SQL, Optimization: preflight.Optimization}, options, values...)
+	request, scalarDiagnostics, err := r.materializeScalarSubqueries(ctx, request)
+	if err != nil || scalarDiagnostics.BlocksNative() {
+		return SQLExecutionResult{
+			Prepared:    request.Bound.Prepared,
+			Request:     request,
+			Diagnostics: scalarDiagnostics,
+			Preflight:   preflight.Preflight,
+		}, err
+	}
+	prepared = request.Bound.Prepared
 	result := SQLExecutionResult{
 		Prepared:    prepared,
 		Request:     request,

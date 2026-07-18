@@ -1054,6 +1054,23 @@ func UnboundAggregateRef(alias string, index int) UnboundAggregateRefExpr {
 	return UnboundAggregateRefExpr{Alias: alias, Index: index}
 }
 
+// UnboundScalarSubqueryExpr is a scalar subquery before runtime materialization.
+type UnboundScalarSubqueryExpr struct {
+	SQL   string
+	Scope PredicateScope
+}
+
+// BindExpr preserves scalar subquery intent as a typed expression. Runtime
+// materialization replaces it with a literal before bitmap lowering.
+func (e UnboundScalarSubqueryExpr) BindExpr(context *BindContext, roles FieldRole) (Expr, DiagnosticSet) {
+	return ScalarSubquery(e.SQL, e.Scope), nil
+}
+
+// UnboundScalarSubquery creates an unbound scalar subquery expression.
+func UnboundScalarSubquery(sql string, scope PredicateScope) UnboundScalarSubqueryExpr {
+	return UnboundScalarSubqueryExpr{SQL: sql, Scope: scope}
+}
+
 // BindExpression binds one parser-neutral expression.
 func BindExpression(context *BindContext, expr UnboundExpr, roles FieldRole) (Expr, DiagnosticSet) {
 	if expr == nil {

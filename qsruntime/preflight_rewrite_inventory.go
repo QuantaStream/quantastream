@@ -41,20 +41,6 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			},
 			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of rewriting SQL text.",
 		},
-		{
-			Rule:              qsbridge.RewriteScalarSubqueryPreflight,
-			Reason:            "Uncorrelated scalar subqueries in HAVING are valid SQL shapes, but scalar subquery intent is not planner-native there yet.",
-			SourceSQLShape:    "An uncorrelated scalar aggregate subquery inside HAVING, such as having part_value > (select sum(...) * factor from ...).",
-			TemporaryStrategy: "Route scalar materialization through the native subquery step contract, execute it with the SQL-backed adapter, convert the single result cell into a SQL literal, and replace only that subquery text before native planning.",
-			HelperPlanKinds: []PreflightRewriteHelperPlanKind{
-				PreflightHelperPlanScalarSubquery,
-			},
-			RegressionCoverage: []string{
-				"qsruntime/sql_runtime_test.go scalar subquery preflight trace and ExecuteSQL coverage",
-				"inabox-direct TPCH Q11-style probes when present in SQLRunner suites",
-			},
-			FutureIRReplacement: "Represent scalar subqueries as typed IR expressions and evaluate them as planner/executor scalar inputs without SQL text replacement.",
-		},
 	}
 }
 

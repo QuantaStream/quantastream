@@ -252,14 +252,7 @@ func TestPreflightRewriteDescriptorCompletenessReportsMissingFields(t *testing.T
 }
 
 func TestPreflightRewriteInspectionIncludesDescriptorSummary(t *testing.T) {
-	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
-		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
-			Rownums: []qsbridge.QuantaRownum{1},
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
-				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: 7}},
-			}},
-		}}, nil
-	})
+	runtime := newTestSQLRuntime(t)
 
 	result, err := runtime.applyPreflightRewrites(context.Background(), `select o_orderpriority, count(*) as c
 from orders
@@ -272,24 +265,11 @@ having c > (
 	if err != nil {
 		t.Fatalf("preflight rewrites: %v", err)
 	}
-	if got, want := len(result.Preflight.Rewrites), 2; got != want {
+	if got, want := len(result.Preflight.Rewrites), 1; got != want {
 		t.Fatalf("preflight rewrites = %d, want %d", got, want)
 	}
 	if result.Preflight.Rewrites[0].Descriptor != nil {
 		t.Fatalf("skipped correlated rewrite descriptor = %#v, want nil", result.Preflight.Rewrites[0].Descriptor)
-	}
-	inspection := result.Preflight.Rewrites[1]
-	if !inspection.Applied {
-		t.Fatalf("scalar rewrite applied = false")
-	}
-	if inspection.Descriptor == nil {
-		t.Fatalf("scalar rewrite descriptor = nil")
-	}
-	if inspection.Descriptor.Rule != qsbridge.RewriteScalarSubqueryPreflight {
-		t.Fatalf("descriptor rule = %q", inspection.Descriptor.Rule)
-	}
-	if value, ok := descriptorAttributeValue(*inspection.Descriptor, "subquery_sql"); !ok || !strings.Contains(value, "select o_orderkey") {
-		t.Fatalf("descriptor subquery attribute = %q, %v", value, ok)
 	}
 }
 
@@ -368,15 +348,8 @@ having c > (
 	}
 }
 
-func TestPreflightRewriteSummaryDescriptorReports(t *testing.T) {
-	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
-		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
-			Rownums: []qsbridge.QuantaRownum{1},
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
-				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: 7}},
-			}},
-		}}, nil
-	})
+func TestPreflightRewriteSummaryOmitsScalarDescriptorReportsAfterTypedPromotion(t *testing.T) {
+	runtime := newTestSQLRuntime(t)
 
 	result, err := runtime.applyPreflightRewrites(context.Background(), `select o_orderpriority, count(*) as c
 from orders
@@ -391,41 +364,8 @@ having c > (
 	}
 
 	reports := result.Preflight.DescriptorReports()
-	if got, want := len(reports), 1; got != want {
-		t.Fatalf("descriptor reports = %d, want %d: %#v", got, want, reports)
-	}
-	if reports[0].Rule != qsbridge.RewriteScalarSubqueryPreflight {
-		t.Fatalf("descriptor report rule = %q", reports[0].Rule)
-	}
-	if reports[0].SourceSQLShape != "having(comparison(scalar_subquery))" {
-		t.Fatalf("descriptor report source shape = %q", reports[0].SourceSQLShape)
-	}
-	if len(reports[0].Attributes) == 0 {
-		t.Fatalf("descriptor report attributes = %#v", reports[0].Attributes)
-	}
-	if got, want := len(reports[0].HelperPlans), 1; got != want {
-		t.Fatalf("descriptor report helper plans = %d, want %d", got, want)
-	}
-	if reports[0].HelperPlans[0].Kind != PreflightHelperPlanScalarSubquery {
-		t.Fatalf("descriptor report helper kind = %q", reports[0].HelperPlans[0].Kind)
-	}
-	if reports[0].HelperPlans[0].Lifecycle != qsbridge.SubqueryStepNativeReady || reports[0].HelperPlans[0].NativeStep == nil {
-		t.Fatalf("descriptor helper lifecycle/native step = %#v", reports[0].HelperPlans[0])
-	}
-	if got, want := len(reports[0].NativeSteps), 1; got != want {
-		t.Fatalf("descriptor native steps = %d, want %d: %#v", got, want, reports[0].NativeSteps)
-	}
-	if reports[0].NativeSteps[0].Kind != qsbridge.NativeSubqueryStepScalarMaterialization {
-		t.Fatalf("descriptor native step = %#v", reports[0].NativeSteps[0])
-	}
-	if reports[0].SubqueryIntent == nil || reports[0].SubqueryIntent.Kind != qsbridge.SubqueryIntentScalar {
-		t.Fatalf("descriptor report subquery intent = %#v", reports[0].SubqueryIntent)
-	}
-	if got, want := reports[0].SubqueryIntent.HelperKinds, []string{"scalar_subquery"}; len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("descriptor report subquery helper kinds = %#v, want %#v", got, want)
-	}
-	if !reports[0].NativeReplacementReady || len(reports[0].NativeReplacementMissing) != 0 {
-		t.Fatalf("descriptor report readiness = %v missing=%#v", reports[0].NativeReplacementReady, reports[0].NativeReplacementMissing)
+	if got, want := len(reports), 0; got != want {
+		t.Fatalf("descriptor reports = %d, want %d after scalar typed promotion: %#v", got, want, reports)
 	}
 }
 
@@ -663,43 +603,43 @@ func (e *testNativeSubqueryStepExecutor) ExecuteNativeSubqueryStep(ctx context.C
 	return e.result, nil
 }
 
-func TestScalarPreflightRoutesThroughNativeSubqueryStepExecutor(t *testing.T) {
-	executor := &testNativeSubqueryStepExecutor{}
-	runtime := SQLRuntime{NativeSubquerySteps: executor}
+func TestScalarSubqueryMaterializationReplacesHavingExpressionLiteral(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(29)}},
+			}},
+		}}, nil
+	})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
 
-	result, err := runtime.applyPreflightRewrites(context.Background(), `select o_orderpriority, count(*) as c
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: `select o_orderpriority, count(*) as c
 from orders
 group by o_orderpriority
 having c > (
   select o_orderkey
   from orders
   where o_orderkey >= 1
-)`, qsbridge.ExecutionOptions{})
+)`}, qsbridge.ExecutionOptions{})
+	materialized, diagnostics, err := runtime.materializeScalarSubqueries(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("materialize scalar: %v", err)
 	}
-	if executor.executions != 1 {
-		t.Fatalf("native executions = %d, want 1", executor.executions)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
-	if executor.last.Step.Kind != qsbridge.NativeSubqueryStepScalarMaterialization {
-		t.Fatalf("native step = %#v", executor.last.Step)
+	binary, ok := materialized.Bound.Prepared.Query.Having[0].Expr.(qsbridge.BinaryExpr)
+	if !ok {
+		t.Fatalf("having expr = %T, want binary", materialized.Bound.Prepared.Query.Having[0].Expr)
 	}
-	if !strings.Contains(result.SQL, "having c > 29") {
-		t.Fatalf("rewritten SQL = %q, want scalar literal from native executor", result.SQL)
-	}
-	reports := result.Preflight.HelperExecutionReports()
-	if got, want := len(reports), 1; got != want {
-		t.Fatalf("helper reports = %d, want %d: %#v", got, want, reports)
-	}
-	if reports[0].NativeTrace == nil || reports[0].NativeTrace.StepKind != qsbridge.NativeSubqueryStepScalarMaterialization {
-		t.Fatalf("native trace = %#v", reports[0].NativeTrace)
-	}
-	if reports[0].Payload.Scalar == nil || !reports[0].Payload.Scalar.Materialized {
-		t.Fatalf("scalar payload report = %#v", reports[0].Payload.Scalar)
+	literal, ok := binary.Right.(qsbridge.LiteralExpr)
+	if !ok || literal.Kind != qsbridge.ValueInt || scalarSubqueryTestIntLiteralValue(literal) != 29 {
+		t.Fatalf("having right = %#v, want materialized int literal 29", binary.Right)
 	}
 }
 
-func TestPreflightRewriteSummaryReportsScalarHelperExecutionPayload(t *testing.T) {
+func TestScalarSubqueryMaterializationReplacesWhereExpressionLiteral(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
 			Rownums: []qsbridge.QuantaRownum{1},
@@ -708,37 +648,87 @@ func TestPreflightRewriteSummaryReportsScalarHelperExecutionPayload(t *testing.T
 			}},
 		}}, nil
 	})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
 
-	result, err := runtime.applyPreflightRewrites(context.Background(), `select o_orderpriority, count(*) as c
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: `select o_orderkey
 from orders
-group by o_orderpriority
-having c > (
+where o_orderkey > (
   select o_orderkey
   from orders
   where o_orderkey >= 1
-)`, qsbridge.ExecutionOptions{})
+)`}, qsbridge.ExecutionOptions{})
+	materialized, diagnostics, err := runtime.materializeScalarSubqueries(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("materialize scalar: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	binary, ok := materialized.Bound.Prepared.Query.Predicates[0].Expr.(qsbridge.BinaryExpr)
+	if !ok {
+		t.Fatalf("where expr = %T, want binary", materialized.Bound.Prepared.Query.Predicates[0].Expr)
+	}
+	literal, ok := binary.Right.(qsbridge.LiteralExpr)
+	if !ok || literal.Kind != qsbridge.ValueInt || scalarSubqueryTestIntLiteralValue(literal) != 7 {
+		t.Fatalf("where right = %#v, want materialized int literal 7", binary.Right)
+	}
+}
+
+func TestScalarSubqueryMaterializedFloatThresholdLowersAgainstIntegerBSI(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueFloat, Value: 7.5}},
+			}},
+		}}, nil
+	})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
+
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: `select o_orderkey
+from orders
+where o_orderkey > (
+  select avg(o_orderkey)
+  from orders
+)`}, qsbridge.ExecutionOptions{})
+	materialized, diagnostics, err := runtime.materializeScalarSubqueries(context.Background(), request)
+	if err != nil {
+		t.Fatalf("materialize scalar: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
 
-	reports := result.Preflight.HelperExecutionReports()
-	if got, want := len(reports), 1; got != want {
-		t.Fatalf("helper reports = %d, want %d: %#v", got, want, reports)
+	intermediate, diagnostics := qsbridge.QuantaIntermediateLowerer{}.LowerExecutionRequest(materialized)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics = %#v, want none", diagnostics)
 	}
-	if reports[0].Plan.Kind != PreflightHelperPlanScalarSubquery || reports[0].Payload.Scalar == nil {
-		t.Fatalf("scalar helper report = %#v", reports[0])
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
 	}
-	if reports[0].Payload.Scalar.OutputName != "scalar_subquery_value" || reports[0].SQL == "" {
-		t.Fatalf("scalar payload report = %#v", reports[0])
+	fragment := intermediate.Fragments[0]
+	if fragment.Field != "o_orderkey" || fragment.BSIOp != qsbridge.QuantaBSIOpGT {
+		t.Fatalf("fragment = %#v, want o_orderkey GT", fragment)
 	}
-	if reports[0].NativeStep == nil || reports[0].NativeStep.Kind != qsbridge.NativeSubqueryStepScalarMaterialization {
-		t.Fatalf("scalar native step report = %#v", reports[0].NativeStep)
+	if fragment.Value == nil || fragment.Value.Int64() != 7 {
+		t.Fatalf("fragment value = %v, want 7 for o_orderkey > 7.5", fragment.Value)
 	}
-	if reports[0].NativeTrace == nil || reports[0].NativeTrace.OutputCount != 1 {
-		t.Fatalf("scalar native trace = %#v", reports[0].NativeTrace)
-	}
-	if reports[0].Payload.Scalar == nil || !reports[0].Payload.Scalar.Materialized {
-		t.Fatalf("scalar payload report = %#v", reports[0].Payload.Scalar)
+}
+
+func scalarSubqueryTestIntLiteralValue(literal qsbridge.LiteralExpr) int64 {
+	switch value := literal.Value.(type) {
+	case int:
+		return int64(value)
+	case int8:
+		return int64(value)
+	case int16:
+		return int64(value)
+	case int32:
+		return int64(value)
+	case int64:
+		return value
+	default:
+		return 0
 	}
 }
 
@@ -784,37 +774,29 @@ where p.p_brand = 'Brand#23'
 	}
 }
 
-func TestPreflightRewriteSummaryReportsScalarHelperWhenExecutionBlocks(t *testing.T) {
-	executor := &testPreflightHelperExecutor{
-		result: PreflightHelperExecutionResult{
-			Diagnostics: qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticScalarSubquery, qsbridge.PhaseExecute, "scalar helper blocked")},
-		},
-	}
-	runtime := SQLRuntime{PreflightHelpers: executor}
+func TestScalarSubqueryMaterializationReportsInvalidScalarShape(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 2}, nil
+	})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
 
-	result, err := runtime.applyPreflightRewrites(context.Background(), `select o_orderpriority, count(*) as c
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: `select o_orderpriority, count(*) as c
 from orders
 group by o_orderpriority
 having c > (
   select o_orderkey
   from orders
   where o_orderkey >= 1
-)`, qsbridge.ExecutionOptions{})
+)`}, qsbridge.ExecutionOptions{})
+	_, diagnostics, err := runtime.materializeScalarSubqueries(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("materialize scalar: %v", err)
 	}
-	if !result.Diagnostics.BlocksNative() {
-		t.Fatalf("diagnostics = %#v, want blocking scalar helper diagnostic", result.Diagnostics)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocking scalar helper diagnostic", diagnostics)
 	}
-	if message := result.Diagnostics[0].Message; !strings.Contains(message, "rule=scalar_subquery_preflight") || !strings.Contains(message, "helper=scalar_subquery") || !strings.Contains(message, "phase=execute") {
-		t.Fatalf("diagnostic message = %q, want normalized helper context", message)
-	}
-	reports := result.Preflight.HelperExecutionReports()
-	if got, want := len(reports), 1; got != want {
-		t.Fatalf("helper reports = %d, want %d: %#v", got, want, reports)
-	}
-	if reports[0].Plan.Kind != PreflightHelperPlanScalarSubquery || reports[0].Payload.Scalar == nil {
-		t.Fatalf("helper report = %#v, want scalar payload report", reports[0])
+	if message := diagnostics[0].Message; !strings.Contains(message, "scalar subquery must return exactly one row and one column") {
+		t.Fatalf("diagnostic message = %q", message)
 	}
 }
 

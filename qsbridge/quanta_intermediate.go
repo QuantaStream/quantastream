@@ -1110,6 +1110,14 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		}
 		value = normalized
 	}
+	if field.Type == DataTypeInt {
+		normalizedOp, normalized, diagnostics, ok := quantaIntermediateNormalizeDiscreteNumericComparison(op, value)
+		if !ok {
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+		op = normalizedOp
+		value = normalized
+	}
 	if field.Type == DataTypeBool {
 		normalized, diagnostics, ok := quantaIntermediateNormalizeBoolValue(value)
 		if !ok {
@@ -1851,6 +1859,36 @@ func quantaIntermediateNormalizeScaledNumericValue(field FieldRef, value Literal
 		), false
 	}
 	return Literal(ValueInt, int64(rounded)), nil, true
+}
+
+func quantaIntermediateNormalizeDiscreteNumericComparison(op BinaryOp, value LiteralExpr) (BinaryOp, LiteralExpr, DiagnosticSet, bool) {
+	floatValue, ok := quantaIntermediateFloat64Literal(value)
+	if !ok || math.Trunc(floatValue) == floatValue {
+		return op, value, nil, true
+	}
+	switch op {
+	case BinaryOpGreater:
+		return BinaryOpGreater, Literal(ValueInt, int64(math.Floor(floatValue))), nil, true
+	case BinaryOpGreaterEqual:
+		return BinaryOpGreaterEqual, Literal(ValueInt, int64(math.Ceil(floatValue))), nil, true
+	case BinaryOpLess:
+		return BinaryOpLess, Literal(ValueInt, int64(math.Ceil(floatValue))), nil, true
+	case BinaryOpLessEqual:
+		return BinaryOpLessEqual, Literal(ValueInt, int64(math.Floor(floatValue))), nil, true
+	default:
+		return op, LiteralExpr{}, quantaIntermediateDiagnostics("fractional values cannot be lowered for equality against integer BSI fields"), false
+	}
+}
+
+func quantaIntermediateFloat64Literal(value LiteralExpr) (float64, bool) {
+	switch typed := value.Value.(type) {
+	case float32:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	default:
+		return 0, false
+	}
 }
 
 func quantaIntermediateParseTimeMillis(text string) (int64, bool) {

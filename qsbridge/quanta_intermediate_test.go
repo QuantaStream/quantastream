@@ -99,6 +99,63 @@ func TestQuantaIntermediateLowererLowersLegacyBoolPredicate(t *testing.T) {
 		t.Fatalf("bool true encoded value = %v, want legacy true row id 1", fragment.Values[0])
 	}
 }
+
+func TestQuantaIntermediateLowererNormalizesFractionalThresholdsForIntegerBSI(t *testing.T) {
+	service := simpleRunnerPlanningService()
+	tests := []struct {
+		name  string
+		sql   string
+		op    QuantaBSIOp
+		value int64
+	}{
+		{
+			name:  "greater_than_floor",
+			sql:   "select o_orderkey from orders where o_orderkey > 7.5",
+			op:    QuantaBSIOpGT,
+			value: 7,
+		},
+		{
+			name:  "greater_equal_ceil",
+			sql:   "select o_orderkey from orders where o_orderkey >= 7.5",
+			op:    QuantaBSIOpGE,
+			value: 8,
+		},
+		{
+			name:  "less_than_ceil",
+			sql:   "select o_orderkey from orders where o_orderkey < 7.5",
+			op:    QuantaBSIOpLT,
+			value: 8,
+		},
+		{
+			name:  "less_equal_floor",
+			sql:   "select o_orderkey from orders where o_orderkey <= 7.5",
+			op:    QuantaBSIOpLE,
+			value: 7,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, request := service.PrepareExecutionRequest(PlanRequest{SQL: tt.sql}, ExecutionOptions{})
+
+			intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerExecutionRequest(request)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("lower diagnostics: %#v", diagnostics)
+			}
+			if len(intermediate.Fragments) != 1 {
+				t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
+			}
+			fragment := intermediate.Fragments[0]
+			if fragment.Field != "o_orderkey" || fragment.BSIOp != tt.op {
+				t.Fatalf("fragment = %#v, want o_orderkey %s", fragment, tt.op)
+			}
+			if fragment.Value == nil || fragment.Value.Int64() != tt.value {
+				t.Fatalf("fragment value = %v, want %d", fragment.Value, tt.value)
+			}
+		})
+	}
+}
+
 func TestQuantaIntermediateLowererLowersMutationPredicates(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(

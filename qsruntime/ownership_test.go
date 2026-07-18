@@ -78,18 +78,19 @@ func TestRuntimeOwnershipForFileMarksPreflightHelpersAsScaffold(t *testing.T) {
 
 func TestRuntimeOwnershipForFileSeparatesDurableContractsFromNativeStaging(t *testing.T) {
 	tests := map[string]RuntimeOwnershipCategory{
-		"bitmap_result_adapter.go":      RuntimeOwnershipComposition,
-		"execution_inspection.go":       RuntimeOwnershipComposition,
-		"inspection_rows.go":            RuntimeOwnershipComposition,
-		"materialization.go":            RuntimeOwnershipComposition,
-		"relationship_join_plan.go":     RuntimeOwnershipComposition,
-		"relationship_tuple_rowset.go":  RuntimeOwnershipNativeKernelStaging,
-		"direct_bitmap_runtime.go":      RuntimeOwnershipNativeKernelStaging,
-		"relationship_vector_reader.go": RuntimeOwnershipNativeKernelStaging,
-		"preflight_rewrite.go":          RuntimeOwnershipPreflightScaffold,
-		"execution.go":                  RuntimeOwnershipComposition,
-		"sql_runtime.go":                RuntimeOwnershipComposition,
-		"metadata_invalidation.go":      RuntimeOwnershipMetadataBridge,
+		"bitmap_result_adapter.go":           RuntimeOwnershipComposition,
+		"execution_inspection.go":            RuntimeOwnershipComposition,
+		"inspection_rows.go":                 RuntimeOwnershipComposition,
+		"materialization.go":                 RuntimeOwnershipComposition,
+		"relationship_join_plan.go":          RuntimeOwnershipComposition,
+		"relationship_tuple_rowset.go":       RuntimeOwnershipNativeKernelStaging,
+		"direct_bitmap_runtime.go":           RuntimeOwnershipNativeKernelStaging,
+		"relationship_vector_reader.go":      RuntimeOwnershipNativeKernelStaging,
+		"scalar_subquery_materialization.go": RuntimeOwnershipNativeKernelStaging,
+		"preflight_rewrite.go":               RuntimeOwnershipPreflightScaffold,
+		"execution.go":                       RuntimeOwnershipComposition,
+		"sql_runtime.go":                     RuntimeOwnershipComposition,
+		"metadata_invalidation.go":           RuntimeOwnershipMetadataBridge,
 	}
 	for file, want := range tests {
 		if got := RuntimeOwnershipForFile(file).Category; got != want {
