@@ -1476,6 +1476,7 @@ func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, Unb
 			return nil, nil, nil, nil, nil, diagnostic, false
 		} else if ok {
 			subqueries = append(subqueries, subquery)
+			continue
 		}
 		parsed, diagnostic, ok := parseSimplePredicate(part, &parameterIndex)
 		if !ok {

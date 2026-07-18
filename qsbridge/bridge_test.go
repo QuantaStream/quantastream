@@ -134,6 +134,14 @@ where p.p_brand = 'Brand#45'
 	if got, want := len(query.Subqueries), 1; got != want {
 		t.Fatalf("subqueries = %d, want %d: %#v", got, want, query.Subqueries)
 	}
+	if got, want := len(query.Predicates), 2; got != want {
+		t.Fatalf("predicates = %d, want parent filters only: %#v", got, query.Predicates)
+	}
+	for _, predicate := range query.Predicates {
+		if predicateReferencesField(predicate, "l", "l_quantity") {
+			t.Fatalf("correlated aggregate predicate leaked into bound predicates: %#v", predicate)
+		}
+	}
 	intent := query.Subqueries[0]
 	if !intent.Valid() || intent.CorrelatedAggregate == nil {
 		t.Fatalf("subquery intent = %#v, want valid correlated aggregate", intent)
@@ -1118,5 +1126,20 @@ func testCorrelatedAggregateCatalog() MemoryCatalog {
 			{Name: "count", Kind: FunctionAggregate, ReturnType: DataTypeInt, Native: true},
 			{Name: "avg", Kind: FunctionAggregate, Arguments: []DataType{DataTypeInt}, ReturnType: DataTypeFloat, Native: true},
 		},
+	}
+}
+
+func predicateReferencesField(predicate Predicate, qualifier string, name string) bool {
+	return exprReferencesField(predicate.Expr, qualifier, name)
+}
+
+func exprReferencesField(expr Expr, qualifier string, name string) bool {
+	switch typed := expr.(type) {
+	case FieldExpr:
+		return typed.Ref.Table.RefName() == qualifier && typed.Ref.Name == name
+	case BinaryExpr:
+		return exprReferencesField(typed.Left, qualifier, name) || exprReferencesField(typed.Right, qualifier, name)
+	default:
+		return false
 	}
 }

@@ -244,6 +244,14 @@ where p.p_brand = 'Brand#45'
 	if got, want := len(statement.Select.Subqueries), 1; got != want {
 		t.Fatalf("subqueries = %d, want %d: %#v", got, want, statement.Select.Subqueries)
 	}
+	if got, want := len(statement.Select.Predicates), 2; got != want {
+		t.Fatalf("predicates = %d, want parent filters only: %#v", got, statement.Select.Predicates)
+	}
+	for _, predicate := range statement.Select.Predicates {
+		if unboundPredicateReferencesField(predicate, "l", "l_quantity") {
+			t.Fatalf("correlated aggregate predicate leaked into normal predicates: %#v", predicate)
+		}
+	}
 	intent := statement.Select.Subqueries[0]
 	if intent.Kind != SubqueryIntentCorrelatedAggregate || intent.CorrelatedAggregate == nil {
 		t.Fatalf("subquery intent = %#v, want correlated aggregate", intent)
@@ -1462,5 +1470,20 @@ func TestSimpleParserBridgeParsesGroupedMixedBooleanPredicateWithBlocker(t *test
 	}
 	if right.Op != BinaryOpAnd {
 		t.Fatalf("where right op = %q, want %q", right.Op, BinaryOpAnd)
+	}
+}
+
+func unboundPredicateReferencesField(predicate UnboundPredicate, qualifier string, name string) bool {
+	return unboundExprReferencesField(predicate.Expr, qualifier, name)
+}
+
+func unboundExprReferencesField(expr UnboundExpr, qualifier string, name string) bool {
+	switch typed := expr.(type) {
+	case UnboundFieldExpr:
+		return typed.Qualifier == qualifier && typed.Name == name
+	case UnboundBinaryExpr:
+		return unboundExprReferencesField(typed.Left, qualifier, name) || unboundExprReferencesField(typed.Right, qualifier, name)
+	default:
+		return false
 	}
 }
