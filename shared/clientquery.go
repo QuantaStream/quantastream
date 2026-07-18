@@ -285,31 +285,32 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 
 	// Iterate over node results and summarize into group results
 	aa := make([]*roaring64.Bitmap, len(ra))
-	adOr := make([]*roaring64.Bitmap, len(ra))
-	adAnd := make([]*roaring64.Bitmap, len(ra))
 	ae := make([]*roaring64.Bitmap, 0)
-	numAndPredicates := len(ra[0].GetIntersects())
+	numAndPredicates := maxIntermediateBitmapSlots(ra, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetIntersects()
+	})
 	for i := 0; i < numAndPredicates; i++ {
-		for j := 0; j < len(ra); j++ {
-			aa[j] = ra[j].GetIntersects()[i]
-		}
-		gr.AddIntersect(roaring64.ParOr(len(ra), aa...))
+		gr.AddIntersect(mergeIntermediateBitmapSlot(ra, i, func(result *IntermediateResult) []*roaring64.Bitmap {
+			return result.GetIntersects()
+		}))
 	}
 
-	numDiffAndPredicates := len(ra[0].GetAndDifferences())
+	numDiffAndPredicates := maxIntermediateBitmapSlots(ra, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetAndDifferences()
+	})
 	for i := 0; i < numDiffAndPredicates; i++ {
-		for j := 0; j < len(ra); j++ {
-			adAnd[j] = ra[j].GetAndDifferences()[i]
-		}
-		gr.AddAndDifference(roaring64.ParOr(len(ra), adAnd...))
+		gr.AddAndDifference(mergeIntermediateBitmapSlot(ra, i, func(result *IntermediateResult) []*roaring64.Bitmap {
+			return result.GetAndDifferences()
+		}))
 	}
 
-	numDiffOrPredicates := len(ra[0].GetOrDifferences())
+	numDiffOrPredicates := maxIntermediateBitmapSlots(ra, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetOrDifferences()
+	})
 	for i := 0; i < numDiffOrPredicates; i++ {
-		for j := 0; j < len(ra); j++ {
-			adOr[j] = ra[j].GetOrDifferences()[i]
-		}
-		gr.AddOrDifference(roaring64.ParOr(len(ra), adOr...))
+		gr.AddOrDifference(mergeIntermediateBitmapSlot(ra, i, func(result *IntermediateResult) []*roaring64.Bitmap {
+			return result.GetOrDifferences()
+		}))
 	}
 
 	samples := make([]*roaring64.Bitmap, 0)
@@ -345,6 +346,37 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 	gr.AddExistence(roaring64.ParOr(len(ae), ae...))
 
 	return gr, nil
+}
+
+func maxIntermediateBitmapSlots(results []*IntermediateResult, selectSlots func(*IntermediateResult) []*roaring64.Bitmap) int {
+	maxSlots := 0
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		if slots := len(selectSlots(result)); slots > maxSlots {
+			maxSlots = slots
+		}
+	}
+	return maxSlots
+}
+
+func mergeIntermediateBitmapSlot(results []*IntermediateResult, slot int, selectSlots func(*IntermediateResult) []*roaring64.Bitmap) *roaring64.Bitmap {
+	bitmaps := make([]*roaring64.Bitmap, 0, len(results))
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		slots := selectSlots(result)
+		if slot >= len(slots) || slots[slot] == nil {
+			continue
+		}
+		bitmaps = append(bitmaps, slots[slot])
+	}
+	if len(bitmaps) == 0 {
+		return roaring64.NewBitmap()
+	}
+	return roaring64.ParOr(len(bitmaps), bitmaps...)
 }
 
 func queryResultCardinalityDebug(result *pb.QueryResult) string {

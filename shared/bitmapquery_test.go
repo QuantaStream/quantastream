@@ -85,3 +85,44 @@ func TestIntermediateResultFinalBitmapAppliesLocalPredicates(t *testing.T) {
 		t.Fatalf("final bitmap = %#v, want only 2 and 3", final.ToArray())
 	}
 }
+
+func TestMergeIntermediateBitmapSlotIncludesLaterNodeSlots(t *testing.T) {
+	firstNode := NewIntermediateResult("part")
+	secondNode := NewIntermediateResult("part")
+	secondNode.AddIntersect(roaring64.BitmapOf(7, 9))
+
+	results := []*IntermediateResult{firstNode, secondNode}
+	maxSlots := maxIntermediateBitmapSlots(results, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetIntersects()
+	})
+	if maxSlots != 1 {
+		t.Fatalf("max intersect slots = %d, want 1", maxSlots)
+	}
+
+	merged := mergeIntermediateBitmapSlot(results, 0, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetIntersects()
+	})
+	if got, want := merged.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("merged cardinality = %d, want %d", got, want)
+	}
+	if !merged.Contains(7) || !merged.Contains(9) {
+		t.Fatalf("merged bitmap = %#v, want values from later node", merged.ToArray())
+	}
+}
+
+func TestMergeIntermediateBitmapSlotTreatsMissingDifferenceSlotsAsEmpty(t *testing.T) {
+	firstNode := NewIntermediateResult("part")
+	firstNode.AddAndDifference(roaring64.BitmapOf(3))
+	secondNode := NewIntermediateResult("part")
+
+	results := []*IntermediateResult{firstNode, secondNode}
+	merged := mergeIntermediateBitmapSlot(results, 0, func(result *IntermediateResult) []*roaring64.Bitmap {
+		return result.GetAndDifferences()
+	})
+	if got, want := merged.GetCardinality(), uint64(1); got != want {
+		t.Fatalf("merged cardinality = %d, want %d", got, want)
+	}
+	if !merged.Contains(3) {
+		t.Fatalf("merged bitmap = %#v, want difference from first node", merged.ToArray())
+	}
+}

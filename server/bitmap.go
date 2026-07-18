@@ -1297,11 +1297,15 @@ func (m *BitmapIndex) flush() error {
 }
 
 func (m *BitmapIndex) persistDirtyCaches() (int, uint64, int, uint64, error) {
-	bitmapCount, bitmapWrites, err := m.checkPersistBitmapCache(false)
+	return m.persistCaches(false)
+}
+
+func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, error) {
+	bitmapCount, bitmapWrites, err := m.checkPersistBitmapCache(forceSync)
 	if err != nil {
 		return bitmapCount, bitmapWrites, 0, 0, err
 	}
-	bsiCount, bsiWrites, err := m.checkPersistBSICache(false)
+	bsiCount, bsiWrites, err := m.checkPersistBSICache(forceSync)
 	if err != nil {
 		return bitmapCount, bitmapWrites, bsiCount, bsiWrites, err
 	}
@@ -1315,7 +1319,7 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 	if err != nil {
 		return &empty.Empty{}, err
 	}
-	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistDirtyCaches()
+	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(true)
 	if err != nil {
 		return &empty.Empty{}, err
 	}

@@ -272,7 +272,7 @@ func TestShutdownPersistWritesDirtyBSI(t *testing.T) {
 	}
 }
 
-func TestCommitPersistSkipsCleanCaches(t *testing.T) {
+func TestCommitPersistForcesCleanCachesToSavepoint(t *testing.T) {
 	now := time.Unix(100, 0)
 	values := roaring64.NewDefaultBSI()
 	values.SetValue(1, 10)
@@ -310,18 +310,23 @@ func TestCommitPersistSkipsCleanCaches(t *testing.T) {
 	}
 	index.ServicePort = 1
 
-	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := index.persistDirtyCaches()
+	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := index.persistCaches(true)
 	if err != nil {
-		t.Fatalf("persistDirtyCaches returned error: %v", err)
+		t.Fatalf("persistCaches returned error: %v", err)
 	}
-	if bitmapCount != 1 || bitmapWrites != 0 || bsiCount != 1 || bsiWrites != 0 {
-		t.Fatalf("expected clean commit persist to count caches but skip writes, got bitmapCount=%d bitmapWrites=%d bsiCount=%d bsiWrites=%d",
+	if bitmapCount != 1 || bitmapWrites != 1 || bsiCount != 1 || bsiWrites != 1 {
+		t.Fatalf("expected forced commit persist to write clean caches, got bitmapCount=%d bitmapWrites=%d bsiCount=%d bsiWrites=%d",
 			bitmapCount, bitmapWrites, bsiCount, bsiWrites)
 	}
 
 	bitmapPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
-	if _, err := os.Stat(bitmapPath); !os.IsNotExist(err) {
-		t.Fatalf("expected clean standard bitmap not to be persisted by commit, stat err=%v", err)
+	if _, err := os.Stat(bitmapPath); err != nil {
+		t.Fatalf("expected clean standard bitmap to be persisted by forced commit, stat err=%v", err)
+	}
+
+	bsiPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	if _, err := os.Stat(bsiPath); err != nil {
+		t.Fatalf("expected clean BSI to be persisted by forced commit, stat err=%v", err)
 	}
 }
 
