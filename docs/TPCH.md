@@ -7,6 +7,21 @@ performance benchmark.
 Formal performance comparisons belong in the Benchmark Lab methodology described
 in [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
 
+## Current Checkpoint
+
+As of 2026-07-18, the SF 0.01 `tpch_queries.yaml` roadmap suite is green in
+both `inabox-direct` and `inabox-standard`.
+
+The latest one-run mode comparison produced:
+
+- `inabox-direct`: PASS, 26 seconds elapsed
+- `inabox-standard`: PASS, 24 seconds elapsed
+
+These timings are useful readiness and profiling signals, not formal benchmark
+claims. SQLRunner currently reports many per-case timings as coarse `<1s` or
+`1s` buckets, so fine-grained performance attribution should use dedicated
+profiling runs and runtime probes.
+
 ## Existing Schema Model
 
 The repository already contains TPC-H table schemas under
