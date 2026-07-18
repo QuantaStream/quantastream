@@ -158,8 +158,8 @@ func (p PreflightRewriteHelperPlanDescriptor) CompletenessReport() PreflightRewr
 func preflightRewriteDescriptor(rule qsbridge.RewriteRuleID, sql string) (*PreflightRewriteDescriptorSummary, bool) {
 	switch rule {
 	case qsbridge.RewriteCorrelatedAggregatePreflight:
-		if descriptor, ok := findCorrelatedAverageQuantityPredicate(sql); ok {
-			summary := descriptor.descriptorSummary()
+		if match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql); ok {
+			summary := match.Descriptor.descriptorSummary()
 			return &summary, true
 		}
 	}

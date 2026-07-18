@@ -7,7 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-func TestFindCorrelatedAverageQuantityPredicate(t *testing.T) {
+func TestCorrelatedAverageQuantitySQLRecognizerMatchesDescriptorAndFilters(t *testing.T) {
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
@@ -19,10 +19,11 @@ where p.p_brand = 'Brand#45'
     where l2.l_partkey = p.p_partkey
   )`
 
-	descriptor, ok := findCorrelatedAverageQuantityPredicate(sql)
+	match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
 	if !ok {
 		t.Fatalf("correlated average predicate not found")
 	}
+	descriptor := match.Descriptor
 	if descriptor.OuterLineitem != "l" || descriptor.InnerLineitem != "l2" || descriptor.OuterPart != "p" || descriptor.Factor != 0.2 {
 		t.Fatalf("descriptor = %#v", descriptor)
 	}
@@ -38,7 +39,7 @@ where p.p_brand = 'Brand#45'
 	if got := correlatedQualifiedNames(descriptor.RequiredFilters); len(got) != 2 || got[0] != "p.p_brand" || got[1] != "p.p_container" {
 		t.Fatalf("descriptor required filters = %#v", got)
 	}
-	brand, container, ok := correlatedPartFilters(sql, descriptor.OuterPart)
+	brand, container, ok := match.requiredPartFilters()
 	if !ok || brand != "Brand#45" || container != "MED JAR" {
 		t.Fatalf("filters = %q/%q ok=%v", brand, container, ok)
 	}

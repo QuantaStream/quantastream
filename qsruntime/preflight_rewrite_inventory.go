@@ -30,7 +30,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
 			Reason:            "TPC-H-style correlated aggregate predicates are useful read-path shapes, but correlated aggregate subquery intent is not planner-native yet.",
 			SourceSQLShape:    "A correlated average quantity predicate such as l_quantity < (select factor * avg(l2.l_quantity) from lineitem l2 where l2.l_partkey = p.p_partkey).",
-			TemporaryStrategy: "Route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, execute them with SQL-backed adapters for now, then expand the predicate into equivalent per-key threshold branches before native planning.",
+			TemporaryStrategy: "Recognize the Q17-style SQL pattern behind an isolated temporary recognizer, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then expand the predicate into equivalent per-key threshold branches before native planning.",
 			HelperPlanKinds: []PreflightRewriteHelperPlanKind{
 				PreflightHelperPlanParentKeyLookup,
 				PreflightHelperPlanAggregateThresholdLookup,

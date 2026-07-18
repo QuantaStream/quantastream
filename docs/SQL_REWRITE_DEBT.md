@@ -34,6 +34,11 @@ required parent filters. The recognizer is still a temporary SQL-pattern match,
 but descriptor reports and helper intent are derived from typed fields rather
 than ad hoc qualified-name strings.
 
+The remaining SQL-pattern matching for this shape is isolated behind the private
+`correlatedAverageQuantitySQLRecognizer` boundary. When correlated aggregate
+subqueries become parser/IR-native, that recognizer and its SQL rewrite caller
+are the intended deletion point.
+
 ## Guardrails
 
 - Every entry returned by `SQLRuntime.preflightRewriteRules()` must have an
