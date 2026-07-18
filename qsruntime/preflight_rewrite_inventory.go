@@ -110,8 +110,8 @@ func preflightSurfaceInventory() []PreflightSurfaceInventory {
 		{
 			Name:              "sql_backed_preflight_helper_executor",
 			Disposition:       PreflightSurfaceCompatibilityFallback,
-			CurrentContract:   "fallback executor that routes helper SQL through SQLRuntime when no native step is available",
-			DeletionCondition: "delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors",
+			CurrentContract:   "fallback executor that routes helper SQL through SQLRuntime only when no native step is available or the default adapter cannot build a native runtime request yet",
+			DeletionCondition: "delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors and the default adapter no longer needs SQL fallback",
 		},
 	}
 }

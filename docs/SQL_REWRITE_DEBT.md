@@ -56,7 +56,7 @@ deleted when native execution covers the required shapes.
 | `parent_key_lookup` | `typed_native_step` | Typed parent-key lookup feeding correlated aggregate threshold work. | Rename helper-shaped request/report wrappers after correlated aggregate planning consumes `NativeSubqueryStep` directly. |
 | `aggregate_threshold_lookup` | `typed_native_step` | Typed aggregate-threshold lookup feeding prepared-query residual branches. | Replace preflight expression expansion with planner-owned aggregate-threshold execution. |
 | `correlated_aggregate_preflight_transform` | `temporary_transform` | Temporary typed transform that consumes Q17-style correlated aggregate intent and attaches a residual expression. | Delete when correlated aggregate subqueries are represented and executed as native planner nodes. |
-| `sql_backed_preflight_helper_executor` | `compatibility_fallback` | Fallback executor that routes helper SQL through `SQLRuntime` when no native step is available. | Delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors. |
+| `sql_backed_preflight_helper_executor` | `compatibility_fallback` | Fallback executor that routes helper SQL through `SQLRuntime` only when no native step is available or the default adapter cannot build a native runtime request yet. | Delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors and the default adapter no longer needs SQL fallback. |
 
 ## Guardrails
 

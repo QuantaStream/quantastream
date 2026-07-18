@@ -1057,6 +1057,143 @@ func TestPreflightHelperExecutionValidatesPayloadByKind(t *testing.T) {
 	}
 }
 
+func TestNativePreflightStepFallsBackOnlyWhenNativeStepMissing(t *testing.T) {
+	tests := []struct {
+		name       string
+		kind       PreflightRewriteHelperPlanKind
+		stepKind   qsbridge.NativeSubqueryStepKind
+		outputName string
+		payload    PreflightHelperPayload
+		execute    func(SQLRuntime, context.Context, PreflightHelperExecutionRequest) (PreflightHelperExecutionResult, error)
+	}{
+		{
+			name:       "scalar",
+			kind:       PreflightHelperPlanScalarSubquery,
+			stepKind:   qsbridge.NativeSubqueryStepScalarMaterialization,
+			outputName: "scalar_subquery_value",
+			payload: PreflightHelperPayload{Scalar: &PreflightScalarHelperPayload{
+				SubquerySQL: "select count(*) from orders",
+				OutputName:  "scalar_subquery_value",
+			}},
+			execute: func(runtime SQLRuntime, ctx context.Context, request PreflightHelperExecutionRequest) (PreflightHelperExecutionResult, error) {
+				return runtime.executeScalarNativeSubqueryStep(ctx, request)
+			},
+		},
+		{
+			name:       "parent key",
+			kind:       PreflightHelperPlanParentKeyLookup,
+			stepKind:   qsbridge.NativeSubqueryStepParentKeyLookup,
+			outputName: "p_partkey",
+			payload: PreflightHelperPayload{ParentKeyLookup: &PreflightParentKeyLookupPayload{
+				Table:    "part",
+				Alias:    "p",
+				KeyField: "p_partkey",
+				Filters:  []PreflightHelperEqualityFilter{{Field: "p_brand", Value: "Brand#23"}},
+				Output:   "p_partkey",
+			}},
+			execute: func(runtime SQLRuntime, ctx context.Context, request PreflightHelperExecutionRequest) (PreflightHelperExecutionResult, error) {
+				return runtime.executeParentKeyNativeSubqueryStep(ctx, request)
+			},
+		},
+		{
+			name:       "aggregate threshold",
+			kind:       PreflightHelperPlanAggregateThresholdLookup,
+			stepKind:   qsbridge.NativeSubqueryStepAggregateThresholdLookup,
+			outputName: "quantity_threshold",
+			payload: PreflightHelperPayload{AggregateThresholdLookup: &PreflightAggregateThresholdLookupPayload{
+				Table:             "lineitem",
+				KeyField:          "l_partkey",
+				AggregateFunction: "avg",
+				ValueField:        "l_quantity",
+				PartKeys:          []int64{101},
+				ParentRownums:     []qsbridge.QuantaRownum{1},
+				Factor:            0.2,
+				KeyOutput:         "l_partkey",
+				ValueOutput:       "quantity_threshold",
+			}},
+			execute: func(runtime SQLRuntime, ctx context.Context, request PreflightHelperExecutionRequest) (PreflightHelperExecutionResult, error) {
+				return runtime.executeAggregateThresholdNativeSubqueryStep(ctx, request)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step := qsbridge.NativeSubqueryStep{
+				Name:          tt.outputName,
+				Kind:          tt.stepKind,
+				Lifecycle:     qsbridge.SubqueryStepNativeReady,
+				Outputs:       []string{tt.outputName},
+				ExecutionMode: "test_native_step",
+			}
+			request := PreflightHelperExecutionRequest{
+				Plan: PreflightRewriteHelperPlanDescriptor{
+					Name:       tt.outputName,
+					Kind:       tt.kind,
+					Outputs:    []string{tt.outputName},
+					NativeStep: &step,
+				},
+				SQL:     "select helper_value",
+				Payload: tt.payload,
+			}
+			helper := &testPreflightHelperExecutor{
+				result: PreflightHelperExecutionResult{
+					Plan:   request.Plan,
+					SQL:    "fallback:" + tt.outputName,
+					Result: SQLExecutionResult{Runtime: ExecutionResult{RowSet: helperRowSet([]qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(11)}})}},
+				},
+			}
+			native := &testNativeSubqueryStepExecutor{
+				result: qsbridge.NativeSubqueryStepExecutionResult{
+					Step: step,
+					Outputs: map[string]qsbridge.ResultCell{
+						tt.outputName: {Kind: qsbridge.ValueInt, Value: int64(44)},
+					},
+					RowSet: helperRowSet([]qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(44)}}),
+				},
+			}
+			runtime := SQLRuntime{
+				PreflightHelpers:    helper,
+				NativeSubquerySteps: native,
+			}
+
+			result, err := tt.execute(runtime, context.Background(), request)
+			if err != nil {
+				t.Fatalf("native preflight step: %v", err)
+			}
+			if helper.executions != 0 {
+				t.Fatalf("helper executions with native step = %d, want 0", helper.executions)
+			}
+			if native.executions != 1 || native.last.Step.Kind != tt.stepKind {
+				t.Fatalf("native executions = %d request = %#v, want step kind %s", native.executions, native.last, tt.stepKind)
+			}
+			if result.NativeTrace == nil || result.NativeTrace.ExecutionMode != "test_native_step" {
+				t.Fatalf("native trace = %#v, want test_native_step", result.NativeTrace)
+			}
+			if tt.kind == PreflightHelperPlanScalarSubquery && (result.Payload.Scalar == nil || result.Payload.Scalar.Materialized.Value != int64(44)) {
+				t.Fatalf("scalar payload = %#v, want materialized native output", result.Payload.Scalar)
+			}
+
+			request.Plan.NativeStep = nil
+			helper.executions = 0
+			native.executions = 0
+			fallback, err := tt.execute(runtime, context.Background(), request)
+			if err != nil {
+				t.Fatalf("fallback preflight step: %v", err)
+			}
+			if helper.executions != 1 {
+				t.Fatalf("helper executions without native step = %d, want 1", helper.executions)
+			}
+			if native.executions != 0 {
+				t.Fatalf("native executions without native step = %d, want 0", native.executions)
+			}
+			if fallback.SQL != "fallback:"+tt.outputName {
+				t.Fatalf("fallback SQL = %q", fallback.SQL)
+			}
+		})
+	}
+}
+
 func TestScalarNativeStepExecutesRuntimeRequest(t *testing.T) {
 	helper := &testPreflightHelperExecutor{}
 	var gotRequest ExecutionRequest
