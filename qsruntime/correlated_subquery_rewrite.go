@@ -3,7 +3,6 @@ package qsruntime
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,22 +90,6 @@ func (m correlatedAverageQuantitySQLMatch) requiredPartFilters() (string, string
 	return m.PartBrand, m.PartContainer, m.RequiredFiltersFound
 }
 
-type correlatedAverageQuantitySQLRecognizer struct{}
-
-func (correlatedAverageQuantitySQLRecognizer) recognize(sql string) (correlatedAverageQuantitySQLMatch, bool) {
-	descriptor, ok := matchCorrelatedAverageQuantityPredicateSQL(sql)
-	if !ok {
-		return correlatedAverageQuantitySQLMatch{}, false
-	}
-	brand, container, filtersFound := matchCorrelatedPartFiltersSQL(sql, descriptor.OuterPart)
-	return correlatedAverageQuantitySQLMatch{
-		Descriptor:           descriptor,
-		PartBrand:            brand,
-		PartContainer:        container,
-		RequiredFiltersFound: filtersFound,
-	}, true
-}
-
 type q17PartKeySeed struct {
 	PartKey      int64
 	ParentRownum qsbridge.QuantaRownum
@@ -161,10 +144,16 @@ func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context
 }
 
 func (r SQLRuntime) correlatedAverageQuantityRewriteMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
-	if typed, ok := r.correlatedAverageQuantityTypedMatch(sql); ok {
-		return typed, true
+	return r.correlatedAverageQuantityTypedMatch(sql)
+}
+
+func (r SQLRuntime) correlatedAverageQuantityRewriteDescriptor(sql string) (*PreflightRewriteDescriptorSummary, bool) {
+	match, ok := r.correlatedAverageQuantityTypedMatch(sql)
+	if !ok {
+		return nil, false
 	}
-	return (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
+	summary := match.Descriptor.descriptorSummary()
+	return &summary, true
 }
 
 func (r SQLRuntime) correlatedAverageQuantityTypedMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
@@ -325,58 +314,6 @@ func correlatedFieldsFromRefs(refs []qsbridge.FieldRef) []correlatedSubqueryFiel
 	return fields
 }
 
-func findCorrelatedAverageQuantityPredicate(sql string) (correlatedAverageQuantityDescriptor, bool) {
-	match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
-	if !ok {
-		return correlatedAverageQuantityDescriptor{}, false
-	}
-	return match.Descriptor, true
-}
-
-func matchCorrelatedAverageQuantityPredicateSQL(sql string) (correlatedAverageQuantityDescriptor, bool) {
-	re := regexp.MustCompile(`(?is)\s+and\s+([a-z_][a-z0-9_]*)\.l_quantity\s*<\s*\(\s*select\s+([0-9]+(?:\.[0-9]+)?)\s*\*\s*avg\(\s*([a-z_][a-z0-9_]*)\.l_quantity\s*\)\s+from\s+lineitem\s+as\s+([a-z_][a-z0-9_]*)\s+where\s+([a-z_][a-z0-9_]*)\.l_partkey\s*=\s*([a-z_][a-z0-9_]*)\.p_partkey\s*\)`)
-	match := re.FindStringSubmatchIndex(sql)
-	if match == nil {
-		return correlatedAverageQuantityDescriptor{}, false
-	}
-	groups := regexpSubmatches(sql, match)
-	if len(groups) != 7 || !strings.EqualFold(groups[3], groups[4]) || !strings.EqualFold(groups[3], groups[5]) {
-		return correlatedAverageQuantityDescriptor{}, false
-	}
-	factor, err := strconv.ParseFloat(groups[2], 64)
-	if err != nil {
-		return correlatedAverageQuantityDescriptor{}, false
-	}
-	return correlatedAverageQuantityDescriptor{
-		Start:             match[0],
-		End:               match[1],
-		OuterLineitem:     groups[1],
-		Factor:            factor,
-		AggregateFunction: "avg",
-		OuterQuantity:     correlatedField("lineitem", groups[1], "l_quantity", qsbridge.DataTypeInt),
-		InnerQuantity:     correlatedField("lineitem", groups[3], "l_quantity", qsbridge.DataTypeInt),
-		InnerLineitem:     groups[3],
-		InnerKey:          correlatedField("lineitem", groups[3], "l_partkey", qsbridge.DataTypeInt),
-		OuterPart:         groups[6],
-		OuterKey:          correlatedField("part", groups[6], "p_partkey", qsbridge.DataTypeInt),
-		RequiredFilters: []correlatedSubqueryField{
-			correlatedField("part", groups[6], "p_brand", qsbridge.DataTypeString),
-			correlatedField("part", groups[6], "p_container", qsbridge.DataTypeString),
-		},
-	}, true
-}
-
-func correlatedPartFilters(sql string, partAlias string) (string, string, bool) {
-	return matchCorrelatedPartFiltersSQL(sql, partAlias)
-}
-
-func matchCorrelatedPartFiltersSQL(sql string, partAlias string) (string, string, bool) {
-	alias := regexp.QuoteMeta(partAlias)
-	brand := firstRegexpGroup(sql, `(?is)\b`+alias+`\.p_brand\s*=\s*'([^']*)'`)
-	container := firstRegexpGroup(sql, `(?is)\b`+alias+`\.p_container\s*=\s*'([^']*)'`)
-	return brand, container, brand != "" && container != ""
-}
-
 func (r SQLRuntime) correlatedAveragePartKeys(ctx context.Context, partAlias string, brand string, container string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) ([]int64, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
 	seeds, diagnostics, reports, err := r.correlatedAveragePartKeySeeds(ctx, partAlias, brand, container, options, values...)
 	keys := make([]int64, 0, len(seeds))
@@ -507,26 +444,6 @@ func correlatedThresholdHelperRequest(partKeys []int64, parentRownums []qsbridge
 		Options: options,
 		Values:  append([]qsbridge.ParameterValue(nil), values...),
 	}
-}
-
-func regexpSubmatches(text string, indexes []int) []string {
-	groups := make([]string, 0, len(indexes)/2)
-	for i := 0; i < len(indexes); i += 2 {
-		if indexes[i] < 0 || indexes[i+1] < 0 {
-			groups = append(groups, "")
-			continue
-		}
-		groups = append(groups, text[indexes[i]:indexes[i+1]])
-	}
-	return groups
-}
-
-func firstRegexpGroup(text string, pattern string) string {
-	match := regexp.MustCompile(pattern).FindStringSubmatch(text)
-	if len(match) < 2 {
-		return ""
-	}
-	return match[1]
 }
 
 func resultCellInt64(cell qsbridge.ResultCell) (int64, bool) {

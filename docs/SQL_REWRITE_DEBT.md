@@ -10,7 +10,7 @@ architecture.
 
 | Rule | Current SQL shape | Temporary strategy | Helper-plan descriptors | Current regression coverage | Future replacement |
 |---|---|---|---|---|---|
-| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Route parent-key lookup and aggregate-threshold materialization through native subquery step contracts, then expand the predicate into equivalent per-key threshold branches before native planning. Helper SQL remains as debug/fallback context, not the execution contract for runtime-ready native steps. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
+| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Use typed correlated aggregate intent from the bound query, route parent-key lookup and aggregate-threshold materialization through native subquery step contracts, then expand the predicate into equivalent per-key threshold branches before native planning. Helper SQL remains as debug/fallback context, not the execution contract for runtime-ready native steps. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
 
 ## Native Promotion Order
 
@@ -30,16 +30,15 @@ outer correlated SQL rewrite is still being retired.
 
 The Q17-style correlated aggregate descriptor and qsbridge subquery intent now
 carry typed table/alias/field references for the outer value, inner aggregate
-value, correlated keys, and required parent filters. The simple parser can now
-recognize the Q17 correlated aggregate predicate and bind it into
-`QueryIR.Subqueries` as typed intent. Runtime preflight now prefers that bound
-intent when constructing the temporary execution rewrite and only falls back to
-the SQL-pattern recognizer when the typed shape is unavailable.
+value, correlated keys, source predicate text, and required parent filters. The
+simple parser recognizes the Q17 correlated aggregate predicate and binds it
+into `QueryIR.Subqueries` as typed intent. Runtime preflight now requires that
+bound intent when constructing the temporary execution rewrite; the old
+SQL-pattern recognizer fallback has been deleted.
 
-The remaining SQL-pattern matching for this shape is isolated behind the private
-`correlatedAverageQuantitySQLRecognizer` boundary. When correlated aggregate
-subqueries become fully planner/executor-native, that fallback recognizer and
-the SQL rewrite caller are the intended deletion point.
+The remaining debt for this shape is the SQL predicate expansion itself. When
+correlated aggregate subqueries become fully planner/executor-native, the
+preflight rewrite caller is the intended deletion point.
 
 ## Guardrails
 

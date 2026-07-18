@@ -121,10 +121,7 @@ where p.p_brand = 'Brand#45'
     from lineitem as l2
     where l2.l_partkey = p.p_partkey
   )`
-	correlated, ok := findCorrelatedAverageQuantityPredicate(correlatedSQL)
-	if !ok {
-		t.Fatalf("correlated descriptor not found")
-	}
+	correlated := testCorrelatedAverageQuantityDescriptor(t, correlatedSQL)
 	correlatedSummary := correlated.descriptorSummary()
 	if correlatedSummary.Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
 		t.Fatalf("correlated rule = %q", correlatedSummary.Rule)
@@ -234,7 +231,7 @@ having c > (
 }
 
 func TestPreflightRewriteDescriptorReportIsCompact(t *testing.T) {
-	descriptor, ok := findCorrelatedAverageQuantityPredicate(`select sum(l.l_extendedprice) / 7.0 as avg_yearly
+	descriptor := testCorrelatedAverageQuantityDescriptor(t, `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
 where p.p_brand = 'Brand#45'
@@ -244,9 +241,6 @@ where p.p_brand = 'Brand#45'
     from lineitem as l2
     where l2.l_partkey = p.p_partkey
   )`)
-	if !ok {
-		t.Fatalf("correlated descriptor not found")
-	}
 
 	report := descriptor.descriptorSummary().Report()
 	if report.Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
@@ -322,7 +316,7 @@ where p.p_brand = 'Brand#23'
 		if !ok {
 			t.Fatalf("rewrite rule %q has no known descriptor SQL", item.Rule)
 		}
-		descriptor, ok := preflightRewriteDescriptor(item.Rule, sql)
+		descriptor, ok := testPreflightRewriteDescriptor(t, item.Rule, sql)
 		if !ok {
 			t.Fatalf("rewrite rule %q did not produce a descriptor", item.Rule)
 		}
@@ -348,7 +342,7 @@ where p.p_brand = 'Brand#23'
     where l2.l_partkey = p.p_partkey
   )`,
 		}[rule]
-		summary, ok := preflightRewriteDescriptor(rule, summarySQL)
+		summary, ok := testPreflightRewriteDescriptor(t, rule, summarySQL)
 		if !ok {
 			t.Fatalf("descriptor for rule %q not found", rule)
 		}
@@ -372,7 +366,7 @@ where p.p_brand = 'Brand#23'
 }
 
 func TestPreflightRewriteDescriptorReportsExposeSubqueryIntent(t *testing.T) {
-	descriptor, ok := findCorrelatedAverageQuantityPredicate(`select sum(l.l_extendedprice) / 7.0 as avg_yearly
+	descriptor := testCorrelatedAverageQuantityDescriptor(t, `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
 where p.p_brand = 'Brand#23'
@@ -382,9 +376,6 @@ where p.p_brand = 'Brand#23'
     from lineitem as l2
     where l2.l_partkey = p.p_partkey
   )`)
-	if !ok {
-		t.Fatalf("correlated descriptor not found")
-	}
 
 	report := descriptor.descriptorSummary().Report()
 	if report.SubqueryIntent == nil || report.SubqueryIntent.Kind != qsbridge.SubqueryIntentCorrelatedAggregate {
@@ -411,7 +402,7 @@ where p.p_brand = 'Brand#23'
 }
 
 func TestCorrelatedPreflightDescriptorIntentCanSeedPlannerPlaceholder(t *testing.T) {
-	descriptor, ok := findCorrelatedAverageQuantityPredicate(`select sum(l.l_extendedprice) / 7.0 as avg_yearly
+	descriptor := testCorrelatedAverageQuantityDescriptor(t, `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
 where p.p_brand = 'Brand#23'
@@ -421,9 +412,6 @@ where p.p_brand = 'Brand#23'
     from lineitem as l2
     where l2.l_partkey = p.p_partkey
   )`)
-	if !ok {
-		t.Fatalf("correlated descriptor not found")
-	}
 	summary := descriptor.descriptorSummary()
 	if summary.SubqueryIntent == nil {
 		t.Fatalf("subquery intent = nil")
@@ -643,7 +631,9 @@ func scalarSubqueryTestIntLiteralValue(literal qsbridge.LiteralExpr) int64 {
 }
 
 func TestPreflightRewriteSummaryReportsCorrelatedHelperExecutionPayloads(t *testing.T) {
-	runtime := SQLRuntime{PreflightHelpers: &nativePrototypePreflightHelperExecutor{}}
+	runtime := newTestSQLRuntime(t)
+	runtime.Environment.Execution.Selector.Direct = nil
+	runtime.PreflightHelpers = &nativePrototypePreflightHelperExecutor{}
 	query := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
@@ -698,9 +688,6 @@ where p.p_brand = 'Brand#23'
     where l2.l_partkey = p.p_partkey
   )`
 
-	if _, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(query); ok {
-		t.Fatalf("test query unexpectedly matched SQL recognizer fallback")
-	}
 	if _, ok := runtime.correlatedAverageQuantityTypedMatch(query); !ok {
 		plan := runtime.Plan(query)
 		t.Fatalf("typed correlated aggregate match not found: subqueries=%d diagnostics=%#v", len(plan.Query.Subqueries), plan.Diagnostics)
@@ -780,7 +767,9 @@ func TestPreflightRewriteSummaryReportsCorrelatedHelperWhenMaterializationBlocks
 			)}},
 		},
 	}
-	runtime := SQLRuntime{PreflightHelpers: executor}
+	runtime := newTestSQLRuntime(t)
+	runtime.Environment.Execution.Selector.Direct = nil
+	runtime.PreflightHelpers = executor
 	query := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
@@ -1397,6 +1386,28 @@ func TestPreflightHelperExecutionDelegatesThroughRuntimeBoundary(t *testing.T) {
 	cell, diagnostics := scalarSubqueryResultCell(helper.Result.Runtime.RowSet)
 	if diagnostics.BlocksNative() || cell.Value != 7 {
 		t.Fatalf("helper cell = %#v diagnostics = %#v", cell, diagnostics)
+	}
+}
+
+func testCorrelatedAverageQuantityDescriptor(t *testing.T, sql string) correlatedAverageQuantityDescriptor {
+	t.Helper()
+	runtime := newTestSQLRuntime(t)
+	match, ok := runtime.correlatedAverageQuantityTypedMatch(sql)
+	if !ok {
+		plan := runtime.Plan(sql)
+		t.Fatalf("correlated typed descriptor not found: subqueries=%d diagnostics=%#v", len(plan.Query.Subqueries), plan.Diagnostics)
+	}
+	return match.Descriptor
+}
+
+func testPreflightRewriteDescriptor(t *testing.T, rule qsbridge.RewriteRuleID, sql string) (*PreflightRewriteDescriptorSummary, bool) {
+	t.Helper()
+	runtime := newTestSQLRuntime(t)
+	switch rule {
+	case qsbridge.RewriteCorrelatedAggregatePreflight:
+		return runtime.correlatedAverageQuantityRewriteDescriptor(sql)
+	default:
+		return nil, false
 	}
 }
 
