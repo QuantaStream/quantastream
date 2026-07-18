@@ -54,10 +54,12 @@ type PreflightRewriteResult struct {
 }
 
 type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, []PreflightHelperExecutionRequestReport, error, bool)
+type preflightRewriteDescriptorFunc func(sql string) (*PreflightRewriteDescriptorSummary, bool)
 
 type preflightRewriteRule struct {
-	rule  qsbridge.RewriteRuleID
-	apply preflightRewriteFunc
+	rule       qsbridge.RewriteRuleID
+	apply      preflightRewriteFunc
+	descriptor preflightRewriteDescriptorFunc
 }
 
 // RuleID returns the stable optimizer rewrite rule represented by this preflight hook.
@@ -67,7 +69,10 @@ func (r preflightRewriteRule) RuleID() qsbridge.RewriteRuleID {
 
 // ApplyPreflightRewrite adapts a rewrite function to the PreflightRewrite interface.
 func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (PreflightRewriteResult, error) {
-	descriptor, _ := preflightRewriteDescriptor(r.rule, sql)
+	var descriptor *PreflightRewriteDescriptorSummary
+	if r.descriptor != nil {
+		descriptor, _ = r.descriptor(sql)
+	}
 	started := time.Now()
 	rewritten, diagnostics, optimization, helperReports, err, applied := r.apply(ctx, sql, options, values...)
 	duration := time.Since(started)
@@ -91,7 +96,11 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 
 func (r SQLRuntime) preflightRewriteRules() []PreflightRewrite {
 	return []PreflightRewrite{
-		preflightRewriteRule{rule: qsbridge.RewriteCorrelatedAggregatePreflight, apply: r.rewriteCorrelatedAverageQuantitySubquery},
+		preflightRewriteRule{
+			rule:       qsbridge.RewriteCorrelatedAggregatePreflight,
+			apply:      r.rewriteCorrelatedAverageQuantitySubquery,
+			descriptor: r.correlatedAverageQuantityRewriteDescriptor,
+		},
 	}
 }
 

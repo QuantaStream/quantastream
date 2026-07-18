@@ -7,7 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-func TestCorrelatedAverageQuantitySQLRecognizerMatchesDescriptorAndFilters(t *testing.T) {
+func TestCorrelatedAverageQuantityTypedMatchBuildsDescriptorAndFilters(t *testing.T) {
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
@@ -19,9 +19,11 @@ where p.p_brand = 'Brand#45'
     where l2.l_partkey = p.p_partkey
   )`
 
-	match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
+	runtime := newTestSQLRuntime(t)
+	match, ok := runtime.correlatedAverageQuantityTypedMatch(sql)
 	if !ok {
-		t.Fatalf("correlated average predicate not found")
+		plan := runtime.Plan(sql)
+		t.Fatalf("correlated average typed intent not found: subqueries=%d diagnostics=%#v", len(plan.Query.Subqueries), plan.Diagnostics)
 	}
 	descriptor := match.Descriptor
 	if descriptor.OuterLineitem != "l" || descriptor.InnerLineitem != "l2" || descriptor.OuterPart != "p" || descriptor.Factor != 0.2 {

@@ -155,17 +155,6 @@ func (p PreflightRewriteHelperPlanDescriptor) CompletenessReport() PreflightRewr
 	return report
 }
 
-func preflightRewriteDescriptor(rule qsbridge.RewriteRuleID, sql string) (*PreflightRewriteDescriptorSummary, bool) {
-	switch rule {
-	case qsbridge.RewriteCorrelatedAggregatePreflight:
-		if match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql); ok {
-			summary := match.Descriptor.descriptorSummary()
-			return &summary, true
-		}
-	}
-	return nil, false
-}
-
 func correlatedParentKeyHelperPlan(partAlias string, sql string) PreflightRewriteHelperPlanDescriptor {
 	step := correlatedParentKeyNativeStep(partAlias)
 	return PreflightRewriteHelperPlanDescriptor{
