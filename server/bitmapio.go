@@ -313,13 +313,19 @@ func (m *BitmapIndex) openCompleteFile(index, field string, rowIDOrBits int64, t
 // Called during server startup.  Iterates filesystem and loads up fragement queue.
 func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 
+	start := time.Now()
 	m.fragFileLock.Lock()
 	defer m.fragFileLock.Unlock()
 
 	baseDir := m.dataDir + sep + "bitmap"
 
 	var fragMap = make(map[string]map[string]map[int64]map[int64]*BitmapFragment)
+	fileCount := 0
+	standardFileCount := 0
+	bsiFileCount := 0
+	ignoredFieldCount := 0
 
+	walkStart := time.Now()
 	err := filepath.Walk(baseDir,
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -328,6 +334,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			if info.IsDir() {
 				return nil
 			}
+			fileCount++
 			bf := &BitmapFragment{ModTime: info.ModTime(), IsInit: true}
 
 			data, err := ioutil.ReadFile(path)
@@ -349,6 +356,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			attr, err := m.getFieldConfig(bf.IndexName, bf.FieldName)
 			if err != nil {
 				u.Errorf("Attribute %s.%s not found in schema. ignoring", bf.IndexName, bf.FieldName)
+				ignoredFieldCount++
 				return nil
 			}
 
@@ -359,6 +367,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			bf.IsBSI = isBSIBitmapPath(s)
 
 			if bf.IsBSI {
+				bsiFileCount++
 				if tq != "" {
 					ts, err := time.Parse(timeFmt, s[len(s)-2])
 					if err != nil {
@@ -415,6 +424,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 					existFrag.ModTime = info.ModTime().Add(time.Second * -10)
 				}
 			} else {
+				standardFileCount++
 				bf.RowIDOrBits, err = strconv.ParseInt(s[2], 10, 64)
 				if err != nil {
 					err := fmt.Errorf("readBitmapFiles: Could not parse RowID - %v", err)
@@ -455,19 +465,32 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			}
 			return nil
 		})
+	walkElapsed := time.Since(walkStart)
 	if err != nil {
 		u.Errorf("filepath.Walk - %v", err)
 		return err
 	}
 
 	if len(fragMap) == 0 {
+		fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d fragments=0 walk_elapsed=%v enqueue_elapsed=0s flush_elapsed=0s total_elapsed=%v\n",
+			baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, walkElapsed, time.Since(start))
 		return nil
 	}
 
+	enqueueStart := time.Now()
+	fragmentCount := 0
+	standardFragmentCount := 0
+	bsiFragmentCount := 0
 	for _, index := range fragMap {
 		for _, field := range index {
 			for _, ts := range field {
 				for _, frag := range ts {
+					fragmentCount++
+					if frag.IsBSI {
+						bsiFragmentCount++
+					} else {
+						standardFragmentCount++
+					}
 					select {
 					case fragQueue <- frag:
 					default:
@@ -477,7 +500,15 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			}
 		}
 	}
-	return m.flush()
+	enqueueElapsed := time.Since(enqueueStart)
+	flushStart := time.Now()
+	if err := m.flush(); err != nil {
+		return err
+	}
+	flushElapsed := time.Since(flushStart)
+	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
+		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
+	return nil
 }
 
 func isBSIBitmapPath(parts []string) bool {

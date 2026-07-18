@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsinabox"
@@ -74,7 +75,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 0
 	}
 
+	mountStart := time.Now()
 	process, diagnostics, err := qsinabox.MountStandardProcess(ctx, config)
+	mountElapsed := time.Since(mountStart)
 	if err != nil {
 		fmt.Fprintf(stderr, "mount inabox-standard process: %v\n", err)
 		return 2
@@ -85,6 +88,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	defer process.Close()
 
+	fmt.Fprintf(stdout, "mount_elapsed=%s\n", mountElapsed)
 	plan := qsinabox.NewStandardPlan(config, process.Backend.Services)
 	for _, line := range plan.SummaryLines() {
 		fmt.Fprintln(stdout, line)
