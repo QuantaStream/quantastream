@@ -47,6 +47,50 @@ where p.p_brand = 'Brand#45'
 	}
 }
 
+func TestCorrelatedAverageThresholdPredicateExprBuildsTypedBranches(t *testing.T) {
+	runtime := newTestSQLRuntime(t)
+	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#45'
+  and p.p_container = 'MED JAR'
+  and l.l_quantity < (
+    select avg(l2.l_quantity) * 0.2
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`
+
+	match, ok := runtime.correlatedAverageQuantityTypedMatch(sql)
+	if !ok {
+		t.Fatalf("typed correlated aggregate match not found")
+	}
+	expr := correlatedAverageThresholdPredicateExpr(match.Descriptor, []q17PartThreshold{
+		{PartKey: 101, Threshold: 10},
+		{PartKey: 202, Threshold: 20.5},
+	})
+
+	or, ok := expr.(qsbridge.BinaryExpr)
+	if !ok || or.Op != qsbridge.BinaryOpOr {
+		t.Fatalf("expr = %#v, want OR binary", expr)
+	}
+	assertCorrelatedAverageThresholdBranch(t, or.Left, 101, 10)
+	assertCorrelatedAverageThresholdBranch(t, or.Right, 202, 20.5)
+}
+
+func TestCorrelatedAverageThresholdPredicateExprBuildsFalsePredicateForEmptyThresholds(t *testing.T) {
+	expr := correlatedAverageThresholdPredicateExpr(correlatedAverageQuantityDescriptor{}, nil)
+
+	binary, ok := expr.(qsbridge.BinaryExpr)
+	if !ok || binary.Op != qsbridge.BinaryOpEqual {
+		t.Fatalf("expr = %#v, want equality false predicate", expr)
+	}
+	left, leftOK := binary.Left.(qsbridge.LiteralExpr)
+	right, rightOK := binary.Right.(qsbridge.LiteralExpr)
+	if !leftOK || !rightOK || left.Kind != qsbridge.ValueInt || right.Kind != qsbridge.ValueInt || left.Value != int64(1) || right.Value != int64(0) {
+		t.Fatalf("false predicate = %#v", binary)
+	}
+}
+
 func TestScalarSubqueryResultCellReadsUnnamedProjectionVector(t *testing.T) {
 	cell, diagnostics := scalarSubqueryResultCell(qsbridge.QuantaProjectedRowSet{
 		Rownums: []qsbridge.QuantaRownum{1},
@@ -59,6 +103,38 @@ func TestScalarSubqueryResultCellReadsUnnamedProjectionVector(t *testing.T) {
 	}
 	if cell.Value != 95025.42544399995 {
 		t.Fatalf("cell = %#v", cell)
+	}
+}
+
+func assertCorrelatedAverageThresholdBranch(t *testing.T, expr qsbridge.Expr, partKey int64, threshold float64) {
+	t.Helper()
+	and, ok := expr.(qsbridge.BinaryExpr)
+	if !ok || and.Op != qsbridge.BinaryOpAnd {
+		t.Fatalf("branch = %#v, want AND binary", expr)
+	}
+	keyEq, ok := and.Left.(qsbridge.BinaryExpr)
+	if !ok || keyEq.Op != qsbridge.BinaryOpEqual {
+		t.Fatalf("key branch = %#v, want equality", and.Left)
+	}
+	keyField, ok := keyEq.Left.(qsbridge.FieldExpr)
+	if !ok || keyField.Ref.Name != "p_partkey" || keyField.Ref.Table.RefName() != "p" {
+		t.Fatalf("key field = %#v", keyEq.Left)
+	}
+	keyValue, ok := keyEq.Right.(qsbridge.LiteralExpr)
+	if !ok || keyValue.Kind != qsbridge.ValueInt || keyValue.Value != partKey {
+		t.Fatalf("key value = %#v, want %d", keyEq.Right, partKey)
+	}
+	quantityLess, ok := and.Right.(qsbridge.BinaryExpr)
+	if !ok || quantityLess.Op != qsbridge.BinaryOpLess {
+		t.Fatalf("quantity branch = %#v, want less-than", and.Right)
+	}
+	quantityField, ok := quantityLess.Left.(qsbridge.FieldExpr)
+	if !ok || quantityField.Ref.Name != "l_quantity" || quantityField.Ref.Table.RefName() != "l" {
+		t.Fatalf("quantity field = %#v", quantityLess.Left)
+	}
+	thresholdValue, ok := quantityLess.Right.(qsbridge.LiteralExpr)
+	if !ok || thresholdValue.Kind != qsbridge.ValueFloat || thresholdValue.Value != threshold {
+		t.Fatalf("threshold value = %#v, want %v", quantityLess.Right, threshold)
 	}
 }
 

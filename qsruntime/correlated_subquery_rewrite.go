@@ -314,6 +314,26 @@ func correlatedFieldsFromRefs(refs []qsbridge.FieldRef) []correlatedSubqueryFiel
 	return fields
 }
 
+func correlatedAverageThresholdPredicateExpr(descriptor correlatedAverageQuantityDescriptor, thresholds []q17PartThreshold) qsbridge.Expr {
+	if len(thresholds) == 0 {
+		return qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Literal(qsbridge.ValueInt, int64(1)), qsbridge.Literal(qsbridge.ValueInt, int64(0)))
+	}
+	var expression qsbridge.Expr
+	for _, threshold := range thresholds {
+		branch := qsbridge.Binary(
+			qsbridge.BinaryOpAnd,
+			qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(descriptor.OuterKey.fieldRef()), qsbridge.Literal(qsbridge.ValueInt, threshold.PartKey)),
+			qsbridge.Binary(qsbridge.BinaryOpLess, qsbridge.Field(descriptor.OuterQuantity.fieldRef()), qsbridge.Literal(qsbridge.ValueFloat, threshold.Threshold)),
+		)
+		if expression == nil {
+			expression = branch
+			continue
+		}
+		expression = qsbridge.Binary(qsbridge.BinaryOpOr, expression, branch)
+	}
+	return expression
+}
+
 func (r SQLRuntime) correlatedAveragePartKeys(ctx context.Context, partAlias string, brand string, container string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) ([]int64, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
 	seeds, diagnostics, reports, err := r.correlatedAveragePartKeySeeds(ctx, partAlias, brand, container, options, values...)
 	keys := make([]int64, 0, len(seeds))
