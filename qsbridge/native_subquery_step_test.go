@@ -61,6 +61,32 @@ func TestNativeSubqueryStepsPromotesNativeReadyHelpers(t *testing.T) {
 	}
 }
 
+func TestNativeSubqueryStepsPromotesSiblingMembership(t *testing.T) {
+	root := ScalarSubqueryNode{Intents: []SubqueryPlanIntent{{
+		Kind: SubqueryIntentCorrelatedMembership,
+		HelperIntents: []SubqueryHelperIntent{{
+			Name:               "q21_other_supplier_exists",
+			Kind:               string(SubqueryHelperPlanSiblingMembership),
+			Inputs:             []string{"l1.l_orderkey", "l2.l_orderkey"},
+			Outputs:            []string{"l1"},
+			Materialization:    "outer rownum keep/drop domain",
+			BitmapNativeTarget: "semi membership over sibling lineitem aliases",
+		}},
+	}}}
+
+	steps := NativeSubquerySteps(root)
+	if got, want := len(steps), 1; got != want {
+		t.Fatalf("native steps = %d, want %d: %#v", got, want, steps)
+	}
+	step := steps[0]
+	if step.Kind != NativeSubqueryStepSiblingMembership || step.Lifecycle != SubqueryStepNativeReady {
+		t.Fatalf("native step = %#v, want native-ready sibling membership", step)
+	}
+	if step.ExecutionMode != "sql_backed_until_bitmap_native_executor_exists" {
+		t.Fatalf("execution mode = %q", step.ExecutionMode)
+	}
+}
+
 func TestNativeSubqueryStepExecutionContractTracesResult(t *testing.T) {
 	step := NativeSubqueryStep{
 		Name:          "scalar_value",

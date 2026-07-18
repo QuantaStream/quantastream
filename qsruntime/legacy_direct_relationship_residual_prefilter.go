@@ -476,7 +476,7 @@ func sameRowComparisonPolicy(plan qsbridge.SameRowComparisonPlan, candidateCount
 	if candidateCount == 0 {
 		return sameRowComparisonPolicyDecision{useNative: true, reason: "empty_candidate_set"}
 	}
-	return sameRowComparisonPolicyDecision{useNative: true, reason: "native_keeps_compared_values_unmaterialized"}
+	return sameRowComparisonPolicyDecision{useNative: true, reason: "native_compares_bsi_values_without_sql_projection"}
 }
 
 func sameRowComparisonPolicyName(decision sameRowComparisonPolicyDecision) string {

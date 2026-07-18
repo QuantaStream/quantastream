@@ -25,6 +25,8 @@ const (
 	NativeSubqueryStepParentKeyLookup NativeSubqueryStepKind = "parent_key_lookup"
 	// NativeSubqueryStepAggregateThresholdLookup materializes aggregate thresholds keyed by correlated values.
 	NativeSubqueryStepAggregateThresholdLookup NativeSubqueryStepKind = "aggregate_threshold_lookup"
+	// NativeSubqueryStepSiblingMembership evaluates correlated sibling-domain semi/anti membership.
+	NativeSubqueryStepSiblingMembership NativeSubqueryStepKind = "sibling_membership"
 )
 
 // NativeSubqueryStep is the executor-facing contract for first-class subquery

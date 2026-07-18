@@ -279,7 +279,7 @@ func TestLegacyDirectRelationshipApplyTupleSameRowResidualsUsesNativePolicyAndKe
 	assertExecutionProbe(t, probes, "relationship_join", "graph_tuple_residual_native_same_row", "1")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_tuple_residual_materialized", "1")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_tuple_same_row_1_policy", "native_same_row")
-	assertExecutionProbe(t, probes, "relationship_join", "graph_tuple_same_row_1_policy_reason", "native_keeps_compared_values_unmaterialized")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_tuple_same_row_1_policy_reason", "native_compares_bsi_values_without_sql_projection")
 }
 
 func TestLegacyDirectRelationshipApplyResidualRolePrefiltersKeepsLiteralPredicateEager(t *testing.T) {

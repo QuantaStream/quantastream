@@ -9,6 +9,8 @@ const (
 	SubqueryIntentScalar SubqueryIntentKind = "scalar_subquery"
 	// SubqueryIntentCorrelatedAggregate evaluates an aggregate subquery correlated to outer rows.
 	SubqueryIntentCorrelatedAggregate SubqueryIntentKind = "correlated_aggregate_subquery"
+	// SubqueryIntentCorrelatedMembership evaluates EXISTS/NOT EXISTS membership correlated to outer rows.
+	SubqueryIntentCorrelatedMembership SubqueryIntentKind = "correlated_membership_subquery"
 )
 
 // SubqueryHelperIntent describes helper work implied by a subquery intent.
@@ -44,14 +46,31 @@ type CorrelatedAggregateSubqueryIntent struct {
 	Scope             PredicateScope
 }
 
+// CorrelatedMembershipSubqueryIntent records an EXISTS/NOT EXISTS subquery that
+// should become a semi/anti membership operation over a correlated domain.
+type CorrelatedMembershipSubqueryIntent struct {
+	Operation              RelationshipJoinOperationIntent
+	OuterDomain            RownumDomain
+	InnerDomain            RownumDomain
+	OuterKeyRef            string
+	InnerKeyRef            string
+	CrossDomainPredicates  []string
+	RequiredFilters        []string
+	OutputName             string
+	BitmapNativeTarget     string
+	Scope                  PredicateScope
+	RepeatedPhysicalSource bool
+}
+
 // SubqueryPlanIntent is the durable planner vocabulary for subquery work that
 // may still be executed through temporary preflight helpers today.
 type SubqueryPlanIntent struct {
-	Kind                SubqueryIntentKind
-	Capability          PlanCapability
-	HelperIntents       []SubqueryHelperIntent
-	Scalar              *ScalarSubqueryIntent
-	CorrelatedAggregate *CorrelatedAggregateSubqueryIntent
+	Kind                 SubqueryIntentKind
+	Capability           PlanCapability
+	HelperIntents        []SubqueryHelperIntent
+	Scalar               *ScalarSubqueryIntent
+	CorrelatedAggregate  *CorrelatedAggregateSubqueryIntent
+	CorrelatedMembership *CorrelatedMembershipSubqueryIntent
 }
 
 // Valid reports whether the intent has the shape required by its kind.
@@ -61,6 +80,13 @@ func (i SubqueryPlanIntent) Valid() bool {
 		return i.Scalar != nil && i.Scalar.OutputName != ""
 	case SubqueryIntentCorrelatedAggregate:
 		return i.CorrelatedAggregate != nil && i.CorrelatedAggregate.AggregateFunction != "" && i.CorrelatedAggregate.InnerKeyRef != "" && i.CorrelatedAggregate.OuterKeyRef != ""
+	case SubqueryIntentCorrelatedMembership:
+		return i.CorrelatedMembership != nil &&
+			(i.CorrelatedMembership.Operation == RelationshipJoinOperationSemi || i.CorrelatedMembership.Operation == RelationshipJoinOperationAnti) &&
+			i.CorrelatedMembership.OuterDomain.Name() != "" &&
+			i.CorrelatedMembership.InnerDomain.Name() != "" &&
+			i.CorrelatedMembership.OuterKeyRef != "" &&
+			i.CorrelatedMembership.InnerKeyRef != ""
 	default:
 		return false
 	}
@@ -77,11 +103,12 @@ func (i SubqueryPlanIntent) HelperKinds() []string {
 
 // SubqueryPlanIntentReport is a compact inspection view of subquery planning intent.
 type SubqueryPlanIntentReport struct {
-	Kind                SubqueryIntentKind
-	Capability          PlanCapability
-	HelperKinds         []string
-	Scalar              *ScalarSubqueryIntentReport
-	CorrelatedAggregate *CorrelatedAggregateSubqueryIntentReport
+	Kind                 SubqueryIntentKind
+	Capability           PlanCapability
+	HelperKinds          []string
+	Scalar               *ScalarSubqueryIntentReport
+	CorrelatedAggregate  *CorrelatedAggregateSubqueryIntentReport
+	CorrelatedMembership *CorrelatedMembershipSubqueryIntentReport
 }
 
 // ScalarSubqueryIntentReport summarizes scalar subquery planning intent.
@@ -101,6 +128,21 @@ type CorrelatedAggregateSubqueryIntentReport struct {
 	OuterKeyRef       string
 	RequiredFilters   []string
 	Scope             PredicateScope
+}
+
+// CorrelatedMembershipSubqueryIntentReport summarizes correlated membership planning intent.
+type CorrelatedMembershipSubqueryIntentReport struct {
+	Operation              RelationshipJoinOperationIntent
+	OuterDomain            string
+	InnerDomain            string
+	OuterKeyRef            string
+	InnerKeyRef            string
+	CrossDomainPredicates  []string
+	RequiredFilters        []string
+	OutputName             string
+	BitmapNativeTarget     string
+	Scope                  PredicateScope
+	RepeatedPhysicalSource bool
 }
 
 // Report returns a compact inspection view of the subquery planning intent.
@@ -127,6 +169,21 @@ func (i SubqueryPlanIntent) Report() SubqueryPlanIntentReport {
 			OuterKeyRef:       i.CorrelatedAggregate.OuterKeyRef,
 			RequiredFilters:   append([]string(nil), i.CorrelatedAggregate.RequiredFilters...),
 			Scope:             i.CorrelatedAggregate.Scope,
+		}
+	}
+	if i.CorrelatedMembership != nil {
+		report.CorrelatedMembership = &CorrelatedMembershipSubqueryIntentReport{
+			Operation:              i.CorrelatedMembership.Operation,
+			OuterDomain:            i.CorrelatedMembership.OuterDomain.Name(),
+			InnerDomain:            i.CorrelatedMembership.InnerDomain.Name(),
+			OuterKeyRef:            i.CorrelatedMembership.OuterKeyRef,
+			InnerKeyRef:            i.CorrelatedMembership.InnerKeyRef,
+			CrossDomainPredicates:  append([]string(nil), i.CorrelatedMembership.CrossDomainPredicates...),
+			RequiredFilters:        append([]string(nil), i.CorrelatedMembership.RequiredFilters...),
+			OutputName:             i.CorrelatedMembership.OutputName,
+			BitmapNativeTarget:     i.CorrelatedMembership.BitmapNativeTarget,
+			Scope:                  i.CorrelatedMembership.Scope,
+			RepeatedPhysicalSource: i.CorrelatedMembership.RepeatedPhysicalSource,
 		}
 	}
 	return report

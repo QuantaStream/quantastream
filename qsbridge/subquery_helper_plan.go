@@ -10,6 +10,8 @@ const (
 	SubqueryHelperPlanParentKeyLookup SubqueryHelperPlanKind = "parent_key_lookup"
 	// SubqueryHelperPlanAggregateThresholdLookup computes aggregate thresholds keyed by correlated values.
 	SubqueryHelperPlanAggregateThresholdLookup SubqueryHelperPlanKind = "aggregate_threshold_lookup"
+	// SubqueryHelperPlanSiblingMembership evaluates correlated sibling-domain semi/anti membership.
+	SubqueryHelperPlanSiblingMembership SubqueryHelperPlanKind = "sibling_membership"
 )
 
 // SubqueryHelperPlan is an executor-neutral sketch of helper work implied by
@@ -165,6 +167,28 @@ func fallbackSubqueryHelperPlan(intent SubqueryPlanIntent) (SubqueryHelperPlan, 
 			Materialization:    "per-key aggregate threshold map",
 			BitmapNativeTarget: "aggregate-threshold helper kernel feeding bitmap predicate branches",
 		}, true
+	case SubqueryIntentCorrelatedMembership:
+		if intent.CorrelatedMembership == nil {
+			return SubqueryHelperPlan{}, false
+		}
+		name := intent.CorrelatedMembership.OutputName
+		if name == "" {
+			name = "correlated_sibling_membership"
+		}
+		target := intent.CorrelatedMembership.BitmapNativeTarget
+		if target == "" {
+			target = "semi/anti membership over repeated table aliases using relationship-vector domains"
+		}
+		return SubqueryHelperPlan{
+			Name:               name,
+			Kind:               SubqueryHelperPlanSiblingMembership,
+			SubqueryKind:       intent.Kind,
+			Lifecycle:          SubqueryStepNativeReady,
+			Inputs:             []string{intent.CorrelatedMembership.OuterKeyRef, intent.CorrelatedMembership.InnerKeyRef},
+			Outputs:            []string{name},
+			Materialization:    "outer rownum keep/drop domain",
+			BitmapNativeTarget: target,
+		}, true
 	default:
 		return SubqueryHelperPlan{}, false
 	}
@@ -181,6 +205,8 @@ func (p SubqueryHelperPlan) NativeStep() (NativeSubqueryStep, bool) {
 		kind = NativeSubqueryStepParentKeyLookup
 	case SubqueryHelperPlanAggregateThresholdLookup:
 		kind = NativeSubqueryStepAggregateThresholdLookup
+	case SubqueryHelperPlanSiblingMembership:
+		kind = NativeSubqueryStepSiblingMembership
 	default:
 		return NativeSubqueryStep{}, false
 	}
@@ -208,7 +234,8 @@ func defaultSubqueryHelperLifecycle(kind SubqueryHelperPlanKind) SubqueryStepLif
 	switch kind {
 	case SubqueryHelperPlanScalarSubquery,
 		SubqueryHelperPlanParentKeyLookup,
-		SubqueryHelperPlanAggregateThresholdLookup:
+		SubqueryHelperPlanAggregateThresholdLookup,
+		SubqueryHelperPlanSiblingMembership:
 		return SubqueryStepNativeReady
 	default:
 		return SubqueryStepCompatibility

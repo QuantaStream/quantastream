@@ -23,14 +23,15 @@ const (
 	SameRowComparisonStageSeedCandidates SameRowComparisonStageKind = "seed_candidates"
 	// SameRowComparisonStageCompareBSIFields compares two BSI-backed fields in one rownum domain.
 	SameRowComparisonStageCompareBSIFields SameRowComparisonStageKind = "compare_bsi_fields"
-	// SameRowComparisonStageReturnRownums returns matching rownums without materializing compared values.
+	// SameRowComparisonStageReturnRownums returns matching rownums without projecting compared values as SQL cells.
 	SameRowComparisonStageReturnRownums SameRowComparisonStageKind = "return_rownums"
 )
 
 // SameRowComparisonRequest describes a field-vs-field comparison over one rownum domain.
 //
-// The request intentionally returns rownums instead of materialized values. It
-// is the native kernel target for predicates such as l_receiptdate > l_commitdate.
+// The request intentionally returns rownums instead of SQL-materialized values.
+// Kernels may still read storage-native values internally while evaluating
+// predicates such as l_receiptdate > l_commitdate.
 type SameRowComparisonRequest struct {
 	ID              string
 	ProbePrefix     string

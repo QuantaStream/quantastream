@@ -138,7 +138,7 @@ syntax or planner capability.
 | Q18 | Supported | Direct child-FK and joined large-order quantity threshold grouping plus formal customer/order projection are covered. |
 | Q19 | Supported | Formal mixed-table OR discounted revenue is covered in inabox-direct with grouped boolean lowering and constrained child-domain branch evaluation. |
 | Q20 | Supported | Staged `forest%` part filtering, forest `part -> partsupp` join count, equivalent `IN (SELECT ...)` membership count, Canada supplier join, 1994 shipped-quantity grouping, and fixed-threshold shipped-quantity `HAVING` are covered; formal query remains blocked by scalar aggregate comparison, interval syntax, and compound subquery composition. |
-| Q21 | Supported | Inabox-direct covers Saudi supplier, F-status order, and late-receipt line counts; the Saudi/F/late grouped wait count remains an explicit XFAIL and formal query still needs correlated `EXISTS` / `NOT EXISTS`. |
+| Q21 | Supported | Inabox-direct covers Saudi supplier, F-status order, late-receipt line counts, and the joined/grouped Saudi supplier wait kernel; formal query still needs correlated `EXISTS` / `NOT EXISTS` over repeated `lineitem` aliases. |
 | Q22 | Supported | Inabox-direct covers seeded customer anti-membership and seeded phone-prefix function-OR count; formal scalar-threshold grouping remains blocked. |
 
 The inabox-direct TPCH kernel suite is now represented across Q1-Q22. As of the
@@ -798,9 +798,30 @@ receipt-date and formal lineitem filter paths from roughly 12-15 seconds to
 about 6-7 seconds at SF 0.01.
 
 Same-table date field comparisons (`l_commitdate < l_receiptdate` and
-`l_shipdate < l_commitdate`) remain residual. Pure comparison probes still cost
-roughly 10-16 seconds because they scan broad `lineitem` candidate sets and
-evaluate field-to-field predicates outside the native bitmap/BSI predicate path.
-Future work should either narrow residual candidates before comparison, optimize
-typed residual field-comparison evaluation, or add a native field-to-field BSI
-predicate shape. Grouped output is not the active bottleneck.
+`l_shipdate < l_commitdate`) are recognized by the native same-row comparison
+kernel and return rownums without SQL-row materialization. They remain a
+performance target because the current kernel reads the two BSI fields and
+compares storage-native values per candidate rownum, rather than evaluating a
+true BSI-to-BSI predicate. 2026-07-18 SF 0.01 inabox-direct probes for Q21's
+`l_receiptdate > l_commitdate` full-lineitem comparison passed but spent roughly
+1.2-2.5 seconds in the same-row kernel over 60,175 candidates depending on warm
+state. The narrower Q12 receipt-window path passed with same-row phases of
+about 309 ms over 2,764 candidates and 178 ms over 1,763 candidates. This
+confirms that the current cost is candidate-set proportional. Future work
+should add a native
+field-to-field BSI predicate shape, and keep narrowing candidates before
+same-row comparison whenever other bitmap predicates are available.
+
+TPC-H Q21 is the roadmap canary for correlated sibling-domain semi/anti joins.
+The supported `.040` staged kernel proves the selective spine: supplier/nation
+and order-status filters reduce `lineitem l1` before applying the same-row
+late-receipt comparison, avoiding a full-lineitem comparison in the joined
+shape. The formal query then needs two repeated-alias membership checks over
+the same physical `lineitem` table: `EXISTS` keeps `l1` rows whose order has
+another supplier row (`l2`), and `NOT EXISTS` removes `l1` rows whose order has
+another late supplier row (`l3`). The staged XFAIL ladder captures this map:
+`.050` same-order other-supplier `EXISTS`, `.060` late-line plus sibling
+`EXISTS`, `.070` Saudi/F/late supplier wait with sibling `EXISTS`, and `.080`
+the formal `EXISTS` plus `NOT EXISTS` shape. Expected values are derived from
+the SF 0.01 generated TPC-H files so future XPASS events can be promoted
+intentionally.

@@ -50,6 +50,47 @@ func TestSubqueryPlanIntentValidatesCorrelatedAggregateShape(t *testing.T) {
 	}
 }
 
+func TestSubqueryPlanIntentValidatesCorrelatedMembershipShape(t *testing.T) {
+	lineitem1 := TableInstance{Table: "lineitem", Alias: "l1"}
+	lineitem2 := TableInstance{Table: "lineitem", Alias: "l2"}
+	intent := SubqueryPlanIntent{
+		Kind:       SubqueryIntentCorrelatedMembership,
+		Capability: CapabilitySemiMembership,
+		CorrelatedMembership: &CorrelatedMembershipSubqueryIntent{
+			Operation: RelationshipJoinOperationSemi,
+			OuterDomain: RownumDomain{
+				Table: lineitem1,
+				Role:  "l1",
+			},
+			InnerDomain: RownumDomain{
+				Table: lineitem2,
+				Role:  "l2",
+			},
+			OuterKeyRef:            "l1.l_orderkey",
+			InnerKeyRef:            "l2.l_orderkey",
+			CrossDomainPredicates:  []string{"l2.l_suppkey <> l1.l_suppkey"},
+			OutputName:             "q21_other_supplier_exists",
+			BitmapNativeTarget:     "semi membership over sibling lineitem aliases",
+			Scope:                  PredicateScopeWhere,
+			RepeatedPhysicalSource: true,
+		},
+	}
+
+	if !intent.Valid() {
+		t.Fatalf("intent should be valid: %#v", intent)
+	}
+	report := intent.Report()
+	if report.CorrelatedMembership == nil {
+		t.Fatalf("report = %#v, want correlated membership report", report)
+	}
+	if report.CorrelatedMembership.Operation != RelationshipJoinOperationSemi ||
+		report.CorrelatedMembership.OuterDomain != "l1" ||
+		report.CorrelatedMembership.InnerDomain != "l2" ||
+		!report.CorrelatedMembership.RepeatedPhysicalSource {
+		t.Fatalf("correlated membership report = %#v", report.CorrelatedMembership)
+	}
+}
+
 func TestQueryIRCarriesSubqueryPlanIntents(t *testing.T) {
 	query := QueryIR{
 		Kind: QueryKindSelect,

@@ -88,6 +88,38 @@ func TestLowerSubqueryHelperPlansProvidesFallbackSketches(t *testing.T) {
 	}
 }
 
+func TestLowerSubqueryHelperPlansProvidesQ21SiblingMembershipFallback(t *testing.T) {
+	root := ScalarSubqueryNode{Intents: []SubqueryPlanIntent{{
+		Kind: SubqueryIntentCorrelatedMembership,
+		CorrelatedMembership: &CorrelatedMembershipSubqueryIntent{
+			Operation:          RelationshipJoinOperationAnti,
+			OuterDomain:        RownumDomain{Table: TableInstance{Table: "lineitem", Alias: "l1"}, Role: "l1"},
+			InnerDomain:        RownumDomain{Table: TableInstance{Table: "lineitem", Alias: "l3"}, Role: "l3"},
+			OuterKeyRef:        "l1.l_orderkey",
+			InnerKeyRef:        "l3.l_orderkey",
+			RequiredFilters:    []string{"l3.l_receiptdate > l3.l_commitdate"},
+			OutputName:         "q21_no_other_late_supplier",
+			BitmapNativeTarget: "anti membership over sibling lineitem aliases after late-receipt filtering",
+		},
+	}}}
+
+	plans := LowerSubqueryHelperPlans(root)
+	if got, want := len(plans), 1; got != want {
+		t.Fatalf("helper plans = %d, want %d: %#v", got, want, plans)
+	}
+	plan := plans[0]
+	if plan.Kind != SubqueryHelperPlanSiblingMembership || plan.Lifecycle != SubqueryStepNativeReady {
+		t.Fatalf("helper plan = %#v, want native-ready sibling membership", plan)
+	}
+	if got, want := plan.Inputs, []string{"l1.l_orderkey", "l3.l_orderkey"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("inputs = %#v, want %#v", got, want)
+	}
+	step, ok := plan.NativeStep()
+	if !ok || step.Kind != NativeSubqueryStepSiblingMembership || step.Name != "q21_no_other_late_supplier" {
+		t.Fatalf("native step = %#v ok=%v, want sibling membership step", step, ok)
+	}
+}
+
 func subqueryHelperPlanKindPresent(plans []SubqueryHelperPlan, kind SubqueryHelperPlanKind) bool {
 	for _, plan := range plans {
 		if plan.Kind == kind {

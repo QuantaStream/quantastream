@@ -1325,6 +1325,104 @@ tests:
       rows:
         - ["Supplier#000000074", 182]
 
+  - id: "tpch_queries.q21.050_same_order_other_supplier_exists_count"
+    status: xfail
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, semi-join, count]
+    sql: |-
+      select count(*) as same_order_other_supplier_count
+      from lineitem as l1
+      where exists (
+        select *
+        from lineitem as l2
+        where l2.l_orderkey = l1.l_orderkey
+          and l2.l_suppkey <> l1.l_suppkey
+      )
+    expect:
+      rows:
+        - [58021]
+
+  - id: "tpch_queries.q21.060_late_line_with_other_supplier_exists_count"
+    status: xfail
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, field-comparison, semi-join, count]
+    sql: |-
+      select count(*) as late_line_with_other_supplier_count
+      from lineitem as l1
+      where l1.l_receiptdate > l1.l_commitdate
+        and exists (
+          select *
+          from lineitem as l2
+          where l2.l_orderkey = l1.l_orderkey
+            and l2.l_suppkey <> l1.l_suppkey
+        )
+    expect:
+      rows:
+        - [36537]
+
+  - id: "tpch_queries.q21.070_saudi_late_supplier_wait_exists_count"
+    status: xfail
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, four-table-join, semi-join, group-by, order-by, limit]
+    sql: |-
+      select s.s_name, count(*) as numwait
+      from supplier as s
+      inner join lineitem as l1 on s.s_suppkey = l1.l_suppkey
+      inner join orders as o on o.o_orderkey = l1.l_orderkey
+      inner join nation as n on s.s_nationkey = n.n_nationkey
+      where o.o_orderstatus = 'F'
+        and l1.l_receiptdate > l1.l_commitdate
+        and n.n_name = 'SAUDI ARABIA'
+        and exists (
+          select *
+          from lineitem as l2
+          where l2.l_orderkey = l1.l_orderkey
+            and l2.l_suppkey <> l1.l_suppkey
+        )
+      group by s.s_name
+      order by numwait desc, s.s_name
+      limit 10
+    expect:
+      rows:
+        - ["Supplier#000000074", 176]
+
+  - id: "tpch_queries.q21.080_formal_supplier_wait_exists_not_exists_count"
+    status: xfail
+    kind: query
+    order: exact
+    capabilities: [tpch-q21, correlated-exists, correlated-not-exists, repeated-table-alias, sibling-domain, semi-join, anti-join, group-by, order-by, limit]
+    sql: |-
+      select s.s_name, count(*) as numwait
+      from supplier as s
+      inner join lineitem as l1 on s.s_suppkey = l1.l_suppkey
+      inner join orders as o on o.o_orderkey = l1.l_orderkey
+      inner join nation as n on s.s_nationkey = n.n_nationkey
+      where o.o_orderstatus = 'F'
+        and l1.l_receiptdate > l1.l_commitdate
+        and n.n_name = 'SAUDI ARABIA'
+        and exists (
+          select *
+          from lineitem as l2
+          where l2.l_orderkey = l1.l_orderkey
+            and l2.l_suppkey <> l1.l_suppkey
+        )
+        and not exists (
+          select *
+          from lineitem as l3
+          where l3.l_orderkey = l1.l_orderkey
+            and l3.l_suppkey <> l1.l_suppkey
+            and l3.l_receiptdate > l3.l_commitdate
+        )
+      group by s.s_name
+      order by numwait desc, s.s_name
+      limit 10
+    expect:
+      rows:
+        - ["Supplier#000000074", 9]
+
   - id: "tpch_queries.q18.010_large_order_quantity_threshold"
     status: supported
     kind: query

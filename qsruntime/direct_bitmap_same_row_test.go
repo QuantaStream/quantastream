@@ -64,6 +64,6 @@ func TestDirectBitmapRuntimeAppliesSameRowResidualBeforeCountAggregate(t *testin
 	}
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_same_row", "plan_count", "1")
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_same_row", "direct_bitmap_same_row_1_policy", "native_same_row")
-	assertExecutionProbe(t, result.Probes, "direct_bitmap_same_row", "direct_bitmap_same_row_1_policy_reason", "native_keeps_compared_values_unmaterialized")
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_same_row", "direct_bitmap_same_row_1_policy_reason", "native_compares_bsi_values_without_sql_projection")
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "direct_bitmap_same_row_1_fake", "called")
 }
