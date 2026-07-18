@@ -309,8 +309,8 @@ func (n CorrelatedAggregateSubqueryNode) CorrelatedAggregateKeyRefs() ([]string,
 		if intent.CorrelatedAggregate == nil {
 			continue
 		}
-		inner = append(inner, intent.CorrelatedAggregate.InnerKeyRef)
-		outer = append(outer, intent.CorrelatedAggregate.OuterKeyRef)
+		inner = append(inner, correlatedAggregateFieldName(intent.CorrelatedAggregate.InnerKeyRef, intent.CorrelatedAggregate.InnerKey))
+		outer = append(outer, correlatedAggregateFieldName(intent.CorrelatedAggregate.OuterKeyRef, intent.CorrelatedAggregate.OuterKey))
 	}
 	return inner, outer
 }

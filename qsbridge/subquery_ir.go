@@ -36,14 +36,19 @@ type ScalarSubqueryIntent struct {
 // CorrelatedAggregateSubqueryIntent records the planner-visible shape of a
 // correlated aggregate subquery before it becomes native execution nodes.
 type CorrelatedAggregateSubqueryIntent struct {
-	AggregateFunction string
-	Factor            float64
-	OuterValueRef     string
-	InnerValueRef     string
-	InnerKeyRef       string
-	OuterKeyRef       string
-	RequiredFilters   []string
-	Scope             PredicateScope
+	AggregateFunction    string
+	Factor               float64
+	OuterValue           FieldRef
+	InnerValue           FieldRef
+	InnerKey             FieldRef
+	OuterKey             FieldRef
+	OuterValueRef        string
+	InnerValueRef        string
+	InnerKeyRef          string
+	OuterKeyRef          string
+	RequiredFilterFields []FieldRef
+	RequiredFilters      []string
+	Scope                PredicateScope
 }
 
 // CorrelatedMembershipSubqueryIntent records an EXISTS/NOT EXISTS subquery that
@@ -79,7 +84,10 @@ func (i SubqueryPlanIntent) Valid() bool {
 	case SubqueryIntentScalar:
 		return i.Scalar != nil && i.Scalar.OutputName != ""
 	case SubqueryIntentCorrelatedAggregate:
-		return i.CorrelatedAggregate != nil && i.CorrelatedAggregate.AggregateFunction != "" && i.CorrelatedAggregate.InnerKeyRef != "" && i.CorrelatedAggregate.OuterKeyRef != ""
+		return i.CorrelatedAggregate != nil &&
+			i.CorrelatedAggregate.AggregateFunction != "" &&
+			correlatedAggregateFieldName(i.CorrelatedAggregate.InnerKeyRef, i.CorrelatedAggregate.InnerKey) != "" &&
+			correlatedAggregateFieldName(i.CorrelatedAggregate.OuterKeyRef, i.CorrelatedAggregate.OuterKey) != ""
 	case SubqueryIntentCorrelatedMembership:
 		return i.CorrelatedMembership != nil &&
 			(i.CorrelatedMembership.Operation == RelationshipJoinOperationSemi || i.CorrelatedMembership.Operation == RelationshipJoinOperationAnti) &&
@@ -163,11 +171,11 @@ func (i SubqueryPlanIntent) Report() SubqueryPlanIntentReport {
 		report.CorrelatedAggregate = &CorrelatedAggregateSubqueryIntentReport{
 			AggregateFunction: i.CorrelatedAggregate.AggregateFunction,
 			Factor:            i.CorrelatedAggregate.Factor,
-			OuterValueRef:     i.CorrelatedAggregate.OuterValueRef,
-			InnerValueRef:     i.CorrelatedAggregate.InnerValueRef,
-			InnerKeyRef:       i.CorrelatedAggregate.InnerKeyRef,
-			OuterKeyRef:       i.CorrelatedAggregate.OuterKeyRef,
-			RequiredFilters:   append([]string(nil), i.CorrelatedAggregate.RequiredFilters...),
+			OuterValueRef:     correlatedAggregateFieldName(i.CorrelatedAggregate.OuterValueRef, i.CorrelatedAggregate.OuterValue),
+			InnerValueRef:     correlatedAggregateFieldName(i.CorrelatedAggregate.InnerValueRef, i.CorrelatedAggregate.InnerValue),
+			InnerKeyRef:       correlatedAggregateFieldName(i.CorrelatedAggregate.InnerKeyRef, i.CorrelatedAggregate.InnerKey),
+			OuterKeyRef:       correlatedAggregateFieldName(i.CorrelatedAggregate.OuterKeyRef, i.CorrelatedAggregate.OuterKey),
+			RequiredFilters:   correlatedAggregateRequiredFilterNames(*i.CorrelatedAggregate),
 			Scope:             i.CorrelatedAggregate.Scope,
 		}
 	}
@@ -187,4 +195,21 @@ func (i SubqueryPlanIntent) Report() SubqueryPlanIntentReport {
 		}
 	}
 	return report
+}
+
+func correlatedAggregateFieldName(fallback string, field FieldRef) string {
+	if fallback != "" {
+		return fallback
+	}
+	if field.Name == "" {
+		return ""
+	}
+	return field.QualifiedName()
+}
+
+func correlatedAggregateRequiredFilterNames(intent CorrelatedAggregateSubqueryIntent) []string {
+	if len(intent.RequiredFilters) > 0 {
+		return append([]string(nil), intent.RequiredFilters...)
+	}
+	return qualifiedFieldNames(intent.RequiredFilterFields)
 }

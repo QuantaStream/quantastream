@@ -50,6 +50,46 @@ func TestSubqueryPlanIntentValidatesCorrelatedAggregateShape(t *testing.T) {
 	}
 }
 
+func TestSubqueryPlanIntentValidatesTypedCorrelatedAggregateShape(t *testing.T) {
+	outerLineitem := TableInstance{Table: "lineitem", Alias: "l"}
+	innerLineitem := TableInstance{Table: "lineitem", Alias: "l2"}
+	part := TableInstance{Table: "part", Alias: "p"}
+	intent := SubqueryPlanIntent{
+		Kind:       SubqueryIntentCorrelatedAggregate,
+		Capability: CapabilityScalarSubquery,
+		CorrelatedAggregate: &CorrelatedAggregateSubqueryIntent{
+			AggregateFunction: "avg",
+			Factor:            0.2,
+			OuterValue:        FieldRef{Table: outerLineitem, Name: "l_quantity", Type: DataTypeInt},
+			InnerValue:        FieldRef{Table: innerLineitem, Name: "l_quantity", Type: DataTypeInt},
+			InnerKey:          FieldRef{Table: innerLineitem, Name: "l_partkey", Type: DataTypeInt},
+			OuterKey:          FieldRef{Table: part, Name: "p_partkey", Type: DataTypeInt},
+			RequiredFilterFields: []FieldRef{
+				{Table: part, Name: "p_brand", Type: DataTypeString},
+				{Table: part, Name: "p_container", Type: DataTypeString},
+			},
+			Scope: PredicateScopeWhere,
+		},
+	}
+
+	if !intent.Valid() {
+		t.Fatalf("intent should be valid with typed refs: %#v", intent)
+	}
+	report := intent.Report()
+	if report.CorrelatedAggregate == nil {
+		t.Fatalf("report = %#v, want correlated aggregate report", report)
+	}
+	if report.CorrelatedAggregate.OuterValueRef != "l.l_quantity" ||
+		report.CorrelatedAggregate.InnerValueRef != "l2.l_quantity" ||
+		report.CorrelatedAggregate.InnerKeyRef != "l2.l_partkey" ||
+		report.CorrelatedAggregate.OuterKeyRef != "p.p_partkey" {
+		t.Fatalf("correlated aggregate refs = %#v", report.CorrelatedAggregate)
+	}
+	if got, want := report.CorrelatedAggregate.RequiredFilters, []string{"p.p_brand", "p.p_container"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("required filters = %#v, want %#v", got, want)
+	}
+}
+
 func TestSubqueryPlanIntentValidatesCorrelatedMembershipShape(t *testing.T) {
 	lineitem1 := TableInstance{Table: "lineitem", Alias: "l1"}
 	lineitem2 := TableInstance{Table: "lineitem", Alias: "l2"}

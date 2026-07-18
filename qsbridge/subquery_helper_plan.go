@@ -156,13 +156,16 @@ func fallbackSubqueryHelperPlan(intent SubqueryPlanIntent) (SubqueryHelperPlan, 
 		if intent.CorrelatedAggregate == nil {
 			return SubqueryHelperPlan{}, false
 		}
-		outputs := []string{intent.CorrelatedAggregate.OuterKeyRef, "threshold"}
+		innerKey := correlatedAggregateFieldName(intent.CorrelatedAggregate.InnerKeyRef, intent.CorrelatedAggregate.InnerKey)
+		innerValue := correlatedAggregateFieldName(intent.CorrelatedAggregate.InnerValueRef, intent.CorrelatedAggregate.InnerValue)
+		outerKey := correlatedAggregateFieldName(intent.CorrelatedAggregate.OuterKeyRef, intent.CorrelatedAggregate.OuterKey)
+		outputs := []string{outerKey, "threshold"}
 		return SubqueryHelperPlan{
 			Name:               "correlated_aggregate_thresholds",
 			Kind:               SubqueryHelperPlanAggregateThresholdLookup,
 			SubqueryKind:       intent.Kind,
 			Lifecycle:          SubqueryStepNativeReady,
-			Inputs:             []string{intent.CorrelatedAggregate.InnerKeyRef, intent.CorrelatedAggregate.InnerValueRef},
+			Inputs:             []string{innerKey, innerValue},
 			Outputs:            outputs,
 			Materialization:    "per-key aggregate threshold map",
 			BitmapNativeTarget: "aggregate-threshold helper kernel feeding bitmap predicate branches",

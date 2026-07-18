@@ -156,6 +156,19 @@ where p.p_brand = 'Brand#45'
 	if correlatedSummary.SubqueryIntent == nil || !correlatedSummary.SubqueryIntent.Valid() || correlatedSummary.SubqueryIntent.Kind != qsbridge.SubqueryIntentCorrelatedAggregate {
 		t.Fatalf("correlated subquery intent = %#v", correlatedSummary.SubqueryIntent)
 	}
+	correlatedIntent := correlatedSummary.SubqueryIntent.CorrelatedAggregate
+	if correlatedIntent == nil {
+		t.Fatalf("correlated aggregate intent is nil")
+	}
+	if correlatedIntent.OuterValue.QualifiedName() != "l.l_quantity" ||
+		correlatedIntent.InnerValue.QualifiedName() != "l2.l_quantity" ||
+		correlatedIntent.InnerKey.QualifiedName() != "l2.l_partkey" ||
+		correlatedIntent.OuterKey.QualifiedName() != "p.p_partkey" {
+		t.Fatalf("typed correlated aggregate refs = %#v", correlatedIntent)
+	}
+	if got, want := len(correlatedIntent.RequiredFilterFields), 2; got != want {
+		t.Fatalf("typed correlated required filters = %#v, want %d", correlatedIntent.RequiredFilterFields, want)
+	}
 	if got, want := len(correlatedSummary.HelperPlans), 2; got != want {
 		t.Fatalf("correlated helper plans = %d, want %d", got, want)
 	}
