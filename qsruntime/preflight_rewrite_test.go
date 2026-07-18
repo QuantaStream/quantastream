@@ -705,6 +705,14 @@ where p.p_brand = 'Brand#23'
 	if !strings.Contains(result.SQL, "(p.p_partkey = 101 and l.l_quantity < 10)") {
 		t.Fatalf("rewritten SQL = %s, want threshold branch from typed intent", result.SQL)
 	}
+	reports := result.Preflight.DescriptorReports()
+	if got, want := len(reports), 1; got != want {
+		t.Fatalf("descriptor reports = %d, want %d: %#v", got, want, reports)
+	}
+	expression := reports[0].ReplacementExpression
+	if expression == nil || expression.Operator != qsbridge.BinaryOpAnd || expression.BranchCount != 1 {
+		t.Fatalf("replacement expression report = %#v", expression)
+	}
 }
 
 type q17TypedPathNativeStepExecutor struct{}

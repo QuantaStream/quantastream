@@ -107,6 +107,36 @@ where p.p_brand = 'Brand#45'
 	}
 }
 
+func TestCorrelatedAverageThresholdPredicateExpressionReportSummarizesRuntimeShape(t *testing.T) {
+	runtime := newTestSQLRuntime(t)
+	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#45'
+  and p.p_container = 'MED JAR'
+  and l.l_quantity < (
+    select avg(l2.l_quantity) * 0.2
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`
+
+	match, ok := runtime.correlatedAverageQuantityTypedMatch(sql)
+	if !ok {
+		t.Fatalf("typed correlated aggregate match not found")
+	}
+	report := correlatedAverageThresholdPredicateExpressionReport(correlatedAverageThresholdPredicateExpr(match.Descriptor, []q17PartThreshold{
+		{PartKey: 101, Threshold: 10},
+		{PartKey: 202, Threshold: 20.5},
+	}))
+
+	if report.Kind != qsbridge.ExprBinary || report.Operator != qsbridge.BinaryOpOr || report.BranchCount != 2 || report.LiteralCount != 4 {
+		t.Fatalf("report = %#v", report)
+	}
+	if got, want := report.FieldNames, []string{"l.l_quantity", "p.p_partkey"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("fields = %#v, want %#v", got, want)
+	}
+}
+
 func TestCorrelatedAverageThresholdPredicateExprBuildsFalsePredicateForEmptyThresholds(t *testing.T) {
 	expr := correlatedAverageThresholdPredicateExpr(correlatedAverageQuantityDescriptor{}, nil)
 

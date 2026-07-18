@@ -381,6 +381,7 @@ type PreflightRewriteDescriptorReport struct {
 	Rule                     qsbridge.RewriteRuleID
 	SourceSQLShape           string
 	ReplacementSQLShape      string
+	ReplacementExpression    *PreflightRewriteExpressionReport
 	Start                    int
 	End                      int
 	Attributes               []string
@@ -390,6 +391,16 @@ type PreflightRewriteDescriptorReport struct {
 	HelperPlans              []PreflightRewriteHelperPlanReport
 	NativeSteps              []qsbridge.NativeSubqueryStepReport
 	SubqueryIntent           *qsbridge.SubqueryPlanIntentReport
+}
+
+// PreflightRewriteExpressionReport summarizes the expression tree produced by
+// an applied preflight rewrite without exposing the full expression payload.
+type PreflightRewriteExpressionReport struct {
+	Kind         qsbridge.ExprKind
+	Operator     qsbridge.BinaryOp
+	BranchCount  int
+	FieldNames   []string
+	LiteralCount int
 }
 
 // PreflightRewriteHelperPlanReport is a compact inspection view of one
@@ -480,7 +491,9 @@ func (i PreflightRewriteInspection) DescriptorReport() (PreflightRewriteDescript
 	if i.Descriptor == nil {
 		return PreflightRewriteDescriptorReport{}, false
 	}
-	return i.Descriptor.Report(), true
+	report := i.Descriptor.Report()
+	report.ReplacementExpression = i.ReplacementExpression
+	return report, true
 }
 
 // DescriptorReports returns compact reports for every preflight rewrite

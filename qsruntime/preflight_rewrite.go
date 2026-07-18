@@ -21,13 +21,14 @@ type PreflightRewrite interface {
 
 // PreflightRewriteInspection summarizes one preflight rule decision.
 type PreflightRewriteInspection struct {
-	Rule          qsbridge.RewriteRuleID
-	Applied       bool
-	Descriptor    *PreflightRewriteDescriptorSummary
-	HelperReports []PreflightHelperExecutionRequestReport
-	Duration      time.Duration
-	Diagnostics   int
-	Blocking      int
+	Rule                  qsbridge.RewriteRuleID
+	Applied               bool
+	Descriptor            *PreflightRewriteDescriptorSummary
+	ReplacementExpression *PreflightRewriteExpressionReport
+	HelperReports         []PreflightHelperExecutionRequestReport
+	Duration              time.Duration
+	Diagnostics           int
+	Blocking              int
 }
 
 // PreflightRewriteSummary summarizes the complete preflight rewrite pass.
@@ -43,17 +44,18 @@ type PreflightRewriteSummary struct {
 
 // PreflightRewriteResult captures the output of one pre-planning rewrite attempt.
 type PreflightRewriteResult struct {
-	SQL           string
-	Applied       bool
-	Duration      time.Duration
-	Diagnostics   qsbridge.DiagnosticSet
-	Descriptor    *PreflightRewriteDescriptorSummary
-	HelperReports []PreflightHelperExecutionRequestReport
-	Optimization  qsbridge.OptimizationTrace
-	Preflight     PreflightRewriteSummary
+	SQL                   string
+	Applied               bool
+	Duration              time.Duration
+	Diagnostics           qsbridge.DiagnosticSet
+	Descriptor            *PreflightRewriteDescriptorSummary
+	ReplacementExpression *PreflightRewriteExpressionReport
+	HelperReports         []PreflightHelperExecutionRequestReport
+	Optimization          qsbridge.OptimizationTrace
+	Preflight             PreflightRewriteSummary
 }
 
-type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, []PreflightHelperExecutionRequestReport, error, bool)
+type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool)
 type preflightRewriteDescriptorFunc func(sql string) (*PreflightRewriteDescriptorSummary, bool)
 
 type preflightRewriteRule struct {
@@ -74,7 +76,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		descriptor, _ = r.descriptor(sql)
 	}
 	started := time.Now()
-	rewritten, diagnostics, optimization, helperReports, err, applied := r.apply(ctx, sql, options, values...)
+	rewritten, diagnostics, optimization, replacementExpression, helperReports, err, applied := r.apply(ctx, sql, options, values...)
 	duration := time.Since(started)
 	if !applied {
 		return PreflightRewriteResult{
@@ -84,13 +86,14 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		}, err
 	}
 	return PreflightRewriteResult{
-		SQL:           rewritten,
-		Applied:       true,
-		Duration:      duration,
-		Diagnostics:   diagnostics,
-		Descriptor:    descriptor,
-		HelperReports: helperReports,
-		Optimization:  optimization,
+		SQL:                   rewritten,
+		Applied:               true,
+		Duration:              duration,
+		Diagnostics:           diagnostics,
+		Descriptor:            descriptor,
+		ReplacementExpression: replacementExpression,
+		HelperReports:         helperReports,
+		Optimization:          optimization,
 	}, err
 }
 
@@ -130,12 +133,13 @@ func (r SQLRuntime) applyPreflightRewrites(ctx context.Context, sql string, opti
 
 func inspectPreflightRewrite(rule qsbridge.RewriteRuleID, result PreflightRewriteResult) PreflightRewriteInspection {
 	inspection := PreflightRewriteInspection{
-		Rule:          rule,
-		Applied:       result.Applied,
-		Descriptor:    result.Descriptor,
-		HelperReports: append([]PreflightHelperExecutionRequestReport(nil), result.HelperReports...),
-		Duration:      result.Duration,
-		Diagnostics:   len(result.Diagnostics),
+		Rule:                  rule,
+		Applied:               result.Applied,
+		Descriptor:            result.Descriptor,
+		ReplacementExpression: result.ReplacementExpression,
+		HelperReports:         append([]PreflightHelperExecutionRequestReport(nil), result.HelperReports...),
+		Duration:              result.Duration,
+		Diagnostics:           len(result.Diagnostics),
 	}
 	for _, diagnostic := range result.Diagnostics {
 		if diagnostic.BlocksNative() {

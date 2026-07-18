@@ -111,32 +111,34 @@ func correlatedAverageRewriteTrace() qsbridge.OptimizationTrace {
 	return trace
 }
 
-func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, []PreflightHelperExecutionRequestReport, error, bool) {
+func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool) {
 	match, ok := r.correlatedAverageQuantityRewriteMatch(sql)
 	if !ok {
-		return "", nil, qsbridge.OptimizationTrace{}, nil, nil, false
+		return "", nil, qsbridge.OptimizationTrace{}, nil, nil, nil, false
 	}
 	descriptor := match.Descriptor
 	brand, container, ok := match.requiredPartFilters()
 	if !ok {
-		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite requires part brand and container filters")}, qsbridge.OptimizationTrace{}, nil, nil, true
+		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite requires part brand and container filters")}, qsbridge.OptimizationTrace{}, nil, nil, nil, true
 	}
 	partSeeds, diagnostics, partKeyReports, err := r.correlatedAveragePartKeySeeds(ctx, descriptor.OuterPart, brand, container, options, values...)
 	helperReports := append([]PreflightHelperExecutionRequestReport(nil), partKeyReports...)
 	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, helperReports, err, true
+		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, helperReports, err, true
 	}
 	thresholds, diagnostics, thresholdReports, err := r.correlatedAverageThresholdsForSeeds(ctx, partSeeds, descriptor.Factor, options, values...)
 	helperReports = append(helperReports, thresholdReports...)
 	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, helperReports, err, true
+		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, helperReports, err, true
 	}
-	predicate, ok := correlatedAverageThresholdPredicateSQL(correlatedAverageThresholdPredicateExpr(descriptor, thresholds))
+	predicateExpr := correlatedAverageThresholdPredicateExpr(descriptor, thresholds)
+	predicate, ok := correlatedAverageThresholdPredicateSQL(predicateExpr)
 	if !ok {
-		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite could not render threshold predicate expression")}, qsbridge.OptimizationTrace{}, helperReports, nil, true
+		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite could not render threshold predicate expression")}, qsbridge.OptimizationTrace{}, nil, helperReports, nil, true
 	}
 	rewritten := rewriteCorrelatedAveragePredicateSQL(sql, descriptor, predicate)
-	return rewritten, nil, correlatedAverageRewriteTrace(), helperReports, nil, true
+	report := correlatedAverageThresholdPredicateExpressionReport(predicateExpr)
+	return rewritten, nil, correlatedAverageRewriteTrace(), &report, helperReports, nil, true
 }
 
 func (r SQLRuntime) correlatedAverageQuantityRewriteMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
@@ -344,6 +346,36 @@ func correlatedAverageThresholdPredicateSQL(expr qsbridge.Expr) (string, bool) {
 		return "(" + strings.Join(rendered, " or ") + ")", true
 	}
 	return correlatedAverageThresholdPredicateBranchSQL(expr)
+}
+
+func correlatedAverageThresholdPredicateExpressionReport(expr qsbridge.Expr) PreflightRewriteExpressionReport {
+	report := PreflightRewriteExpressionReport{
+		Kind:        expr.ExpressionKind(),
+		BranchCount: len(correlatedAverageFlattenBinary(expr, qsbridge.BinaryOpOr)),
+	}
+	if binary, ok := expr.(qsbridge.BinaryExpr); ok {
+		report.Operator = binary.Op
+	}
+	fields := make(map[string]struct{})
+	correlatedAverageExpressionReportWalk(expr, fields, &report.LiteralCount)
+	report.FieldNames = make([]string, 0, len(fields))
+	for field := range fields {
+		report.FieldNames = append(report.FieldNames, field)
+	}
+	sort.Strings(report.FieldNames)
+	return report
+}
+
+func correlatedAverageExpressionReportWalk(expr qsbridge.Expr, fields map[string]struct{}, literalCount *int) {
+	switch typed := expr.(type) {
+	case qsbridge.BinaryExpr:
+		correlatedAverageExpressionReportWalk(typed.Left, fields, literalCount)
+		correlatedAverageExpressionReportWalk(typed.Right, fields, literalCount)
+	case qsbridge.FieldExpr:
+		fields[typed.Ref.QualifiedName()] = struct{}{}
+	case qsbridge.LiteralExpr:
+		(*literalCount)++
+	}
 }
 
 func correlatedAverageThresholdPredicateBranchSQL(expr qsbridge.Expr) (string, bool) {
