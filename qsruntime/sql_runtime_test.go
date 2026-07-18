@@ -282,6 +282,53 @@ having c > (
 	}
 }
 
+func TestSQLRuntimeExecuteSQLAppliesCorrelatedAggregateReplacementAsResidualPredicate(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 3}, nil
+	})
+	runtime.NativeSubquerySteps = q17TypedPathNativeStepExecutor{}
+	query := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#23'
+  and p.p_container = 'MED BOX'
+  and l.l_quantity < (
+    select avg(l2.l_quantity) * 0.2
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`
+
+	result, err := runtime.ExecuteSQL(context.Background(), query, qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Preflight.Applied != 1 || result.Preflight.Skipped != 0 {
+		t.Fatalf("preflight summary = %#v, want correlated aggregate replacement applied", result.Preflight)
+	}
+	if result.Prepared.SQL != query {
+		t.Fatalf("prepared SQL = %q, want original SQL", result.Prepared.SQL)
+	}
+	if result.Prepared.Inspection.Diagnostics.BlocksNative() {
+		t.Fatalf("inspection diagnostics = %#v, want none after correlated aggregate replacement", result.Prepared.Inspection.Diagnostics)
+	}
+	if qsbridge.PhysicalPlanDiagnostics(result.Prepared.Physical.Root).BlocksNative() {
+		t.Fatalf("physical diagnostics = %#v, want none after correlated aggregate replacement", qsbridge.PhysicalPlanDiagnostics(result.Prepared.Physical.Root))
+	}
+	if got := len(result.Request.Bound.Prepared.Query.Subqueries); got != 0 {
+		t.Fatalf("subqueries = %d, want consumed correlated aggregate intent: %#v", got, result.Request.Bound.Prepared.Query.Subqueries)
+	}
+	predicates := result.Request.Bound.Prepared.Query.Predicates
+	if got, want := len(predicates), 3; got != want {
+		t.Fatalf("predicates = %d, want %d parent filters plus residual replacement: %#v", got, want, predicates)
+	}
+	replacement := predicates[2]
+	if replacement.Placement != qsbridge.PredicateResidualScan || replacement.Scope != qsbridge.PredicateScopeWhere {
+		t.Fatalf("replacement predicate = %#v, want where residual", replacement)
+	}
+	assertCorrelatedAverageThresholdBranch(t, replacement.Expr, 101, 10)
+}
+
 func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
 	trace := qsbridge.NewOptimizationTrace()
 	trace = mergeRuntimeOptimizationTrace(trace, correlatedAverageRewriteTrace())

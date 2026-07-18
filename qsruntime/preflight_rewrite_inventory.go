@@ -2,7 +2,7 @@ package qsruntime
 
 import "github.com/QuantaStream/quantastream/qsbridge"
 
-// PreflightRewriteInventory records one temporary SQL-to-SQL rewrite that
+// PreflightRewriteInventory records one temporary preflight transform that
 // should eventually become a first-class parser, IR, planner, or executor
 // capability.
 type PreflightRewriteInventory struct {
@@ -30,7 +30,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
 			Reason:            "TPC-H-style correlated aggregate predicates are useful read-path shapes, but correlated aggregate subquery intent is not planner-native yet.",
 			SourceSQLShape:    "A correlated average quantity predicate such as l_quantity < (select factor * avg(l2.l_quantity) from lineitem l2 where l2.l_partkey = p.p_partkey).",
-			TemporaryStrategy: "Use typed Q17-style correlated aggregate intent from the bound query, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then expand the predicate into equivalent per-key threshold branches before native planning.",
+			TemporaryStrategy: "Use typed Q17-style correlated aggregate intent from the bound query, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then attach equivalent per-key threshold branches as a typed prepared-query residual.",
 			HelperPlanKinds: []PreflightRewriteHelperPlanKind{
 				PreflightHelperPlanParentKeyLookup,
 				PreflightHelperPlanAggregateThresholdLookup,
@@ -39,7 +39,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 				"qsruntime/sql_runtime_test.go correlated aggregate preflight trace and ExecuteSQL coverage",
 				"inabox-direct TPCH Q17-style probes when present in SQLRunner suites",
 			},
-			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of rewriting SQL text.",
+			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of preflight expression expansion.",
 		},
 	}
 }

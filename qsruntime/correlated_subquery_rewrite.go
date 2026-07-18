@@ -30,6 +30,7 @@ type correlatedSubqueryField struct {
 	Alias string
 	Name  string
 	Type  qsbridge.DataType
+	Ref   qsbridge.FieldRef
 }
 
 func correlatedField(table string, alias string, name string, dataType qsbridge.DataType) correlatedSubqueryField {
@@ -52,6 +53,9 @@ func (f correlatedSubqueryField) qualifiedName() string {
 }
 
 func (f correlatedSubqueryField) fieldRef() qsbridge.FieldRef {
+	if f.Ref.Name != "" {
+		return f.Ref
+	}
 	return qsbridge.FieldRef{
 		Table: qsbridge.TableInstance{
 			Table: f.Table,
@@ -111,34 +115,29 @@ func correlatedAverageRewriteTrace() qsbridge.OptimizationTrace {
 	return trace
 }
 
-func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool) {
+func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, qsbridge.Expr, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool) {
 	match, ok := r.correlatedAverageQuantityRewriteMatch(sql)
 	if !ok {
-		return "", nil, qsbridge.OptimizationTrace{}, nil, nil, nil, false
+		return "", nil, qsbridge.OptimizationTrace{}, nil, nil, nil, nil, false
 	}
 	descriptor := match.Descriptor
 	brand, container, ok := match.requiredPartFilters()
 	if !ok {
-		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite requires part brand and container filters")}, qsbridge.OptimizationTrace{}, nil, nil, nil, true
+		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite requires part brand and container filters")}, qsbridge.OptimizationTrace{}, nil, nil, nil, nil, true
 	}
 	partSeeds, diagnostics, partKeyReports, err := r.correlatedAveragePartKeySeeds(ctx, descriptor.OuterPart, brand, container, options, values...)
 	helperReports := append([]PreflightHelperExecutionRequestReport(nil), partKeyReports...)
 	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, helperReports, err, true
+		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, nil, helperReports, err, true
 	}
 	thresholds, diagnostics, thresholdReports, err := r.correlatedAverageThresholdsForSeeds(ctx, partSeeds, descriptor.Factor, options, values...)
 	helperReports = append(helperReports, thresholdReports...)
 	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, helperReports, err, true
+		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, nil, helperReports, err, true
 	}
 	predicateExpr := correlatedAverageThresholdPredicateExpr(descriptor, thresholds)
-	predicate, ok := correlatedAverageThresholdPredicateSQL(predicateExpr)
-	if !ok {
-		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite could not render threshold predicate expression")}, qsbridge.OptimizationTrace{}, nil, helperReports, nil, true
-	}
-	rewritten := rewriteCorrelatedAveragePredicateSQL(sql, descriptor, predicate)
 	report := correlatedAverageThresholdPredicateExpressionReport(predicateExpr)
-	return rewritten, nil, correlatedAverageRewriteTrace(), &report, helperReports, nil, true
+	return sql, nil, correlatedAverageRewriteTrace(), predicateExpr, &report, helperReports, nil, true
 }
 
 func (r SQLRuntime) correlatedAverageQuantityRewriteMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
@@ -301,7 +300,9 @@ func sameCorrelatedFilterField(left qsbridge.FieldRef, right qsbridge.FieldRef) 
 }
 
 func correlatedFieldFromRef(ref qsbridge.FieldRef) correlatedSubqueryField {
-	return correlatedField(ref.Table.Table, ref.Table.Alias, ref.Name, ref.Type)
+	field := correlatedField(ref.Table.Table, ref.Table.Alias, ref.Name, ref.Type)
+	field.Ref = ref
+	return field
 }
 
 func correlatedFieldsFromRefs(refs []qsbridge.FieldRef) []correlatedSubqueryField {

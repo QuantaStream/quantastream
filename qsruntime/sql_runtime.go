@@ -76,6 +76,8 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: preflight.SQL, Optimization: preflight.Optimization}, options, values...)
+	request = applyPreflightReplacementExpressions(request, preflight)
+	prepared = request.Bound.Prepared
 	request, scalarDiagnostics, err := r.materializeScalarSubqueries(ctx, request)
 	if err != nil || scalarDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
@@ -163,6 +165,60 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	result.Runtime = runtimeResult
 	result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 	return result, err
+}
+
+func applyPreflightReplacementExpressions(request qsbridge.ExecutionRequest, preflight PreflightRewriteResult) qsbridge.ExecutionRequest {
+	if preflight.ReplacementExpr == nil {
+		return request
+	}
+	query := request.Bound.Prepared.Query
+	query.Predicates = append(append([]qsbridge.Predicate(nil), query.Predicates...), qsbridge.Predicate{
+		Expr:      preflight.ReplacementExpr,
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	})
+	query.Subqueries = removeAppliedPreflightSubqueries(query.Subqueries)
+	logical := qsbridge.BuildLogicalPlan(query)
+	physical := qsbridge.BuildPhysicalPlan(logical, request.Bound.Prepared.Scope)
+	inspection := qsbridge.InspectOptimizedQuery(query, preflight.Optimization, request.Bound.Prepared.Scope)
+	request.Bound.Prepared.Query = query
+	request.Bound.Prepared.Logical = logical
+	request.Bound.Prepared.Physical = physical
+	request.Bound.Prepared.Inspection = inspection
+	request.Bound.Prepared.Parameters = query.RequiredParameters()
+	request.Bound.Prepared.ResultColumns = query.ResultColumns()
+	request.Bound.Prepared.Result = query.Result
+	request.Bound.Prepared.Access = query.RequiredAccess()
+	request.Bound.Prepared.Diagnostics = runtimeDiagnosticsWithoutCode(request.Bound.Prepared.Diagnostics, qsbridge.DiagnosticCorrelatedAggregateSubquery)
+	request.Bound.Prepared.Diagnostics = runtimeDiagnosticsWithoutUnknownLogicalNode(request.Bound.Prepared.Diagnostics)
+	request.Bound.Prepared.Supported = query.Supported() && inspection.Supported && !request.Bound.Prepared.Diagnostics.BlocksNative()
+	request.Bound.Diagnostics = runtimeDiagnosticsWithoutCode(request.Bound.Diagnostics, qsbridge.DiagnosticCorrelatedAggregateSubquery)
+	request.Bound.Diagnostics = runtimeDiagnosticsWithoutUnknownLogicalNode(request.Bound.Diagnostics)
+	request.Bound.Supported = request.Bound.Prepared.Supported && !request.Bound.Diagnostics.BlocksNative()
+	request.Diagnostics = runtimeDiagnosticsWithoutCode(request.Diagnostics, qsbridge.DiagnosticCorrelatedAggregateSubquery)
+	request.Diagnostics = runtimeDiagnosticsWithoutUnknownLogicalNode(request.Diagnostics)
+	request.Supported = request.Bound.SupportedForExecution() && !request.Diagnostics.BlocksNative()
+	request.Result = request.Bound.Prepared.Result
+	request.ResultColumns = append([]qsbridge.ResultColumn(nil), request.Bound.Prepared.ResultColumns...)
+	request.Access = append([]qsbridge.AccessRequirement(nil), request.Bound.Prepared.Access...)
+	return request
+}
+
+func removeAppliedPreflightSubqueries(subqueries []qsbridge.SubqueryPlanIntent) []qsbridge.SubqueryPlanIntent {
+	if len(subqueries) == 0 {
+		return nil
+	}
+	filtered := make([]qsbridge.SubqueryPlanIntent, 0, len(subqueries))
+	for _, intent := range subqueries {
+		if intent.Kind == qsbridge.SubqueryIntentCorrelatedAggregate {
+			continue
+		}
+		filtered = append(filtered, intent)
+	}
+	if len(filtered) == len(subqueries) {
+		return subqueries
+	}
+	return filtered
 }
 
 func withEmptyCandidateSet(request ExecutionRequest) ExecutionRequest {
@@ -314,6 +370,17 @@ func runtimeDiagnosticsWithoutCode(diagnostics qsbridge.DiagnosticSet, code qsbr
 	filtered := make(qsbridge.DiagnosticSet, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Code == code {
+			continue
+		}
+		filtered = append(filtered, diagnostic)
+	}
+	return filtered
+}
+
+func runtimeDiagnosticsWithoutUnknownLogicalNode(diagnostics qsbridge.DiagnosticSet) qsbridge.DiagnosticSet {
+	filtered := make(qsbridge.DiagnosticSet, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == qsbridge.DiagnosticInternalInvariant && diagnostic.Message == "unknown logical node type" {
 			continue
 		}
 		filtered = append(filtered, diagnostic)

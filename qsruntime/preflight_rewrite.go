@@ -7,7 +7,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-// PreflightRewrite applies one SQL-to-SQL compatibility rewrite before native planning.
+// PreflightRewrite applies one compatibility transform before native planning.
 //
 // The boundary is intentionally narrow and temporary: it isolates compatibility
 // scaffolding from ExecuteSQL while the equivalent shapes move into first-class
@@ -15,7 +15,7 @@ import (
 type PreflightRewrite interface {
 	// RuleID returns the stable optimizer rewrite rule represented by this preflight hook.
 	RuleID() qsbridge.RewriteRuleID
-	// ApplyPreflightRewrite returns a rewritten SQL string, diagnostics, and optimizer trace metadata.
+	// ApplyPreflightRewrite returns transformed SQL, optional typed replacement state, diagnostics, and optimizer trace metadata.
 	ApplyPreflightRewrite(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (PreflightRewriteResult, error)
 }
 
@@ -49,13 +49,14 @@ type PreflightRewriteResult struct {
 	Duration              time.Duration
 	Diagnostics           qsbridge.DiagnosticSet
 	Descriptor            *PreflightRewriteDescriptorSummary
+	ReplacementExpr       qsbridge.Expr
 	ReplacementExpression *PreflightRewriteExpressionReport
 	HelperReports         []PreflightHelperExecutionRequestReport
 	Optimization          qsbridge.OptimizationTrace
 	Preflight             PreflightRewriteSummary
 }
 
-type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool)
+type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, qsbridge.Expr, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool)
 type preflightRewriteDescriptorFunc func(sql string) (*PreflightRewriteDescriptorSummary, bool)
 
 type preflightRewriteRule struct {
@@ -76,7 +77,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		descriptor, _ = r.descriptor(sql)
 	}
 	started := time.Now()
-	rewritten, diagnostics, optimization, replacementExpression, helperReports, err, applied := r.apply(ctx, sql, options, values...)
+	rewritten, diagnostics, optimization, replacementExpr, replacementExpression, helperReports, err, applied := r.apply(ctx, sql, options, values...)
 	duration := time.Since(started)
 	if !applied {
 		return PreflightRewriteResult{
@@ -91,6 +92,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		Duration:              duration,
 		Diagnostics:           diagnostics,
 		Descriptor:            descriptor,
+		ReplacementExpr:       replacementExpr,
 		ReplacementExpression: replacementExpression,
 		HelperReports:         helperReports,
 		Optimization:          optimization,
@@ -125,6 +127,7 @@ func (r SQLRuntime) applyPreflightRewrites(ctx context.Context, sql string, opti
 			continue
 		}
 		result.SQL = step.SQL
+		result.ReplacementExpr = step.ReplacementExpr
 		result.Diagnostics = append(result.Diagnostics, step.Diagnostics...)
 		result.Optimization = mergeRuntimeOptimizationTrace(result.Optimization, step.Optimization)
 	}

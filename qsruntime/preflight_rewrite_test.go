@@ -699,11 +699,15 @@ where p.p_brand = 'Brand#23'
 	if result.Preflight.Applied != 1 || result.Diagnostics.BlocksNative() {
 		t.Fatalf("rewrite result = applied:%d diagnostics:%#v", result.Preflight.Applied, result.Diagnostics)
 	}
-	if strings.Contains(result.SQL, "avg(") {
-		t.Fatalf("rewritten SQL still contains correlated aggregate subquery: %s", result.SQL)
+	if result.SQL != query {
+		t.Fatalf("preflight SQL = %q, want original SQL so typed replacement can be applied after binding", result.SQL)
 	}
-	if !strings.Contains(result.SQL, "(p.p_partkey = 101 and l.l_quantity < 10)") {
-		t.Fatalf("rewritten SQL = %s, want threshold branch from typed intent", result.SQL)
+	if result.ReplacementExpr == nil {
+		t.Fatalf("replacement expr = nil, want typed threshold predicate")
+	}
+	assertCorrelatedAverageThresholdBranch(t, result.ReplacementExpr, 101, 10)
+	if got, want := len(result.Optimization.Rewrites), 1; got != want {
+		t.Fatalf("rewrite trace count = %d, want %d: %#v", got, want, result.Optimization.Rewrites)
 	}
 	reports := result.Preflight.DescriptorReports()
 	if got, want := len(reports), 1; got != want {
