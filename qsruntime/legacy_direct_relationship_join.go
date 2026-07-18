@@ -1036,6 +1036,22 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 			rownums = rows
 		}
 	}
+	membershipStart := time.Now()
+	var membershipProbes []ExecutionProbe
+	tupleRows, alignedRows, membershipProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleMemberships(ctx, request, tupleRows, alignedRows)
+	membershipElapsed := time.Since(membershipStart)
+	result.Probes = append(result.Probes, membershipProbes...)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if err != nil || result.Diagnostics.BlocksNative() {
+		return result, err
+	}
+	if rows, ok := alignedRows[sink]; ok {
+		rownums = rows
+	} else if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
+		if rows, ok := alignedRows[role]; ok {
+			rownums = rows
+		}
+	}
 	fields = legacyDirectRelationshipPostReductionFields(request, fields)
 	if len(fields) == 0 {
 		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph grouped aggregate requires materialized group or aggregate fields")...)
@@ -1073,6 +1089,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_materialization_elapsed", materializationElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_tuple_expansion_elapsed", tupleExpansionElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_same_row_elapsed", sameRowElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_membership_elapsed", membershipElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_residual_filter_elapsed", residualElapsed.String()),
 	)
 	result.Probes = append(result.Probes, materializationProbes...)
@@ -1090,6 +1107,140 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_execution_elapsed", aggregateElapsed.String()),
 	)
 	return aggregateResult, nil
+}
+
+// legacyDirectRelationshipApplyTupleMemberships applies SQL membership filters
+// to a reduced graph tuple stream while preserving role-rownum alignment.
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyTupleMemberships(ctx context.Context, request ExecutionRequest, tupleRows RelationshipTupleRowSet, alignedRows map[string][]qsbridge.QuantaRownum) (RelationshipTupleRowSet, map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	if len(request.Memberships) == 0 {
+		return tupleRows, alignedRows, nil, nil, nil
+	}
+	materialization := e.projectionMaterializationKernel()
+	if materialization == nil {
+		return RelationshipTupleRowSet{}, nil, nil, legacyDirectRelationshipDiagnostic("relationship-vector graph membership requires a projection materialization kernel"), nil
+	}
+	sessions := e.Sessions
+	if sessions == nil && e.Source != nil {
+		sessions = LegacyQuantaSourceSessionProvider{Source: e.Source}
+	}
+	if sessions == nil {
+		return RelationshipTupleRowSet{}, nil, nil, legacyDirectRelationshipDiagnostic("relationship-vector graph membership requires a direct session provider"), nil
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions:        sessions,
+		Materialization: materialization,
+	}
+	currentTuples := tupleRows
+	currentAligned := legacyDirectRelationshipCloneAlignedRows(alignedRows)
+	probes := make([]ExecutionProbe, 0, len(request.Memberships)*6)
+	for index, membership := range request.Memberships {
+		prefix := fmt.Sprintf("graph_membership_%d_", index+1)
+		role, diagnostics := legacyDirectRelationshipMembershipTupleRole(membership.Left.Table, currentAligned)
+		if diagnostics.BlocksNative() {
+			return RelationshipTupleRowSet{}, nil, probes, diagnostics, nil
+		}
+		leftCandidates := legacyDirectRelationshipTupleUniqueRownums(currentTuples, role)
+		filtered, diagnostics, err := runtime.directBitmapApplyMembership(ctx, request, BitmapQueryResult{
+			Success: true,
+			Count:   uint64(len(leftCandidates)),
+			Rownums: leftCandidates,
+		}, membership)
+		if err != nil || diagnostics.BlocksNative() {
+			return RelationshipTupleRowSet{}, nil, probes, diagnostics, err
+		}
+		allowed := make(map[qsbridge.QuantaRownum]struct{}, len(filtered.Rownums))
+		for _, rownum := range filtered.Rownums {
+			allowed[rownum] = struct{}{}
+		}
+		keep := make([]int, 0, currentTuples.CandidateCount())
+		for rowIndex, row := range currentTuples.Rows {
+			rownum, ok := row.Rownum(qsbridge.TableInstanceID(role))
+			if !ok {
+				return RelationshipTupleRowSet{}, nil, probes, legacyDirectRelationshipDiagnostic("relationship-vector graph membership tuple row missing role " + role), nil
+			}
+			if _, ok := allowed[rownum]; ok {
+				keep = append(keep, rowIndex)
+			}
+		}
+		beforeRows := currentTuples.CandidateCount()
+		currentTuples = currentTuples.FilterByIndexes(keep)
+		currentAligned = legacyDirectRelationshipFilterAlignedRowsByTupleIndexes(currentAligned, keep)
+		probes = append(probes,
+			legacyDirectRelationshipProbe(prefix+"kind", string(membership.Kind)),
+			legacyDirectRelationshipProbe(prefix+"left_role", role),
+			legacyDirectRelationshipProbe(prefix+"left_candidates", strconv.Itoa(len(leftCandidates))),
+			legacyDirectRelationshipProbe(prefix+"left_rows_after", strconv.Itoa(len(filtered.Rownums))),
+			legacyDirectRelationshipProbe(prefix+"tuple_rows_before", strconv.Itoa(beforeRows)),
+			legacyDirectRelationshipProbe(prefix+"tuple_rows_after", strconv.Itoa(currentTuples.CandidateCount())),
+		)
+	}
+	return currentTuples, currentAligned, probes, nil, nil
+}
+
+// legacyDirectRelationshipMembershipTupleRole resolves a membership field's
+// table instance to the graph role key carried in aligned tuple rows.
+func legacyDirectRelationshipMembershipTupleRole(table qsbridge.TableInstance, alignedRows map[string][]qsbridge.QuantaRownum) (string, qsbridge.DiagnosticSet) {
+	candidates := []string{
+		legacyDirectRelationshipTableRoleKey(table),
+		strings.ToLower(table.Alias),
+		strings.ToLower(string(table.ID)),
+		strings.ToLower(table.Table),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := alignedRows[candidate]; ok {
+			return candidate, nil
+		}
+	}
+	return "", legacyDirectRelationshipDiagnostic("relationship-vector graph membership left role is not part of the reduced tuple graph")
+}
+
+// legacyDirectRelationshipTupleUniqueRownums returns distinct rownums for one
+// role in tuple order so membership filtering avoids duplicate materialization.
+func legacyDirectRelationshipTupleUniqueRownums(tupleRows RelationshipTupleRowSet, role string) []qsbridge.QuantaRownum {
+	seen := make(map[qsbridge.QuantaRownum]struct{})
+	rownums := make([]qsbridge.QuantaRownum, 0, tupleRows.CandidateCount())
+	roleID := qsbridge.TableInstanceID(role)
+	for _, row := range tupleRows.Rows {
+		rownum, ok := row.Rownum(roleID)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[rownum]; ok {
+			continue
+		}
+		seen[rownum] = struct{}{}
+		rownums = append(rownums, rownum)
+	}
+	return rownums
+}
+
+// legacyDirectRelationshipCloneAlignedRows copies aligned role rownum vectors
+// before a membership filter mutates the graph's working rowset.
+func legacyDirectRelationshipCloneAlignedRows(alignedRows map[string][]qsbridge.QuantaRownum) map[string][]qsbridge.QuantaRownum {
+	cloned := make(map[string][]qsbridge.QuantaRownum, len(alignedRows))
+	for role, rows := range alignedRows {
+		cloned[role] = append([]qsbridge.QuantaRownum(nil), rows...)
+	}
+	return cloned
+}
+
+// legacyDirectRelationshipFilterAlignedRowsByTupleIndexes applies tuple keep
+// indexes to every aligned role vector, preserving positional correspondence.
+func legacyDirectRelationshipFilterAlignedRowsByTupleIndexes(alignedRows map[string][]qsbridge.QuantaRownum, keep []int) map[string][]qsbridge.QuantaRownum {
+	filtered := make(map[string][]qsbridge.QuantaRownum, len(alignedRows))
+	for role, rows := range alignedRows {
+		next := make([]qsbridge.QuantaRownum, 0, len(keep))
+		for _, index := range keep {
+			if index >= 0 && index < len(rows) {
+				next = append(next, rows[index])
+			}
+		}
+		filtered[role] = next
+	}
+	return filtered
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphProjectionResult(ctx context.Context, request ExecutionRequest, sink string, rownums []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, scratchpad legacyDirectRelationshipGraphScratchpad, result ExecutionResult) (ExecutionResult, error) {
@@ -1176,9 +1327,6 @@ func legacyDirectRelationshipChainShapeDiagnostics(request ExecutionRequest, vec
 func legacyDirectRelationshipGraphShapeDiagnostics(request ExecutionRequest, vector RelationshipVectorJoinRequest) qsbridge.DiagnosticSet {
 	if vector.EdgeCount() < 2 {
 		return nil
-	}
-	if len(request.Memberships) > 0 {
-		return legacyDirectRelationshipDiagnostic("inabox-direct relationship-vector graph execution does not support membership filters in this slice")
 	}
 	for _, edge := range vector.Edges {
 		if edge.SQLKind != qsbridge.JoinKindInner || edge.ExecutionKind != qsbridge.RelationshipJoinExecutionVector {

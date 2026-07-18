@@ -1361,7 +1361,6 @@ tests:
         - [36537]
 
   - id: "tpch_queries.q21.070_saudi_late_supplier_wait_exists_count"
-    status: xfail
     kind: query
     order: exact
     capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, four-table-join, semi-join, group-by, order-by, limit]
