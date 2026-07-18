@@ -50,13 +50,14 @@ type PreflightRewriteResult struct {
 	Diagnostics           qsbridge.DiagnosticSet
 	Descriptor            *PreflightRewriteDescriptorSummary
 	ReplacementExpr       qsbridge.Expr
+	NativePredicates      NativePredicateSet
 	ReplacementExpression *PreflightRewriteExpressionReport
 	HelperReports         []PreflightHelperExecutionRequestReport
 	Optimization          qsbridge.OptimizationTrace
 	Preflight             PreflightRewriteSummary
 }
 
-type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, qsbridge.Expr, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool)
+type preflightRewriteFunc func(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, qsbridge.Expr, NativePredicateSet, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool)
 type preflightRewriteDescriptorFunc func(sql string) (*PreflightRewriteDescriptorSummary, bool)
 
 type preflightRewriteRule struct {
@@ -77,7 +78,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		descriptor, _ = r.descriptor(sql)
 	}
 	started := time.Now()
-	rewritten, diagnostics, optimization, replacementExpr, replacementExpression, helperReports, err, applied := r.apply(ctx, sql, options, values...)
+	rewritten, diagnostics, optimization, replacementExpr, nativePredicates, replacementExpression, helperReports, err, applied := r.apply(ctx, sql, options, values...)
 	duration := time.Since(started)
 	if !applied {
 		return PreflightRewriteResult{
@@ -93,6 +94,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 		Diagnostics:           diagnostics,
 		Descriptor:            descriptor,
 		ReplacementExpr:       replacementExpr,
+		NativePredicates:      nativePredicates,
 		ReplacementExpression: replacementExpression,
 		HelperReports:         helperReports,
 		Optimization:          optimization,
@@ -128,6 +130,7 @@ func (r SQLRuntime) applyPreflightRewrites(ctx context.Context, sql string, opti
 		}
 		result.SQL = step.SQL
 		result.ReplacementExpr = step.ReplacementExpr
+		result.NativePredicates.CorrelatedAggregate = append(result.NativePredicates.CorrelatedAggregate, step.NativePredicates.CorrelatedAggregate...)
 		result.Diagnostics = append(result.Diagnostics, step.Diagnostics...)
 		result.Optimization = mergeRuntimeOptimizationTrace(result.Optimization, step.Optimization)
 	}

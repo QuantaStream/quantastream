@@ -123,6 +123,7 @@ func MaterializationRequestFromExecution(request ExecutionRequest, result Bitmap
 		if len(materialization.Rownums) == 0 {
 			materialization.Rownums = append([]qsbridge.QuantaRownum(nil), result.Rownums...)
 		}
+		materialization.ProjectionFields = appendNativePredicateProjectionFields(materialization.ProjectionFields, request.NativePredicates)
 		if rootIndex, ok := request.RootIndex(); ok {
 			index := materialization.Index
 			if index == "" {
@@ -145,7 +146,8 @@ func MaterializationRequestFromExecution(request ExecutionRequest, result Bitmap
 		}
 	}
 	candidates := qsbridge.CandidateSetFromBitmapResult(rootIndex, result)
-	return candidates.MaterializationRequest(materializationRootProjectionFields(rootIndex, request.Query.ProjectionFields)), nil
+	fields := appendNativePredicateProjectionFields(request.Query.ProjectionFields, request.NativePredicates)
+	return candidates.MaterializationRequest(materializationRootProjectionFields(rootIndex, fields)), nil
 }
 
 func materializationRootProjectionFields(rootIndex string, fields []qsbridge.QuantaProjectionField) []qsbridge.QuantaProjectionField {

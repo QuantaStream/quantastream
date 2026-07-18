@@ -90,10 +90,15 @@ func AggregateRelationshipTupleProjected(s RelationshipTupleRowSet, request Exec
 	return directBitmapMaterializedAggregateResult(request, rowSet, result)
 }
 
-// FilterRelationshipTupleProjectedResiduals filters projected and tuple rows with the same residual keep indexes.
+// FilterRelationshipTupleProjectedResiduals filters projected and tuple rows with
+// the same native-predicate and residual keep indexes.
 func FilterRelationshipTupleProjectedResiduals(s RelationshipTupleRowSet, request ExecutionRequest, rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.QuantaProjectedRowSet, RelationshipTupleRowSet, qsbridge.DiagnosticSet) {
 	if rowSet.CandidateCount() != s.CandidateCount() {
 		return qsbridge.QuantaProjectedRowSet{}, RelationshipTupleRowSet{}, relationshipTupleDiagnostics(fmt.Sprintf("projected row count %d does not match tuple row count %d", rowSet.CandidateCount(), s.CandidateCount()))
+	}
+	rowSet, s, diagnostics := filterRelationshipTupleProjectedNativePredicates(s, request, rowSet)
+	if diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, RelationshipTupleRowSet{}, diagnostics
 	}
 	residuals := directBitmapResidualScanPredicates(request)
 	if len(residuals) == 0 {
@@ -102,6 +107,23 @@ func FilterRelationshipTupleProjectedResiduals(s RelationshipTupleRowSet, reques
 	keep := make([]int, 0, rowSet.CandidateCount())
 	for i := 0; i < rowSet.CandidateCount(); i++ {
 		matched, diagnostics := directBitmapEvaluateResidualPredicates(residuals, rowSet, i)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, RelationshipTupleRowSet{}, diagnostics
+		}
+		if matched {
+			keep = append(keep, i)
+		}
+	}
+	return directBitmapFilterRowSetByIndexes(rowSet, keep), s.FilterByIndexes(keep), nil
+}
+
+func filterRelationshipTupleProjectedNativePredicates(s RelationshipTupleRowSet, request ExecutionRequest, rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.QuantaProjectedRowSet, RelationshipTupleRowSet, qsbridge.DiagnosticSet) {
+	if request.NativePredicates.Empty() {
+		return rowSet, s, nil
+	}
+	keep := make([]int, 0, rowSet.CandidateCount())
+	for i := 0; i < rowSet.CandidateCount(); i++ {
+		matched, diagnostics := evaluateNativePredicatesForRow(request.NativePredicates, rowSet, i)
 		if diagnostics.BlocksNative() {
 			return qsbridge.QuantaProjectedRowSet{}, RelationshipTupleRowSet{}, diagnostics
 		}

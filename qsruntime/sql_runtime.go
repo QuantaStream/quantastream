@@ -76,7 +76,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: preflight.SQL, Optimization: preflight.Optimization}, options, values...)
-	request = applyPreflightReplacementExpressions(request, preflight)
+	request = applyPreflightPlanningState(request, preflight)
 	prepared = request.Bound.Prepared
 	request, scalarDiagnostics, err := r.materializeScalarSubqueries(ctx, request)
 	if err != nil || scalarDiagnostics.BlocksNative() {
@@ -116,7 +116,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			if result.Diagnostics.BlocksNative() {
 				return result, nil
 			}
-			runtimeRequest := NewSQLExecutionRequest(intermediate, request)
+			runtimeRequest := applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight)
 			if existsGate.EmptyCandidateSet {
 				runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 			}
@@ -138,7 +138,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		if result.Diagnostics.BlocksNative() {
 			return result, nil
 		}
-		runtimeResult, err := r.ExecutePrepared(ctx, NewSQLExecutionRequest(intermediate, request))
+		runtimeResult, err := r.ExecutePrepared(ctx, applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight))
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 		return result, err
@@ -157,7 +157,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 
-	runtimeRequest := NewSQLExecutionRequest(intermediate, request)
+	runtimeRequest := applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight)
 	if existsGate.EmptyCandidateSet {
 		runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 	}
@@ -167,16 +167,18 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	return result, err
 }
 
-func applyPreflightReplacementExpressions(request qsbridge.ExecutionRequest, preflight PreflightRewriteResult) qsbridge.ExecutionRequest {
-	if preflight.ReplacementExpr == nil {
+func applyPreflightPlanningState(request qsbridge.ExecutionRequest, preflight PreflightRewriteResult) qsbridge.ExecutionRequest {
+	if preflight.ReplacementExpr == nil && len(preflight.NativePredicates.CorrelatedAggregate) == 0 {
 		return request
 	}
 	query := request.Bound.Prepared.Query
-	query.Predicates = append(append([]qsbridge.Predicate(nil), query.Predicates...), qsbridge.Predicate{
-		Expr:      preflight.ReplacementExpr,
-		Placement: qsbridge.PredicateResidualScan,
-		Scope:     qsbridge.PredicateScopeWhere,
-	})
+	if preflight.ReplacementExpr != nil {
+		query.Predicates = append(append([]qsbridge.Predicate(nil), query.Predicates...), qsbridge.Predicate{
+			Expr:      preflight.ReplacementExpr,
+			Placement: qsbridge.PredicateResidualScan,
+			Scope:     qsbridge.PredicateScopeWhere,
+		})
+	}
 	query.Subqueries = removeAppliedPreflightSubqueries(query.Subqueries)
 	logical := qsbridge.BuildLogicalPlan(query)
 	physical := qsbridge.BuildPhysicalPlan(logical, request.Bound.Prepared.Scope)
@@ -201,6 +203,15 @@ func applyPreflightReplacementExpressions(request qsbridge.ExecutionRequest, pre
 	request.Result = request.Bound.Prepared.Result
 	request.ResultColumns = append([]qsbridge.ResultColumn(nil), request.Bound.Prepared.ResultColumns...)
 	request.Access = append([]qsbridge.AccessRequirement(nil), request.Bound.Prepared.Access...)
+	return request
+}
+
+func applyPreflightRuntimeState(request ExecutionRequest, preflight PreflightRewriteResult) ExecutionRequest {
+	if len(preflight.NativePredicates.CorrelatedAggregate) == 0 {
+		return request
+	}
+	request.NativePredicates.CorrelatedAggregate = append(request.NativePredicates.CorrelatedAggregate, preflight.NativePredicates.CorrelatedAggregate...)
+	request.Materialization.ProjectionFields = appendNativePredicateProjectionFields(request.Materialization.ProjectionFields, request.NativePredicates)
 	return request
 }
 

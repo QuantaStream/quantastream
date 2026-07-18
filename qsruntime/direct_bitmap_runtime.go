@@ -182,6 +182,12 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	if materializationErr != nil {
 		return result, materializationErr
 	}
+	rowSet, nativePredicateProbes, nativePredicateDiagnostics := filterRowSetByNativePredicates(request, rowSet)
+	result.Probes = append(result.Probes, nativePredicateProbes...)
+	result.Diagnostics = append(result.Diagnostics, nativePredicateDiagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, err
+	}
 	rowSet, residualDiagnostics := directBitmapFilterResidualScanPredicates(request, rowSet)
 	result.Diagnostics = append(result.Diagnostics, residualDiagnostics...)
 	if result.Diagnostics.BlocksNative() {
@@ -271,7 +277,7 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	if result.Diagnostics.BlocksNative() {
 		return result
 	}
-	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) {
+	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
 		return directBitmapCountAggregateResult(request, result)
 	}
 	if r.projectionMaterializationKernel() == nil {
@@ -301,6 +307,13 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 		return result
 	}
 	residualStart := time.Now()
+	var nativePredicateProbes []ExecutionProbe
+	rowSet, nativePredicateProbes, diagnostics = filterRowSetByNativePredicates(request, rowSet)
+	result.Probes = append(result.Probes, nativePredicateProbes...)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result
+	}
 	rowSet, residualDiagnostics := directBitmapFilterResidualScanPredicates(request, rowSet)
 	residualElapsed := time.Since(residualStart)
 	result.Diagnostics = append(result.Diagnostics, residualDiagnostics...)

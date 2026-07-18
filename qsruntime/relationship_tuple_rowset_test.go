@@ -331,6 +331,60 @@ func TestRelationshipTupleRowSetFiltersProjectedResidualsWithAlignedTupleRows(t 
 	})
 }
 
+func TestRelationshipTupleRowSetFiltersNativeCorrelatedAggregatePredicates(t *testing.T) {
+	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	partKey := qsbridge.FieldRef{Table: part, Name: "p_partkey", Type: qsbridge.DataTypeInt}
+	quantity := qsbridge.FieldRef{Table: lineitem, Name: "l_quantity", Type: qsbridge.DataTypeInt}
+	rowSet := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"p": 101, "l": 11}},
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"p": 202, "l": 21}},
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"p": 101, "l": 12}},
+	}}
+	projected := qsbridge.QuantaProjectedRowSet{
+		Index:   "lineitem",
+		Rownums: []qsbridge.QuantaRownum{11, 21, 12},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "part", Role: "p", Field: "p_partkey", Type: qsbridge.DataTypeInt},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(101)},
+					{Kind: qsbridge.ValueInt, Value: int64(202)},
+					{Kind: qsbridge.ValueInt, Value: int64(101)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "lineitem", Role: "l", Field: "l_quantity", Type: qsbridge.DataTypeInt},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(9)},
+					{Kind: qsbridge.ValueInt, Value: int64(15)},
+					{Kind: qsbridge.ValueInt, Value: int64(11)},
+				},
+			},
+		},
+	}
+	request := ExecutionRequest{NativePredicates: NativePredicateSet{CorrelatedAggregate: []CorrelatedAggregatePredicate{{
+		KeyField:   partKey,
+		ValueField: quantity,
+		Operator:   qsbridge.BinaryOpLess,
+		Thresholds: []CorrelatedAggregateThreshold{
+			{Key: 101, Threshold: 10},
+			{Key: 202, Threshold: 20},
+		},
+	}}}}
+	filteredProjected, filteredRows, diagnostics := FilterRelationshipTupleProjectedResiduals(rowSet, request, projected)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if filteredProjected.CandidateCount() != 2 {
+		t.Fatalf("projected rows = %d, want 2", filteredProjected.CandidateCount())
+	}
+	assertRelationshipTupleRows(t, filteredRows, []map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{
+		{"p": 101, "l": 11},
+		{"p": 202, "l": 21},
+	})
+}
+
 func assertRelationshipTupleRows(t *testing.T, rowSet RelationshipTupleRowSet, want []map[qsbridge.TableInstanceID]qsbridge.QuantaRownum) {
 	t.Helper()
 	if len(rowSet.Rows) != len(want) {

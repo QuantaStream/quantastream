@@ -58,7 +58,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
 			Reason:            "TPC-H-style correlated aggregate predicates are useful read-path shapes, but correlated aggregate subquery intent is not planner-native yet.",
 			SourceSQLShape:    "A correlated average quantity predicate such as l_quantity < (select factor * avg(l2.l_quantity) from lineitem l2 where l2.l_partkey = p.p_partkey).",
-			TemporaryStrategy: "Use typed Q17-style correlated aggregate intent from the bound query, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then attach equivalent per-key threshold branches as a typed prepared-query residual.",
+			TemporaryStrategy: "Use typed Q17-style correlated aggregate intent from the bound query, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then attach a native correlated aggregate predicate to the runtime request.",
 			HelperPlanKinds: []PreflightRewriteHelperPlanKind{
 				PreflightHelperPlanParentKeyLookup,
 				PreflightHelperPlanAggregateThresholdLookup,
@@ -67,7 +67,7 @@ func preflightRewriteInventory() []PreflightRewriteInventory {
 				"qsruntime/sql_runtime_test.go correlated aggregate preflight trace and ExecuteSQL coverage",
 				"inabox-direct TPCH Q17-style probes when present in SQLRunner suites",
 			},
-			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of preflight expression expansion.",
+			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of preflight orchestration.",
 		},
 	}
 }
@@ -97,14 +97,14 @@ func preflightSurfaceInventory() []PreflightSurfaceInventory {
 			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
 			HelperKind:        PreflightHelperPlanAggregateThresholdLookup,
 			NativeStepKind:    qsbridge.NativeSubqueryStepAggregateThresholdLookup,
-			CurrentContract:   "typed aggregate-threshold lookup feeding prepared-query residual branches",
-			DeletionCondition: "replace preflight expression expansion with planner-owned aggregate-threshold execution",
+			CurrentContract:   "typed aggregate-threshold lookup feeding native correlated aggregate predicate thresholds",
+			DeletionCondition: "replace preflight orchestration with planner-owned aggregate-threshold execution",
 		},
 		{
 			Name:              "correlated_aggregate_preflight_transform",
 			Disposition:       PreflightSurfaceTemporaryTransform,
 			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
-			CurrentContract:   "temporary typed transform that consumes Q17-style correlated aggregate intent and attaches a residual expression",
+			CurrentContract:   "temporary typed transform that consumes Q17-style correlated aggregate intent and attaches native predicate metadata",
 			DeletionCondition: "delete when correlated aggregate subqueries are represented and executed as native planner nodes",
 		},
 		{

@@ -47,7 +47,7 @@ where p.p_brand = 'Brand#45'
 	}
 }
 
-func TestCorrelatedAverageThresholdPredicateExprBuildsTypedBranches(t *testing.T) {
+func TestCorrelatedAverageNativePredicateBuildsThresholds(t *testing.T) {
 	runtime := newTestSQLRuntime(t)
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
@@ -64,20 +64,20 @@ where p.p_brand = 'Brand#45'
 	if !ok {
 		t.Fatalf("typed correlated aggregate match not found")
 	}
-	expr := correlatedAverageThresholdPredicateExpr(match.Descriptor, []q17PartThreshold{
+	predicate := correlatedAverageNativePredicate(match.Descriptor, []q17PartThreshold{
 		{PartKey: 101, Threshold: 10},
 		{PartKey: 202, Threshold: 20.5},
 	})
 
-	or, ok := expr.(qsbridge.BinaryExpr)
-	if !ok || or.Op != qsbridge.BinaryOpOr {
-		t.Fatalf("expr = %#v, want OR binary", expr)
+	if predicate.KeyField.Name != "p_partkey" || predicate.ValueField.Name != "l_quantity" || predicate.Operator != qsbridge.BinaryOpLess {
+		t.Fatalf("native predicate = %#v", predicate)
 	}
-	assertCorrelatedAverageThresholdBranch(t, or.Left, 101, 10)
-	assertCorrelatedAverageThresholdBranch(t, or.Right, 202, 20.5)
+	if len(predicate.Thresholds) != 2 || predicate.Thresholds[0].Key != 101 || predicate.Thresholds[0].Threshold != 10 || predicate.Thresholds[1].Key != 202 || predicate.Thresholds[1].Threshold != 20.5 {
+		t.Fatalf("thresholds = %#v", predicate.Thresholds)
+	}
 }
 
-func TestCorrelatedAverageThresholdPredicateExpressionReportSummarizesRuntimeShape(t *testing.T) {
+func TestCorrelatedAverageNativePredicateExpressionReportSummarizesRuntimeShape(t *testing.T) {
 	runtime := newTestSQLRuntime(t)
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l
@@ -94,12 +94,12 @@ where p.p_brand = 'Brand#45'
 	if !ok {
 		t.Fatalf("typed correlated aggregate match not found")
 	}
-	report := correlatedAverageThresholdPredicateExpressionReport(correlatedAverageThresholdPredicateExpr(match.Descriptor, []q17PartThreshold{
+	report := correlatedAverageNativePredicateExpressionReport(correlatedAverageNativePredicate(match.Descriptor, []q17PartThreshold{
 		{PartKey: 101, Threshold: 10},
 		{PartKey: 202, Threshold: 20.5},
 	}))
 
-	if report.Kind != qsbridge.ExprBinary || report.Operator != qsbridge.BinaryOpOr || report.BranchCount != 2 || report.LiteralCount != 4 {
+	if report.Kind != qsbridge.ExprKind("native_correlated_aggregate_predicate") || report.Operator != qsbridge.BinaryOpLess || report.BranchCount != 2 || report.LiteralCount != 4 {
 		t.Fatalf("report = %#v", report)
 	}
 	if got, want := report.FieldNames, []string{"l.l_quantity", "p.p_partkey"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
@@ -107,17 +107,11 @@ where p.p_brand = 'Brand#45'
 	}
 }
 
-func TestCorrelatedAverageThresholdPredicateExprBuildsFalsePredicateForEmptyThresholds(t *testing.T) {
-	expr := correlatedAverageThresholdPredicateExpr(correlatedAverageQuantityDescriptor{}, nil)
+func TestCorrelatedAverageNativePredicateHandlesEmptyThresholds(t *testing.T) {
+	predicate := correlatedAverageNativePredicate(correlatedAverageQuantityDescriptor{}, nil)
 
-	binary, ok := expr.(qsbridge.BinaryExpr)
-	if !ok || binary.Op != qsbridge.BinaryOpEqual {
-		t.Fatalf("expr = %#v, want equality false predicate", expr)
-	}
-	left, leftOK := binary.Left.(qsbridge.LiteralExpr)
-	right, rightOK := binary.Right.(qsbridge.LiteralExpr)
-	if !leftOK || !rightOK || left.Kind != qsbridge.ValueInt || right.Kind != qsbridge.ValueInt || left.Value != int64(1) || right.Value != int64(0) {
-		t.Fatalf("false predicate = %#v", binary)
+	if len(predicate.Thresholds) != 0 || predicate.Operator != qsbridge.BinaryOpLess {
+		t.Fatalf("predicate = %#v, want empty threshold native predicate", predicate)
 	}
 }
 
@@ -133,38 +127,6 @@ func TestScalarSubqueryResultCellReadsUnnamedProjectionVector(t *testing.T) {
 	}
 	if cell.Value != 95025.42544399995 {
 		t.Fatalf("cell = %#v", cell)
-	}
-}
-
-func assertCorrelatedAverageThresholdBranch(t *testing.T, expr qsbridge.Expr, partKey int64, threshold float64) {
-	t.Helper()
-	and, ok := expr.(qsbridge.BinaryExpr)
-	if !ok || and.Op != qsbridge.BinaryOpAnd {
-		t.Fatalf("branch = %#v, want AND binary", expr)
-	}
-	keyEq, ok := and.Left.(qsbridge.BinaryExpr)
-	if !ok || keyEq.Op != qsbridge.BinaryOpEqual {
-		t.Fatalf("key branch = %#v, want equality", and.Left)
-	}
-	keyField, ok := keyEq.Left.(qsbridge.FieldExpr)
-	if !ok || keyField.Ref.Name != "p_partkey" || keyField.Ref.Table.RefName() != "p" {
-		t.Fatalf("key field = %#v", keyEq.Left)
-	}
-	keyValue, ok := keyEq.Right.(qsbridge.LiteralExpr)
-	if !ok || keyValue.Kind != qsbridge.ValueInt || keyValue.Value != partKey {
-		t.Fatalf("key value = %#v, want %d", keyEq.Right, partKey)
-	}
-	quantityLess, ok := and.Right.(qsbridge.BinaryExpr)
-	if !ok || quantityLess.Op != qsbridge.BinaryOpLess {
-		t.Fatalf("quantity branch = %#v, want less-than", and.Right)
-	}
-	quantityField, ok := quantityLess.Left.(qsbridge.FieldExpr)
-	if !ok || quantityField.Ref.Name != "l_quantity" || quantityField.Ref.Table.RefName() != "l" {
-		t.Fatalf("quantity field = %#v", quantityLess.Left)
-	}
-	thresholdValue, ok := quantityLess.Right.(qsbridge.LiteralExpr)
-	if !ok || thresholdValue.Kind != qsbridge.ValueFloat || thresholdValue.Value != threshold {
-		t.Fatalf("threshold value = %#v, want %v", quantityLess.Right, threshold)
 	}
 }
 
@@ -242,12 +204,14 @@ having c > (
 	}
 }
 
-func TestSQLRuntimeExecuteSQLAppliesCorrelatedAggregateReplacementAsResidualPredicate(t *testing.T) {
+func TestSQLRuntimeExecuteSQLAppliesCorrelatedAggregateNativePredicate(t *testing.T) {
+	var gotRequest ExecutionRequest
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		gotRequest = request
 		return ExecutionResult{Count: 3}, nil
 	})
 	runtime.NativeSubquerySteps = q17TypedPathNativeStepExecutor{}
-	query := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+	query := `select count(*) as avg_yearly
 from lineitem as l
 inner join part as p on p.p_partkey = l.l_partkey
 where p.p_brand = 'Brand#23'
@@ -263,8 +227,14 @@ where p.p_brand = 'Brand#23'
 	if err != nil {
 		t.Fatalf("execute sql: %v", err)
 	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.Runtime.Count != 3 {
+		t.Fatalf("runtime count = %d, want fake executor result count 3", result.Runtime.Count)
+	}
 	if result.Preflight.Applied != 1 || result.Preflight.Skipped != 0 {
-		t.Fatalf("preflight summary = %#v, want correlated aggregate replacement applied", result.Preflight)
+		t.Fatalf("preflight summary = %#v, want correlated aggregate native predicate applied", result.Preflight)
 	}
 	if result.Prepared.SQL != query {
 		t.Fatalf("prepared SQL = %q, want original SQL", result.Prepared.SQL)
@@ -279,14 +249,19 @@ where p.p_brand = 'Brand#23'
 		t.Fatalf("subqueries = %d, want consumed correlated aggregate intent: %#v", got, result.Request.Bound.Prepared.Query.Subqueries)
 	}
 	predicates := result.Request.Bound.Prepared.Query.Predicates
-	if got, want := len(predicates), 3; got != want {
-		t.Fatalf("predicates = %d, want %d parent filters plus residual replacement: %#v", got, want, predicates)
+	if got, want := len(predicates), 2; got != want {
+		t.Fatalf("predicates = %d, want %d parent filters without residual replacement: %#v", got, want, predicates)
 	}
-	replacement := predicates[2]
-	if replacement.Placement != qsbridge.PredicateResidualScan || replacement.Scope != qsbridge.PredicateScopeWhere {
-		t.Fatalf("replacement predicate = %#v, want where residual", replacement)
+	if got, want := len(gotRequest.NativePredicates.CorrelatedAggregate), 1; got != want {
+		t.Fatalf("runtime native correlated aggregate predicates = %d, want %d", got, want)
 	}
-	assertCorrelatedAverageThresholdBranch(t, replacement.Expr, 101, 10)
+	native := gotRequest.NativePredicates.CorrelatedAggregate[0]
+	if native.KeyField.Name != "p_partkey" || native.ValueField.Name != "l_quantity" || native.Operator != qsbridge.BinaryOpLess {
+		t.Fatalf("runtime native predicate = %#v", native)
+	}
+	if len(native.Thresholds) != 1 || native.Thresholds[0].Key != 101 || native.Thresholds[0].Threshold != 10 {
+		t.Fatalf("runtime native thresholds = %#v", native.Thresholds)
+	}
 }
 
 func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {

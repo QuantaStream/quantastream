@@ -745,10 +745,19 @@ where p.p_brand = 'Brand#23'
 	if result.SQL != query {
 		t.Fatalf("preflight SQL = %q, want original SQL so typed replacement can be applied after binding", result.SQL)
 	}
-	if result.ReplacementExpr == nil {
-		t.Fatalf("replacement expr = nil, want typed threshold predicate")
+	if result.ReplacementExpr != nil {
+		t.Fatalf("replacement expr = %#v, want native correlated aggregate predicate instead", result.ReplacementExpr)
 	}
-	assertCorrelatedAverageThresholdBranch(t, result.ReplacementExpr, 101, 10)
+	if got, want := len(result.NativePredicates.CorrelatedAggregate), 1; got != want {
+		t.Fatalf("native correlated aggregate predicates = %d, want %d", got, want)
+	}
+	predicate := result.NativePredicates.CorrelatedAggregate[0]
+	if predicate.KeyField.Name != "p_partkey" || predicate.ValueField.Name != "l_quantity" || predicate.Operator != qsbridge.BinaryOpLess {
+		t.Fatalf("native correlated aggregate predicate = %#v", predicate)
+	}
+	if len(predicate.Thresholds) != 1 || predicate.Thresholds[0].Key != 101 || predicate.Thresholds[0].Threshold != 10 {
+		t.Fatalf("native thresholds = %#v, want p_partkey 101 threshold 10", predicate.Thresholds)
+	}
 	if got, want := len(result.Optimization.Rewrites), 1; got != want {
 		t.Fatalf("rewrite trace count = %d, want %d: %#v", got, want, result.Optimization.Rewrites)
 	}
@@ -757,7 +766,7 @@ where p.p_brand = 'Brand#23'
 		t.Fatalf("descriptor reports = %d, want %d: %#v", got, want, reports)
 	}
 	expression := reports[0].ReplacementExpression
-	if expression == nil || expression.Operator != qsbridge.BinaryOpAnd || expression.BranchCount != 1 {
+	if expression == nil || expression.Kind != qsbridge.ExprKind("native_correlated_aggregate_predicate") || expression.Operator != qsbridge.BinaryOpLess || expression.BranchCount != 1 {
 		t.Fatalf("replacement expression report = %#v", expression)
 	}
 }

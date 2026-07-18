@@ -10,7 +10,7 @@ architecture.
 
 | Rule | Current SQL shape | Temporary strategy | Helper-plan descriptors | Current regression coverage | Future replacement |
 |---|---|---|---|---|---|
-| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Use typed correlated aggregate intent from the bound query, route parent-key lookup and aggregate-threshold materialization through native subquery step contracts, then attach an equivalent typed residual predicate to the prepared query after binding. Helper SQL remains as debug/fallback context, not the execution contract for runtime-ready native steps. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
+| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Use typed correlated aggregate intent from the bound query, route parent-key lookup and aggregate-threshold materialization through native subquery step contracts, then attach native correlated aggregate predicate metadata to the runtime request. Helper SQL remains as debug/fallback context, not the execution contract for runtime-ready native steps. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
 
 ## Native Promotion Order
 
@@ -36,12 +36,12 @@ into `QueryIR.Subqueries` as typed intent. Runtime preflight now requires that
 bound intent when constructing the temporary execution transform; the old
 SQL-pattern recognizer fallback has been deleted. The parent SQL text is no
 longer rewritten for this shape; preflight preserves the original SQL and
-applies the generated threshold expression to the prepared query as a typed
-where residual.
+attaches a native correlated aggregate predicate to the runtime request.
 
-The remaining debt for this shape is the preflight expression expansion itself.
-When correlated aggregate subqueries become fully planner/executor-native, the
-preflight transform caller is the intended deletion point.
+The remaining debt for this shape is the preflight orchestration shell around
+parent-key lookup and aggregate-threshold lookup. When correlated aggregate
+subqueries become fully planner/executor-native, the preflight transform caller
+is the intended deletion point.
 
 ## Surface Classification
 
@@ -54,8 +54,8 @@ deleted when native execution covers the required shapes.
 |---|---|---|---|
 | `scalar_subquery_materialization` | `typed_native_step` | Typed scalar subquery materialization through `NativeSubqueryStepExecutionRequest`. | Rename helper-shaped request/report wrappers after scalar materialization is owned directly by the planner/executor pipeline. |
 | `parent_key_lookup` | `typed_native_step` | Typed parent-key lookup feeding correlated aggregate threshold work. | Rename helper-shaped request/report wrappers after correlated aggregate planning consumes `NativeSubqueryStep` directly. |
-| `aggregate_threshold_lookup` | `typed_native_step` | Typed aggregate-threshold lookup feeding prepared-query residual branches. | Replace preflight expression expansion with planner-owned aggregate-threshold execution. |
-| `correlated_aggregate_preflight_transform` | `temporary_transform` | Temporary typed transform that consumes Q17-style correlated aggregate intent and attaches a residual expression. | Delete when correlated aggregate subqueries are represented and executed as native planner nodes. |
+| `aggregate_threshold_lookup` | `typed_native_step` | Typed aggregate-threshold lookup feeding native correlated aggregate predicate thresholds. | Replace preflight orchestration with planner-owned aggregate-threshold execution. |
+| `correlated_aggregate_preflight_transform` | `temporary_transform` | Temporary typed transform that consumes Q17-style correlated aggregate intent and attaches native predicate metadata. | Delete when correlated aggregate subqueries are represented and executed as native planner nodes. |
 | `sql_backed_preflight_helper_executor` | `compatibility_fallback` | Fallback executor that routes helper SQL through `SQLRuntime` only when no native step is available or the default adapter cannot build a native runtime request yet. | Delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors and the default adapter no longer needs SQL fallback. |
 
 ## Guardrails

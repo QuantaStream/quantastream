@@ -8,31 +8,32 @@ import "github.com/QuantaStream/quantastream/qsbridge"
 // carries qsbridge-neutral query, aggregate, and materialization contracts
 // before a direct or legacy adapter chooses how to execute them.
 type ExecutionRequest struct {
-	Query           qsbridge.QuantaIntermediateQuery
-	HasCandidateSet bool
-	CandidateSet    qsbridge.QuantaCandidateSet
-	SourceIndexes   []string
-	Sources         []qsbridge.TableInstance
-	Joins           []qsbridge.JoinEdge
-	Memberships     []qsbridge.MembershipEdge
-	Result          qsbridge.ResultShape
-	Statement       qsbridge.StatementResult
-	Projection      []qsbridge.ProjectionColumn
-	Predicates      []qsbridge.Predicate
-	GroupBy         []qsbridge.Expr
-	Having          []qsbridge.Predicate
-	ProjectionOrder []qsbridge.FieldRef
-	OrderBy         []qsbridge.SortSpec
-	Options         qsbridge.ExecutionOptions
-	Mutation        qsbridge.MutationShape
-	SQLAggregates   []qsbridge.Aggregate
-	Aggregates      []qsbridge.QuantaAggregateRequest
-	Materialization qsbridge.QuantaMaterializationRequest
-	FilterDomain    qsbridge.QuantaFilterDomainTranslation
-	NodeCatalog     qsbridge.NodeCatalogView
-	QueryCatalog    qsbridge.QueryCatalogView
-	Route           ExecutionRoute
-	Probes          []ExecutionProbe
+	Query            qsbridge.QuantaIntermediateQuery
+	HasCandidateSet  bool
+	CandidateSet     qsbridge.QuantaCandidateSet
+	SourceIndexes    []string
+	Sources          []qsbridge.TableInstance
+	Joins            []qsbridge.JoinEdge
+	Memberships      []qsbridge.MembershipEdge
+	Result           qsbridge.ResultShape
+	Statement        qsbridge.StatementResult
+	Projection       []qsbridge.ProjectionColumn
+	Predicates       []qsbridge.Predicate
+	GroupBy          []qsbridge.Expr
+	Having           []qsbridge.Predicate
+	ProjectionOrder  []qsbridge.FieldRef
+	OrderBy          []qsbridge.SortSpec
+	Options          qsbridge.ExecutionOptions
+	Mutation         qsbridge.MutationShape
+	SQLAggregates    []qsbridge.Aggregate
+	Aggregates       []qsbridge.QuantaAggregateRequest
+	Materialization  qsbridge.QuantaMaterializationRequest
+	NativePredicates NativePredicateSet
+	FilterDomain     qsbridge.QuantaFilterDomainTranslation
+	NodeCatalog      qsbridge.NodeCatalogView
+	QueryCatalog     qsbridge.QueryCatalogView
+	Route            ExecutionRoute
+	Probes           []ExecutionProbe
 }
 
 // NewExecutionRequest copies a neutral Quanta query into a runtime envelope.

@@ -1482,7 +1482,7 @@ func legacyDirectRelationshipCanPruneEdgesForResult(request ExecutionRequest, ed
 	if len(edges) <= 1 || len(request.SQLAggregates) == 0 {
 		return true
 	}
-	if directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) {
+	if directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
 		return false
 	}
 	return true
@@ -1611,6 +1611,10 @@ func legacyDirectRelationshipRequiredGraphRoles(request ExecutionRequest) map[st
 	}
 	for _, predicate := range request.Predicates {
 		addExpr(predicate.Expr)
+	}
+	for _, predicate := range request.NativePredicates.CorrelatedAggregate {
+		addField(predicate.KeyField)
+		addField(predicate.ValueField)
 	}
 	for _, membership := range request.Memberships {
 		addField(membership.Left)
@@ -3083,7 +3087,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipFilt
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAggregateResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, joined []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult) (ExecutionResult, error) {
-	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) {
+	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
 		result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
 		return directBitmapCountAggregateResult(request, result), nil
 	}
@@ -3448,6 +3452,10 @@ func legacyDirectRelationshipPostReductionFieldKeys(request ExecutionRequest) ma
 	}
 	for _, predicate := range request.Predicates {
 		addExpr(predicate.Expr)
+	}
+	for _, predicate := range request.NativePredicates.CorrelatedAggregate {
+		addField(predicate.KeyField)
+		addField(predicate.ValueField)
 	}
 	for _, join := range request.Joins {
 		for _, predicate := range join.On {
