@@ -77,6 +77,36 @@ where p.p_brand = 'Brand#45'
 	assertCorrelatedAverageThresholdBranch(t, or.Right, 202, 20.5)
 }
 
+func TestCorrelatedAverageThresholdPredicateSQLRendersCurrentRewriteShape(t *testing.T) {
+	runtime := newTestSQLRuntime(t)
+	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#45'
+  and p.p_container = 'MED JAR'
+  and l.l_quantity < (
+    select avg(l2.l_quantity) * 0.2
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`
+
+	match, ok := runtime.correlatedAverageQuantityTypedMatch(sql)
+	if !ok {
+		t.Fatalf("typed correlated aggregate match not found")
+	}
+	rendered, ok := correlatedAverageThresholdPredicateSQL(correlatedAverageThresholdPredicateExpr(match.Descriptor, []q17PartThreshold{
+		{PartKey: 101, Threshold: 10},
+		{PartKey: 202, Threshold: 20.5},
+	}))
+	if !ok {
+		t.Fatalf("threshold predicate did not render")
+	}
+	want := "((p.p_partkey = 101 and l.l_quantity < 10) or (p.p_partkey = 202 and l.l_quantity < 20.5))"
+	if rendered != want {
+		t.Fatalf("rendered = %q, want %q", rendered, want)
+	}
+}
+
 func TestCorrelatedAverageThresholdPredicateExprBuildsFalsePredicateForEmptyThresholds(t *testing.T) {
 	expr := correlatedAverageThresholdPredicateExpr(correlatedAverageQuantityDescriptor{}, nil)
 
@@ -88,6 +118,16 @@ func TestCorrelatedAverageThresholdPredicateExprBuildsFalsePredicateForEmptyThre
 	right, rightOK := binary.Right.(qsbridge.LiteralExpr)
 	if !leftOK || !rightOK || left.Kind != qsbridge.ValueInt || right.Kind != qsbridge.ValueInt || left.Value != int64(1) || right.Value != int64(0) {
 		t.Fatalf("false predicate = %#v", binary)
+	}
+}
+
+func TestCorrelatedAverageThresholdPredicateSQLRendersFalsePredicate(t *testing.T) {
+	rendered, ok := correlatedAverageThresholdPredicateSQL(correlatedAverageThresholdPredicateExpr(correlatedAverageQuantityDescriptor{}, nil))
+	if !ok {
+		t.Fatalf("false threshold predicate did not render")
+	}
+	if rendered != "1 = 0" {
+		t.Fatalf("rendered = %q, want false predicate", rendered)
 	}
 }
 

@@ -131,15 +131,11 @@ func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context
 	if err != nil || diagnostics.BlocksNative() {
 		return "", diagnostics, qsbridge.OptimizationTrace{}, helperReports, err, true
 	}
-	if len(thresholds) == 0 {
-		trace := correlatedAverageRewriteTrace()
-		return rewriteCorrelatedAveragePredicateSQL(sql, descriptor, "1 = 0"), nil, trace, helperReports, nil, true
+	predicate, ok := correlatedAverageThresholdPredicateSQL(correlatedAverageThresholdPredicateExpr(descriptor, thresholds))
+	if !ok {
+		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite could not render threshold predicate expression")}, qsbridge.OptimizationTrace{}, helperReports, nil, true
 	}
-	branches := make([]string, 0, len(thresholds))
-	for _, threshold := range thresholds {
-		branches = append(branches, fmt.Sprintf("(%s = %d and %s < %s)", descriptor.OuterKey.qualifiedName(), threshold.PartKey, descriptor.OuterQuantity.qualifiedName(), strconv.FormatFloat(threshold.Threshold, 'g', -1, 64)))
-	}
-	rewritten := rewriteCorrelatedAveragePredicateSQL(sql, descriptor, "("+strings.Join(branches, " or ")+")")
+	rewritten := rewriteCorrelatedAveragePredicateSQL(sql, descriptor, predicate)
 	return rewritten, nil, correlatedAverageRewriteTrace(), helperReports, nil, true
 }
 
@@ -332,6 +328,87 @@ func correlatedAverageThresholdPredicateExpr(descriptor correlatedAverageQuantit
 		expression = qsbridge.Binary(qsbridge.BinaryOpOr, expression, branch)
 	}
 	return expression
+}
+
+func correlatedAverageThresholdPredicateSQL(expr qsbridge.Expr) (string, bool) {
+	branches := correlatedAverageFlattenBinary(expr, qsbridge.BinaryOpOr)
+	if len(branches) > 1 {
+		rendered := make([]string, 0, len(branches))
+		for _, branch := range branches {
+			sql, ok := correlatedAverageThresholdPredicateBranchSQL(branch)
+			if !ok {
+				return "", false
+			}
+			rendered = append(rendered, sql)
+		}
+		return "(" + strings.Join(rendered, " or ") + ")", true
+	}
+	return correlatedAverageThresholdPredicateBranchSQL(expr)
+}
+
+func correlatedAverageThresholdPredicateBranchSQL(expr qsbridge.Expr) (string, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.BinaryExpr:
+		if typed.Op == qsbridge.BinaryOpAnd {
+			left, leftOK := correlatedAverageThresholdPredicateBranchSQL(typed.Left)
+			right, rightOK := correlatedAverageThresholdPredicateBranchSQL(typed.Right)
+			if !leftOK || !rightOK {
+				return "", false
+			}
+			return "(" + left + " and " + right + ")", true
+		}
+		left, leftOK := correlatedAverageThresholdOperandSQL(typed.Left)
+		right, rightOK := correlatedAverageThresholdOperandSQL(typed.Right)
+		if !leftOK || !rightOK {
+			return "", false
+		}
+		return left + " " + string(typed.Op) + " " + right, true
+	default:
+		return correlatedAverageThresholdOperandSQL(expr)
+	}
+}
+
+func correlatedAverageThresholdOperandSQL(expr qsbridge.Expr) (string, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.FieldExpr:
+		return correlatedFieldFromRef(typed.Ref).qualifiedName(), true
+	case qsbridge.LiteralExpr:
+		return correlatedAverageThresholdLiteralSQL(typed)
+	default:
+		return "", false
+	}
+}
+
+func correlatedAverageThresholdLiteralSQL(literal qsbridge.LiteralExpr) (string, bool) {
+	switch literal.Kind {
+	case qsbridge.ValueInt:
+		switch value := literal.Value.(type) {
+		case int:
+			return strconv.Itoa(value), true
+		case int64:
+			return strconv.FormatInt(value, 10), true
+		default:
+			return "", false
+		}
+	case qsbridge.ValueFloat:
+		value, ok := resultCellFloat64(qsbridge.ResultCell{Kind: literal.Kind, Value: literal.Value})
+		if !ok {
+			return "", false
+		}
+		return strconv.FormatFloat(value, 'g', -1, 64), true
+	default:
+		return "", false
+	}
+}
+
+func correlatedAverageFlattenBinary(expr qsbridge.Expr, op qsbridge.BinaryOp) []qsbridge.Expr {
+	binary, ok := expr.(qsbridge.BinaryExpr)
+	if !ok || binary.Op != op {
+		return []qsbridge.Expr{expr}
+	}
+	left := correlatedAverageFlattenBinary(binary.Left, op)
+	right := correlatedAverageFlattenBinary(binary.Right, op)
+	return append(left, right...)
 }
 
 func (r SQLRuntime) correlatedAveragePartKeys(ctx context.Context, partAlias string, brand string, container string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) ([]int64, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
