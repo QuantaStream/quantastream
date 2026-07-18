@@ -367,11 +367,6 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 	a := make([]*roaring64.BSI, 0)
 
 	if tq == "" { // No time quantum
-		// Verify that the data shard is primary here, skip if not.
-		hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(lookupTime))
-		if !m.Member(hashKey) {
-			return result, nil
-		}
 		if bm, ok := m.bsiCache[index][field][0]; ok {
 			if stat != nil {
 				stat.ShardsVisited++
@@ -408,6 +403,7 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 					stat.RetainedRows += bm.BSI.GetCardinality()
 				}
 			}
+			hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(lookupTime))
 			u.Debugf("timeRangeBSI No Quantum selecting %s", hashKey)
 			mergeStart := time.Now()
 			if len(a) > 0 {
