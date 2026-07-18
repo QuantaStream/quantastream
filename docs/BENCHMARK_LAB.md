@@ -113,6 +113,25 @@ MySQL configuration should be ordinary and documented. Avoid bespoke tuning
 unless the same level of tuning is also documented for QuantaStream and the goal
 of the run is explicitly a tuned-system comparison.
 
+Once both systems are running and loaded, `sqlrunner/run-mysql-benchmark-compare.sh`
+captures benchmark reports for stock MySQL and the selected QuantaStream target,
+then renders a comparison with MySQL as the baseline:
+
+```bash
+cd sqlrunner
+MYSQL_DSN='user:pass@tcp(mysql-host:3306)/tpch' \
+TARGET_ENGINE=inabox-standard \
+TARGET_HOST=127.0.0.1 \
+TARGET_PORT=4000 \
+SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
+BENCHMARK_RUNS=3 \
+  ./run-mysql-benchmark-compare.sh
+```
+
+The script writes JSON reports and the markdown comparison under ignored local
+paths by default. These artifacts are evidence for the current run, not source
+controlled compatibility contracts.
+
 ## Measurement Rules
 
 For every benchmark run, record:
@@ -143,9 +162,10 @@ The current scaffold supports `-benchmark_report`, `-benchmark_profile`,
 `-benchmark_warmup`, `-benchmark_runs`, and `-benchmark_metadata` for normal
 SQLRunner suite execution. `-benchmark_summary` renders one report, and
 `-benchmark_compare` compares two or more reports with the first report as the
-baseline. The helper scripts `sqlrunner/run-benchmark.sh` and
-`sqlrunner/run-benchmark-compare.sh` wrap those flags for local developer runs.
-These reports are benchmark artifacts, not compatibility verdicts.
+baseline. The helper scripts `sqlrunner/run-benchmark.sh`,
+`sqlrunner/run-benchmark-compare.sh`, and
+`sqlrunner/run-mysql-benchmark-compare.sh` wrap those flags for local developer
+runs. These reports are benchmark artifacts, not compatibility verdicts.
 
 Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and

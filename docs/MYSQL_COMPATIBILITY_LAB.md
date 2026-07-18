@@ -144,6 +144,17 @@ Recommended workflow:
 Timing from these runs is useful context, but it is not the compatibility
 verdict. Move repeatable timing work to the Benchmark Lab.
 
+For MySQL-vs-QuantaStream timing, use the benchmark wrapper rather than
+`MYSQL_COMPAT_MODE=diff`:
+
+```bash
+cd sqlrunner
+MYSQL_DSN='user:pass@tcp(mysql-host:3306)/tpch' \
+TARGET_ENGINE=inabox-standard \
+SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
+  ./run-mysql-benchmark-compare.sh
+```
+
 ## Benchmark Boundary
 
 The compatibility lab is correctness-first. It may record durations, but it

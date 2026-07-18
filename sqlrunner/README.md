@@ -319,6 +319,19 @@ BENCHMARK_RUNS=3 \
   ./run-benchmark-compare.sh
 ```
 
+Use the MySQL comparison wrapper when stock MySQL is the baseline. The caller
+must provide a live MySQL DSN and ensure MySQL and QuantaStream already contain
+the same logical dataset:
+
+```bash
+MYSQL_DSN='user:pass@tcp(mysql-host:3306)/tpch' \
+TARGET_ENGINE=inabox-standard \
+TARGET_HOST=127.0.0.1 \
+TARGET_PORT=4000 \
+SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
+  ./run-mysql-benchmark-compare.sh
+```
+
 ## TPC-H Suites
 
 TPC-H-specific suites live with the benchmark assets under
