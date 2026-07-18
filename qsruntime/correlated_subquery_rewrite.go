@@ -210,14 +210,6 @@ func correlatedAveragePredicateRange(sql string, sourcePredicate string) (int, i
 	return start, start + len(sourcePredicate), true
 }
 
-func rewriteCorrelatedAveragePredicateSQL(sql string, descriptor correlatedAverageQuantityDescriptor, predicate string) string {
-	replacement := strings.TrimSpace(predicate)
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(sql[descriptor.Start:descriptor.End])), "and ") {
-		replacement = " and " + replacement
-	}
-	return sql[:descriptor.Start] + replacement + sql[descriptor.End:]
-}
-
 func correlatedAverageQuantityFilterValues(query qsbridge.QueryIR, filters []qsbridge.FieldRef) (string, string, bool) {
 	values := make(map[string]string)
 	for _, predicate := range query.Predicates {
@@ -333,22 +325,6 @@ func correlatedAverageThresholdPredicateExpr(descriptor correlatedAverageQuantit
 	return expression
 }
 
-func correlatedAverageThresholdPredicateSQL(expr qsbridge.Expr) (string, bool) {
-	branches := correlatedAverageFlattenBinary(expr, qsbridge.BinaryOpOr)
-	if len(branches) > 1 {
-		rendered := make([]string, 0, len(branches))
-		for _, branch := range branches {
-			sql, ok := correlatedAverageThresholdPredicateBranchSQL(branch)
-			if !ok {
-				return "", false
-			}
-			rendered = append(rendered, sql)
-		}
-		return "(" + strings.Join(rendered, " or ") + ")", true
-	}
-	return correlatedAverageThresholdPredicateBranchSQL(expr)
-}
-
 func correlatedAverageThresholdPredicateExpressionReport(expr qsbridge.Expr) PreflightRewriteExpressionReport {
 	report := PreflightRewriteExpressionReport{
 		Kind:        expr.ExpressionKind(),
@@ -376,61 +352,6 @@ func correlatedAverageExpressionReportWalk(expr qsbridge.Expr, fields map[string
 		fields[typed.Ref.QualifiedName()] = struct{}{}
 	case qsbridge.LiteralExpr:
 		(*literalCount)++
-	}
-}
-
-func correlatedAverageThresholdPredicateBranchSQL(expr qsbridge.Expr) (string, bool) {
-	switch typed := expr.(type) {
-	case qsbridge.BinaryExpr:
-		if typed.Op == qsbridge.BinaryOpAnd {
-			left, leftOK := correlatedAverageThresholdPredicateBranchSQL(typed.Left)
-			right, rightOK := correlatedAverageThresholdPredicateBranchSQL(typed.Right)
-			if !leftOK || !rightOK {
-				return "", false
-			}
-			return "(" + left + " and " + right + ")", true
-		}
-		left, leftOK := correlatedAverageThresholdOperandSQL(typed.Left)
-		right, rightOK := correlatedAverageThresholdOperandSQL(typed.Right)
-		if !leftOK || !rightOK {
-			return "", false
-		}
-		return left + " " + string(typed.Op) + " " + right, true
-	default:
-		return correlatedAverageThresholdOperandSQL(expr)
-	}
-}
-
-func correlatedAverageThresholdOperandSQL(expr qsbridge.Expr) (string, bool) {
-	switch typed := expr.(type) {
-	case qsbridge.FieldExpr:
-		return correlatedFieldFromRef(typed.Ref).qualifiedName(), true
-	case qsbridge.LiteralExpr:
-		return correlatedAverageThresholdLiteralSQL(typed)
-	default:
-		return "", false
-	}
-}
-
-func correlatedAverageThresholdLiteralSQL(literal qsbridge.LiteralExpr) (string, bool) {
-	switch literal.Kind {
-	case qsbridge.ValueInt:
-		switch value := literal.Value.(type) {
-		case int:
-			return strconv.Itoa(value), true
-		case int64:
-			return strconv.FormatInt(value, 10), true
-		default:
-			return "", false
-		}
-	case qsbridge.ValueFloat:
-		value, ok := resultCellFloat64(qsbridge.ResultCell{Kind: literal.Kind, Value: literal.Value})
-		if !ok {
-			return "", false
-		}
-		return strconv.FormatFloat(value, 'g', -1, 64), true
-	default:
-		return "", false
 	}
 }
 
