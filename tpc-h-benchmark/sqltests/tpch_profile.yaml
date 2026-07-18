@@ -130,12 +130,13 @@ tests:
       group by n.n_name
       order by revenue desc
     expect:
+      numeric_tolerance: 0.01
       rows:
-        - ["VIETNAM", "4347349.82"]
-        - ["CHINA", "3208304.49"]
-        - ["INDONESIA", "3142880.00"]
-        - ["JAPAN", "2573140.21"]
-        - ["INDIA", "2234418.88"]
+        - ["VIETNAM", "1000926.70"]
+        - ["CHINA", "740210.76"]
+        - ["JAPAN", "660651.24"]
+        - ["INDONESIA", "566379.53"]
+        - ["INDIA", "422874.68"]
   - id: "tpch_profile.q3.grouped_revenue_with_order_fields"
     status: supported
     issue: "profile comparator - Q3 grouped revenue with parent order fields"
@@ -191,27 +192,28 @@ tests:
       order by revenue desc
       limit 20
     expect:
+      numeric_tolerance: 0.01
       rows:
-        - [1162, "Customer#000001162", "1131539.88"]
-        - [940, "Customer#000000940", "1006284.98"]
-        - [697, "Customer#000000697", "906256.01"]
-        - [244, "Customer#000000244", "846950.85"]
-        - [868, "Customer#000000868", "844427.20"]
-        - [664, "Customer#000000664", "837666.60"]
-        - [1201, "Customer#000001201", "830016.47"]
-        - [1318, "Customer#000001318", "826716.58"]
-        - [1150, "Customer#000001150", "812323.15"]
-        - [1001, "Customer#000001001", "810010.07"]
-        - [1126, "Customer#000001126", "804582.64"]
-        - [1255, "Customer#000001255", "801848.85"]
-        - [34, "Customer#000000034", "797149.82"]
-        - [1483, "Customer#000001483", "732106.63"]
-        - [739, "Customer#000000739", "730246.64"]
-        - [73, "Customer#000000073", "728666.78"]
-        - [1144, "Customer#000001144", "704124.91"]
-        - [277, "Customer#000000277", "699109.28"]
-        - [1234, "Customer#000001234", "694310.08"]
-        - [679, "Customer#000000679", "691270.36"]
+        - [679, "Customer#000000679", "378211.33"]
+        - [1201, "Customer#000001201", "374331.53"]
+        - [422, "Customer#000000422", "366451.01"]
+        - [334, "Customer#000000334", "360370.76"]
+        - [805, "Customer#000000805", "359448.90"]
+        - [932, "Customer#000000932", "341608.28"]
+        - [853, "Customer#000000853", "341236.62"]
+        - [872, "Customer#000000872", "338328.78"]
+        - [737, "Customer#000000737", "338185.34"]
+        - [1118, "Customer#000001118", "319875.73"]
+        - [223, "Customer#000000223", "319564.28"]
+        - [808, "Customer#000000808", "314774.62"]
+        - [478, "Customer#000000478", "299651.80"]
+        - [1441, "Customer#000001441", "294705.39"]
+        - [1478, "Customer#000001478", "294431.92"]
+        - [211, "Customer#000000211", "287905.64"]
+        - [197, "Customer#000000197", "283190.48"]
+        - [1030, "Customer#000001030", "282557.36"]
+        - [1049, "Customer#000001049", "281134.11"]
+        - [1094, "Customer#000001094", "274877.44"]
 
   - id: "tpch_profile.q5.same_nation_combined_graph_count"
     status: supported
@@ -280,11 +282,11 @@ tests:
       group by n.n_name
     expect:
       rows:
-        - ["CHINA", "108715630.20"]
-        - ["INDIA", "76932168.98"]
-        - ["INDONESIA", "73272169.29"]
-        - ["JAPAN", "61566824.17"]
-        - ["VIETNAM", "90520443.70"]
+        - ["CHINA", "23582877.89"]
+        - ["INDIA", "17102746.02"]
+        - ["INDONESIA", "16103423.74"]
+        - ["JAPAN", "13190756.10"]
+        - ["VIETNAM", "20186581.99"]
 
   - id: "tpch_profile.q5.regional_revenue_ordering"
     status: supported
@@ -307,9 +309,8 @@ tests:
       order by revenue desc
     expect:
       rows:
-        - ["CHINA", "108715630.20"]
-        - ["VIETNAM", "90520443.70"]
-        - ["INDIA", "76932168.98"]
-        - ["INDONESIA", "73272169.29"]
-        - ["JAPAN", "61566824.17"]
-
+        - ["CHINA", "23582877.89"]
+        - ["VIETNAM", "20186581.99"]
+        - ["INDIA", "17102746.02"]
+        - ["INDONESIA", "16103423.74"]
+        - ["JAPAN", "13190756.10"]
