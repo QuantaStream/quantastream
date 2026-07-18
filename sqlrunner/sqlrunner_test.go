@@ -183,6 +183,22 @@ func TestSlowCaseResultsDisabledWithoutThreshold(t *testing.T) {
 	}
 }
 
+func TestFormatCaseDurationSupportsPreciseTimingWithoutVerboseSQL(t *testing.T) {
+	duration := 123 * time.Millisecond
+	if got := formatCaseDuration(duration, false, false); got != " [<1s]" {
+		t.Fatalf("coarse duration = %q, want [<1s]", got)
+	}
+	if got := formatCaseDuration(duration, false, true); got != " [123ms]" {
+		t.Fatalf("precise duration = %q, want [123ms]", got)
+	}
+	if got := formatCaseDuration(duration, true, false); got != " [123ms]" {
+		t.Fatalf("verbose duration = %q, want [123ms]", got)
+	}
+	if got := formatCaseDuration(450*time.Microsecond, false, true); got != " [450us]" {
+		t.Fatalf("submillisecond precise duration = %q, want [450us]", got)
+	}
+}
+
 func TestParseEngineDiffRequiresReferenceAndTarget(t *testing.T) {
 	diff, err := parseEngineDiff(" mysql-reference , runtime ")
 	if err != nil {

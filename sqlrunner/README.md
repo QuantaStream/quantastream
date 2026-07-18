@@ -45,6 +45,10 @@ go run . \
   -case runtime_smoke.001.project_order_keys
 ```
 
+Use `-precise_timing` when comparing performance. It keeps the normal suite
+output compact but prints millisecond or microsecond case durations instead of
+collapsing subsecond cases to `<1s>`.
+
 See [`roadmap/FORMAT.md`](roadmap/FORMAT.md) for the complete format.
 
 ## Harnesses

@@ -69,7 +69,7 @@ func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roa
 		log.Printf("BENCHMARK warmup %d/%d", i+1, cfg.BenchmarkWarmup)
 		summary := runner.Run(ctx, suite)
 		if summary.HasFailures() {
-			logSummaryResults(summary, cfg.Verbose)
+			logSummaryResults(summary, cfg.Verbose, cfg.PreciseTiming)
 			return fmt.Errorf("benchmark warmup %d contains FAIL or XPASS results", i+1)
 		}
 	}
@@ -82,7 +82,7 @@ func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roa
 		summary := runner.Run(ctx, suite)
 		duration := time.Since(started)
 		log.Printf("BENCHMARK measured run %d/%d completed in %s", i+1, cfg.BenchmarkRuns, duration.Round(time.Millisecond))
-		logSummaryResults(summary, cfg.Verbose)
+		logSummaryResults(summary, cfg.Verbose, cfg.PreciseTiming)
 		if summary.HasFailures() {
 			failed = true
 		}

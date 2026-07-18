@@ -58,6 +58,7 @@ type runnerConfig struct {
 	BenchmarkWarmup   int
 	BenchmarkRuns     int
 	BenchmarkSummary  string
+	PreciseTiming     bool
 }
 
 type runnerHarness struct {
@@ -92,6 +93,7 @@ func main() {
 	benchmarkWarmup := flag.Int("benchmark_warmup", 0, "Warm-up suite runs before measured benchmark runs.")
 	benchmarkRuns := flag.Int("benchmark_runs", 1, "Measured suite runs written to -benchmark_report output.")
 	benchmarkSummary := flag.String("benchmark_summary", "", "Read a JSON benchmark report and print a human-readable summary.")
+	preciseTiming := flag.Bool("precise_timing", false, "Print millisecond case durations in suite summaries without verbose SQL logging.")
 	flag.Parse()
 
 	cfg := runnerConfig{
@@ -117,6 +119,7 @@ func main() {
 		BenchmarkWarmup:   *benchmarkWarmup,
 		BenchmarkRuns:     *benchmarkRuns,
 		BenchmarkSummary:  strings.TrimSpace(*benchmarkSummary),
+		PreciseTiming:     *preciseTiming,
 	}
 	cfg = applyEngineDefaults(cfg)
 
@@ -188,7 +191,7 @@ func main() {
 		return
 	}
 
-	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.SlowThreshold, cfg.CompatReport); err != nil {
+	if err := executeSuite(context.Background(), suite, harness.Runner, cfg.Verbose, cfg.PreciseTiming, cfg.SlowThreshold, cfg.CompatReport); err != nil {
 		log.Printf("SQL roadmap suite failed: %v", err)
 		os.Exit(1)
 	}
@@ -437,11 +440,11 @@ func grantSQLRunnerRoles(_ *shared.KVStore) error {
 	return nil
 }
 
-func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose bool, slowThreshold time.Duration, compatReport bool) error {
+func executeSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, verbose, preciseTiming bool, slowThreshold time.Duration, compatReport bool) error {
 	summary := runner.Run(ctx, suite)
 	log.Printf("\n-------- SQL Roadmap Suite: %s --------", summary.Suite)
-	logSummaryResults(summary, verbose)
-	logSlowCases(summary, slowThreshold, verbose)
+	logSummaryResults(summary, verbose, preciseTiming)
+	logSlowCases(summary, slowThreshold, verbose, preciseTiming)
 	if compatReport {
 		logCompatibilityReport(suite, summary)
 	}
@@ -455,7 +458,7 @@ func captureCompatibilityExpected(ctx context.Context, suite *roadmap.Suite, run
 	capture := runner.CaptureCompatibilityExpected(ctx, suite, roadmap.CompatibilityCaptureOptions{Canonical: roadmap.DefaultCanonicalOptions()})
 	log.Printf("\n-------- SQL Compatibility Capture: %s --------", capture.Summary.Suite)
 	for _, result := range capture.Summary.Results {
-		duration := formatCaseDuration(result.Duration, cfg.Verbose)
+		duration := formatCaseDuration(result.Duration, cfg.Verbose, cfg.PreciseTiming)
 		if result.Details == "" {
 			log.Printf("%-6s %s%s", result.Status, result.ID, duration)
 		} else {
@@ -476,14 +479,14 @@ func captureCompatibilityExpected(ctx context.Context, suite *roadmap.Suite, run
 	return nil
 }
 
-func logSlowCases(summary roadmap.Summary, threshold time.Duration, verbose bool) {
+func logSlowCases(summary roadmap.Summary, threshold time.Duration, verbose, preciseTiming bool) {
 	slow := slowCaseResults(summary, threshold)
 	if len(slow) == 0 {
 		return
 	}
-	log.Printf("SLOW   cases >= %s", formatSlowThreshold(threshold, verbose))
+	log.Printf("SLOW   cases >= %s", formatSlowThreshold(threshold, verbose, preciseTiming))
 	for _, result := range slow {
-		log.Printf("SLOW   %s%s %s", result.ID, formatCaseDuration(result.Duration, verbose), result.Status)
+		log.Printf("SLOW   %s%s %s", result.ID, formatCaseDuration(result.Duration, verbose, preciseTiming), result.Status)
 	}
 }
 
@@ -506,9 +509,9 @@ func slowCaseResults(summary roadmap.Summary, threshold time.Duration) []roadmap
 	return slow
 }
 
-func formatSlowThreshold(duration time.Duration, verbose bool) string {
-	if verbose {
-		return duration.Round(time.Millisecond).String()
+func formatSlowThreshold(duration time.Duration, verbose, preciseTiming bool) string {
+	if verbose || preciseTiming {
+		return formatPreciseDuration(duration)
 	}
 	rounded := duration.Round(time.Second)
 	if rounded == 0 {
@@ -517,18 +520,28 @@ func formatSlowThreshold(duration time.Duration, verbose bool) string {
 	return rounded.String()
 }
 
-func formatCaseDuration(duration time.Duration, verbose bool) string {
+func formatCaseDuration(duration time.Duration, verbose, preciseTiming bool) string {
 	if duration == 0 {
 		return ""
 	}
-	if verbose {
-		return fmt.Sprintf(" [%s]", duration.Round(time.Millisecond))
+	if verbose || preciseTiming {
+		return fmt.Sprintf(" [%s]", formatPreciseDuration(duration))
 	}
 	rounded := duration.Round(time.Second)
 	if rounded == 0 {
 		return " [<1s]"
 	}
 	return fmt.Sprintf(" [%s]", rounded)
+}
+
+func formatPreciseDuration(duration time.Duration) string {
+	if duration >= time.Millisecond {
+		return duration.Round(time.Millisecond).String()
+	}
+	if duration >= time.Microsecond {
+		return fmt.Sprintf("%dus", duration.Round(time.Microsecond).Microseconds())
+	}
+	return "<1us"
 }
 
 func check(err error) {

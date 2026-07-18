@@ -60,7 +60,7 @@ func executeCompatibilityDiff(ctx context.Context, suite *roadmap.Suite, cfg run
 
 	capture := referenceHarness.Runner.CaptureCompatibilityExpected(ctx, suite, roadmap.CompatibilityCaptureOptions{Canonical: roadmap.DefaultCanonicalOptions()})
 	log.Printf("\n-------- SQL Compatibility Reference Capture: %s (%s) --------", capture.Summary.Suite, diff.Reference)
-	logSummaryResults(capture.Summary, cfg.Verbose)
+	logSummaryResults(capture.Summary, cfg.Verbose, cfg.PreciseTiming)
 	if capture.Summary.HasFailures() {
 		return fmt.Errorf("reference capture contains FAIL results")
 	}
@@ -75,8 +75,8 @@ func executeCompatibilityDiff(ctx context.Context, suite *roadmap.Suite, cfg run
 
 	targetSummary := targetHarness.Runner.Run(ctx, &capture.Suite)
 	log.Printf("\n-------- SQL Compatibility Diff: %s (%s -> %s) --------", targetSummary.Suite, diff.Reference, diff.Target)
-	logSummaryResults(targetSummary, cfg.Verbose)
-	logSlowCases(targetSummary, cfg.SlowThreshold, cfg.Verbose)
+	logSummaryResults(targetSummary, cfg.Verbose, cfg.PreciseTiming)
+	logSlowCases(targetSummary, cfg.SlowThreshold, cfg.Verbose, cfg.PreciseTiming)
 	if cfg.CompatReport {
 		logCompatibilityReport(&capture.Suite, targetSummary)
 	}
@@ -95,9 +95,9 @@ func closeHarness(label string, harness runnerHarness) {
 	}
 }
 
-func logSummaryResults(summary roadmap.Summary, verbose bool) {
+func logSummaryResults(summary roadmap.Summary, verbose, preciseTiming bool) {
 	for _, result := range summary.Results {
-		duration := formatCaseDuration(result.Duration, verbose)
+		duration := formatCaseDuration(result.Duration, verbose, preciseTiming)
 		if result.Details == "" {
 			log.Printf("%-6s %s%s", result.Status, result.ID, duration)
 		} else {

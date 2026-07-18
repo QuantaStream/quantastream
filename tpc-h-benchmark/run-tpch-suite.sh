@@ -73,6 +73,7 @@ for run in $(seq 1 "${RUNS}"); do
         -user "${USER}" \
         -db "${DB}" \
           -port "${PORT}" \
+          -precise_timing \
           -case "${case_id}" || exit "$?"
       done
       if [[ -z "${CASES}" ]]; then
@@ -82,7 +83,8 @@ for run in $(seq 1 "${RUNS}"); do
           -host "${HOST}" \
           -user "${USER}" \
           -db "${DB}" \
-          -port "${PORT}"
+          -port "${PORT}" \
+          -precise_timing
       fi
   ) 2>&1 | tee -a "${LOG_FILE}"
   status="${PIPESTATUS[0]}"

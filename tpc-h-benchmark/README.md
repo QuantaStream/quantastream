@@ -251,6 +251,10 @@ cd tpc-h-benchmark
 ./run-tpch-suite.sh 3
 ```
 
+The helper passes SQLRunner `-precise_timing`, so captured logs include
+millisecond or microsecond case durations instead of collapsing subsecond cases
+to `<1s>`.
+
 Set `QUANTA_ENGINE` to capture the same suite through a specific SQLRunner
 engine. This is useful for apples-to-apples profiling across execution modes:
 
