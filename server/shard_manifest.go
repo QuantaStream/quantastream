@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -71,6 +72,15 @@ type BitmapShardManifestObservation struct {
 	ScanFiles        int
 	MissingFileCount int
 	Elapsed          time.Duration
+}
+
+func useBitmapShardManifestEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_USE_SHARD_MANIFEST"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 type bitmapShardManifestBuilder struct {
@@ -244,22 +254,29 @@ func (m *BitmapIndex) loadBitmapShardManifest() (BitmapShardManifest, error) {
 }
 
 func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) BitmapShardManifestObservation {
+	_, observation := m.loadAndObserveBitmapShardManifest(&scan)
+	return observation
+}
+
+func (m *BitmapIndex) loadAndObserveBitmapShardManifest(scan *BitmapShardManifest) (BitmapShardManifest, BitmapShardManifestObservation) {
 	start := time.Now()
 	observation := BitmapShardManifestObservation{
-		Status:      "missing",
-		ScanEntries: scan.Stats.TotalEntries,
-		ScanFiles:   scan.Stats.TotalFiles,
+		Status: "missing",
+	}
+	if scan != nil {
+		observation.ScanEntries = scan.Stats.TotalEntries
+		observation.ScanFiles = scan.Stats.TotalFiles
 	}
 	manifest, err := m.loadBitmapShardManifest()
 	if err != nil {
 		observation.Status = "invalid"
 		observation.Detail = err.Error()
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	if manifest.Version == 0 && len(manifest.Entries) == 0 {
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	observation.ManifestEntries = manifest.Stats.TotalEntries
 	observation.ManifestFiles = manifest.Stats.TotalFiles
@@ -268,19 +285,19 @@ func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) Bitma
 		observation.Status = "invalid"
 		observation.Detail = fmt.Sprintf("version=%d expected=%d", manifest.Version, bitmapShardManifestVersion)
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	if len(manifest.Entries) == 0 {
 		observation.Status = "invalid"
 		observation.Detail = "empty_entries"
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	if manifest.Stats.TotalEntries != len(manifest.Entries) {
 		observation.Status = "invalid"
 		observation.Detail = fmt.Sprintf("entry_stats=%d actual_entries=%d", manifest.Stats.TotalEntries, len(manifest.Entries))
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	actualFiles := 0
 	for _, entry := range manifest.Entries {
@@ -288,13 +305,13 @@ func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) Bitma
 			observation.Status = "invalid"
 			observation.Detail = "entry_missing_required_field"
 			observation.Elapsed = time.Since(start)
-			return observation
+			return manifest, observation
 		}
 		if entry.Kind != bitmapShardKindStandard && entry.Kind != bitmapShardKindBSI {
 			observation.Status = "invalid"
 			observation.Detail = fmt.Sprintf("unknown_kind=%s", entry.Kind)
 			observation.Elapsed = time.Since(start)
-			return observation
+			return manifest, observation
 		}
 		for _, file := range entry.Files {
 			actualFiles++
@@ -302,7 +319,7 @@ func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) Bitma
 				observation.Status = "invalid"
 				observation.Detail = "file_missing_relative_path"
 				observation.Elapsed = time.Since(start)
-				return observation
+				return manifest, observation
 			}
 			if _, err := os.Stat(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath))); err != nil {
 				observation.MissingFileCount++
@@ -313,23 +330,23 @@ func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) Bitma
 		observation.Status = "invalid"
 		observation.Detail = fmt.Sprintf("file_stats=%d actual_files=%d", manifest.Stats.TotalFiles, actualFiles)
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	if observation.MissingFileCount > 0 {
 		observation.Status = "stale"
 		observation.Detail = fmt.Sprintf("missing_files=%d", observation.MissingFileCount)
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
-	if !manifest.Stats.equal(scan.Stats) {
+	if scan != nil && !manifest.Stats.equal(scan.Stats) {
 		observation.Status = "mismatch"
 		observation.Detail = "stats_differ_from_slow_scan"
 		observation.Elapsed = time.Since(start)
-		return observation
+		return manifest, observation
 	}
 	observation.Status = "ok"
 	observation.Elapsed = time.Since(start)
-	return observation
+	return manifest, observation
 }
 
 func (s BitmapShardManifestStats) equal(other BitmapShardManifestStats) bool {

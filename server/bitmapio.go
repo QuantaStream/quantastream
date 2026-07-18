@@ -319,7 +319,21 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 
 	baseDir := m.dataDir + sep + "bitmap"
 
-	var fragMap = make(map[string]map[string]map[int64]map[int64]*BitmapFragment)
+	if useBitmapShardManifestEnabled() {
+		manifest, observation := m.loadAndObserveBitmapShardManifest(nil)
+		if observation.Status == "ok" {
+			if err := m.readBitmapFilesFromManifest(manifest, observation, fragQueue, start); err == nil {
+				return nil
+			} else {
+				u.Warnf("BitmapIndex manifest startup load failed; falling back to slow scan: %v", err)
+			}
+		} else {
+			fmt.Printf("BitmapIndex startup manifest opt_in=true load_source=slow_scan manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v\n",
+				observation.Status, observation.Detail, observation.ManifestEntries, observation.ManifestFiles, observation.MissingFileCount, observation.Elapsed)
+		}
+	}
+
+	var fragMap = newBitmapStartupFragmentMap()
 	fileCount := 0
 	standardFileCount := 0
 	bsiFileCount := 0
@@ -490,6 +504,140 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 	}
 
 	enqueueStart := time.Now()
+	fragmentCount, standardFragmentCount, bsiFragmentCount, err := enqueueBitmapStartupFragments(fragMap, fragQueue)
+	if err != nil {
+		return err
+	}
+	enqueueElapsed := time.Since(enqueueStart)
+	flushStart := time.Now()
+	if err := m.flush(); err != nil {
+		return err
+	}
+	flushElapsed := time.Since(flushStart)
+	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_scan_entries=%d manifest_scan_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
+		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifestObservation.Status, manifestObservation.Detail, manifestObservation.ManifestEntries, manifestObservation.ManifestFiles, manifestObservation.ScanEntries, manifestObservation.ScanFiles, manifestObservation.MissingFileCount, manifestObservation.Elapsed, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
+	return nil
+}
+
+func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, observation BitmapShardManifestObservation, fragQueue chan *BitmapFragment, startedAt time.Time) error {
+	loadStart := time.Now()
+	fragMap := newBitmapStartupFragmentMap()
+	fileCount := 0
+	standardFileCount := 0
+	bsiFileCount := 0
+
+	for _, entry := range manifest.Entries {
+		if _, err := m.getFieldConfig(entry.Table, entry.Field); err != nil {
+			return fmt.Errorf("manifest references field outside active schema: %s.%s: %w", entry.Table, entry.Field, err)
+		}
+		switch entry.Kind {
+		case bitmapShardKindStandard:
+			if len(entry.Files) != 1 {
+				return fmt.Errorf("manifest standard shard %s.%s row=%d shard=%s has %d files",
+					entry.Table, entry.Field, entry.RowIDOrBits, entry.Shard, len(entry.Files))
+			}
+			file := entry.Files[0]
+			data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
+			if err != nil {
+				return fmt.Errorf("read manifest standard bitmap %s: %w", file.RelativePath, err)
+			}
+			fileCount++
+			standardFileCount++
+			if err := fragMap.add(&BitmapFragment{
+				IndexName:   entry.Table,
+				FieldName:   entry.Field,
+				RowIDOrBits: entry.RowIDOrBits,
+				Time:        entry.ShardTime,
+				BitData:     [][]byte{data},
+				ModTime:     file.ModTime,
+				IsInit:      true,
+			}); err != nil {
+				return err
+			}
+		case bitmapShardKindBSI:
+			frag := &BitmapFragment{
+				IndexName:   entry.Table,
+				FieldName:   entry.Field,
+				RowIDOrBits: -1,
+				Time:        entry.ShardTime,
+				BitData:     make([][]byte, 2),
+				ModTime:     entry.ShardTime,
+				IsBSI:       true,
+				IsInit:      true,
+			}
+			for _, file := range entry.Files {
+				data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
+				if err != nil {
+					return fmt.Errorf("read manifest BSI bitmap %s: %w", file.RelativePath, err)
+				}
+				fileCount++
+				bsiFileCount++
+				for file.BitSlice >= len(frag.BitData) {
+					frag.BitData = append(frag.BitData, make([]byte, 0))
+				}
+				frag.BitData[file.BitSlice] = data
+				if file.ModTime.After(frag.ModTime) {
+					frag.ModTime = file.ModTime
+				}
+			}
+			if len(frag.BitData) == 0 || len(frag.BitData[0]) == 0 {
+				return fmt.Errorf("manifest BSI shard %s.%s shard=%s has no existence bitmap",
+					entry.Table, entry.Field, entry.Shard)
+			}
+			if err := fragMap.add(frag); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("manifest has unknown bitmap shard kind %s", entry.Kind)
+		}
+	}
+
+	enqueueStart := time.Now()
+	fragmentCount, standardFragmentCount, bsiFragmentCount, err := enqueueBitmapStartupFragments(fragMap, fragQueue)
+	if err != nil {
+		return err
+	}
+	enqueueElapsed := time.Since(enqueueStart)
+	flushStart := time.Now()
+	if err := m.flush(); err != nil {
+		return err
+	}
+	flushElapsed := time.Since(flushStart)
+	fmt.Printf("BitmapIndex startup load_source=manifest opt_in=true files=%d standard_files=%d bsi_files=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d manifest_load_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
+		fileCount, standardFileCount, bsiFileCount, observation.Status, observation.Detail, observation.ManifestEntries, observation.ManifestFiles, observation.MissingFileCount, observation.Elapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, time.Since(loadStart), enqueueElapsed, flushElapsed, time.Since(startedAt))
+	return nil
+}
+
+type bitmapStartupFragmentMap map[string]map[string]map[int64]map[int64]*BitmapFragment
+
+func newBitmapStartupFragmentMap() bitmapStartupFragmentMap {
+	return make(map[string]map[string]map[int64]map[int64]*BitmapFragment)
+}
+
+func (m bitmapStartupFragmentMap) add(f *BitmapFragment) error {
+	if _, ok := m[f.IndexName]; !ok {
+		m[f.IndexName] = make(map[string]map[int64]map[int64]*BitmapFragment)
+	}
+	if _, ok := m[f.IndexName][f.FieldName]; !ok {
+		m[f.IndexName][f.FieldName] = make(map[int64]map[int64]*BitmapFragment)
+	}
+	rID := f.RowIDOrBits
+	if f.IsBSI {
+		rID = -1
+	}
+	if _, ok := m[f.IndexName][f.FieldName][rID]; !ok {
+		m[f.IndexName][f.FieldName][rID] = make(map[int64]*BitmapFragment)
+	}
+	t := f.Time.UnixNano()
+	if _, ok := m[f.IndexName][f.FieldName][rID][t]; ok {
+		return fmt.Errorf("duplicate startup bitmap fragment %s.%s row=%d shard=%s",
+			f.IndexName, f.FieldName, rID, f.Time.Format(timeFmt))
+	}
+	m[f.IndexName][f.FieldName][rID][t] = f
+	return nil
+}
+
+func enqueueBitmapStartupFragments(fragMap bitmapStartupFragmentMap, fragQueue chan *BitmapFragment) (int, int, int, error) {
 	fragmentCount := 0
 	standardFragmentCount := 0
 	bsiFragmentCount := 0
@@ -506,21 +654,13 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 					select {
 					case fragQueue <- frag:
 					default:
-						return fmt.Errorf("Update: fragment queue is full")
+						return fragmentCount, standardFragmentCount, bsiFragmentCount, fmt.Errorf("Update: fragment queue is full")
 					}
 				}
 			}
 		}
 	}
-	enqueueElapsed := time.Since(enqueueStart)
-	flushStart := time.Now()
-	if err := m.flush(); err != nil {
-		return err
-	}
-	flushElapsed := time.Since(flushStart)
-	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_scan_entries=%d manifest_scan_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
-		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifestObservation.Status, manifestObservation.Detail, manifestObservation.ManifestEntries, manifestObservation.ManifestFiles, manifestObservation.ScanEntries, manifestObservation.ScanFiles, manifestObservation.MissingFileCount, manifestObservation.Elapsed, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
-	return nil
+	return fragmentCount, standardFragmentCount, bsiFragmentCount, nil
 }
 
 func isBSIBitmapPath(parts []string) bool {

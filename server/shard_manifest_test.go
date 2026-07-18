@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -299,6 +300,86 @@ func TestObserveBitmapShardManifestReportsInvalidStats(t *testing.T) {
 	}
 }
 
+func TestUseBitmapShardManifestEnabled(t *testing.T) {
+	t.Setenv("QUANTASTREAM_USE_SHARD_MANIFEST", "true")
+	if !useBitmapShardManifestEnabled() {
+		t.Fatal("expected true to enable manifest startup")
+	}
+	t.Setenv("QUANTASTREAM_USE_SHARD_MANIFEST", "0")
+	if useBitmapShardManifestEnabled() {
+		t.Fatal("expected 0 to disable manifest startup")
+	}
+}
+
+func TestReadBitmapFilesFromManifestLoadsStandardBitmap(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	bits := roaring64.BitmapOf(1, 2, 3)
+	data, err := bits.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal bitmap: %v", err)
+	}
+	target := writeManifestTestFileBytes(t, index.dataDir, "bitmap/customer/c_mktsegment/0/1994-01-02T00", data)
+	info := statManifestTestFile(t, target)
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	builder.addStandardFile(target, info, "customer", "c_mktsegment", 0, shardTime)
+	manifest := builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+	observation := BitmapShardManifestObservation{
+		Status:          "ok",
+		ManifestEntries: manifest.Stats.TotalEntries,
+		ManifestFiles:   manifest.Stats.TotalFiles,
+	}
+
+	if err := index.readBitmapFilesFromManifest(manifest, observation, index.fragQueue, time.Now()); err != nil {
+		t.Fatalf("readBitmapFilesFromManifest returned error: %v", err)
+	}
+	loaded := index.bitmapCache["customer"]["c_mktsegment"][0][shardTime.UnixNano()]
+	if loaded == nil {
+		t.Fatal("expected standard bitmap to load from manifest")
+	}
+	if got := loaded.Bits.GetCardinality(); got != 3 {
+		t.Fatalf("loaded cardinality = %d, want 3", got)
+	}
+}
+
+func TestReadBitmapFilesFromManifestLoadsBSI(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(1, 10)
+	bsi.SetValue(2, 20)
+	data, err := bsi.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal BSI: %v", err)
+	}
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	for i, slice := range data {
+		name := "EBM"
+		if i > 0 {
+			name = strconv.Itoa(i)
+		}
+		target := writeManifestTestFileBytes(t, index.dataDir, filepath.ToSlash(filepath.Join("bitmap", "lineitem", "l_quantity", "bsi", "1994-01-02T00", name)), slice)
+		builder.addBSIFile(target, statManifestTestFile(t, target), "lineitem", "l_quantity", shardTime, i)
+	}
+	manifest := builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+	observation := BitmapShardManifestObservation{
+		Status:          "ok",
+		ManifestEntries: manifest.Stats.TotalEntries,
+		ManifestFiles:   manifest.Stats.TotalFiles,
+	}
+
+	if err := index.readBitmapFilesFromManifest(manifest, observation, index.fragQueue, time.Now()); err != nil {
+		t.Fatalf("readBitmapFilesFromManifest returned error: %v", err)
+	}
+	loaded := index.bsiCache["lineitem"]["l_quantity"][shardTime.UnixNano()]
+	if loaded == nil {
+		t.Fatal("expected BSI to load from manifest")
+	}
+	if got := loaded.GetExistenceBitmap().GetCardinality(); got != 2 {
+		t.Fatalf("loaded BSI existence cardinality = %d, want 2", got)
+	}
+}
+
 func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManifest) {
 	t.Helper()
 	index := newManifestPersistenceTestIndex(t)
@@ -308,6 +389,35 @@ func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManife
 	builder := newBitmapShardManifestBuilder(index.dataDir)
 	builder.addStandardFile(target, info, "customer", "is_active", 0, shardTime)
 	return index, builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+}
+
+func newManifestLoadTestIndex(t *testing.T) *BitmapIndex {
+	t.Helper()
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "customer", nil)
+	if err != nil {
+		t.Fatalf("load customer schema: %v", err)
+	}
+	lineitem, err := shared.LoadSchema("../tpc-h-benchmark/config", "lineitem", nil)
+	if err != nil {
+		t.Fatalf("load lineitem schema: %v", err)
+	}
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("manifest-load-test"),
+			dataDir: t.TempDir(),
+		},
+		bitmapCache: make(map[string]map[string]map[uint64]map[int64]*StandardBitmap),
+		bsiCache:    make(map[string]map[string]map[int64]*BSIBitmap),
+		seedCache:   make(map[string]*SeedBitmap),
+		tableCache: map[string]*shared.BasicTable{
+			"customer": table,
+			"lineitem": lineitem,
+		},
+		fragQueue: make(chan *BitmapFragment, 16),
+		workers:   []*WorkerThread{NewWorkerThread(0)},
+	}
+	go index.batchProcessLoop(index.workers[0])
+	return index
 }
 
 func newManifestPersistenceTestIndex(t *testing.T) *BitmapIndex {
@@ -324,11 +434,16 @@ func newManifestPersistenceTestIndex(t *testing.T) *BitmapIndex {
 
 func writeManifestTestFile(t *testing.T, dataDir, rel string) string {
 	t.Helper()
+	return writeManifestTestFileBytes(t, dataDir, rel, []byte("test"))
+}
+
+func writeManifestTestFileBytes(t *testing.T, dataDir, rel string, data []byte) string {
+	t.Helper()
 	path := filepath.Join(dataDir, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatalf("create test file directory: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatalf("write test file: %v", err)
 	}
 	return path
