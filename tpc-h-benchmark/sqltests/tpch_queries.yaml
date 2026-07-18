@@ -1326,7 +1326,6 @@ tests:
         - ["Supplier#000000074", 182]
 
   - id: "tpch_queries.q21.050_same_order_other_supplier_exists_count"
-    status: xfail
     kind: query
     order: exact
     capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, semi-join, count]

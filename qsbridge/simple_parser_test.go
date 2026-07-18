@@ -522,6 +522,45 @@ func TestSimpleParserBridgeParsesCorrelatedExistsAsMembership(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCorrelatedExistsWithSiblingPredicate(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select count(*) as same_order_other_supplier_count
+		from lineitem as l1
+		where exists (
+			select *
+			from lineitem as l2
+			where l2.l_orderkey = l1.l_orderkey
+			  and l2.l_suppkey <> l1.l_suppkey
+		)
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Memberships) != 1 {
+		t.Fatalf("memberships = %d, want 1", len(statement.Select.Memberships))
+	}
+	membership := statement.Select.Memberships[0]
+	if membership.LeftQualifier != "l1" || membership.LeftField != "l_orderkey" {
+		t.Fatalf("left membership = %#v, want l1.l_orderkey", membership)
+	}
+	if membership.RightTable.Name != "lineitem" || membership.RightTable.Alias != "l2" {
+		t.Fatalf("right table = %#v, want lineitem as l2", membership.RightTable)
+	}
+	if membership.RightQualifier != "l2" || membership.RightField != "l_orderkey" {
+		t.Fatalf("right membership = %#v, want l2.l_orderkey", membership)
+	}
+	if len(membership.Predicates) != 1 {
+		t.Fatalf("membership predicates = %d, want 1", len(membership.Predicates))
+	}
+	binary, ok := membership.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("membership predicate = %T, want binary", membership.Predicates[0].Expr)
+	}
+	if binary.Op != BinaryOpNotEqual {
+		t.Fatalf("membership predicate op = %q, want <>", binary.Op)
+	}
+}
+
 func TestSimpleParserBridgeParsesCorrelatedNotExistsAsAntiMembership(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select count(*)

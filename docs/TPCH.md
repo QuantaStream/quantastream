@@ -138,7 +138,7 @@ syntax or planner capability.
 | Q18 | Supported | Direct child-FK and joined large-order quantity threshold grouping plus formal customer/order projection are covered. |
 | Q19 | Supported | Formal mixed-table OR discounted revenue is covered in inabox-direct with grouped boolean lowering and constrained child-domain branch evaluation. |
 | Q20 | Supported | Staged `forest%` part filtering, forest `part -> partsupp` join count, equivalent `IN (SELECT ...)` membership count, Canada supplier join, 1994 shipped-quantity grouping, and fixed-threshold shipped-quantity `HAVING` are covered; formal query remains blocked by scalar aggregate comparison, interval syntax, and compound subquery composition. |
-| Q21 | Supported | Inabox-direct covers Saudi supplier, F-status order, late-receipt line counts, and the joined/grouped Saudi supplier wait kernel; formal query still needs correlated `EXISTS` / `NOT EXISTS` over repeated `lineitem` aliases. |
+| Q21 | Supported | Inabox-direct covers Saudi supplier, F-status order, late-receipt line counts, same-order other-supplier `EXISTS`, and the joined/grouped Saudi supplier wait kernel; formal query still needs filtered sibling `EXISTS` / `NOT EXISTS` over repeated `lineitem` aliases. |
 | Q22 | Supported | Inabox-direct covers seeded customer anti-membership and seeded phone-prefix function-OR count; formal scalar-threshold grouping remains blocked. |
 
 The inabox-direct TPCH kernel suite is now represented across Q1-Q22. As of the
@@ -168,11 +168,10 @@ bypass the global bitmap-count fast path so they can materialize group fields
 before reducing rows.
 
 TPC-H Q21 now has inabox-direct coverage for the Saudi supplier dimension join,
-F-status order count, and raw late-receipt same-table date comparison. The
-late-receipt count is correct but still slow, and the grouped Saudi/F/late
-supplier wait count remains an XFAIL because the joined graph shape still
-undercounts. Correlated `EXISTS` / `NOT EXISTS` remains the formal query
-boundary.
+F-status order count, raw late-receipt same-table date comparison, same-order
+other-supplier `EXISTS`, and the grouped Saudi/F/late supplier wait kernel. The
+late-receipt count is correct but still slow. Filtered sibling `EXISTS` /
+`NOT EXISTS` remains the formal query boundary.
 
 TPC-H Q22 now has inabox-direct coverage for seeded customer anti-membership
 and seeded phone-prefix function `OR` filtering.
@@ -486,12 +485,11 @@ rather than a lineitem grouping, string-filter, residual projection, or
 supplier/nation join blocker.
 
 TPC-H Q21 has staged executable coverage for the Saudi supplier filter,
-late lineitem receipt-vs-commit predicate, F-status order count, and the
-joined/grouped Saudi supplier wait kernel. The late receipt count is correct
-but slow locally, so it remains a performance target. Formal Q21 remains
-blocked on correlated `EXISTS` and `NOT EXISTS` subqueries over repeated
-`lineitem` aliases; both current probes return empty result sets rather than
-counts.
+late lineitem receipt-vs-commit predicate, F-status order count, same-order
+other-supplier `EXISTS`, and the joined/grouped Saudi supplier wait kernel.
+The late receipt count is correct but slow locally, so it remains a performance
+target. Formal Q21 remains blocked on the filtered sibling `EXISTS` and
+`NOT EXISTS` subqueries over repeated `lineitem` aliases.
 
 TPC-H Q22 has staged executable coverage in `tpc-h-benchmark/sqltests/tpch_q22_profile.yaml` through the reusable customer kernels.
 `substr(c_phone, 1, 2)` works in projection and grouping, and the formal phone
@@ -819,9 +817,9 @@ late-receipt comparison, avoiding a full-lineitem comparison in the joined
 shape. The formal query then needs two repeated-alias membership checks over
 the same physical `lineitem` table: `EXISTS` keeps `l1` rows whose order has
 another supplier row (`l2`), and `NOT EXISTS` removes `l1` rows whose order has
-another late supplier row (`l3`). The staged XFAIL ladder captures this map:
-`.050` same-order other-supplier `EXISTS`, `.060` late-line plus sibling
-`EXISTS`, `.070` Saudi/F/late supplier wait with sibling `EXISTS`, and `.080`
-the formal `EXISTS` plus `NOT EXISTS` shape. Expected values are derived from
-the SF 0.01 generated TPC-H files so future XPASS events can be promoted
-intentionally.
+another late supplier row (`l3`). The first sibling-domain `EXISTS` guardrail,
+`.050`, is now a native semi-membership shape. The remaining staged XFAIL
+ladder is `.060` late-line plus sibling `EXISTS`, `.070` Saudi/F/late supplier
+wait with sibling `EXISTS`, and `.080` the formal `EXISTS` plus `NOT EXISTS`
+shape. Expected values are derived from the SF 0.01 generated TPC-H files so
+future XPASS events can be promoted intentionally.

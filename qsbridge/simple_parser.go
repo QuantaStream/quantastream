@@ -1661,40 +1661,62 @@ func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bo
 		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery only supports a single table source"), false
 	}
 	if hasAnyKeyword(predicateText, "where", "join", "group", "having", "order", "limit") {
-		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery only supports a simple correlated equality predicate"), false
+		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery only supports simple AND-combined predicates"), false
 	}
 	table, diagnostic, ok := parseSimpleTable(sourceOnlyText)
 	if !ok {
 		return UnboundMembership{}, diagnostic, false
 	}
-	op, leftText, rightText, ok := splitBeforeComparisonOperator(predicateText)
-	if !ok || op != BinaryOpEqual {
-		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery requires a correlated equality predicate"), false
-	}
-	leftQualifier, leftField := splitProjectionField(strings.TrimSpace(leftText))
-	rightQualifier, rightField := splitProjectionField(strings.TrimSpace(rightText))
 	tableRef := tableRefName(table.Name, table.Alias)
-	if simpleQualifierMatchesTable(leftQualifier, tableRef) && !simpleQualifierMatchesTable(rightQualifier, tableRef) {
-		return UnboundMembership{
-			LeftQualifier:  rightQualifier,
-			LeftField:      rightField,
-			RightTable:     table,
-			RightQualifier: leftQualifier,
-			RightField:     leftField,
-			Kind:           kind,
-		}, Diagnostic{}, true
+	parts := splitSimpleAndPredicates(predicateText)
+	predicates := make([]UnboundPredicate, 0, len(parts)-1)
+	parameterIndex := 1
+	membership := UnboundMembership{}
+	correlationFound := false
+	for _, part := range parts {
+		op, leftText, rightText, ok := splitBeforeComparisonOperator(part)
+		if !correlationFound && ok && op == BinaryOpEqual {
+			leftQualifier, leftField := splitProjectionField(strings.TrimSpace(leftText))
+			rightQualifier, rightField := splitProjectionField(strings.TrimSpace(rightText))
+			if simpleQualifierMatchesTable(leftQualifier, tableRef) && !simpleQualifierMatchesTable(rightQualifier, tableRef) {
+				membership = UnboundMembership{
+					LeftQualifier:  rightQualifier,
+					LeftField:      rightField,
+					RightTable:     table,
+					RightQualifier: leftQualifier,
+					RightField:     leftField,
+					Kind:           kind,
+				}
+				correlationFound = true
+				continue
+			}
+			if simpleQualifierMatchesTable(rightQualifier, tableRef) && !simpleQualifierMatchesTable(leftQualifier, tableRef) {
+				membership = UnboundMembership{
+					LeftQualifier:  leftQualifier,
+					LeftField:      leftField,
+					RightTable:     table,
+					RightQualifier: rightQualifier,
+					RightField:     rightField,
+					Kind:           kind,
+				}
+				correlationFound = true
+				continue
+			}
+		}
+		parsed, diagnostic, ok := parseSimplePredicate(part, &parameterIndex)
+		if !ok {
+			return UnboundMembership{}, diagnostic, false
+		}
+		for i := range parsed {
+			parsed[i].Placement = PredicateResidualScan
+		}
+		predicates = append(predicates, parsed...)
 	}
-	if simpleQualifierMatchesTable(rightQualifier, tableRef) && !simpleQualifierMatchesTable(leftQualifier, tableRef) {
-		return UnboundMembership{
-			LeftQualifier:  leftQualifier,
-			LeftField:      leftField,
-			RightTable:     table,
-			RightQualifier: rightQualifier,
-			RightField:     rightField,
-			Kind:           kind,
-		}, Diagnostic{}, true
+	if !correlationFound {
+		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery correlation must compare child and outer fields"), false
 	}
-	return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery correlation must compare child and outer fields"), false
+	membership.Predicates = predicates
+	return membership, Diagnostic{}, true
 }
 
 func simpleQualifierMatchesTable(qualifier string, tableRef string) bool {

@@ -42,6 +42,9 @@ func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, r
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	if directBitmapMembershipHasCorrelatedPredicates(membership) {
+		return r.directBitmapApplyCorrelatedSiblingMembership(ctx, result, membership)
+	}
 	if filtered, handled, diagnostics, err := r.directBitmapApplyRelationshipMembership(ctx, result, membership); handled || err != nil || diagnostics.BlocksNative() {
 		return filtered, diagnostics, err
 	}
@@ -65,6 +68,84 @@ func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, re
 	filtered.Rownums = filtered.Rownums[:0]
 	for i, rownum := range leftRowSet.Rownums {
 		_, matched := rightValues[directBitmapGroupKey(leftValues[i])]
+		keep := matched
+		if membership.Kind == qsbridge.MembershipAnti {
+			keep = !matched
+		}
+		if keep {
+			filtered.Rownums = append(filtered.Rownums, rownum)
+		}
+	}
+	filtered.Count = uint64(len(filtered.Rownums))
+	return filtered, nil, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	if !strings.EqualFold(membership.Left.Table.Table, membership.Right.Table.Table) {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership only supports repeated aliases of the same physical table in this slice"), nil
+	}
+	rightOnlyPredicates, correlatedPredicates := directBitmapSplitMembershipPredicates(membership)
+	if len(correlatedPredicates) == 0 {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership requires a cross-domain predicate"), nil
+	}
+	rightMembership := membership
+	rightMembership.Predicates = rightOnlyPredicates
+	rightResult, diagnostics, err := r.directBitmapMembershipRightCandidateResult(ctx, rightMembership)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
+	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
+	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
+	leftRowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+		Index:            membership.Left.Table.Table,
+		Rownums:          append([]qsbridge.QuantaRownum(nil), result.Rownums...),
+		ProjectionFields: leftFields,
+	})
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
+	rightRowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+		Index:            membership.Right.Table.Table,
+		Rownums:          append([]qsbridge.QuantaRownum(nil), rightResult.Rownums...),
+		ProjectionFields: rightFields,
+	})
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
+	leftKeys, ok := directBitmapProjectedValues(leftRowSet, membership.Left)
+	if !ok {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
+	}
+	rightKeys, ok := directBitmapProjectedValues(rightRowSet, membership.Right)
+	if !ok {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership right key is not present in materialized row set"), nil
+	}
+	rightRowsByKey := make(map[string][]int, len(rightKeys))
+	for i, value := range rightKeys {
+		if value.Kind == qsbridge.ValueNull || value.Value == nil {
+			continue
+		}
+		key := directBitmapGroupKey(value)
+		rightRowsByKey[key] = append(rightRowsByKey[key], i)
+	}
+	filtered := result.Clone()
+	filtered.Rownums = filtered.Rownums[:0]
+	for i, rownum := range leftRowSet.Rownums {
+		key := ""
+		if i < len(leftKeys) && leftKeys[i].Kind != qsbridge.ValueNull && leftKeys[i].Value != nil {
+			key = directBitmapGroupKey(leftKeys[i])
+		}
+		matched := false
+		for _, rightIndex := range rightRowsByKey[key] {
+			ok, diagnostics := directBitmapEvaluateCorrelatedMembershipPredicates(correlatedPredicates, leftRowSet, i, rightRowSet, rightIndex, membership)
+			if diagnostics.BlocksNative() {
+				return result, diagnostics, nil
+			}
+			if ok {
+				matched = true
+				break
+			}
+		}
 		keep := matched
 		if membership.Kind == qsbridge.MembershipAnti {
 			keep = !matched
@@ -362,6 +443,124 @@ func directBitmapMembershipResidualPredicates(predicates []qsbridge.Predicate) [
 	return residuals
 }
 
+func directBitmapMembershipHasCorrelatedPredicates(membership qsbridge.MembershipEdge) bool {
+	_, correlated := directBitmapSplitMembershipPredicates(membership)
+	return len(correlated) > 0
+}
+
+func directBitmapSplitMembershipPredicates(membership qsbridge.MembershipEdge) ([]qsbridge.Predicate, []qsbridge.Predicate) {
+	rightOnly := make([]qsbridge.Predicate, 0, len(membership.Predicates))
+	correlated := make([]qsbridge.Predicate, 0, len(membership.Predicates))
+	for _, predicate := range membership.Predicates {
+		fields := directBitmapMembershipRequiredFields(predicate.Expr)
+		hasLeft := false
+		hasRight := false
+		other := false
+		for _, field := range fields {
+			switch {
+			case directBitmapSameTableInstance(field.Table, membership.Left.Table):
+				hasLeft = true
+			case directBitmapSameTableInstance(field.Table, membership.Right.Table):
+				hasRight = true
+			default:
+				other = true
+			}
+		}
+		if other || hasLeft {
+			correlated = append(correlated, predicate)
+			continue
+		}
+		if hasRight || len(fields) == 0 {
+			rightOnly = append(rightOnly, predicate)
+		}
+	}
+	return rightOnly, correlated
+}
+
+func directBitmapCorrelatedMembershipProjectionFields(base qsbridge.FieldRef, predicates []qsbridge.Predicate, table qsbridge.TableInstance) []qsbridge.QuantaProjectionField {
+	fields := []qsbridge.QuantaProjectionField{directBitmapMembershipProjectionField(base)}
+	for _, predicate := range predicates {
+		for _, required := range directBitmapMembershipRequiredFields(predicate.Expr) {
+			if !directBitmapSameTableInstance(required.Table, table) {
+				continue
+			}
+			projection := directBitmapMembershipProjectionField(required)
+			if !directBitmapMembershipHasProjectionField(fields, projection) {
+				fields = append(fields, projection)
+			}
+		}
+	}
+	return fields
+}
+
+func directBitmapEvaluateCorrelatedMembershipPredicates(predicates []qsbridge.Predicate, leftRowSet qsbridge.QuantaProjectedRowSet, leftIndex int, rightRowSet qsbridge.QuantaProjectedRowSet, rightIndex int, membership qsbridge.MembershipEdge) (bool, qsbridge.DiagnosticSet) {
+	for _, predicate := range predicates {
+		matched, diagnostics := directBitmapEvaluateCorrelatedMembershipBoolExpr(predicate.Expr, leftRowSet, leftIndex, rightRowSet, rightIndex, membership)
+		if diagnostics.BlocksNative() {
+			return false, diagnostics
+		}
+		if !matched {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func directBitmapEvaluateCorrelatedMembershipBoolExpr(expr qsbridge.Expr, leftRowSet qsbridge.QuantaProjectedRowSet, leftIndex int, rightRowSet qsbridge.QuantaProjectedRowSet, rightIndex int, membership qsbridge.MembershipEdge) (bool, qsbridge.DiagnosticSet) {
+	binary, ok := directBitmapBinaryExpr(expr)
+	if !ok {
+		return false, directBitmapMembershipDiagnostics("correlated sibling membership predicate must be binary")
+	}
+	switch binary.Op {
+	case qsbridge.BinaryOpEqual, qsbridge.BinaryOpNotEqual,
+		qsbridge.BinaryOpLess, qsbridge.BinaryOpLessEqual,
+		qsbridge.BinaryOpGreater, qsbridge.BinaryOpGreaterEqual:
+		left, diagnostics := directBitmapEvaluateCorrelatedMembershipExpr(binary.Left, leftRowSet, leftIndex, rightRowSet, rightIndex, membership)
+		if diagnostics.BlocksNative() {
+			return false, diagnostics
+		}
+		right, diagnostics := directBitmapEvaluateCorrelatedMembershipExpr(binary.Right, leftRowSet, leftIndex, rightRowSet, rightIndex, membership)
+		if diagnostics.BlocksNative() {
+			return false, diagnostics
+		}
+		return directBitmapResidualCompareCells(binary.Op, left, right), nil
+	default:
+		return false, directBitmapMembershipDiagnostics("correlated sibling membership predicate operator is not supported in this slice")
+	}
+}
+
+func directBitmapEvaluateCorrelatedMembershipExpr(expr qsbridge.Expr, leftRowSet qsbridge.QuantaProjectedRowSet, leftIndex int, rightRowSet qsbridge.QuantaProjectedRowSet, rightIndex int, membership qsbridge.MembershipEdge) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if field, ok := directBitmapExprField(expr); ok {
+		switch {
+		case directBitmapSameTableInstance(field.Table, membership.Left.Table):
+			values, ok := directBitmapProjectedValues(leftRowSet, field)
+			if !ok || leftIndex >= len(values) {
+				return qsbridge.ResultCell{}, directBitmapMembershipDiagnostics("correlated sibling membership left field is not materialized")
+			}
+			return values[leftIndex], nil
+		case directBitmapSameTableInstance(field.Table, membership.Right.Table):
+			values, ok := directBitmapProjectedValues(rightRowSet, field)
+			if !ok || rightIndex >= len(values) {
+				return qsbridge.ResultCell{}, directBitmapMembershipDiagnostics("correlated sibling membership right field is not materialized")
+			}
+			return values[rightIndex], nil
+		default:
+			return qsbridge.ResultCell{}, directBitmapMembershipDiagnostics("correlated sibling membership field is outside the membership domains")
+		}
+	}
+	if literal, ok := directBitmapLiteralExpr(expr); ok {
+		return directBitmapLiteralCell(literal), nil
+	}
+	return qsbridge.ResultCell{}, directBitmapMembershipDiagnostics("correlated sibling membership expression is not supported in this slice")
+}
+
+func directBitmapSameTableInstance(left qsbridge.TableInstance, right qsbridge.TableInstance) bool {
+	if left.ID != "" && right.ID != "" {
+		return left.ID == right.ID
+	}
+	return strings.EqualFold(left.RefName(), right.RefName()) && strings.EqualFold(left.Table, right.Table)
+}
+
 func directBitmapMembershipPredicateCanLower(predicate qsbridge.Predicate) bool {
 	if predicate.Placement == qsbridge.PredicateResidualScan {
 		return false
@@ -418,6 +617,7 @@ func directBitmapMembershipRequiredFields(expr qsbridge.Expr) []qsbridge.FieldRe
 func directBitmapMembershipProjectionField(field qsbridge.FieldRef) qsbridge.QuantaProjectionField {
 	return qsbridge.QuantaProjectionField{
 		Index:        field.Table.Table,
+		Role:         qsbridge.TableInstanceID(materializationFieldRole(field.Table.Table, field)),
 		Field:        directBitmapFieldPhysicalName(field),
 		Type:         field.Type,
 		PhysicalName: field.PhysicalName,

@@ -685,7 +685,7 @@ func BindMembership(context *BindContext, membership UnboundMembership) (Members
 	if diagnostics.BlocksNative() {
 		return MembershipEdge{}, diagnostics
 	}
-	predicates := bindMembershipPredicates(context, membership, &diagnostics)
+	predicates := bindMembershipPredicates(context, membership, right, &diagnostics)
 	if diagnostics.BlocksNative() {
 		return MembershipEdge{}, diagnostics
 	}
@@ -717,19 +717,44 @@ func BindMembership(context *BindContext, membership UnboundMembership) (Members
 	return edge, nil
 }
 
-func bindMembershipPredicates(context *BindContext, membership UnboundMembership, diagnostics *DiagnosticSet) []Predicate {
+func bindMembershipPredicates(context *BindContext, membership UnboundMembership, right FieldRef, diagnostics *DiagnosticSet) []Predicate {
 	if len(membership.Predicates) == 0 {
 		return nil
 	}
 	bindContext := context
 	if membership.RightTable.Name != "" {
-		bindContext = NewBindContext(context.Catalog, context.DefaultSchema)
-		if _, tableDiagnostics := bindContext.AddTable(membership.RightTable); tableDiagnostics.BlocksNative() {
+		var tableDiagnostics DiagnosticSet
+		bindContext, tableDiagnostics = bindMembershipPredicateContext(context, membership, right)
+		if tableDiagnostics.BlocksNative() {
 			*diagnostics = append(*diagnostics, tableDiagnostics...)
 			return nil
 		}
 	}
 	return bindUnboundPredicates(bindContext, membership.Predicates, diagnostics)
+}
+
+func bindMembershipPredicateContext(context *BindContext, membership UnboundMembership, right FieldRef) (*BindContext, DiagnosticSet) {
+	if context == nil {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	schema := membership.RightTable.Schema
+	if schema == "" {
+		schema = context.DefaultSchema
+	}
+	definition, diagnostics := context.Catalog.Table(schema, membership.RightTable.Name)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	bindContext := NewBindContext(context.Catalog, context.DefaultSchema)
+	bindContext.tables = append(bindContext.tables, context.tables...)
+	bindContext.nextTableID = context.nextTableID
+	bindContext.tables = append(bindContext.tables, BoundTable{
+		Instance:   right.Table,
+		Definition: definition,
+	})
+	return bindContext, nil
 }
 
 func bindMembershipRightField(context *BindContext, membership UnboundMembership) (FieldRef, DiagnosticSet) {

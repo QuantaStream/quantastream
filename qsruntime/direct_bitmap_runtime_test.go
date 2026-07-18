@@ -1860,6 +1860,103 @@ func TestDirectBitmapRuntimeAppliesSingleTableMembershipBeforeCountAggregate(t *
 	}
 }
 
+func TestDirectBitmapRuntimeAppliesCorrelatedSiblingMembershipBeforeCountAggregate(t *testing.T) {
+	leftTable := qsbridge.TableInstance{ID: "lineitem_1", Table: "lineitem", Alias: "l1"}
+	rightTable := qsbridge.TableInstance{ID: "lineitem_membership", Table: "lineitem", Alias: "l2"}
+	leftOrderKey := qsbridge.FieldRef{Table: leftTable, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt}
+	rightOrderKey := qsbridge.FieldRef{Table: rightTable, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt}
+	leftSuppKey := qsbridge.FieldRef{Table: leftTable, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt}
+	rightSuppKey := qsbridge.FieldRef{Table: rightTable, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  leftOrderKey,
+		Right: rightOrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Predicates: []qsbridge.Predicate{{
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(rightSuppKey), qsbridge.Field(leftSuppKey)),
+			Placement: qsbridge.PredicateResidualScan,
+			Scope:     qsbridge.PredicateScopeWhere,
+		}},
+		Legal: true,
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "same_order_other_supplier_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 4, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "l_orderkey":
+						if rownum <= 2 {
+							values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(10)})
+						} else {
+							values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(20)})
+						}
+					case "l_suppkey":
+						switch rownum {
+						case 1, 2:
+							values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(1)})
+						case 3:
+							values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(2)})
+						case 4:
+							values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(3)})
+						default:
+							t.Fatalf("unexpected rownum %d", rownum)
+						}
+					default:
+						t.Fatalf("unexpected projection field %#v", field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+					Field:  field,
+					Values: values,
+				})
+			}
+			return rowSet, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if got := chunk.Rows[0][0].Value; got != int64(2) {
+		t.Fatalf("count value = %#v, want 2", got)
+	}
+}
+
 func TestDirectBitmapRuntimeMaterializesResidualPredicatesBeforeCount(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "part", Table: "part"}
 	partType := qsbridge.FieldRef{Table: table, Name: "p_type", Type: qsbridge.DataTypeString}
