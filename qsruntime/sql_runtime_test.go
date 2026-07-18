@@ -406,6 +406,72 @@ func TestSQLRuntimeExecuteSQLReturnsParserDiagnostics(t *testing.T) {
 	assertRuntimeDiagnosticCode(t, result.Diagnostics, qsbridge.DiagnosticParserBoundary)
 }
 
+func TestSQLRuntimeExecuteSQLMaterializesTrueExistsGate(t *testing.T) {
+	var parentRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if len(request.Query.Fragments) > 0 {
+			return ExecutionResult{Count: 1}, nil
+		}
+		parentRequest = request
+		return ExecutionResult{Count: 11}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select count(*)
+		from orders
+		where exists (
+			select o_orderkey
+			from orders
+			where o_orderkey = 1
+		)
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if parentRequest.HasCandidateSet {
+		t.Fatalf("parent request has candidate set for true EXISTS gate: %#v", parentRequest.CandidateSet)
+	}
+	if got, want := len(result.Request.Bound.Prepared.Query.Predicates), 0; got != want {
+		t.Fatalf("prepared predicates = %d, want true gate pruned", got)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLMaterializesFalseExistsGateAsEmptyCandidateSet(t *testing.T) {
+	var parentRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.HasCandidateSet {
+			parentRequest = request
+			return ExecutionResult{Count: uint64(len(request.CandidateSet.Rownums))}, nil
+		}
+		return ExecutionResult{Count: 0}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select count(*)
+		from orders
+		where exists (
+			select o_orderkey
+			from orders
+			where o_orderkey = -999
+		)
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if !parentRequest.HasCandidateSet {
+		t.Fatalf("parent request missing empty candidate set for false EXISTS gate")
+	}
+	if parentRequest.CandidateSet.Index != "orders" || len(parentRequest.CandidateSet.Rownums) != 0 {
+		t.Fatalf("candidate set = %#v, want empty orders set", parentRequest.CandidateSet)
+	}
+}
+
 func newTestSQLRuntime(t *testing.T) SQLRuntime {
 	t.Helper()
 	return newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

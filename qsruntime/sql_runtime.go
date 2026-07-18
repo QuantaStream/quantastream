@@ -85,6 +85,16 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			Preflight:   preflight.Preflight,
 		}, err
 	}
+	var existsGate existsSubqueryGateState
+	request, existsGate, existsDiagnostics, err := r.materializeExistsSubqueryGates(ctx, request)
+	if err != nil || existsDiagnostics.BlocksNative() {
+		return SQLExecutionResult{
+			Prepared:    request.Bound.Prepared,
+			Request:     request,
+			Diagnostics: existsDiagnostics,
+			Preflight:   preflight.Preflight,
+		}, err
+	}
 	prepared = request.Bound.Prepared
 	result := SQLExecutionResult{
 		Prepared:    prepared,
@@ -104,7 +114,11 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			if result.Diagnostics.BlocksNative() {
 				return result, nil
 			}
-			runtimeResult, err := r.ExecutePrepared(ctx, NewSQLExecutionRequest(intermediate, request))
+			runtimeRequest := NewSQLExecutionRequest(intermediate, request)
+			if existsGate.EmptyCandidateSet {
+				runtimeRequest = withEmptyCandidateSet(runtimeRequest)
+			}
+			runtimeResult, err := r.ExecutePrepared(ctx, runtimeRequest)
 			result.Runtime = runtimeResult
 			result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 			return result, err
@@ -141,10 +155,19 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 
-	runtimeResult, err := r.ExecutePrepared(ctx, NewSQLExecutionRequest(intermediate, request))
+	runtimeRequest := NewSQLExecutionRequest(intermediate, request)
+	if existsGate.EmptyCandidateSet {
+		runtimeRequest = withEmptyCandidateSet(runtimeRequest)
+	}
+	runtimeResult, err := r.ExecutePrepared(ctx, runtimeRequest)
 	result.Runtime = runtimeResult
 	result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 	return result, err
+}
+
+func withEmptyCandidateSet(request ExecutionRequest) ExecutionRequest {
+	index, _ := request.RootIndex()
+	return request.WithCandidateSet(qsbridge.QuantaCandidateSet{Index: index})
 }
 
 func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {

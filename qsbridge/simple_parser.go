@@ -1453,6 +1453,14 @@ func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, Unb
 			memberships = append(memberships, existsMembership)
 			continue
 		}
+		existsPredicate, diagnostic, ok := parseSimpleExistsPredicate(part)
+		if diagnostic.Code != "" {
+			return nil, nil, nil, nil, diagnostic, false
+		}
+		if ok {
+			predicates = append(predicates, existsPredicate)
+			continue
+		}
 		membership, diagnostic, ok := parseSimpleSubqueryMembership(part)
 		if diagnostic.Code != "" {
 			return nil, nil, nil, nil, diagnostic, false
@@ -1724,7 +1732,7 @@ func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bo
 	}
 	sourceOnlyText, predicateText, hasWhere := splitOptionalKeyword(sourceText, "where")
 	if !hasWhere {
-		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery requires a correlated equality predicate"), false
+		return UnboundMembership{}, Diagnostic{}, false
 	}
 	if hasAnyKeyword(sourceOnlyText, "join", "group", "having", "order", "limit") {
 		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery only supports a single table source"), false
@@ -1782,10 +1790,39 @@ func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bo
 		predicates = append(predicates, parsed...)
 	}
 	if !correlationFound {
-		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery correlation must compare child and outer fields"), false
+		return UnboundMembership{}, Diagnostic{}, false
 	}
 	membership.Predicates = predicates
 	return membership, Diagnostic{}, true
+}
+
+func parseSimpleExistsPredicate(text string) (UnboundPredicate, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	negated := false
+	existsBody, ok := consumeKeyword(trimmed, "exists")
+	if !ok {
+		if remaining, notOK := consumeKeyword(trimmed, "not"); notOK {
+			existsBody, ok = consumeKeyword(remaining, "exists")
+			negated = ok
+		}
+	}
+	if !ok {
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	body, diagnostic, ok := parseSimpleMembershipSubqueryBody(existsBody)
+	if !ok {
+		if diagnostic.Code != "" {
+			return UnboundPredicate{}, diagnostic, false
+		}
+		return UnboundPredicate{}, simpleParserDiagnostic("EXISTS subquery must be a SELECT"), false
+	}
+	sql := "select " + strings.TrimSpace(body)
+	return UnboundPredicate{
+		Expr:         UnboundExistsSubquery(sql, negated, PredicateScopeWhere),
+		Placement:    PredicateResidualScan,
+		Scope:        PredicateScopeWhere,
+		Capabilities: []PlanCapability{CapabilityExistsSubquery},
+	}, Diagnostic{}, true
 }
 
 func simpleQualifierMatchesTable(qualifier string, tableRef string) bool {

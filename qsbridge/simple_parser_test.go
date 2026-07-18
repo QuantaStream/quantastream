@@ -1,6 +1,9 @@
 package qsbridge
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSimpleParserBridgeParsesUpdateStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set age = 99, phoneType = 'cell;home', last_name = 'Madden, Jr' where state = 'ID'")
@@ -613,6 +616,39 @@ func TestSimpleParserBridgeParsesCorrelatedNotExistsAsAntiMembership(t *testing.
 	}
 	if got := statement.Select.Memberships[0].Kind; got != MembershipAnti {
 		t.Fatalf("membership kind = %q, want anti", got)
+	}
+}
+
+func TestSimpleParserBridgeParsesNonCorrelatedExistsAsGatePredicate(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select count(*)
+		from customers_qa
+		where exists (
+			select cust_id
+			from orders_qa
+			where cust_id = '10'
+		)
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Memberships) != 0 {
+		t.Fatalf("memberships = %d, want 0 for non-correlated EXISTS", len(statement.Select.Memberships))
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	exists, ok := statement.Select.Predicates[0].Expr.(UnboundExistsSubqueryExpr)
+	if !ok {
+		t.Fatalf("predicate expr = %T, want UnboundExistsSubqueryExpr", statement.Select.Predicates[0].Expr)
+	}
+	if exists.Negated {
+		t.Fatalf("exists negated = true, want false")
+	}
+	if !strings.HasPrefix(exists.SQL, "select cust_id") ||
+		!strings.Contains(exists.SQL, "from orders_qa") ||
+		!strings.Contains(exists.SQL, "where cust_id = '10'") {
+		t.Fatalf("exists SQL = %q, want child select text", exists.SQL)
 	}
 }
 

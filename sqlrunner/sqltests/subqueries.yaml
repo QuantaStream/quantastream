@@ -284,10 +284,9 @@ tests:
         - [4]
 
   - id: "subqueries.043.non_correlated_exists_true"
-    status: xfail
+    status: supported
     kind: query
     capabilities: [subquery, exists, non-correlated-subquery]
-    issue: "Non-correlated EXISTS requires a subquery-gate execution step that evaluates child row existence once and passes or suppresses the parent result set."
     sql: |-
       select count(*)
       from customers_qa
@@ -301,17 +300,16 @@ tests:
         - [10]
 
   - id: "subqueries.044.non_correlated_exists_false"
-    status: xfail
+    status: supported
     kind: query
     capabilities: [subquery, exists, non-correlated-subquery]
-    issue: "Non-correlated EXISTS requires a subquery-gate execution step that evaluates child row existence once and passes or suppresses the parent result set."
     sql: |-
       select count(*)
       from customers_qa
       where exists (
         select cust_id
         from orders_qa
-        where cust_id = 'missing'
+        where cust_id = '999999'
       )
     expect:
       rows:

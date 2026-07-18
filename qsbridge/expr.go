@@ -247,6 +247,24 @@ func ScalarSubquery(sql string, scope PredicateScope) ScalarSubqueryExpr {
 	return ScalarSubqueryExpr{SQL: sql, Scope: scope}
 }
 
+// ExistsSubqueryExpr records a non-correlated EXISTS subquery gate that must
+// be evaluated once before the parent query can be lowered.
+type ExistsSubqueryExpr struct {
+	SQL     string
+	Negated bool
+	Scope   PredicateScope
+}
+
+// ExpressionKind reports that ExistsSubqueryExpr is an EXISTS subquery gate.
+func (ExistsSubqueryExpr) ExpressionKind() ExprKind {
+	return ExprExistsSubquery
+}
+
+// ExistsSubquery creates an EXISTS subquery gate expression.
+func ExistsSubquery(sql string, negated bool, scope PredicateScope) ExistsSubqueryExpr {
+	return ExistsSubqueryExpr{SQL: sql, Negated: negated, Scope: scope}
+}
+
 // ExprDataType returns the SQL-facing data type carried by a bound expression.
 func ExprDataType(expr Expr) DataType {
 	switch n := expr.(type) {
@@ -304,6 +322,12 @@ func ExprDataType(expr Expr) DataType {
 		if n != nil {
 			return n.Type
 		}
+	case ExistsSubqueryExpr:
+		return DataTypeBool
+	case *ExistsSubqueryExpr:
+		if n != nil {
+			return DataTypeBool
+		}
 	}
 	return DataTypeUnknown
 }
@@ -333,6 +357,10 @@ func ExprNullable(expr Expr) bool {
 		return true
 	case *ScalarSubqueryExpr:
 		return true
+	case ExistsSubqueryExpr:
+		return false
+	case *ExistsSubqueryExpr:
+		return n == nil
 	}
 	return true
 }

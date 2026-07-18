@@ -148,6 +148,8 @@ const (
 	ExprAggregateRef ExprKind = "aggregate_ref"
 	// ExprScalarSubquery is a scalar subquery expression awaiting materialization.
 	ExprScalarSubquery ExprKind = "scalar_subquery"
+	// ExprExistsSubquery is an EXISTS subquery expression awaiting gate materialization.
+	ExprExistsSubquery ExprKind = "exists_subquery"
 )
 
 // ParameterRef identifies one prepared-statement placeholder.
@@ -214,6 +216,8 @@ const (
 	CapabilityGroupedJoin PlanCapability = "GroupedJoin"
 	// CapabilityScalarSubquery identifies scalar subquery execution.
 	CapabilityScalarSubquery PlanCapability = "ScalarSubquery"
+	// CapabilityExistsSubquery identifies EXISTS subquery gate execution.
+	CapabilityExistsSubquery PlanCapability = "ExistsSubquery"
 	// CapabilityOuterJoin identifies preserved-side join semantics.
 	CapabilityOuterJoin PlanCapability = "OuterJoin"
 	// CapabilityNullExtension identifies null-filled rows for unmatched outer join input.

@@ -1071,6 +1071,25 @@ func UnboundScalarSubquery(sql string, scope PredicateScope) UnboundScalarSubque
 	return UnboundScalarSubqueryExpr{SQL: sql, Scope: scope}
 }
 
+// UnboundExistsSubqueryExpr is a non-correlated EXISTS gate before runtime
+// materialization.
+type UnboundExistsSubqueryExpr struct {
+	SQL     string
+	Negated bool
+	Scope   PredicateScope
+}
+
+// BindExpr preserves EXISTS gate intent as a typed expression. Runtime
+// materialization replaces it with a boolean literal before bitmap lowering.
+func (e UnboundExistsSubqueryExpr) BindExpr(context *BindContext, roles FieldRole) (Expr, DiagnosticSet) {
+	return ExistsSubquery(e.SQL, e.Negated, e.Scope), nil
+}
+
+// UnboundExistsSubquery creates an unbound EXISTS gate expression.
+func UnboundExistsSubquery(sql string, negated bool, scope PredicateScope) UnboundExistsSubqueryExpr {
+	return UnboundExistsSubqueryExpr{SQL: sql, Negated: negated, Scope: scope}
+}
+
 // BindExpression binds one parser-neutral expression.
 func BindExpression(context *BindContext, expr UnboundExpr, roles FieldRole) (Expr, DiagnosticSet) {
 	if expr == nil {

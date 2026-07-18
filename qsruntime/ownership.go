@@ -138,7 +138,8 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 		return true
 	}
 	switch file {
-	case "filter_domain_normalization.go",
+	case "exists_subquery_materialization.go",
+		"filter_domain_normalization.go",
 		"filter_evaluator.go",
 		"native_projection_capability.go",
 		"native_projection_materialization.go",
