@@ -53,23 +53,7 @@ type PreflightSurfaceInventory struct {
 }
 
 func preflightRewriteInventory() []PreflightRewriteInventory {
-	return []PreflightRewriteInventory{
-		{
-			Rule:              qsbridge.RewriteCorrelatedAggregatePreflight,
-			Reason:            "TPC-H-style correlated aggregate predicates are useful read-path shapes, but correlated aggregate subquery intent is not planner-native yet.",
-			SourceSQLShape:    "A correlated average quantity predicate such as l_quantity < (select factor * avg(l2.l_quantity) from lineitem l2 where l2.l_partkey = p.p_partkey).",
-			TemporaryStrategy: "Use typed Q17-style correlated aggregate intent from the bound query, route parent-key lookup and per-key aggregate-threshold materialization through native subquery step contracts, then attach a native correlated aggregate predicate to the runtime request.",
-			HelperPlanKinds: []PreflightRewriteHelperPlanKind{
-				PreflightHelperPlanParentKeyLookup,
-				PreflightHelperPlanAggregateThresholdLookup,
-			},
-			RegressionCoverage: []string{
-				"qsruntime/sql_runtime_test.go correlated aggregate preflight trace and ExecuteSQL coverage",
-				"inabox-direct TPCH Q17-style probes when present in SQLRunner suites",
-			},
-			FutureIRReplacement: "Represent correlated aggregate subqueries as typed IR nodes, then lower them through planner-owned aggregate-threshold and semi-join kernels instead of preflight orchestration.",
-		},
-	}
+	return nil
 }
 
 func preflightSurfaceInventory() []PreflightSurfaceInventory {
@@ -117,12 +101,7 @@ func preflightSurfaceInventory() []PreflightSurfaceInventory {
 }
 
 func nextPreflightNativePromotionCandidate() NativePromotionCandidate {
-	return NativePromotionCandidate{
-		HelperKind: PreflightHelperPlanAggregateThresholdLookup,
-		Rule:       qsbridge.RewriteCorrelatedAggregatePreflight,
-		Reason:     "parent-key lookup now has a native-step contract, so aggregate-threshold lookup is the next execution shape to make bitmap-native",
-		Follows:    qsbridge.NativeSubqueryStepParentKeyLookup,
-	}
+	return NativePromotionCandidate{}
 }
 
 func preflightRewriteInventoryByRule() map[qsbridge.RewriteRuleID]PreflightRewriteInventory {

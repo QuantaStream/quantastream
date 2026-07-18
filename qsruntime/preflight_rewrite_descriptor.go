@@ -202,7 +202,7 @@ func correlatedThresholdHelperPlan(sql string, inputs []string, outputs []string
 		InputFields:        rewriteDescriptorFields(inputs, "lineitem"),
 		OutputFields:       rewriteDescriptorFields(firstQualifiedReferences(outputs), "part"),
 		Materialization:    "per-key aggregate threshold map",
-		BitmapNativeTarget: "aggregate-threshold helper kernel feeding bitmap predicate branches",
+		BitmapNativeTarget: "aggregate-threshold kernel feeding native correlated aggregate predicate thresholds",
 		Lifecycle:          qsbridge.SubqueryStepNativeReady,
 		NativeStep:         &step,
 	}
@@ -217,7 +217,7 @@ func correlatedThresholdNativeStep(inputs []string, outputs []string) qsbridge.N
 		Inputs:             append([]string(nil), inputs...),
 		Outputs:            append([]string(nil), outputs...),
 		Materialization:    "per-key aggregate threshold map",
-		BitmapNativeTarget: "aggregate-threshold helper kernel feeding bitmap predicate branches",
+		BitmapNativeTarget: "aggregate-threshold kernel feeding native correlated aggregate predicate thresholds",
 		ExecutionMode:      "sql_backed_until_bitmap_native_executor_exists",
 	}
 }
@@ -254,7 +254,7 @@ func (d correlatedAverageQuantityDescriptor) descriptorSummary() PreflightRewrit
 	return PreflightRewriteDescriptorSummary{
 		Rule:                qsbridge.RewriteCorrelatedAggregatePreflight,
 		SourceSQLShape:      "predicate(correlated_aggregate_subquery)",
-		ReplacementSQLShape: "predicate(disjunction(per_key_thresholds))",
+		ReplacementSQLShape: "native_predicate(correlated_aggregate_threshold)",
 		Range: PreflightRewriteTextRange{
 			Start: d.Start,
 			End:   d.End,

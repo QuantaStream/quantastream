@@ -102,13 +102,7 @@ func (r preflightRewriteRule) ApplyPreflightRewrite(ctx context.Context, sql str
 }
 
 func (r SQLRuntime) preflightRewriteRules() []PreflightRewrite {
-	return []PreflightRewrite{
-		preflightRewriteRule{
-			rule:       qsbridge.RewriteCorrelatedAggregatePreflight,
-			apply:      r.rewriteCorrelatedAverageQuantitySubquery,
-			descriptor: r.correlatedAverageQuantityRewriteDescriptor,
-		},
-	}
+	return nil
 }
 
 func (r SQLRuntime) applyPreflightRewrites(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (PreflightRewriteResult, error) {

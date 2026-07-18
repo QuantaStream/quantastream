@@ -22,6 +22,8 @@ const (
 	RewriteScalarSubqueryPreflight RewriteRuleID = "scalar_subquery_preflight"
 	// RewriteCorrelatedAggregatePreflight records correlated aggregate preflight expansion before native planning.
 	RewriteCorrelatedAggregatePreflight RewriteRuleID = "correlated_aggregate_preflight"
+	// RewriteCorrelatedAggregateNativePredicate records correlated aggregate lowering into executor-owned native predicate metadata.
+	RewriteCorrelatedAggregateNativePredicate RewriteRuleID = "correlated_aggregate_native_predicate"
 	// RewriteFullTableScan records scan shapes with no source-row filtering predicate.
 	RewriteFullTableScan RewriteRuleID = "full_table_scan"
 	// RewriteRelationshipVectorStrategy records relation-vector execution strategy opportunities.

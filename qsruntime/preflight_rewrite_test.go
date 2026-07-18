@@ -5,19 +5,21 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-func TestSQLRuntimeExecuteSQLUsesPreflightBoundary(t *testing.T) {
+func TestSQLRuntimeExecuteSQLUsesNativeSubqueryPreparationBoundary(t *testing.T) {
 	source, err := os.ReadFile("sql_runtime.go")
 	if err != nil {
 		t.Fatalf("read sql_runtime.go: %v", err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "applyPreflightRewrites(ctx") {
-		t.Fatalf("ExecuteSQL should route compatibility rewrites through applyPreflightRewrites")
+	if !strings.Contains(text, "materializeCorrelatedAggregatePredicates(ctx") {
+		t.Fatalf("ExecuteSQL should route correlated aggregate intent through native subquery preparation")
+	}
+	if strings.Contains(text, "applyPreflightRewrites(ctx") {
+		t.Fatalf("ExecuteSQL should not route active SQL rewrite debt through applyPreflightRewrites")
 	}
 	for _, forbidden := range []string{
 		"rewriteCorrelatedAverageQuantitySubquery(ctx",
@@ -29,27 +31,25 @@ func TestSQLRuntimeExecuteSQLUsesPreflightBoundary(t *testing.T) {
 	}
 }
 
-func TestPreflightRewriteInventoryNamesPlannerNativeSubqueryIntentGap(t *testing.T) {
-	for _, item := range preflightRewriteInventory() {
-		if !strings.Contains(item.Reason, "subquery intent is not planner-native") {
-			t.Fatalf("rewrite rule %q reason = %q, want planner-native subquery intent wording", item.Rule, item.Reason)
-		}
+func TestPreflightRewriteInventoryHasNoActiveRules(t *testing.T) {
+	if got := len(preflightRewriteInventory()); got != 0 {
+		t.Fatalf("active preflight rewrite inventory entries = %d, want none", got)
 	}
 }
 
-func TestNextPreflightNativePromotionCandidateIsAggregateThresholdLookup(t *testing.T) {
+func TestNextPreflightNativePromotionCandidateIsEmptyAfterDebtRetired(t *testing.T) {
 	candidate := nextPreflightNativePromotionCandidate()
-	if candidate.HelperKind != PreflightHelperPlanAggregateThresholdLookup {
-		t.Fatalf("candidate helper kind = %q, want aggregate-threshold lookup", candidate.HelperKind)
+	if candidate.HelperKind != "" {
+		t.Fatalf("candidate helper kind = %q, want none", candidate.HelperKind)
 	}
-	if candidate.Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
-		t.Fatalf("candidate rule = %q, want correlated aggregate preflight", candidate.Rule)
+	if candidate.Rule != "" {
+		t.Fatalf("candidate rule = %q, want none", candidate.Rule)
 	}
-	if candidate.Follows != qsbridge.NativeSubqueryStepParentKeyLookup {
-		t.Fatalf("candidate follows = %q, want parent-key lookup", candidate.Follows)
+	if candidate.Follows != "" {
+		t.Fatalf("candidate follows = %q, want none", candidate.Follows)
 	}
-	if !strings.Contains(candidate.Reason, "bitmap-native") {
-		t.Fatalf("candidate reason = %q, want bitmap-native execution note", candidate.Reason)
+	if candidate.Reason != "" {
+		t.Fatalf("candidate reason = %q, want none", candidate.Reason)
 	}
 }
 
@@ -172,7 +172,7 @@ where p.p_brand = 'Brand#45'
 	if correlatedSummary.SourceSQLShape != "predicate(correlated_aggregate_subquery)" {
 		t.Fatalf("correlated source shape = %q", correlatedSummary.SourceSQLShape)
 	}
-	if correlatedSummary.ReplacementSQLShape != "predicate(disjunction(per_key_thresholds))" {
+	if correlatedSummary.ReplacementSQLShape != "native_predicate(correlated_aggregate_threshold)" {
 		t.Fatalf("correlated replacement shape = %q", correlatedSummary.ReplacementSQLShape)
 	}
 	if value, ok := descriptorAttributeValue(correlatedSummary, "aggregate_function"); !ok || value != "avg" {
@@ -265,11 +265,11 @@ having c > (
 	if err != nil {
 		t.Fatalf("preflight rewrites: %v", err)
 	}
-	if got, want := len(result.Preflight.Rewrites), 1; got != want {
+	if got, want := len(result.Preflight.Rewrites), 0; got != want {
 		t.Fatalf("preflight rewrites = %d, want %d", got, want)
 	}
-	if result.Preflight.Rewrites[0].Descriptor != nil {
-		t.Fatalf("skipped correlated rewrite descriptor = %#v, want nil", result.Preflight.Rewrites[0].Descriptor)
+	if result.Preflight.Total != 0 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 0 || result.Preflight.Duration != 0 {
+		t.Fatalf("preflight summary = %#v, want empty no-op pass", result.Preflight)
 	}
 }
 
@@ -292,7 +292,7 @@ where p.p_brand = 'Brand#45'
 	if report.SourceSQLShape != "predicate(correlated_aggregate_subquery)" {
 		t.Fatalf("source shape = %q", report.SourceSQLShape)
 	}
-	if report.ReplacementSQLShape != "predicate(disjunction(per_key_thresholds))" {
+	if report.ReplacementSQLShape != "native_predicate(correlated_aggregate_threshold)" {
 		t.Fatalf("replacement shape = %q", report.ReplacementSQLShape)
 	}
 	if report.Start < 0 || report.End <= report.Start {
@@ -688,12 +688,20 @@ where p.p_brand = 'Brand#23'
     where l2.l_partkey = p.p_partkey
   )`
 
-	result, err := runtime.applyPreflightRewrites(context.Background(), query, qsbridge.ExecutionOptions{})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: query}, qsbridge.ExecutionOptions{})
+	_, summary, diagnostics, err := runtime.materializeCorrelatedAggregatePredicates(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("native correlated aggregate preparation: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if summary.CorrelatedAggregates != 1 {
+		t.Fatalf("native subquery summary = %#v, want one correlated aggregate", summary)
 	}
 
-	reports := result.Preflight.HelperExecutionReports()
+	reports := summary.HelperExecutionReports()
 	if got, want := len(reports), 2; got != want {
 		t.Fatalf("helper reports = %d, want %d: %#v", got, want, reports)
 	}
@@ -735,38 +743,39 @@ where p.p_brand = 'Brand#23'
 		plan := runtime.Plan(query)
 		t.Fatalf("typed correlated aggregate match not found: subqueries=%d diagnostics=%#v", len(plan.Query.Subqueries), plan.Diagnostics)
 	}
-	result, err := runtime.applyPreflightRewrites(context.Background(), query, qsbridge.ExecutionOptions{})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: query}, qsbridge.ExecutionOptions{})
+	request, summary, diagnostics, err := runtime.materializeCorrelatedAggregatePredicates(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("native correlated aggregate preparation: %v", err)
 	}
-	if result.Preflight.Applied != 1 || result.Diagnostics.BlocksNative() {
-		t.Fatalf("rewrite result = applied:%d diagnostics:%#v", result.Preflight.Applied, result.Diagnostics)
+	if summary.CorrelatedAggregates != 1 || diagnostics.BlocksNative() {
+		t.Fatalf("native preparation = correlated:%d diagnostics:%#v", summary.CorrelatedAggregates, diagnostics)
 	}
-	if result.SQL != query {
-		t.Fatalf("preflight SQL = %q, want original SQL so typed replacement can be applied after binding", result.SQL)
+	if request.Bound.Prepared.SQL != query {
+		t.Fatalf("prepared SQL = %q, want original SQL", request.Bound.Prepared.SQL)
 	}
-	if result.ReplacementExpr != nil {
-		t.Fatalf("replacement expr = %#v, want native correlated aggregate predicate instead", result.ReplacementExpr)
+	if got := len(request.Bound.Prepared.Query.Subqueries); got != 0 {
+		t.Fatalf("remaining subqueries = %d, want consumed correlated aggregate intent", got)
 	}
-	if got, want := len(result.NativePredicates.CorrelatedAggregate), 1; got != want {
+	if got, want := len(summary.NativePredicates.CorrelatedAggregate), 1; got != want {
 		t.Fatalf("native correlated aggregate predicates = %d, want %d", got, want)
 	}
-	predicate := result.NativePredicates.CorrelatedAggregate[0]
+	predicate := summary.NativePredicates.CorrelatedAggregate[0]
 	if predicate.KeyField.Name != "p_partkey" || predicate.ValueField.Name != "l_quantity" || predicate.Operator != qsbridge.BinaryOpLess {
 		t.Fatalf("native correlated aggregate predicate = %#v", predicate)
 	}
 	if len(predicate.Thresholds) != 1 || predicate.Thresholds[0].Key != 101 || predicate.Thresholds[0].Threshold != 10 {
 		t.Fatalf("native thresholds = %#v, want p_partkey 101 threshold 10", predicate.Thresholds)
 	}
-	if got, want := len(result.Optimization.Rewrites), 1; got != want {
-		t.Fatalf("rewrite trace count = %d, want %d: %#v", got, want, result.Optimization.Rewrites)
+	if got, want := len(summary.Optimization.Rewrites), 1; got != want {
+		t.Fatalf("rewrite trace count = %d, want %d: %#v", got, want, summary.Optimization.Rewrites)
 	}
-	reports := result.Preflight.DescriptorReports()
-	if got, want := len(reports), 1; got != want {
-		t.Fatalf("descriptor reports = %d, want %d: %#v", got, want, reports)
+	if summary.Optimization.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregateNativePredicate {
+		t.Fatalf("rewrite trace = %#v, want native correlated aggregate predicate", summary.Optimization.Rewrites[0])
 	}
-	expression := reports[0].ReplacementExpression
-	if expression == nil || expression.Kind != qsbridge.ExprKind("native_correlated_aggregate_predicate") || expression.Operator != qsbridge.BinaryOpLess || expression.BranchCount != 1 {
+	expression := correlatedAverageNativePredicateExpressionReport(predicate)
+	if expression.Kind != qsbridge.ExprKind("native_correlated_aggregate_predicate") || expression.Operator != qsbridge.BinaryOpLess || expression.BranchCount != 1 {
 		t.Fatalf("replacement expression report = %#v", expression)
 	}
 }
@@ -845,17 +854,19 @@ where p.p_brand = 'Brand#23'
     where l2.l_partkey = p.p_partkey
   )`
 
-	result, err := runtime.applyPreflightRewrites(context.Background(), query, qsbridge.ExecutionOptions{})
+	service := qsbridge.NewPlanningService(runtime.Planner(), nil)
+	_, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: query}, qsbridge.ExecutionOptions{})
+	_, summary, diagnostics, err := runtime.materializeCorrelatedAggregatePredicates(context.Background(), request)
 	if err != nil {
-		t.Fatalf("preflight rewrites: %v", err)
+		t.Fatalf("native correlated aggregate preparation: %v", err)
 	}
-	if !result.Diagnostics.BlocksNative() {
-		t.Fatalf("diagnostics = %#v, want blocking correlated helper diagnostic", result.Diagnostics)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocking correlated helper diagnostic", diagnostics)
 	}
-	if message := result.Diagnostics[0].Message; !strings.Contains(message, "rule=correlated_aggregate_preflight") || !strings.Contains(message, "helper=parent_key_lookup") || !strings.Contains(message, "phase=execute") {
+	if message := diagnostics[0].Message; !strings.Contains(message, "rule=correlated_aggregate_preflight") || !strings.Contains(message, "helper=parent_key_lookup") || !strings.Contains(message, "phase=execute") {
 		t.Fatalf("diagnostic message = %q, want normalized helper context", message)
 	}
-	reports := result.Preflight.HelperExecutionReports()
+	reports := summary.HelperExecutionReports()
 	if got, want := len(reports), 1; got != want {
 		t.Fatalf("helper reports = %d, want %d: %#v", got, want, reports)
 	}
@@ -864,7 +875,7 @@ where p.p_brand = 'Brand#23'
 	}
 }
 
-func TestPreflightRewriteInspectionRecordsDurations(t *testing.T) {
+func TestPreflightRewriteInspectionRecordsNoActiveDurations(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
 			Rownums: []qsbridge.QuantaRownum{1},
@@ -885,18 +896,8 @@ having c > (
 	if err != nil {
 		t.Fatalf("preflight rewrites: %v", err)
 	}
-	if result.Preflight.Total == 0 {
-		t.Fatalf("preflight summary total = 0")
-	}
-	var summed time.Duration
-	for _, rewrite := range result.Preflight.Rewrites {
-		if rewrite.Duration < 0 {
-			t.Fatalf("rewrite duration = %s", rewrite.Duration)
-		}
-		summed += rewrite.Duration
-	}
-	if result.Preflight.Duration != summed {
-		t.Fatalf("summary duration = %s, want %s", result.Preflight.Duration, summed)
+	if result.Preflight.Total != 0 || result.Preflight.Duration != 0 || len(result.Preflight.Rewrites) != 0 {
+		t.Fatalf("preflight summary = %#v, want no active rewrite timing", result.Preflight)
 	}
 }
 

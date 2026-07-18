@@ -23,12 +23,13 @@ type SQLRuntime struct {
 
 // SQLExecutionResult captures each stage from SQL planning through runtime execution.
 type SQLExecutionResult struct {
-	Prepared     qsbridge.PreparedPlan
-	Request      qsbridge.ExecutionRequest
-	Intermediate qsbridge.QuantaIntermediateQuery
-	Runtime      ExecutionResult
-	Diagnostics  qsbridge.DiagnosticSet
-	Preflight    PreflightRewriteSummary
+	Prepared         qsbridge.PreparedPlan
+	Request          qsbridge.ExecutionRequest
+	Intermediate     qsbridge.QuantaIntermediateQuery
+	Runtime          ExecutionResult
+	Diagnostics      qsbridge.DiagnosticSet
+	NativeSubqueries NativeSubqueryPreparationSummary
+	Preflight        PreflightRewriteSummary
 }
 
 // SQLInspectionResult captures SQL planning, lowering, and runtime inspection without execution.
@@ -70,39 +71,43 @@ func (r SQLRuntime) Plan(sql string) qsbridge.PlanResult {
 
 // ExecuteSQL prepares, lowers, and executes SQL through the runtime environment.
 func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
-	preflight, err := r.applyPreflightRewrites(ctx, sql, options, values...)
-	if err != nil || preflight.Diagnostics.BlocksNative() {
-		return SQLExecutionResult{Diagnostics: preflight.Diagnostics, Preflight: preflight.Preflight}, err
-	}
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
-	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: preflight.SQL, Optimization: preflight.Optimization}, options, values...)
-	request = applyPreflightPlanningState(request, preflight)
+	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
+	request, nativeSubqueries, nativeSubqueryDiagnostics, err := r.materializeCorrelatedAggregatePredicates(ctx, request, values...)
+	if err != nil || nativeSubqueryDiagnostics.BlocksNative() {
+		return SQLExecutionResult{
+			Prepared:         request.Bound.Prepared,
+			Request:          request,
+			Diagnostics:      nativeSubqueryDiagnostics,
+			NativeSubqueries: nativeSubqueries,
+		}, err
+	}
 	prepared = request.Bound.Prepared
 	request, scalarDiagnostics, err := r.materializeScalarSubqueries(ctx, request)
 	if err != nil || scalarDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
-			Prepared:    request.Bound.Prepared,
-			Request:     request,
-			Diagnostics: scalarDiagnostics,
-			Preflight:   preflight.Preflight,
+			Prepared:         request.Bound.Prepared,
+			Request:          request,
+			Diagnostics:      scalarDiagnostics,
+			NativeSubqueries: nativeSubqueries,
 		}, err
 	}
 	var existsGate existsSubqueryGateState
 	request, existsGate, existsDiagnostics, err := r.materializeExistsSubqueryGates(ctx, request)
 	if err != nil || existsDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
-			Prepared:    request.Bound.Prepared,
-			Request:     request,
-			Diagnostics: existsDiagnostics,
-			Preflight:   preflight.Preflight,
+			Prepared:         request.Bound.Prepared,
+			Request:          request,
+			Diagnostics:      existsDiagnostics,
+			NativeSubqueries: nativeSubqueries,
 		}, err
 	}
 	prepared = request.Bound.Prepared
 	result := SQLExecutionResult{
-		Prepared:    prepared,
-		Request:     request,
-		Diagnostics: append(qsbridge.DiagnosticSet(nil), request.Diagnostics...),
-		Preflight:   preflight.Preflight,
+		Prepared:         prepared,
+		Request:          request,
+		Diagnostics:      append(qsbridge.DiagnosticSet(nil), request.Diagnostics...),
+		NativeSubqueries: nativeSubqueries,
 	}
 	if result.Diagnostics.BlocksNative() {
 		if r.EnableFilterExpressions && prepared.Kind == qsbridge.QueryKindSelect && request.Bound.Prepared.Query.Kind == qsbridge.QueryKindSelect {
@@ -116,7 +121,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			if result.Diagnostics.BlocksNative() {
 				return result, nil
 			}
-			runtimeRequest := applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight)
+			runtimeRequest := applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates)
 			if existsGate.EmptyCandidateSet {
 				runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 			}
@@ -138,7 +143,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		if result.Diagnostics.BlocksNative() {
 			return result, nil
 		}
-		runtimeResult, err := r.ExecutePrepared(ctx, applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight))
+		runtimeResult, err := r.ExecutePrepared(ctx, applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates))
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 		return result, err
@@ -157,7 +162,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 
-	runtimeRequest := applyPreflightRuntimeState(NewSQLExecutionRequest(intermediate, request), preflight)
+	runtimeRequest := applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates)
 	if existsGate.EmptyCandidateSet {
 		runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 	}
@@ -167,22 +172,13 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	return result, err
 }
 
-func applyPreflightPlanningState(request qsbridge.ExecutionRequest, preflight PreflightRewriteResult) qsbridge.ExecutionRequest {
-	if preflight.ReplacementExpr == nil && len(preflight.NativePredicates.CorrelatedAggregate) == 0 {
+func applyNativeSubqueryPlanningState(request qsbridge.ExecutionRequest, query qsbridge.QueryIR, optimization qsbridge.OptimizationTrace) qsbridge.ExecutionRequest {
+	if len(query.Subqueries) == len(request.Bound.Prepared.Query.Subqueries) && len(optimization.Rewrites) == 0 && len(optimization.Diagnostics) == 0 {
 		return request
 	}
-	query := request.Bound.Prepared.Query
-	if preflight.ReplacementExpr != nil {
-		query.Predicates = append(append([]qsbridge.Predicate(nil), query.Predicates...), qsbridge.Predicate{
-			Expr:      preflight.ReplacementExpr,
-			Placement: qsbridge.PredicateResidualScan,
-			Scope:     qsbridge.PredicateScopeWhere,
-		})
-	}
-	query.Subqueries = removeAppliedPreflightSubqueries(query.Subqueries)
 	logical := qsbridge.BuildLogicalPlan(query)
 	physical := qsbridge.BuildPhysicalPlan(logical, request.Bound.Prepared.Scope)
-	inspection := qsbridge.InspectOptimizedQuery(query, preflight.Optimization, request.Bound.Prepared.Scope)
+	inspection := qsbridge.InspectOptimizedQuery(query, optimization, request.Bound.Prepared.Scope)
 	request.Bound.Prepared.Query = query
 	request.Bound.Prepared.Logical = logical
 	request.Bound.Prepared.Physical = physical
@@ -206,11 +202,11 @@ func applyPreflightPlanningState(request qsbridge.ExecutionRequest, preflight Pr
 	return request
 }
 
-func applyPreflightRuntimeState(request ExecutionRequest, preflight PreflightRewriteResult) ExecutionRequest {
-	if len(preflight.NativePredicates.CorrelatedAggregate) == 0 {
+func applyNativeSubqueryRuntimeState(request ExecutionRequest, predicates NativePredicateSet) ExecutionRequest {
+	if len(predicates.CorrelatedAggregate) == 0 {
 		return request
 	}
-	request.NativePredicates.CorrelatedAggregate = append(request.NativePredicates.CorrelatedAggregate, preflight.NativePredicates.CorrelatedAggregate...)
+	request.NativePredicates.CorrelatedAggregate = append(request.NativePredicates.CorrelatedAggregate, predicates.CorrelatedAggregate...)
 	request.Materialization.ProjectionFields = appendNativePredicateProjectionFields(request.Materialization.ProjectionFields, request.NativePredicates)
 	return request
 }

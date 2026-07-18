@@ -106,42 +106,27 @@ type q17PartThreshold struct {
 
 func correlatedAverageRewriteTrace() qsbridge.OptimizationTrace {
 	trace := qsbridge.NewOptimizationTrace()
-	trace.Add(qsbridge.RewriteAppliedRecord(
-		qsbridge.RewriteCorrelatedAggregatePreflight,
-		"correlated aggregate subquery intent is not planner-native yet; expanded average quantity subquery into per-key threshold predicates before native planning",
-		"predicate(correlated_aggregate_subquery)",
-		"predicate(disjunction(per_key_thresholds))",
-	))
+	trace.Add(correlatedAverageNativeOptimizationRecord(nil))
 	return trace
 }
 
-func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, qsbridge.Expr, NativePredicateSet, *PreflightRewriteExpressionReport, []PreflightHelperExecutionRequestReport, error, bool) {
-	match, ok := r.correlatedAverageQuantityRewriteMatch(sql)
-	if !ok {
-		return "", nil, qsbridge.OptimizationTrace{}, nil, NativePredicateSet{}, nil, nil, nil, false
-	}
-	descriptor := match.Descriptor
-	brand, container, ok := match.requiredPartFilters()
-	if !ok {
-		return "", qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average rewrite requires part brand and container filters")}, qsbridge.OptimizationTrace{}, nil, NativePredicateSet{}, nil, nil, nil, true
-	}
-	partSeeds, diagnostics, partKeyReports, err := r.correlatedAveragePartKeySeeds(ctx, descriptor.OuterPart, brand, container, options, values...)
-	helperReports := append([]PreflightHelperExecutionRequestReport(nil), partKeyReports...)
-	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, NativePredicateSet{}, nil, helperReports, err, true
-	}
-	thresholds, diagnostics, thresholdReports, err := r.correlatedAverageThresholdsForSeeds(ctx, partSeeds, descriptor.Factor, options, values...)
-	helperReports = append(helperReports, thresholdReports...)
-	if err != nil || diagnostics.BlocksNative() {
-		return "", diagnostics, qsbridge.OptimizationTrace{}, nil, NativePredicateSet{}, nil, helperReports, err, true
-	}
-	nativePredicate := correlatedAverageNativePredicate(descriptor, thresholds)
-	report := correlatedAverageNativePredicateExpressionReport(nativePredicate)
-	return sql, nil, correlatedAverageRewriteTrace(), nil, NativePredicateSet{CorrelatedAggregate: []CorrelatedAggregatePredicate{nativePredicate}}, &report, helperReports, nil, true
+func correlatedAverageNativeOptimizationTrace(predicate CorrelatedAggregatePredicate) qsbridge.OptimizationTrace {
+	trace := qsbridge.NewOptimizationTrace()
+	trace.Add(correlatedAverageNativeOptimizationRecord([]qsbridge.FieldRef{predicate.KeyField, predicate.ValueField}))
+	return trace
 }
 
-func (r SQLRuntime) correlatedAverageQuantityRewriteMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
-	return r.correlatedAverageQuantityTypedMatch(sql)
+func correlatedAverageNativeOptimizationRecord(fields []qsbridge.FieldRef) qsbridge.RewriteRecord {
+	return qsbridge.RewriteRecord{
+		Rule:     qsbridge.RewriteCorrelatedAggregateNativePredicate,
+		Status:   qsbridge.RewriteApplied,
+		Category: qsbridge.RewriteCategoryPhysical,
+		Impact:   qsbridge.RewriteImpactPhysicalShape,
+		Reason:   "correlated aggregate subquery intent lowered into executor-owned native predicate metadata",
+		Before:   "subquery_intent(correlated_aggregate)",
+		After:    "native_predicate(correlated_aggregate_threshold)",
+		Fields:   append([]qsbridge.FieldRef(nil), fields...),
+	}
 }
 
 func (r SQLRuntime) correlatedAverageQuantityRewriteDescriptor(sql string) (*PreflightRewriteDescriptorSummary, bool) {
@@ -155,26 +140,56 @@ func (r SQLRuntime) correlatedAverageQuantityRewriteDescriptor(sql string) (*Pre
 
 func (r SQLRuntime) correlatedAverageQuantityTypedMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
 	plan := r.Plan(sql)
-	for _, intent := range plan.Query.Subqueries {
-		if intent.Kind != qsbridge.SubqueryIntentCorrelatedAggregate || intent.CorrelatedAggregate == nil {
-			continue
+	return correlatedAverageQuantityMatchFromQuery(sql, plan.Query)
+}
+
+func correlatedAverageQuantityMatchFromQuery(sql string, query qsbridge.QueryIR) (correlatedAverageQuantitySQLMatch, bool) {
+	for _, intent := range query.Subqueries {
+		if match, ok := correlatedAverageQuantityMatchFromIntent(sql, query, intent); ok {
+			return match, true
 		}
-		descriptor, ok := correlatedAverageQuantityDescriptorFromIntent(sql, *intent.CorrelatedAggregate)
-		if !ok {
-			continue
-		}
-		brand, container, ok := correlatedAverageQuantityFilterValues(plan.Query, intent.CorrelatedAggregate.RequiredFilterFields)
-		if !ok {
-			continue
-		}
-		return correlatedAverageQuantitySQLMatch{
-			Descriptor:           descriptor,
-			PartBrand:            brand,
-			PartContainer:        container,
-			RequiredFiltersFound: true,
-		}, true
 	}
 	return correlatedAverageQuantitySQLMatch{}, false
+}
+
+func correlatedAverageQuantityMatchFromIntent(sql string, query qsbridge.QueryIR, intent qsbridge.SubqueryPlanIntent) (correlatedAverageQuantitySQLMatch, bool) {
+	if intent.Kind != qsbridge.SubqueryIntentCorrelatedAggregate || intent.CorrelatedAggregate == nil {
+		return correlatedAverageQuantitySQLMatch{}, false
+	}
+	descriptor, ok := correlatedAverageQuantityDescriptorFromIntent(sql, *intent.CorrelatedAggregate)
+	if !ok {
+		return correlatedAverageQuantitySQLMatch{}, false
+	}
+	brand, container, ok := correlatedAverageQuantityFilterValues(query, intent.CorrelatedAggregate.RequiredFilterFields)
+	if !ok {
+		return correlatedAverageQuantitySQLMatch{}, false
+	}
+	return correlatedAverageQuantitySQLMatch{
+		Descriptor:           descriptor,
+		PartBrand:            brand,
+		PartContainer:        container,
+		RequiredFiltersFound: true,
+	}, true
+}
+
+func (r SQLRuntime) correlatedAverageNativePredicateForMatch(ctx context.Context, match correlatedAverageQuantitySQLMatch, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (CorrelatedAggregatePredicate, []PreflightHelperExecutionRequestReport, qsbridge.OptimizationTrace, qsbridge.DiagnosticSet, error) {
+	descriptor := match.Descriptor
+	brand, container, ok := match.requiredPartFilters()
+	if !ok {
+		return CorrelatedAggregatePredicate{}, nil, qsbridge.OptimizationTrace{}, qsbridge.DiagnosticSet{qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCorrelatedAggregateSubquery, qsbridge.PhasePlan, "correlated average native predicate requires part brand and container filters")}, nil
+	}
+	partSeeds, diagnostics, partKeyReports, err := r.correlatedAveragePartKeySeeds(ctx, descriptor.OuterPart, brand, container, options, values...)
+	helperReports := append([]PreflightHelperExecutionRequestReport(nil), partKeyReports...)
+	if err != nil || diagnostics.BlocksNative() {
+		return CorrelatedAggregatePredicate{}, helperReports, qsbridge.OptimizationTrace{}, diagnostics, err
+	}
+	thresholds, diagnostics, thresholdReports, err := r.correlatedAverageThresholdsForSeeds(ctx, partSeeds, descriptor.Factor, options, values...)
+	helperReports = append(helperReports, thresholdReports...)
+	if err != nil || diagnostics.BlocksNative() {
+		return CorrelatedAggregatePredicate{}, helperReports, qsbridge.OptimizationTrace{}, diagnostics, err
+	}
+	predicate := correlatedAverageNativePredicate(descriptor, thresholds)
+	return predicate, helperReports, correlatedAverageNativeOptimizationTrace(predicate), nil, nil
 }
 
 func correlatedAverageQuantityDescriptorFromIntent(sql string, intent qsbridge.CorrelatedAggregateSubqueryIntent) (correlatedAverageQuantityDescriptor, bool) {

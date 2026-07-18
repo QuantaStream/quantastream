@@ -155,11 +155,8 @@ having c > (
 	if got, want := len(result.Optimization.Rewrites), 0; got != want {
 		t.Fatalf("rewrite count = %d, want %d: %#v", got, want, result.Optimization.Rewrites)
 	}
-	if result.Preflight.Total != 1 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 1 {
-		t.Fatalf("preflight summary = %#v, want one skipped correlated rewrite", result.Preflight)
-	}
-	if result.Preflight.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight || result.Preflight.Rewrites[0].Applied {
-		t.Fatalf("first preflight inspection = %#v, want skipped correlated rewrite", result.Preflight.Rewrites[0])
+	if result.Preflight.Total != 0 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 0 || len(result.Preflight.Rewrites) != 0 {
+		t.Fatalf("preflight summary = %#v, want no active SQL rewrite work", result.Preflight)
 	}
 }
 
@@ -185,8 +182,8 @@ having c > (
 	if err != nil {
 		t.Fatalf("execute sql: %v", err)
 	}
-	if result.Preflight.Total != 1 || result.Preflight.Applied != 0 || result.Preflight.Skipped != 1 {
-		t.Fatalf("preflight summary = %#v, want scalar materialization outside preflight", result.Preflight)
+	if result.Preflight.Total != 0 {
+		t.Fatalf("preflight summary = %#v, want no SQL rewrite preflight work", result.Preflight)
 	}
 	if got := result.Preflight.HelperExecutionReports(); len(got) != 0 {
 		t.Fatalf("helper reports = %#v, want none for typed scalar materialization", got)
@@ -233,8 +230,11 @@ where p.p_brand = 'Brand#23'
 	if result.Runtime.Count != 3 {
 		t.Fatalf("runtime count = %d, want fake executor result count 3", result.Runtime.Count)
 	}
-	if result.Preflight.Applied != 1 || result.Preflight.Skipped != 0 {
-		t.Fatalf("preflight summary = %#v, want correlated aggregate native predicate applied", result.Preflight)
+	if result.Preflight.Total != 0 {
+		t.Fatalf("preflight summary = %#v, want no SQL rewrite preflight work", result.Preflight)
+	}
+	if result.NativeSubqueries.CorrelatedAggregates != 1 {
+		t.Fatalf("native subquery summary = %#v, want one correlated aggregate", result.NativeSubqueries)
 	}
 	if result.Prepared.SQL != query {
 		t.Fatalf("prepared SQL = %q, want original SQL", result.Prepared.SQL)
@@ -255,6 +255,9 @@ where p.p_brand = 'Brand#23'
 	if got, want := len(gotRequest.NativePredicates.CorrelatedAggregate), 1; got != want {
 		t.Fatalf("runtime native correlated aggregate predicates = %d, want %d", got, want)
 	}
+	if got, want := len(result.NativeSubqueries.HelperExecutionReports()), 2; got != want {
+		t.Fatalf("native subquery helper reports = %d, want %d", got, want)
+	}
 	native := gotRequest.NativePredicates.CorrelatedAggregate[0]
 	if native.KeyField.Name != "p_partkey" || native.ValueField.Name != "l_quantity" || native.Operator != qsbridge.BinaryOpLess {
 		t.Fatalf("runtime native predicate = %#v", native)
@@ -264,7 +267,7 @@ where p.p_brand = 'Brand#23'
 	}
 }
 
-func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
+func TestSQLRuntimeNativeCorrelatedAggregateTraceIsPlannerVisible(t *testing.T) {
 	trace := qsbridge.NewOptimizationTrace()
 	trace = mergeRuntimeOptimizationTrace(trace, correlatedAverageRewriteTrace())
 
@@ -274,8 +277,8 @@ func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
 	if got, want := len(trace.Rewrites), 1; got != want {
 		t.Fatalf("rewrite count = %d, want %d: %#v", got, want, trace.Rewrites)
 	}
-	if trace.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight || trace.Rewrites[0].Status != qsbridge.RewriteApplied {
-		t.Fatalf("rewrite = %#v, want correlated aggregate preflight applied", trace.Rewrites[0])
+	if trace.Rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregateNativePredicate || trace.Rewrites[0].Status != qsbridge.RewriteApplied {
+		t.Fatalf("rewrite = %#v, want correlated aggregate native predicate applied", trace.Rewrites[0])
 	}
 
 	runtime := newTestSQLRuntime(t)
@@ -292,7 +295,7 @@ func TestSQLRuntimePreflightRewriteTracesArePlannerVisible(t *testing.T) {
 	if got, want := len(rewrites), 1; got != want {
 		t.Fatalf("prepared rewrites = %d, want %d: %#v", got, want, rewrites)
 	}
-	if rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregatePreflight {
+	if rewrites[0].Rule != qsbridge.RewriteCorrelatedAggregateNativePredicate {
 		t.Fatalf("prepared rewrite rules = %#v", rewrites)
 	}
 }

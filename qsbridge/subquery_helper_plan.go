@@ -168,7 +168,7 @@ func fallbackSubqueryHelperPlan(intent SubqueryPlanIntent) (SubqueryHelperPlan, 
 			Inputs:             []string{innerKey, innerValue},
 			Outputs:            outputs,
 			Materialization:    "per-key aggregate threshold map",
-			BitmapNativeTarget: "aggregate-threshold helper kernel feeding bitmap predicate branches",
+			BitmapNativeTarget: "aggregate-threshold kernel feeding native correlated aggregate predicate thresholds",
 		}, true
 	case SubqueryIntentCorrelatedMembership:
 		if intent.CorrelatedMembership == nil {

@@ -144,6 +144,7 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 		"native_predicate.go",
 		"native_projection_capability.go",
 		"native_projection_materialization.go",
+		"native_subquery_preparation.go",
 		"relationship_tuple_rowset.go",
 		"relationship_vector_reader.go",
 		"scalar_subquery_materialization.go":
