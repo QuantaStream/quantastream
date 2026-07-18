@@ -324,6 +324,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 	standardFileCount := 0
 	bsiFileCount := 0
 	ignoredFieldCount := 0
+	manifestBuilder := newBitmapShardManifestBuilder(m.dataDir)
 
 	walkStart := time.Now()
 	err := filepath.Walk(baseDir,
@@ -402,6 +403,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				if _, ok := fragMap[bf.IndexName][bf.FieldName][int64(-1)]; !ok {
 					fragMap[bf.IndexName][bf.FieldName][int64(-1)] = make(map[int64]*BitmapFragment)
 				}
+				manifestBuilder.addBSIFile(path, info, bf.IndexName, bf.FieldName, bf.Time, bitSliceIndex)
 				if existFrag, ok := fragMap[bf.IndexName][bf.FieldName][int64(-1)][bf.Time.UnixNano()]; !ok {
 					if bitSliceIndex == -1 {
 						err := fmt.Errorf("readBitmapFiles: Should not be here bitslice must be zero here")
@@ -453,6 +455,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				if _, ok := fragMap[bf.IndexName][bf.FieldName][rID]; !ok {
 					fragMap[bf.IndexName][bf.FieldName][rID] = make(map[int64]*BitmapFragment)
 				}
+				manifestBuilder.addStandardFile(path, info, bf.IndexName, bf.FieldName, rID, bf.Time)
 				if _, ok := fragMap[bf.IndexName][bf.FieldName][rID][bf.Time.UnixNano()]; !ok {
 					bf.BitData = [][]byte{data}
 					fragMap[bf.IndexName][bf.FieldName][rID][bf.Time.UnixNano()] = bf
@@ -470,10 +473,18 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 		u.Errorf("filepath.Walk - %v", err)
 		return err
 	}
+	manifest := manifestBuilder.manifest(time.Now().UTC(), "startup_slow_scan")
+	manifestWriteStart := time.Now()
+	manifestWriteElapsed := time.Duration(0)
+	if err := m.saveBitmapShardManifest(manifest); err != nil {
+		u.Warnf("BitmapIndex startup manifest write failed: %v", err)
+	} else {
+		manifestWriteElapsed = time.Since(manifestWriteStart)
+	}
 
 	if len(fragMap) == 0 {
-		fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d fragments=0 walk_elapsed=%v enqueue_elapsed=0s flush_elapsed=0s total_elapsed=%v\n",
-			baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, walkElapsed, time.Since(start))
+		fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_entries=%d manifest_write_elapsed=%v fragments=0 walk_elapsed=%v enqueue_elapsed=0s flush_elapsed=0s total_elapsed=%v\n",
+			baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifest.Stats.TotalEntries, manifestWriteElapsed, walkElapsed, time.Since(start))
 		return nil
 	}
 
@@ -506,8 +517,8 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 		return err
 	}
 	flushElapsed := time.Since(flushStart)
-	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
-		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
+	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_entries=%d manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
+		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifest.Stats.TotalEntries, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
 	return nil
 }
 

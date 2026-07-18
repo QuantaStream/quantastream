@@ -1,0 +1,220 @@
+package server
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"gopkg.in/yaml.v2"
+)
+
+const (
+	// BitmapShardManifestFileName is the persisted bitmap startup index.
+	BitmapShardManifestFileName = "BITMAP_SHARD_MANIFEST"
+	bitmapShardManifestVersion  = 1
+	bitmapShardKindStandard     = "standard"
+	bitmapShardKindBSI          = "bsi"
+)
+
+// BitmapShardManifest records logical bitmap artifacts discovered on disk.
+//
+// The manifest is an acceleration structure. Catalog metadata and persisted
+// bitmap/KV files remain authoritative; a missing or stale manifest must be
+// rebuilt from disk rather than trusted blindly.
+type BitmapShardManifest struct {
+	Version     int                        `yaml:"version"`
+	GeneratedAt time.Time                  `yaml:"generated_at"`
+	Source      string                     `yaml:"source"`
+	Stats       BitmapShardManifestStats   `yaml:"stats"`
+	Entries     []BitmapShardManifestEntry `yaml:"entries"`
+}
+
+// BitmapShardManifestStats summarizes the manifest for startup diagnostics.
+type BitmapShardManifestStats struct {
+	TotalEntries    int `yaml:"total_entries"`
+	StandardEntries int `yaml:"standard_entries"`
+	BSIEntries      int `yaml:"bsi_entries"`
+	TotalFiles      int `yaml:"total_files"`
+	StandardFiles   int `yaml:"standard_files"`
+	BSIFiles        int `yaml:"bsi_files"`
+}
+
+// BitmapShardManifestEntry describes one logical standard bitmap or BSI shard.
+type BitmapShardManifestEntry struct {
+	Table       string                    `yaml:"table"`
+	Field       string                    `yaml:"field"`
+	Kind        string                    `yaml:"kind"`
+	RowIDOrBits int64                     `yaml:"row_id_or_bits"`
+	Shard       string                    `yaml:"shard"`
+	ShardTime   time.Time                 `yaml:"shard_time"`
+	Files       []BitmapShardManifestFile `yaml:"files"`
+}
+
+// BitmapShardManifestFile describes one physical file backing a logical shard.
+type BitmapShardManifestFile struct {
+	RelativePath string    `yaml:"relative_path"`
+	Role         string    `yaml:"role"`
+	BitSlice     int       `yaml:"bit_slice,omitempty"`
+	SizeBytes    int64     `yaml:"size_bytes"`
+	ModTime      time.Time `yaml:"mod_time"`
+}
+
+type bitmapShardManifestBuilder struct {
+	dataDir string
+	entries map[string]*BitmapShardManifestEntry
+}
+
+func newBitmapShardManifestBuilder(dataDir string) *bitmapShardManifestBuilder {
+	return &bitmapShardManifestBuilder{
+		dataDir: dataDir,
+		entries: make(map[string]*BitmapShardManifestEntry),
+	}
+}
+
+func (b *bitmapShardManifestBuilder) addStandardFile(path string, info os.FileInfo, table, field string, rowID int64, shardTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindStandard, rowID, shardTime)
+	entry.Files = append(entry.Files, BitmapShardManifestFile{
+		RelativePath: b.relativePath(path),
+		Role:         "bitmap",
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+	})
+}
+
+func (b *bitmapShardManifestBuilder) addBSIFile(path string, info os.FileInfo, table, field string, shardTime time.Time, bitSliceIndex int) {
+	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
+	role := "bit_slice"
+	if bitSliceIndex == 0 {
+		role = "existence"
+	}
+	entry.Files = append(entry.Files, BitmapShardManifestFile{
+		RelativePath: b.relativePath(path),
+		Role:         role,
+		BitSlice:     bitSliceIndex,
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+	})
+}
+
+func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source string) BitmapShardManifest {
+	if generatedAt.IsZero() {
+		generatedAt = time.Now()
+	}
+	manifest := BitmapShardManifest{
+		Version:     bitmapShardManifestVersion,
+		GeneratedAt: generatedAt.UTC(),
+		Source:      source,
+		Entries:     make([]BitmapShardManifestEntry, 0, len(b.entries)),
+	}
+	for _, entry := range b.entries {
+		sort.SliceStable(entry.Files, func(i, j int) bool {
+			if entry.Files[i].BitSlice != entry.Files[j].BitSlice {
+				return entry.Files[i].BitSlice < entry.Files[j].BitSlice
+			}
+			return entry.Files[i].RelativePath < entry.Files[j].RelativePath
+		})
+		manifest.Entries = append(manifest.Entries, *entry)
+	}
+	sort.SliceStable(manifest.Entries, func(i, j int) bool {
+		left := manifest.Entries[i]
+		right := manifest.Entries[j]
+		if left.Table != right.Table {
+			return left.Table < right.Table
+		}
+		if left.Field != right.Field {
+			return left.Field < right.Field
+		}
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.RowIDOrBits != right.RowIDOrBits {
+			return left.RowIDOrBits < right.RowIDOrBits
+		}
+		return left.Shard < right.Shard
+	})
+	for _, entry := range manifest.Entries {
+		manifest.Stats.TotalEntries++
+		manifest.Stats.TotalFiles += len(entry.Files)
+		switch entry.Kind {
+		case bitmapShardKindBSI:
+			manifest.Stats.BSIEntries++
+			manifest.Stats.BSIFiles += len(entry.Files)
+		default:
+			manifest.Stats.StandardEntries++
+			manifest.Stats.StandardFiles += len(entry.Files)
+		}
+	}
+	return manifest
+}
+
+func (b *bitmapShardManifestBuilder) entry(table, field, kind string, rowIDOrBits int64, shardTime time.Time) *BitmapShardManifestEntry {
+	shard := formatShardTime(shardTime)
+	key := fmt.Sprintf("%s/%s/%s/%d/%s", table, field, kind, rowIDOrBits, shard)
+	if entry, ok := b.entries[key]; ok {
+		return entry
+	}
+	entry := &BitmapShardManifestEntry{
+		Table:       table,
+		Field:       field,
+		Kind:        kind,
+		RowIDOrBits: rowIDOrBits,
+		Shard:       shard,
+		ShardTime:   shardTime.UTC(),
+	}
+	b.entries[key] = entry
+	return entry
+}
+
+func (b *bitmapShardManifestBuilder) relativePath(path string) string {
+	rel, err := filepath.Rel(b.dataDir, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
+func (m *BitmapIndex) bitmapShardManifestPath() string {
+	return filepath.Join(m.dataDir, BitmapShardManifestFileName)
+}
+
+func (m *BitmapIndex) saveBitmapShardManifest(manifest BitmapShardManifest) error {
+	if manifest.Version == 0 {
+		manifest.Version = bitmapShardManifestVersion
+	}
+	if manifest.GeneratedAt.IsZero() {
+		manifest.GeneratedAt = time.Now().UTC()
+	}
+	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
+		return fmt.Errorf("create bitmap manifest directory: %w", err)
+	}
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("marshal bitmap shard manifest: %w", err)
+	}
+	path := m.bitmapShardManifestPath()
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write bitmap shard manifest: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace bitmap shard manifest: %w", err)
+	}
+	return nil
+}
+
+func (m *BitmapIndex) loadBitmapShardManifest() (BitmapShardManifest, error) {
+	var manifest BitmapShardManifest
+	data, err := os.ReadFile(m.bitmapShardManifestPath())
+	if os.IsNotExist(err) {
+		return manifest, nil
+	}
+	if err != nil {
+		return manifest, fmt.Errorf("read bitmap shard manifest: %w", err)
+	}
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return manifest, fmt.Errorf("parse bitmap shard manifest: %w", err)
+	}
+	return manifest, nil
+}
