@@ -154,6 +154,49 @@ TPCH_DDL_MODE=admin ./create-tpch.sh
 TPCH_DDL_MODE=sql QUANTA_PORT=4000 ./create-tpch.sh
 ```
 
+## Load Data Into Stock MySQL
+
+Use `load-mysql-tpch.sh` to load the same generated `.tbl` files into a
+caller-managed MySQL instance for compatibility and benchmark comparison work:
+
+```bash
+cd tpc-h-benchmark
+MYSQL_HOST=127.0.0.1 \
+MYSQL_PORT=3306 \
+MYSQL_USER=root \
+MYSQL_PASSWORD='secret' \
+MYSQL_DATABASE=tpch \
+  ./load-mysql-tpch.sh local/data/sf-0.01
+```
+
+The loader creates the standard TPC-H tables, loads data with
+`LOAD DATA LOCAL INFILE`, creates indexes, and validates counts against the
+`.tbl` files. The MySQL client and server must both allow local infile loading.
+If the server reports `local_infile=OFF`, enable it before loading.
+
+`MYSQL_INDEX_PROFILE` controls the MySQL index posture:
+
+```bash
+MYSQL_INDEX_PROFILE=benchmark  # default: primary keys plus common join/filter indexes
+MYSQL_INDEX_PROFILE=pk         # primary keys only
+MYSQL_INDEX_PROFILE=none       # no indexes
+```
+
+The selected profile is benchmark evidence, so record it beside any timing
+claim. After loading MySQL and starting a matching QuantaStream target, compare
+the two systems through SQLRunner:
+
+```bash
+cd ../sqlrunner
+MYSQL_DSN='root:secret@tcp(127.0.0.1:3306)/tpch' \
+TARGET_ENGINE=inabox-standard \
+TARGET_HOST=127.0.0.1 \
+TARGET_PORT=4000 \
+SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
+BENCHMARK_RUNS=3 \
+  ./run-mysql-benchmark-compare.sh
+```
+
 ## Validate Loaded Data
 
 TPC-H SQL roadmap suites live under `tpc-h-benchmark/sqltests` so the benchmark

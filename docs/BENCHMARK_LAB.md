@@ -118,8 +118,16 @@ captures benchmark reports for stock MySQL and the selected QuantaStream target,
 then renders a comparison with MySQL as the baseline:
 
 ```bash
+cd tpc-h-benchmark
+MYSQL_HOST=mysql-host \
+MYSQL_USER=bench \
+MYSQL_PASSWORD='secret' \
+MYSQL_DATABASE=tpch \
+MYSQL_INDEX_PROFILE=benchmark \
+  ./load-mysql-tpch.sh local/data/sf-0.01
+
 cd sqlrunner
-MYSQL_DSN='user:pass@tcp(mysql-host:3306)/tpch' \
+MYSQL_DSN='bench:secret@tcp(mysql-host:3306)/tpch' \
 TARGET_ENGINE=inabox-standard \
 TARGET_HOST=127.0.0.1 \
 TARGET_PORT=4000 \
