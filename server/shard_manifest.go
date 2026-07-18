@@ -81,10 +81,10 @@ type BitmapShardManifestObservation struct {
 
 func useBitmapShardManifestEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_USE_SHARD_MANIFEST"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+	case "0", "false", "no", "off":
 		return false
+	default:
+		return true
 	}
 }
 

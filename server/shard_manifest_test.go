@@ -301,6 +301,10 @@ func TestObserveBitmapShardManifestReportsInvalidStats(t *testing.T) {
 }
 
 func TestUseBitmapShardManifestEnabled(t *testing.T) {
+	t.Setenv("QUANTASTREAM_USE_SHARD_MANIFEST", "")
+	if !useBitmapShardManifestEnabled() {
+		t.Fatal("expected empty setting to enable manifest startup by default")
+	}
 	t.Setenv("QUANTASTREAM_USE_SHARD_MANIFEST", "true")
 	if !useBitmapShardManifestEnabled() {
 		t.Fatal("expected true to enable manifest startup")
