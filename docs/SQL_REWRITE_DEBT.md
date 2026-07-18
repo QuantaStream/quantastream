@@ -28,6 +28,12 @@ typed parent keys and rownums. Inspection can tell the execution story as scalar
 materialization, parent-key lookup, and aggregate-threshold lookup while the
 outer correlated SQL rewrite is still being retired.
 
+The Q17-style correlated aggregate descriptor now carries typed table/alias/field
+references for the outer value, inner aggregate value, correlated keys, and
+required parent filters. The recognizer is still a temporary SQL-pattern match,
+but descriptor reports and helper intent are derived from typed fields rather
+than ad hoc qualified-name strings.
+
 ## Guardrails
 
 - Every entry returned by `SQLRuntime.preflightRewriteRules()` must have an

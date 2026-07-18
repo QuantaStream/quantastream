@@ -26,14 +26,17 @@ where p.p_brand = 'Brand#45'
 	if descriptor.OuterLineitem != "l" || descriptor.InnerLineitem != "l2" || descriptor.OuterPart != "p" || descriptor.Factor != 0.2 {
 		t.Fatalf("descriptor = %#v", descriptor)
 	}
-	if descriptor.AggregateFunction != "avg" || descriptor.OuterQuantityRef != "l.l_quantity" || descriptor.InnerQuantityRef != "l2.l_quantity" {
+	if descriptor.AggregateFunction != "avg" || descriptor.OuterQuantity.qualifiedName() != "l.l_quantity" || descriptor.InnerQuantity.qualifiedName() != "l2.l_quantity" {
 		t.Fatalf("descriptor aggregate refs = %#v", descriptor)
 	}
-	if descriptor.InnerCorrelatedKey != "l2.l_partkey" || descriptor.OuterCorrelatedKey != "p.p_partkey" {
+	if descriptor.InnerQuantity.Table != "lineitem" || descriptor.OuterQuantity.Table != "lineitem" || descriptor.OuterKey.Table != "part" {
+		t.Fatalf("descriptor typed fields = %#v", descriptor)
+	}
+	if descriptor.InnerKey.qualifiedName() != "l2.l_partkey" || descriptor.OuterKey.qualifiedName() != "p.p_partkey" {
 		t.Fatalf("descriptor correlated keys = %#v", descriptor)
 	}
-	if len(descriptor.RequiredPartFilters) != 2 || descriptor.RequiredPartFilters[0] != "p.p_brand" || descriptor.RequiredPartFilters[1] != "p.p_container" {
-		t.Fatalf("descriptor required filters = %#v", descriptor.RequiredPartFilters)
+	if got := correlatedQualifiedNames(descriptor.RequiredFilters); len(got) != 2 || got[0] != "p.p_brand" || got[1] != "p.p_container" {
+		t.Fatalf("descriptor required filters = %#v", got)
 	}
 	brand, container, ok := correlatedPartFilters(sql, descriptor.OuterPart)
 	if !ok || brand != "Brand#45" || container != "MED JAR" {

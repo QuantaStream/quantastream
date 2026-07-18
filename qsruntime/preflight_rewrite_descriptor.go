@@ -240,28 +240,26 @@ func (d correlatedAverageQuantityDescriptor) descriptorSummary() PreflightRewrit
 		{Name: "outer_lineitem_alias", Value: d.OuterLineitem},
 		{Name: "inner_lineitem_alias", Value: d.InnerLineitem},
 		{Name: "outer_part_alias", Value: d.OuterPart},
-		{Name: "inner_correlated_key", Value: d.InnerCorrelatedKey},
-		{Name: "outer_correlated_key", Value: d.OuterCorrelatedKey},
+		{Name: "inner_correlated_key", Value: d.InnerKey.qualifiedName()},
+		{Name: "outer_correlated_key", Value: d.OuterKey.qualifiedName()},
 	}
-	for _, filter := range d.RequiredPartFilters {
-		attributes = append(attributes, PreflightRewriteDescriptorAttribute{Name: "required_filter", Value: filter})
+	for _, filter := range d.RequiredFilters {
+		attributes = append(attributes, PreflightRewriteDescriptorAttribute{Name: "required_filter", Value: filter.qualifiedName()})
 	}
 
 	fields := []qsbridge.FieldRef{
-		rewriteDescriptorField(d.OuterQuantityRef, "lineitem"),
-		rewriteDescriptorField(d.InnerQuantityRef, "lineitem"),
-		rewriteDescriptorField(d.InnerCorrelatedKey, "lineitem"),
-		rewriteDescriptorField(d.OuterCorrelatedKey, "part"),
+		d.OuterQuantity.fieldRef(),
+		d.InnerQuantity.fieldRef(),
+		d.InnerKey.fieldRef(),
+		d.OuterKey.fieldRef(),
 	}
-	for _, filter := range d.RequiredPartFilters {
-		fields = append(fields, rewriteDescriptorField(filter, "part"))
-	}
+	fields = append(fields, correlatedFieldRefs(d.RequiredFilters)...)
 
 	parentPlan := correlatedParentKeyHelperPlan(d.OuterPart, "")
 	thresholdPlan := correlatedThresholdHelperPlan(
 		"",
-		[]string{d.InnerCorrelatedKey, d.InnerQuantityRef},
-		[]string{d.OuterCorrelatedKey, "threshold"},
+		[]string{d.InnerKey.qualifiedName(), d.InnerQuantity.qualifiedName()},
+		[]string{d.OuterKey.qualifiedName(), "threshold"},
 	)
 
 	return PreflightRewriteDescriptorSummary{
@@ -283,7 +281,7 @@ func (d correlatedAverageQuantityDescriptor) descriptorSummary() PreflightRewrit
 func (d correlatedAverageQuantityDescriptor) subqueryPlanIntent() qsbridge.SubqueryPlanIntent {
 	helperPlans := []PreflightRewriteHelperPlanDescriptor{
 		correlatedParentKeyHelperPlan(d.OuterPart, ""),
-		correlatedThresholdHelperPlan("", []string{d.InnerCorrelatedKey, d.InnerQuantityRef}, []string{d.OuterCorrelatedKey, "threshold"}),
+		correlatedThresholdHelperPlan("", []string{d.InnerKey.qualifiedName(), d.InnerQuantity.qualifiedName()}, []string{d.OuterKey.qualifiedName(), "threshold"}),
 	}
 	helperIntents := make([]qsbridge.SubqueryHelperIntent, 0, len(helperPlans))
 	for _, helper := range helperPlans {
@@ -295,11 +293,11 @@ func (d correlatedAverageQuantityDescriptor) subqueryPlanIntent() qsbridge.Subqu
 		CorrelatedAggregate: &qsbridge.CorrelatedAggregateSubqueryIntent{
 			AggregateFunction: d.AggregateFunction,
 			Factor:            d.Factor,
-			OuterValueRef:     d.OuterQuantityRef,
-			InnerValueRef:     d.InnerQuantityRef,
-			InnerKeyRef:       d.InnerCorrelatedKey,
-			OuterKeyRef:       d.OuterCorrelatedKey,
-			RequiredFilters:   append([]string(nil), d.RequiredPartFilters...),
+			OuterValueRef:     d.OuterQuantity.qualifiedName(),
+			InnerValueRef:     d.InnerQuantity.qualifiedName(),
+			InnerKeyRef:       d.InnerKey.qualifiedName(),
+			OuterKeyRef:       d.OuterKey.qualifiedName(),
+			RequiredFilters:   correlatedQualifiedNames(d.RequiredFilters),
 			Scope:             qsbridge.PredicateScopeWhere,
 		},
 		HelperIntents: helperIntents,

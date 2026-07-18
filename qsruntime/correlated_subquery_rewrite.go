@@ -12,18 +12,72 @@ import (
 )
 
 type correlatedAverageQuantityDescriptor struct {
-	Start               int
-	End                 int
-	OuterLineitem       string
-	InnerLineitem       string
-	OuterPart           string
-	Factor              float64
-	AggregateFunction   string
-	OuterQuantityRef    string
-	InnerQuantityRef    string
-	InnerCorrelatedKey  string
-	OuterCorrelatedKey  string
-	RequiredPartFilters []string
+	Start             int
+	End               int
+	OuterLineitem     string
+	InnerLineitem     string
+	OuterPart         string
+	Factor            float64
+	AggregateFunction string
+	OuterQuantity     correlatedSubqueryField
+	InnerQuantity     correlatedSubqueryField
+	InnerKey          correlatedSubqueryField
+	OuterKey          correlatedSubqueryField
+	RequiredFilters   []correlatedSubqueryField
+}
+
+type correlatedSubqueryField struct {
+	Table string
+	Alias string
+	Name  string
+	Type  qsbridge.DataType
+}
+
+func correlatedField(table string, alias string, name string, dataType qsbridge.DataType) correlatedSubqueryField {
+	return correlatedSubqueryField{
+		Table: table,
+		Alias: alias,
+		Name:  name,
+		Type:  dataType,
+	}
+}
+
+func (f correlatedSubqueryField) qualifiedName() string {
+	if f.Alias != "" {
+		return f.Alias + "." + f.Name
+	}
+	if f.Table != "" {
+		return f.Table + "." + f.Name
+	}
+	return f.Name
+}
+
+func (f correlatedSubqueryField) fieldRef() qsbridge.FieldRef {
+	return qsbridge.FieldRef{
+		Table: qsbridge.TableInstance{
+			Table: f.Table,
+			Alias: f.Alias,
+		},
+		Name:         f.Name,
+		PhysicalName: f.Name,
+		Type:         f.Type,
+	}
+}
+
+func correlatedQualifiedNames(fields []correlatedSubqueryField) []string {
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.qualifiedName())
+	}
+	return names
+}
+
+func correlatedFieldRefs(fields []correlatedSubqueryField) []qsbridge.FieldRef {
+	refs := make([]qsbridge.FieldRef, 0, len(fields))
+	for _, field := range fields {
+		refs = append(refs, field.fieldRef())
+	}
+	return refs
 }
 
 type q17PartKeySeed struct {
@@ -72,7 +126,7 @@ func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context
 	}
 	branches := make([]string, 0, len(thresholds))
 	for _, threshold := range thresholds {
-		branches = append(branches, fmt.Sprintf("(%s = %d and %s < %s)", descriptor.OuterCorrelatedKey, threshold.PartKey, descriptor.OuterQuantityRef, strconv.FormatFloat(threshold.Threshold, 'g', -1, 64)))
+		branches = append(branches, fmt.Sprintf("(%s = %d and %s < %s)", descriptor.OuterKey.qualifiedName(), threshold.PartKey, descriptor.OuterQuantity.qualifiedName(), strconv.FormatFloat(threshold.Threshold, 'g', -1, 64)))
 	}
 	rewritten := sql[:descriptor.Start] + " and (" + strings.Join(branches, " or ") + ")" + sql[descriptor.End:]
 	return rewritten, nil, correlatedAverageRewriteTrace(), helperReports, nil, true
@@ -93,18 +147,21 @@ func findCorrelatedAverageQuantityPredicate(sql string) (correlatedAverageQuanti
 		return correlatedAverageQuantityDescriptor{}, false
 	}
 	return correlatedAverageQuantityDescriptor{
-		Start:               match[0],
-		End:                 match[1],
-		OuterLineitem:       groups[1],
-		Factor:              factor,
-		AggregateFunction:   "avg",
-		OuterQuantityRef:    groups[1] + ".l_quantity",
-		InnerQuantityRef:    groups[3] + ".l_quantity",
-		InnerLineitem:       groups[3],
-		InnerCorrelatedKey:  groups[3] + ".l_partkey",
-		OuterPart:           groups[6],
-		OuterCorrelatedKey:  groups[6] + ".p_partkey",
-		RequiredPartFilters: []string{groups[6] + ".p_brand", groups[6] + ".p_container"},
+		Start:             match[0],
+		End:               match[1],
+		OuterLineitem:     groups[1],
+		Factor:            factor,
+		AggregateFunction: "avg",
+		OuterQuantity:     correlatedField("lineitem", groups[1], "l_quantity", qsbridge.DataTypeInt),
+		InnerQuantity:     correlatedField("lineitem", groups[3], "l_quantity", qsbridge.DataTypeInt),
+		InnerLineitem:     groups[3],
+		InnerKey:          correlatedField("lineitem", groups[3], "l_partkey", qsbridge.DataTypeInt),
+		OuterPart:         groups[6],
+		OuterKey:          correlatedField("part", groups[6], "p_partkey", qsbridge.DataTypeInt),
+		RequiredFilters: []correlatedSubqueryField{
+			correlatedField("part", groups[6], "p_brand", qsbridge.DataTypeString),
+			correlatedField("part", groups[6], "p_container", qsbridge.DataTypeString),
+		},
 	}, true
 }
 
