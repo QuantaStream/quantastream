@@ -1071,6 +1071,42 @@ func TestParentKeyPreflightExecutesNativeRuntimeStep(t *testing.T) {
 	}
 }
 
+func TestParentKeyNativeStepUsesTypedPayloadNotHelperSQL(t *testing.T) {
+	helper := &testPreflightHelperExecutor{}
+	var gotRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		gotRequest = request
+		return ExecutionResult{RowSet: helperRowSet([]qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: int64(101)},
+		})}, nil
+	})
+	runtime.PreflightHelpers = helper
+
+	request := correlatedParentKeyHelperRequest("p", "Brand#23", "MED BOX", "this is not SQL", qsbridge.ExecutionOptions{})
+	result, err := runtime.executeParentKeyNativeSubqueryStep(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute parent-key native step: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if helper.executions != 0 {
+		t.Fatalf("helper executions = %d, want typed native path", helper.executions)
+	}
+	if gotRequest.SourceIndexes[0] != "part" || gotRequest.ProjectionCount() == 0 || gotRequest.FragmentCount() != 2 {
+		t.Fatalf("native request indexes/projection/fragments = %#v/%d/%d", gotRequest.SourceIndexes, gotRequest.ProjectionCount(), gotRequest.FragmentCount())
+	}
+	if gotRequest.Query.Fragments[0].Field != "p_brand" || gotRequest.Query.Fragments[1].Field != "p_container" {
+		t.Fatalf("fragments = %#v", gotRequest.Query.Fragments)
+	}
+	if result.SQL != "this is not SQL" {
+		t.Fatalf("helper SQL = %q, want preserved debug text", result.SQL)
+	}
+	if result.NativeTrace == nil || result.NativeTrace.ExecutionMode != "native_runtime_parent_key_lookup" || result.NativeTrace.RowCount != 1 {
+		t.Fatalf("native trace = %#v", result.NativeTrace)
+	}
+}
+
 func TestAggregateThresholdPreflightExecutesNativeRuntimeStep(t *testing.T) {
 	helper := &testPreflightHelperExecutor{}
 	var gotRequest ExecutionRequest

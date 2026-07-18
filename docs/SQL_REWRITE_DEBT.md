@@ -10,7 +10,7 @@ architecture.
 
 | Rule | Current SQL shape | Temporary strategy | Helper-plan descriptors | Current regression coverage | Future replacement |
 |---|---|---|---|---|---|
-| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Route parent-key lookup and aggregate-threshold materialization through native subquery step contracts backed by the SQL adapter, then expand the predicate into equivalent per-key threshold branches before native planning. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
+| `correlated_aggregate_preflight` | Correlated aggregate predicates such as `l_quantity < (select factor * avg(l2.l_quantity) ... where l2.l_partkey = p.p_partkey)`. | Route parent-key lookup and aggregate-threshold materialization through native subquery step contracts, then expand the predicate into equivalent per-key threshold branches before native planning. Helper SQL remains as debug/fallback context, not the execution contract for runtime-ready native steps. | `parent_key_lookup`, `aggregate_threshold_lookup` | `qsruntime/sql_runtime_test.go`; inabox-direct TPCH Q17-style probes when present. | Typed correlated aggregate subquery IR lowered by planner-owned aggregate-threshold and semi-join kernels. |
 
 ## Native Promotion Order
 
@@ -20,10 +20,13 @@ parsed as typed expression nodes and materialized into literals inside the
 runtime before bitmap lowering. The parent SQL text is no longer rewritten for
 those shapes, and the old scalar SQL-text rewrite scanner has been deleted.
 
-`parent_key_lookup` and `aggregate_threshold_lookup` still have native-ready
-contracts under `correlated_aggregate_preflight`. Both still delegate to the
-SQL-backed adapter internally, but inspection can now tell the execution story
-as scalar materialization, parent-key lookup, and aggregate-threshold lookup.
+`parent_key_lookup` and `aggregate_threshold_lookup` have native-ready contracts
+under `correlated_aggregate_preflight`. When the runtime is ready, parent-key
+lookup now builds a bound query from its typed payload instead of reparsing the
+helper SQL text, and aggregate-threshold lookup builds its runtime request from
+typed parent keys and rownums. Inspection can tell the execution story as scalar
+materialization, parent-key lookup, and aggregate-threshold lookup while the
+outer correlated SQL rewrite is still being retired.
 
 ## Guardrails
 
@@ -37,11 +40,10 @@ as scalar materialization, parent-key lookup, and aggregate-threshold lookup.
   helper-plan descriptors so non-planner-native subquery intent remains visible
   in diagnostics.
 - Parent-key and aggregate-threshold preflight now route through the native
-  subquery step executor contract before falling back to SQL-backed adapter
-  internals.
+  subquery step executor contract before falling back to SQL-backed helper work
+  when the runtime is not ready for native execution.
 - Helper-plan descriptors now route through injectable execution boundaries
-  with typed scalar, parent-key, and aggregate threshold payloads. The default
-  implementation still delegates to SQL-backed helper work today, but helper
-  SQL is now fallback/debug context rather than the only contract.
+  with typed scalar, parent-key, and aggregate threshold payloads. Helper SQL is
+  fallback/debug context rather than the only contract.
 - Delete temporary rewrite code as soon as the equivalent parser, IR, planner,
   or executor capability makes it eligible for deletion.

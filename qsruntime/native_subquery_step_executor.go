@@ -154,13 +154,71 @@ func (a nativeScalarPreflightAdapter) executeParentKeyLookupNativeStep(ctx conte
 }
 
 func (a nativeScalarPreflightAdapter) parentKeyLookupExecutionRequest() (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
-	service := qsbridge.NewPlanningService(a.Runtime.Planner(), nil)
-	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: a.Request.SQL}, a.Request.Options, a.Request.Values...)
-	diagnostics := append(qsbridge.DiagnosticSet(nil), request.Diagnostics...)
-	if diagnostics.BlocksNative() || prepared.Kind != qsbridge.QueryKindSelect {
+	payload := a.Request.Payload.ParentKeyLookup
+	request, diagnostics, ok := parentKeyLookupExecutionRequest(payload, a.Runtime, a.Request.Options, a.Request.SQL)
+	if !ok || diagnostics.BlocksNative() {
 		return ExecutionRequest{}, diagnostics, false
 	}
-	intermediate, lowerDiagnostics := a.Runtime.Lowerer.LowerExecutionRequest(request)
+	return request, diagnostics, true
+}
+
+func parentKeyLookupExecutionRequest(payload *PreflightParentKeyLookupPayload, runtime SQLRuntime, options qsbridge.ExecutionOptions, sql string) (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
+	if payload == nil || payload.Table == "" || payload.KeyField == "" {
+		return ExecutionRequest{}, helperExecutionDiagnostic(PreflightHelperPlanParentKeyLookup, "parent-key native payload is incomplete"), false
+	}
+	alias := payload.Alias
+	if alias == "" {
+		alias = payload.Table
+	}
+	context := qsbridge.NewBindContext(runtime.Environment.Catalog, runtime.DefaultSchema)
+	predicates := make([]qsbridge.UnboundPredicate, 0, len(payload.Filters))
+	for _, filter := range payload.Filters {
+		if filter.Field == "" {
+			return ExecutionRequest{}, helperExecutionDiagnostic(PreflightHelperPlanParentKeyLookup, "parent-key native filter has no field"), false
+		}
+		predicates = append(predicates, qsbridge.UnboundPredicate{
+			Expr:      qsbridge.UnboundBinary(qsbridge.BinaryOpEqual, qsbridge.UnboundField(alias, filter.Field), qsbridge.UnboundLiteral(qsbridge.ValueString, filter.Value)),
+			Placement: qsbridge.PredicatePushdown,
+			Scope:     qsbridge.PredicateScopeWhere,
+		})
+	}
+	query, diagnostics := qsbridge.BindSelect(context, qsbridge.UnboundSelect{
+		Tables: []qsbridge.UnboundTable{{
+			Name:  payload.Table,
+			Alias: alias,
+		}},
+		Projection: []qsbridge.UnboundProjection{{
+			Expr:  qsbridge.UnboundField(alias, payload.KeyField),
+			Alias: payload.Output,
+			Type:  qsbridge.DataTypeInt,
+		}},
+		Predicates: predicates,
+		OrderBy: []qsbridge.UnboundSort{{
+			Expr:      qsbridge.UnboundField(alias, payload.KeyField),
+			Direction: qsbridge.SortAscending,
+		}},
+		Result: qsbridge.ResultShape{Kind: qsbridge.ResultQuery},
+	})
+	if diagnostics.BlocksNative() {
+		return ExecutionRequest{}, diagnostics, false
+	}
+	prepared := qsbridge.PreparedPlan{
+		SQL:            sql,
+		DefaultSchema:  runtime.DefaultSchema,
+		CatalogVersion: runtime.CatalogVersion,
+		Session:        runtime.Session.Clone(),
+		Scope:          runtime.Scope,
+		Kind:           qsbridge.QueryKindSelect,
+		Query:          query,
+		Diagnostics:    append(qsbridge.DiagnosticSet(nil), diagnostics...),
+		Access:         query.RequiredAccess(),
+		Parameters:     query.RequiredParameters(),
+		ResultColumns:  query.ResultColumns(),
+		Result:         query.Result,
+		Supported:      query.Supported() && !diagnostics.BlocksNative(),
+	}
+	request := prepared.ExecutionRequest(options)
+	intermediate, lowerDiagnostics := runtime.Lowerer.LowerExecutionRequest(request)
 	diagnostics = append(diagnostics, lowerDiagnostics...)
 	if diagnostics.BlocksNative() {
 		return ExecutionRequest{}, diagnostics, false
