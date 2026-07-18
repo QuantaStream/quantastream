@@ -684,6 +684,67 @@ where p.p_brand = 'Brand#23'
 	}
 }
 
+func TestPreflightRewritePrefersTypedCorrelatedAggregateIntent(t *testing.T) {
+	runtime := newTestSQLRuntime(t)
+	runtime.NativeSubquerySteps = q17TypedPathNativeStepExecutor{}
+	query := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#23'
+  and p.p_container = 'MED BOX'
+  and l.l_quantity < (
+    select avg(l2.l_quantity) * 0.2
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`
+
+	if _, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(query); ok {
+		t.Fatalf("test query unexpectedly matched SQL recognizer fallback")
+	}
+	if _, ok := runtime.correlatedAverageQuantityTypedMatch(query); !ok {
+		plan := runtime.Plan(query)
+		t.Fatalf("typed correlated aggregate match not found: subqueries=%d diagnostics=%#v", len(plan.Query.Subqueries), plan.Diagnostics)
+	}
+	result, err := runtime.applyPreflightRewrites(context.Background(), query, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("preflight rewrites: %v", err)
+	}
+	if result.Preflight.Applied != 1 || result.Diagnostics.BlocksNative() {
+		t.Fatalf("rewrite result = applied:%d diagnostics:%#v", result.Preflight.Applied, result.Diagnostics)
+	}
+	if strings.Contains(result.SQL, "avg(") {
+		t.Fatalf("rewritten SQL still contains correlated aggregate subquery: %s", result.SQL)
+	}
+	if !strings.Contains(result.SQL, "(p.p_partkey = 101 and l.l_quantity < 10)") {
+		t.Fatalf("rewritten SQL = %s, want threshold branch from typed intent", result.SQL)
+	}
+}
+
+type q17TypedPathNativeStepExecutor struct{}
+
+func (q17TypedPathNativeStepExecutor) ExecuteNativeSubqueryStep(ctx context.Context, request qsbridge.NativeSubqueryStepExecutionRequest) (qsbridge.NativeSubqueryStepExecutionResult, error) {
+	switch request.Step.Kind {
+	case qsbridge.NativeSubqueryStepParentKeyLookup:
+		return qsbridge.NativeSubqueryStepExecutionResult{
+			Step: request.Step,
+			RowSet: helperRowSetColumns([]qsbridge.ResultCell{
+				{Kind: qsbridge.ValueInt, Value: int64(101)},
+				{Kind: qsbridge.ValueInt, Value: int64(202)},
+			}),
+		}, nil
+	case qsbridge.NativeSubqueryStepAggregateThresholdLookup:
+		return qsbridge.NativeSubqueryStepExecutionResult{
+			Step: request.Step,
+			RowSet: helperRowSetColumns(
+				[]qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(101)}},
+				[]qsbridge.ResultCell{{Kind: qsbridge.ValueFloat, Value: float64(50)}},
+			),
+		}, nil
+	default:
+		return qsbridge.NativeSubqueryStepExecutionResult{Step: request.Step}, nil
+	}
+}
+
 func TestScalarSubqueryMaterializationReportsInvalidScalarShape(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{Count: 2}, nil

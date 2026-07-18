@@ -1510,6 +1510,7 @@ func parseSimpleCorrelatedAggregateSubqueryIntent(text string, whereParts []stri
 	if !ok {
 		return UnboundSubqueryPlanIntent{}, diagnostic, false
 	}
+	correlated.SourcePredicate = strings.TrimSpace(text)
 	return UnboundSubqueryPlanIntent{
 		Kind:                SubqueryIntentCorrelatedAggregate,
 		Capability:          CapabilityScalarSubquery,

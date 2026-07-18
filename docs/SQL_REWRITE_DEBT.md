@@ -32,15 +32,14 @@ The Q17-style correlated aggregate descriptor and qsbridge subquery intent now
 carry typed table/alias/field references for the outer value, inner aggregate
 value, correlated keys, and required parent filters. The simple parser can now
 recognize the Q17 correlated aggregate predicate and bind it into
-`QueryIR.Subqueries` as typed intent. The runtime recognizer is still a
-temporary SQL-pattern match for execution rewrite, but descriptor reports and
-helper intent are derived from typed fields rather than ad hoc qualified-name
-strings.
+`QueryIR.Subqueries` as typed intent. Runtime preflight now prefers that bound
+intent when constructing the temporary execution rewrite and only falls back to
+the SQL-pattern recognizer when the typed shape is unavailable.
 
 The remaining SQL-pattern matching for this shape is isolated behind the private
 `correlatedAverageQuantitySQLRecognizer` boundary. When correlated aggregate
-subqueries become parser/IR-native, that recognizer and its SQL rewrite caller
-are the intended deletion point.
+subqueries become fully planner/executor-native, that fallback recognizer and
+the SQL rewrite caller are the intended deletion point.
 
 ## Guardrails
 

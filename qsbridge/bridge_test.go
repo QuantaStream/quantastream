@@ -1,6 +1,9 @@
 package qsbridge
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBindSelectBuildsQueryIR(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
@@ -144,6 +147,9 @@ where p.p_brand = 'Brand#45'
 	}
 	if correlated.OuterValue.Type != DataTypeInt || correlated.InnerValue.Type != DataTypeInt || correlated.OuterKey.Type != DataTypeInt {
 		t.Fatalf("correlated ref types = outer=%q inner=%q key=%q", correlated.OuterValue.Type, correlated.InnerValue.Type, correlated.OuterKey.Type)
+	}
+	if !strings.Contains(correlated.SourcePredicate, "l.l_quantity <") {
+		t.Fatalf("source predicate = %q, want bound correlated predicate text", correlated.SourcePredicate)
 	}
 	if got, want := len(correlated.RequiredFilterFields), 2; got != want {
 		t.Fatalf("required filter fields = %#v, want %d", correlated.RequiredFilterFields, want)

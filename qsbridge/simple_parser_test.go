@@ -252,6 +252,9 @@ where p.p_brand = 'Brand#45'
 	if correlated.AggregateFunction != "avg" || correlated.Factor != 0.2 {
 		t.Fatalf("correlated aggregate = %#v, want avg factor 0.2", correlated)
 	}
+	if !strings.Contains(correlated.SourcePredicate, "l.l_quantity <") || !strings.Contains(correlated.SourcePredicate, "select 0.2 * avg(l2.l_quantity)") {
+		t.Fatalf("source predicate = %q, want original correlated predicate text", correlated.SourcePredicate)
+	}
 	if correlated.OuterValue.Qualifier != "l" || correlated.OuterValue.Name != "l_quantity" ||
 		correlated.InnerValue.Qualifier != "l2" || correlated.InnerValue.Name != "l_quantity" ||
 		correlated.InnerKey.Qualifier != "l2" || correlated.InnerKey.Name != "l_partkey" ||

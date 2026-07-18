@@ -183,6 +183,7 @@ type UnboundSubqueryPlanIntent struct {
 type UnboundCorrelatedAggregateSubqueryIntent struct {
 	AggregateFunction string
 	Factor            float64
+	SourcePredicate   string
 	OuterValue        UnboundFieldExpr
 	InnerValue        UnboundFieldExpr
 	InnerTable        UnboundTable
@@ -863,6 +864,7 @@ func bindCorrelatedAggregateSubqueryIntent(context *BindContext, unbound Unbound
 	return CorrelatedAggregateSubqueryIntent{
 		AggregateFunction:    unbound.AggregateFunction,
 		Factor:               unbound.Factor,
+		SourcePredicate:      unbound.SourcePredicate,
 		OuterValue:           outerValue,
 		InnerValue:           innerValue,
 		InnerKey:             innerKey,

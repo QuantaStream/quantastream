@@ -129,7 +129,7 @@ func correlatedAverageRewriteTrace() qsbridge.OptimizationTrace {
 }
 
 func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (string, qsbridge.DiagnosticSet, qsbridge.OptimizationTrace, []PreflightHelperExecutionRequestReport, error, bool) {
-	match, ok := (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
+	match, ok := r.correlatedAverageQuantityRewriteMatch(sql)
 	if !ok {
 		return "", nil, qsbridge.OptimizationTrace{}, nil, nil, false
 	}
@@ -150,14 +150,179 @@ func (r SQLRuntime) rewriteCorrelatedAverageQuantitySubquery(ctx context.Context
 	}
 	if len(thresholds) == 0 {
 		trace := correlatedAverageRewriteTrace()
-		return sql[:descriptor.Start] + " and 1 = 0" + sql[descriptor.End:], nil, trace, helperReports, nil, true
+		return rewriteCorrelatedAveragePredicateSQL(sql, descriptor, "1 = 0"), nil, trace, helperReports, nil, true
 	}
 	branches := make([]string, 0, len(thresholds))
 	for _, threshold := range thresholds {
 		branches = append(branches, fmt.Sprintf("(%s = %d and %s < %s)", descriptor.OuterKey.qualifiedName(), threshold.PartKey, descriptor.OuterQuantity.qualifiedName(), strconv.FormatFloat(threshold.Threshold, 'g', -1, 64)))
 	}
-	rewritten := sql[:descriptor.Start] + " and (" + strings.Join(branches, " or ") + ")" + sql[descriptor.End:]
+	rewritten := rewriteCorrelatedAveragePredicateSQL(sql, descriptor, "("+strings.Join(branches, " or ")+")")
 	return rewritten, nil, correlatedAverageRewriteTrace(), helperReports, nil, true
+}
+
+func (r SQLRuntime) correlatedAverageQuantityRewriteMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
+	if typed, ok := r.correlatedAverageQuantityTypedMatch(sql); ok {
+		return typed, true
+	}
+	return (correlatedAverageQuantitySQLRecognizer{}).recognize(sql)
+}
+
+func (r SQLRuntime) correlatedAverageQuantityTypedMatch(sql string) (correlatedAverageQuantitySQLMatch, bool) {
+	plan := r.Plan(sql)
+	for _, intent := range plan.Query.Subqueries {
+		if intent.Kind != qsbridge.SubqueryIntentCorrelatedAggregate || intent.CorrelatedAggregate == nil {
+			continue
+		}
+		descriptor, ok := correlatedAverageQuantityDescriptorFromIntent(sql, *intent.CorrelatedAggregate)
+		if !ok {
+			continue
+		}
+		brand, container, ok := correlatedAverageQuantityFilterValues(plan.Query, intent.CorrelatedAggregate.RequiredFilterFields)
+		if !ok {
+			continue
+		}
+		return correlatedAverageQuantitySQLMatch{
+			Descriptor:           descriptor,
+			PartBrand:            brand,
+			PartContainer:        container,
+			RequiredFiltersFound: true,
+		}, true
+	}
+	return correlatedAverageQuantitySQLMatch{}, false
+}
+
+func correlatedAverageQuantityDescriptorFromIntent(sql string, intent qsbridge.CorrelatedAggregateSubqueryIntent) (correlatedAverageQuantityDescriptor, bool) {
+	start, end, ok := correlatedAveragePredicateRange(sql, intent.SourcePredicate)
+	if !ok {
+		return correlatedAverageQuantityDescriptor{}, false
+	}
+	return correlatedAverageQuantityDescriptor{
+		Start:             start,
+		End:               end,
+		OuterLineitem:     intent.OuterValue.Table.RefName(),
+		InnerLineitem:     intent.InnerValue.Table.RefName(),
+		OuterPart:         intent.OuterKey.Table.RefName(),
+		Factor:            intent.Factor,
+		AggregateFunction: intent.AggregateFunction,
+		OuterQuantity:     correlatedFieldFromRef(intent.OuterValue),
+		InnerQuantity:     correlatedFieldFromRef(intent.InnerValue),
+		InnerKey:          correlatedFieldFromRef(intent.InnerKey),
+		OuterKey:          correlatedFieldFromRef(intent.OuterKey),
+		RequiredFilters:   correlatedFieldsFromRefs(intent.RequiredFilterFields),
+	}, true
+}
+
+func correlatedAveragePredicateRange(sql string, sourcePredicate string) (int, int, bool) {
+	sourcePredicate = strings.TrimSpace(sourcePredicate)
+	if sourcePredicate == "" {
+		return 0, 0, false
+	}
+	start := strings.Index(sql, sourcePredicate)
+	if start < 0 {
+		return 0, 0, false
+	}
+	return start, start + len(sourcePredicate), true
+}
+
+func rewriteCorrelatedAveragePredicateSQL(sql string, descriptor correlatedAverageQuantityDescriptor, predicate string) string {
+	replacement := strings.TrimSpace(predicate)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(sql[descriptor.Start:descriptor.End])), "and ") {
+		replacement = " and " + replacement
+	}
+	return sql[:descriptor.Start] + replacement + sql[descriptor.End:]
+}
+
+func correlatedAverageQuantityFilterValues(query qsbridge.QueryIR, filters []qsbridge.FieldRef) (string, string, bool) {
+	values := make(map[string]string)
+	for _, predicate := range query.Predicates {
+		field, value, ok := correlatedAverageEqualityStringFilter(predicate.Expr)
+		if !ok {
+			continue
+		}
+		for _, filter := range filters {
+			if !sameCorrelatedFilterField(field, filter) {
+				continue
+			}
+			values[strings.ToLower(filter.Name)] = value
+		}
+	}
+	brand := values["p_brand"]
+	container := values["p_container"]
+	return brand, container, brand != "" && container != ""
+}
+
+func correlatedAverageEqualityStringFilter(expr qsbridge.Expr) (qsbridge.FieldRef, string, bool) {
+	binary, ok := correlatedAverageBinaryExpr(expr)
+	if !ok || binary.Op != qsbridge.BinaryOpEqual {
+		return qsbridge.FieldRef{}, "", false
+	}
+	if field, ok := correlatedAverageFieldExpr(binary.Left); ok {
+		if literal, ok := correlatedAverageStringLiteral(binary.Right); ok {
+			return field, literal, true
+		}
+	}
+	if field, ok := correlatedAverageFieldExpr(binary.Right); ok {
+		if literal, ok := correlatedAverageStringLiteral(binary.Left); ok {
+			return field, literal, true
+		}
+	}
+	return qsbridge.FieldRef{}, "", false
+}
+
+func correlatedAverageBinaryExpr(expr qsbridge.Expr) (qsbridge.BinaryExpr, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.BinaryExpr:
+		return typed, true
+	case *qsbridge.BinaryExpr:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return qsbridge.BinaryExpr{}, false
+}
+
+func correlatedAverageFieldExpr(expr qsbridge.Expr) (qsbridge.FieldRef, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.FieldExpr:
+		return typed.Ref, true
+	case *qsbridge.FieldExpr:
+		if typed != nil {
+			return typed.Ref, true
+		}
+	}
+	return qsbridge.FieldRef{}, false
+}
+
+func correlatedAverageStringLiteral(expr qsbridge.Expr) (string, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.LiteralExpr:
+		if typed.Kind == qsbridge.ValueString {
+			value, ok := typed.Value.(string)
+			return value, ok
+		}
+	case *qsbridge.LiteralExpr:
+		if typed != nil && typed.Kind == qsbridge.ValueString {
+			value, ok := typed.Value.(string)
+			return value, ok
+		}
+	}
+	return "", false
+}
+
+func sameCorrelatedFilterField(left qsbridge.FieldRef, right qsbridge.FieldRef) bool {
+	return strings.EqualFold(left.Table.RefName(), right.Table.RefName()) && strings.EqualFold(left.Name, right.Name)
+}
+
+func correlatedFieldFromRef(ref qsbridge.FieldRef) correlatedSubqueryField {
+	return correlatedField(ref.Table.Table, ref.Table.Alias, ref.Name, ref.Type)
+}
+
+func correlatedFieldsFromRefs(refs []qsbridge.FieldRef) []correlatedSubqueryField {
+	fields := make([]correlatedSubqueryField, 0, len(refs))
+	for _, ref := range refs {
+		fields = append(fields, correlatedFieldFromRef(ref))
+	}
+	return fields
 }
 
 func findCorrelatedAverageQuantityPredicate(sql string) (correlatedAverageQuantityDescriptor, bool) {

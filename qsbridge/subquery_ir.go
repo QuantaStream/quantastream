@@ -38,6 +38,7 @@ type ScalarSubqueryIntent struct {
 type CorrelatedAggregateSubqueryIntent struct {
 	AggregateFunction    string
 	Factor               float64
+	SourcePredicate      string
 	OuterValue           FieldRef
 	InnerValue           FieldRef
 	InnerKey             FieldRef
@@ -130,6 +131,7 @@ type ScalarSubqueryIntentReport struct {
 type CorrelatedAggregateSubqueryIntentReport struct {
 	AggregateFunction string
 	Factor            float64
+	SourcePredicate   string
 	OuterValueRef     string
 	InnerValueRef     string
 	InnerKeyRef       string
@@ -171,6 +173,7 @@ func (i SubqueryPlanIntent) Report() SubqueryPlanIntentReport {
 		report.CorrelatedAggregate = &CorrelatedAggregateSubqueryIntentReport{
 			AggregateFunction: i.CorrelatedAggregate.AggregateFunction,
 			Factor:            i.CorrelatedAggregate.Factor,
+			SourcePredicate:   i.CorrelatedAggregate.SourcePredicate,
 			OuterValueRef:     correlatedAggregateFieldName(i.CorrelatedAggregate.OuterValueRef, i.CorrelatedAggregate.OuterValue),
 			InnerValueRef:     correlatedAggregateFieldName(i.CorrelatedAggregate.InnerValueRef, i.CorrelatedAggregate.InnerValue),
 			InnerKeyRef:       correlatedAggregateFieldName(i.CorrelatedAggregate.InnerKeyRef, i.CorrelatedAggregate.InnerKey),
