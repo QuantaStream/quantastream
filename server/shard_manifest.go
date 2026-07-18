@@ -61,6 +61,18 @@ type BitmapShardManifestFile struct {
 	ModTime      time.Time `yaml:"mod_time"`
 }
 
+// BitmapShardManifestObservation reports whether the persisted manifest looks usable.
+type BitmapShardManifestObservation struct {
+	Status           string
+	Detail           string
+	ManifestEntries  int
+	ManifestFiles    int
+	ScanEntries      int
+	ScanFiles        int
+	MissingFileCount int
+	Elapsed          time.Duration
+}
+
 type bitmapShardManifestBuilder struct {
 	dataDir string
 	entries map[string]*BitmapShardManifestEntry
@@ -229,4 +241,102 @@ func (m *BitmapIndex) loadBitmapShardManifest() (BitmapShardManifest, error) {
 		return manifest, fmt.Errorf("parse bitmap shard manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+func (m *BitmapIndex) observeBitmapShardManifest(scan BitmapShardManifest) BitmapShardManifestObservation {
+	start := time.Now()
+	observation := BitmapShardManifestObservation{
+		Status:      "missing",
+		ScanEntries: scan.Stats.TotalEntries,
+		ScanFiles:   scan.Stats.TotalFiles,
+	}
+	manifest, err := m.loadBitmapShardManifest()
+	if err != nil {
+		observation.Status = "invalid"
+		observation.Detail = err.Error()
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	if manifest.Version == 0 && len(manifest.Entries) == 0 {
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	observation.ManifestEntries = manifest.Stats.TotalEntries
+	observation.ManifestFiles = manifest.Stats.TotalFiles
+
+	if manifest.Version != bitmapShardManifestVersion {
+		observation.Status = "invalid"
+		observation.Detail = fmt.Sprintf("version=%d expected=%d", manifest.Version, bitmapShardManifestVersion)
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	if len(manifest.Entries) == 0 {
+		observation.Status = "invalid"
+		observation.Detail = "empty_entries"
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	if manifest.Stats.TotalEntries != len(manifest.Entries) {
+		observation.Status = "invalid"
+		observation.Detail = fmt.Sprintf("entry_stats=%d actual_entries=%d", manifest.Stats.TotalEntries, len(manifest.Entries))
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	actualFiles := 0
+	for _, entry := range manifest.Entries {
+		if entry.Table == "" || entry.Field == "" || entry.Kind == "" || entry.Shard == "" {
+			observation.Status = "invalid"
+			observation.Detail = "entry_missing_required_field"
+			observation.Elapsed = time.Since(start)
+			return observation
+		}
+		if entry.Kind != bitmapShardKindStandard && entry.Kind != bitmapShardKindBSI {
+			observation.Status = "invalid"
+			observation.Detail = fmt.Sprintf("unknown_kind=%s", entry.Kind)
+			observation.Elapsed = time.Since(start)
+			return observation
+		}
+		for _, file := range entry.Files {
+			actualFiles++
+			if file.RelativePath == "" {
+				observation.Status = "invalid"
+				observation.Detail = "file_missing_relative_path"
+				observation.Elapsed = time.Since(start)
+				return observation
+			}
+			if _, err := os.Stat(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath))); err != nil {
+				observation.MissingFileCount++
+			}
+		}
+	}
+	if manifest.Stats.TotalFiles != actualFiles {
+		observation.Status = "invalid"
+		observation.Detail = fmt.Sprintf("file_stats=%d actual_files=%d", manifest.Stats.TotalFiles, actualFiles)
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	if observation.MissingFileCount > 0 {
+		observation.Status = "stale"
+		observation.Detail = fmt.Sprintf("missing_files=%d", observation.MissingFileCount)
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	if !manifest.Stats.equal(scan.Stats) {
+		observation.Status = "mismatch"
+		observation.Detail = "stats_differ_from_slow_scan"
+		observation.Elapsed = time.Since(start)
+		return observation
+	}
+	observation.Status = "ok"
+	observation.Elapsed = time.Since(start)
+	return observation
+}
+
+func (s BitmapShardManifestStats) equal(other BitmapShardManifestStats) bool {
+	return s.TotalEntries == other.TotalEntries &&
+		s.StandardEntries == other.StandardEntries &&
+		s.BSIEntries == other.BSIEntries &&
+		s.TotalFiles == other.TotalFiles &&
+		s.StandardFiles == other.StandardFiles &&
+		s.BSIFiles == other.BSIFiles
 }

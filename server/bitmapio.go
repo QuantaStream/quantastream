@@ -474,6 +474,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 		return err
 	}
 	manifest := manifestBuilder.manifest(time.Now().UTC(), "startup_slow_scan")
+	manifestObservation := m.observeBitmapShardManifest(manifest)
 	manifestWriteStart := time.Now()
 	manifestWriteElapsed := time.Duration(0)
 	if err := m.saveBitmapShardManifest(manifest); err != nil {
@@ -483,8 +484,8 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 	}
 
 	if len(fragMap) == 0 {
-		fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_entries=%d manifest_write_elapsed=%v fragments=0 walk_elapsed=%v enqueue_elapsed=0s flush_elapsed=0s total_elapsed=%v\n",
-			baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifest.Stats.TotalEntries, manifestWriteElapsed, walkElapsed, time.Since(start))
+		fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_scan_entries=%d manifest_scan_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v manifest_write_elapsed=%v fragments=0 walk_elapsed=%v enqueue_elapsed=0s flush_elapsed=0s total_elapsed=%v\n",
+			baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifestObservation.Status, manifestObservation.Detail, manifestObservation.ManifestEntries, manifestObservation.ManifestFiles, manifestObservation.ScanEntries, manifestObservation.ScanFiles, manifestObservation.MissingFileCount, manifestObservation.Elapsed, manifestWriteElapsed, walkElapsed, time.Since(start))
 		return nil
 	}
 
@@ -517,8 +518,8 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 		return err
 	}
 	flushElapsed := time.Since(flushStart)
-	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_entries=%d manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
-		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifest.Stats.TotalEntries, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
+	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_scan_entries=%d manifest_scan_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
+		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifestObservation.Status, manifestObservation.Detail, manifestObservation.ManifestEntries, manifestObservation.ManifestFiles, manifestObservation.ScanEntries, manifestObservation.ScanFiles, manifestObservation.MissingFileCount, manifestObservation.Elapsed, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
 	return nil
 }
 

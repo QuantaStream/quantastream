@@ -224,6 +224,92 @@ func TestBSIPersistInvalidatesShardManifestWhenBSIWrites(t *testing.T) {
 	}
 }
 
+func TestObserveBitmapShardManifestReportsMissing(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	scan := BitmapShardManifest{
+		Stats: BitmapShardManifestStats{TotalEntries: 1, TotalFiles: 1},
+	}
+
+	observation := index.observeBitmapShardManifest(scan)
+	if observation.Status != "missing" {
+		t.Fatalf("status = %s, want missing", observation.Status)
+	}
+	if observation.ScanEntries != 1 || observation.ScanFiles != 1 {
+		t.Fatalf("unexpected scan stats in observation: %+v", observation)
+	}
+}
+
+func TestObserveBitmapShardManifestReportsOK(t *testing.T) {
+	index, manifest := newObservedManifestTestIndex(t)
+	if err := index.saveBitmapShardManifest(manifest); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	observation := index.observeBitmapShardManifest(manifest)
+	if observation.Status != "ok" {
+		t.Fatalf("status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+	if observation.ManifestEntries != 1 || observation.ManifestFiles != 1 {
+		t.Fatalf("unexpected manifest stats in observation: %+v", observation)
+	}
+}
+
+func TestObserveBitmapShardManifestReportsMismatch(t *testing.T) {
+	index, manifest := newObservedManifestTestIndex(t)
+	if err := index.saveBitmapShardManifest(manifest); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+	scan := manifest
+	scan.Stats.TotalFiles = 2
+
+	observation := index.observeBitmapShardManifest(scan)
+	if observation.Status != "mismatch" {
+		t.Fatalf("status = %s detail=%s, want mismatch", observation.Status, observation.Detail)
+	}
+}
+
+func TestObserveBitmapShardManifestReportsStaleWhenFileMissing(t *testing.T) {
+	index, manifest := newObservedManifestTestIndex(t)
+	if err := index.saveBitmapShardManifest(manifest); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(index.dataDir, filepath.FromSlash(manifest.Entries[0].Files[0].RelativePath))); err != nil {
+		t.Fatalf("remove manifest file target: %v", err)
+	}
+
+	observation := index.observeBitmapShardManifest(manifest)
+	if observation.Status != "stale" {
+		t.Fatalf("status = %s detail=%s, want stale", observation.Status, observation.Detail)
+	}
+	if observation.MissingFileCount != 1 {
+		t.Fatalf("missing files = %d, want 1", observation.MissingFileCount)
+	}
+}
+
+func TestObserveBitmapShardManifestReportsInvalidStats(t *testing.T) {
+	index, manifest := newObservedManifestTestIndex(t)
+	manifest.Stats.TotalEntries = 2
+	if err := index.saveBitmapShardManifest(manifest); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	observation := index.observeBitmapShardManifest(manifest)
+	if observation.Status != "invalid" {
+		t.Fatalf("status = %s detail=%s, want invalid", observation.Status, observation.Detail)
+	}
+}
+
+func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManifest) {
+	t.Helper()
+	index := newManifestPersistenceTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	target := writeManifestTestFile(t, index.dataDir, "bitmap/customer/is_active/0/1994-01-02T00")
+	info := statManifestTestFile(t, target)
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	builder.addStandardFile(target, info, "customer", "is_active", 0, shardTime)
+	return index, builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+}
+
 func newManifestPersistenceTestIndex(t *testing.T) *BitmapIndex {
 	t.Helper()
 	index := &BitmapIndex{
