@@ -44,13 +44,18 @@ type BitmapShardManifestStats struct {
 
 // BitmapShardManifestEntry describes one logical standard bitmap or BSI shard.
 type BitmapShardManifestEntry struct {
-	Table       string                    `yaml:"table"`
-	Field       string                    `yaml:"field"`
-	Kind        string                    `yaml:"kind"`
-	RowIDOrBits int64                     `yaml:"row_id_or_bits"`
-	Shard       string                    `yaml:"shard"`
-	ShardTime   time.Time                 `yaml:"shard_time"`
-	Files       []BitmapShardManifestFile `yaml:"files"`
+	Table            string                    `yaml:"table"`
+	Field            string                    `yaml:"field"`
+	Kind             string                    `yaml:"kind"`
+	RowIDOrBits      int64                     `yaml:"row_id_or_bits"`
+	Shard            string                    `yaml:"shard"`
+	ShardTime        time.Time                 `yaml:"shard_time"`
+	BaseRelativePath string                    `yaml:"base_relative_path,omitempty"`
+	FileCount        int                       `yaml:"file_count,omitempty"`
+	MaxBitSlice      int                       `yaml:"max_bit_slice,omitempty"`
+	HasExistence     bool                      `yaml:"has_existence,omitempty"`
+	ModTime          time.Time                 `yaml:"mod_time,omitempty"`
+	Files            []BitmapShardManifestFile `yaml:"files,omitempty"`
 }
 
 // BitmapShardManifestFile describes one physical file backing a logical shard.
@@ -107,17 +112,17 @@ func (b *bitmapShardManifestBuilder) addStandardFile(path string, info os.FileIn
 
 func (b *bitmapShardManifestBuilder) addBSIFile(path string, info os.FileInfo, table, field string, shardTime time.Time, bitSliceIndex int) {
 	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
-	role := "bit_slice"
-	if bitSliceIndex == 0 {
-		role = "existence"
+	entry.BaseRelativePath = b.relativePath(filepath.Dir(path))
+	entry.FileCount++
+	if bitSliceIndex > entry.MaxBitSlice {
+		entry.MaxBitSlice = bitSliceIndex
 	}
-	entry.Files = append(entry.Files, BitmapShardManifestFile{
-		RelativePath: b.relativePath(path),
-		Role:         role,
-		BitSlice:     bitSliceIndex,
-		SizeBytes:    info.Size(),
-		ModTime:      info.ModTime().UTC(),
-	})
+	if bitSliceIndex == 0 {
+		entry.HasExistence = true
+	}
+	if entry.ModTime.IsZero() || info.ModTime().After(entry.ModTime) {
+		entry.ModTime = info.ModTime().UTC()
+	}
 }
 
 func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source string) BitmapShardManifest {
@@ -131,12 +136,14 @@ func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source stri
 		Entries:     make([]BitmapShardManifestEntry, 0, len(b.entries)),
 	}
 	for _, entry := range b.entries {
-		sort.SliceStable(entry.Files, func(i, j int) bool {
-			if entry.Files[i].BitSlice != entry.Files[j].BitSlice {
-				return entry.Files[i].BitSlice < entry.Files[j].BitSlice
-			}
-			return entry.Files[i].RelativePath < entry.Files[j].RelativePath
-		})
+		if entry.Kind != bitmapShardKindBSI {
+			sort.SliceStable(entry.Files, func(i, j int) bool {
+				if entry.Files[i].BitSlice != entry.Files[j].BitSlice {
+					return entry.Files[i].BitSlice < entry.Files[j].BitSlice
+				}
+				return entry.Files[i].RelativePath < entry.Files[j].RelativePath
+			})
+		}
 		manifest.Entries = append(manifest.Entries, *entry)
 	}
 	sort.SliceStable(manifest.Entries, func(i, j int) bool {
@@ -158,17 +165,25 @@ func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source stri
 	})
 	for _, entry := range manifest.Entries {
 		manifest.Stats.TotalEntries++
-		manifest.Stats.TotalFiles += len(entry.Files)
+		entryFileCount := entry.manifestFileCount()
+		manifest.Stats.TotalFiles += entryFileCount
 		switch entry.Kind {
 		case bitmapShardKindBSI:
 			manifest.Stats.BSIEntries++
-			manifest.Stats.BSIFiles += len(entry.Files)
+			manifest.Stats.BSIFiles += entryFileCount
 		default:
 			manifest.Stats.StandardEntries++
-			manifest.Stats.StandardFiles += len(entry.Files)
+			manifest.Stats.StandardFiles += entryFileCount
 		}
 	}
 	return manifest
+}
+
+func (e BitmapShardManifestEntry) manifestFileCount() int {
+	if e.Kind == bitmapShardKindBSI && e.FileCount > 0 {
+		return e.FileCount
+	}
+	return len(e.Files)
 }
 
 func (b *bitmapShardManifestBuilder) entry(table, field, kind string, rowIDOrBits int64, shardTime time.Time) *BitmapShardManifestEntry {
@@ -312,6 +327,22 @@ func (m *BitmapIndex) loadAndObserveBitmapShardManifest(scan *BitmapShardManifes
 			observation.Detail = fmt.Sprintf("unknown_kind=%s", entry.Kind)
 			observation.Elapsed = time.Since(start)
 			return manifest, observation
+		}
+		if entry.Kind == bitmapShardKindBSI && entry.BaseRelativePath != "" {
+			actualFiles += entry.manifestFileCount()
+			if entry.FileCount <= 0 || entry.MaxBitSlice < 0 || !entry.HasExistence {
+				observation.Status = "invalid"
+				observation.Detail = "bsi_compact_entry_missing_required_field"
+				observation.Elapsed = time.Since(start)
+				return manifest, observation
+			}
+			if _, err := os.Stat(filepath.Join(m.dataDir, filepath.FromSlash(entry.BaseRelativePath))); err != nil {
+				observation.MissingFileCount++
+			}
+			if _, err := os.Stat(filepath.Join(m.dataDir, filepath.FromSlash(entry.BaseRelativePath), "EBM")); err != nil {
+				observation.MissingFileCount++
+			}
+			continue
 		}
 		for _, file := range entry.Files {
 			actualFiles++

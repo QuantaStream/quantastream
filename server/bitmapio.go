@@ -350,6 +350,10 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				return nil
 			}
 			fileCount++
+			if fileCount%50000 == 0 {
+				fmt.Printf("BitmapIndex startup scan progress files=%d standard_files=%d bsi_files=%d ignored_fields=%d elapsed=%v\n",
+					fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, time.Since(walkStart))
+			}
 			bf := &BitmapFragment{ModTime: info.ModTime(), IsInit: true}
 
 			data, err := ioutil.ReadFile(path)
@@ -525,6 +529,7 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 	fileCount := 0
 	standardFileCount := 0
 	bsiFileCount := 0
+	nextProgressFileCount := 50000
 
 	for _, entry := range manifest.Entries {
 		if _, err := m.getFieldConfig(entry.Table, entry.Field); err != nil {
@@ -565,19 +570,17 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 				IsBSI:       true,
 				IsInit:      true,
 			}
-			for _, file := range entry.Files {
-				data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
-				if err != nil {
-					return fmt.Errorf("read manifest BSI bitmap %s: %w", file.RelativePath, err)
-				}
-				fileCount++
-				bsiFileCount++
-				for file.BitSlice >= len(frag.BitData) {
-					frag.BitData = append(frag.BitData, make([]byte, 0))
-				}
-				frag.BitData[file.BitSlice] = data
-				if file.ModTime.After(frag.ModTime) {
-					frag.ModTime = file.ModTime
+			loadedFiles, err := m.loadManifestBSIEntry(entry, frag)
+			if err != nil {
+				return err
+			}
+			fileCount += loadedFiles
+			bsiFileCount += loadedFiles
+			if fileCount >= nextProgressFileCount {
+				fmt.Printf("BitmapIndex startup manifest load progress files=%d standard_files=%d bsi_files=%d elapsed=%v\n",
+					fileCount, standardFileCount, bsiFileCount, time.Since(loadStart))
+				for nextProgressFileCount <= fileCount {
+					nextProgressFileCount += 50000
 				}
 			}
 			if len(frag.BitData) == 0 || len(frag.BitData[0]) == 0 {
@@ -606,6 +609,54 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 	fmt.Printf("BitmapIndex startup load_source=manifest opt_in=true files=%d standard_files=%d bsi_files=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d manifest_load_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
 		fileCount, standardFileCount, bsiFileCount, observation.Status, observation.Detail, observation.ManifestEntries, observation.ManifestFiles, observation.MissingFileCount, observation.Elapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, time.Since(loadStart), enqueueElapsed, flushElapsed, time.Since(startedAt))
 	return nil
+}
+
+func (m *BitmapIndex) loadManifestBSIEntry(entry BitmapShardManifestEntry, frag *BitmapFragment) (int, error) {
+	if entry.BaseRelativePath != "" {
+		basePath := filepath.Join(m.dataDir, filepath.FromSlash(entry.BaseRelativePath))
+		loadedFiles := 0
+		if !entry.ModTime.IsZero() {
+			frag.ModTime = entry.ModTime
+		}
+		for bitSliceIndex := 0; bitSliceIndex <= entry.MaxBitSlice; bitSliceIndex++ {
+			name := strconv.Itoa(bitSliceIndex)
+			if bitSliceIndex == 0 {
+				name = "EBM"
+			}
+			path := filepath.Join(basePath, name)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return loadedFiles, fmt.Errorf("read compact manifest BSI bitmap %s: %w", filepath.ToSlash(path), err)
+			}
+			loadedFiles++
+			for bitSliceIndex >= len(frag.BitData) {
+				frag.BitData = append(frag.BitData, make([]byte, 0))
+			}
+			frag.BitData[bitSliceIndex] = data
+		}
+		if entry.FileCount > 0 && loadedFiles != entry.FileCount {
+			return loadedFiles, fmt.Errorf("compact manifest BSI shard %s.%s shard=%s loaded %d files, manifest expected %d",
+				entry.Table, entry.Field, entry.Shard, loadedFiles, entry.FileCount)
+		}
+		return loadedFiles, nil
+	}
+
+	loadedFiles := 0
+	for _, file := range entry.Files {
+		data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
+		if err != nil {
+			return loadedFiles, fmt.Errorf("read manifest BSI bitmap %s: %w", file.RelativePath, err)
+		}
+		loadedFiles++
+		for file.BitSlice >= len(frag.BitData) {
+			frag.BitData = append(frag.BitData, make([]byte, 0))
+		}
+		frag.BitData[file.BitSlice] = data
+		if file.ModTime.After(frag.ModTime) {
+			frag.ModTime = file.ModTime
+		}
+	}
+	return loadedFiles, nil
 }
 
 type bitmapStartupFragmentMap map[string]map[string]map[int64]map[int64]*BitmapFragment

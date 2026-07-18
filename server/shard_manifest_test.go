@@ -48,14 +48,14 @@ func TestBitmapShardManifestBuilderGroupsStandardAndBSIFiles(t *testing.T) {
 	if bsi.Kind != bitmapShardKindBSI || bsi.RowIDOrBits != -1 {
 		t.Fatalf("expected BSI entry, got %+v", bsi)
 	}
-	if len(bsi.Files) != 2 {
-		t.Fatalf("expected 2 BSI files, got %d", len(bsi.Files))
+	if len(bsi.Files) != 0 {
+		t.Fatalf("expected compact BSI manifest to omit per-file entries, got %d", len(bsi.Files))
 	}
-	if bsi.Files[0].Role != "existence" || bsi.Files[0].BitSlice != 0 {
-		t.Fatalf("expected EBM/existence file first, got %+v", bsi.Files[0])
+	if bsi.BaseRelativePath != "bitmap/lineitem/l_quantity/bsi/1994-01-02T00" {
+		t.Fatalf("unexpected BSI base relative path: %s", bsi.BaseRelativePath)
 	}
-	if bsi.Files[1].Role != "bit_slice" || bsi.Files[1].BitSlice != 1 {
-		t.Fatalf("expected bit-slice file second, got %+v", bsi.Files[1])
+	if bsi.FileCount != 2 || bsi.MaxBitSlice != 1 || !bsi.HasExistence {
+		t.Fatalf("unexpected compact BSI metadata: %+v", bsi)
 	}
 }
 
