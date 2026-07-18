@@ -43,6 +43,21 @@ The remaining debt for this shape is the preflight expression expansion itself.
 When correlated aggregate subqueries become fully planner/executor-native, the
 preflight transform caller is the intended deletion point.
 
+## Surface Classification
+
+Some code still uses helper-shaped names because that is where the first
+subquery scaffolding landed. The distinction below is intentional: typed native
+steps can be renamed or moved later, while compatibility fallback code should be
+deleted when native execution covers the required shapes.
+
+| Surface | Disposition | Current contract | Deletion or rename trigger |
+|---|---|---|---|
+| `scalar_subquery_materialization` | `typed_native_step` | Typed scalar subquery materialization through `NativeSubqueryStepExecutionRequest`. | Rename helper-shaped request/report wrappers after scalar materialization is owned directly by the planner/executor pipeline. |
+| `parent_key_lookup` | `typed_native_step` | Typed parent-key lookup feeding correlated aggregate threshold work. | Rename helper-shaped request/report wrappers after correlated aggregate planning consumes `NativeSubqueryStep` directly. |
+| `aggregate_threshold_lookup` | `typed_native_step` | Typed aggregate-threshold lookup feeding prepared-query residual branches. | Replace preflight expression expansion with planner-owned aggregate-threshold execution. |
+| `correlated_aggregate_preflight_transform` | `temporary_transform` | Temporary typed transform that consumes Q17-style correlated aggregate intent and attaches a residual expression. | Delete when correlated aggregate subqueries are represented and executed as native planner nodes. |
+| `sql_backed_preflight_helper_executor` | `compatibility_fallback` | Fallback executor that routes helper SQL through `SQLRuntime` when no native step is available. | Delete when scalar, parent-key, aggregate-threshold, and sibling-membership paths all have required native executors. |
+
 ## Guardrails
 
 - Every entry returned by `SQLRuntime.preflightRewriteRules()` must have an

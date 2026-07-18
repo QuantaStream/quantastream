@@ -53,6 +53,41 @@ func TestNextPreflightNativePromotionCandidateIsAggregateThresholdLookup(t *test
 	}
 }
 
+func TestPreflightSurfaceInventoryClassifiesTypedNativeStepsAndFallbackDebt(t *testing.T) {
+	byHelperKind := make(map[PreflightRewriteHelperPlanKind]PreflightSurfaceInventory)
+	var fallbackDebt []PreflightSurfaceInventory
+	for _, item := range preflightSurfaceInventory() {
+		if strings.TrimSpace(item.Name) == "" || strings.TrimSpace(item.CurrentContract) == "" || strings.TrimSpace(item.DeletionCondition) == "" {
+			t.Fatalf("surface inventory entry is incomplete: %#v", item)
+		}
+		if item.HelperKind != "" {
+			byHelperKind[item.HelperKind] = item
+		}
+		if item.Disposition == PreflightSurfaceCompatibilityFallback {
+			fallbackDebt = append(fallbackDebt, item)
+		}
+	}
+
+	for _, item := range preflightRewriteInventory() {
+		for _, helperKind := range item.HelperPlanKinds {
+			surface, ok := byHelperKind[helperKind]
+			if !ok {
+				t.Fatalf("helper kind %q from rule %q has no surface inventory entry", helperKind, item.Rule)
+			}
+			if surface.Disposition != PreflightSurfaceTypedNativeStep {
+				t.Fatalf("helper kind %q disposition = %q, want typed native step", helperKind, surface.Disposition)
+			}
+			if surface.NativeStepKind == "" {
+				t.Fatalf("helper kind %q has no native step kind", helperKind)
+			}
+		}
+	}
+
+	if len(fallbackDebt) != 1 || fallbackDebt[0].Name != "sql_backed_preflight_helper_executor" {
+		t.Fatalf("fallback debt = %#v, want only sql-backed preflight helper executor", fallbackDebt)
+	}
+}
+
 func TestPreflightRewriteRulesHaveInventory(t *testing.T) {
 	runtime := SQLRuntime{}
 	inventory := preflightRewriteInventoryByRule()
@@ -106,6 +141,14 @@ func TestPreflightRewriteInventoryMatchesDebtDocument(t *testing.T) {
 			if !strings.Contains(text, coverageFile) {
 				t.Fatalf("SQL_REWRITE_DEBT.md missing regression coverage file %q for rule %q", coverageFile, item.Rule)
 			}
+		}
+	}
+	for _, item := range preflightSurfaceInventory() {
+		if !strings.Contains(text, "`"+item.Name+"`") {
+			t.Fatalf("SQL_REWRITE_DEBT.md missing preflight surface %q", item.Name)
+		}
+		if !strings.Contains(text, "`"+string(item.Disposition)+"`") {
+			t.Fatalf("SQL_REWRITE_DEBT.md missing disposition %q for surface %q", item.Disposition, item.Name)
 		}
 	}
 }
