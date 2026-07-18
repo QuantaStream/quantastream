@@ -121,34 +121,24 @@ func TestPreflightRewriteRulesHaveInventory(t *testing.T) {
 	}
 }
 
-func TestPreflightRewriteInventoryMatchesDebtDocument(t *testing.T) {
-	doc, err := os.ReadFile("../docs/SQL_REWRITE_DEBT.md")
-	if err != nil {
-		t.Fatalf("read SQL_REWRITE_DEBT.md: %v", err)
-	}
-	text := string(doc)
+func TestPreflightRewriteInventoryAndSurfaceContractsStaySelfContained(t *testing.T) {
 	for _, item := range preflightRewriteInventory() {
-		if !strings.Contains(text, "`"+string(item.Rule)+"`") {
-			t.Fatalf("SQL_REWRITE_DEBT.md missing rule %q", item.Rule)
+		if item.Rule == "" {
+			t.Fatalf("active rewrite inventory item has no rule: %#v", item)
 		}
-		for _, helperKind := range item.HelperPlanKinds {
-			if !strings.Contains(text, "`"+string(helperKind)+"`") {
-				t.Fatalf("SQL_REWRITE_DEBT.md missing helper kind %q for rule %q", helperKind, item.Rule)
-			}
+		if strings.TrimSpace(item.Reason) == "" || strings.TrimSpace(item.FutureIRReplacement) == "" {
+			t.Fatalf("active rewrite inventory item is incomplete: %#v", item)
 		}
-		for _, coverage := range item.RegressionCoverage {
-			coverageFile := strings.Fields(coverage)[0]
-			if !strings.Contains(text, coverageFile) {
-				t.Fatalf("SQL_REWRITE_DEBT.md missing regression coverage file %q for rule %q", coverageFile, item.Rule)
-			}
+		if len(item.HelperPlanKinds) == 0 || len(item.RegressionCoverage) == 0 {
+			t.Fatalf("active rewrite inventory item is missing helper or coverage notes: %#v", item)
 		}
 	}
 	for _, item := range preflightSurfaceInventory() {
-		if !strings.Contains(text, "`"+item.Name+"`") {
-			t.Fatalf("SQL_REWRITE_DEBT.md missing preflight surface %q", item.Name)
+		if strings.TrimSpace(item.Name) == "" {
+			t.Fatalf("surface inventory item has no name: %#v", item)
 		}
-		if !strings.Contains(text, "`"+string(item.Disposition)+"`") {
-			t.Fatalf("SQL_REWRITE_DEBT.md missing disposition %q for surface %q", item.Disposition, item.Name)
+		if item.Disposition == "" || strings.TrimSpace(item.CurrentContract) == "" || strings.TrimSpace(item.DeletionCondition) == "" {
+			t.Fatalf("surface inventory item is incomplete: %#v", item)
 		}
 	}
 }
