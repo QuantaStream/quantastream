@@ -1343,7 +1343,6 @@ tests:
         - [58021]
 
   - id: "tpch_queries.q21.060_late_line_with_other_supplier_exists_count"
-    status: xfail
     kind: query
     order: exact
     capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, field-comparison, semi-join, count]
