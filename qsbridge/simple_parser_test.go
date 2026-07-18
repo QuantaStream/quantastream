@@ -806,6 +806,26 @@ func TestSimpleParserBridgeParsesAggregateAliasOrderBy(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesComputedProjectionAliasOrderBy(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select year(l_shipdate) as l_year, count(*) as line_count from lineitem group by year(l_shipdate) order by l_year")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.OrderBy) != 1 {
+		t.Fatalf("order by = %d, want 1", len(statement.Select.OrderBy))
+	}
+	call, ok := statement.Select.OrderBy[0].Expr.(UnboundCallExpr)
+	if !ok {
+		t.Fatalf("order by expression = %T, want UnboundCallExpr", statement.Select.OrderBy[0].Expr)
+	}
+	if call.Name != "year" || len(call.Args) != 1 {
+		t.Fatalf("order by call = %#v, want year(field)", call)
+	}
+	if field, ok := call.Args[0].(UnboundFieldExpr); !ok || field.Name != "l_shipdate" {
+		t.Fatalf("order by call arg = %#v, want l_shipdate field", call.Args[0])
+	}
+}
+
 func TestSimpleParserBridgeParsesMultiKeyOrderBy(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_custkey as customer_id, count(*) as order_count from orders as o group by o.o_custkey order by order_count desc, o.o_custkey asc")
 	if diagnostics.BlocksNative() {

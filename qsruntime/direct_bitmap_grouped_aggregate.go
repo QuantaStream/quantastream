@@ -711,6 +711,29 @@ func directBitmapGroupExpressionsEqual(left qsbridge.Expr, right qsbridge.Expr) 
 		}
 		return true
 	}
+	if leftLiteral, ok := directBitmapLiteralExpr(left); ok {
+		rightLiteral, rightOK := directBitmapLiteralExpr(right)
+		return rightOK && leftLiteral.Kind == rightLiteral.Kind && directBitmapCellEqual(directBitmapLiteralCell(leftLiteral), directBitmapLiteralCell(rightLiteral))
+	}
+	if leftBinary, ok := directBitmapBinaryExpr(left); ok {
+		rightBinary, rightOK := directBitmapBinaryExpr(right)
+		return rightOK &&
+			leftBinary.Op == rightBinary.Op &&
+			directBitmapGroupExpressionsEqual(leftBinary.Left, rightBinary.Left) &&
+			directBitmapGroupExpressionsEqual(leftBinary.Right, rightBinary.Right)
+	}
+	if leftList, ok := directBitmapListExpr(left); ok {
+		rightList, rightOK := directBitmapListExpr(right)
+		if !rightOK || len(leftList.Items) != len(rightList.Items) {
+			return false
+		}
+		for i := range leftList.Items {
+			if !directBitmapGroupExpressionsEqual(leftList.Items[i], rightList.Items[i]) {
+				return false
+			}
+		}
+		return true
+	}
 	leftRef, leftOK := directBitmapExprAggregateRef(left)
 	rightRef, rightOK := directBitmapExprAggregateRef(right)
 	if leftOK || rightOK {

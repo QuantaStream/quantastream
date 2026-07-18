@@ -570,9 +570,7 @@ func resolveSimpleOrderByProjection(sort UnboundSort, projections []UnboundProje
 		if projection.Alias == "" || !strings.EqualFold(projection.Alias, field.Name) {
 			continue
 		}
-		if _, ok := projection.Expr.(UnboundAggregateRefExpr); ok {
-			sort.Expr = projection.Expr
-		}
+		sort.Expr = projection.Expr
 		return sort, Diagnostic{}, true
 	}
 	return sort, Diagnostic{}, true
@@ -2237,6 +2235,28 @@ func simpleUnboundExprEqual(left UnboundExpr, right UnboundExpr) bool {
 	case UnboundLiteralExpr:
 		rightTyped, ok := right.(UnboundLiteralExpr)
 		return ok && leftTyped.Kind == rightTyped.Kind && leftTyped.Value == rightTyped.Value
+	case UnboundListExpr:
+		rightTyped, ok := right.(UnboundListExpr)
+		if !ok || len(leftTyped.Items) != len(rightTyped.Items) {
+			return false
+		}
+		for index := range leftTyped.Items {
+			if !simpleUnboundExprEqual(leftTyped.Items[index], rightTyped.Items[index]) {
+				return false
+			}
+		}
+		return true
+	case UnboundCallExpr:
+		rightTyped, ok := right.(UnboundCallExpr)
+		if !ok || !strings.EqualFold(leftTyped.Name, rightTyped.Name) || len(leftTyped.Args) != len(rightTyped.Args) {
+			return false
+		}
+		for index := range leftTyped.Args {
+			if !simpleUnboundExprEqual(leftTyped.Args[index], rightTyped.Args[index]) {
+				return false
+			}
+		}
+		return true
 	case UnboundBinaryExpr:
 		rightTyped, ok := right.(UnboundBinaryExpr)
 		return ok && leftTyped.Op == rightTyped.Op && simpleUnboundExprEqual(leftTyped.Left, rightTyped.Left) && simpleUnboundExprEqual(leftTyped.Right, rightTyped.Right)

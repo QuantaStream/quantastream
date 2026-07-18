@@ -1421,8 +1421,7 @@ tests:
         - ["22923.03"]
 
   - id: "tpch_queries.functions.010_shipdate_year_group_count"
-    status: xfail
-    issue: "grouping by computed date function expressions is not implemented yet"
+    status: supported
     kind: query
     order: rowsort
     capabilities: [sql-functions, date-function, residual-group-by, tpch-shape]
@@ -1443,8 +1442,7 @@ tests:
         - [1998, 6825]
 
   - id: "tpch_queries.functions.020_part_type_prefix_group_count"
-    status: xfail
-    issue: "grouping by computed string function expressions is not implemented yet"
+    status: supported
     kind: query
     order: rowsort
     capabilities: [sql-functions, string-function, residual-group-by, tpch-shape]

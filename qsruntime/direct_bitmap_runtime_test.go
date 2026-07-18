@@ -2445,3 +2445,67 @@ func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedYearGroup(t *te
 		t.Fatalf("second average = %v, want 25", got)
 	}
 }
+
+func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedSubstringGroup(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "part", Table: "part", Alias: "p"}
+	partType := qsbridge.FieldRef{Table: table, Name: "p_type", Type: qsbridge.DataTypeString}
+	prefixExpr := qsbridge.FunctionCall(
+		qsbridge.FunctionDefinition{Name: "substr", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeString},
+		qsbridge.Field(partType),
+		qsbridge.Literal(qsbridge.ValueInt, int64(1)),
+		qsbridge.Literal(qsbridge.ValueInt, int64(5)),
+	)
+	request := ExecutionRequest{
+		SourceIndexes: []string{"part"},
+		GroupBy:       []qsbridge.Expr{prefixExpr},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: prefixExpr, Alias: "prefix", Type: qsbridge.DataTypeString},
+			{Expr: qsbridge.AggregateRef("part_count", 0), Alias: "part_count", Type: qsbridge.DataTypeInt},
+		},
+		SQLAggregates: []qsbridge.Aggregate{
+			{
+				Function: "count",
+				Alias:    "part_count",
+				Type:     qsbridge.DataTypeInt,
+			},
+		},
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "part",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "part", Role: "p", Field: "p_type", Type: qsbridge.DataTypeString},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "ECONOMY ANODIZED"},
+					{Kind: qsbridge.ValueString, Value: "ECONOMY BRUSHED"},
+					{Kind: qsbridge.ValueString, Value: "PROMO POLISHED"},
+				},
+			},
+		},
+	}
+
+	result := directBitmapMaterializedGroupedAggregateResult(request, materialized, ExecutionResult{})
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two grouped rows", chunk.Rows)
+	}
+	if got := chunk.Rows[0][0].Value; got != "ECONO" {
+		t.Fatalf("first prefix = %v, want ECONO", got)
+	}
+	if got := chunk.Rows[0][1].Value; got != int64(2) {
+		t.Fatalf("first count = %v, want 2", got)
+	}
+	if got := chunk.Rows[1][0].Value; got != "PROMO" {
+		t.Fatalf("second prefix = %v, want PROMO", got)
+	}
+	if got := chunk.Rows[1][1].Value; got != int64(1) {
+		t.Fatalf("second count = %v, want 1", got)
+	}
+}
