@@ -226,6 +226,46 @@ func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *tes
 	}
 }
 
+func TestSimpleParserBridgeParsesQ17CorrelatedAggregateIntent(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+select count(*)
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#45'
+  and p.p_container = 'MED JAR'
+  and l.l_quantity < (
+    select 0.2 * avg(l2.l_quantity)
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if got, want := len(statement.Select.Subqueries), 1; got != want {
+		t.Fatalf("subqueries = %d, want %d: %#v", got, want, statement.Select.Subqueries)
+	}
+	intent := statement.Select.Subqueries[0]
+	if intent.Kind != SubqueryIntentCorrelatedAggregate || intent.CorrelatedAggregate == nil {
+		t.Fatalf("subquery intent = %#v, want correlated aggregate", intent)
+	}
+	correlated := intent.CorrelatedAggregate
+	if correlated.AggregateFunction != "avg" || correlated.Factor != 0.2 {
+		t.Fatalf("correlated aggregate = %#v, want avg factor 0.2", correlated)
+	}
+	if correlated.OuterValue.Qualifier != "l" || correlated.OuterValue.Name != "l_quantity" ||
+		correlated.InnerValue.Qualifier != "l2" || correlated.InnerValue.Name != "l_quantity" ||
+		correlated.InnerKey.Qualifier != "l2" || correlated.InnerKey.Name != "l_partkey" ||
+		correlated.OuterKey.Qualifier != "p" || correlated.OuterKey.Name != "p_partkey" {
+		t.Fatalf("correlated refs = %#v", correlated)
+	}
+	if got, want := len(correlated.RequiredFilters), 2; got != want {
+		t.Fatalf("required filters = %#v, want %d", correlated.RequiredFilters, want)
+	}
+	if correlated.RequiredFilters[0].Name != "p_brand" || correlated.RequiredFilters[1].Name != "p_container" {
+		t.Fatalf("required filters = %#v", correlated.RequiredFilters)
+	}
+}
+
 func TestSimpleParserBridgeParsesLimitOffset(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id from orders as o order by o.o_orderkey limit 1 offset 2")
 	if diagnostics.BlocksNative() {

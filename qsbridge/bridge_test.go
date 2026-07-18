@@ -109,6 +109,59 @@ func TestBindSelectResolvesProjectionAliasesInWherePredicates(t *testing.T) {
 	}
 }
 
+func TestBindSelectBindsQ17CorrelatedAggregateIntent(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+select count(*)
+from lineitem as l
+inner join part as p on p.p_partkey = l.l_partkey
+where p.p_brand = 'Brand#45'
+  and p.p_container = 'MED JAR'
+  and l.l_quantity < (
+    select 0.2 * avg(l2.l_quantity)
+    from lineitem as l2
+    where l2.l_partkey = p.p_partkey
+  )`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	query, diagnostics := statement.Bind(NewBindContext(testCorrelatedAggregateCatalog(), "quanta"))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("bind diagnostics: %#v", diagnostics)
+	}
+	if got, want := len(query.Subqueries), 1; got != want {
+		t.Fatalf("subqueries = %d, want %d: %#v", got, want, query.Subqueries)
+	}
+	intent := query.Subqueries[0]
+	if !intent.Valid() || intent.CorrelatedAggregate == nil {
+		t.Fatalf("subquery intent = %#v, want valid correlated aggregate", intent)
+	}
+	correlated := intent.CorrelatedAggregate
+	if correlated.OuterValue.QualifiedName() != "l.l_quantity" ||
+		correlated.InnerValue.QualifiedName() != "l2.l_quantity" ||
+		correlated.InnerKey.QualifiedName() != "l2.l_partkey" ||
+		correlated.OuterKey.QualifiedName() != "p.p_partkey" {
+		t.Fatalf("correlated refs = %#v", correlated)
+	}
+	if correlated.OuterValue.Type != DataTypeInt || correlated.InnerValue.Type != DataTypeInt || correlated.OuterKey.Type != DataTypeInt {
+		t.Fatalf("correlated ref types = outer=%q inner=%q key=%q", correlated.OuterValue.Type, correlated.InnerValue.Type, correlated.OuterKey.Type)
+	}
+	if got, want := len(correlated.RequiredFilterFields), 2; got != want {
+		t.Fatalf("required filter fields = %#v, want %d", correlated.RequiredFilterFields, want)
+	}
+	plan := BuildLogicalPlan(query)
+	found := false
+	WalkLogicalPlan(plan.Root, func(node LogicalNode) bool {
+		if node.NodeKind() == PlanNodeCorrelatedAggregateSubquery {
+			found = true
+			return false
+		}
+		return true
+	})
+	if !found {
+		t.Fatalf("plan root = %#v, want correlated aggregate placeholder", plan.Root)
+	}
+}
+
 func TestBindSelectPreservesStringEnumDictionaryCapabilities(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	selectStmt := UnboundSelect{
@@ -1031,5 +1084,33 @@ func TestBindPredicatePreservesScope(t *testing.T) {
 	}
 	if predicate.Placement != PredicateResidualJoin {
 		t.Fatalf("Placement = %q, want residual_join", predicate.Placement)
+	}
+}
+
+func testCorrelatedAggregateCatalog() MemoryCatalog {
+	return MemoryCatalog{
+		Tables: []TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "lineitem",
+				Fields: []FieldDefinition{
+					{Name: "l_partkey", Type: DataTypeInt, Index: IndexBSI},
+					{Name: "l_quantity", Type: DataTypeInt, Index: IndexBSI},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "part",
+				Fields: []FieldDefinition{
+					{Name: "p_partkey", Type: DataTypeInt, Index: IndexBSI},
+					{Name: "p_brand", Type: DataTypeString, Index: IndexBackingString},
+					{Name: "p_container", Type: DataTypeString, Index: IndexStringEnum},
+				},
+			},
+		},
+		Functions: []FunctionDefinition{
+			{Name: "count", Kind: FunctionAggregate, ReturnType: DataTypeInt, Native: true},
+			{Name: "avg", Kind: FunctionAggregate, Arguments: []DataType{DataTypeInt}, ReturnType: DataTypeFloat, Native: true},
+		},
 	}
 }

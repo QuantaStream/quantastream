@@ -59,6 +59,7 @@ type UnboundSelect struct {
 	Memberships []UnboundMembership
 	Predicates  []UnboundPredicate
 	WhereExpr   UnboundExpr
+	Subqueries  []UnboundSubqueryPlanIntent
 	GroupBy     []UnboundExpr
 	Aggregates  []UnboundAggregate
 	Having      []UnboundPredicate
@@ -170,6 +171,27 @@ type UnboundPredicate struct {
 	Unsupported  string
 }
 
+// UnboundSubqueryPlanIntent describes parser-recognized subquery intent before catalog binding.
+type UnboundSubqueryPlanIntent struct {
+	Kind                SubqueryIntentKind
+	Capability          PlanCapability
+	CorrelatedAggregate *UnboundCorrelatedAggregateSubqueryIntent
+	HelperIntents       []SubqueryHelperIntent
+}
+
+// UnboundCorrelatedAggregateSubqueryIntent describes a correlated aggregate subquery before field binding.
+type UnboundCorrelatedAggregateSubqueryIntent struct {
+	AggregateFunction string
+	Factor            float64
+	OuterValue        UnboundFieldExpr
+	InnerValue        UnboundFieldExpr
+	InnerTable        UnboundTable
+	InnerKey          UnboundFieldExpr
+	OuterKey          UnboundFieldExpr
+	RequiredFilters   []UnboundFieldExpr
+	Scope             PredicateScope
+}
+
 // UnboundSort describes one unbound ORDER BY expression.
 type UnboundSort struct {
 	Expr      UnboundExpr
@@ -255,6 +277,15 @@ func BindSelect(context *BindContext, selectStmt UnboundSelect) (QueryIR, Diagno
 			continue
 		}
 		query.Predicates = append(query.Predicates, bound)
+	}
+
+	for _, subquery := range selectStmt.Subqueries {
+		intent, subqueryDiagnostics := BindSubqueryPlanIntent(context, subquery)
+		if subqueryDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, subqueryDiagnostics...)
+			continue
+		}
+		query.Subqueries = append(query.Subqueries, intent)
 	}
 
 	if selectStmt.WhereExpr != nil {
@@ -777,6 +808,106 @@ func bindMembershipRightField(context *BindContext, membership UnboundMembership
 		}
 	}
 	return field.Ref(instance, FieldRoleResidualInput), nil
+}
+
+// BindSubqueryPlanIntent binds parser-recognized subquery intent into catalog-backed planner intent.
+func BindSubqueryPlanIntent(context *BindContext, unbound UnboundSubqueryPlanIntent) (SubqueryPlanIntent, DiagnosticSet) {
+	intent := SubqueryPlanIntent{
+		Kind:          unbound.Kind,
+		Capability:    unbound.Capability,
+		HelperIntents: append([]SubqueryHelperIntent(nil), unbound.HelperIntents...),
+	}
+	switch unbound.Kind {
+	case SubqueryIntentCorrelatedAggregate:
+		if unbound.CorrelatedAggregate == nil {
+			return intent, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCorrelatedAggregateSubquery, PhaseBind, "correlated aggregate subquery intent is empty"),
+			}
+		}
+		correlated, diagnostics := bindCorrelatedAggregateSubqueryIntent(context, *unbound.CorrelatedAggregate)
+		if diagnostics.BlocksNative() {
+			return intent, diagnostics
+		}
+		intent.CorrelatedAggregate = &correlated
+		return intent, nil
+	default:
+		return intent, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "unsupported subquery intent kind: "+string(unbound.Kind)),
+		}
+	}
+}
+
+func bindCorrelatedAggregateSubqueryIntent(context *BindContext, unbound UnboundCorrelatedAggregateSubqueryIntent) (CorrelatedAggregateSubqueryIntent, DiagnosticSet) {
+	outerValue, outerValueDiagnostics := bindOuterSubqueryField(context, unbound.OuterValue)
+	innerValue, innerValueDiagnostics := bindInnerSubqueryField(context, unbound.InnerTable, unbound.InnerValue)
+	innerKey, innerKeyDiagnostics := bindInnerSubqueryField(context, unbound.InnerTable, unbound.InnerKey)
+	outerKey, outerKeyDiagnostics := bindOuterSubqueryField(context, unbound.OuterKey)
+	diagnostics := make(DiagnosticSet, 0, len(outerValueDiagnostics)+len(innerValueDiagnostics)+len(innerKeyDiagnostics)+len(outerKeyDiagnostics))
+	diagnostics = append(diagnostics, outerValueDiagnostics...)
+	diagnostics = append(diagnostics, innerValueDiagnostics...)
+	diagnostics = append(diagnostics, innerKeyDiagnostics...)
+	diagnostics = append(diagnostics, outerKeyDiagnostics...)
+
+	requiredFilters := make([]FieldRef, 0, len(unbound.RequiredFilters))
+	for _, filter := range unbound.RequiredFilters {
+		ref, filterDiagnostics := bindOuterSubqueryField(context, filter)
+		if filterDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, filterDiagnostics...)
+			continue
+		}
+		requiredFilters = append(requiredFilters, ref)
+	}
+	if diagnostics.BlocksNative() {
+		return CorrelatedAggregateSubqueryIntent{}, diagnostics
+	}
+	return CorrelatedAggregateSubqueryIntent{
+		AggregateFunction:    unbound.AggregateFunction,
+		Factor:               unbound.Factor,
+		OuterValue:           outerValue,
+		InnerValue:           innerValue,
+		InnerKey:             innerKey,
+		OuterKey:             outerKey,
+		RequiredFilterFields: requiredFilters,
+		Scope:                unbound.Scope,
+	}, nil
+}
+
+func bindOuterSubqueryField(context *BindContext, field UnboundFieldExpr) (FieldRef, DiagnosticSet) {
+	return context.ResolveField(field.Qualifier, field.Name, FieldRoleResidualInput)
+}
+
+func bindInnerSubqueryField(context *BindContext, table UnboundTable, field UnboundFieldExpr) (FieldRef, DiagnosticSet) {
+	if context == nil {
+		return FieldRef{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return FieldRef{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	schema := table.Schema
+	if schema == "" {
+		schema = context.DefaultSchema
+	}
+	definition, diagnostics := context.Catalog.Table(schema, table.Name)
+	if diagnostics.BlocksNative() {
+		return FieldRef{}, diagnostics
+	}
+	instance := definition.Instance(TableInstanceID(table.Name+"_subquery"), table.Alias)
+	if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, instance.RefName()) {
+		return FieldRef{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticTableAliasNotFound, PhaseBind, "table reference not found in subquery: "+field.Qualifier),
+		}
+	}
+	definitionField, ok := definition.Field(field.Name)
+	if !ok {
+		return FieldRef{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "field not found: "+instance.RefName()+"."+field.Name),
+		}
+	}
+	return definitionField.Ref(instance, FieldRoleResidualInput), nil
 }
 
 // BindAggregate binds one parser-neutral aggregate slot.

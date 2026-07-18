@@ -131,10 +131,11 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	predicates := []UnboundPredicate(nil)
 	memberships := []UnboundMembership(nil)
+	subqueries := []UnboundSubqueryPlanIntent(nil)
 	whereExpr := UnboundExpr(nil)
 	blockers := []NativeBlocker(nil)
 	if hasWhere {
-		predicates, memberships, whereExpr, blockers, diagnostic, ok = parseSimpleWhere(whereText)
+		predicates, memberships, whereExpr, subqueries, blockers, diagnostic, ok = parseSimpleWhere(whereText)
 		if !ok {
 			return UnboundStatement{}, diagnostic, false
 		}
@@ -156,6 +157,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			Memberships: memberships,
 			Predicates:  predicates,
 			WhereExpr:   whereExpr,
+			Subqueries:  subqueries,
 			GroupBy:     groupBy,
 			Having:      having,
 			OrderBy:     orderBy,
@@ -1422,32 +1424,33 @@ func parseSimplePredicatesWithParameterIndex(text string, parameterIndex int) ([
 	return predicates, Diagnostic{}, true
 }
 
-func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, UnboundExpr, []NativeBlocker, Diagnostic, bool) {
+func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, UnboundExpr, []UnboundSubqueryPlanIntent, []NativeBlocker, Diagnostic, bool) {
 	if simpleWhereHasMixedBooleanPredicates(text) {
 		if predicates, diagnostic, ok := parseSimpleMixedBooleanWherePredicates(text); ok || diagnostic.Code != "" {
 			if !ok {
-				return nil, nil, nil, nil, diagnostic, false
+				return nil, nil, nil, nil, nil, diagnostic, false
 			}
-			return predicates, nil, nil, nil, Diagnostic{}, true
+			return predicates, nil, nil, nil, nil, Diagnostic{}, true
 		}
 		whereExpr, diagnostic, ok := parseSimpleBooleanExpression(text)
 		if !ok {
-			return nil, nil, nil, nil, diagnostic, false
+			return nil, nil, nil, nil, nil, diagnostic, false
 		}
-		return nil, nil, whereExpr, []NativeBlocker{mixedBooleanPredicateBlocker("mixed AND/OR predicates require grouped boolean expression lowering")}, Diagnostic{}, true
+		return nil, nil, whereExpr, nil, []NativeBlocker{mixedBooleanPredicateBlocker("mixed AND/OR predicates require grouped boolean expression lowering")}, Diagnostic{}, true
 	}
 	if len(splitSimpleOrPredicates(text)) > 1 {
 		predicates, diagnostic, ok := parseSimplePredicates(text)
-		return predicates, nil, nil, nil, diagnostic, ok
+		return predicates, nil, nil, nil, nil, diagnostic, ok
 	}
 	parts := splitSimpleAndPredicates(text)
 	predicates := make([]UnboundPredicate, 0, len(parts))
 	memberships := make([]UnboundMembership, 0)
+	subqueries := make([]UnboundSubqueryPlanIntent, 0, 1)
 	parameterIndex := 1
 	for _, part := range parts {
 		existsMembership, diagnostic, ok := parseSimpleExistsMembership(part)
 		if diagnostic.Code != "" {
-			return nil, nil, nil, nil, diagnostic, false
+			return nil, nil, nil, nil, nil, diagnostic, false
 		}
 		if ok {
 			memberships = append(memberships, existsMembership)
@@ -1455,7 +1458,7 @@ func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, Unb
 		}
 		existsPredicate, diagnostic, ok := parseSimpleExistsPredicate(part)
 		if diagnostic.Code != "" {
-			return nil, nil, nil, nil, diagnostic, false
+			return nil, nil, nil, nil, nil, diagnostic, false
 		}
 		if ok {
 			predicates = append(predicates, existsPredicate)
@@ -1463,22 +1466,223 @@ func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, Unb
 		}
 		membership, diagnostic, ok := parseSimpleSubqueryMembership(part)
 		if diagnostic.Code != "" {
-			return nil, nil, nil, nil, diagnostic, false
+			return nil, nil, nil, nil, nil, diagnostic, false
 		}
 		if ok {
 			memberships = append(memberships, membership)
 			continue
 		}
+		if subquery, diagnostic, ok := parseSimpleCorrelatedAggregateSubqueryIntent(part, parts); diagnostic.Code != "" {
+			return nil, nil, nil, nil, nil, diagnostic, false
+		} else if ok {
+			subqueries = append(subqueries, subquery)
+		}
 		parsed, diagnostic, ok := parseSimplePredicate(part, &parameterIndex)
 		if !ok {
-			return nil, nil, nil, nil, diagnostic, false
+			return nil, nil, nil, nil, nil, diagnostic, false
 		}
 		predicates = append(predicates, parsed...)
 	}
 	if len(predicates) == 0 && len(memberships) == 0 {
-		return nil, nil, nil, nil, simpleParserDiagnostic("WHERE predicate is empty"), false
+		return nil, nil, nil, nil, nil, simpleParserDiagnostic("WHERE predicate is empty"), false
 	}
-	return predicates, memberships, nil, nil, Diagnostic{}, true
+	return predicates, memberships, nil, subqueries, nil, Diagnostic{}, true
+}
+
+func parseSimpleCorrelatedAggregateSubqueryIntent(text string, whereParts []string) (UnboundSubqueryPlanIntent, Diagnostic, bool) {
+	op, leftText, rightText, ok := splitBeforeComparisonOperator(text)
+	if !ok || !simpleCorrelatedAggregateComparisonOperator(op) {
+		return UnboundSubqueryPlanIntent{}, Diagnostic{}, false
+	}
+	leftExpr, ok := parseSimpleScalarExpression(leftText)
+	if !ok {
+		return UnboundSubqueryPlanIntent{}, Diagnostic{}, false
+	}
+	outerValue, ok := leftExpr.(UnboundFieldExpr)
+	if !ok || outerValue.Qualifier == "" {
+		return UnboundSubqueryPlanIntent{}, Diagnostic{}, false
+	}
+	scalar, ok := parseSimpleScalarSubqueryExpression(rightText, PredicateScopeWhere)
+	if !ok {
+		return UnboundSubqueryPlanIntent{}, Diagnostic{}, false
+	}
+	correlated, diagnostic, ok := parseSimpleCorrelatedAggregateSubqueryBody(scalar.SQL, outerValue, whereParts)
+	if !ok {
+		return UnboundSubqueryPlanIntent{}, diagnostic, false
+	}
+	return UnboundSubqueryPlanIntent{
+		Kind:                SubqueryIntentCorrelatedAggregate,
+		Capability:          CapabilityScalarSubquery,
+		CorrelatedAggregate: &correlated,
+	}, Diagnostic{}, true
+}
+
+func simpleCorrelatedAggregateComparisonOperator(op BinaryOp) bool {
+	switch op {
+	case BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual:
+		return true
+	default:
+		return false
+	}
+}
+
+func parseSimpleCorrelatedAggregateSubqueryBody(sql string, outerValue UnboundFieldExpr, whereParts []string) (UnboundCorrelatedAggregateSubqueryIntent, Diagnostic, bool) {
+	selectBody, ok := consumeKeyword(sql, "select")
+	if !ok {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	projectionText, sourceText, ok := splitBeforeTopLevelKeyword(selectBody, "from")
+	if !ok {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	sourceOnlyText, predicateText, hasWhere := splitOptionalKeyword(sourceText, "where")
+	if !hasWhere {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	if hasAnyTopLevelKeyword(sourceOnlyText, "join", "group", "having", "order", "limit") ||
+		hasAnyTopLevelKeyword(predicateText, "where", "join", "group", "having", "order", "limit") {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	innerTable, diagnostic, ok := parseSimpleTable(sourceOnlyText)
+	if !ok {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, diagnostic, false
+	}
+	aggregateFunction, factor, innerValue, ok := parseSimpleCorrelatedAggregateProjection(projectionText)
+	if !ok {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	innerTableRef := tableRefName(innerTable.Name, innerTable.Alias)
+	if !simpleQualifierMatchesTable(innerValue.Qualifier, innerTableRef) {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	innerKey, outerKey, ok := parseSimpleCorrelatedAggregateKeys(predicateText, innerTableRef)
+	if !ok {
+		return UnboundCorrelatedAggregateSubqueryIntent{}, Diagnostic{}, false
+	}
+	return UnboundCorrelatedAggregateSubqueryIntent{
+		AggregateFunction: aggregateFunction,
+		Factor:            factor,
+		OuterValue:        outerValue,
+		InnerValue:        innerValue,
+		InnerTable:        innerTable,
+		InnerKey:          innerKey,
+		OuterKey:          outerKey,
+		RequiredFilters:   parseSimpleCorrelatedAggregateRequiredFilters(whereParts, outerKey.Qualifier),
+		Scope:             PredicateScopeWhere,
+	}, Diagnostic{}, true
+}
+
+func parseSimpleCorrelatedAggregateProjection(text string) (string, float64, UnboundFieldExpr, bool) {
+	if function, field, ok := parseSimpleAggregateFieldProjection(text); ok {
+		return function, 1, field, true
+	}
+	left, right, ok := splitBeforeOperator(text, "*")
+	if !ok {
+		return "", 0, UnboundFieldExpr{}, false
+	}
+	if factor, ok := parseSimpleFloatFactor(left); ok {
+		if function, field, aggregateOK := parseSimpleAggregateFieldProjection(right); aggregateOK {
+			return function, factor, field, true
+		}
+	}
+	if factor, ok := parseSimpleFloatFactor(right); ok {
+		if function, field, aggregateOK := parseSimpleAggregateFieldProjection(left); aggregateOK {
+			return function, factor, field, true
+		}
+	}
+	return "", 0, UnboundFieldExpr{}, false
+}
+
+func parseSimpleAggregateFieldProjection(text string) (string, UnboundFieldExpr, bool) {
+	call, ok := parseSimpleAggregateCallExpression(text)
+	if !ok || len(call.Args) != 1 {
+		return "", UnboundFieldExpr{}, false
+	}
+	field, ok := call.Args[0].(UnboundFieldExpr)
+	if !ok || field.Qualifier == "" {
+		return "", UnboundFieldExpr{}, false
+	}
+	return call.Name, field, true
+}
+
+func parseSimpleFloatFactor(text string) (float64, bool) {
+	literal, diagnostic, ok := parseSimpleLiteral(strings.TrimSpace(text))
+	if !ok || diagnostic.Code != "" {
+		return 0, false
+	}
+	switch literal.Kind {
+	case ValueInt:
+		if value, ok := literal.Value.(int64); ok {
+			return float64(value), true
+		}
+	case ValueFloat:
+		if value, ok := literal.Value.(float64); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func parseSimpleCorrelatedAggregateKeys(text string, innerTableRef string) (UnboundFieldExpr, UnboundFieldExpr, bool) {
+	for _, part := range splitSimpleAndPredicates(text) {
+		op, leftText, rightText, ok := splitBeforeComparisonOperator(part)
+		if !ok || op != BinaryOpEqual {
+			continue
+		}
+		leftExpr, leftOK := parseSimpleScalarExpression(leftText)
+		rightExpr, rightOK := parseSimpleScalarExpression(rightText)
+		left, leftField := leftExpr.(UnboundFieldExpr)
+		right, rightField := rightExpr.(UnboundFieldExpr)
+		if !leftOK || !rightOK || !leftField || !rightField {
+			continue
+		}
+		if simpleQualifierMatchesTable(left.Qualifier, innerTableRef) && !simpleQualifierMatchesTable(right.Qualifier, innerTableRef) {
+			return left, right, true
+		}
+		if simpleQualifierMatchesTable(right.Qualifier, innerTableRef) && !simpleQualifierMatchesTable(left.Qualifier, innerTableRef) {
+			return right, left, true
+		}
+	}
+	return UnboundFieldExpr{}, UnboundFieldExpr{}, false
+}
+
+func parseSimpleCorrelatedAggregateRequiredFilters(whereParts []string, qualifier string) []UnboundFieldExpr {
+	if qualifier == "" {
+		return nil
+	}
+	filters := make([]UnboundFieldExpr, 0, 2)
+	seen := make(map[string]struct{})
+	for _, part := range whereParts {
+		op, leftText, rightText, ok := splitBeforeComparisonOperator(part)
+		if !ok || op != BinaryOpEqual {
+			continue
+		}
+		leftExpr, leftOK := parseSimpleScalarExpression(leftText)
+		rightExpr, rightOK := parseSimpleScalarExpression(rightText)
+		if left, ok := leftExpr.(UnboundFieldExpr); ok && leftOK && simpleQualifierMatchesTable(left.Qualifier, qualifier) && simpleCorrelatedAggregateLiteralExpr(rightExpr, rightOK) {
+			key := strings.ToLower(left.Qualifier + "." + left.Name)
+			if _, exists := seen[key]; !exists {
+				seen[key] = struct{}{}
+				filters = append(filters, left)
+			}
+		}
+		if right, ok := rightExpr.(UnboundFieldExpr); ok && rightOK && simpleQualifierMatchesTable(right.Qualifier, qualifier) && simpleCorrelatedAggregateLiteralExpr(leftExpr, leftOK) {
+			key := strings.ToLower(right.Qualifier + "." + right.Name)
+			if _, exists := seen[key]; !exists {
+				seen[key] = struct{}{}
+				filters = append(filters, right)
+			}
+		}
+	}
+	return filters
+}
+
+func simpleCorrelatedAggregateLiteralExpr(expr UnboundExpr, ok bool) bool {
+	if !ok {
+		return false
+	}
+	_, literal := expr.(UnboundLiteralExpr)
+	return literal
 }
 
 func parseSimpleMixedBooleanWherePredicates(text string) ([]UnboundPredicate, Diagnostic, bool) {
