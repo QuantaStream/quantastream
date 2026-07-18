@@ -6,13 +6,13 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-// nativeScalarPreflightAdapter executes native subquery steps by
-// delegating to the existing SQL-backed preflight helper implementation.
+// nativePreflightAdapter executes native-ready preflight subquery steps.
 //
 // This is intentionally an adapter, not the final bitmap-native executor. It
-// proves the native step contract can drive scalar subquery materialization
-// without changing externally visible behavior.
-type nativeScalarPreflightAdapter struct {
+// proves the native step contract can drive scalar, parent-key, and
+// aggregate-threshold helper-shaped work without changing externally visible
+// behavior.
+type nativePreflightAdapter struct {
 	Runtime SQLRuntime
 	Helper  PreflightHelperExecutor
 	Request PreflightHelperExecutionRequest
@@ -20,7 +20,7 @@ type nativeScalarPreflightAdapter struct {
 
 // ExecuteNativeSubqueryStep runs a native preflight step through the
 // current preflight helper boundary and returns native-step outputs.
-func (a nativeScalarPreflightAdapter) ExecuteNativeSubqueryStep(ctx context.Context, request qsbridge.NativeSubqueryStepExecutionRequest) (qsbridge.NativeSubqueryStepExecutionResult, error) {
+func (a nativePreflightAdapter) ExecuteNativeSubqueryStep(ctx context.Context, request qsbridge.NativeSubqueryStepExecutionRequest) (qsbridge.NativeSubqueryStepExecutionResult, error) {
 	if !nativePreflightStepKindMatchesPlan(request.Step.Kind, a.Request.Plan.Kind) {
 		return qsbridge.NativeSubqueryStepExecutionResult{
 			Step: request.Step,
@@ -77,7 +77,7 @@ func (a nativeScalarPreflightAdapter) ExecuteNativeSubqueryStep(ctx context.Cont
 	}, err
 }
 
-func (a nativeScalarPreflightAdapter) executeScalarMaterializationNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
+func (a nativePreflightAdapter) executeScalarMaterializationNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
 	payload := a.Request.Payload.Scalar
 	if payload == nil {
 		return qsbridge.NativeSubqueryStepExecutionResult{
@@ -114,7 +114,7 @@ func (a nativeScalarPreflightAdapter) executeScalarMaterializationNativeStep(ctx
 	}, err, true
 }
 
-func (a nativeScalarPreflightAdapter) scalarMaterializationExecutionRequest() (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
+func (a nativePreflightAdapter) scalarMaterializationExecutionRequest() (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
 	service := qsbridge.NewPlanningService(a.Runtime.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: a.Request.SQL}, a.Request.Options, a.Request.Values...)
 	diagnostics := append(qsbridge.DiagnosticSet(nil), request.Diagnostics...)
@@ -129,7 +129,7 @@ func (a nativeScalarPreflightAdapter) scalarMaterializationExecutionRequest() (E
 	return NewSQLExecutionRequest(intermediate, request), diagnostics, true
 }
 
-func (a nativeScalarPreflightAdapter) executeParentKeyLookupNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
+func (a nativePreflightAdapter) executeParentKeyLookupNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
 	payload := a.Request.Payload.ParentKeyLookup
 	if payload == nil {
 		return qsbridge.NativeSubqueryStepExecutionResult{
@@ -153,7 +153,7 @@ func (a nativeScalarPreflightAdapter) executeParentKeyLookupNativeStep(ctx conte
 	}, err, true
 }
 
-func (a nativeScalarPreflightAdapter) parentKeyLookupExecutionRequest() (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
+func (a nativePreflightAdapter) parentKeyLookupExecutionRequest() (ExecutionRequest, qsbridge.DiagnosticSet, bool) {
 	payload := a.Request.Payload.ParentKeyLookup
 	request, diagnostics, ok := parentKeyLookupExecutionRequest(payload, a.Runtime, a.Request.Options, a.Request.SQL)
 	if !ok || diagnostics.BlocksNative() {
@@ -226,7 +226,7 @@ func parentKeyLookupExecutionRequest(payload *PreflightParentKeyLookupPayload, r
 	return NewSQLExecutionRequest(intermediate, request), diagnostics, true
 }
 
-func (a nativeScalarPreflightAdapter) executeAggregateThresholdLookupNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
+func (a nativePreflightAdapter) executeAggregateThresholdLookupNativeStep(ctx context.Context, step qsbridge.NativeSubqueryStep) (qsbridge.NativeSubqueryStepExecutionResult, error, bool) {
 	payload := a.Request.Payload.AggregateThresholdLookup
 	if payload == nil {
 		return qsbridge.NativeSubqueryStepExecutionResult{
@@ -321,7 +321,7 @@ func (r SQLRuntime) nativeSubqueryStepExecutor(request PreflightHelperExecutionR
 	if r.NativeSubquerySteps != nil {
 		return r.NativeSubquerySteps
 	}
-	return nativeScalarPreflightAdapter{
+	return nativePreflightAdapter{
 		Runtime: r,
 		Helper:  r.PreflightHelpers,
 		Request: request,
