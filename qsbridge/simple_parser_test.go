@@ -463,6 +463,13 @@ func TestSimpleParserBridgeParsesFilteredSubqueryMembership(t *testing.T) {
 	if binary.Op != BinaryOpEqual {
 		t.Fatalf("membership predicate op = %q, want equal", binary.Op)
 	}
+	left, ok := binary.Left.(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("membership predicate left = %T, want field", binary.Left)
+	}
+	if left.Qualifier != "orders_qa" || left.Name != "ship_via" {
+		t.Fatalf("membership predicate left = %#v, want orders_qa.ship_via", left)
+	}
 }
 
 func TestSimpleParserBridgeParsesFilteredSubqueryMembershipWithInnerAnd(t *testing.T) {

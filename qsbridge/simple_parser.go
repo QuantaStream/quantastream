@@ -1601,6 +1601,13 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 	if !ok {
 		return UnboundMembership{}, diagnostic, false
 	}
+	rightQualifier, rightField := splitProjectionField(strings.TrimSpace(projectionText))
+	if rightField == "" {
+		return UnboundMembership{}, simpleParserDiagnostic("membership subquery SELECT field is empty"), false
+	}
+	if rightQualifier == "" {
+		rightQualifier = tableRefName(table.Name, table.Alias)
+	}
 	predicates := []UnboundPredicate(nil)
 	if hasWhere {
 		var predicateDiagnostic Diagnostic
@@ -1608,13 +1615,7 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 		if !ok {
 			return UnboundMembership{}, predicateDiagnostic, false
 		}
-	}
-	rightQualifier, rightField := splitProjectionField(strings.TrimSpace(projectionText))
-	if rightField == "" {
-		return UnboundMembership{}, simpleParserDiagnostic("membership subquery SELECT field is empty"), false
-	}
-	if rightQualifier == "" {
-		rightQualifier = tableRefName(table.Name, table.Alias)
+		predicates = qualifySimpleMembershipPredicates(predicates, rightQualifier)
 	}
 	return UnboundMembership{
 		LeftQualifier:  leftQualifier,
@@ -1625,6 +1626,51 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 		Predicates:     predicates,
 		Kind:           kind,
 	}, Diagnostic{}, true
+}
+
+func qualifySimpleMembershipPredicates(predicates []UnboundPredicate, qualifier string) []UnboundPredicate {
+	qualified := make([]UnboundPredicate, len(predicates))
+	for i, predicate := range predicates {
+		predicate.Expr = qualifySimpleMembershipExpr(predicate.Expr, qualifier)
+		qualified[i] = predicate
+	}
+	return qualified
+}
+
+func qualifySimpleMembershipExpr(expr UnboundExpr, qualifier string) UnboundExpr {
+	if qualifier == "" {
+		return expr
+	}
+	switch typed := expr.(type) {
+	case UnboundFieldExpr:
+		if typed.Qualifier == "" {
+			typed.Qualifier = qualifier
+		}
+		return typed
+	case UnboundBinaryExpr:
+		typed.Left = qualifySimpleMembershipExpr(typed.Left, qualifier)
+		typed.Right = qualifySimpleMembershipExpr(typed.Right, qualifier)
+		return typed
+	case UnboundListExpr:
+		for i := range typed.Items {
+			typed.Items[i] = qualifySimpleMembershipExpr(typed.Items[i], qualifier)
+		}
+		return typed
+	case UnboundCallExpr:
+		for i := range typed.Args {
+			typed.Args[i] = qualifySimpleMembershipExpr(typed.Args[i], qualifier)
+		}
+		return typed
+	case UnboundSearchedCaseExpr:
+		for i := range typed.Whens {
+			typed.Whens[i].Condition = qualifySimpleMembershipExpr(typed.Whens[i].Condition, qualifier)
+			typed.Whens[i].Result = qualifySimpleMembershipExpr(typed.Whens[i].Result, qualifier)
+		}
+		typed.Else = qualifySimpleMembershipExpr(typed.Else, qualifier)
+		return typed
+	default:
+		return expr
+	}
 }
 
 func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bool) {

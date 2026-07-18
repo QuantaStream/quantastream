@@ -272,10 +272,9 @@ tests:
         - [8]
 
   - id: "subqueries.042.scalar_subquery"
-    status: xfail
+    status: supported
     kind: query
     capabilities: [subquery, scalar-subquery, aggregate]
-    issue: "Scalar predicate subqueries require a scalar-subquery execution step that evaluates the subquery once and injects the result into the parent predicate."
     sql: |-
       select count(*)
       from customers_qa
