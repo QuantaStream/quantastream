@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
 func TestBitmapShardManifestBuilderGroupsStandardAndBSIFiles(t *testing.T) {
@@ -108,6 +109,131 @@ func TestBitmapShardManifestSaveAndLoad(t *testing.T) {
 	if loaded.Entries[0].RowIDOrBits != 0 {
 		t.Fatalf("row-zero entry was not preserved: %+v", loaded.Entries[0])
 	}
+}
+
+func TestBitmapShardManifestInvalidationIsIdempotent(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	if err := index.saveBitmapShardManifest(BitmapShardManifest{Source: "test"}); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	if err := index.invalidateBitmapShardManifest("test"); err != nil {
+		t.Fatalf("invalidateBitmapShardManifest returned error: %v", err)
+	}
+	if err := index.invalidateBitmapShardManifest("test"); err != nil {
+		t.Fatalf("second invalidateBitmapShardManifest returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(index.dataDir, BitmapShardManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest to be removed, stat err=%v", err)
+	}
+}
+
+func TestBitmapPersistInvalidatesShardManifestWhenStandardBitmapWrites(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	now := time.Unix(100, 0)
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customers": {
+			"isActive": {
+				0: {
+					now.UnixNano(): {
+						Bits:        roaring64.BitmapOf(1, 2),
+						ModTime:     now,
+						PersistTime: now.Add(-time.Second),
+					},
+				},
+			},
+		},
+	}
+	if err := index.saveBitmapShardManifest(BitmapShardManifest{Source: "test"}); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	_, writes, err := index.checkPersistBitmapCache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBitmapCache returned error: %v", err)
+	}
+	if writes != 1 {
+		t.Fatalf("writes = %d, want 1", writes)
+	}
+	if _, err := os.Stat(filepath.Join(index.dataDir, BitmapShardManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest to be invalidated after standard persist, stat err=%v", err)
+	}
+}
+
+func TestBitmapPersistLeavesShardManifestWhenStandardBitmapDoesNotWrite(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	now := time.Unix(100, 0)
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customers": {
+			"isActive": {
+				0: {
+					now.UnixNano(): {
+						Bits:        roaring64.BitmapOf(1, 2),
+						ModTime:     now,
+						PersistTime: now,
+					},
+				},
+			},
+		},
+	}
+	if err := index.saveBitmapShardManifest(BitmapShardManifest{Source: "test"}); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	_, writes, err := index.checkPersistBitmapCache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBitmapCache returned error: %v", err)
+	}
+	if writes != 0 {
+		t.Fatalf("writes = %d, want 0", writes)
+	}
+	if _, err := os.Stat(filepath.Join(index.dataDir, BitmapShardManifestFileName)); err != nil {
+		t.Fatalf("expected manifest to remain after clean skipped persist, stat err=%v", err)
+	}
+}
+
+func TestBSIPersistInvalidatesShardManifestWhenBSIWrites(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	index.bsiCache = map[string]map[string]map[int64]*BSIBitmap{
+		"orders": {
+			"o_orderkey": {
+				now.UnixNano(): {
+					BSI:         values,
+					ModTime:     now,
+					PersistTime: now.Add(-time.Second),
+				},
+			},
+		},
+	}
+	if err := index.saveBitmapShardManifest(BitmapShardManifest{Source: "test"}); err != nil {
+		t.Fatalf("saveBitmapShardManifest returned error: %v", err)
+	}
+
+	_, writes, err := index.checkPersistBSICache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBSICache returned error: %v", err)
+	}
+	if writes != 1 {
+		t.Fatalf("writes = %d, want 1", writes)
+	}
+	if _, err := os.Stat(filepath.Join(index.dataDir, BitmapShardManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest to be invalidated after BSI persist, stat err=%v", err)
+	}
+}
+
+func newManifestPersistenceTestIndex(t *testing.T) *BitmapIndex {
+	t.Helper()
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+	}
+	index.ServicePort = 1
+	return index
 }
 
 func writeManifestTestFile(t *testing.T, dataDir, rel string) string {

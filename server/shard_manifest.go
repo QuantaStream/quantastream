@@ -204,6 +204,18 @@ func (m *BitmapIndex) saveBitmapShardManifest(manifest BitmapShardManifest) erro
 	return nil
 }
 
+func (m *BitmapIndex) invalidateBitmapShardManifest(reason string) error {
+	path := m.bitmapShardManifestPath()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove bitmap shard manifest after %s: %w", reason, err)
+	}
+	tmpPath := path + ".tmp"
+	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove temporary bitmap shard manifest after %s: %w", reason, err)
+	}
+	return nil
+}
+
 func (m *BitmapIndex) loadBitmapShardManifest() (BitmapShardManifest, error) {
 	var manifest BitmapShardManifest
 	data, err := os.ReadFile(m.bitmapShardManifestPath())

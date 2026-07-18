@@ -1130,6 +1130,14 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 	if m.persistenceDisabled() {
 		return 0, 0, nil // test mode, persistence disabled
 	}
+	manifestDirty := false
+	defer func() {
+		if manifestDirty {
+			if err := m.invalidateBitmapShardManifest("standard bitmap persistence"); err != nil {
+				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
+			}
+		}
+	}()
 
 	m.bitmapCacheLock.RLock()
 	defer m.bitmapCacheLock.RUnlock()
@@ -1151,6 +1159,7 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 								indexName, fieldName, rowID, time.Unix(0, t).UTC().Format(timeFmt), err)
 						}
 						writeCount++
+						manifestDirty = true
 						bitmap.PersistTime = time.Now()
 					}
 					bitmap.Lock.Unlock()
@@ -1180,6 +1189,14 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 	if m.persistenceDisabled() {
 		return 0, 0, nil // test mode persistence disabled
 	}
+	manifestDirty := false
+	defer func() {
+		if manifestDirty {
+			if err := m.invalidateBitmapShardManifest("BSI persistence"); err != nil {
+				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
+			}
+		}
+	}()
 
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
@@ -1200,6 +1217,7 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 							indexName, fieldName, time.Unix(0, t).UTC().Format(timeFmt), err)
 					}
 					writeCount++
+					manifestDirty = true
 					bsi.PersistTime = time.Now()
 				}
 				bsi.Lock.Unlock()
@@ -1462,6 +1480,9 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 		if err := os.RemoveAll(tableDir); err != nil {
 			u.Infof("error dropping table %s directory - %v", req.Table, err)
 		} else {
+			if err := m.invalidateBitmapShardManifest("table drop"); err != nil {
+				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
+			}
 			u.Infof("Table %s dropped.", req.Table)
 		}
 	case pb.TableOperationRequest_TRUNCATE:
@@ -1472,6 +1493,9 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 		if err := os.RemoveAll(tableDir); err != nil {
 			u.Errorf("error truncating table %s directory - %v", req.Table, err)
 		} else {
+			if err := m.invalidateBitmapShardManifest("table truncate"); err != nil {
+				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
+			}
 			u.Infof("Table %s truncated.", req.Table)
 		}
 	default:
