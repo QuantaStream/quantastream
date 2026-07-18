@@ -298,6 +298,27 @@ specific report is intentionally promoted. Render a human-readable summary with:
 go run . -benchmark_summary expected/local/tpch-kernels.json
 ```
 
+Compare two or more benchmark reports with the first report as the baseline:
+
+```bash
+go run . \
+  -benchmark_compare expected/local/direct.json,expected/local/standard.json \
+  -benchmark_limit 20
+```
+
+The comparison output lists median case timing deltas, status changes, and
+missing cases. `-benchmark_limit 0` prints every comparable case.
+
+The comparison wrapper runs a suite for multiple engines, writes ignored local
+JSON reports, and writes a markdown comparison beside them:
+
+```bash
+ENGINES="inabox-direct inabox-standard" \
+SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
+BENCHMARK_RUNS=3 \
+  ./run-benchmark-compare.sh
+```
+
 ## TPC-H Suites
 
 TPC-H-specific suites live with the benchmark assets under

@@ -141,9 +141,11 @@ remain correctness-first:
 
 The current scaffold supports `-benchmark_report`, `-benchmark_profile`,
 `-benchmark_warmup`, `-benchmark_runs`, and `-benchmark_metadata` for normal
-SQLRunner suite execution. The helper script `sqlrunner/run-benchmark.sh` wraps
-those flags for local developer runs. These reports are benchmark artifacts, not
-compatibility verdicts.
+SQLRunner suite execution. `-benchmark_summary` renders one report, and
+`-benchmark_compare` compares two or more reports with the first report as the
+baseline. The helper scripts `sqlrunner/run-benchmark.sh` and
+`sqlrunner/run-benchmark-compare.sh` wrap those flags for local developer runs.
+These reports are benchmark artifacts, not compatibility verdicts.
 
 Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and
@@ -157,7 +159,7 @@ performance.
    selected.
 3. Promote a small read-only benchmark suite that is safe to repeat without
    mutating benchmark state.
-4. Add a local developer benchmark summary renderer for comparing two report
-   files.
+4. Promote a controlled report archive convention once reference benchmark runs
+   become repeatable enough to preserve.
 5. Promote benchmark results only after correctness has passed for the same
    suite and dataset.

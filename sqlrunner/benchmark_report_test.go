@@ -25,6 +25,22 @@ func TestParseBenchmarkMetadataRejectsMalformedPair(t *testing.T) {
 	}
 }
 
+func TestParseBenchmarkReportPaths(t *testing.T) {
+	paths, err := parseBenchmarkReportPaths("direct.json, standard.json")
+	if err != nil {
+		t.Fatalf("parseBenchmarkReportPaths failed: %v", err)
+	}
+	if len(paths) != 2 || paths[0] != "direct.json" || paths[1] != "standard.json" {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
+func TestParseBenchmarkReportPathsRejectsSingleReport(t *testing.T) {
+	if _, err := parseBenchmarkReportPaths("direct.json"); err == nil {
+		t.Fatal("expected single benchmark report path to fail")
+	}
+}
+
 func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 	runs := []benchmarkMeasuredRun{
 		{
@@ -93,5 +109,59 @@ func TestRenderBenchmarkSummary(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("summary text missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRenderBenchmarkComparison(t *testing.T) {
+	baseline := benchmarkReport{
+		Suite:        "tpch",
+		Engine:       "inabox-direct",
+		Profile:      "developer-local",
+		MeasuredRuns: 3,
+		Cases: []benchmarkCaseReport{
+			{ID: "q1", Status: roadmap.ResultPass, Runs: 3, MedianMS: 100},
+			{ID: "q2", Status: roadmap.ResultPass, Runs: 3, MedianMS: 200},
+		},
+	}
+	target := benchmarkReport{
+		Suite:        "tpch",
+		Engine:       "inabox-standard",
+		Profile:      "developer-local",
+		MeasuredRuns: 3,
+		Cases: []benchmarkCaseReport{
+			{ID: "q1", Status: roadmap.ResultPass, Runs: 3, MedianMS: 150},
+			{ID: "q2", Status: roadmap.ResultPass, Runs: 3, MedianMS: 100},
+		},
+	}
+
+	var out bytes.Buffer
+	if err := renderBenchmarkComparison(&out, []benchmarkReport{baseline, target}, []string{"direct.json", "standard.json"}, 20); err != nil {
+		t.Fatalf("renderBenchmarkComparison failed: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Benchmark Comparison: tpch",
+		"Baseline: inabox-direct/developer-local (direct.json)",
+		"Target: inabox-standard/developer-local (standard.json)",
+		"q1",
+		"+50ms",
+		"1.50x",
+		"q2",
+		"-100ms",
+		"0.50x",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("comparison text missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRenderBenchmarkComparisonRejectsDifferentSuites(t *testing.T) {
+	baseline := benchmarkReport{Suite: "tpch", Engine: "inabox-direct"}
+	target := benchmarkReport{Suite: "basic", Engine: "inabox-standard"}
+
+	var out bytes.Buffer
+	if err := renderBenchmarkComparison(&out, []benchmarkReport{baseline, target}, []string{"direct.json", "standard.json"}, 20); err == nil {
+		t.Fatal("expected suite mismatch to fail")
 	}
 }

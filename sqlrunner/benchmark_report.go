@@ -272,6 +272,22 @@ func printBenchmarkSummary(path string) error {
 	return renderBenchmarkSummary(os.Stdout, report)
 }
 
+func printBenchmarkComparison(rawPaths string, limit int) error {
+	paths, err := parseBenchmarkReportPaths(rawPaths)
+	if err != nil {
+		return err
+	}
+	reports := make([]benchmarkReport, 0, len(paths))
+	for _, path := range paths {
+		report, err := loadBenchmarkReport(path)
+		if err != nil {
+			return err
+		}
+		reports = append(reports, report)
+	}
+	return renderBenchmarkComparison(os.Stdout, reports, paths, limit)
+}
+
 func loadBenchmarkReport(path string) (benchmarkReport, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -352,4 +368,230 @@ func sortedBenchmarkMetadataKeys(metadata map[string]string) []string {
 
 func formatBenchmarkMillis(millis int64) string {
 	return fmt.Sprintf("%dms", millis)
+}
+
+func parseBenchmarkReportPaths(rawPaths string) ([]string, error) {
+	rawPaths = strings.TrimSpace(rawPaths)
+	if rawPaths == "" {
+		return nil, fmt.Errorf("benchmark_compare requires at least two benchmark report paths")
+	}
+	parts := strings.Split(rawPaths, ",")
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		path := strings.TrimSpace(part)
+		if path == "" {
+			return nil, fmt.Errorf("benchmark_compare paths cannot be empty")
+		}
+		paths = append(paths, path)
+	}
+	if len(paths) < 2 {
+		return nil, fmt.Errorf("benchmark_compare requires at least two benchmark report paths")
+	}
+	return paths, nil
+}
+
+type benchmarkComparisonRow struct {
+	ID           string
+	Baseline     benchmarkCaseReport
+	Target       benchmarkCaseReport
+	HasBaseline  bool
+	HasTarget    bool
+	DeltaMS      int64
+	Status       string
+	SortPriority int
+}
+
+func renderBenchmarkComparison(w io.Writer, reports []benchmarkReport, paths []string, limit int) error {
+	if limit < 0 {
+		return fmt.Errorf("benchmark_limit cannot be negative")
+	}
+	if len(reports) < 2 {
+		return fmt.Errorf("benchmark comparison requires at least two benchmark reports")
+	}
+	if len(paths) != len(reports) {
+		return fmt.Errorf("benchmark comparison paths/reports length mismatch")
+	}
+
+	baseline := reports[0]
+	suite := strings.TrimSpace(baseline.Suite)
+	if suite == "" {
+		return fmt.Errorf("baseline benchmark report does not include a suite name")
+	}
+	for i := range reports {
+		if strings.TrimSpace(reports[i].Suite) != suite {
+			return fmt.Errorf("benchmark report %q uses suite %q, expected %q", paths[i], reports[i].Suite, suite)
+		}
+	}
+
+	if _, err := fmt.Fprintf(w, "Benchmark Comparison: %s\n", suite); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Baseline: %s (%s)\n", benchmarkReportLabel(baseline), paths[0]); err != nil {
+		return err
+	}
+
+	for i := 1; i < len(reports); i++ {
+		if i > 1 {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		if err := renderBenchmarkComparisonTarget(w, baseline, reports[i], paths[i], limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderBenchmarkComparisonTarget(w io.Writer, baseline benchmarkReport, target benchmarkReport, targetPath string, limit int) error {
+	if _, err := fmt.Fprintf(w, "\nTarget: %s (%s)\n", benchmarkReportLabel(target), targetPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Runs: baseline %d measured, target %d measured\n\n", baseline.MeasuredRuns, target.MeasuredRuns); err != nil {
+		return err
+	}
+
+	rows := benchmarkComparisonRows(baseline, target)
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(w, "No comparable cases.")
+		return err
+	}
+	sortBenchmarkComparisonRows(rows)
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "Case\tBaseline\tTarget\tDelta\tRatio\tStatus"); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.ID,
+			formatBenchmarkComparisonMillis(row.Baseline.MedianMS, row.HasBaseline),
+			formatBenchmarkComparisonMillis(row.Target.MedianMS, row.HasTarget),
+			formatBenchmarkComparisonDelta(row),
+			formatBenchmarkComparisonRatio(row),
+			row.Status,
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func benchmarkComparisonRows(baseline benchmarkReport, target benchmarkReport) []benchmarkComparisonRow {
+	baselineCases := benchmarkCasesByID(baseline)
+	targetCases := benchmarkCasesByID(target)
+	ids := make(map[string]struct{}, len(baselineCases)+len(targetCases))
+	for id := range baselineCases {
+		ids[id] = struct{}{}
+	}
+	for id := range targetCases {
+		ids[id] = struct{}{}
+	}
+
+	rows := make([]benchmarkComparisonRow, 0, len(ids))
+	for id := range ids {
+		baselineCase, hasBaseline := baselineCases[id]
+		targetCase, hasTarget := targetCases[id]
+		row := benchmarkComparisonRow{
+			ID:          id,
+			Baseline:    baselineCase,
+			Target:      targetCase,
+			HasBaseline: hasBaseline,
+			HasTarget:   hasTarget,
+			Status:      benchmarkComparisonStatus(baselineCase, hasBaseline, targetCase, hasTarget),
+		}
+		if hasBaseline && hasTarget {
+			row.DeltaMS = targetCase.MedianMS - baselineCase.MedianMS
+		}
+		row.SortPriority = benchmarkComparisonSortPriority(row)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func benchmarkCasesByID(report benchmarkReport) map[string]benchmarkCaseReport {
+	cases := make(map[string]benchmarkCaseReport, len(report.Cases))
+	for _, result := range report.Cases {
+		cases[result.ID] = result
+	}
+	return cases
+}
+
+func sortBenchmarkComparisonRows(rows []benchmarkComparisonRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].SortPriority != rows[j].SortPriority {
+			return rows[i].SortPriority > rows[j].SortPriority
+		}
+		if rows[i].DeltaMS != rows[j].DeltaMS {
+			return rows[i].DeltaMS > rows[j].DeltaMS
+		}
+		return rows[i].ID < rows[j].ID
+	})
+}
+
+func benchmarkComparisonSortPriority(row benchmarkComparisonRow) int {
+	if !row.HasBaseline || !row.HasTarget {
+		return 3
+	}
+	if row.Baseline.Status != row.Target.Status {
+		return 2
+	}
+	if row.DeltaMS > 0 {
+		return 1
+	}
+	return 0
+}
+
+func benchmarkComparisonStatus(baseline benchmarkCaseReport, hasBaseline bool, target benchmarkCaseReport, hasTarget bool) string {
+	switch {
+	case !hasBaseline:
+		return "missing-baseline"
+	case !hasTarget:
+		return "missing-target"
+	case baseline.Status == target.Status:
+		return target.Status
+	default:
+		return fmt.Sprintf("%s->%s", baseline.Status, target.Status)
+	}
+}
+
+func benchmarkReportLabel(report benchmarkReport) string {
+	engine := strings.TrimSpace(report.Engine)
+	if engine == "" {
+		engine = "unknown"
+	}
+	profile := strings.TrimSpace(report.Profile)
+	if profile == "" {
+		return engine
+	}
+	return fmt.Sprintf("%s/%s", engine, profile)
+}
+
+func formatBenchmarkComparisonMillis(millis int64, ok bool) string {
+	if !ok {
+		return "n/a"
+	}
+	return formatBenchmarkMillis(millis)
+}
+
+func formatBenchmarkComparisonDelta(row benchmarkComparisonRow) string {
+	if !row.HasBaseline || !row.HasTarget {
+		return "n/a"
+	}
+	if row.DeltaMS > 0 {
+		return fmt.Sprintf("+%dms", row.DeltaMS)
+	}
+	return fmt.Sprintf("%dms", row.DeltaMS)
+}
+
+func formatBenchmarkComparisonRatio(row benchmarkComparisonRow) string {
+	if !row.HasBaseline || !row.HasTarget || row.Baseline.MedianMS == 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.2fx", float64(row.Target.MedianMS)/float64(row.Baseline.MedianMS))
 }

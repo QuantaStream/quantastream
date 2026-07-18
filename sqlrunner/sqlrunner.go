@@ -58,6 +58,8 @@ type runnerConfig struct {
 	BenchmarkWarmup   int
 	BenchmarkRuns     int
 	BenchmarkSummary  string
+	BenchmarkCompare  string
+	BenchmarkLimit    int
 	PreciseTiming     bool
 }
 
@@ -93,6 +95,8 @@ func main() {
 	benchmarkWarmup := flag.Int("benchmark_warmup", 0, "Warm-up suite runs before measured benchmark runs.")
 	benchmarkRuns := flag.Int("benchmark_runs", 1, "Measured suite runs written to -benchmark_report output.")
 	benchmarkSummary := flag.String("benchmark_summary", "", "Read a JSON benchmark report and print a human-readable summary.")
+	benchmarkCompare := flag.String("benchmark_compare", "", "Read comma-separated JSON benchmark reports and print a comparison using the first report as baseline.")
+	benchmarkLimit := flag.Int("benchmark_limit", 20, "Maximum slower-case rows to print for -benchmark_compare; set 0 to print all.")
 	preciseTiming := flag.Bool("precise_timing", false, "Print millisecond case durations in suite summaries without verbose SQL logging.")
 	flag.Parse()
 
@@ -119,6 +123,8 @@ func main() {
 		BenchmarkWarmup:   *benchmarkWarmup,
 		BenchmarkRuns:     *benchmarkRuns,
 		BenchmarkSummary:  strings.TrimSpace(*benchmarkSummary),
+		BenchmarkCompare:  strings.TrimSpace(*benchmarkCompare),
+		BenchmarkLimit:    *benchmarkLimit,
 		PreciseTiming:     *preciseTiming,
 	}
 	cfg = applyEngineDefaults(cfg)
@@ -126,6 +132,13 @@ func main() {
 	if cfg.BenchmarkSummary != "" {
 		if err := printBenchmarkSummary(cfg.BenchmarkSummary); err != nil {
 			log.Printf("SQL benchmark summary failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if cfg.BenchmarkCompare != "" {
+		if err := printBenchmarkComparison(cfg.BenchmarkCompare, cfg.BenchmarkLimit); err != nil {
+			log.Printf("SQL benchmark comparison failed: %v", err)
 			os.Exit(1)
 		}
 		return
@@ -241,6 +254,7 @@ func printUsage(err error) {
 	u.Warn("Diff example: ./sqlrunner -engine_diff mysql-reference,inabox-direct -suite_file sqltests/mysql_compat_select.yaml -mysql_dsn 'user:pass@tcp(127.0.0.1:3306)/test'")
 	u.Warn("Benchmark example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
 	u.Warn("Benchmark summary example: ./sqlrunner -benchmark_summary expected/local/tpch.json")
+	u.Warn("Benchmark compare example: ./sqlrunner -benchmark_compare expected/local/direct.json,expected/local/standard.json")
 }
 
 func configureLogging(logLevel string) {
