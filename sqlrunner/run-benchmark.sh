@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/benchmark_metadata.sh"
 
-SUITE_FILE="${SUITE_FILE:-sqltests/inabox_direct_tpch_kernels.yaml}"
+SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml}"
 ENGINE="${ENGINE:-inabox-direct}"
 BENCHMARK_PROFILE="${BENCHMARK_PROFILE:-developer-local}"
 BENCHMARK_REPORT="${BENCHMARK_REPORT:-expected/local/benchmark-$(date -u +%Y%m%dT%H%M%SZ).json}"

@@ -9,7 +9,7 @@ Usage:
 Environment:
   MYSQL_DSN                 Required database/sql DSN for the stock MySQL reference.
   MYSQL_DRIVER              database/sql driver. Defaults to mysql.
-  SUITE_FILE                SQLRunner suite. Defaults to ../tpc-h-benchmark/sqltests/tpch_queries.yaml.
+  SUITE_FILE                SQLRunner suite. Defaults to ../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml.
   TARGET_ENGINE             QuantaStream target engine. Defaults to inabox-standard.
   TARGET_HOST               QuantaStream host. Defaults to QUANTA_HOST or 127.0.0.1.
   TARGET_PORT               QuantaStream port. Defaults to QUANTA_PORT or 4000.
@@ -44,7 +44,7 @@ source "${SCRIPT_DIR}/benchmark_metadata.sh"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 MYSQL_DRIVER="${MYSQL_DRIVER:-mysql}"
-SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_queries.yaml}"
+SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml}"
 TARGET_ENGINE="${TARGET_ENGINE:-inabox-standard}"
 TARGET_HOST="${TARGET_HOST:-${QUANTA_HOST:-127.0.0.1}}"
 TARGET_PORT="${TARGET_PORT:-${QUANTA_PORT:-4000}}"

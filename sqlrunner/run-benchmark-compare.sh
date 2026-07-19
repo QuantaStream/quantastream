@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/benchmark_metadata.sh"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
-SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_queries.yaml}"
+SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml}"
 ENGINES="${ENGINES:-inabox-direct inabox-standard}"
 BENCHMARK_PROFILE="${BENCHMARK_PROFILE:-developer-local}"
 BENCHMARK_WARMUP="${BENCHMARK_WARMUP:-0}"

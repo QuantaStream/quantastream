@@ -277,12 +277,12 @@ Benchmark Lab controls in `../docs/BENCHMARK_LAB.md`:
 ```bash
 go run . \
   -engine inabox-direct \
-  -suite_file sqltests/inabox_direct_tpch_kernels.yaml \
+  -suite_file ../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml \
   -benchmark_profile developer-local \
   -benchmark_warmup 1 \
   -benchmark_runs 3 \
   -benchmark_metadata commit=$(git rev-parse --short HEAD),cache=warm \
-  -benchmark_report expected/local/tpch-kernels.json
+  -benchmark_report expected/local/tpch-benchmark-readonly.json
 ```
 
 The wrapper script uses the same flags with environment-variable defaults:
@@ -296,12 +296,17 @@ metadata automatically. TPC-H suites infer `dataset=tpch`; set
 `BENCHMARK_SCALE_FACTOR`, `TPCH_SCALE_FACTOR`, or `SCALE_FACTOR` to record the
 scale factor. Use `BENCHMARK_DATASET` to override the inferred dataset label,
 and use `BENCHMARK_METADATA` for any additional run-specific key/value pairs.
+The default benchmark suite is
+`../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml`, a compact read-only
+TPC-H checkpoint intended for repeatable performance comparisons. Override
+`SUITE_FILE` when intentionally running a broader roadmap suite such as
+`../tpc-h-benchmark/sqltests/tpch_queries.yaml`.
 
 Generated benchmark artifacts should stay under ignored local paths unless a
 specific report is intentionally promoted. Render a human-readable summary with:
 
 ```bash
-go run . -benchmark_summary expected/local/tpch-kernels.json
+go run . -benchmark_summary expected/local/tpch-benchmark-readonly.json
 ```
 
 Compare two or more benchmark reports with the first report as the baseline:
@@ -320,7 +325,6 @@ JSON reports, and writes a markdown comparison beside them:
 
 ```bash
 ENGINES="inabox-direct inabox-standard" \
-SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
 BENCHMARK_RUNS=3 \
   ./run-benchmark-compare.sh
 ```
@@ -334,7 +338,6 @@ MYSQL_DSN='user:pass@tcp(mysql-host:3306)/tpch' \
 TARGET_ENGINE=inabox-standard \
 TARGET_HOST=127.0.0.1 \
 TARGET_PORT=4000 \
-SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
   ./run-mysql-benchmark-compare.sh
 ```
 
@@ -361,9 +364,10 @@ threshold after normal suite output. Normal suite output includes a rounded
 duration on each result line.
 
 `tpch_smoke.yaml` validates that a generated/load TPC-H fixture is complete and
-relationship traversal is sane. `tpch_queries.yaml` is the formal query roadmap
-suite and should grow incrementally as QuantaStream's TPC-H query support
-matures.
+relationship traversal is sane. `tpch_benchmark_readonly.yaml` is the compact
+repeatable benchmark suite used by the helper scripts. `tpch_queries.yaml` is
+the broader query roadmap suite and should grow incrementally as QuantaStream's
+TPC-H query support matures.
 
 For `inabox-standard`, prefer the TPC-H helper in the benchmark directory
 instead of a raw SQLRunner command. The helper starts `cmd/quantastream` on an

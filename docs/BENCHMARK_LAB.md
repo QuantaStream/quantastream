@@ -91,6 +91,21 @@ This is not perfect equivalence because QuantaStream and MySQL use different
 storage and execution models. It is, however, a disciplined comparison when the
 purpose is to understand user-observable SQL behavior and response time.
 
+## Default Benchmark Suite
+
+Benchmark helper scripts default to
+`tpc-h-benchmark/sqltests/tpch_benchmark_readonly.yaml`. This suite is small,
+read-only, and intentionally repeats a representative mix of the current engine
+surface: seed counts, grouped lineitem aggregation, Q3-style graph aggregation,
+Q5-style regional graph filtering, Q6/Q12/Q16/Q19 predicates, Q21 sibling
+membership, and a date-function grouping case.
+
+Use this suite for routine local and reference comparisons because it avoids
+mutating benchmark state and keeps the signal focused. Use
+`tpc-h-benchmark/sqltests/tpch_queries.yaml` as an explicit `SUITE_FILE`
+override when the goal is a broader query-roadmap pass rather than a compact
+benchmark checkpoint.
+
 ## MySQL Reference Deployment Recipe
 
 For a Tier 3 reference benchmark, deploy MySQL as a peer system rather than as a
@@ -131,7 +146,6 @@ MYSQL_DSN='bench:secret@tcp(mysql-host:3306)/tpch' \
 TARGET_ENGINE=inabox-standard \
 TARGET_HOST=127.0.0.1 \
 TARGET_PORT=4000 \
-SUITE_FILE=../tpc-h-benchmark/sqltests/tpch_queries.yaml \
 BENCHMARK_RUNS=3 \
   ./run-mysql-benchmark-compare.sh
 ```
@@ -199,9 +213,7 @@ performance.
 
 1. Add a MySQL reference deployment template once the preferred cloud baseline is
    selected.
-2. Promote a small read-only benchmark suite that is safe to repeat without
-   mutating benchmark state.
-3. Promote a controlled report archive convention once reference benchmark runs
+2. Promote a controlled report archive convention once reference benchmark runs
    become repeatable enough to preserve.
-4. Promote benchmark results only after correctness has passed for the same
+3. Promote benchmark results only after correctness has passed for the same
    suite and dataset.
