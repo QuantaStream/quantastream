@@ -178,7 +178,9 @@ The current scaffold supports `-benchmark_report`, `-benchmark_profile`,
 `-benchmark_warmup`, `-benchmark_runs`, and `-benchmark_metadata` for normal
 SQLRunner suite execution. `-benchmark_summary` renders one report, and
 `-benchmark_compare` compares two or more reports with the first report as the
-baseline. The helper scripts `sqlrunner/run-benchmark.sh`,
+baseline. Benchmark comparisons include compact baseline and target metadata so
+the generated `comparison.md` remains useful even when copied away from the
+source JSON reports. The helper scripts `sqlrunner/run-benchmark.sh`,
 `sqlrunner/run-benchmark-compare.sh`, and
 `sqlrunner/run-mysql-benchmark-compare.sh` wrap those flags for local developer
 runs. These reports are benchmark artifacts, not compatibility verdicts.

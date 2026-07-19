@@ -179,6 +179,7 @@ func TestRenderBenchmarkComparison(t *testing.T) {
 		Engine:       "inabox-direct",
 		Profile:      "developer-local",
 		MeasuredRuns: 3,
+		Metadata:     map[string]string{"repo_commit": "abc", "host_os": "linux"},
 		Cases: []benchmarkCaseReport{
 			{ID: "q1", Status: roadmap.ResultPass, Runs: 3, MedianMS: 100},
 			{ID: "q2", Status: roadmap.ResultPass, Runs: 3, MedianMS: 200},
@@ -189,6 +190,7 @@ func TestRenderBenchmarkComparison(t *testing.T) {
 		Engine:       "inabox-standard",
 		Profile:      "developer-local",
 		MeasuredRuns: 3,
+		Metadata:     map[string]string{"repo_commit": "def", "host_os": "linux"},
 		Cases: []benchmarkCaseReport{
 			{ID: "q1", Status: roadmap.ResultPass, Runs: 3, MedianMS: 150},
 			{ID: "q2", Status: roadmap.ResultPass, Runs: 3, MedianMS: 100},
@@ -203,7 +205,11 @@ func TestRenderBenchmarkComparison(t *testing.T) {
 	for _, want := range []string{
 		"Benchmark Comparison: tpch",
 		"Baseline: inabox-direct/developer-local (direct.json)",
+		"Baseline metadata:",
+		"repo_commit=abc",
 		"Target: inabox-standard/developer-local (standard.json)",
+		"Target metadata:",
+		"repo_commit=def",
 		"q1",
 		"+50ms",
 		"1.50x",
@@ -214,6 +220,20 @@ func TestRenderBenchmarkComparison(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("comparison text missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestBenchmarkComparisonMetadataKeysPrioritizesCommonContext(t *testing.T) {
+	keys := benchmarkComparisonMetadataKeys(map[string]string{
+		"z_custom":    "z",
+		"repo_commit": "abc",
+		"host_os":     "linux",
+		"dataset":     "tpch",
+		"a_custom":    "a",
+	})
+	want := []string{"dataset", "repo_commit", "host_os", "a_custom", "z_custom"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("keys = %#v, want %#v", keys, want)
 	}
 }
 

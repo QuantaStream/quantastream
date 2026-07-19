@@ -553,6 +553,9 @@ func renderBenchmarkComparison(w io.Writer, reports []benchmarkReport, paths []s
 	if _, err := fmt.Fprintf(w, "Baseline: %s (%s)\n", benchmarkReportLabel(baseline), paths[0]); err != nil {
 		return err
 	}
+	if err := renderBenchmarkComparisonReportMetadata(w, "Baseline metadata", baseline); err != nil {
+		return err
+	}
 
 	for i := 1; i < len(reports); i++ {
 		if i > 1 {
@@ -569,6 +572,9 @@ func renderBenchmarkComparison(w io.Writer, reports []benchmarkReport, paths []s
 
 func renderBenchmarkComparisonTarget(w io.Writer, baseline benchmarkReport, target benchmarkReport, targetPath string, limit int) error {
 	if _, err := fmt.Fprintf(w, "\nTarget: %s (%s)\n", benchmarkReportLabel(target), targetPath); err != nil {
+		return err
+	}
+	if err := renderBenchmarkComparisonReportMetadata(w, "Target metadata", target); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "Runs: baseline %d measured, target %d measured\n\n", baseline.MeasuredRuns, target.MeasuredRuns); err != nil {
@@ -604,6 +610,65 @@ func renderBenchmarkComparisonTarget(w io.Writer, baseline benchmarkReport, targ
 		}
 	}
 	return tw.Flush()
+}
+
+func renderBenchmarkComparisonReportMetadata(w io.Writer, title string, report benchmarkReport) error {
+	if len(report.Metadata) == 0 {
+		return nil
+	}
+	keys := benchmarkComparisonMetadataKeys(report.Metadata)
+	if len(keys) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "%s:\n", title); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(w, "  %s=%s\n", key, report.Metadata[key]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func benchmarkComparisonMetadataKeys(metadata map[string]string) []string {
+	priority := []string{
+		"reference",
+		"target",
+		"cloud",
+		"region",
+		"instance",
+		"storage_class",
+		"dataset",
+		"scale_factor",
+		"repo_commit",
+		"repo_branch",
+		"repo_dirty",
+		"host_os",
+		"host_arch",
+		"host_cpus",
+		"go_version",
+		"storage_type",
+		"storage_mount",
+	}
+	keys := make([]string, 0, len(metadata))
+	seen := make(map[string]struct{}, len(metadata))
+	for _, key := range priority {
+		if _, ok := metadata[key]; ok {
+			keys = append(keys, key)
+			seen[key] = struct{}{}
+		}
+	}
+	remaining := make([]string, 0, len(metadata)-len(keys))
+	for key := range metadata {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		remaining = append(remaining, key)
+	}
+	sort.Strings(remaining)
+	keys = append(keys, remaining...)
+	return keys
 }
 
 func benchmarkComparisonRows(baseline benchmarkReport, target benchmarkReport) []benchmarkComparisonRow {
