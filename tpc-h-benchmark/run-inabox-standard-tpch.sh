@@ -104,6 +104,20 @@ wait_for_server() {
   exit 1
 }
 
+target_port_in_use() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk -v port=":${PORT}" '$4 ~ port "$" { found = 1 } END { exit found ? 0 : 1 }'
+    return $?
+  fi
+  (echo >/dev/tcp/"${HOST}"/"${PORT}") >/dev/null 2>&1
+}
+
+describe_target_port() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp 2>/dev/null | awk -v port=":${PORT}" '$4 ~ port "$" { print }'
+  fi
+}
+
 run_step() {
   local name="$1"
   shift
@@ -249,6 +263,12 @@ if [[ "${RUN_LOAD}" == "1" ]]; then
 fi
 
 if [[ "${START_SERVER}" == "1" ]]; then
+  if target_port_in_use; then
+    echo "cannot start quantastream server: target ${HOST}:${PORT} is already listening" >&2
+    describe_target_port >&2
+    echo "stop the existing process, choose a different PORT, or set START_SERVER=0 when intentionally targeting a running server" >&2
+    exit 2
+  fi
   echo "starting quantastream server target=${HOST}:${PORT}"
   (
     cd "${REPO_ROOT}"
