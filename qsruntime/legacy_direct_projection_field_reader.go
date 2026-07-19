@@ -244,12 +244,13 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
 	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := directProjectionBSICacheFromContext(ctx)
-	if bsi, ok := cache.get(cacheKey, foundSet); ok {
+	if bsi, mode, ok := cache.get(cacheKey, foundSet); ok {
 		return NativeProjectionBSIReadResult{
 			BSI: bsi,
 			Probes: []ExecutionProbe{
 				directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
 				directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+				directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
 			},
 		}, nil, nil
 	}
@@ -291,6 +292,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 		Probes: []ExecutionProbe{
 			directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
 			directProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
+			directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, "miss"),
 		},
 	}, nil, nil
 }
@@ -313,6 +315,15 @@ func directProjectionBSICacheProbe(index, field string, hit bool) ExecutionProbe
 		Section: "native_projection_materialization",
 		Name:    "bsi_projection_cache_hit",
 		Value:   value,
+		Detail:  index + "." + field,
+	}
+}
+
+func directProjectionBSICacheModeProbe(index, field string, mode string) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_cache_mode",
+		Value:   mode,
 		Detail:  index + "." + field,
 	}
 }
