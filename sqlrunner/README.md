@@ -291,6 +291,12 @@ The wrapper script uses the same flags with environment-variable defaults:
 BENCHMARK_RUNS=3 ./run-benchmark.sh
 ```
 
+Benchmark wrapper scripts add `suite`, `dataset`, `engine`, and endpoint
+metadata automatically. TPC-H suites infer `dataset=tpch`; set
+`BENCHMARK_SCALE_FACTOR`, `TPCH_SCALE_FACTOR`, or `SCALE_FACTOR` to record the
+scale factor. Use `BENCHMARK_DATASET` to override the inferred dataset label,
+and use `BENCHMARK_METADATA` for any additional run-specific key/value pairs.
+
 Generated benchmark artifacts should stay under ignored local paths unless a
 specific report is intentionally promoted. Render a human-readable summary with:
 

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/benchmark_metadata.sh"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_queries.yaml}"
@@ -39,9 +40,8 @@ for engine in $ENGINES; do
     -benchmark_report "$report"
     -precise_timing
   )
-  if [[ -n "$BENCHMARK_METADATA" ]]; then
-    args+=( -benchmark_metadata "$BENCHMARK_METADATA" )
-  fi
+  metadata="$(benchmark_metadata_join "$(benchmark_base_metadata "$SUITE_FILE" "$engine" "$HOST" "$PORT")" "$BENCHMARK_METADATA")"
+  args+=( -benchmark_metadata "$metadata" )
 
   echo "===== benchmark engine=${engine} report=${report} ====="
   (cd "$SCRIPT_DIR" && go run . "${args[@]}")

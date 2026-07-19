@@ -140,6 +140,12 @@ The script writes JSON reports and the markdown comparison under ignored local
 paths by default. These artifacts are evidence for the current run, not source
 controlled compatibility contracts.
 
+The benchmark helper scripts add common dataset metadata automatically. For
+TPC-H suites, `dataset=tpch` is inferred from the suite path. Set
+`BENCHMARK_SCALE_FACTOR`, `TPCH_SCALE_FACTOR`, or `SCALE_FACTOR` to record the
+scale factor, and set `BENCHMARK_DATASET` to override the dataset label for
+non-TPC-H workloads.
+
 ## Measurement Rules
 
 For every benchmark run, record:

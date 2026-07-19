@@ -22,6 +22,8 @@ Environment:
   BENCHMARK_RUNS            Measured suite runs. Defaults to 3.
   BENCHMARK_LIMIT           Comparison rows to print. Defaults to 20. Use 0 for all.
   BENCHMARK_METADATA        Additional comma-separated key=value metadata.
+  BENCHMARK_DATASET         Dataset label. Defaults to tpch for TPC-H suites.
+  BENCHMARK_SCALE_FACTOR    Dataset scale factor label. Falls back to TPCH_SCALE_FACTOR or SCALE_FACTOR.
   BENCHMARK_OUTPUT_DIR      Output directory. Defaults to expected/local/mysql-benchmarks/<timestamp>.
 USAGE
 }
@@ -38,6 +40,7 @@ if [[ -z "${MYSQL_DSN:-}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/benchmark_metadata.sh"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 MYSQL_DRIVER="${MYSQL_DRIVER:-mysql}"
@@ -55,10 +58,10 @@ BENCHMARK_RUNS="${BENCHMARK_RUNS:-3}"
 BENCHMARK_LIMIT="${BENCHMARK_LIMIT:-20}"
 BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${SCRIPT_DIR}/expected/local/mysql-benchmarks/${RUN_ID}}"
 
-metadata="reference=mysql,target=${TARGET_ENGINE}"
-if [[ -n "${BENCHMARK_METADATA:-}" ]]; then
-  metadata="${metadata},${BENCHMARK_METADATA}"
-fi
+reference_metadata="$(benchmark_metadata_join "$(benchmark_base_metadata "$SUITE_FILE" "mysql-reference")" "reference=mysql,target=${TARGET_ENGINE}")"
+reference_metadata="$(benchmark_metadata_join "$reference_metadata" "${BENCHMARK_METADATA:-}")"
+target_metadata="$(benchmark_metadata_join "$(benchmark_base_metadata "$SUITE_FILE" "$TARGET_ENGINE" "$TARGET_HOST" "$TARGET_PORT")" "reference=mysql,target=${TARGET_ENGINE}")"
+target_metadata="$(benchmark_metadata_join "$target_metadata" "${BENCHMARK_METADATA:-}")"
 
 mkdir -p "$BENCHMARK_OUTPUT_DIR"
 
@@ -75,7 +78,7 @@ echo "===== benchmark reference=mysql-reference report=${reference_report} =====
   -benchmark_profile "$BENCHMARK_PROFILE" \
   -benchmark_warmup "$BENCHMARK_WARMUP" \
   -benchmark_runs "$BENCHMARK_RUNS" \
-  -benchmark_metadata "$metadata" \
+  -benchmark_metadata "$reference_metadata" \
   -benchmark_report "$reference_report" \
   -precise_timing)
 
@@ -92,7 +95,7 @@ echo "===== benchmark target=${TARGET_ENGINE} report=${target_report} ====="
   -benchmark_profile "$BENCHMARK_PROFILE" \
   -benchmark_warmup "$BENCHMARK_WARMUP" \
   -benchmark_runs "$BENCHMARK_RUNS" \
-  -benchmark_metadata "$metadata" \
+  -benchmark_metadata "$target_metadata" \
   -benchmark_report "$target_report" \
   -precise_timing)
 
