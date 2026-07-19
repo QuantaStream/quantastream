@@ -1,6 +1,4 @@
-# DEVELOPMENT.md
-
-# Quanta Development Guide
+# QuantaStream Development Guide
 
 ## Build
 
@@ -71,12 +69,24 @@ The SQL layer currently supports a practical analytical SQL subset.
 Supported custom SQL extensions are tracked in
 [`SUPPORTED_SQL.md`](SUPPORTED_SQL.md), and known unsupported or partial SQL
 syntax is tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md). The long-term
-direction for a Quanta-native SQL engine is captured in
-[`NATIVE_SQL_ENGINE_PLAN.md`](NATIVE_SQL_ENGINE_PLAN.md).
+direction for the native SQL engine is summarized in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 The bitmap execution engine is the primary architectural focus.
 
 Avoid broad SQL/parser rewrites unless necessary.
+
+### Local Dependency Overlays
+
+Some development branches may test Roaring Bitmap or BSI changes before the
+selected module version in `go.mod` is updated. When a branch note calls for a
+local Go workspace, run the named checks with that workspace, for example:
+
+```bash
+GOWORK=/tmp/qs-roaring.work go test ./qsruntime -count=1
+```
+
+Use normal module mode unless the active branch explicitly requires an overlay.
 
 ### Subquery Roadmap
 
@@ -152,7 +162,8 @@ should be deleted instead of preserved as compatibility scaffolding.
 6. OSS onboarding simplification
 
 Future onboarding work includes analyzer tooling for profiling representative
-data samples and proposing Quanta schemas. See [`ANALYZER.md`](ANALYZER.md).
+data samples and proposing QuantaStream schemas. That design is tracked
+internally until it is ready for public documentation.
 
 ---
 

@@ -1,6 +1,6 @@
 # Schema Design Guide
 
-Quanta schemas are physical design documents, not just logical table
+QuantaStream schemas are physical design documents, not just logical table
 definitions. The mapping strategy chosen for each attribute determines how the
 engine can filter, join, group, aggregate, project, and reload that data.
 
@@ -9,12 +9,14 @@ The older field-level configuration reference lives in
 how to choose schema shapes.
 
 Future analyzer tooling should help generate and explain draft schemas from
-representative data samples. See [`ANALYZER.md`](ANALYZER.md).
+representative data samples. That work is tracked internally until it is ready
+for public documentation.
 
 ## Mental Model
 
-Each table is stored as bitmap and BSI-backed fields keyed by Quanta row IDs.
-For many analytical queries, the best schema is the one that lets Quanta answer
+Each table is stored as bitmap and BSI-backed fields keyed by QuantaStream row
+IDs. For many analytical queries, the best schema is the one that lets
+QuantaStream answer
 as much of the query as possible with bitmap/BSI operations before rows are
 materialized for projection.
 
@@ -31,13 +33,13 @@ Important schema concepts:
 
 ## Inspecting Physical Schema With `DESCRIBE`
 
-Quanta supports a MySQL-style `DESCRIBE <table>` view that layers
-Quanta-specific physical schema information onto familiar SQL metadata. This is
+QuantaStream supports a MySQL-style `DESCRIBE <table>` view that layers
+QuantaStream-specific physical schema information onto familiar SQL metadata. This is
 useful when validating that a loaded table is using the intended bitmap, BSI,
 string, and relationship strategies.
 
 The `Extra` column exposes the physical mapping strategy, and the `Key` column
-adds Quanta relationship and key hints such as `FK: <table>`, `PK`, and `PK*`.
+adds QuantaStream relationship and key hints such as `FK: <table>`, `PK`, and `PK*`.
 Treat this as a diagnostic view rather than a lossless replacement for the
 schema YAML: when a field participates in multiple concepts, such as a
 relationship and a logical key, the schema file remains the source of truth.

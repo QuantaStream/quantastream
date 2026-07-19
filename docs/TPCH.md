@@ -1,6 +1,6 @@
 # TPC-H Roadmap
 
-TPC-H is the near-term analytical validation target for Quanta. The goal is to
+TPC-H is the near-term analytical validation target for QuantaStream. The goal is to
 use it as a correctness and capability roadmap before treating it as a formal
 performance benchmark.
 
@@ -9,18 +9,18 @@ in [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
 
 ## Current Checkpoint
 
-As of 2026-07-18, the SF 0.01 `tpch_queries.yaml` roadmap suite is green in
+As of 2026-07-19, the SF 0.01 `tpch_queries.yaml` roadmap suite is green in
 both `inabox-direct` and `inabox-standard`.
 
-The latest one-run mode comparison produced:
+The latest `inabox-standard` run through the MySQL protocol produced:
 
-- `inabox-direct`: PASS, 26 seconds elapsed
-- `inabox-standard`: PASS, 24 seconds elapsed
+- 83/83 passing cases
+- 33.790 seconds suite elapsed
+- about 11.52 seconds mount/startup elapsed
 
 These timings are useful readiness and profiling signals, not formal benchmark
-claims. SQLRunner currently reports many per-case timings as coarse `<1s` or
-`1s` buckets, so fine-grained performance attribution should use dedicated
-profiling runs and runtime probes.
+claims. Fine-grained performance attribution should use dedicated profiling
+runs, runtime probes, and the Benchmark Lab reporting path.
 
 ## Existing Schema Model
 
@@ -798,18 +798,12 @@ about 6-7 seconds at SF 0.01.
 
 Same-table date field comparisons (`l_commitdate < l_receiptdate` and
 `l_shipdate < l_commitdate`) are recognized by the native same-row comparison
-kernel and return rownums without SQL-row materialization. They remain a
-performance target because the current kernel reads the two BSI fields and
-compares storage-native values per candidate rownum, rather than evaluating a
-true BSI-to-BSI predicate. 2026-07-18 SF 0.01 inabox-direct probes for Q21's
-`l_receiptdate > l_commitdate` full-lineitem comparison passed but spent roughly
-1.2-2.5 seconds in the same-row kernel over 60,175 candidates depending on warm
-state. The narrower Q12 receipt-window path passed with same-row phases of
-about 309 ms over 2,764 candidates and 178 ms over 1,763 candidates. This
-confirms that the current cost is candidate-set proportional. Future work
-should add a native
-field-to-field BSI predicate shape, and keep narrowing candidates before
-same-row comparison whenever other bitmap predicates are available.
+kernel and return rownums without SQL-row materialization. The current
+development branch evaluates this through a Roaring BSI-to-BSI comparison
+primitive when available, with residual-scan evaluation as the correctness
+fallback. Q21 late-receipt and Q12 date-order probes remain useful performance
+canaries because they expose candidate-set size, shard-window behavior, and
+standard-vs-direct adapter overhead.
 
 TPC-H Q21 is the roadmap canary for correlated sibling-domain semi/anti joins.
 The supported `.040` staged kernel proves the selective spine: supplier/nation

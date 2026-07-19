@@ -15,8 +15,8 @@ not yet part of the current milestone.
 
 Several unsupported shapes are symptoms of planner/executor boundaries rather
 than isolated missing functions. These should be treated as native SQL engine
-design requirements and kept aligned with
-[`NATIVE_SQL_ENGINE_PLAN.md`](NATIVE_SQL_ENGINE_PLAN.md):
+design requirements and kept aligned with the public architecture guide and the
+internal native-engine roadmap:
 
 - preserve structured query shape through parsing, especially compound
   predicates containing subqueries
