@@ -51,6 +51,8 @@ type legacyDirectRelationshipPair struct {
 }
 
 type legacyDirectRelationshipReduceTiming struct {
+	domainMappingCacheHit       bool
+	domainMappingCacheMode      string
 	projectionElapsed           time.Duration
 	projectionCacheHit          bool
 	projectionRows              int
@@ -394,6 +396,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			legacyDirectRelationshipProbe("single_parent_rows_seed", legacyDirectRelationshipInitialReadSeed(usedChildCandidateSet, len(parentRows))),
 			legacyDirectRelationshipProbe("single_child_rows_seed", legacyDirectRelationshipChildInitialReadSeed(usedChildCandidateSet, len(childRows))),
 			legacyDirectRelationshipProbe("single_projection_rows", strconv.Itoa(reduceTiming.projectionRows)),
+			legacyDirectRelationshipProbe("single_domain_mapping_cache_hit", strconv.FormatBool(reduceTiming.domainMappingCacheHit)),
+			legacyDirectRelationshipProbe("single_domain_mapping_cache_mode", reduceTiming.domainMappingCacheMode),
 			legacyDirectRelationshipProbe("single_fk_projection_rows", strconv.Itoa(reduceTiming.fkProjectionRows)),
 			legacyDirectRelationshipProbe("single_fk_child_overlap_rows", strconv.Itoa(reduceTiming.fkChildOverlapRows)),
 			legacyDirectRelationshipProbe("single_fk_projection_initial_coverage_status", string(reduceTiming.fkProjectionInitialCoverage.Status)),
@@ -609,6 +613,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"child_rows", strconv.Itoa(len(childRows))),
 				legacyDirectRelationshipProbe(probePrefix+"joined_rows", strconv.Itoa(len(joined))),
 				legacyDirectRelationshipProbe(probePrefix+"reduce_elapsed", edgeReduceElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"domain_mapping_cache_hit", strconv.FormatBool(reduceTiming.domainMappingCacheHit)),
+				legacyDirectRelationshipProbe(probePrefix+"domain_mapping_cache_mode", reduceTiming.domainMappingCacheMode),
 				legacyDirectRelationshipProbe(probePrefix+"projection_rows", strconv.Itoa(reduceTiming.projectionRows)),
 				legacyDirectRelationshipProbe(probePrefix+"projection_elapsed", reduceTiming.projectionElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"projection_cache_hit", strconv.FormatBool(reduceTiming.projectionCacheHit)),
@@ -2802,6 +2808,18 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		projectionRows = childRows
 	}
 	timing.projectionRows = len(projectionRows)
+	timing.domainMappingCacheMode = "miss"
+	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, projectionRows)
+	domainCacheKey := legacyDirectRelationshipDomainMappingCacheKey(edge, fromTime, toTime)
+	if parentByChild, mode, ok := DomainMappingCacheFromContext(ctx).Get(domainCacheKey, parentRows, childRows); ok {
+		_, joined, pairs := legacyDirectRelationshipRowsFromParentMap(childRows, parentByChild)
+		timing.domainMappingCacheHit = true
+		timing.domainMappingCacheMode = mode
+		timing.parentKeyRows = len(legacyDirectRelationshipUniqueRownums(parentRows))
+		timing.matchedRows = len(joined)
+		timing.fkProjectionScope = "domain_mapping_cache"
+		return joined, pairs, timing, nil, nil
+	}
 	childFoundSet := legacyDirectRelationshipBitmap(childRows)
 	projectionStart := time.Now()
 	fkBSI, projectionCacheHit, diagnostics, err := e.legacyDirectRelationshipProjectedFKBSI(ctx, request, edge, projectionRows)
@@ -2851,7 +2869,28 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	if diagnostics.BlocksNative() {
 		return nil, nil, timing, diagnostics, nil
 	}
+	DomainMappingCacheFromContext(ctx).Set(domainCacheKey, parentRows, childRows, legacyDirectRelationshipParentMapFromPairs(pairs))
 	return joined, pairs, timing, nil, nil
+}
+
+func legacyDirectRelationshipDomainMappingCacheKey(edge legacyDirectRelationshipEdge, fromTime, toTime int64) DomainMappingCacheKey {
+	return DomainMappingCacheKey{
+		SourceDomain:  edge.childKey(),
+		TargetDomain:  edge.parentKey(),
+		VectorIndex:   edge.childTable,
+		VectorField:   edge.childField,
+		Direction:     "child_to_parent",
+		FromTimeNanos: fromTime,
+		ToTimeNanos:   toTime,
+	}
+}
+
+func legacyDirectRelationshipParentMapFromPairs(pairs []legacyDirectRelationshipPair) map[qsbridge.QuantaRownum]qsbridge.QuantaRownum {
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(pairs))
+	for _, pair := range pairs {
+		parentByChild[pair.child] = pair.parent
+	}
+	return parentByChild
 }
 
 func legacyDirectRelationshipFKProjectionStats(fkBSI *roaring64.BSI, childFoundSet *roaring64.Bitmap) (int, int) {

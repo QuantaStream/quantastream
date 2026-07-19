@@ -859,6 +859,7 @@ func TestLegacyDirectRelationshipParentKeyRowsUsesParentRownumDomain(t *testing.
 
 func TestLegacyDirectRelationshipReduceTimingIncludesParentKeyAndMatchMetrics(t *testing.T) {
 	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
 		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
 			BSI: testRelationshipVectorBSI(map[uint64]int64{
 				101: 1,
@@ -907,6 +908,69 @@ func TestLegacyDirectRelationshipReduceTimingIncludesParentKeyAndMatchMetrics(t 
 	}
 	if timing.projectionRows != 4 || timing.fkProjectionRows != 4 {
 		t.Fatalf("projection rows = %d fk rows = %d, want 4/4", timing.projectionRows, timing.fkProjectionRows)
+	}
+}
+
+func TestLegacyDirectRelationshipReduceUsesQueryScratchpadDomainMapping(t *testing.T) {
+	calls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				101: 1,
+				102: 1,
+				103: 2,
+				104: 4,
+			}),
+			Calls: &calls,
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:  "o",
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		childRole:   "l",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+		sqlKind:     qsbridge.JoinKindInner,
+	}
+	ctx := WithQueryScratchpad(context.Background())
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	parentRows := []qsbridge.QuantaRownum{1, 2}
+	childRows := []qsbridge.QuantaRownum{101, 102, 103, 104}
+
+	joined, pairs, firstTiming, diagnostics, err := executor.legacyDirectRelationshipReduceWithTiming(ctx, request, edge, parentRows, childRows)
+	if err != nil {
+		t.Fatalf("first reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first diagnostics = %#v, want none", diagnostics)
+	}
+	if firstTiming.domainMappingCacheHit {
+		t.Fatal("first reduce should miss the domain mapping cache")
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls after first reduce = %d, want 1", calls)
+	}
+	if len(joined) != 3 || len(pairs) != 3 {
+		t.Fatalf("first joined/pairs = %d/%d, want 3/3", len(joined), len(pairs))
+	}
+
+	joined, pairs, secondTiming, diagnostics, err := executor.legacyDirectRelationshipReduceWithTiming(ctx, request, edge, parentRows, childRows)
+	if err != nil {
+		t.Fatalf("second reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second diagnostics = %#v, want none", diagnostics)
+	}
+	if !secondTiming.domainMappingCacheHit || secondTiming.domainMappingCacheMode != "exact" {
+		t.Fatalf("second domain cache = %t/%q, want exact hit", secondTiming.domainMappingCacheHit, secondTiming.domainMappingCacheMode)
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls after second reduce = %d, want still 1", calls)
+	}
+	if len(joined) != 3 || len(pairs) != 3 {
+		t.Fatalf("second joined/pairs = %d/%d, want 3/3", len(joined), len(pairs))
 	}
 }
 

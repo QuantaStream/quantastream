@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -14,12 +15,14 @@ type queryScratchpadContextKey struct{}
 // cache misses are filled.
 type QueryScratchpad struct {
 	ProjectionBSIs *ProjectionBSICache
+	DomainMappings *DomainMappingCache
 }
 
 // NewQueryScratchpad creates an empty per-query execution scratchpad.
 func NewQueryScratchpad() *QueryScratchpad {
 	return &QueryScratchpad{
 		ProjectionBSIs: NewProjectionBSICache(),
+		DomainMappings: NewDomainMappingCache(),
 	}
 }
 
@@ -50,6 +53,16 @@ func ProjectionBSICacheFromContext(ctx context.Context) *ProjectionBSICache {
 		return nil
 	}
 	return scratchpad.ProjectionBSIs
+}
+
+// DomainMappingCacheFromContext returns the request-scoped rownum-domain
+// mapping cache.
+func DomainMappingCacheFromContext(ctx context.Context) *DomainMappingCache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.DomainMappings
 }
 
 // ProjectionBSICacheKey identifies a BSI projection by logical field and time
@@ -151,6 +164,105 @@ func projectionRownumSetCovers(container, subset *roaring64.Bitmap) bool {
 	overlap := subset.Clone()
 	overlap.And(container)
 	return overlap.GetCardinality() == subset.GetCardinality()
+}
+
+// DomainMappingCacheKey identifies a relationship-vector rownum-domain
+// translation. Candidate parent/child rownum sets live in cache entries so
+// narrowed requests can reuse a broader mapping when both sets are covered.
+type DomainMappingCacheKey struct {
+	SourceDomain  string
+	TargetDomain  string
+	VectorIndex   string
+	VectorField   string
+	Direction     string
+	FromTimeNanos int64
+	ToTimeNanos   int64
+}
+
+type domainMappingCacheEntry struct {
+	ParentSet     *roaring64.Bitmap
+	ChildSet      *roaring64.Bitmap
+	ParentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum
+}
+
+// DomainMappingCache deduplicates relationship-vector rownum-domain
+// translations within one SQL execution request.
+type DomainMappingCache struct {
+	mu      sync.Mutex
+	entries map[DomainMappingCacheKey][]domainMappingCacheEntry
+}
+
+// NewDomainMappingCache creates an empty per-query domain mapping cache.
+func NewDomainMappingCache() *DomainMappingCache {
+	return &DomainMappingCache{
+		entries: make(map[DomainMappingCacheKey][]domainMappingCacheEntry),
+	}
+}
+
+// Get returns a cached child->parent rownum mapping. It returns "exact" when
+// both rownum sets match the cached request and "retained_subset" when a cached
+// broader mapping can safely satisfy the narrower request.
+func (c *DomainMappingCache) Get(key DomainMappingCacheKey, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum) (map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	parentSet := projectionBitmapFromRownums(parentRows)
+	childSet := projectionBitmapFromRownums(childRows)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, entry := range c.entries[key] {
+		if projectionRownumSetsEqual(entry.ParentSet, parentSet) && projectionRownumSetsEqual(entry.ChildSet, childSet) {
+			return cloneDomainMapping(entry.ParentByChild), "exact", true
+		}
+	}
+	for _, entry := range c.entries[key] {
+		if projectionRownumSetCovers(entry.ParentSet, parentSet) && projectionRownumSetCovers(entry.ChildSet, childSet) {
+			return retainedDomainMapping(entry.ParentByChild, parentSet, childRows), "retained_subset", true
+		}
+	}
+	return nil, "", false
+}
+
+// Set records a child->parent rownum mapping for one relationship edge request.
+func (c *DomainMappingCache) Set(key DomainMappingCacheKey, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum, parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum) {
+	if c == nil || parentByChild == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = append(c.entries[key], domainMappingCacheEntry{
+		ParentSet:     projectionBitmapFromRownums(parentRows),
+		ChildSet:      projectionBitmapFromRownums(childRows),
+		ParentByChild: cloneDomainMapping(parentByChild),
+	})
+}
+
+func projectionBitmapFromRownums(rownums []qsbridge.QuantaRownum) *roaring64.Bitmap {
+	bitmap := roaring64.NewBitmap()
+	for _, rownum := range rownums {
+		bitmap.Add(uint64(rownum))
+	}
+	return bitmap
+}
+
+func cloneDomainMapping(parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum) map[qsbridge.QuantaRownum]qsbridge.QuantaRownum {
+	cloned := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(parentByChild))
+	for child, parent := range parentByChild {
+		cloned[child] = parent
+	}
+	return cloned
+}
+
+func retainedDomainMapping(parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, parentSet *roaring64.Bitmap, childRows []qsbridge.QuantaRownum) map[qsbridge.QuantaRownum]qsbridge.QuantaRownum {
+	retained := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(childRows))
+	for _, child := range childRows {
+		parent, ok := parentByChild[child]
+		if !ok || !parentSet.Contains(uint64(parent)) {
+			continue
+		}
+		retained[child] = parent
+	}
+	return retained
 }
 
 // DirectProjectionBSICache keeps existing inabox-direct call sites stable while
