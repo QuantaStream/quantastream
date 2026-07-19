@@ -34,6 +34,7 @@ type NativeProxyRuntimeConfig struct {
 	CatalogVersion            qsbridge.CatalogVersion
 	Functions                 []qsbridge.FunctionDefinition
 	Profile                   RuntimeInspectionProfile
+	ContextWrapper            func(context.Context) context.Context
 	EnableFilterExpressions   bool
 	ApplyRecommendedEdgeOrder bool
 }

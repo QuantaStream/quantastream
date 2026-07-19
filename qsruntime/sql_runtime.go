@@ -17,6 +17,7 @@ type SQLRuntime struct {
 	Scope               qsbridge.PhysicalScope
 	PreflightHelpers    PreflightHelperExecutor
 	NativeSubquerySteps qsbridge.NativeSubqueryStepExecutor
+	ContextWrapper      func(context.Context) context.Context
 	// EnableFilterExpressions allows a runtime to execute grouped boolean filter trees.
 	EnableFilterExpressions bool
 }
@@ -71,6 +72,9 @@ func (r SQLRuntime) Plan(sql string) qsbridge.PlanResult {
 
 // ExecuteSQL prepares, lowers, and executes SQL through the runtime environment.
 func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
+	if r.ContextWrapper != nil {
+		ctx = r.ContextWrapper(ctx)
+	}
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
 	request, nativeSubqueries, nativeSubqueryDiagnostics, err := r.materializeCorrelatedAggregatePredicates(ctx, request, values...)
@@ -341,6 +345,7 @@ type SQLRuntimeBuilder struct {
 	Scope                   qsbridge.PhysicalScope
 	PreflightHelpers        PreflightHelperExecutor
 	NativeSubquerySteps     qsbridge.NativeSubqueryStepExecutor
+	ContextWrapper          func(context.Context) context.Context
 	EnableFilterExpressions bool
 }
 
@@ -369,6 +374,7 @@ func (b SQLRuntimeBuilder) Build(ctx context.Context) (SQLRuntime, qsbridge.Diag
 		Scope:                   b.Scope,
 		PreflightHelpers:        b.PreflightHelpers,
 		NativeSubquerySteps:     b.NativeSubquerySteps,
+		ContextWrapper:          b.ContextWrapper,
 		EnableFilterExpressions: b.EnableFilterExpressions,
 	}, nil, nil
 }

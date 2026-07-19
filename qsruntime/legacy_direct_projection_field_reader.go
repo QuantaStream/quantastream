@@ -240,6 +240,19 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no source"),
 		}, nil
 	}
+	fromTime, toTime := nativeProjectionWindowNanos(r.TableCache, request)
+	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
+	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
+	cache := directProjectionBSICacheFromContext(ctx)
+	if bsi, ok := cache.get(cacheKey, foundSet); ok {
+		return NativeProjectionBSIReadResult{
+			BSI: bsi,
+			Probes: []ExecutionProbe{
+				directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+				directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+			},
+		}, nil, nil
+	}
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     request.Index,
 		Field:     request.PhysicalField,
@@ -264,8 +277,6 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no bitmap index"),
 		}, nil
 	}
-	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
-	fromTime, toTime := nativeProjectionWindowNanos(r.TableCache, request)
 	bsiByField, _, err := legacySession.Session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, foundSet, false)
 	if err != nil {
 		return NativeProjectionBSIReadResult{}, nil, err
@@ -274,15 +285,36 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	if bsi == nil {
 		bsi = roaring64.NewDefaultBSI()
 	}
+	cache.set(cacheKey, foundSet, bsi)
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
-		Probes: []ExecutionProbe{{
-			Section: "native_projection_materialization",
-			Name:    "bsi_projection_rows",
-			Value:   strconv.Itoa(len(request.Rownums)),
-			Detail:  request.Index + "." + request.PhysicalField,
-		}},
+		Probes: []ExecutionProbe{
+			directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+			directProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
+		},
 	}, nil, nil
+}
+
+func directProjectionBSIRowsProbe(index, field string, rows int) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_rows",
+		Value:   strconv.Itoa(rows),
+		Detail:  index + "." + field,
+	}
+}
+
+func directProjectionBSICacheProbe(index, field string, hit bool) ExecutionProbe {
+	value := "false"
+	if hit {
+		value = "true"
+	}
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_cache_hit",
+		Value:   value,
+		Detail:  index + "." + field,
+	}
 }
 
 // LegacyDirectProjectionDictionaryIDReader reads StringEnum dictionary IDs

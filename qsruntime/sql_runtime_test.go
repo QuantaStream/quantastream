@@ -7,6 +7,33 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
+	type contextKey struct{}
+	const contextValue = "direct-cache"
+	var wrapperCalled bool
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if got := ctx.Value(contextKey{}); got != contextValue {
+			t.Fatalf("wrapped context value = %#v, want %q", got, contextValue)
+		}
+		return ExecutionResult{Count: 1}, nil
+	})
+	runtime.ContextWrapper = func(ctx context.Context) context.Context {
+		wrapperCalled = true
+		return context.WithValue(ctx, contextKey{}, contextValue)
+	}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select count(*) from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if !wrapperCalled {
+		t.Fatal("ContextWrapper was not called")
+	}
+}
+
 func TestCorrelatedAverageQuantityTypedMatchBuildsDescriptorAndFilters(t *testing.T) {
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l

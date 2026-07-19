@@ -205,6 +205,7 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 				return runtime, diagnostics, nil
 			}),
 		},
+		ContextWrapper:          config.ContextWrapper,
 		EnableFilterExpressions: config.EnableFilterExpressions,
 	}.Build(ctx)
 	if err != nil || diagnostics.BlocksNative() {

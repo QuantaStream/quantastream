@@ -61,7 +61,58 @@ func TestLegacyDirectSameRowBSIComparisonKernelFiltersRownumsWithoutMaterializat
 		t.Fatalf("reader calls = %d, want 2", len(requests))
 	}
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_input_count", "4")
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_strategy", "bsi_bitwise")
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_output_count", "1")
+}
+
+func TestLegacyDirectSameRowBSIComparisonKernelUsesSharedExistenceForNotEqual(t *testing.T) {
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	leftBSI := roaring64.NewDefaultBSI()
+	rightBSI := roaring64.NewDefaultBSI()
+	leftBSI.SetValue(1, 10)
+	rightBSI.SetValue(1, 10)
+	leftBSI.SetValue(2, 11)
+	rightBSI.SetValue(2, 12)
+	leftBSI.SetValue(3, 13)
+	rightBSI.SetValue(4, 14)
+
+	kernel := LegacyDirectSameRowBSIComparisonKernel{
+		Reader: NativeProjectionBSIReaderFunc(func(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			switch request.PhysicalField {
+			case "l_suppkey":
+				return NativeProjectionBSIReadResult{BSI: leftBSI}, nil, nil
+			case "l_other_suppkey":
+				return NativeProjectionBSIReadResult{BSI: rightBSI}, nil, nil
+			default:
+				t.Fatalf("unexpected physical field %q", request.PhysicalField)
+				return NativeProjectionBSIReadResult{}, nil, nil
+			}
+		}),
+	}
+
+	result, err := kernel.CompareSameRowFields(context.Background(), qsbridge.SameRowComparisonRequest{
+		ID:          "q21_other_supplier",
+		ProbePrefix: "q21_other_supplier_",
+		Domain: qsbridge.RownumDomainSet{
+			Domain:  qsbridge.RownumDomain{Table: lineitem, Role: "l"},
+			Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4},
+		},
+		Left:     qsbridge.FieldRef{Table: lineitem, Name: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI},
+		Right:    qsbridge.FieldRef{Table: lineitem, Name: "l_other_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI},
+		Operator: qsbridge.BinaryOpNotEqual,
+		Kind:     qsbridge.SameRowComparisonBSI,
+	})
+	if err != nil {
+		t.Fatalf("CompareSameRowFields: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if got, want := result.Domain.Rownums, []qsbridge.QuantaRownum{2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rownums = %#v, want %#v", got, want)
+	}
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_other_supplier_strategy", "bsi_bitwise")
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_other_supplier_output_count", "1")
 }
 
 func TestUnsupportedSameRowComparisonKernelReportsBoundary(t *testing.T) {

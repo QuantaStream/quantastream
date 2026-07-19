@@ -11,6 +11,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/source"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
 // LegacyDirectSameRowBSIComparisonKernel compares same-row BSI fields through inabox-direct storage reads.
@@ -88,29 +89,36 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		))
 		return result, nil
 	}
+	compareOp, invert, ok := legacyDirectSameRowComparisonOperation(request.Operator)
+	if !ok {
+		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
+			qsbridge.DiagnosticUnsupportedSQL,
+			qsbridge.PhaseExecute,
+			fmt.Sprintf("inabox-direct same-row comparison does not support operator %q", request.Operator),
+		))
+		return result, nil
+	}
+	compareStart := time.Now()
+	candidates := legacyDirectSameRowComparisonFoundSet(request.Domain.Rownums)
+	comparisonUniverse := candidates.Clone()
+	comparisonUniverse.And(left.BSI.GetExistenceBitmap())
+	comparisonUniverse.And(right.BSI.GetExistenceBitmap())
+	matches := left.BSI.CompareBSI(compareOp, right.BSI, comparisonUniverse)
+	if invert {
+		comparisonUniverse.AndNot(matches)
+		matches = comparisonUniverse
+	}
 	for _, rownum := range request.Domain.Rownums {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		leftValue, leftOK := left.BSI.GetBigValue(uint64(rownum))
-		rightValue, rightOK := right.BSI.GetBigValue(uint64(rownum))
-		if !leftOK || !rightOK || leftValue == nil || rightValue == nil {
-			continue
-		}
-		matched, ok := legacyDirectSameRowComparisonMatch(request.Operator, leftValue.Cmp(rightValue))
-		if !ok {
-			result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
-				qsbridge.DiagnosticUnsupportedSQL,
-				qsbridge.PhaseExecute,
-				fmt.Sprintf("inabox-direct same-row comparison does not support operator %q", request.Operator),
-			))
-			return result, nil
-		}
-		if matched {
+		if matches.Contains(uint64(rownum)) {
 			result.Domain.Rownums = append(result.Domain.Rownums, rownum)
 		}
 	}
 	result.Probes = append(result.Probes,
+		sameRowComparisonProbe(request, "strategy", "bsi_bitwise", ""),
+		sameRowComparisonProbe(request, "compare_elapsed", time.Since(compareStart).String(), ""),
 		sameRowComparisonProbe(request, "output_count", strconv.Itoa(result.CandidateCount()), ""),
 		sameRowComparisonProbe(request, "rows_removed", strconv.Itoa(request.CandidateCount()-result.CandidateCount()), ""),
 		sameRowComparisonProbe(request, "elapsed", time.Since(start).String(), ""),
@@ -141,6 +149,14 @@ func legacyDirectSameRowComparisonSameDomain(request qsbridge.SameRowComparisonR
 		(domain == "" || strings.EqualFold(domain, leftRole))
 }
 
+func legacyDirectSameRowComparisonFoundSet(rownums []qsbridge.QuantaRownum) *roaring64.Bitmap {
+	foundSet := roaring64.NewBitmap()
+	for _, rownum := range rownums {
+		foundSet.Add(uint64(rownum))
+	}
+	return foundSet
+}
+
 func legacyDirectSameRowComparisonBSIReadRequest(request qsbridge.SameRowComparisonRequest, field qsbridge.FieldRef) NativeProjectionBSIReadRequest {
 	index := field.Table.Table
 	return NativeProjectionBSIReadRequest{
@@ -161,22 +177,22 @@ func legacyDirectSameRowComparisonBSIReadRequest(request qsbridge.SameRowCompari
 	}
 }
 
-func legacyDirectSameRowComparisonMatch(op qsbridge.BinaryOp, compare int) (bool, bool) {
+func legacyDirectSameRowComparisonOperation(op qsbridge.BinaryOp) (roaring64.Operation, bool, bool) {
 	switch op {
 	case qsbridge.BinaryOpEqual:
-		return compare == 0, true
+		return roaring64.EQ, false, true
 	case qsbridge.BinaryOpNotEqual:
-		return compare != 0, true
+		return roaring64.EQ, true, true
 	case qsbridge.BinaryOpLess:
-		return compare < 0, true
+		return roaring64.LT, false, true
 	case qsbridge.BinaryOpLessEqual:
-		return compare <= 0, true
+		return roaring64.LE, false, true
 	case qsbridge.BinaryOpGreater:
-		return compare > 0, true
+		return roaring64.GT, false, true
 	case qsbridge.BinaryOpGreaterEqual:
-		return compare >= 0, true
+		return roaring64.GE, false, true
 	default:
-		return false, false
+		return 0, false, false
 	}
 }
 
