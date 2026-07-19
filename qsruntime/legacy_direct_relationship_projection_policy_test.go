@@ -1,6 +1,7 @@
 package qsruntime
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -114,7 +115,7 @@ func TestLegacyDirectRelationshipProjectionRowsForGraphReduceUsesCachedBroadProj
 	executor.ProjectionCache.Put(cacheKey, testRelationshipVectorBSI(map[uint64]int64{1: 10}))
 	policy := legacyDirectRelationshipProjectionPolicy(edge, childRows, scratchpad, 1)
 
-	rows, applied := executor.legacyDirectRelationshipProjectionRowsForGraphReduce(ExecutionRequest{}, edge, childRows, scratchpad, policy)
+	rows, applied := executor.legacyDirectRelationshipProjectionRowsForGraphReduce(context.Background(), ExecutionRequest{}, edge, childRows, scratchpad, policy)
 
 	if len(rows) != len(initialRows) {
 		t.Fatalf("projection rows = %#v, want cached broad scratchpad initial rows", rows)

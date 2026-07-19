@@ -79,7 +79,9 @@ func (r *LegacyDirectRelationshipVectorReader) ReadRelatedCandidateResult(ctx co
 	}, diagnostics, err
 }
 
-// relationshipVectorReaderWithRequestProjectionCache wraps inabox-direct vector reads with one request-scoped projection cache.
+// relationshipVectorReaderWithRequestProjectionCache wraps older call paths
+// with a fallback projection cache. QueryScratchpad-aware requests use the
+// shared scratchpad cache instead.
 func relationshipVectorReaderWithRequestProjectionCache(reader RelationshipVectorReader) RelationshipVectorReader {
 	cache := NewLegacyDirectRelationshipVectorProjectionCache()
 	switch r := reader.(type) {

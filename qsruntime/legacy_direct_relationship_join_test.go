@@ -1557,21 +1557,21 @@ func TestLegacyDirectRelationshipCachedFullFKBSIReusesCoveredFoundSet(t *testing
 	cacheKey := executor.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, nil)
 	executor.ProjectionCache.Put(cacheKey, full)
 
-	got, ok := executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11, 12))
+	got, ok := executor.legacyDirectRelationshipCachedFullFKBSI(context.Background(), edge, fromTime, toTime, roaring64.BitmapOf(11, 12))
 	if !ok {
 		t.Fatalf("full FK BSI cache hit = false, want true for equal foundset")
 	}
 	if got != full {
 		t.Fatalf("cached BSI pointer changed")
 	}
-	got, ok = executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11))
+	got, ok = executor.legacyDirectRelationshipCachedFullFKBSI(context.Background(), edge, fromTime, toTime, roaring64.BitmapOf(11))
 	if !ok {
 		t.Fatalf("full FK BSI cache hit = false, want true for covered narrowed foundset")
 	}
 	if got != full {
 		t.Fatalf("covered foundset cached BSI pointer changed")
 	}
-	if _, ok := executor.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, roaring64.BitmapOf(11, 13)); ok {
+	if _, ok := executor.legacyDirectRelationshipCachedFullFKBSI(context.Background(), edge, fromTime, toTime, roaring64.BitmapOf(11, 13)); ok {
 		t.Fatalf("full FK BSI cache hit = true, want false for uncovered foundset")
 	}
 }

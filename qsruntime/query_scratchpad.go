@@ -14,15 +14,17 @@ type queryScratchpadContextKey struct{}
 // and executor helpers. It is topology-neutral; deployment adapters decide how
 // cache misses are filled.
 type QueryScratchpad struct {
-	ProjectionBSIs *ProjectionBSICache
-	DomainMappings *DomainMappingCache
+	ProjectionBSIs                *ProjectionBSICache
+	DomainMappings                *DomainMappingCache
+	RelationshipVectorProjections *RelationshipVectorProjectionCache
 }
 
 // NewQueryScratchpad creates an empty per-query execution scratchpad.
 func NewQueryScratchpad() *QueryScratchpad {
 	return &QueryScratchpad{
-		ProjectionBSIs: NewProjectionBSICache(),
-		DomainMappings: NewDomainMappingCache(),
+		ProjectionBSIs:                NewProjectionBSICache(),
+		DomainMappings:                NewDomainMappingCache(),
+		RelationshipVectorProjections: NewRelationshipVectorProjectionCache(),
 	}
 }
 
@@ -63,6 +65,16 @@ func DomainMappingCacheFromContext(ctx context.Context) *DomainMappingCache {
 		return nil
 	}
 	return scratchpad.DomainMappings
+}
+
+// RelationshipVectorProjectionCacheFromContext returns the request-scoped
+// relationship-vector FK projection cache.
+func RelationshipVectorProjectionCacheFromContext(ctx context.Context) *RelationshipVectorProjectionCache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.RelationshipVectorProjections
 }
 
 // ProjectionBSICacheKey identifies a BSI projection by logical field and time
@@ -263,6 +275,51 @@ func retainedDomainMapping(parentByChild map[qsbridge.QuantaRownum]qsbridge.Quan
 		retained[child] = parent
 	}
 	return retained
+}
+
+// RelationshipVectorProjectionCache reuses projected FK BSIs during one
+// execution request.
+type RelationshipVectorProjectionCache struct {
+	mu      sync.Mutex
+	entries map[string]*roaring64.BSI
+}
+
+// NewRelationshipVectorProjectionCache creates an empty request-scoped
+// relationship-vector FK projection cache.
+func NewRelationshipVectorProjectionCache() *RelationshipVectorProjectionCache {
+	return &RelationshipVectorProjectionCache{entries: map[string]*roaring64.BSI{}}
+}
+
+// Get returns a previously projected relationship-vector BSI.
+func (c *RelationshipVectorProjectionCache) Get(key string) (*roaring64.BSI, bool) {
+	if c == nil || key == "" {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	bsi, ok := c.entries[key]
+	return bsi, ok
+}
+
+// Put stores a projected relationship-vector BSI for the current execution request.
+func (c *RelationshipVectorProjectionCache) Put(key string, bsi *roaring64.BSI) {
+	if c == nil || key == "" || bsi == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = bsi
+}
+
+// LegacyDirectRelationshipVectorProjectionCache keeps existing inabox-direct
+// call sites stable while they migrate to QueryScratchpad naming.
+type LegacyDirectRelationshipVectorProjectionCache = RelationshipVectorProjectionCache
+
+// NewLegacyDirectRelationshipVectorProjectionCache creates an empty
+// request-scoped relationship-vector projection cache for compatibility call
+// sites that have not yet adopted NewRelationshipVectorProjectionCache.
+func NewLegacyDirectRelationshipVectorProjectionCache() *LegacyDirectRelationshipVectorProjectionCache {
+	return NewRelationshipVectorProjectionCache()
 }
 
 // DirectProjectionBSICache keeps existing inabox-direct call sites stable while

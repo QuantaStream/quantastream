@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -59,13 +58,13 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 	}
 	projectionStart := time.Now()
 	projectionCacheKey := b.relationshipVectorProjectionCacheKey(read)
-	fkBSI, projectionCacheHit := b.cachedRelationshipVectorProjection(projectionCacheKey)
+	fkBSI, projectionCacheHit := b.cachedRelationshipVectorProjection(ctx, projectionCacheKey)
 	var diagnostics qsbridge.DiagnosticSet
 	var err error
 	if fkBSI == nil {
 		fkBSI, diagnostics, err = projector.ReadRelationshipVectorProjection(ctx, read)
 		if err == nil && !diagnostics.BlocksNative() && fkBSI != nil {
-			b.storeRelationshipVectorProjection(projectionCacheKey, fkBSI)
+			b.storeRelationshipVectorProjection(ctx, projectionCacheKey, fkBSI)
 		}
 	}
 	projectionElapsed := time.Since(projectionStart)
@@ -109,49 +108,18 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 	}, nil, nil
 }
 
-// LegacyDirectRelationshipVectorProjectionCache reuses projected FK BSIs during one execution request.
-type LegacyDirectRelationshipVectorProjectionCache struct {
-	mu      sync.Mutex
-	entries map[string]*roaring64.BSI
-}
-
-// NewLegacyDirectRelationshipVectorProjectionCache creates an empty request-scoped projection cache.
-func NewLegacyDirectRelationshipVectorProjectionCache() *LegacyDirectRelationshipVectorProjectionCache {
-	return &LegacyDirectRelationshipVectorProjectionCache{entries: map[string]*roaring64.BSI{}}
-}
-
-// Get returns a previously projected relationship-vector BSI.
-func (c *LegacyDirectRelationshipVectorProjectionCache) Get(key string) (*roaring64.BSI, bool) {
-	if c == nil || key == "" {
-		return nil, false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	bsi, ok := c.entries[key]
-	return bsi, ok
-}
-
-// Put stores a projected relationship-vector BSI for the current execution request.
-func (c *LegacyDirectRelationshipVectorProjectionCache) Put(key string, bsi *roaring64.BSI) {
-	if c == nil || key == "" || bsi == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[key] = bsi
-}
-
 // cachedRelationshipVectorProjection returns a projected FK BSI when request-scoped reuse is available.
-func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorProjection(key string) (*roaring64.BSI, bool) {
-	if b.ProjectionCache == nil {
-		return nil, false
+func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorProjection(ctx context.Context, key string) (*roaring64.BSI, bool) {
+	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
+		return cache.Get(key)
 	}
 	return b.ProjectionCache.Get(key)
 }
 
 // storeRelationshipVectorProjection stores a projected FK BSI when a request-scoped cache is present.
-func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorProjection(key string, bsi *roaring64.BSI) {
-	if b.ProjectionCache == nil {
+func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorProjection(ctx context.Context, key string, bsi *roaring64.BSI) {
+	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
+		cache.Put(key, bsi)
 		return
 	}
 	b.ProjectionCache.Put(key, bsi)

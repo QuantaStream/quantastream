@@ -21,6 +21,9 @@ func TestWithQueryScratchpadInstallsOneRequestCache(t *testing.T) {
 	if scratchpad.DomainMappings == nil {
 		t.Fatal("domain mapping cache was not installed")
 	}
+	if scratchpad.RelationshipVectorProjections == nil {
+		t.Fatal("relationship-vector projection cache was not installed")
+	}
 	if again := WithQueryScratchpad(ctx); again != ctx {
 		t.Fatal("scratchpad wrapper should preserve an existing request cache")
 	}
@@ -148,5 +151,23 @@ func TestDomainMappingCacheRetainsCoveredSubset(t *testing.T) {
 	}
 	if _, _, ok := cache.Get(key, []qsbridge.QuantaRownum{1}, []qsbridge.QuantaRownum{101, 999}); ok {
 		t.Fatal("cache should miss when requested child set is not covered")
+	}
+}
+
+func TestRelationshipVectorProjectionCacheStoresProjectedFKBSIs(t *testing.T) {
+	cache := NewRelationshipVectorProjectionCache()
+	key := "lineitem\x00l_orderkey\x0010\x0020\x00all"
+	bsi := roaring64.NewDefaultBSI()
+	cache.Put(key, bsi)
+
+	got, ok := cache.Get(key)
+	if !ok || got != bsi {
+		t.Fatalf("cache lookup = %#v/%t, want stored FK BSI", got, ok)
+	}
+	if _, ok := cache.Get("orders\x00o_custkey\x0010\x0020\x00all"); ok {
+		t.Fatal("cache should distinguish relationship-vector projection keys")
+	}
+	if got, ok := NewLegacyDirectRelationshipVectorProjectionCache().Get(key); ok || got != nil {
+		t.Fatalf("empty compatibility cache lookup = %#v/%t, want miss", got, ok)
 	}
 }

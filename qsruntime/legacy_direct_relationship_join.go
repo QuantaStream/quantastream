@@ -284,7 +284,7 @@ func legacyDirectRelationshipSyntheticEndpointProjection(field qsbridge.QuantaPr
 // ExecuteRelationshipVectorJoin executes a supported direct relationship-vector shape or reports the explicit boundary.
 func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoin(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {
 	if (e.Source != nil || e.RelationshipProjectionReader != nil) && e.TableCache != nil {
-		if e.ProjectionCache == nil {
+		if e.relationshipVectorProjectionCache(ctx) == nil {
 			e.ProjectionCache = NewLegacyDirectRelationshipVectorProjectionCache()
 		}
 		return e.executeLegacyDirectRelationshipVectorJoin(ctx, request, vector)
@@ -297,6 +297,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoi
 		},
 		Diagnostics: kernelResult.Diagnostics,
 	}, err
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) relationshipVectorProjectionCache(ctx context.Context) *LegacyDirectRelationshipVectorProjectionCache {
+	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
+		return cache
+	}
+	return e.ProjectionCache
 }
 
 // Kernel returns the low-level kernel used by the inabox-direct relationship adapter.
@@ -595,7 +602,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				scratchpad,
 				legacyDirectRelationshipEdgeOrderRemainingProjectionReuse(executionCandidates, edgeIndex, edge),
 			)
-			projectionRows, projectionPolicy := e.legacyDirectRelationshipProjectionRowsForGraphReduce(request, edge, childRows, scratchpad, projectionPolicy)
+			projectionRows, projectionPolicy := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
 			edgeReduceStart := time.Now()
 			joined, _, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRows(ctx, request, edge, parentRows, childRows, projectionRows)
 			edgeReduceElapsed := time.Since(edgeReduceStart)
@@ -1697,7 +1704,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 					continue
 				}
 				projectionPolicy := legacyDirectRelationshipProjectionPolicy(edge, childRows, scratchpad, 1)
-				projectionRows, _ := e.legacyDirectRelationshipProjectionRowsForGraphReduce(request, edge, childRows, scratchpad, projectionPolicy)
+				projectionRows, _ := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
 				parentByChild, diagnostics, err := e.legacyDirectRelationshipParentMapWithProjectionRows(ctx, request, edge, childRows, projectionRows)
 				if err != nil || diagnostics.BlocksNative() {
 					return nil, diagnostics, err
@@ -1778,8 +1785,11 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectedFullFKBSI(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge) (*roaring64.BSI, bool, qsbridge.DiagnosticSet, error) {
 	fromTime, toTime := e.legacyDirectRelationshipBroadVectorProjectionWindow(edge.childTable)
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, nil)
-	if fkBSI, ok := e.ProjectionCache.Get(cacheKey); ok {
-		return fkBSI, true, nil, nil
+	cache := e.relationshipVectorProjectionCache(ctx)
+	if cache != nil {
+		if fkBSI, ok := cache.Get(cacheKey); ok {
+			return fkBSI, true, nil, nil
+		}
 	}
 	if e.Source == nil && e.RelationshipProjectionReader == nil {
 		return nil, false, nil, nil
@@ -1789,10 +1799,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectedFKBSIForFoundSet(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childFoundSet *roaring64.Bitmap, fromTime, toTime int64) (*roaring64.BSI, bool, qsbridge.DiagnosticSet, error) {
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, childFoundSet)
-	if fkBSI, ok := e.ProjectionCache.Get(cacheKey); ok {
-		return fkBSI, true, nil, nil
+	cache := e.relationshipVectorProjectionCache(ctx)
+	if cache != nil {
+		if fkBSI, ok := cache.Get(cacheKey); ok {
+			return fkBSI, true, nil, nil
+		}
 	}
-	if fullFKBSI, ok := e.legacyDirectRelationshipCachedFullFKBSI(edge, fromTime, toTime, childFoundSet); ok {
+	if fullFKBSI, ok := e.legacyDirectRelationshipCachedFullFKBSI(ctx, edge, fromTime, toTime, childFoundSet); ok {
 		return fullFKBSI, true, nil, nil
 	}
 	if e.Source == nil && e.RelationshipProjectionReader == nil {
@@ -1811,7 +1824,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 				fmt.Sprintf("relationship-vector projection did not return %s.%s", edge.childTable, edge.childField),
 			), nil
 		}
-		e.ProjectionCache.Put(cacheKey, fkBSI)
+		if cache != nil {
+			cache.Put(cacheKey, fkBSI)
+		}
 		return fkBSI, false, nil, nil
 	}
 	provider := LegacyQuantaSourceSessionProvider{Source: e.Source}
@@ -1851,7 +1866,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 			),
 		), nil
 	}
-	e.ProjectionCache.Put(cacheKey, fkBSI)
+	if cache != nil {
+		cache.Put(cacheKey, fkBSI)
+	}
 	return fkBSI, false, nil, nil
 }
 
@@ -1893,12 +1910,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipVect
 	}
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCachedFullFKBSI(edge legacyDirectRelationshipEdge, fromTime, toTime int64, childFoundSet *roaring64.Bitmap) (*roaring64.BSI, bool) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCachedFullFKBSI(ctx context.Context, edge legacyDirectRelationshipEdge, fromTime, toTime int64, childFoundSet *roaring64.Bitmap) (*roaring64.BSI, bool) {
 	if childFoundSet == nil {
 		return nil, false
 	}
+	cache := e.relationshipVectorProjectionCache(ctx)
+	if cache == nil {
+		return nil, false
+	}
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, nil)
-	fkBSI, ok := e.ProjectionCache.Get(cacheKey)
+	fkBSI, ok := cache.Get(cacheKey)
 	if !ok || fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
 		return nil, false
 	}
@@ -1920,17 +1941,18 @@ func legacyDirectRelationshipBitmapCovers(container *roaring64.Bitmap, subset *r
 	return overlap.GetCardinality() == subset.GetCardinality()
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectionRowsForGraphReduce(request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, scratchpad legacyDirectRelationshipGraphScratchpad, policy legacyDirectRelationshipProjectionPolicyResult) ([]qsbridge.QuantaRownum, legacyDirectRelationshipProjectionPolicyResult) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectionRowsForGraphReduce(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, scratchpad legacyDirectRelationshipGraphScratchpad, policy legacyDirectRelationshipProjectionPolicyResult) ([]qsbridge.QuantaRownum, legacyDirectRelationshipProjectionPolicyResult) {
 	initialRows, ok := scratchpad.initialRowsForTable(edge.childTable)
 	if !ok || len(initialRows) == 0 || len(initialRows) == len(childRows) {
 		return legacyDirectRelationshipProjectionRowsForAppliedPolicy(edge, childRows, scratchpad, policy), policy
 	}
-	if edge.projectionScope != qsbridge.RelationshipVectorProjectionScopeBroadFromFoundset || e.ProjectionCache == nil {
+	cache := e.relationshipVectorProjectionCache(ctx)
+	if edge.projectionScope != qsbridge.RelationshipVectorProjectionScopeBroadFromFoundset || cache == nil {
 		return legacyDirectRelationshipProjectionRowsForAppliedPolicy(edge, childRows, scratchpad, policy), policy
 	}
 	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, initialRows)
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, legacyDirectRelationshipBitmap(initialRows))
-	if _, ok := e.ProjectionCache.Get(cacheKey); !ok {
+	if _, ok := cache.Get(cacheKey); !ok {
 		return legacyDirectRelationshipProjectionRowsForAppliedPolicy(edge, childRows, scratchpad, policy), policy
 	}
 	policy.Strategy = legacyDirectRelationshipProjectionStrategyBroadFromScratchpad
