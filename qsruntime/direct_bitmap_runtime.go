@@ -115,7 +115,6 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 		queryElapsed = time.Since(queryStart)
 		releaseDiagnostics = session.Release(ctx)
 	}
-	bitmapResult, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
 	var sameRowProbes []ExecutionProbe
 	var sameRowDiagnostics qsbridge.DiagnosticSet
 	var sameRowErr error
@@ -124,6 +123,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	if sameRowApplied {
 		request = directBitmapWithoutSameRowResidualPredicates(request)
 	}
+	bitmapResult, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
 	result := r.Adapter.ToExecutionResult(bitmapResult)
 	result.Probes = append(result.Probes, request.Probes...)
 	result.Probes = append(result.Probes, sameRowProbes...)

@@ -44,7 +44,7 @@ func (r DirectBitmapRuntime) directBitmapApplySameRowResiduals(ctx context.Conte
 }
 
 func directBitmapSameRowResidualPlans(request ExecutionRequest) ([]qsbridge.SameRowComparisonPlan, bool) {
-	if len(request.Memberships) > 0 || len(request.Joins) > 0 {
+	if len(request.Joins) > 0 {
 		return nil, false
 	}
 	residuals := make([]qsbridge.Predicate, 0, len(request.Predicates))
