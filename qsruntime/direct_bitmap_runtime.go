@@ -123,10 +123,11 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	if sameRowApplied {
 		request = directBitmapWithoutSameRowResidualPredicates(request)
 	}
-	bitmapResult, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
+	bitmapResult, membershipProbes, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
 	result := r.Adapter.ToExecutionResult(bitmapResult)
 	result.Probes = append(result.Probes, request.Probes...)
 	result.Probes = append(result.Probes, sameRowProbes...)
+	result.Probes = append(result.Probes, membershipProbes...)
 	result.Probes = append(result.Probes,
 		ExecutionProbe{
 			Section: "direct_bitmap",

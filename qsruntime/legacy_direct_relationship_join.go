@@ -1141,11 +1141,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 			return RelationshipTupleRowSet{}, nil, probes, diagnostics, nil
 		}
 		leftCandidates := legacyDirectRelationshipTupleUniqueRownums(currentTuples, role)
-		filtered, diagnostics, err := runtime.directBitmapApplyMembership(ctx, request, BitmapQueryResult{
+		filtered, membershipProbes, diagnostics, err := runtime.directBitmapApplyMembership(ctx, request, BitmapQueryResult{
 			Success: true,
 			Count:   uint64(len(leftCandidates)),
 			Rownums: leftCandidates,
 		}, membership)
+		probes = append(probes, membershipProbes...)
 		if err != nil || diagnostics.BlocksNative() {
 			return RelationshipTupleRowSet{}, nil, probes, diagnostics, err
 		}

@@ -366,7 +366,7 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 		},
 	}
 
-	filtered, diagnostics, err := runtime.directBitmapApplyMembership(context.Background(), ExecutionRequest{}, BitmapQueryResult{
+	filtered, probes, diagnostics, err := runtime.directBitmapApplyMembership(context.Background(), ExecutionRequest{}, BitmapQueryResult{
 		Success: true,
 		Count:   2,
 		Rownums: []qsbridge.QuantaRownum{1, 2},
@@ -383,6 +383,10 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 	if !rightKeyNarrowCalled {
 		t.Fatalf("right key narrowing query was not called")
 	}
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_left_key_count", "2")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_right_candidates_before", "2")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_right_candidates_after", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_applied", "true")
 	if !sameRownumSlicesEqual(filtered.Rownums, []qsbridge.QuantaRownum{1}) {
 		t.Fatalf("filtered rownums = %#v, want row 1", filtered.Rownums)
 	}
