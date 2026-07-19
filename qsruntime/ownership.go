@@ -138,8 +138,7 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 		return true
 	}
 	switch file {
-	case "direct_projection_bsi_cache.go",
-		"exists_subquery_materialization.go",
+	case "exists_subquery_materialization.go",
 		"filter_domain_normalization.go",
 		"filter_evaluator.go",
 		"native_predicate.go",
@@ -181,6 +180,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"native_proxy_mysql_session.go",
 		"native_proxy_runtime.go",
 		"native_proxy_server.go",
+		"query_scratchpad.go",
 		"relationship_join_plan.go",
 		"route.go",
 		"runtime_environment.go",

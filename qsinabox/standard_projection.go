@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -21,115 +20,6 @@ const (
 	standardProjectionFullTimeRangeEndMillis   int64 = 4102444800000  // 2100-01-01T00:00:00Z
 )
 
-type standardProjectionBSICacheContextKey struct{}
-
-type standardProjectionBSICacheKey struct {
-	Index         string
-	Field         string
-	FromTimeNanos int64
-	ToTimeNanos   int64
-}
-
-type standardProjectionBSICacheEntry struct {
-	RownumSet *roaring64.Bitmap
-	BSI       *roaring64.BSI
-}
-
-// StandardProjectionBSICache deduplicates read-only BSI projections during one
-// SQL execution request.
-type StandardProjectionBSICache struct {
-	mu      sync.Mutex
-	entries map[standardProjectionBSICacheKey][]standardProjectionBSICacheEntry
-}
-
-// NewStandardProjectionBSICache creates an empty per-query BSI projection cache.
-func NewStandardProjectionBSICache() *StandardProjectionBSICache {
-	return &StandardProjectionBSICache{
-		entries: make(map[standardProjectionBSICacheKey][]standardProjectionBSICacheEntry),
-	}
-}
-
-// WithStandardProjectionBSICache installs a request-scoped BSI projection cache.
-func WithStandardProjectionBSICache(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if standardProjectionBSICacheFromContext(ctx) != nil {
-		return ctx
-	}
-	return context.WithValue(ctx, standardProjectionBSICacheContextKey{}, NewStandardProjectionBSICache())
-}
-
-func standardProjectionBSICacheFromContext(ctx context.Context) *StandardProjectionBSICache {
-	if ctx == nil {
-		return nil
-	}
-	cache, _ := ctx.Value(standardProjectionBSICacheContextKey{}).(*StandardProjectionBSICache)
-	return cache
-}
-
-func (c *StandardProjectionBSICache) get(key standardProjectionBSICacheKey, rownumSet *roaring64.Bitmap) (*roaring64.BSI, string, bool) {
-	if c == nil {
-		return nil, "", false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, entry := range c.entries[key] {
-		if standardProjectionRownumSetsEqual(entry.RownumSet, rownumSet) {
-			return entry.BSI, "exact", true
-		}
-	}
-	for _, entry := range c.entries[key] {
-		if standardProjectionRownumSetCovers(entry.RownumSet, rownumSet) {
-			return entry.BSI.NewBSIRetainSet(rownumSet), "retained_subset", true
-		}
-	}
-	return nil, "", false
-}
-
-func (c *StandardProjectionBSICache) set(key standardProjectionBSICacheKey, rownumSet *roaring64.Bitmap, bsi *roaring64.BSI) {
-	if c == nil || rownumSet == nil || bsi == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[key] = append(c.entries[key], standardProjectionBSICacheEntry{
-		RownumSet: rownumSet.Clone(),
-		BSI:       bsi,
-	})
-}
-
-func standardProjectionBSICacheKeyFor(request qsruntime.NativeProjectionBSIReadRequest, fromTime, toTime int64) standardProjectionBSICacheKey {
-	return standardProjectionBSICacheKey{
-		Index:         request.Index,
-		Field:         request.PhysicalField,
-		FromTimeNanos: fromTime,
-		ToTimeNanos:   toTime,
-	}
-}
-
-func standardProjectionRownumSetsEqual(left, right *roaring64.Bitmap) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	if left.GetCardinality() != right.GetCardinality() {
-		return false
-	}
-	return left.Equals(right)
-}
-
-func standardProjectionRownumSetCovers(container, subset *roaring64.Bitmap) bool {
-	if subset == nil {
-		return true
-	}
-	if container == nil {
-		return subset.GetCardinality() == 0
-	}
-	overlap := subset.Clone()
-	overlap.And(container)
-	return overlap.GetCardinality() == subset.GetCardinality()
-}
-
 // StandardProjectionBSIReader reads projected BSI vectors through the
 // in-process inabox-standard session pool.
 type StandardProjectionBSIReader struct {
@@ -142,9 +32,9 @@ type StandardProjectionBSIReader struct {
 func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request qsruntime.NativeProjectionBSIReadRequest) (qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
 	foundSet := standardProjectionBitmap(request.Rownums)
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
-	cacheKey := standardProjectionBSICacheKeyFor(request, fromTime, toTime)
-	cache := standardProjectionBSICacheFromContext(ctx)
-	if bsi, mode, ok := cache.get(cacheKey, foundSet); ok {
+	cacheKey := qsruntime.ProjectionBSICacheKeyFor(request, fromTime, toTime)
+	cache := qsruntime.ProjectionBSICacheFromContext(ctx)
+	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
 		return qsruntime.NativeProjectionBSIReadResult{
 			BSI: bsi,
 			Probes: []qsruntime.ExecutionProbe{
@@ -174,7 +64,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			},
 		}
 		probes = append(probes, standardProjectionBSIStatsProbes(request.Index, request.PhysicalField, stats)...)
-		cache.set(cacheKey, foundSet, bsi)
+		cache.Set(cacheKey, foundSet, bsi)
 		return qsruntime.NativeProjectionBSIReadResult{
 			BSI:    bsi,
 			Probes: probes,
@@ -193,7 +83,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	if bsi == nil {
 		bsi = roaring64.NewDefaultBSI()
 	}
-	cache.set(cacheKey, foundSet, bsi)
+	cache.Set(cacheKey, foundSet, bsi)
 	return qsruntime.NativeProjectionBSIReadResult{
 		BSI: bsi,
 		Probes: []qsruntime.ExecutionProbe{

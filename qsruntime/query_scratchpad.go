@@ -1,0 +1,180 @@
+package qsruntime
+
+import (
+	"context"
+	"sync"
+
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
+)
+
+type queryScratchpadContextKey struct{}
+
+// QueryScratchpad carries request-scoped execution memoization across planner
+// and executor helpers. It is topology-neutral; deployment adapters decide how
+// cache misses are filled.
+type QueryScratchpad struct {
+	ProjectionBSIs *ProjectionBSICache
+}
+
+// NewQueryScratchpad creates an empty per-query execution scratchpad.
+func NewQueryScratchpad() *QueryScratchpad {
+	return &QueryScratchpad{
+		ProjectionBSIs: NewProjectionBSICache(),
+	}
+}
+
+// WithQueryScratchpad installs a request-scoped execution scratchpad.
+func WithQueryScratchpad(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if QueryScratchpadFromContext(ctx) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, queryScratchpadContextKey{}, NewQueryScratchpad())
+}
+
+// QueryScratchpadFromContext returns the request scratchpad, when installed.
+func QueryScratchpadFromContext(ctx context.Context) *QueryScratchpad {
+	if ctx == nil {
+		return nil
+	}
+	scratchpad, _ := ctx.Value(queryScratchpadContextKey{}).(*QueryScratchpad)
+	return scratchpad
+}
+
+// ProjectionBSICacheFromContext returns the request-scoped projection cache.
+func ProjectionBSICacheFromContext(ctx context.Context) *ProjectionBSICache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.ProjectionBSIs
+}
+
+// ProjectionBSICacheKey identifies a BSI projection by logical field and time
+// window. Candidate rownum sets live in cache entries so subset reuse can be
+// evaluated without creating topology-specific key shapes.
+type ProjectionBSICacheKey struct {
+	Index           string
+	Field           string
+	FromTimeNanos   int64
+	ToTimeNanos     int64
+	FromEpochMillis int64
+	ToEpochMillis   int64
+}
+
+type projectionBSICacheEntry struct {
+	RownumSet *roaring64.Bitmap
+	BSI       *roaring64.BSI
+}
+
+// ProjectionBSICache deduplicates read-only BSI projections within one SQL
+// execution request.
+type ProjectionBSICache struct {
+	mu      sync.Mutex
+	entries map[ProjectionBSICacheKey][]projectionBSICacheEntry
+}
+
+// NewProjectionBSICache creates an empty per-query BSI projection cache.
+func NewProjectionBSICache() *ProjectionBSICache {
+	return &ProjectionBSICache{
+		entries: make(map[ProjectionBSICacheKey][]projectionBSICacheEntry),
+	}
+}
+
+// Get returns an exact cached projection or a retained copy from a cached
+// superset. The mode string is probe-friendly: "exact", "retained_subset", or
+// empty on miss.
+func (c *ProjectionBSICache) Get(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) (*roaring64.BSI, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, entry := range c.entries[key] {
+		if projectionRownumSetsEqual(entry.RownumSet, rownumSet) {
+			return entry.BSI, "exact", true
+		}
+	}
+	for _, entry := range c.entries[key] {
+		if projectionRownumSetCovers(entry.RownumSet, rownumSet) {
+			return entry.BSI.NewBSIRetainSet(rownumSet), "retained_subset", true
+		}
+	}
+	return nil, "", false
+}
+
+// Set records a projected BSI for one candidate rownum set.
+func (c *ProjectionBSICache) Set(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap, bsi *roaring64.BSI) {
+	if c == nil || rownumSet == nil || bsi == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = append(c.entries[key], projectionBSICacheEntry{
+		RownumSet: rownumSet.Clone(),
+		BSI:       bsi,
+	})
+}
+
+// ProjectionBSICacheKeyFor builds the shared projection-cache key for a native
+// BSI read request.
+func ProjectionBSICacheKeyFor(request NativeProjectionBSIReadRequest, fromTime, toTime int64) ProjectionBSICacheKey {
+	return ProjectionBSICacheKey{
+		Index:           request.Index,
+		Field:           request.PhysicalField,
+		FromTimeNanos:   fromTime,
+		ToTimeNanos:     toTime,
+		FromEpochMillis: request.FromEpochMillis,
+		ToEpochMillis:   request.ToEpochMillis,
+	}
+}
+
+func projectionRownumSetsEqual(left, right *roaring64.Bitmap) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	if left.GetCardinality() != right.GetCardinality() {
+		return false
+	}
+	return left.Equals(right)
+}
+
+func projectionRownumSetCovers(container, subset *roaring64.Bitmap) bool {
+	if subset == nil {
+		return true
+	}
+	if container == nil {
+		return subset.GetCardinality() == 0
+	}
+	overlap := subset.Clone()
+	overlap.And(container)
+	return overlap.GetCardinality() == subset.GetCardinality()
+}
+
+// DirectProjectionBSICache keeps existing inabox-direct call sites stable while
+// they migrate to QueryScratchpad/ProjectionBSICache naming.
+type DirectProjectionBSICache = ProjectionBSICache
+
+type directProjectionBSICacheKey = ProjectionBSICacheKey
+
+// NewDirectProjectionBSICache creates a shared projection cache for legacy
+// direct-mode call sites that have not yet adopted NewProjectionBSICache.
+func NewDirectProjectionBSICache() *DirectProjectionBSICache {
+	return NewProjectionBSICache()
+}
+
+// WithDirectProjectionBSICache installs the shared query scratchpad for legacy
+// direct-mode call sites that have not yet adopted WithQueryScratchpad.
+func WithDirectProjectionBSICache(ctx context.Context) context.Context {
+	return WithQueryScratchpad(ctx)
+}
+
+func directProjectionBSICacheFromContext(ctx context.Context) *DirectProjectionBSICache {
+	return ProjectionBSICacheFromContext(ctx)
+}
+
+func directProjectionBSICacheKeyFor(request NativeProjectionBSIReadRequest, fromTime, toTime int64) directProjectionBSICacheKey {
+	return ProjectionBSICacheKeyFor(request, fromTime, toTime)
+}

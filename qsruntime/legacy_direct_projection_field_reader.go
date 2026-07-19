@@ -244,7 +244,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
 	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := directProjectionBSICacheFromContext(ctx)
-	if bsi, mode, ok := cache.get(cacheKey, foundSet); ok {
+	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
 		return NativeProjectionBSIReadResult{
 			BSI: bsi,
 			Probes: []ExecutionProbe{
@@ -286,7 +286,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	if bsi == nil {
 		bsi = roaring64.NewDefaultBSI()
 	}
-	cache.set(cacheKey, foundSet, bsi)
+	cache.Set(cacheKey, foundSet, bsi)
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
 		Probes: []ExecutionProbe{

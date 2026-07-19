@@ -26,4 +26,8 @@
 // durable engine contracts, native-kernel staging, temporary preflight
 // scaffolding, runtime composition, metadata bridges, and legacy compatibility
 // quarantine visibly separate while the package is still intentionally mixed.
+//
+// QueryScratchpad centralizes request-scoped memoization so inabox-direct,
+// inabox-standard, and future distributed adapters do not grow separate cache
+// implementations for the same execution algebra.
 package qsruntime

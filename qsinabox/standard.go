@@ -54,7 +54,7 @@ func (c StandardConfig) Address() string {
 func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
 	c = c.WithDefaults()
 	serverConfig := qsruntime.NativeProxyServerConfig{
-		ContextWrapper: WithStandardProjectionBSICache,
+		ContextWrapper: qsruntime.WithQueryScratchpad,
 	}
 	if c.RuntimeProbeLogging {
 		serverConfig.ProbeLogger = qsruntime.RuntimeProbeLoggerFunc(func(probe qsruntime.ExecutionProbe) {

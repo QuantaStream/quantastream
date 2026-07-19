@@ -90,7 +90,7 @@ func inaboxDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config q
 		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
 		Functions:                 inaboxDirectSQLFunctions(),
 		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
-		ContextWrapper:            qsruntime.WithDirectProjectionBSICache,
+		ContextWrapper:            qsruntime.WithQueryScratchpad,
 		EnableFilterExpressions:   true,
 		ApplyRecommendedEdgeOrder: os.Getenv("QUANTASTREAM_INABOX_DIRECT_APPLY_EDGE_ORDER") == "1",
 	})
