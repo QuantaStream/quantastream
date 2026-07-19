@@ -7,8 +7,11 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -64,6 +67,7 @@ func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roa
 	if err != nil {
 		return err
 	}
+	metadata = mergeBenchmarkMetadata(detectBenchmarkMetadata(), metadata)
 
 	for i := 0; i < cfg.BenchmarkWarmup; i++ {
 		log.Printf("BENCHMARK warmup %d/%d", i+1, cfg.BenchmarkWarmup)
@@ -133,6 +137,126 @@ func parseBenchmarkMetadata(raw string) (map[string]string, error) {
 		return nil, nil
 	}
 	return metadata, nil
+}
+
+func mergeBenchmarkMetadata(autoMetadata, explicitMetadata map[string]string) map[string]string {
+	merged := make(map[string]string, len(autoMetadata)+len(explicitMetadata))
+	for key, value := range autoMetadata {
+		addBenchmarkMetadataValue(merged, key, value)
+	}
+	for key, value := range explicitMetadata {
+		addBenchmarkMetadataValue(merged, key, value)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func addBenchmarkMetadataValue(metadata map[string]string, key, value string) {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" {
+		return
+	}
+	metadata[key] = value
+}
+
+func detectBenchmarkMetadata() map[string]string {
+	metadata := map[string]string{
+		"host_os":    runtime.GOOS,
+		"host_arch":  runtime.GOARCH,
+		"host_cpus":  strconv.Itoa(runtime.NumCPU()),
+		"go_version": strings.TrimPrefix(runtime.Version(), "go"),
+	}
+	if host, err := os.Hostname(); err == nil {
+		addBenchmarkMetadataValue(metadata, "host_name", host)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		addBenchmarkMetadataValue(metadata, "cwd", cwd)
+		addBenchmarkStorageMetadata(metadata, cwd)
+		addBenchmarkGitMetadata(metadata, cwd)
+	}
+	addBenchmarkEnvMetadata(metadata, "quantastream_config_dir", "QUANTASTREAM_CONFIG_DIR")
+	addBenchmarkEnvMetadata(metadata, "quantastream_data_dir", "QUANTASTREAM_DATA_DIR")
+	return metadata
+}
+
+func addBenchmarkEnvMetadata(metadata map[string]string, key, envName string) {
+	addBenchmarkMetadataValue(metadata, key, os.Getenv(envName))
+}
+
+func addBenchmarkGitMetadata(metadata map[string]string, cwd string) {
+	if commit, ok := runBenchmarkMetadataCommand(cwd, "git", "rev-parse", "--short", "HEAD"); ok {
+		addBenchmarkMetadataValue(metadata, "repo_commit", commit)
+	}
+	if branch, ok := runBenchmarkMetadataCommand(cwd, "git", "branch", "--show-current"); ok {
+		addBenchmarkMetadataValue(metadata, "repo_branch", branch)
+	}
+	if status, ok := runBenchmarkMetadataCommand(cwd, "git", "status", "--short"); ok {
+		addBenchmarkMetadataValue(metadata, "repo_dirty", strconv.FormatBool(strings.TrimSpace(status) != ""))
+	}
+}
+
+func addBenchmarkStorageMetadata(metadata map[string]string, path string) {
+	storage := detectBenchmarkStorageMetadata(path)
+	for key, value := range storage {
+		addBenchmarkMetadataValue(metadata, key, value)
+	}
+}
+
+func detectBenchmarkStorageMetadata(path string) map[string]string {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	if output, ok := runBenchmarkMetadataCommand("", "df", "-P", "-T", path); ok {
+		return parseBenchmarkDFOutput(output, true)
+	}
+	if output, ok := runBenchmarkMetadataCommand("", "df", "-P", path); ok {
+		return parseBenchmarkDFOutput(output, false)
+	}
+	return nil
+}
+
+func parseBenchmarkDFOutput(output string, includesType bool) map[string]string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	fields := strings.Fields(lines[1])
+	if includesType {
+		if len(fields) < 7 {
+			return nil
+		}
+		return map[string]string{
+			"storage_device":       fields[0],
+			"storage_type":         fields[1],
+			"storage_available_kb": fields[4],
+			"storage_used_percent": strings.TrimSuffix(fields[5], "%"),
+			"storage_mount":        strings.Join(fields[6:], " "),
+		}
+	}
+	if len(fields) < 6 {
+		return nil
+	}
+	return map[string]string{
+		"storage_device":       fields[0],
+		"storage_available_kb": fields[3],
+		"storage_used_percent": strings.TrimSuffix(fields[4], "%"),
+		"storage_mount":        strings.Join(fields[5:], " "),
+	}
+}
+
+func runBenchmarkMetadataCommand(dir, name string, args ...string) (string, bool) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(output)), true
 }
 
 func buildBenchmarkReport(suite, engine, profile string, metadata map[string]string, warmup int, runs []benchmarkMeasuredRun, generatedAt time.Time) benchmarkReport {

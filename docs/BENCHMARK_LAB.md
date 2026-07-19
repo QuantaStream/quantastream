@@ -156,6 +156,14 @@ For every benchmark run, record:
 A benchmark run should be reproducible from the recorded metadata without
 relying on chat history or local memory.
 
+SQLRunner benchmark reports automatically add best-effort local metadata for
+developer and `inabox-standard` runs, including host OS/architecture/CPU count,
+Go version, current repository commit/branch/dirty status, working directory,
+and the filesystem/mount information for the working directory when the host can
+provide it. Explicit `-benchmark_metadata key=value` entries override
+auto-detected values so reference runs can still record curated cloud/provider
+metadata.
+
 ## Relationship To SQLRunner
 
 SQLRunner can support benchmark collection, but the compatibility lab should
@@ -181,13 +189,11 @@ performance.
 
 ## Initial Work Items
 
-1. Extend the benchmark report with host and storage metadata auto-detection for
-   developer-local and `inabox-standard` runs.
-2. Add a MySQL reference deployment template once the preferred cloud baseline is
+1. Add a MySQL reference deployment template once the preferred cloud baseline is
    selected.
-3. Promote a small read-only benchmark suite that is safe to repeat without
+2. Promote a small read-only benchmark suite that is safe to repeat without
    mutating benchmark state.
-4. Promote a controlled report archive convention once reference benchmark runs
+3. Promote a controlled report archive convention once reference benchmark runs
    become repeatable enough to preserve.
-5. Promote benchmark results only after correctness has passed for the same
+4. Promote benchmark results only after correctness has passed for the same
    suite and dataset.

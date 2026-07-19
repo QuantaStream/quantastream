@@ -25,6 +25,67 @@ func TestParseBenchmarkMetadataRejectsMalformedPair(t *testing.T) {
 	}
 }
 
+func TestMergeBenchmarkMetadataExplicitOverridesAuto(t *testing.T) {
+	metadata := mergeBenchmarkMetadata(
+		map[string]string{"host_os": "linux", "repo_commit": "auto", "empty": ""},
+		map[string]string{"repo_commit": "explicit", "suite": "tpch"},
+	)
+	if metadata["host_os"] != "linux" {
+		t.Fatalf("host_os = %q", metadata["host_os"])
+	}
+	if metadata["repo_commit"] != "explicit" {
+		t.Fatalf("repo_commit = %q", metadata["repo_commit"])
+	}
+	if metadata["suite"] != "tpch" {
+		t.Fatalf("suite = %q", metadata["suite"])
+	}
+	if _, ok := metadata["empty"]; ok {
+		t.Fatalf("empty metadata should be omitted: %#v", metadata)
+	}
+}
+
+func TestDetectBenchmarkMetadataIncludesRuntimeFields(t *testing.T) {
+	metadata := detectBenchmarkMetadata()
+	for _, key := range []string{"host_os", "host_arch", "host_cpus", "go_version"} {
+		if strings.TrimSpace(metadata[key]) == "" {
+			t.Fatalf("metadata missing %s: %#v", key, metadata)
+		}
+	}
+}
+
+func TestParseBenchmarkDFOutputWithFilesystemType(t *testing.T) {
+	metadata := parseBenchmarkDFOutput(`Filesystem     Type 1024-blocks    Used Available Capacity Mounted on
+/dev/sdc       ext4   1055762868 123456 987654321      12% /home
+`, true)
+	if metadata["storage_device"] != "/dev/sdc" {
+		t.Fatalf("storage_device = %q", metadata["storage_device"])
+	}
+	if metadata["storage_type"] != "ext4" {
+		t.Fatalf("storage_type = %q", metadata["storage_type"])
+	}
+	if metadata["storage_available_kb"] != "987654321" {
+		t.Fatalf("storage_available_kb = %q", metadata["storage_available_kb"])
+	}
+	if metadata["storage_used_percent"] != "12" {
+		t.Fatalf("storage_used_percent = %q", metadata["storage_used_percent"])
+	}
+	if metadata["storage_mount"] != "/home" {
+		t.Fatalf("storage_mount = %q", metadata["storage_mount"])
+	}
+}
+
+func TestParseBenchmarkDFOutputWithoutFilesystemType(t *testing.T) {
+	metadata := parseBenchmarkDFOutput(`Filesystem     1024-blocks    Used Available Capacity Mounted on
+/dev/sdc        1055762868 123456 987654321      12% /home
+`, false)
+	if metadata["storage_type"] != "" {
+		t.Fatalf("storage_type = %q", metadata["storage_type"])
+	}
+	if metadata["storage_available_kb"] != "987654321" || metadata["storage_used_percent"] != "12" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
 func TestParseBenchmarkReportPaths(t *testing.T) {
 	paths, err := parseBenchmarkReportPaths("direct.json, standard.json")
 	if err != nil {
