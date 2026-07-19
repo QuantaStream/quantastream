@@ -2,10 +2,13 @@ package qsinabox
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -20,6 +23,94 @@ const (
 	standardProjectionFullTimeRangeEndMillis   int64 = 4102444800000  // 2100-01-01T00:00:00Z
 )
 
+type standardProjectionBSICacheContextKey struct{}
+
+type standardProjectionBSICacheKey struct {
+	Index         string
+	Field         string
+	FromTimeNanos int64
+	ToTimeNanos   int64
+	RownumCount   int
+	RownumDigest  uint64
+}
+
+type standardProjectionBSICacheEntry struct {
+	BSI *roaring64.BSI
+}
+
+// StandardProjectionBSICache deduplicates read-only BSI projections during one
+// SQL execution request.
+type StandardProjectionBSICache struct {
+	mu      sync.Mutex
+	entries map[standardProjectionBSICacheKey]standardProjectionBSICacheEntry
+}
+
+// NewStandardProjectionBSICache creates an empty per-query BSI projection cache.
+func NewStandardProjectionBSICache() *StandardProjectionBSICache {
+	return &StandardProjectionBSICache{
+		entries: make(map[standardProjectionBSICacheKey]standardProjectionBSICacheEntry),
+	}
+}
+
+// WithStandardProjectionBSICache installs a request-scoped BSI projection cache.
+func WithStandardProjectionBSICache(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if standardProjectionBSICacheFromContext(ctx) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, standardProjectionBSICacheContextKey{}, NewStandardProjectionBSICache())
+}
+
+func standardProjectionBSICacheFromContext(ctx context.Context) *StandardProjectionBSICache {
+	if ctx == nil {
+		return nil
+	}
+	cache, _ := ctx.Value(standardProjectionBSICacheContextKey{}).(*StandardProjectionBSICache)
+	return cache
+}
+
+func (c *StandardProjectionBSICache) get(key standardProjectionBSICacheKey) (*roaring64.BSI, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	return entry.BSI, ok
+}
+
+func (c *StandardProjectionBSICache) set(key standardProjectionBSICacheKey, bsi *roaring64.BSI) {
+	if c == nil || bsi == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = standardProjectionBSICacheEntry{BSI: bsi}
+}
+
+func standardProjectionBSICacheKeyFor(request qsruntime.NativeProjectionBSIReadRequest, fromTime, toTime int64) standardProjectionBSICacheKey {
+	return standardProjectionBSICacheKey{
+		Index:         request.Index,
+		Field:         request.PhysicalField,
+		FromTimeNanos: fromTime,
+		ToTimeNanos:   toTime,
+		RownumCount:   len(request.Rownums),
+		RownumDigest:  standardProjectionRownumDigest(request.Rownums),
+	}
+}
+
+func standardProjectionRownumDigest(rownums []qsbridge.QuantaRownum) uint64 {
+	hash := fnv.New64a()
+	var buffer [8]byte
+	for _, rownum := range rownums {
+		binary.LittleEndian.PutUint64(buffer[:], uint64(rownum))
+		_, _ = hash.Write(buffer[:])
+	}
+	return hash.Sum64()
+}
+
 // StandardProjectionBSIReader reads projected BSI vectors through the
 // in-process inabox-standard session pool.
 type StandardProjectionBSIReader struct {
@@ -32,18 +123,28 @@ type StandardProjectionBSIReader struct {
 func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request qsruntime.NativeProjectionBSIReadRequest) (qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
 	foundSet := standardProjectionBitmap(request.Rownums)
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
+	cacheKey := standardProjectionBSICacheKeyFor(request, fromTime, toTime)
+	cache := standardProjectionBSICacheFromContext(ctx)
+	if bsi, ok := cache.get(cacheKey); ok {
+		return qsruntime.NativeProjectionBSIReadResult{
+			BSI: bsi,
+			Probes: []qsruntime.ExecutionProbe{
+				standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+				standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+			},
+		}, nil, nil
+	}
 	if r.Direct != nil {
 		bsi, stats, err := r.Direct.ProjectBSIWithStats(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
 		if err != nil {
 			return qsruntime.NativeProjectionBSIReadResult{}, nil, err
 		}
+		if bsi == nil {
+			bsi = roaring64.NewDefaultBSI()
+		}
 		probes := []qsruntime.ExecutionProbe{
-			{
-				Section: "native_projection_materialization",
-				Name:    "standard_bsi_projection_rows",
-				Value:   strconv.Itoa(len(request.Rownums)),
-				Detail:  request.Index + "." + request.PhysicalField,
-			},
+			standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+			standardProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
 			{
 				Section: "native_projection_materialization",
 				Name:    "standard_bsi_projection_transport",
@@ -52,6 +153,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			},
 		}
 		probes = append(probes, standardProjectionBSIStatsProbes(request.Index, request.PhysicalField, stats)...)
+		cache.set(cacheKey, bsi)
 		return qsruntime.NativeProjectionBSIReadResult{
 			BSI:    bsi,
 			Probes: probes,
@@ -70,15 +172,36 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	if bsi == nil {
 		bsi = roaring64.NewDefaultBSI()
 	}
+	cache.set(cacheKey, bsi)
 	return qsruntime.NativeProjectionBSIReadResult{
 		BSI: bsi,
-		Probes: []qsruntime.ExecutionProbe{{
-			Section: "native_projection_materialization",
-			Name:    "standard_bsi_projection_rows",
-			Value:   strconv.Itoa(len(request.Rownums)),
-			Detail:  request.Index + "." + request.PhysicalField,
-		}},
+		Probes: []qsruntime.ExecutionProbe{
+			standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+			standardProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
+		},
 	}, nil, nil
+}
+
+func standardProjectionBSIRowsProbe(index, field string, rows int) qsruntime.ExecutionProbe {
+	return qsruntime.ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "standard_bsi_projection_rows",
+		Value:   strconv.Itoa(rows),
+		Detail:  index + "." + field,
+	}
+}
+
+func standardProjectionBSICacheProbe(index, field string, hit bool) qsruntime.ExecutionProbe {
+	value := "false"
+	if hit {
+		value = "true"
+	}
+	return qsruntime.ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "standard_bsi_projection_cache_hit",
+		Value:   value,
+		Detail:  index + "." + field,
+	}
 }
 
 func standardProjectionBSIStatsProbes(index, field string, stats server.ProjectBSIStats) []qsruntime.ExecutionProbe {

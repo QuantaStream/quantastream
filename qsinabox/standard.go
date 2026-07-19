@@ -53,7 +53,9 @@ func (c StandardConfig) Address() string {
 // NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
 func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
 	c = c.WithDefaults()
-	serverConfig := qsruntime.NativeProxyServerConfig{}
+	serverConfig := qsruntime.NativeProxyServerConfig{
+		ContextWrapper: WithStandardProjectionBSICache,
+	}
 	if c.RuntimeProbeLogging {
 		serverConfig.ProbeLogger = qsruntime.RuntimeProbeLoggerFunc(func(probe qsruntime.ExecutionProbe) {
 			log.Infof("RUNTIME probe section=%s name=%s value=%s detail=%s", probe.Section, probe.Name, probe.Value, probe.Detail)

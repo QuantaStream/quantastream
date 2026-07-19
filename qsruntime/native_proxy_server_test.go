@@ -96,6 +96,35 @@ func TestNativeProxyServerLogsRuntimeProbesWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestNativeProxyServerWrapsExecutionContext(t *testing.T) {
+	type contextKey struct{}
+	const contextValue = "request-cache"
+	var wrapperCalled bool
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if got := ctx.Value(contextKey{}); got != contextValue {
+			t.Fatalf("wrapped context value = %#v, want %q", got, contextValue)
+		}
+		return ExecutionResult{Count: 1}, nil
+	})}
+	server := NewNativeProxyServer(runtime, NativeProxyServerConfig{
+		ContextWrapper: func(ctx context.Context) context.Context {
+			wrapperCalled = true
+			return context.WithValue(ctx, contextKey{}, contextValue)
+		},
+	})
+
+	result, err := server.ExecuteSQL(context.Background(), "select count(*) from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if !wrapperCalled {
+		t.Fatalf("ContextWrapper was not called")
+	}
+}
+
 func TestNativeProxyFrontDoorDefaultsToMySQLQIABWithoutClaimingWireReadiness(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{}, NativeProxyFrontDoorConfig{})
 	summary := frontDoor.Summary()

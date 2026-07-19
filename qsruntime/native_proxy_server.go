@@ -127,8 +127,9 @@ func (f NativeProxyFrontDoor) Summary() NativeProxyFrontDoorSummary {
 
 // NativeProxyServerConfig captures server-side ownership metadata before wire protocol binding.
 type NativeProxyServerConfig struct {
-	Route       ExecutionRoute
-	ProbeLogger RuntimeProbeLogger
+	Route          ExecutionRoute
+	ProbeLogger    RuntimeProbeLogger
+	ContextWrapper func(context.Context) context.Context
 }
 
 // WithDefaults returns a server config that prefers the local direct QIAB route.
@@ -141,18 +142,20 @@ func (c NativeProxyServerConfig) WithDefaults() NativeProxyServerConfig {
 
 // NativeProxyServer is the composition point that future wire-protocol adapters will own.
 type NativeProxyServer struct {
-	Runtime     NativeProxyRuntime
-	Route       ExecutionRoute
-	ProbeLogger RuntimeProbeLogger
+	Runtime        NativeProxyRuntime
+	Route          ExecutionRoute
+	ProbeLogger    RuntimeProbeLogger
+	ContextWrapper func(context.Context) context.Context
 }
 
 // NewNativeProxyServer builds the server-side owner for an already composed native runtime.
 func NewNativeProxyServer(runtime NativeProxyRuntime, config NativeProxyServerConfig) NativeProxyServer {
 	config = config.WithDefaults()
 	return NativeProxyServer{
-		Runtime:     runtime,
-		Route:       config.Route,
-		ProbeLogger: config.ProbeLogger,
+		Runtime:        runtime,
+		Route:          config.Route,
+		ProbeLogger:    config.ProbeLogger,
+		ContextWrapper: config.ContextWrapper,
 	}
 }
 
@@ -165,6 +168,9 @@ func (s NativeProxyServer) Ready() bool {
 func (s NativeProxyServer) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
 	if !s.Ready() {
 		return SQLExecutionResult{Diagnostics: nativeProxyServerNotReadyDiagnostics()}, nil
+	}
+	if s.ContextWrapper != nil {
+		ctx = s.ContextWrapper(ctx)
 	}
 	result, err := s.Runtime.ExecuteSQL(ctx, sql, options, values...)
 	s.logRuntimeProbes(result.Runtime.Probes)
