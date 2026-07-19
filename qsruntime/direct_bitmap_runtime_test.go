@@ -266,6 +266,162 @@ func TestDirectBitmapRuntimeFiltersRelationshipVectorMembershipResiduals(t *test
 	}
 }
 
+func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t *testing.T) {
+	leftTable := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	rightTable := qsbridge.TableInstance{Table: "lineitem", Alias: "l3"}
+	leftOrderKey := qsbridge.FieldRef{Table: leftTable, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	leftSuppKey := qsbridge.FieldRef{Table: leftTable, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	rightOrderKey := qsbridge.FieldRef{Table: rightTable, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	rightSuppKey := qsbridge.FieldRef{Table: rightTable, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	rightReceiptDate := qsbridge.FieldRef{Table: rightTable, Name: "l_receiptdate", PhysicalName: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	rightCommitDate := qsbridge.FieldRef{Table: rightTable, Name: "l_commitdate", PhysicalName: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	sameRowCalled := false
+	rightKeyNarrowCalled := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					index, ok := request.RootIndex()
+					if !ok || index != "lineitem" {
+						t.Fatalf("membership right request root index = %q/%t, want lineitem", index, ok)
+					}
+					if len(request.Query.Fragments) == 1 && request.Query.Fragments[0].BSIOp == qsbridge.QuantaBSIOpBatchEQ {
+						rightKeyNarrowCalled = true
+						if got, want := len(request.Query.Fragments[0].Values), 2; got != want {
+							t.Fatalf("right key lookup values = %d, want %d", got, want)
+						}
+						return BitmapQueryResult{Success: true, Count: 2, Rownums: []qsbridge.QuantaRownum{10, 11}}, nil, nil
+					}
+					return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{10, 11, 12}}, nil, nil
+				},
+			}, nil, nil
+		}),
+		SameRowComparison: SameRowComparisonKernelFunc(func(_ context.Context, comparison qsbridge.SameRowComparisonRequest) (qsbridge.SameRowComparisonResult, error) {
+			sameRowCalled = true
+			if !sameRownumSlicesEqual(comparison.Domain.Rownums, []qsbridge.QuantaRownum{10, 11, 12}) {
+				t.Fatalf("same-row domain = %#v, want right-side candidates", comparison.Domain.Rownums)
+			}
+			return qsbridge.SameRowComparisonResult{
+				ID: comparison.ID,
+				Domain: qsbridge.RownumDomainSet{
+					Domain:  comparison.Domain.Domain,
+					Rownums: []qsbridge.QuantaRownum{10, 12},
+				},
+			}, nil
+		}),
+		Materialization: qsruntimeMaterializationKernelFunc(func(_ context.Context, request qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			if request.RequestCount() != 1 {
+				t.Fatalf("materialization request count = %d, want one", request.RequestCount())
+			}
+			materializationRequest := request.Requests[0]
+			if sameRownumSlicesEqual(materializationRequest.Rownums, []qsbridge.QuantaRownum{10, 11, 12}) {
+				t.Fatalf("right side was materialized before native same-row filtering")
+			}
+			if sameRownumSlicesEqual(materializationRequest.Rownums, []qsbridge.QuantaRownum{10, 12}) {
+				t.Fatalf("right side was materialized before dynamic key narrowing")
+			}
+			for _, field := range materializationRequest.ProjectionFields {
+				if field.Field == "l_receiptdate" || field.Field == "l_commitdate" {
+					t.Fatalf("same-row date field %s should not require residual materialization", field.Field)
+				}
+			}
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   materializationRequest.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), materializationRequest.Rownums...),
+			}
+			for _, field := range materializationRequest.ProjectionFields {
+				values := make([]qsbridge.ResultCell, 0, len(materializationRequest.Rownums))
+				for _, rownum := range materializationRequest.Rownums {
+					values = append(values, membershipTestIntCell(rownum, field.Field))
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{Field: field, Values: values})
+			}
+			return qsbridge.ProjectionMaterializationKernelResult{
+				ID: request.ID,
+				Results: []qsbridge.ProjectionMaterializationResult{{
+					ID:      materializationRequest.DependencyID,
+					Request: materializationRequest,
+					RowSet:  rowSet,
+				}},
+			}, nil
+		}),
+	}
+	membership := qsbridge.MembershipEdge{
+		Left:  leftOrderKey,
+		Right: rightOrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Predicates: []qsbridge.Predicate{
+			{
+				Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(rightOrderKey), qsbridge.Field(leftOrderKey)),
+				Placement: qsbridge.PredicateResidualScan,
+			},
+			{
+				Expr:      qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(rightSuppKey), qsbridge.Field(leftSuppKey)),
+				Placement: qsbridge.PredicateResidualScan,
+			},
+			{
+				Expr:      qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.Field(rightReceiptDate), qsbridge.Field(rightCommitDate)),
+				Placement: qsbridge.PredicateResidualScan,
+			},
+		},
+	}
+
+	filtered, diagnostics, err := runtime.directBitmapApplyMembership(context.Background(), ExecutionRequest{}, BitmapQueryResult{
+		Success: true,
+		Count:   2,
+		Rownums: []qsbridge.QuantaRownum{1, 2},
+	}, membership)
+	if err != nil {
+		t.Fatalf("apply membership: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !sameRowCalled {
+		t.Fatalf("same-row kernel was not called")
+	}
+	if !rightKeyNarrowCalled {
+		t.Fatalf("right key narrowing query was not called")
+	}
+	if !sameRownumSlicesEqual(filtered.Rownums, []qsbridge.QuantaRownum{1}) {
+		t.Fatalf("filtered rownums = %#v, want row 1", filtered.Rownums)
+	}
+}
+
+func membershipTestIntCell(rownum qsbridge.QuantaRownum, field string) qsbridge.ResultCell {
+	valuesByField := map[string]map[qsbridge.QuantaRownum]int64{
+		"l_orderkey": {
+			1:  100,
+			2:  200,
+			10: 100,
+			12: 300,
+		},
+		"l_suppkey": {
+			1:  10,
+			2:  20,
+			10: 11,
+			12: 30,
+		},
+	}
+	value, ok := valuesByField[field][rownum]
+	if !ok {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull}
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value}
+}
+
+func sameRownumSlicesEqual(left []qsbridge.QuantaRownum, right []qsbridge.QuantaRownum) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDirectBitmapRuntimeExecutesBorrowedSession(t *testing.T) {
 	released := false
 	runtime := DirectBitmapRuntime{

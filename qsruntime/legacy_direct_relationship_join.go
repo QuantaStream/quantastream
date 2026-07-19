@@ -1127,8 +1127,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 		return RelationshipTupleRowSet{}, nil, nil, legacyDirectRelationshipDiagnostic("relationship-vector graph membership requires a direct session provider"), nil
 	}
 	runtime := DirectBitmapRuntime{
-		Sessions:        sessions,
-		Materialization: materialization,
+		Sessions:          sessions,
+		Materialization:   materialization,
+		SameRowComparison: e.sameRowComparisonKernel(),
 	}
 	currentTuples := tupleRows
 	currentAligned := legacyDirectRelationshipCloneAlignedRows(alignedRows)
@@ -3518,8 +3519,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 	}
 	materialization := e.projectionMaterializationKernel()
 	runtime := DirectBitmapRuntime{
-		Sessions:        LegacyQuantaSourceSessionProvider{Source: e.Source},
-		Materialization: materialization,
+		Sessions:          LegacyQuantaSourceSessionProvider{Source: e.Source},
+		Materialization:   materialization,
+		SameRowComparison: e.sameRowComparisonKernel(),
 	}
 	filteredPairs := append([]legacyDirectRelationshipPair(nil), pairs...)
 	for _, membership := range request.Memberships {

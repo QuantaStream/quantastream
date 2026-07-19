@@ -10,6 +10,10 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+// directBitmapMembershipMaxDynamicBatchEQValues caps dynamic sibling-domain
+// narrowing so a large left domain does not turn into an oversized lookup list.
+const directBitmapMembershipMaxDynamicBatchEQValues = 4096
+
 func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, request ExecutionRequest, result BitmapQueryResult) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
 	if len(request.Memberships) == 0 {
 		return result, nil, nil
@@ -104,6 +108,14 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if err != nil || diagnostics.BlocksNative() {
 		return result, diagnostics, err
 	}
+	leftKeys, ok := directBitmapProjectedValues(leftRowSet, membership.Left)
+	if !ok {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
+	}
+	rightResult, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
 	rightRowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
 		Index:            membership.Right.Table.Table,
 		Rownums:          append([]qsbridge.QuantaRownum(nil), rightResult.Rownums...),
@@ -111,10 +123,6 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	})
 	if err != nil || diagnostics.BlocksNative() {
 		return result, diagnostics, err
-	}
-	leftKeys, ok := directBitmapProjectedValues(leftRowSet, membership.Left)
-	if !ok {
-		return result, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
 	}
 	rightKeys, ok := directBitmapProjectedValues(rightRowSet, membership.Right)
 	if !ok {
@@ -156,6 +164,117 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	}
 	filtered.Count = uint64(len(filtered.Rownums))
 	return filtered, nil, nil
+}
+
+// directBitmapNarrowCorrelatedMembershipRightCandidates reduces a sibling
+// membership's right alias with a dynamic BATCH_EQ lookup from the current
+// left-side key values before right-side correlation fields are materialized.
+func (r DirectBitmapRuntime) directBitmapNarrowCorrelatedMembershipRightCandidates(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge, leftKeys []qsbridge.ResultCell) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	values, ok := directBitmapMembershipBatchEQValues(leftKeys)
+	if !ok {
+		return result, nil, nil
+	}
+	if len(values) == 0 {
+		filtered := result.Clone()
+		filtered.Rownums = filtered.Rownums[:0]
+		filtered.Count = 0
+		return filtered, nil, nil
+	}
+	if len(values) > directBitmapMembershipMaxDynamicBatchEQValues {
+		return result, nil, nil
+	}
+	if r.Sessions == nil {
+		return result, directBitmapMembershipDiagnostics("correlated sibling membership right-key narrowing has no session provider"), nil
+	}
+	narrowRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     membership.Right.Table.Table,
+			Field:     directBitmapFieldPhysicalName(membership.Right),
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+			Values:    values,
+		}},
+	})
+	session, diagnostics, err := r.Sessions.BorrowDirectSession(ctx, narrowRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
+	if session == nil {
+		return result, directBitmapMembershipDiagnostics("direct session provider returned nil correlated membership session"), nil
+	}
+	narrowed, queryDiagnostics, queryErr := session.QueryBitmap(ctx, narrowRequest)
+	releaseDiagnostics := session.Release(ctx)
+	diagnostics = append(diagnostics, queryDiagnostics...)
+	diagnostics = append(diagnostics, releaseDiagnostics...)
+	if queryErr != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, queryErr
+	}
+	return directBitmapIntersectMembershipCandidates(result, narrowed), nil, nil
+}
+
+// directBitmapMembershipBatchEQValues converts materialized key cells into
+// unique integer values suitable for a BSI BATCH_EQ lookup.
+func directBitmapMembershipBatchEQValues(cells []qsbridge.ResultCell) ([]*big.Int, bool) {
+	seen := make(map[string]struct{}, len(cells))
+	values := make([]*big.Int, 0, len(cells))
+	for _, cell := range cells {
+		value, ok := directBitmapMembershipCellBigInt(cell)
+		if !ok {
+			return nil, false
+		}
+		if value == nil {
+			continue
+		}
+		key := value.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+// directBitmapMembershipCellBigInt converts one SQL cell into an integer BSI
+// lookup value, returning nil for SQL NULL and false for unsupported types.
+func directBitmapMembershipCellBigInt(cell qsbridge.ResultCell) (*big.Int, bool) {
+	if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
+		return nil, true
+	}
+	switch value := cell.Value.(type) {
+	case int:
+		return big.NewInt(int64(value)), true
+	case int64:
+		return big.NewInt(value), true
+	case uint64:
+		return new(big.Int).SetUint64(value), true
+	case string:
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		return big.NewInt(parsed), true
+	default:
+		return nil, false
+	}
+}
+
+// directBitmapIntersectMembershipCandidates preserves the left candidate order
+// while applying a right-side bitmap query as a narrowing filter.
+func directBitmapIntersectMembershipCandidates(left BitmapQueryResult, right BitmapQueryResult) BitmapQueryResult {
+	allowed := make(map[qsbridge.QuantaRownum]struct{}, len(right.Rownums))
+	for _, rownum := range right.Rownums {
+		allowed[rownum] = struct{}{}
+	}
+	filtered := left.Clone()
+	filtered.Rownums = filtered.Rownums[:0]
+	for _, rownum := range left.Rownums {
+		if _, ok := allowed[rownum]; ok {
+			filtered.Rownums = append(filtered.Rownums, rownum)
+		}
+	}
+	filtered.Count = uint64(len(filtered.Rownums))
+	return filtered
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyRelationshipMembership(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, bool, qsbridge.DiagnosticSet, error) {
@@ -276,7 +395,14 @@ func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResult(ctx cont
 	if len(residuals) == 0 {
 		return rightResult, nil, nil
 	}
-	rowSet, diagnostics, err := r.directBitmapMembershipMaterialize(ctx, rightResult, membership.Right, membership.Predicates)
+	rightResult, residuals, diagnostics, err = r.directBitmapApplyMembershipRightSameRowResiduals(ctx, rightRequest, rightResult, residuals)
+	if err != nil || diagnostics.BlocksNative() {
+		return BitmapQueryResult{}, diagnostics, err
+	}
+	if len(residuals) == 0 {
+		return rightResult, nil, nil
+	}
+	rowSet, diagnostics, err := r.directBitmapMembershipMaterialize(ctx, rightResult, membership.Right, residuals)
 	if err != nil || diagnostics.BlocksNative() {
 		return BitmapQueryResult{}, diagnostics, err
 	}
@@ -287,6 +413,26 @@ func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResult(ctx cont
 	rightResult.Rownums = append([]qsbridge.QuantaRownum(nil), rowSet.Rownums...)
 	rightResult.Count = uint64(len(rightResult.Rownums))
 	return rightResult, nil, nil
+}
+
+// directBitmapApplyMembershipRightSameRowResiduals applies right-only same-row
+// BSI residual predicates before the membership path falls back to row
+// materialization for remaining residuals.
+func (r DirectBitmapRuntime) directBitmapApplyMembershipRightSameRowResiduals(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, residuals []qsbridge.Predicate) (BitmapQueryResult, []qsbridge.Predicate, qsbridge.DiagnosticSet, error) {
+	sameRow, remaining := directBitmapSplitSameRowResidualPredicates(residuals)
+	if len(sameRow) == 0 {
+		return result, residuals, nil, nil
+	}
+	sameRowRequest := request
+	sameRowRequest.Predicates = sameRow
+	filtered, _, diagnostics, err, applied := r.directBitmapApplySameRowResiduals(ctx, sameRowRequest, result)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, residuals, diagnostics, err
+	}
+	if !applied {
+		return result, residuals, nil, nil
+	}
+	return filtered, remaining, nil, nil
 }
 
 func (r DirectBitmapRuntime) directBitmapMembershipRightValues(ctx context.Context, membership qsbridge.MembershipEdge) (map[string]struct{}, qsbridge.DiagnosticSet, error) {
@@ -441,6 +587,23 @@ func directBitmapMembershipResidualPredicates(predicates []qsbridge.Predicate) [
 		}
 	}
 	return residuals
+}
+
+// directBitmapSplitSameRowResidualPredicates separates residual predicates that
+// can be evaluated by the native same-row BSI comparison kernel.
+func directBitmapSplitSameRowResidualPredicates(predicates []qsbridge.Predicate) ([]qsbridge.Predicate, []qsbridge.Predicate) {
+	sameRow := make([]qsbridge.Predicate, 0, len(predicates))
+	remaining := make([]qsbridge.Predicate, 0, len(predicates))
+	for _, predicate := range predicates {
+		if predicate.Placement == qsbridge.PredicateResidualScan {
+			if _, _, _, ok := qsbridge.SameRowBSIComparisonPredicate(predicate); ok {
+				sameRow = append(sameRow, predicate)
+				continue
+			}
+		}
+		remaining = append(remaining, predicate)
+	}
+	return sameRow, remaining
 }
 
 func directBitmapMembershipHasCorrelatedPredicates(membership qsbridge.MembershipEdge) bool {
