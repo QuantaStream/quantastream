@@ -88,6 +88,11 @@ func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, re
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	start := time.Now()
+	detail := directBitmapMembershipNarrowProbeDetail(membership)
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("correlated_sibling_left_candidates_before", strconv.Itoa(len(result.Rownums)), detail),
+	}
 	if !strings.EqualFold(membership.Left.Table.Table, membership.Right.Table.Table) {
 		return result, nil, directBitmapMembershipDiagnostics("correlated sibling membership only supports repeated aliases of the same physical table in this slice"), nil
 	}
@@ -97,34 +102,57 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	}
 	rightMembership := membership
 	rightMembership.Predicates = rightOnlyPredicates
+	rightCandidateStart := time.Now()
 	rightResult, diagnostics, err := r.directBitmapMembershipRightCandidateResult(ctx, rightMembership)
+	rightCandidateElapsed := time.Since(rightCandidateStart)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
+	)
 	if err != nil || diagnostics.BlocksNative() {
-		return result, nil, diagnostics, err
+		return result, probes, diagnostics, err
 	}
 	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
 	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
-	leftRowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+	leftMaterializationStart := time.Now()
+	leftRowSet, diagnostics, leftMaterializationProbes, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
 		Index:            membership.Left.Table.Table,
 		Rownums:          append([]qsbridge.QuantaRownum(nil), result.Rownums...),
 		ProjectionFields: leftFields,
 	})
-	if err != nil || diagnostics.BlocksNative() {
-		return result, nil, diagnostics, err
-	}
-	leftKeys, ok := directBitmapProjectedValues(leftRowSet, membership.Left)
-	if !ok {
-		return result, nil, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
-	}
-	var probes []ExecutionProbe
-	rightResult, probes, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
+	leftMaterializationElapsed := time.Since(leftMaterializationStart)
+	probes = append(probes, leftMaterializationProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_left_materialization_elapsed", leftMaterializationElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_left_materialization_rows", strconv.Itoa(leftRowSet.CandidateCount()), detail),
+		directBitmapMembershipProbe("correlated_sibling_left_materialization_fields", strconv.Itoa(len(leftFields)), detail),
+	)
 	if err != nil || diagnostics.BlocksNative() {
 		return result, probes, diagnostics, err
 	}
-	rightRowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+	leftKeys, ok := directBitmapProjectedValues(leftRowSet, membership.Left)
+	if !ok {
+		return result, probes, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
+	}
+	var narrowProbes []ExecutionProbe
+	rightResult, narrowProbes, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
+	probes = append(probes, narrowProbes...)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, probes, diagnostics, err
+	}
+	rightMaterializationStart := time.Now()
+	rightRowSet, diagnostics, rightMaterializationProbes, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
 		Index:            membership.Right.Table.Table,
 		Rownums:          append([]qsbridge.QuantaRownum(nil), rightResult.Rownums...),
 		ProjectionFields: rightFields,
 	})
+	rightMaterializationElapsed := time.Since(rightMaterializationStart)
+	probes = append(probes, rightMaterializationProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_materialization_elapsed", rightMaterializationElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_materialization_rows", strconv.Itoa(rightRowSet.CandidateCount()), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_materialization_fields", strconv.Itoa(len(rightFields)), detail),
+	)
 	if err != nil || diagnostics.BlocksNative() {
 		return result, probes, diagnostics, err
 	}
@@ -132,6 +160,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if !ok {
 		return result, probes, directBitmapMembershipDiagnostics("correlated sibling membership right key is not present in materialized row set"), nil
 	}
+	indexStart := time.Now()
 	rightRowsByKey := make(map[string][]int, len(rightKeys))
 	for i, value := range rightKeys {
 		if value.Kind == qsbridge.ValueNull || value.Value == nil {
@@ -140,8 +169,11 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		key := directBitmapGroupKey(value)
 		rightRowsByKey[key] = append(rightRowsByKey[key], i)
 	}
+	indexElapsed := time.Since(indexStart)
 	filtered := result.Clone()
 	filtered.Rownums = filtered.Rownums[:0]
+	evaluationStart := time.Now()
+	comparisons := 0
 	for i, rownum := range leftRowSet.Rownums {
 		key := ""
 		if i < len(leftKeys) && leftKeys[i].Kind != qsbridge.ValueNull && leftKeys[i].Value != nil {
@@ -149,6 +181,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		}
 		matched := false
 		for _, rightIndex := range rightRowsByKey[key] {
+			comparisons++
 			ok, diagnostics := directBitmapEvaluateCorrelatedMembershipPredicates(correlatedPredicates, leftRowSet, i, rightRowSet, rightIndex, membership)
 			if diagnostics.BlocksNative() {
 				return result, probes, diagnostics, nil
@@ -166,7 +199,16 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 			filtered.Rownums = append(filtered.Rownums, rownum)
 		}
 	}
+	evaluationElapsed := time.Since(evaluationStart)
 	filtered.Count = uint64(len(filtered.Rownums))
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_index_elapsed", indexElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_keys", strconv.Itoa(len(rightRowsByKey)), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_elapsed", evaluationElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_comparisons", strconv.Itoa(comparisons), detail),
+		directBitmapMembershipProbe("correlated_sibling_left_candidates_after", strconv.Itoa(len(filtered.Rownums)), detail),
+		directBitmapMembershipProbe("correlated_sibling_elapsed", time.Since(start).String(), detail),
+	)
 	return filtered, probes, nil, nil
 }
 
