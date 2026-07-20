@@ -175,24 +175,23 @@ func (r StandardProjectionBSIReader) readProjectionBSIWorkGroup(ctx context.Cont
 
 func (r StandardProjectionBSIReader) readProjectionBSIWorkGroupDirect(ctx context.Context, group []standardProjectionBSIReadWork, cache *qsruntime.ProjectionBSICache, results []qsruntime.NativeProjectionBSIReadResult) (qsbridge.DiagnosticSet, error) {
 	groupStart := time.Now()
-	type directProjectionResult struct {
-		BSI   *roaring64.BSI
-		Stats server.ProjectBSIStats
+	fields := make([]string, 0, len(group))
+	for _, work := range group {
+		fields = append(fields, work.Request.PhysicalField)
 	}
-	projected := make([]directProjectionResult, len(group))
-	for i, work := range group {
-		bsi, stats, err := r.Direct.ProjectBSIWithStats(work.Request.Index, work.Request.PhysicalField, work.FromTime, work.ToTime, work.FetchSet, false)
-		if err != nil {
-			return nil, err
-		}
+	projected, statsByField, err := r.Direct.ProjectBSIsWithStats(group[0].Request.Index, fields, group[0].FromTime, group[0].ToTime, group[0].FetchSet, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range fields {
+		bsi := projected[field]
 		if bsi == nil {
-			bsi = roaring64.NewDefaultBSI()
+			projected[field] = roaring64.NewDefaultBSI()
 		}
-		projected[i] = directProjectionResult{BSI: bsi, Stats: stats}
 	}
 	projectionElapsed := time.Since(groupStart)
-	for i, work := range group {
-		bsi := projected[i].BSI
+	for _, work := range group {
+		bsi := projected[work.Request.PhysicalField]
 		if work.PartialOK {
 			bsi = work.Partial.MergeFetchedMissing(bsi)
 		}
@@ -212,7 +211,7 @@ func (r StandardProjectionBSIReader) readProjectionBSIWorkGroupDirect(ctx contex
 				Detail:  work.Request.Index + "." + work.Request.PhysicalField,
 			},
 		}
-		probes = append(probes, standardProjectionBSIStatsProbes(work.Request.Index, work.Request.PhysicalField, projected[i].Stats)...)
+		probes = append(probes, standardProjectionBSIStatsProbes(work.Request.Index, work.Request.PhysicalField, statsByField[work.Request.PhysicalField])...)
 		results[work.Position] = qsruntime.NativeProjectionBSIReadResult{
 			BSI:    bsi,
 			Probes: probes,

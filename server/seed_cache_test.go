@@ -271,6 +271,55 @@ func TestProjectBSIReturnsDirectFoundSetProjection(t *testing.T) {
 	}
 }
 
+func TestProjectBSIsWithStatsReturnsAlignedProjectionFields(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"]["l_shipdate"][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230601,
+		2: 20230602,
+	})
+	index.bsiCache["lineitem"]["l_extendedprice"][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 10000,
+		2: 20000,
+	})
+
+	results, stats, err := index.ProjectBSIsWithStats(
+		"lineitem",
+		[]string{"l_shipdate", "l_extendedprice"},
+		day.UnixNano(),
+		day.UnixNano(),
+		roaring64.BitmapOf(2),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ProjectBSIsWithStats returned error: %v", err)
+	}
+	if len(results) != 2 || len(stats) != 2 {
+		t.Fatalf("projected fields = %d stats = %d, want 2/2", len(results), len(stats))
+	}
+	assertProjectedBSIValue(t, results["l_shipdate"], 2, 20230602)
+	assertProjectedBSIValue(t, results["l_extendedprice"], 2, 20000)
+	if _, ok := results["l_shipdate"].GetValue(1); ok {
+		t.Fatalf("rownum 1 should not be retained in l_shipdate projection")
+	}
+	if stats["l_shipdate"].RetainedRows != 1 || stats["l_extendedprice"].RetainedRows != 1 {
+		t.Fatalf("retained rows = shipdate:%d extendedprice:%d, want 1/1",
+			stats["l_shipdate"].RetainedRows,
+			stats["l_extendedprice"].RetainedRows)
+	}
+}
+
+func assertProjectedBSIValue(t *testing.T, bsi *roaring64.BSI, rownum uint64, want int64) {
+	t.Helper()
+	if bsi == nil {
+		t.Fatalf("projected BSI = nil")
+	}
+	got, ok := bsi.GetValue(rownum)
+	if !ok || got != want {
+		t.Fatalf("rownum %d value = %d ok=%t, want %d true", rownum, got, ok, want)
+	}
+}
+
 func newSeedCacheTestIndex(t *testing.T) *BitmapIndex {
 	t.Helper()
 	root := t.TempDir()

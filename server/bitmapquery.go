@@ -357,6 +357,12 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
 
+	return m.timeRangeBSILocked(index, field, fromTime, toTime, foundSet, negate, ownedOnly, stats...)
+}
+
+func (m *BitmapIndex) timeRangeBSILocked(index, field string, fromTime, toTime time.Time,
+	foundSet *roaring64.Bitmap, negate bool, ownedOnly bool, stats ...*ProjectBSIStats) (*BSIBitmap, error) {
+
 	var stat *ProjectBSIStats
 	if len(stats) > 0 {
 		stat = stats[0]
@@ -768,6 +774,44 @@ func (m *BitmapIndex) ProjectBSI(index, field string, fromTime, toTime int64, fo
 // in-process callers that need to diagnose projection cost.
 func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, ProjectBSIStats, error) {
 	return m.projectBSIWithStats(index, field, fromTime, toTime, foundSet, negate, true)
+}
+
+// ProjectBSIsWithStats returns several projected BSIs under one in-process
+// cache read. This is the multi-field companion to ProjectBSIWithStats for
+// projection batches that share index, time window, foundset, and negate mode.
+func (m *BitmapIndex) ProjectBSIsWithStats(index string, fields []string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (map[string]*roaring64.BSI, map[string]ProjectBSIStats, error) {
+	results := make(map[string]*roaring64.BSI, len(fields))
+	statsByField := make(map[string]ProjectBSIStats, len(fields))
+	if index == "" {
+		return nil, nil, fmt.Errorf("index not specified for projection criteria")
+	}
+	if len(fields) == 0 {
+		return results, statsByField, nil
+	}
+	from := time.Unix(0, fromTime).UTC()
+	to := time.Unix(0, toTime).UTC()
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+	for _, field := range fields {
+		if field == "" {
+			return nil, nil, fmt.Errorf("field not specified for projection criteria")
+		}
+		if _, seen := results[field]; seen {
+			continue
+		}
+		stats := ProjectBSIStats{}
+		bsi, err := m.timeRangeBSILocked(index, field, from, to, foundSet, negate, true, &stats)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bsi == nil || bsi.BSI == nil {
+			results[field] = roaring64.NewDefaultBSI()
+		} else {
+			results[field] = bsi.BSI
+		}
+		statsByField[field] = stats
+	}
+	return results, statsByField, nil
 }
 
 func (m *BitmapIndex) projectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool, ownedOnly bool) (*roaring64.BSI, ProjectBSIStats, error) {
