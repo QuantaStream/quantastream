@@ -59,6 +59,76 @@ func TestNativeProjectionMaterializationKernelReadsSimpleFields(t *testing.T) {
 	}
 }
 
+func TestNativeProjectionMaterializationKernelReusesCachedProjectionValues(t *testing.T) {
+	ctx := WithQueryScratchpad(context.Background())
+	field := qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Visible: true}
+	readRownums := [][]qsbridge.QuantaRownum{}
+	kernel := NativeProjectionMaterializationKernel{
+		Reader: NativeProjectionFieldReaderFunc(func(_ context.Context, request NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+			readRownums = append(readRownums, append([]qsbridge.QuantaRownum(nil), request.Rownums...))
+			values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
+			for _, rownum := range request.Rownums {
+				values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum) * 10})
+			}
+			return NativeProjectionFieldReadResult{
+				Field:  request.Field,
+				Values: values,
+			}, nil, nil
+		}),
+	}
+
+	first, err := kernel.MaterializeProjectionBatches(ctx, ProjectionMaterializationKernelRequest{
+		ID: "projection_materialization",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index:            "lineitem",
+			Rownums:          []qsbridge.QuantaRownum{1, 2},
+			ProjectionFields: []qsbridge.QuantaProjectionField{field},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("first MaterializeProjectionBatches error = %v", err)
+	}
+	if first.Diagnostics.BlocksNative() {
+		t.Fatalf("first diagnostics = %#v, want none", first.Diagnostics)
+	}
+	second, err := kernel.MaterializeProjectionBatches(ctx, ProjectionMaterializationKernelRequest{
+		ID: "projection_materialization",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index:            "lineitem",
+			Rownums:          []qsbridge.QuantaRownum{1, 2, 3},
+			ProjectionFields: []qsbridge.QuantaProjectionField{field},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("second MaterializeProjectionBatches error = %v", err)
+	}
+	if second.Diagnostics.BlocksNative() {
+		t.Fatalf("second diagnostics = %#v, want none", second.Diagnostics)
+	}
+	if len(readRownums) != 2 {
+		t.Fatalf("reader calls = %#v, want two calls", readRownums)
+	}
+	if !sameRownumSlicesEqual(readRownums[0], []qsbridge.QuantaRownum{1, 2}) {
+		t.Fatalf("first read rownums = %#v, want 1/2", readRownums[0])
+	}
+	if !sameRownumSlicesEqual(readRownums[1], []qsbridge.QuantaRownum{3}) {
+		t.Fatalf("second read rownums = %#v, want only missing row 3", readRownums[1])
+	}
+	values := second.Results[0].RowSet.ProjectionVectors[0].Values
+	if values[0].Value != int64(10) || values[1].Value != int64(20) || values[2].Value != int64(30) {
+		t.Fatalf("second values = %#v, want cached 10/20 plus fetched 30", values)
+	}
+	if !nativeProjectionMaterializationTestProbeName(second.Probes, "projection_value_cache_hit") ||
+		!nativeProjectionMaterializationTestProbeName(second.Probes, "projection_value_cache_missing_rows") {
+		t.Fatalf("second probes = %#v, want projection value cache probes", second.Probes)
+	}
+	snapshot := ExecutionInstrumentationSnapshotFromContext(ctx)
+	assertExecutionCounter(t, snapshot, "query_scratchpad", "projection_value_cache_hit", 1)
+	if got := executionCounterObservationCount(snapshot, "query_scratchpad", "projection_value_cache_store"); got != 2 {
+		t.Fatalf("projection value cache store observations = %d, want 2", got)
+	}
+}
+
 func nativeProjectionMaterializationTestProbeName(probes []ExecutionProbe, name string) bool {
 	for _, probe := range probes {
 		if probe.Name == name {
@@ -66,6 +136,16 @@ func nativeProjectionMaterializationTestProbeName(probes []ExecutionProbe, name 
 		}
 	}
 	return false
+}
+
+func executionCounterObservationCount(snapshot ExecutionInstrumentationSnapshot, section string, name string) int {
+	count := 0
+	for _, counter := range snapshot.Counters {
+		if counter.Section == section && counter.Name == name {
+			count++
+		}
+	}
+	return count
 }
 
 func TestNativeProjectionMaterializationKernelRehydratesEncodedStrings(t *testing.T) {
@@ -224,7 +304,7 @@ func TestNativeProjectionMaterializationKernelRehydratesStringEnumIDsFromCatalog
 	if values[0].Value != "AIR" || values[1].Value != "TRUCK" {
 		t.Fatalf("values = %#v, want AIR/TRUCK", values)
 	}
-	if len(result.Probes) < 2 || result.Probes[1].Name != "dictionary_resolver_rehydration_values" {
+	if !nativeProjectionMaterializationTestProbeName(result.Probes, "dictionary_resolver_rehydration_values") {
 		t.Fatalf("probes = %#v, want dictionary resolver rehydration probe", result.Probes)
 	}
 }

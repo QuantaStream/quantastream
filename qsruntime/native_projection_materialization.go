@@ -181,17 +181,36 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 	var diagnostics qsbridge.DiagnosticSet
 	var timingProbes []ExecutionProbe
 	for _, field := range request.ProjectionFields {
+		valueCache := ProjectionValueCacheFromContext(ctx)
+		valueCacheKey := ProjectionValueCacheKeyFor(request.Index, field, request.FromEpochMillis, request.ToEpochMillis)
+		valueCacheDetail := nativeProjectionValueCacheDetail(valueCacheKey, len(request.Rownums))
+		cachedValues, valueCacheMode, valueCacheHit := valueCache.Get(valueCacheKey, request.Rownums)
+		recordQueryScratchpadCacheLookup(ctx, "projection_value_cache", valueCacheHit, valueCacheMode, valueCacheDetail)
+		item.Probes = append(item.Probes, nativeProjectionValueCacheProbes(request, field, valueCacheHit, valueCacheMode, cachedValues)...)
+		if valueCacheHit && cachedValues.MissingCount() == 0 {
+			rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+				Field:  field,
+				Values: cachedValues.Values,
+			})
+			continue
+		}
+		readRownums := append([]qsbridge.QuantaRownum(nil), request.Rownums...)
+		if valueCacheHit {
+			readRownums = append([]qsbridge.QuantaRownum(nil), cachedValues.MissingRownums...)
+		}
 		read := NativeProjectionFieldReadRequest{
 			Index:           request.Index,
 			Field:           field,
-			Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			Rownums:         readRownums,
 			FromEpochMillis: request.FromEpochMillis,
 			ToEpochMillis:   request.ToEpochMillis,
 		}
+		readProbeRequest := request
+		readProbeRequest.Rownums = readRownums
 		readStart := time.Now()
 		readResult, readDiagnostics, err := k.Reader.ReadProjectionField(ctx, read)
 		readElapsed := time.Since(readStart)
-		timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_read_elapsed", readElapsed.String(), request, field))
+		timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_read_elapsed", readElapsed.String(), readProbeRequest, field))
 		diagnostics = append(diagnostics, readDiagnostics...)
 		item.Probes = append(item.Probes, readResult.Probes...)
 		if err != nil || diagnostics.BlocksNative() {
@@ -219,7 +238,7 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 				Values:     values,
 			})
 			rehydrateElapsed := time.Since(rehydrateStart)
-			timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_rehydration_elapsed", rehydrateElapsed.String(), request, field))
+			timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_rehydration_elapsed", rehydrateElapsed.String(), readProbeRequest, field))
 			diagnostics = append(diagnostics, rehydrateDiagnostics...)
 			item.Probes = append(item.Probes, rehydrated.Probes...)
 			if err != nil || diagnostics.BlocksNative() {
@@ -228,17 +247,32 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 			}
 			values = rehydrated.Values
 		}
-		if len(values) != len(request.Rownums) {
+		if len(values) != len(readRownums) {
 			diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticInternalInvariant,
 				qsbridge.PhaseExecute,
-				"native projection materialization returned "+strconv.Itoa(len(values))+" values for "+strconv.Itoa(len(request.Rownums))+" rownums",
+				"native projection materialization returned "+strconv.Itoa(len(values))+" values for "+strconv.Itoa(len(readRownums))+" rownums",
 			))
 			item.Diagnostics = diagnostics
 			return item, diagnostics, nil
 		}
 		if readResult.Field.Field != "" || readResult.Field.PhysicalName != "" {
 			field = readResult.Field
+		}
+		valueCache.Set(valueCacheKey, readRownums, values)
+		recordQueryScratchpadCacheStore(ctx, "projection_value_cache", nativeProjectionValueCacheDetail(valueCacheKey, len(readRownums)))
+		if valueCacheHit {
+			merged, ok := nativeProjectionMergeCachedValues(cachedValues, values)
+			if !ok {
+				diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticInternalInvariant,
+					qsbridge.PhaseExecute,
+					"native projection value cache could not merge partial values for "+field.Field,
+				))
+				item.Diagnostics = diagnostics
+				return item, diagnostics, nil
+			}
+			values = merged
 		}
 		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
 			Field:  field,
@@ -266,6 +300,44 @@ func nativeProjectionMaterializationFieldProbe(name, value string, request qsbri
 		Value:   value,
 		Detail:  detail,
 	}
+}
+
+func nativeProjectionValueCacheProbes(request qsbridge.QuantaMaterializationRequest, field qsbridge.QuantaProjectionField, hit bool, mode string, lookup ProjectionValueCacheLookup) []ExecutionProbe {
+	value := "false"
+	if hit {
+		value = "true"
+	}
+	return []ExecutionProbe{
+		nativeProjectionMaterializationFieldProbe("projection_value_cache_hit", value, request, field),
+		nativeProjectionMaterializationFieldProbe("projection_value_cache_mode", mode, request, field),
+		nativeProjectionMaterializationFieldProbe("projection_value_cache_covered_rows", strconv.Itoa(lookup.CoveredRows), request, field),
+		nativeProjectionMaterializationFieldProbe("projection_value_cache_missing_rows", strconv.Itoa(lookup.MissingCount()), request, field),
+	}
+}
+
+func nativeProjectionValueCacheDetail(key ProjectionValueCacheKey, rows int) string {
+	return "index=" + key.Index +
+		" field=" + key.Field +
+		" rows=" + strconv.Itoa(rows) +
+		" from=" + strconv.FormatInt(key.FromEpochMillis, 10) +
+		" to=" + strconv.FormatInt(key.ToEpochMillis, 10)
+}
+
+func nativeProjectionMergeCachedValues(cached ProjectionValueCacheLookup, fetched []qsbridge.ResultCell) ([]qsbridge.ResultCell, bool) {
+	if cached.MissingCount() == 0 {
+		return cached.Values, true
+	}
+	if len(cached.MissingPositions) != len(fetched) {
+		return nil, false
+	}
+	merged := append([]qsbridge.ResultCell(nil), cached.Values...)
+	for i, position := range cached.MissingPositions {
+		if position < 0 || position >= len(merged) {
+			return nil, false
+		}
+		merged[position] = fetched[i]
+	}
+	return merged, true
 }
 
 func nativeProjectionLookupKind(readResult NativeProjectionFieldReadResult) NativeProjectionLookupKind {

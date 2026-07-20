@@ -20,6 +20,9 @@ func TestWithQueryScratchpadInstallsOneRequestCache(t *testing.T) {
 	if scratchpad.ProjectionBSIs == nil {
 		t.Fatal("projection BSI cache was not installed")
 	}
+	if scratchpad.ProjectionValues == nil {
+		t.Fatal("projection value cache was not installed")
+	}
 	if scratchpad.DomainMappings == nil {
 		t.Fatal("domain mapping cache was not installed")
 	}
@@ -133,6 +136,38 @@ func TestProjectionBSICacheVerifiesRownumCoverage(t *testing.T) {
 	}
 	if _, mode, ok := cache.Get(ProjectionBSICacheKeyFor(request, 10, 30), rownumSet); ok || mode != "key_miss" {
 		t.Fatalf("window-changed lookup mode = %q/%t, want key_miss", mode, ok)
+	}
+}
+
+func TestProjectionValueCacheReturnsOrderedPartialHits(t *testing.T) {
+	cache := NewProjectionValueCache()
+	key := ProjectionValueCacheKey{
+		Index: "lineitem",
+		Field: "l_orderkey",
+	}
+	cache.Set(key, []qsbridge.QuantaRownum{3, 1}, []qsbridge.ResultCell{
+		{Kind: qsbridge.ValueInt, Value: int64(300)},
+		{Kind: qsbridge.ValueInt, Value: int64(100)},
+	})
+
+	lookup, mode, ok := cache.Get(key, []qsbridge.QuantaRownum{1, 2, 3})
+	if !ok || mode != "partial_hit" {
+		t.Fatalf("lookup mode = %q/%t, want partial_hit", mode, ok)
+	}
+	if lookup.CoveredRows != 2 || lookup.MissingCount() != 1 || lookup.MissingRownums[0] != 2 || lookup.MissingPositions[0] != 1 {
+		t.Fatalf("lookup = %#v, want rows 1 and 3 covered with row 2 missing", lookup)
+	}
+	if lookup.Values[0].Value != int64(100) || lookup.Values[2].Value != int64(300) {
+		t.Fatalf("cached values = %#v, want requested row order", lookup.Values)
+	}
+
+	cache.Set(key, []qsbridge.QuantaRownum{2}, []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(200)}})
+	lookup, mode, ok = cache.Get(key, []qsbridge.QuantaRownum{1, 2, 3})
+	if !ok || mode != "complete_hit" || lookup.MissingCount() != 0 {
+		t.Fatalf("complete lookup = %#v/%q/%t, want complete hit", lookup, mode, ok)
+	}
+	if lookup.Values[0].Value != int64(100) || lookup.Values[1].Value != int64(200) || lookup.Values[2].Value != int64(300) {
+		t.Fatalf("complete values = %#v, want 100/200/300", lookup.Values)
 	}
 }
 

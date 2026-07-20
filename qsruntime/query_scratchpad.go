@@ -16,6 +16,7 @@ type queryScratchpadContextKey struct{}
 // cache misses are filled.
 type QueryScratchpad struct {
 	ProjectionBSIs                *ProjectionBSICache
+	ProjectionValues              *ProjectionValueCache
 	DomainMappings                *DomainMappingCache
 	RelationshipVectorProjections *RelationshipVectorProjectionCache
 	Instrumentation               *ExecutionInstrumentation
@@ -25,6 +26,7 @@ type QueryScratchpad struct {
 func NewQueryScratchpad() *QueryScratchpad {
 	return &QueryScratchpad{
 		ProjectionBSIs:                NewProjectionBSICache(),
+		ProjectionValues:              NewProjectionValueCache(),
 		DomainMappings:                NewDomainMappingCache(),
 		RelationshipVectorProjections: NewRelationshipVectorProjectionCache(),
 		Instrumentation:               NewExecutionInstrumentation(),
@@ -58,6 +60,16 @@ func ProjectionBSICacheFromContext(ctx context.Context) *ProjectionBSICache {
 		return nil
 	}
 	return scratchpad.ProjectionBSIs
+}
+
+// ProjectionValueCacheFromContext returns the request-scoped materialized value
+// cache.
+func ProjectionValueCacheFromContext(ctx context.Context) *ProjectionValueCache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.ProjectionValues
 }
 
 // DomainMappingCacheFromContext returns the request-scoped rownum-domain
@@ -329,6 +341,117 @@ func projectionBSICacheBitmapRownums(bitmap *roaring64.Bitmap) []qsbridge.Quanta
 		rownums = append(rownums, qsbridge.QuantaRownum(value))
 	}
 	return rownums
+}
+
+// ProjectionValueCacheKey identifies visible materialized cells by physical
+// field and materialization window. Aliases deliberately do not participate in
+// the key so repeated self-join aliases can share the same physical vector.
+type ProjectionValueCacheKey struct {
+	Index           string
+	Field           string
+	FromEpochMillis int64
+	ToEpochMillis   int64
+}
+
+// ProjectionValueCacheLookup carries ordered cached values plus any rownums
+// still missing from cache.
+type ProjectionValueCacheLookup struct {
+	Values           []qsbridge.ResultCell
+	MissingRownums   []qsbridge.QuantaRownum
+	MissingPositions []int
+	CoveredRows      int
+}
+
+// MissingCount reports how many requested rows still need to be materialized.
+func (l ProjectionValueCacheLookup) MissingCount() int {
+	return len(l.MissingRownums)
+}
+
+// ProjectionValueCache deduplicates already visible projection cells within one
+// SQL execution request.
+type ProjectionValueCache struct {
+	mu      sync.Mutex
+	entries map[ProjectionValueCacheKey]map[qsbridge.QuantaRownum]qsbridge.ResultCell
+}
+
+// NewProjectionValueCache creates an empty per-query projection value cache.
+func NewProjectionValueCache() *ProjectionValueCache {
+	return &ProjectionValueCache{
+		entries: make(map[ProjectionValueCacheKey]map[qsbridge.QuantaRownum]qsbridge.ResultCell),
+	}
+}
+
+// Get returns cached visible cells in the requested rownum order. A partial hit
+// includes the rownums and positions still requiring a storage read.
+func (c *ProjectionValueCache) Get(key ProjectionValueCacheKey, rownums []qsbridge.QuantaRownum) (ProjectionValueCacheLookup, string, bool) {
+	if c == nil {
+		return ProjectionValueCacheLookup{}, "cache_absent", false
+	}
+	if len(rownums) == 0 {
+		return ProjectionValueCacheLookup{Values: []qsbridge.ResultCell{}}, "complete_hit", true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	valuesByRow := c.entries[key]
+	if len(valuesByRow) == 0 {
+		return ProjectionValueCacheLookup{}, "key_miss", false
+	}
+	lookup := ProjectionValueCacheLookup{
+		Values: make([]qsbridge.ResultCell, len(rownums)),
+	}
+	for i, rownum := range rownums {
+		value, ok := valuesByRow[rownum]
+		if !ok {
+			lookup.MissingRownums = append(lookup.MissingRownums, rownum)
+			lookup.MissingPositions = append(lookup.MissingPositions, i)
+			continue
+		}
+		lookup.Values[i] = cloneProjectionValueCell(value)
+		lookup.CoveredRows++
+	}
+	if lookup.CoveredRows == len(rownums) {
+		return lookup, "complete_hit", true
+	}
+	if lookup.CoveredRows > 0 {
+		return lookup, "partial_hit", true
+	}
+	return ProjectionValueCacheLookup{}, "coverage_miss", false
+}
+
+// Set records visible materialized values for their matching rownums.
+func (c *ProjectionValueCache) Set(key ProjectionValueCacheKey, rownums []qsbridge.QuantaRownum, values []qsbridge.ResultCell) {
+	if c == nil || len(rownums) == 0 || len(rownums) != len(values) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	valuesByRow := c.entries[key]
+	if valuesByRow == nil {
+		valuesByRow = make(map[qsbridge.QuantaRownum]qsbridge.ResultCell, len(rownums))
+		c.entries[key] = valuesByRow
+	}
+	for i, rownum := range rownums {
+		valuesByRow[rownum] = cloneProjectionValueCell(values[i])
+	}
+}
+
+// ProjectionValueCacheKeyFor builds the shared value-cache key for a materialized
+// field request.
+func ProjectionValueCacheKeyFor(index string, field qsbridge.QuantaProjectionField, fromEpochMillis, toEpochMillis int64) ProjectionValueCacheKey {
+	fieldName := strings.TrimSpace(field.PhysicalName)
+	if fieldName == "" {
+		fieldName = strings.TrimSpace(field.Field)
+	}
+	return ProjectionValueCacheKey{
+		Index:           strings.TrimSpace(index),
+		Field:           fieldName,
+		FromEpochMillis: fromEpochMillis,
+		ToEpochMillis:   toEpochMillis,
+	}
+}
+
+func cloneProjectionValueCell(value qsbridge.ResultCell) qsbridge.ResultCell {
+	return value
 }
 
 // DomainMappingCacheKey identifies a relationship-vector rownum-domain
