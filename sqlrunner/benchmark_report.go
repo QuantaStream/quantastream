@@ -58,6 +58,16 @@ type benchmarkCaseReport struct {
 	ProfileError string               `json:"profile_error,omitempty"`
 }
 
+const benchmarkSummaryProfileTimingLimit = 20
+
+type benchmarkProfileTimingRow struct {
+	CaseID   string
+	Section  string
+	Name     string
+	Duration time.Duration
+	Detail   string
+}
+
 func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, cfg runnerConfig) error {
 	if cfg.BenchmarkRuns <= 0 {
 		return fmt.Errorf("benchmark_runs must be greater than zero")
@@ -497,7 +507,76 @@ func renderBenchmarkSummary(w io.Writer, report benchmarkReport) error {
 			return err
 		}
 	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	return renderBenchmarkSummaryProfileTimings(w, report, benchmarkSummaryProfileTimingLimit)
+}
+
+func renderBenchmarkSummaryProfileTimings(w io.Writer, report benchmarkReport, limit int) error {
+	rows := benchmarkProfileTimingRows(report)
+	if len(rows) == 0 {
+		return nil
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	if _, err := fmt.Fprintln(w, "\nTop Profile Timings:"); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "Case\tTiming\tSection\tName\tDetail"); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\t%s\t%s\n",
+			row.CaseID,
+			row.Duration.String(),
+			row.Section,
+			row.Name,
+			row.Detail,
+		); err != nil {
+			return err
+		}
+	}
 	return tw.Flush()
+}
+
+func benchmarkProfileTimingRows(report benchmarkReport) []benchmarkProfileTimingRow {
+	var rows []benchmarkProfileTimingRow
+	for _, result := range report.Cases {
+		for _, profile := range result.Profile {
+			if profile.Kind != "timing" {
+				continue
+			}
+			duration, err := time.ParseDuration(profile.Value)
+			if err != nil {
+				continue
+			}
+			rows = append(rows, benchmarkProfileTimingRow{
+				CaseID:   result.ID,
+				Section:  profile.Section,
+				Name:     profile.Name,
+				Duration: duration,
+				Detail:   profile.Detail,
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Duration != rows[j].Duration {
+			return rows[i].Duration > rows[j].Duration
+		}
+		if rows[i].CaseID != rows[j].CaseID {
+			return rows[i].CaseID < rows[j].CaseID
+		}
+		if rows[i].Section != rows[j].Section {
+			return rows[i].Section < rows[j].Section
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	return rows
 }
 
 func sortedBenchmarkMetadataKeys(metadata map[string]string) []string {

@@ -163,7 +163,20 @@ func TestRenderBenchmarkSummary(t *testing.T) {
 		WarmupRuns:   1,
 		MeasuredRuns: 2,
 		Cases: []benchmarkCaseReport{
-			{ID: "001.select", Status: roadmap.ResultPass, Runs: 2, MinMS: 10, MedianMS: 20, P95MS: 30, MaxMS: 40},
+			{
+				ID:       "001.select",
+				Status:   roadmap.ResultPass,
+				Runs:     2,
+				MinMS:    10,
+				MedianMS: 20,
+				P95MS:    30,
+				MaxMS:    40,
+				Profile: []roadmap.ProfileRow{
+					{Kind: "timing", Section: "sql_runtime", Name: "phase_total_elapsed", Value: "12ms"},
+					{Kind: "timing", Section: "direct_bitmap", Name: "phase_bitmap_query_elapsed", Value: "3ms", Detail: "rownums=42"},
+					{Kind: "counter", Section: "direct_bitmap", Name: "bitmap_count", Value: "42"},
+				},
+			},
 		},
 	}
 
@@ -179,10 +192,18 @@ func TestRenderBenchmarkSummary(t *testing.T) {
 		"commit=abc",
 		"001.select",
 		"20ms",
+		"Top Profile Timings:",
+		"phase_total_elapsed",
+		"12ms",
+		"phase_bitmap_query_elapsed",
+		"rownums=42",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("summary text missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Index(text, "phase_total_elapsed") > strings.Index(text, "phase_bitmap_query_elapsed") {
+		t.Fatalf("profile timings were not sorted by duration:\n%s", text)
 	}
 }
 
