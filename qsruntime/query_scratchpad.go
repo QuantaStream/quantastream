@@ -80,6 +80,18 @@ func RelationshipVectorProjectionCacheFromContext(ctx context.Context) *Relation
 	return scratchpad.RelationshipVectorProjections
 }
 
+// RecordQueryScratchpadCacheLookup records a request-scoped cache lookup in the
+// active execution instrumentation.
+func RecordQueryScratchpadCacheLookup(ctx context.Context, cacheName string, hit bool, mode string, detail string) {
+	recordQueryScratchpadCacheLookup(ctx, cacheName, hit, mode, detail)
+}
+
+// RecordQueryScratchpadCacheStore records a request-scoped cache write in the
+// active execution instrumentation.
+func RecordQueryScratchpadCacheStore(ctx context.Context, cacheName string, detail string) {
+	recordQueryScratchpadCacheStore(ctx, cacheName, detail)
+}
+
 func recordQueryScratchpadCacheLookup(ctx context.Context, cacheName string, hit bool, mode string, detail string) {
 	recorder := ExecutionInstrumentationFromContext(ctx)
 	if recorder == nil || cacheName == "" {

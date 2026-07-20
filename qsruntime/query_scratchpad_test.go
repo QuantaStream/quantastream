@@ -59,9 +59,9 @@ func TestExecutionInstrumentationRecordsStructuredObservations(t *testing.T) {
 func TestQueryScratchpadCacheObservationHelpersRecordLookupAndStore(t *testing.T) {
 	ctx := WithQueryScratchpad(context.Background())
 
-	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, "exact", "index=lineitem field=l_orderkey")
-	recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", "source=l target=o")
-	recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key=lineitem:l_orderkey")
+	RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, "exact", "index=lineitem field=l_orderkey")
+	RecordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", "source=l target=o")
+	RecordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key=lineitem:l_orderkey")
 
 	snapshot := ExecutionInstrumentationSnapshotFromContext(ctx)
 	assertExecutionCounter(t, snapshot, "query_scratchpad", "projection_bsi_cache_hit", 1)

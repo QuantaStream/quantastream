@@ -34,7 +34,9 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
 	cacheKey := qsruntime.ProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := qsruntime.ProjectionBSICacheFromContext(ctx)
+	detail := standardProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
 	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
+		qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
 		return qsruntime.NativeProjectionBSIReadResult{
 			BSI: bsi,
 			Probes: []qsruntime.ExecutionProbe{
@@ -44,6 +46,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			},
 		}, nil, nil
 	}
+	qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, "miss", detail)
 	if r.Direct != nil {
 		bsi, stats, err := r.Direct.ProjectBSIWithStats(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
 		if err != nil {
@@ -65,6 +68,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 		}
 		probes = append(probes, standardProjectionBSIStatsProbes(request.Index, request.PhysicalField, stats)...)
 		cache.Set(cacheKey, foundSet, bsi)
+		qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
 		return qsruntime.NativeProjectionBSIReadResult{
 			BSI:    bsi,
 			Probes: probes,
@@ -84,6 +88,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 		bsi = roaring64.NewDefaultBSI()
 	}
 	cache.Set(cacheKey, foundSet, bsi)
+	qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
 	return qsruntime.NativeProjectionBSIReadResult{
 		BSI: bsi,
 		Probes: []qsruntime.ExecutionProbe{
@@ -92,6 +97,18 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, "miss"),
 		},
 	}, nil, nil
+}
+
+func standardProjectionBSICacheInstrumentationDetail(key qsruntime.ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) string {
+	rows := uint64(0)
+	if rownumSet != nil {
+		rows = rownumSet.GetCardinality()
+	}
+	return "index=" + key.Index +
+		" field=" + key.Field +
+		" rows=" + strconv.FormatUint(rows, 10) +
+		" from=" + strconv.FormatInt(key.FromTimeNanos, 10) +
+		" to=" + strconv.FormatInt(key.ToTimeNanos, 10)
 }
 
 func standardProjectionBSIRowsProbe(index, field string, rows int) qsruntime.ExecutionProbe {
