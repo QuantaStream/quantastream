@@ -205,6 +205,12 @@ source JSON reports. The helper scripts `sqlrunner/run-benchmark.sh`,
 `sqlrunner/run-mysql-benchmark-compare.sh` wrap those flags for local developer
 runs. These reports are benchmark artifacts, not compatibility verdicts.
 
+When `-capture_profile` is combined with repeated benchmark runs, each case
+keeps the first captured profile in the historical `profile` field and records
+all measured profiles in `profile_runs`. Use `profile_runs` for noisy query
+analysis because run-to-run variance can move phase timings even when the case
+median looks stable.
+
 Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and
 performance.

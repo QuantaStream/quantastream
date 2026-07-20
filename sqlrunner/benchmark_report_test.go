@@ -126,7 +126,17 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 			Index:    2,
 			Duration: 700 * time.Millisecond,
 			Summary: roadmap.Summary{Suite: "smoke", Results: []roadmap.CaseResult{
-				{ID: "001.select", Status: roadmap.ResultPass, Duration: 150 * time.Millisecond},
+				{
+					ID:       "001.select",
+					Status:   roadmap.ResultPass,
+					Duration: 150 * time.Millisecond,
+					Profile: []roadmap.ProfileRow{{
+						Kind:    "timing",
+						Section: "direct_bitmap",
+						Name:    "phase_bitmap_query_elapsed",
+						Value:   "4ms",
+					}},
+				},
 				{ID: "002.select", Status: roadmap.ResultFail, Duration: 550 * time.Millisecond, Details: "mismatch"},
 			}},
 		},
@@ -147,6 +157,15 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 	}
 	if len(report.Cases[0].Profile) != 1 || report.Cases[0].Profile[0].Section != "direct_bitmap" {
 		t.Fatalf("first case profile = %#v", report.Cases[0].Profile)
+	}
+	if len(report.Cases[0].ProfileRuns) != 2 {
+		t.Fatalf("profile runs = %#v, want one profile per measured run", report.Cases[0].ProfileRuns)
+	}
+	if report.Cases[0].ProfileRuns[0].Run != 1 || report.Cases[0].ProfileRuns[0].Profile[0].Value != "2ms" {
+		t.Fatalf("first profile run = %#v, want run 1 profile", report.Cases[0].ProfileRuns[0])
+	}
+	if report.Cases[0].ProfileRuns[1].Run != 2 || report.Cases[0].ProfileRuns[1].Profile[0].Value != "4ms" {
+		t.Fatalf("second profile run = %#v, want run 2 profile", report.Cases[0].ProfileRuns[1])
 	}
 	if report.Cases[1].Status != roadmap.ResultFail || report.Cases[1].FirstDetail != "mismatch" {
 		t.Fatalf("second case = %#v", report.Cases[1])
@@ -176,6 +195,13 @@ func TestRenderBenchmarkSummary(t *testing.T) {
 					{Kind: "timing", Section: "direct_bitmap", Name: "phase_bitmap_query_elapsed", Value: "3ms", Detail: "rownums=42"},
 					{Kind: "counter", Section: "direct_bitmap", Name: "bitmap_count", Value: "42"},
 				},
+				ProfileRuns: []benchmarkProfileRun{{
+					Run: 1,
+					Profile: []roadmap.ProfileRow{
+						{Kind: "timing", Section: "sql_runtime", Name: "phase_total_elapsed", Value: "12ms"},
+						{Kind: "timing", Section: "direct_bitmap", Name: "phase_bitmap_query_elapsed", Value: "3ms", Detail: "rownums=42"},
+					},
+				}},
 			},
 		},
 	}
@@ -193,8 +219,10 @@ func TestRenderBenchmarkSummary(t *testing.T) {
 		"001.select",
 		"20ms",
 		"Top Profile Timings:",
+		"Case        Run  Timing",
 		"phase_total_elapsed",
 		"12ms",
+		"001.select  1    12ms",
 		"phase_bitmap_query_elapsed",
 		"rownums=42",
 	} {

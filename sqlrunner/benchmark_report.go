@@ -45,23 +45,31 @@ type benchmarkRunReport struct {
 }
 
 type benchmarkCaseReport struct {
-	ID           string               `json:"id"`
-	Status       string               `json:"status"`
-	Runs         int                  `json:"runs"`
-	MinMS        int64                `json:"min_ms"`
-	MedianMS     int64                `json:"median_ms"`
-	P95MS        int64                `json:"p95_ms"`
-	MaxMS        int64                `json:"max_ms"`
-	Statuses     map[string]int       `json:"statuses,omitempty"`
-	FirstDetail  string               `json:"first_detail,omitempty"`
-	Profile      []roadmap.ProfileRow `json:"profile,omitempty"`
-	ProfileError string               `json:"profile_error,omitempty"`
+	ID           string                `json:"id"`
+	Status       string                `json:"status"`
+	Runs         int                   `json:"runs"`
+	MinMS        int64                 `json:"min_ms"`
+	MedianMS     int64                 `json:"median_ms"`
+	P95MS        int64                 `json:"p95_ms"`
+	MaxMS        int64                 `json:"max_ms"`
+	Statuses     map[string]int        `json:"statuses,omitempty"`
+	FirstDetail  string                `json:"first_detail,omitempty"`
+	Profile      []roadmap.ProfileRow  `json:"profile,omitempty"`
+	ProfileRuns  []benchmarkProfileRun `json:"profile_runs,omitempty"`
+	ProfileError string                `json:"profile_error,omitempty"`
 }
 
 const benchmarkSummaryProfileTimingLimit = 20
 
+type benchmarkProfileRun struct {
+	Run          int                  `json:"run"`
+	Profile      []roadmap.ProfileRow `json:"profile,omitempty"`
+	ProfileError string               `json:"profile_error,omitempty"`
+}
+
 type benchmarkProfileTimingRow struct {
 	CaseID   string
+	Run      int
 	Section  string
 	Name     string
 	Duration time.Duration
@@ -287,6 +295,7 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 	caseStatuses := map[string]map[string]int{}
 	caseDetails := map[string]string{}
 	caseProfiles := map[string][]roadmap.ProfileRow{}
+	caseProfileRuns := map[string][]benchmarkProfileRun{}
 	caseProfileErrors := map[string]string{}
 	caseOrder := []string{}
 
@@ -315,6 +324,13 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 			if len(result.Profile) > 0 && len(caseProfiles[result.ID]) == 0 {
 				caseProfiles[result.ID] = cloneProfileRows(result.Profile)
 			}
+			if len(result.Profile) > 0 || result.ProfileError != "" {
+				caseProfileRuns[result.ID] = append(caseProfileRuns[result.ID], benchmarkProfileRun{
+					Run:          run.Index,
+					Profile:      cloneProfileRows(result.Profile),
+					ProfileError: result.ProfileError,
+				})
+			}
 			if result.ProfileError != "" && caseProfileErrors[result.ID] == "" {
 				caseProfileErrors[result.ID] = result.ProfileError
 			}
@@ -335,10 +351,26 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 			Statuses:     cloneStatusCounts(caseStatuses[id]),
 			FirstDetail:  caseDetails[id],
 			Profile:      cloneProfileRows(caseProfiles[id]),
+			ProfileRuns:  cloneBenchmarkProfileRuns(caseProfileRuns[id]),
 			ProfileError: caseProfileErrors[id],
 		})
 	}
 	return report
+}
+
+func cloneBenchmarkProfileRuns(runs []benchmarkProfileRun) []benchmarkProfileRun {
+	if len(runs) == 0 {
+		return nil
+	}
+	cloned := make([]benchmarkProfileRun, len(runs))
+	for i, run := range runs {
+		cloned[i] = benchmarkProfileRun{
+			Run:          run.Run,
+			Profile:      cloneProfileRows(run.Profile),
+			ProfileError: run.ProfileError,
+		}
+	}
+	return cloned
 }
 
 func cloneProfileRows(rows []roadmap.ProfileRow) []roadmap.ProfileRow {
@@ -525,14 +557,19 @@ func renderBenchmarkSummaryProfileTimings(w io.Writer, report benchmarkReport, l
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "Case\tTiming\tSection\tName\tDetail"); err != nil {
+	if _, err := fmt.Fprintln(tw, "Case\tRun\tTiming\tSection\tName\tDetail"); err != nil {
 		return err
 	}
 	for _, row := range rows {
+		run := ""
+		if row.Run > 0 {
+			run = strconv.Itoa(row.Run)
+		}
 		if _, err := fmt.Fprintf(
 			tw,
-			"%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.CaseID,
+			run,
 			row.Duration.String(),
 			row.Section,
 			row.Name,
@@ -547,22 +584,13 @@ func renderBenchmarkSummaryProfileTimings(w io.Writer, report benchmarkReport, l
 func benchmarkProfileTimingRows(report benchmarkReport) []benchmarkProfileTimingRow {
 	var rows []benchmarkProfileTimingRow
 	for _, result := range report.Cases {
-		for _, profile := range result.Profile {
-			if profile.Kind != "timing" {
-				continue
+		if len(result.ProfileRuns) > 0 {
+			for _, run := range result.ProfileRuns {
+				rows = appendBenchmarkProfileTimingRows(rows, result.ID, run.Run, run.Profile)
 			}
-			duration, err := time.ParseDuration(profile.Value)
-			if err != nil {
-				continue
-			}
-			rows = append(rows, benchmarkProfileTimingRow{
-				CaseID:   result.ID,
-				Section:  profile.Section,
-				Name:     profile.Name,
-				Duration: duration,
-				Detail:   profile.Detail,
-			})
+			continue
 		}
+		rows = appendBenchmarkProfileTimingRows(rows, result.ID, 0, result.Profile)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Duration != rows[j].Duration {
@@ -576,6 +604,27 @@ func benchmarkProfileTimingRows(report benchmarkReport) []benchmarkProfileTiming
 		}
 		return rows[i].Name < rows[j].Name
 	})
+	return rows
+}
+
+func appendBenchmarkProfileTimingRows(rows []benchmarkProfileTimingRow, caseID string, run int, profiles []roadmap.ProfileRow) []benchmarkProfileTimingRow {
+	for _, profile := range profiles {
+		if profile.Kind != "timing" {
+			continue
+		}
+		duration, err := time.ParseDuration(profile.Value)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, benchmarkProfileTimingRow{
+			CaseID:   caseID,
+			Run:      run,
+			Section:  profile.Section,
+			Name:     profile.Name,
+			Duration: duration,
+			Detail:   profile.Detail,
+		})
+	}
 	return rows
 }
 

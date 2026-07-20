@@ -309,6 +309,11 @@ specific report is intentionally promoted. Render a human-readable summary with:
 go run . -benchmark_summary expected/local/tpch-benchmark-readonly.json
 ```
 
+When benchmark mode also uses `-capture_profile`, the JSON keeps the first
+captured profile in `profile` for compatibility and stores every measured
+run's profile in `profile_runs`. The summary view uses `profile_runs` when
+available so noisy cases show which run produced each expensive phase.
+
 Compare two or more benchmark reports with the first report as the baseline:
 
 ```bash
