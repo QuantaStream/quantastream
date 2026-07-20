@@ -135,7 +135,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			cacheKey := fmt.Sprintf("%s/%s/%d/%d", v.Index, v.Field, fromTime.UnixNano(), toTime.UnixNano())
 			bsi, bsiCacheHit := bsiQueryCache[cacheKey]
 			if !bsiCacheHit {
-				bsi, err = m.timeRangeBSI(v.Index, v.Field, fromTime, toTime, nil, false)
+				bsi, err = m.timeRangeBSI(v.Index, v.Field, fromTime, toTime, nil, false, true)
 				if err != nil {
 					return nil, err
 				}
@@ -352,7 +352,7 @@ type CompareBSIFieldsStats struct {
 
 // Walk the time range and assemble a union of all BSI fields.
 func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Time,
-	foundSet *roaring64.Bitmap, negate bool, stats ...*ProjectBSIStats) (*BSIBitmap, error) {
+	foundSet *roaring64.Bitmap, negate bool, ownedOnly bool, stats ...*ProjectBSIStats) (*BSIBitmap, error) {
 
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
@@ -435,7 +435,7 @@ func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Ti
 					stat.ShardsInWindow++
 				}
 				hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, ts)))
-				if !m.Member(hashKey) {
+				if ownedOnly && !m.Member(hashKey) {
 					continue
 				}
 				if stat != nil {
@@ -589,7 +589,7 @@ func (m *BitmapIndex) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 	for i, v := range req.FkFields {
 		start := time.Now()
 		//bsi, err := m.timeRangeBSI(req.DriverIndex, v, fromTime, toTime, foundSet, req.Negate)
-		bsi, err := m.timeRangeBSI(req.DriverIndex, v, fromTime, toTime, foundSet, false)
+		bsi, err := m.timeRangeBSI(req.DriverIndex, v, fromTime, toTime, foundSet, false, true)
 		if err != nil {
 			err2 := fmt.Errorf("cannot find FK BSI for %s %s - %v", req.DriverIndex, v, err)
 			return nil, err2
@@ -670,7 +670,7 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 		if _, ok := m.bsiCache[req.Index][v]; ok {
 			var bsi *BSIBitmap
 			//if bsi, err2 = m.timeRangeBSI(req.Index, v, fromTime, toTime, foundSet, req.Negate); err2 != nil {
-			if bsi, err2 = m.timeRangeBSI(req.Index, v, fromTime, toTime, foundSet, false); err2 != nil {
+			if bsi, err2 = m.timeRangeBSI(req.Index, v, fromTime, toTime, foundSet, false, true); err2 != nil {
 				return nil, fmt.Errorf("Error ranging projection BSI for %s %s - %v", req.Index, v, err2)
 			}
 			if bsi.GetCardinality() == 0 {
@@ -743,6 +743,10 @@ func (m *BitmapIndex) ProjectBSI(index, field string, fromTime, toTime int64, fo
 // ProjectBSIWithStats returns a projected BSI and local execution stats for
 // in-process callers that need to diagnose projection cost.
 func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, ProjectBSIStats, error) {
+	return m.projectBSIWithStats(index, field, fromTime, toTime, foundSet, negate, true)
+}
+
+func (m *BitmapIndex) projectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool, ownedOnly bool) (*roaring64.BSI, ProjectBSIStats, error) {
 	if index == "" {
 		return nil, ProjectBSIStats{}, fmt.Errorf("index not specified for projection criteria")
 	}
@@ -750,7 +754,7 @@ func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime 
 		return nil, ProjectBSIStats{}, fmt.Errorf("field not specified for projection criteria")
 	}
 	stats := ProjectBSIStats{}
-	bsi, err := m.timeRangeBSI(index, field, time.Unix(0, fromTime).UTC(), time.Unix(0, toTime).UTC(), foundSet, negate, &stats)
+	bsi, err := m.timeRangeBSI(index, field, time.Unix(0, fromTime).UTC(), time.Unix(0, toTime).UTC(), foundSet, negate, ownedOnly, &stats)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -770,12 +774,12 @@ func (m *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField str
 		return nil, CompareBSIFieldsStats{}, fmt.Errorf("both fields must be specified for BSI comparison")
 	}
 	stats := CompareBSIFieldsStats{}
-	left, leftStats, err := m.ProjectBSIWithStats(index, leftField, fromTime, toTime, foundSet, false)
+	left, leftStats, err := m.projectBSIWithStats(index, leftField, fromTime, toTime, foundSet, false, false)
 	if err != nil {
 		return nil, stats, err
 	}
 	stats.Left = leftStats
-	right, rightStats, err := m.ProjectBSIWithStats(index, rightField, fromTime, toTime, foundSet, false)
+	right, rightStats, err := m.projectBSIWithStats(index, rightField, fromTime, toTime, foundSet, false, false)
 	if err != nil {
 		return nil, stats, err
 	}

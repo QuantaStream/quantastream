@@ -1,14 +1,18 @@
 package shared
 
 import (
+	"context"
 	"math/big"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 func TestBatchMutateRequiresBitmapClients(t *testing.T) {
@@ -64,4 +68,79 @@ func TestActiveClientsSnapshotKeepsNodesWithMissingCachedStatus(t *testing.T) {
 			t.Fatalf("snapshot[%d].index = %d, want %d", i, client.index, i)
 		}
 	}
+}
+
+func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	fake := &compareFanoutBitmapIndexServer{}
+	pb.RegisterBitmapIndexServer(server, fake)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	dialer := func(context.Context, string) (net.Conn, error) {
+		return listener.Dial()
+	}
+	conns := make([]*grpc.ClientConn, 3)
+	for i := range conns {
+		conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithInsecure())
+		if err != nil {
+			t.Fatalf("dial bufnet: %v", err)
+		}
+		conns[i] = conn
+		t.Cleanup(func() {
+			_ = conn.Close()
+		})
+	}
+
+	conn := NewDefaultConnection("compare-fanout")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = conns
+	for _, id := range conn.ids {
+		conn.nodeStatusMap.Store(id, &pb.StatusMessage{NodeState: "Active"})
+	}
+
+	index := NewBitmapIndex(conn)
+	matches, err := index.CompareBSIFields("lineitem", "l_receiptdate", "l_commitdate", 10, 20, roaring64.BitmapOf(1, 2, 3), roaring64.GT, false)
+	if err != nil {
+		t.Fatalf("CompareBSIFields() error = %v", err)
+	}
+	if got, want := fake.callCount(), 3; got != want {
+		t.Fatalf("compare fanout calls = %d, want %d", got, want)
+	}
+	if got, want := matches.GetCardinality(), uint64(3); got != want {
+		t.Fatalf("matches cardinality = %d, want %d", got, want)
+	}
+}
+
+type compareFanoutBitmapIndexServer struct {
+	pb.UnimplementedBitmapIndexServer
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *compareFanoutBitmapIndexServer) CompareBSIFields(context.Context, *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error) {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+
+	bitmap := roaring64.BitmapOf(uint64(call))
+	data, err := bitmap.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+}
+
+func (s *compareFanoutBitmapIndexServer) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }

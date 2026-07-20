@@ -8,6 +8,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -691,19 +692,22 @@ func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, from
 		return aggregateCompareBSIFieldsResponses([]*pb.CompareBSIFieldsResponse{response})
 	}
 
-	resultChan := make(chan *pb.CompareBSIFieldsResponse, 100)
-	var eg errgroup.Group
-	indices, err := c.SelectNodes(index, ReadIntentAll)
-	if err != nil {
-		return nil, fmt.Errorf("CompareBSIFields: %v", err)
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("CompareBSIFields: no active bitmap nodes")
 	}
-	for _, n := range indices {
-		client := c.client[n]
-		clientIndex := n
+	resultChan := make(chan *pb.CompareBSIFieldsResponse, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
 		eg.Go(func() error {
 			response, err := c.compareBSIFieldsClient(client, req, clientIndex)
 			if err != nil {
 				return err
+			}
+			if os.Getenv("QUANTASTREAM_QUERY_FANOUT_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "COMPARE_BSI_FANOUT_RESULT index=%s node=%d %s\n", index, clientIndex, compareBSIFieldsResponseCardinalityDebug(response))
 			}
 			resultChan <- response
 			return nil
@@ -733,6 +737,17 @@ func aggregateCompareBSIFieldsResponses(responses []*pb.CompareBSIFieldsResponse
 		bitmaps = append(bitmaps, bitmap)
 	}
 	return roaring64.ParOr(0, bitmaps...), nil
+}
+
+func compareBSIFieldsResponseCardinalityDebug(response *pb.CompareBSIFieldsResponse) string {
+	if response == nil {
+		return "nil_result=true"
+	}
+	bitmap := roaring64.NewBitmap()
+	if len(response.GetRownums()) > 0 {
+		_ = bitmap.UnmarshalBinary(response.GetRownums())
+	}
+	return fmt.Sprintf("rownums=%d", bitmap.GetCardinality())
 }
 
 func aggregateProjectionResponses(responses []*pb.ProjectionResponse) (map[string]*roaring64.BSI, map[string]map[uint64]*roaring64.Bitmap, error) {
