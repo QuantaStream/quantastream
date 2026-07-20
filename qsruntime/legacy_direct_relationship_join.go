@@ -340,6 +340,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) sameRowComparisonKernel() Sa
 		return LegacyDirectSameRowBSIComparisonKernel{
 			Source:     e.Source,
 			TableCache: e.TableCache,
+			Comparator: LegacyDirectSharedSameRowBSIComparator{
+				Source:     e.Source,
+				TableCache: e.TableCache,
+			},
 		}
 	}
 	return UnsupportedSameRowComparisonKernel{}

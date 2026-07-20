@@ -82,6 +82,17 @@ func (a LocalBitmapIndexAdapter) Projection(ctx context.Context, req *pb.Project
 	return result, err
 }
 
+// CompareBSIFields forwards a row-local BSI comparison without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.CompareBSIFields(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "CompareBSIFields", start, err)
+	return result, err
+}
+
 // Join forwards a join request without a gRPC client hop.
 func (a LocalBitmapIndexAdapter) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
 	if a.Index == nil {

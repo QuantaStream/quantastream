@@ -87,6 +87,10 @@ func TestQSRuntimeLegacyImportsStayInAdapterIslands(t *testing.T) {
 			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
 			"github.com/QuantaStream/quantastream/source": "github.com/QuantaStream/quantastream/source",
 		},
+		"legacy_direct_same_row_bsi_comparator.go": {
+			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
+			"github.com/QuantaStream/quantastream/source": "github.com/QuantaStream/quantastream/source",
+		},
 		"legacy_direct_projection_field_reader.go": {
 			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
 			"github.com/QuantaStream/quantastream/source": "github.com/QuantaStream/quantastream/source",

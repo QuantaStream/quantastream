@@ -694,6 +694,42 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 	return &pb.ProjectionResponse{BitmapResults: bitmapResults, BsiResults: bsiResults}, nil
 }
 
+// CompareBSIFields applies a same-row BSI comparison on this node and returns
+// matching local rownums as a roaring bitmap.
+func (m *BitmapIndex) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var foundSet *roaring64.Bitmap
+	if len(req.GetFoundSet()) > 0 {
+		foundSet = roaring64.NewBitmap()
+		if err := foundSet.UnmarshalBinary(req.GetFoundSet()); err != nil {
+			return nil, err
+		}
+	}
+	matches, _, err := m.CompareBSIFieldsWithStats(
+		req.GetIndex(),
+		req.GetLeftField(),
+		req.GetRightField(),
+		req.GetFromTime(),
+		req.GetToTime(),
+		foundSet,
+		roaring64.Operation(req.GetOperation()),
+		req.GetInvert(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if matches == nil {
+		matches = roaring64.NewBitmap()
+	}
+	data, err := matches.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+}
+
 // ProjectBSI returns a projected BSI directly for in-process callers.
 //
 // The gRPC-shaped Projection API must marshal the BSI into protobuf bytes and

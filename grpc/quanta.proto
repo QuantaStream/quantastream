@@ -36,6 +36,7 @@ service BitmapIndex {
   rpc Query(BitmapQuery) returns (QueryResult) {}
   rpc Join(JoinRequest) returns (JoinResponse) {}
   rpc Projection(ProjectionRequest) returns (ProjectionResponse) {}
+  rpc CompareBSIFields(CompareBSIFieldsRequest) returns (CompareBSIFieldsResponse) {}
   rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
   rpc TableOperation(TableOperationRequest) returns (google.protobuf.Empty) {}
   rpc Synchronize(google.protobuf.StringValue) returns (google.protobuf.Int64Value) {}
@@ -235,6 +236,21 @@ message ProjectionResponse {
   repeated BSIResult bsiResults = 2;
 }
 
+message CompareBSIFieldsRequest {
+  int64    fromTime = 1;
+  int64    toTime = 2;
+  bytes    foundSet = 3;
+  string   index = 4;
+  string   leftField = 5;
+  string   rightField = 6;
+  int32    operation = 7;
+  bool     invert = 8;
+}
+
+message CompareBSIFieldsResponse {
+  bytes    rownums = 1;
+}
+
 message CheckoutSequenceRequest {
   string   index = 1;
   string   pkField = 2;
@@ -251,4 +267,3 @@ message DeleteIndicesWithPrefixRequest {
   string   prefix = 1;
   bool     retainEnums = 2;
 }
-

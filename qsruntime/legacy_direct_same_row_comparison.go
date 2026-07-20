@@ -170,6 +170,7 @@ func legacyDirectSameRowComparisonCompareRequest(request qsbridge.SameRowCompari
 	index := request.Left.Table.Table
 	return NativeSameRowBSICompareRequest{
 		Index:           index,
+		ProbePrefix:     request.ProbePrefix,
 		LeftField:       directBitmapFieldPhysicalName(request.Left),
 		RightField:      directBitmapFieldPhysicalName(request.Right),
 		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Domain.Rownums...),

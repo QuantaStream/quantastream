@@ -103,6 +103,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		Source:     quantaSource,
 		TableCache: tableCache,
 		Reader:     bsiReader,
+		Comparator: LegacyDirectSharedSameRowBSIComparator{
+			Source:     quantaSource,
+			TableCache: tableCache,
+		},
 	}
 	relationshipReader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{

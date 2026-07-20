@@ -778,6 +778,7 @@ const (
 	BitmapIndex_Query_FullMethodName             = "/shared.BitmapIndex/Query"
 	BitmapIndex_Join_FullMethodName              = "/shared.BitmapIndex/Join"
 	BitmapIndex_Projection_FullMethodName        = "/shared.BitmapIndex/Projection"
+	BitmapIndex_CompareBSIFields_FullMethodName  = "/shared.BitmapIndex/CompareBSIFields"
 	BitmapIndex_CheckoutSequence_FullMethodName  = "/shared.BitmapIndex/CheckoutSequence"
 	BitmapIndex_TableOperation_FullMethodName    = "/shared.BitmapIndex/TableOperation"
 	BitmapIndex_Synchronize_FullMethodName       = "/shared.BitmapIndex/Synchronize"
@@ -796,6 +797,7 @@ type BitmapIndexClient interface {
 	Query(ctx context.Context, in *BitmapQuery, opts ...grpc.CallOption) (*QueryResult, error)
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 	Projection(ctx context.Context, in *ProjectionRequest, opts ...grpc.CallOption) (*ProjectionResponse, error)
+	CompareBSIFields(ctx context.Context, in *CompareBSIFieldsRequest, opts ...grpc.CallOption) (*CompareBSIFieldsResponse, error)
 	CheckoutSequence(ctx context.Context, in *CheckoutSequenceRequest, opts ...grpc.CallOption) (*CheckoutSequenceResponse, error)
 	TableOperation(ctx context.Context, in *TableOperationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Synchronize(ctx context.Context, in *wrapperspb.StringValue, opts ...grpc.CallOption) (*wrapperspb.Int64Value, error)
@@ -883,6 +885,15 @@ func (c *bitmapIndexClient) Projection(ctx context.Context, in *ProjectionReques
 	return out, nil
 }
 
+func (c *bitmapIndexClient) CompareBSIFields(ctx context.Context, in *CompareBSIFieldsRequest, opts ...grpc.CallOption) (*CompareBSIFieldsResponse, error) {
+	out := new(CompareBSIFieldsResponse)
+	err := c.cc.Invoke(ctx, BitmapIndex_CompareBSIFields_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bitmapIndexClient) CheckoutSequence(ctx context.Context, in *CheckoutSequenceRequest, opts ...grpc.CallOption) (*CheckoutSequenceResponse, error) {
 	out := new(CheckoutSequenceResponse)
 	err := c.cc.Invoke(ctx, BitmapIndex_CheckoutSequence_FullMethodName, in, out, opts...)
@@ -955,6 +966,7 @@ type BitmapIndexServer interface {
 	Query(context.Context, *BitmapQuery) (*QueryResult, error)
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
 	Projection(context.Context, *ProjectionRequest) (*ProjectionResponse, error)
+	CompareBSIFields(context.Context, *CompareBSIFieldsRequest) (*CompareBSIFieldsResponse, error)
 	CheckoutSequence(context.Context, *CheckoutSequenceRequest) (*CheckoutSequenceResponse, error)
 	TableOperation(context.Context, *TableOperationRequest) (*emptypb.Empty, error)
 	Synchronize(context.Context, *wrapperspb.StringValue) (*wrapperspb.Int64Value, error)
@@ -982,6 +994,9 @@ func (UnimplementedBitmapIndexServer) Join(context.Context, *JoinRequest) (*Join
 }
 func (UnimplementedBitmapIndexServer) Projection(context.Context, *ProjectionRequest) (*ProjectionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Projection not implemented")
+}
+func (UnimplementedBitmapIndexServer) CompareBSIFields(context.Context, *CompareBSIFieldsRequest) (*CompareBSIFieldsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompareBSIFields not implemented")
 }
 func (UnimplementedBitmapIndexServer) CheckoutSequence(context.Context, *CheckoutSequenceRequest) (*CheckoutSequenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckoutSequence not implemented")
@@ -1110,6 +1125,24 @@ func _BitmapIndex_Projection_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BitmapIndexServer).Projection(ctx, req.(*ProjectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BitmapIndex_CompareBSIFields_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompareBSIFieldsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BitmapIndexServer).CompareBSIFields(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BitmapIndex_CompareBSIFields_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BitmapIndexServer).CompareBSIFields(ctx, req.(*CompareBSIFieldsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1262,6 +1295,10 @@ var BitmapIndex_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Projection",
 			Handler:    _BitmapIndex_Projection_Handler,
+		},
+		{
+			MethodName: "CompareBSIFields",
+			Handler:    _BitmapIndex_CompareBSIFields_Handler,
 		},
 		{
 			MethodName: "CheckoutSequence",

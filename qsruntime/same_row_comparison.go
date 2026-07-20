@@ -22,6 +22,7 @@ type SameRowComparisonResult = qsbridge.SameRowComparisonResult
 // BSI fields without returning the compared vectors to the executor.
 type NativeSameRowBSICompareRequest struct {
 	Index           string
+	ProbePrefix     string
 	LeftField       string
 	RightField      string
 	Rownums         []qsbridge.QuantaRownum

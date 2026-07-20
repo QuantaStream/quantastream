@@ -47,14 +47,14 @@ func (c StandardSameRowBSIComparator) CompareSameRowBSI(ctx context.Context, req
 		}
 	}
 	probes := []qsruntime.ExecutionProbe{
-		standardSameRowBSIProbe("standard_compare_transport", "local_direct", request.Index),
-		standardSameRowBSIProbe("standard_compare_elapsed", elapsed.String(), request.Index),
-		standardSameRowBSIProbe("standard_compare_bsi_elapsed", stats.CompareElapsed.String(), request.Index),
-		standardSameRowBSIProbe("standard_compare_input_rows", strconv.Itoa(len(request.Rownums)), request.Index),
-		standardSameRowBSIProbe("standard_compare_output_rows", strconv.FormatUint(stats.OutputRows, 10), request.Index),
+		standardSameRowBSIProbe(request.ProbePrefix+"standard_compare_transport", "local_direct", request.Index),
+		standardSameRowBSIProbe(request.ProbePrefix+"standard_compare_elapsed", elapsed.String(), request.Index),
+		standardSameRowBSIProbe(request.ProbePrefix+"standard_compare_bsi_elapsed", stats.CompareElapsed.String(), request.Index),
+		standardSameRowBSIProbe(request.ProbePrefix+"standard_compare_input_rows", strconv.Itoa(len(request.Rownums)), request.Index),
+		standardSameRowBSIProbe(request.ProbePrefix+"standard_compare_output_rows", strconv.FormatUint(stats.OutputRows, 10), request.Index),
 	}
-	probes = append(probes, standardSameRowBSIStatsProbes("left", request.Index, request.LeftField, stats.Left)...)
-	probes = append(probes, standardSameRowBSIStatsProbes("right", request.Index, request.RightField, stats.Right)...)
+	probes = append(probes, standardSameRowBSIStatsProbes(request.ProbePrefix, "left", request.Index, request.LeftField, stats.Left)...)
+	probes = append(probes, standardSameRowBSIStatsProbes(request.ProbePrefix, "right", request.Index, request.RightField, stats.Right)...)
 	return qsruntime.NativeSameRowBSICompareResult{
 		Rownums: rownums,
 		Probes:  probes,
@@ -70,15 +70,15 @@ func standardSameRowBSIProbe(name, value, detail string) qsruntime.ExecutionProb
 	}
 }
 
-func standardSameRowBSIStatsProbes(side, index, field string, stats server.ProjectBSIStats) []qsruntime.ExecutionProbe {
+func standardSameRowBSIStatsProbes(prefix, side, index, field string, stats server.ProjectBSIStats) []qsruntime.ExecutionProbe {
 	detail := side + " " + index + "." + field
 	return []qsruntime.ExecutionProbe{
-		standardSameRowBSIProbe("standard_compare_"+side+"_shards_visited", strconv.Itoa(stats.ShardsVisited), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_shards_in_window", strconv.Itoa(stats.ShardsInWindow), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_shards_local", strconv.Itoa(stats.ShardsLocal), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_shards_retained", strconv.Itoa(stats.ShardsRetained), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_rows_retained", strconv.FormatUint(stats.RetainedRows, 10), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_retain_elapsed", stats.RetainElapsed.String(), detail),
-		standardSameRowBSIProbe("standard_compare_"+side+"_merge_elapsed", stats.MergeElapsed.String(), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_shards_visited", strconv.Itoa(stats.ShardsVisited), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_shards_in_window", strconv.Itoa(stats.ShardsInWindow), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_shards_local", strconv.Itoa(stats.ShardsLocal), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_shards_retained", strconv.Itoa(stats.ShardsRetained), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_rows_retained", strconv.FormatUint(stats.RetainedRows, 10), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_retain_elapsed", stats.RetainElapsed.String(), detail),
+		standardSameRowBSIProbe(prefix+"standard_compare_"+side+"_merge_elapsed", stats.MergeElapsed.String(), detail),
 	}
 }

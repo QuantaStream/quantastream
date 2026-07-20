@@ -47,6 +47,7 @@ func (f LocalNodeObserverFunc) ObserveLocalNodeCall(call LocalNodeCall) {
 type LocalBitmapIndexService interface {
 	Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error)
 	Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error)
+	CompareBSIFields(context.Context, *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error)
 	Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error)
 	CheckoutSequence(context.Context, *pb.CheckoutSequenceRequest) (*pb.CheckoutSequenceResponse, error)
 	BulkClear(context.Context, *pb.BulkClearRequest) (*empty.Empty, error)

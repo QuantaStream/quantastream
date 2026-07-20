@@ -114,6 +114,31 @@ func TestBitmapIndexBulkClearUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexCompareBSIFieldsUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	foundSet := roaring64.BitmapOf(1, 2, 3)
+	matches, err := index.CompareBSIFields("lineitem", "l_receiptdate", "l_commitdate", 10, 20, foundSet, roaring64.GT, false)
+	if err != nil {
+		t.Fatalf("CompareBSIFields() error = %v", err)
+	}
+	if local.compareBSIFieldsCalls != 1 {
+		t.Fatalf("compare calls = %d, want 1", local.compareBSIFieldsCalls)
+	}
+	if local.compareBSIFieldsRequest == nil {
+		t.Fatal("compare request was not captured")
+	}
+	if local.compareBSIFieldsRequest.Index != "lineitem" || local.compareBSIFieldsRequest.LeftField != "l_receiptdate" || local.compareBSIFieldsRequest.RightField != "l_commitdate" {
+		t.Fatalf("compare request = %#v", local.compareBSIFieldsRequest)
+	}
+	if local.compareBSIFieldsRequest.Operation != int32(roaring64.GT) {
+		t.Fatalf("operation = %d, want GT", local.compareBSIFieldsRequest.Operation)
+	}
+	if got, want := matches.ToArray(), []uint64{2, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("matches = %#v, want %#v", got, want)
+	}
+}
+
 func TestKVStoreLookupUsesLocalService(t *testing.T) {
 	local := &recordingLocalKVStoreService{}
 	store := NewKVStore(&Conn{LocalNodeServices: LocalNodeServices{KVStore: local}})
@@ -170,11 +195,13 @@ func TestKVStoreItemsUsesLocalService(t *testing.T) {
 }
 
 type recordingLocalBitmapIndexService struct {
-	queryCalls       int
-	bulkClearCalls   int
-	bulkClearRequest *pb.BulkClearRequest
-	batchMutateCalls int
-	batchMutateItems []*pb.IndexKVPair
+	queryCalls              int
+	compareBSIFieldsCalls   int
+	compareBSIFieldsRequest *pb.CompareBSIFieldsRequest
+	bulkClearCalls          int
+	bulkClearRequest        *pb.BulkClearRequest
+	batchMutateCalls        int
+	batchMutateItems        []*pb.IndexKVPair
 }
 
 func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error) {
@@ -195,6 +222,17 @@ func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuer
 
 func (s *recordingLocalBitmapIndexService) Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error) {
 	return &pb.ProjectionResponse{}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) CompareBSIFields(_ context.Context, req *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error) {
+	s.compareBSIFieldsCalls++
+	s.compareBSIFieldsRequest = req
+	bitmap := roaring64.BitmapOf(2, 3)
+	data, err := bitmap.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error) {
