@@ -342,6 +342,11 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 
 	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
 	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
+	if directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(result.Rownums, rightOnlyPredicates, leftFields, rightFields) {
+		filtered, reuseProbes, diagnostics, err := r.directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx, start, result, membership, rightOnlyPredicates, correlatedPredicates, comparisons, leftFields, rightFields, detail)
+		probes = append(probes, reuseProbes...)
+		return filtered, probes, true, diagnostics, err
+	}
 	leftReadStart := time.Now()
 	leftVectors, leftReadProbes, diagnostics, err := r.directBitmapReadMembershipBSIVectors(ctx, membership.Left.Table.Table, result.Rownums, leftFields)
 	leftReadElapsed := time.Since(leftReadStart)
@@ -401,6 +406,11 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 		return result, probes, true, directBitmapMembershipDiagnostics("correlated sibling BSI fast path right key vector is missing"), nil
 	}
 
+	filtered, probes, diagnostics := directBitmapFinishCorrelatedSiblingMembershipBSI(start, result, membership, detail, probes, comparisons, leftVectors, leftKey, rightVectors, rightKey)
+	return filtered, probes, true, diagnostics, nil
+}
+
+func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, detail string, probes []ExecutionProbe, comparisons []directBitmapMembershipBSIComparison, leftVectors map[string]directBitmapMembershipBSIVector, leftKey directBitmapMembershipBSIVector, rightVectors map[string]directBitmapMembershipBSIVector, rightKey directBitmapMembershipBSIVector) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet) {
 	indexStart := time.Now()
 	rightRowsByKey := make(map[string][]int, len(rightKey.Values))
 	rightIndexedRows := 0
@@ -465,7 +475,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 			comparisonsEvaluated++
 			ok, diagnostics := directBitmapEvaluateCorrelatedMembershipBSIComparisons(comparisons, leftVectors, i, rightVectors, rightIndex)
 			if diagnostics.BlocksNative() {
-				return result, probes, true, diagnostics, nil
+				return result, probes, diagnostics
 			}
 			if ok {
 				matched = true
@@ -514,7 +524,131 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 		directBitmapMembershipProbe("correlated_sibling_bsi_left_candidates_after", strconv.Itoa(len(filtered.Rownums)), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_elapsed", time.Since(start).String(), detail),
 	)
-	return filtered, probes, true, nil, nil
+	return filtered, probes, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx context.Context, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("correlated_sibling_bsi_right_vector_reuse", "true", detail),
+	}
+	rightMembership := membership
+	rightMembership.Predicates = rightOnlyPredicates
+	rightCandidateStart := time.Now()
+	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, nil)
+	rightCandidateElapsed := time.Since(rightCandidateStart)
+	probes = append(probes, candidateProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "false", detail),
+		directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "right_vector_reuse_large_left_domain", detail),
+	)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, probes, diagnostics, err
+	}
+
+	rightReadStart := time.Now()
+	rightVectors, rightReadProbes, diagnostics, err := r.directBitmapReadMembershipBSIVectors(ctx, membership.Right.Table.Table, rightResult.Rownums, rightFields)
+	rightReadElapsed := time.Since(rightReadStart)
+	probes = append(probes, rightReadProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_bsi_right_read_elapsed", rightReadElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_right_read_rows", strconv.Itoa(len(rightResult.Rownums)), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_right_read_fields", strconv.Itoa(len(rightFields)), detail),
+	)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, probes, diagnostics, err
+	}
+	rightKey, ok := rightVectors[directBitmapMembershipBSIFieldKey(membership.Right)]
+	if !ok {
+		return result, probes, directBitmapMembershipDiagnostics("correlated sibling BSI fast path right key vector is missing"), nil
+	}
+
+	leftDeriveStart := time.Now()
+	leftVectors, ok := directBitmapDeriveLeftMembershipBSIVectorsFromRight(result.Rownums, leftFields, rightFields, rightVectors)
+	leftDeriveElapsed := time.Since(leftDeriveStart)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_bsi_left_read_elapsed", leftDeriveElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_left_read_rows", strconv.Itoa(len(result.Rownums)), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_left_read_fields", strconv.Itoa(len(leftFields)), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_left_read_mode", "right_vector_reuse", detail),
+	)
+	if !ok {
+		return result, probes, directBitmapMembershipDiagnostics("correlated sibling BSI right-vector reuse could not derive left vectors"), nil
+	}
+	leftKey, ok := leftVectors[directBitmapMembershipBSIFieldKey(membership.Left)]
+	if !ok {
+		return result, probes, directBitmapMembershipDiagnostics("correlated sibling BSI fast path left key vector is missing"), nil
+	}
+
+	filtered, probes, diagnostics := directBitmapFinishCorrelatedSiblingMembershipBSI(start, result, membership, detail, probes, comparisons, leftVectors, leftKey, rightVectors, rightKey)
+	return filtered, probes, diagnostics, nil
+}
+
+func directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(leftRownums []qsbridge.QuantaRownum, rightOnlyPredicates []qsbridge.Predicate, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField) bool {
+	if len(rightOnlyPredicates) != 0 || len(leftRownums) <= directBitmapMembershipMaxDynamicBatchEQValues {
+		return false
+	}
+	for _, leftField := range leftFields {
+		if _, ok := directBitmapMatchingRightBSIProjectionField(leftField, rightFields); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.QuantaRownum, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, rightVectors map[string]directBitmapMembershipBSIVector) (map[string]directBitmapMembershipBSIVector, bool) {
+	derived := make(map[string]directBitmapMembershipBSIVector, len(leftFields))
+	for _, leftField := range leftFields {
+		rightField, ok := directBitmapMatchingRightBSIProjectionField(leftField, rightFields)
+		if !ok {
+			return nil, false
+		}
+		rightVector, ok := rightVectors[directBitmapMembershipBSIProjectionKey(rightField)]
+		if !ok {
+			return nil, false
+		}
+		rightPositions := make(map[qsbridge.QuantaRownum]int, len(rightVector.Rownums))
+		for i, rownum := range rightVector.Rownums {
+			rightPositions[rownum] = i
+		}
+		values := make([]*big.Int, len(leftRownums))
+		for i, rownum := range leftRownums {
+			rightIndex, ok := rightPositions[rownum]
+			if !ok || rightIndex >= len(rightVector.Values) || rightVector.Values[rightIndex] == nil {
+				continue
+			}
+			values[i] = new(big.Int).Set(rightVector.Values[rightIndex])
+		}
+		derived[directBitmapMembershipBSIProjectionKey(leftField)] = directBitmapMembershipBSIVector{
+			Field: qsbridge.FieldRef{
+				Table:        qsbridge.TableInstance{Table: leftField.Index, Alias: string(leftField.Role)},
+				Name:         leftField.Field,
+				PhysicalName: leftField.PhysicalName,
+				Type:         leftField.Type,
+			},
+			Rownums: append([]qsbridge.QuantaRownum(nil), leftRownums...),
+			Values:  values,
+		}
+	}
+	return derived, true
+}
+
+func directBitmapMatchingRightBSIProjectionField(leftField qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField) (qsbridge.QuantaProjectionField, bool) {
+	leftPhysical := leftField.PhysicalName
+	if leftPhysical == "" {
+		leftPhysical = leftField.Field
+	}
+	for _, rightField := range rightFields {
+		rightPhysical := rightField.PhysicalName
+		if rightPhysical == "" {
+			rightPhysical = rightField.Field
+		}
+		if strings.EqualFold(leftPhysical, rightPhysical) && leftField.Type == rightField.Type {
+			return rightField, true
+		}
+	}
+	return qsbridge.QuantaProjectionField{}, false
 }
 
 func directBitmapCorrelatedMembershipBSIComparisons(membership qsbridge.MembershipEdge, predicates []qsbridge.Predicate) ([]directBitmapMembershipBSIComparison, bool) {
