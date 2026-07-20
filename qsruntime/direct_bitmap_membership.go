@@ -100,18 +100,6 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if len(correlatedPredicates) == 0 {
 		return result, nil, directBitmapMembershipDiagnostics("correlated sibling membership requires a cross-domain predicate"), nil
 	}
-	rightMembership := membership
-	rightMembership.Predicates = rightOnlyPredicates
-	rightCandidateStart := time.Now()
-	rightResult, diagnostics, err := r.directBitmapMembershipRightCandidateResult(ctx, rightMembership)
-	rightCandidateElapsed := time.Since(rightCandidateStart)
-	probes = append(probes,
-		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
-		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
-	)
-	if err != nil || diagnostics.BlocksNative() {
-		return result, probes, diagnostics, err
-	}
 	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
 	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
 	leftMaterializationStart := time.Now()
@@ -134,11 +122,36 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if !ok {
 		return result, probes, directBitmapMembershipDiagnostics("correlated sibling membership left key is not present in materialized row set"), nil
 	}
-	var narrowProbes []ExecutionProbe
-	rightResult, narrowProbes, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
-	probes = append(probes, narrowProbes...)
+
+	rightMembership := membership
+	rightMembership.Predicates = rightOnlyPredicates
+	narrowFragment, narrowPlanProbes, foldedNarrow := directBitmapCorrelatedMembershipRightKeyNarrowFragment(membership, leftKeys)
+	probes = append(probes, narrowPlanProbes...)
+	rightCandidateStart := time.Now()
+	rightResult, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragments(ctx, rightMembership, narrowFragment)
+	rightCandidateElapsed := time.Since(rightCandidateStart)
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
+	)
+	if foldedNarrow {
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_right_candidates_after", strconv.Itoa(len(rightResult.Rownums)), detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "true", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_mode", "folded_right_request", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_elapsed", rightCandidateElapsed.String(), detail),
+		)
+	}
 	if err != nil || diagnostics.BlocksNative() {
 		return result, probes, diagnostics, err
+	}
+	if !foldedNarrow {
+		var narrowProbes []ExecutionProbe
+		rightResult, narrowProbes, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
+		probes = append(probes, narrowProbes...)
+		if err != nil || diagnostics.BlocksNative() {
+			return result, probes, diagnostics, err
+		}
 	}
 	rightMaterializationStart := time.Now()
 	rightRowSet, diagnostics, rightMaterializationProbes, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
@@ -210,6 +223,58 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		directBitmapMembershipProbe("correlated_sibling_elapsed", time.Since(start).String(), detail),
 	)
 	return filtered, probes, nil, nil
+}
+
+func directBitmapCorrelatedMembershipRightKeyNarrowFragment(membership qsbridge.MembershipEdge, leftKeys []qsbridge.ResultCell) ([]qsbridge.QuantaQueryFragment, []ExecutionProbe, bool) {
+	start := time.Now()
+	detail := directBitmapMembershipNarrowProbeDetail(membership)
+	values, ok := directBitmapMembershipBatchEQValues(leftKeys)
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("correlated_sibling_right_narrow_left_key_count", strconv.Itoa(len(values)), detail),
+	}
+	if !ok {
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "false", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "unsupported_key_type", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_elapsed", time.Since(start).String(), detail),
+		)
+		return nil, probes, false
+	}
+	if len(values) == 0 {
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "true", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "empty_left_keys", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_mode", "folded_right_request", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_elapsed", time.Since(start).String(), detail),
+		)
+		return []qsbridge.QuantaQueryFragment{{
+			Index:     membership.Right.Table.Table,
+			Field:     directBitmapFieldPhysicalName(membership.Right),
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+			Values:    values,
+		}}, probes, true
+	}
+	if len(values) > directBitmapMembershipMaxDynamicBatchEQValues {
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_cap_skipped", "true", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "false", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "key_count_exceeds_cap", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_elapsed", time.Since(start).String(), detail),
+		)
+		return nil, probes, false
+	}
+	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_right_narrow_cap_skipped", "false", detail),
+		directBitmapMembershipProbe("correlated_sibling_right_narrow_mode", "folded_right_request", detail),
+	)
+	return []qsbridge.QuantaQueryFragment{{
+		Index:     membership.Right.Table.Table,
+		Field:     directBitmapFieldPhysicalName(membership.Right),
+		Operation: qsbridge.QuantaOperationIntersect,
+		BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+		Values:    values,
+	}}, probes, true
 }
 
 // directBitmapNarrowCorrelatedMembershipRightCandidates reduces a sibling
@@ -472,7 +537,11 @@ func directBitmapMembershipFieldIsParentRelation(field qsbridge.FieldRef) bool {
 }
 
 func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResult(ctx context.Context, membership qsbridge.MembershipEdge) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
-	rightRequest, diagnostics := directBitmapMembershipRightRequest(membership)
+	return r.directBitmapMembershipRightCandidateResultWithExtraFragments(ctx, membership, nil)
+}
+
+func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithExtraFragments(ctx context.Context, membership qsbridge.MembershipEdge, extraFragments []qsbridge.QuantaQueryFragment) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	rightRequest, diagnostics := directBitmapMembershipRightRequestWithExtraFragments(membership, extraFragments)
 	if diagnostics.BlocksNative() {
 		return BitmapQueryResult{}, diagnostics, nil
 	}
@@ -597,6 +666,10 @@ func (r DirectBitmapRuntime) directBitmapMembershipMaterialize(ctx context.Conte
 }
 
 func directBitmapMembershipRightRequest(membership qsbridge.MembershipEdge) (ExecutionRequest, qsbridge.DiagnosticSet) {
+	return directBitmapMembershipRightRequestWithExtraFragments(membership, nil)
+}
+
+func directBitmapMembershipRightRequestWithExtraFragments(membership qsbridge.MembershipEdge, extraFragments []qsbridge.QuantaQueryFragment) (ExecutionRequest, qsbridge.DiagnosticSet) {
 	fragments := make([]qsbridge.QuantaQueryFragment, 0, len(membership.Predicates))
 	for _, predicate := range membership.Predicates {
 		if predicate.Placement == qsbridge.PredicateResidualScan {
@@ -611,6 +684,7 @@ func directBitmapMembershipRightRequest(membership qsbridge.MembershipEdge) (Exe
 		}
 		fragments = append(fragments, fragment)
 	}
+	fragments = append(fragments, extraFragments...)
 	if len(fragments) == 0 {
 		fragments = append(fragments, qsbridge.QuantaQueryFragment{
 			Index:     membership.Right.Table.Table,

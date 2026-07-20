@@ -343,14 +343,14 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 		}),
 		SameRowComparison: SameRowComparisonKernelFunc(func(_ context.Context, comparison qsbridge.SameRowComparisonRequest) (qsbridge.SameRowComparisonResult, error) {
 			sameRowCalled = true
-			if !sameRownumSlicesEqual(comparison.Domain.Rownums, []qsbridge.QuantaRownum{10, 11, 12}) {
-				t.Fatalf("same-row domain = %#v, want right-side candidates", comparison.Domain.Rownums)
+			if !sameRownumSlicesEqual(comparison.Domain.Rownums, []qsbridge.QuantaRownum{10, 11}) {
+				t.Fatalf("same-row domain = %#v, want key-narrowed right-side candidates", comparison.Domain.Rownums)
 			}
 			return qsbridge.SameRowComparisonResult{
 				ID: comparison.ID,
 				Domain: qsbridge.RownumDomainSet{
 					Domain:  comparison.Domain.Domain,
-					Rownums: []qsbridge.QuantaRownum{10, 12},
+					Rownums: []qsbridge.QuantaRownum{10},
 				},
 			}, nil
 		}),
@@ -429,7 +429,7 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 		t.Fatalf("right key narrowing query was not called")
 	}
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_left_key_count", "2")
-	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_right_candidates_before", "2")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_mode", "folded_right_request")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_right_candidates_after", "1")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_applied", "true")
 	if !sameRownumSlicesEqual(filtered.Rownums, []qsbridge.QuantaRownum{1}) {
