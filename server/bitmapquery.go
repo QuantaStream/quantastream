@@ -797,6 +797,9 @@ func (m *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField str
 	if leftField == "" || rightField == "" {
 		return nil, CompareBSIFieldsStats{}, fmt.Errorf("both fields must be specified for BSI comparison")
 	}
+	if matches, stats, ok, err := m.compareBSIFieldsShardWiseWithStats(index, leftField, rightField, fromTime, toTime, foundSet, op, invert); ok || err != nil {
+		return matches, stats, err
+	}
 	stats := CompareBSIFieldsStats{}
 	left, leftStats, err := m.projectBSIWithStats(index, leftField, fromTime, toTime, foundSet, false, false)
 	if err != nil {
@@ -833,4 +836,132 @@ func (m *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField str
 		stats.OutputRows = matches.GetCardinality()
 	}
 	return matches, stats, nil
+}
+
+func (m *BitmapIndex) compareBSIFieldsShardWiseWithStats(index, leftField, rightField string, fromTime, toTime int64, foundSet *roaring64.Bitmap, op roaring64.Operation, invert bool) (*roaring64.Bitmap, CompareBSIFieldsStats, bool, error) {
+	leftAttr, err := m.getFieldConfig(index, leftField)
+	if err != nil {
+		return nil, CompareBSIFieldsStats{}, true, err
+	}
+	rightAttr, err := m.getFieldConfig(index, rightField)
+	if err != nil {
+		return nil, CompareBSIFieldsStats{}, true, err
+	}
+	if leftAttr.TimeQuantumType != rightAttr.TimeQuantumType {
+		return nil, CompareBSIFieldsStats{}, false, nil
+	}
+	tq := leftAttr.TimeQuantumType
+	from := truncateTime(time.Unix(0, fromTime).UTC(), tq)
+	to := truncateTime(time.Unix(0, toTime).UTC(), tq)
+	stats := CompareBSIFieldsStats{}
+	matches := roaring64.NewBitmap()
+
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+
+	fields := m.bsiCache[index]
+	if fields == nil {
+		return matches, stats, true, nil
+	}
+	leftShards := fields[leftField]
+	rightShards := fields[rightField]
+	if tq == "" {
+		left := leftShards[0]
+		right := rightShards[0]
+		if left != nil {
+			stats.Left.ShardsVisited++
+			stats.Left.ShardsInWindow++
+			stats.Left.ShardsLocal++
+		}
+		if right != nil {
+			stats.Right.ShardsVisited++
+			stats.Right.ShardsInWindow++
+			stats.Right.ShardsLocal++
+		}
+		compareBSIShardPair(left, right, foundSet, op, invert, matches, &stats)
+		return matches, stats, true, nil
+	}
+
+	for ts := range leftShards {
+		stats.Left.ShardsVisited++
+		if !compareBSIShardTimestampInWindow(ts, tq, from, to) {
+			continue
+		}
+		stats.Left.ShardsInWindow++
+		stats.Left.ShardsLocal++
+	}
+	for ts := range rightShards {
+		stats.Right.ShardsVisited++
+		if !compareBSIShardTimestampInWindow(ts, tq, from, to) {
+			continue
+		}
+		stats.Right.ShardsInWindow++
+		stats.Right.ShardsLocal++
+	}
+	for ts, left := range leftShards {
+		if !compareBSIShardTimestampInWindow(ts, tq, from, to) {
+			continue
+		}
+		right := rightShards[ts]
+		compareBSIShardPair(left, right, foundSet, op, invert, matches, &stats)
+	}
+	return matches, stats, true, nil
+}
+
+func compareBSIShardTimestampInWindow(ts int64, tq string, from, to time.Time) bool {
+	rts := truncateTime(time.Unix(0, ts).UTC(), tq).UnixNano()
+	return rts >= from.UnixNano() && rts <= to.UnixNano()
+}
+
+func compareBSIShardPair(left, right *BSIBitmap, foundSet *roaring64.Bitmap, op roaring64.Operation, invert bool, output *roaring64.Bitmap, stats *CompareBSIFieldsStats) {
+	if left == nil || left.BSI == nil || right == nil || right.BSI == nil || output == nil || stats == nil {
+		return
+	}
+	leftRetainStart := time.Now()
+	leftRows := compareBSIShardRetainSet(left.BSI, foundSet)
+	stats.Left.RetainElapsed += time.Since(leftRetainStart)
+	if leftRows.IsEmpty() {
+		return
+	}
+	stats.Left.ShardsRetained++
+	stats.Left.RetainedRows += leftRows.GetCardinality()
+
+	rightRetainStart := time.Now()
+	rightRows := compareBSIShardRetainSet(right.BSI, foundSet)
+	stats.Right.RetainElapsed += time.Since(rightRetainStart)
+	if rightRows.IsEmpty() {
+		return
+	}
+	stats.Right.ShardsRetained++
+	stats.Right.RetainedRows += rightRows.GetCardinality()
+
+	universe := leftRows
+	universe.And(rightRows)
+	if universe.IsEmpty() {
+		return
+	}
+	compareStart := time.Now()
+	matches := left.BSI.CompareBSI(op, right.BSI, universe)
+	if invert {
+		universe.AndNot(matches)
+		matches = universe
+	}
+	stats.CompareElapsed += time.Since(compareStart)
+	if matches == nil || matches.IsEmpty() {
+		return
+	}
+	mergeStart := time.Now()
+	output.Or(matches)
+	mergeElapsed := time.Since(mergeStart)
+	stats.Left.MergeElapsed += mergeElapsed
+	stats.Right.MergeElapsed += mergeElapsed
+	stats.OutputRows = output.GetCardinality()
+}
+
+func compareBSIShardRetainSet(bsi *roaring64.BSI, foundSet *roaring64.Bitmap) *roaring64.Bitmap {
+	rows := bsi.GetExistenceBitmap().Clone()
+	if foundSet != nil {
+		rows.And(foundSet)
+	}
+	return rows
 }
