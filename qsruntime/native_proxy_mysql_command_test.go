@@ -2,7 +2,9 @@ package qsruntime
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
@@ -105,6 +107,40 @@ func TestNativeProxyFrontDoorHandlesMySQLMetadataSelectsAtProtocolBoundary(t *te
 	}
 }
 
+func TestNativeProxyMySQLSessionProfileExposesLastQueryInstrumentation(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		recorder := ExecutionInstrumentationFromContext(ctx)
+		recorder.ObserveDuration("test_executor", "phase_elapsed", 3*time.Millisecond, "unit")
+		recorder.ObserveCount("test_executor", "row_count", 7, "unit")
+		recorder.ObserveEvent("test_executor", "strategy", "native", "unit")
+		return ExecutionResult{Count: 7}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{
+		Server: NativeProxyServerConfig{ContextWrapper: WithQueryScratchpad},
+	})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select count(*) from orders"}); err != nil {
+		t.Fatalf("HandleCommand query failed: %v", err)
+	}
+	response, err := handler.HandleCommand(context.Background(), qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "show quantastream profile"})
+	if err != nil {
+		t.Fatalf("HandleCommand profile failed: %v", err)
+	}
+	if response.Kind != qsmysql.CommandResponseQuery {
+		t.Fatalf("profile response = %#v", response)
+	}
+	payloads := nativeProxyTestPacketPayloadText(response.Packets)
+	for _, want := range []string{"test_executor", "phase_elapsed", "row_count", "strategy", "native"} {
+		if !strings.Contains(payloads, want) {
+			t.Fatalf("profile payloads missing %q: %q", want, payloads)
+		}
+	}
+}
+
 func TestNativeProxyFrontDoorServeMySQLCommandUsesPacketLoop(t *testing.T) {
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
@@ -127,6 +163,14 @@ func TestNativeProxyFrontDoorServeMySQLCommandUsesPacketLoop(t *testing.T) {
 	if response.Kind != qsmysql.CommandResponseQuery || len(writer.packets) != 5 || string(writer.packets[3].Payload) != "\x017" {
 		t.Fatalf("response = %#v written=%#v", response, writer.packets)
 	}
+}
+
+func nativeProxyTestPacketPayloadText(packets []qsmysql.Packet) string {
+	parts := make([]string, 0, len(packets))
+	for _, packet := range packets {
+		parts = append(parts, string(packet.Payload))
+	}
+	return strings.Join(parts, "\n")
 }
 
 type nativeProxyTestPacketReader struct {

@@ -178,6 +178,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"native_proxy_listener.go",
 		"native_proxy_mysql_command.go",
 		"native_proxy_mysql_metadata.go",
+		"native_proxy_mysql_profile.go",
 		"native_proxy_mysql_session.go",
 		"native_proxy_runtime.go",
 		"native_proxy_server.go",

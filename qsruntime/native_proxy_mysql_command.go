@@ -11,11 +11,12 @@ import (
 type NativeProxyMySQLCommandHandler struct {
 	FrontDoor NativeProxyFrontDoor
 	Options   qsbridge.ExecutionOptions
+	Profile   *NativeProxyMySQLSessionProfile
 }
 
 // HandleCommand handles one decoded MySQL command through the native proxy front door.
 func (h NativeProxyMySQLCommandHandler) HandleCommand(ctx context.Context, command qsmysql.Command) (qsmysql.CommandResponse, error) {
-	return h.FrontDoor.HandleMySQLCommand(ctx, command, h.Options)
+	return h.handleMySQLCommand(ctx, command)
 }
 
 // ServeMySQLCommand reads, handles, and writes one MySQL command through packet interfaces.
@@ -23,12 +24,16 @@ func (f NativeProxyFrontDoor) ServeMySQLCommand(ctx context.Context, reader qsmy
 	return (qsmysql.CommandLoop{
 		Reader:  reader,
 		Writer:  writer,
-		Handler: NativeProxyMySQLCommandHandler{FrontDoor: f, Options: options},
+		Handler: NativeProxyMySQLCommandHandler{FrontDoor: f, Options: options, Profile: NewNativeProxyMySQLSessionProfile()},
 	}).ServeNext(ctx)
 }
 
 // HandleMySQLCommand returns the socket-free MySQL packet response for one decoded command.
 func (f NativeProxyFrontDoor) HandleMySQLCommand(ctx context.Context, command qsmysql.Command, options qsbridge.ExecutionOptions) (qsmysql.CommandResponse, error) {
+	return (NativeProxyMySQLCommandHandler{FrontDoor: f, Options: options}).handleMySQLCommand(ctx, command)
+}
+
+func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, command qsmysql.Command) (qsmysql.CommandResponse, error) {
 	switch command.Kind {
 	case qsmysql.CommandKindPing:
 		return qsmysql.PingResponse(), nil
@@ -38,10 +43,14 @@ func (f NativeProxyFrontDoor) HandleMySQLCommand(ctx context.Context, command qs
 		if response, ok, err := nativeProxyMySQLMetadataQueryResponse(command); ok || err != nil {
 			return response, err
 		}
-		result, err := f.Server.ExecuteSQL(ctx, command.SQL, options)
+		if response, ok, err := nativeProxyMySQLProfileQueryResponse(command, h.Profile); ok || err != nil {
+			return response, err
+		}
+		result, err := h.FrontDoor.Server.ExecuteSQL(ctx, command.SQL, h.Options)
 		if err != nil {
 			return qsmysql.ErrorResponseFromError(err), nil
 		}
+		h.Profile.Store(result.Instrumentation)
 		return nativeProxyMySQLResponseFromSQLResult(result)
 	default:
 		return qsmysql.ErrorResponse(qsmysql.ProtocolErrorFromError(nil)), nil

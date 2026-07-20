@@ -37,7 +37,7 @@ func (f NativeProxyFrontDoor) ServeMySQLSessionWithConfig(ctx context.Context, s
 		ConnectionID:   config.ConnectionID,
 		AuthPluginData: config.AuthPluginData,
 		Stream:         stream,
-		Handler:        NativeProxyMySQLCommandHandler{FrontDoor: f, Options: config.Options},
+		Handler:        NativeProxyMySQLCommandHandler{FrontDoor: f, Options: config.Options, Profile: NewNativeProxyMySQLSessionProfile()},
 		Authenticator:  f.Authenticator,
 	})
 	return runner.Serve(ctx)

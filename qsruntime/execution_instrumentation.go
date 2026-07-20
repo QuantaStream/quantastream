@@ -134,3 +134,11 @@ type ExecutionInstrumentationSnapshot struct {
 func (s ExecutionInstrumentationSnapshot) Empty() bool {
 	return len(s.Timings) == 0 && len(s.Counters) == 0 && len(s.Events) == 0
 }
+
+func cloneExecutionInstrumentationSnapshot(snapshot ExecutionInstrumentationSnapshot) ExecutionInstrumentationSnapshot {
+	return ExecutionInstrumentationSnapshot{
+		Timings:  append([]ExecutionTiming(nil), snapshot.Timings...),
+		Counters: append([]ExecutionCounter(nil), snapshot.Counters...),
+		Events:   append([]ExecutionEvent(nil), snapshot.Events...),
+	}
+}
