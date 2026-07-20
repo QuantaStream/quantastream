@@ -101,6 +101,10 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	sameRowComparison := qsruntime.LegacyDirectSameRowBSIComparisonKernel{
 		TableCache: tableCache,
 		Reader:     bsiReader,
+		Comparator: StandardSameRowBSIComparator{
+			TableCache: tableCache,
+			Direct:     b.Adapter.BitmapIndex,
+		},
 	}
 	relationshipProjectionReader := StandardRelationshipVectorProjectionReader{
 		Pool:       pool,

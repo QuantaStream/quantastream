@@ -342,6 +342,14 @@ type ProjectBSIStats struct {
 	MergeElapsed   time.Duration
 }
 
+// CompareBSIFieldsStats captures local same-row BSI comparison work.
+type CompareBSIFieldsStats struct {
+	Left           ProjectBSIStats
+	Right          ProjectBSIStats
+	CompareElapsed time.Duration
+	OutputRows     uint64
+}
+
 // Walk the time range and assemble a union of all BSI fields.
 func (m *BitmapIndex) timeRangeBSI(index, field string, fromTime, toTime time.Time,
 	foundSet *roaring64.Bitmap, negate bool, stats ...*ProjectBSIStats) (*BSIBitmap, error) {
@@ -714,4 +722,51 @@ func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime 
 		return roaring64.NewDefaultBSI(), stats, nil
 	}
 	return bsi.BSI, stats, nil
+}
+
+// CompareBSIFieldsWithStats compares two projected BSI fields inside the local
+// bitmap index and returns only rownums that satisfy the row-local predicate.
+func (m *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField string, fromTime, toTime int64, foundSet *roaring64.Bitmap, op roaring64.Operation, invert bool) (*roaring64.Bitmap, CompareBSIFieldsStats, error) {
+	if index == "" {
+		return nil, CompareBSIFieldsStats{}, fmt.Errorf("index not specified for BSI comparison")
+	}
+	if leftField == "" || rightField == "" {
+		return nil, CompareBSIFieldsStats{}, fmt.Errorf("both fields must be specified for BSI comparison")
+	}
+	stats := CompareBSIFieldsStats{}
+	left, leftStats, err := m.ProjectBSIWithStats(index, leftField, fromTime, toTime, foundSet, false)
+	if err != nil {
+		return nil, stats, err
+	}
+	stats.Left = leftStats
+	right, rightStats, err := m.ProjectBSIWithStats(index, rightField, fromTime, toTime, foundSet, false)
+	if err != nil {
+		return nil, stats, err
+	}
+	stats.Right = rightStats
+	if left == nil {
+		left = roaring64.NewDefaultBSI()
+	}
+	if right == nil {
+		right = roaring64.NewDefaultBSI()
+	}
+	var universe *roaring64.Bitmap
+	if foundSet != nil {
+		universe = foundSet.Clone()
+	} else {
+		universe = left.GetExistenceBitmap().Clone()
+	}
+	universe.And(left.GetExistenceBitmap())
+	universe.And(right.GetExistenceBitmap())
+	compareStart := time.Now()
+	matches := left.CompareBSI(op, right, universe)
+	if invert {
+		universe.AndNot(matches)
+		matches = universe
+	}
+	stats.CompareElapsed = time.Since(compareStart)
+	if matches != nil {
+		stats.OutputRows = matches.GetCardinality()
+	}
+	return matches, stats, nil
 }

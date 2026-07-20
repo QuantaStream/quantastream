@@ -65,6 +65,59 @@ func TestLegacyDirectSameRowBSIComparisonKernelFiltersRownumsWithoutMaterializat
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_output_count", "1")
 }
 
+func TestLegacyDirectSameRowBSIComparisonKernelUsesComparatorWhenMounted(t *testing.T) {
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	readerCalled := false
+	var compareRequest NativeSameRowBSICompareRequest
+	kernel := LegacyDirectSameRowBSIComparisonKernel{
+		Reader: NativeProjectionBSIReaderFunc(func(context.Context, NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			readerCalled = true
+			return NativeProjectionBSIReadResult{}, nil, nil
+		}),
+		Comparator: NativeSameRowBSIComparatorFunc(func(_ context.Context, request NativeSameRowBSICompareRequest) (NativeSameRowBSICompareResult, qsbridge.DiagnosticSet, error) {
+			compareRequest = request
+			return NativeSameRowBSICompareResult{
+				Rownums: []qsbridge.QuantaRownum{2},
+				Probes: []ExecutionProbe{{
+					Section: "same_row_comparison",
+					Name:    "mounted_comparator",
+					Value:   "called",
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := kernel.CompareSameRowFields(context.Background(), qsbridge.SameRowComparisonRequest{
+		ID:          "q21_late_receipt",
+		ProbePrefix: "q21_late_receipt_",
+		Domain: qsbridge.RownumDomainSet{
+			Domain:  qsbridge.RownumDomain{Table: lineitem, Role: "l"},
+			Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		},
+		Left:     qsbridge.FieldRef{Table: lineitem, Name: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime},
+		Right:    qsbridge.FieldRef{Table: lineitem, Name: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime},
+		Operator: qsbridge.BinaryOpGreater,
+		Kind:     qsbridge.SameRowComparisonBSI,
+	})
+	if err != nil {
+		t.Fatalf("CompareSameRowFields: %v", err)
+	}
+	if readerCalled {
+		t.Fatalf("projection reader was called despite mounted comparator")
+	}
+	if got, want := result.Domain.Rownums, []qsbridge.QuantaRownum{2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rownums = %#v, want %#v", got, want)
+	}
+	if compareRequest.LeftField != "l_receiptdate" || compareRequest.RightField != "l_commitdate" {
+		t.Fatalf("compare fields = %s/%s", compareRequest.LeftField, compareRequest.RightField)
+	}
+	if compareRequest.Operation != roaring64.GT || compareRequest.Invert {
+		t.Fatalf("operation = %v invert=%v, want GT false", compareRequest.Operation, compareRequest.Invert)
+	}
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "mounted_comparator", "called")
+	assertExecutionProbe(t, result.Probes, "same_row_comparison", "q21_late_receipt_strategy", "node_local_bsi_compare")
+}
+
 func TestLegacyDirectSameRowBSIComparisonKernelUsesSharedExistenceForNotEqual(t *testing.T) {
 	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
 	leftBSI := roaring64.NewDefaultBSI()

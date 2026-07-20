@@ -19,6 +19,7 @@ type LegacyDirectSameRowBSIComparisonKernel struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
 	Reader     NativeProjectionBSIReader
+	Comparator NativeSameRowBSIComparator
 }
 
 // CompareSameRowFields filters candidate rownums by comparing two BSI-backed fields in one rownum domain.
@@ -56,6 +57,29 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 	if len(request.Domain.Rownums) == 0 {
 		result.Probes = append(result.Probes,
 			sameRowComparisonProbe(request, "output_count", "0", ""),
+			sameRowComparisonProbe(request, "elapsed", time.Since(start).String(), ""),
+		)
+		return result, nil
+	}
+	if k.Comparator != nil {
+		compareStart := time.Now()
+		compareRequest, compareDiagnostics := legacyDirectSameRowComparisonCompareRequest(request)
+		result.Diagnostics = append(result.Diagnostics, compareDiagnostics...)
+		if result.Diagnostics.BlocksNative() {
+			return result, nil
+		}
+		compareResult, diagnostics, err := k.Comparator.CompareSameRowBSI(ctx, compareRequest)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		result.Probes = append(result.Probes, compareResult.Probes...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, err
+		}
+		result.Domain.Rownums = append(result.Domain.Rownums, compareResult.Rownums...)
+		result.Probes = append(result.Probes,
+			sameRowComparisonProbe(request, "strategy", "node_local_bsi_compare", ""),
+			sameRowComparisonProbe(request, "compare_elapsed", time.Since(compareStart).String(), ""),
+			sameRowComparisonProbe(request, "output_count", strconv.Itoa(result.CandidateCount()), ""),
+			sameRowComparisonProbe(request, "rows_removed", strconv.Itoa(request.CandidateCount()-result.CandidateCount()), ""),
 			sameRowComparisonProbe(request, "elapsed", time.Since(start).String(), ""),
 		)
 		return result, nil
@@ -130,6 +154,30 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		sameRowComparisonProbe(request, "elapsed", time.Since(start).String(), ""),
 	)
 	return result, nil
+}
+
+func legacyDirectSameRowComparisonCompareRequest(request qsbridge.SameRowComparisonRequest) (NativeSameRowBSICompareRequest, qsbridge.DiagnosticSet) {
+	compareOp, invert, ok := legacyDirectSameRowComparisonOperation(request.Operator)
+	if !ok {
+		return NativeSameRowBSICompareRequest{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticUnsupportedSQL,
+				qsbridge.PhaseExecute,
+				fmt.Sprintf("inabox-direct same-row comparison does not support operator %q", request.Operator),
+			),
+		}
+	}
+	index := request.Left.Table.Table
+	return NativeSameRowBSICompareRequest{
+		Index:           index,
+		LeftField:       directBitmapFieldPhysicalName(request.Left),
+		RightField:      directBitmapFieldPhysicalName(request.Right),
+		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Domain.Rownums...),
+		Operation:       compareOp,
+		Invert:          invert,
+		FromEpochMillis: request.FromEpochMillis,
+		ToEpochMillis:   request.ToEpochMillis,
+	}, nil
 }
 
 func (k LegacyDirectSameRowBSIComparisonKernel) reader() NativeProjectionBSIReader {

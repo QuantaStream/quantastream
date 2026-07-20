@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
 // SameRowComparisonKernel is the qsruntime-facing same-row comparison contract.
@@ -16,6 +17,38 @@ type SameRowComparisonRequest = qsbridge.SameRowComparisonRequest
 
 // SameRowComparisonResult is the runtime-neutral same-row comparison result.
 type SameRowComparisonResult = qsbridge.SameRowComparisonResult
+
+// NativeSameRowBSICompareRequest asks a storage-local primitive to compare two
+// BSI fields without returning the compared vectors to the executor.
+type NativeSameRowBSICompareRequest struct {
+	Index           string
+	LeftField       string
+	RightField      string
+	Rownums         []qsbridge.QuantaRownum
+	Operation       roaring64.Operation
+	Invert          bool
+	FromEpochMillis int64
+	ToEpochMillis   int64
+}
+
+// NativeSameRowBSICompareResult returns rownums that passed a storage-local BSI comparison.
+type NativeSameRowBSICompareResult struct {
+	Rownums []qsbridge.QuantaRownum
+	Probes  []ExecutionProbe
+}
+
+// NativeSameRowBSIComparator compares same-row BSI fields at the storage boundary.
+type NativeSameRowBSIComparator interface {
+	CompareSameRowBSI(context.Context, NativeSameRowBSICompareRequest) (NativeSameRowBSICompareResult, qsbridge.DiagnosticSet, error)
+}
+
+// NativeSameRowBSIComparatorFunc adapts a function to NativeSameRowBSIComparator.
+type NativeSameRowBSIComparatorFunc func(context.Context, NativeSameRowBSICompareRequest) (NativeSameRowBSICompareResult, qsbridge.DiagnosticSet, error)
+
+// CompareSameRowBSI calls f(ctx, request).
+func (f NativeSameRowBSIComparatorFunc) CompareSameRowBSI(ctx context.Context, request NativeSameRowBSICompareRequest) (NativeSameRowBSICompareResult, qsbridge.DiagnosticSet, error) {
+	return f(ctx, request)
+}
 
 // SameRowComparisonKernelFunc adapts a function to SameRowComparisonKernel.
 type SameRowComparisonKernelFunc func(context.Context, qsbridge.SameRowComparisonRequest) (qsbridge.SameRowComparisonResult, error)
