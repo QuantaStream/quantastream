@@ -157,6 +157,51 @@ func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeRecordsScratchpadInstrumentation(t *testing.T) {
+	ctx := WithQueryScratchpad(context.Background())
+	runtime := DirectBitmapRuntime{
+		Adapter: BitmapQueryResultAdapter{},
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{
+						Success: true,
+						Count:   2,
+						Rownums: []qsbridge.QuantaRownum{10, 20},
+					}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "customers_qa",
+			Field:     "cust_id",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+
+	result, err := runtime.ExecuteDirect(ctx, request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	assertExecutionProbeName(t, result.Probes, "direct_bitmap", "phase_bitmap_query_elapsed")
+
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil || scratchpad.Instrumentation == nil {
+		t.Fatal("scratchpad instrumentation was not installed")
+	}
+	snapshot := scratchpad.Instrumentation.Snapshot()
+	assertExecutionTimingName(t, snapshot, "direct_bitmap", "phase_bitmap_query_elapsed")
+	assertExecutionCounter(t, snapshot, "direct_bitmap", "fragment_count", 1)
+	assertExecutionCounter(t, snapshot, "direct_bitmap", "bitmap_count", 2)
+}
+
 func TestDirectBitmapRuntimeFiltersRelationshipVectorMembershipResiduals(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
@@ -2403,6 +2448,26 @@ func assertExecutionProbeName(t *testing.T, probes []ExecutionProbe, section str
 		}
 	}
 	t.Fatalf("probe %s/%s not found in %#v", section, name, probes)
+}
+
+func assertExecutionTimingName(t *testing.T, snapshot ExecutionInstrumentationSnapshot, section string, name string) {
+	t.Helper()
+	for _, timing := range snapshot.Timings {
+		if timing.Section == section && timing.Name == name && timing.Duration > 0 {
+			return
+		}
+	}
+	t.Fatalf("timing %s/%s not found in %#v", section, name, snapshot.Timings)
+}
+
+func assertExecutionCounter(t *testing.T, snapshot ExecutionInstrumentationSnapshot, section string, name string, value uint64) {
+	t.Helper()
+	for _, counter := range snapshot.Counters {
+		if counter.Section == section && counter.Name == name && counter.Value == value {
+			return
+		}
+	}
+	t.Fatalf("counter %s/%s=%d not found in %#v", section, name, value, snapshot.Counters)
 }
 
 func TestDirectBitmapNumericCellValueParsesRationalStrings(t *testing.T) {

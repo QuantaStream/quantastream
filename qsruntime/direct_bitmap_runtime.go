@@ -124,6 +124,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 		request = directBitmapWithoutSameRowResidualPredicates(request)
 	}
 	bitmapResult, membershipProbes, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
+	directBitmapRecordCoreInstrumentation(ctx, request, bitmapResult, queryElapsed)
 	result := r.Adapter.ToExecutionResult(bitmapResult)
 	result.Probes = append(result.Probes, request.Probes...)
 	result.Probes = append(result.Probes, sameRowProbes...)
@@ -225,6 +226,16 @@ func directBitmapFragmentProbeDetail(request ExecutionRequest) string {
 		details = append(details, fmt.Sprintf("%s.%s op=%s bsi=%s null=%t negate=%t", fragment.Index, fragment.Field, fragment.Operation, fragment.BSIOp, fragment.NullCheck, fragment.Negate))
 	}
 	return strings.Join(details, "; ")
+}
+
+func directBitmapRecordCoreInstrumentation(ctx context.Context, request ExecutionRequest, bitmapResult BitmapQueryResult, queryElapsed time.Duration) {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.ObserveDuration("direct_bitmap", "phase_bitmap_query_elapsed", queryElapsed, "")
+	recorder.ObserveCount("direct_bitmap", "fragment_count", uint64(len(request.Query.Fragments)), directBitmapFragmentProbeDetail(request))
+	recorder.ObserveCount("direct_bitmap", "bitmap_count", bitmapResult.Count, fmt.Sprintf("rownums=%d", len(bitmapResult.Rownums)))
 }
 
 func directBitmapCandidateSetResult(request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {

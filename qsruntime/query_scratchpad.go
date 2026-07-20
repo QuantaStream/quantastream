@@ -17,6 +17,7 @@ type QueryScratchpad struct {
 	ProjectionBSIs                *ProjectionBSICache
 	DomainMappings                *DomainMappingCache
 	RelationshipVectorProjections *RelationshipVectorProjectionCache
+	Instrumentation               *ExecutionInstrumentation
 }
 
 // NewQueryScratchpad creates an empty per-query execution scratchpad.
@@ -25,6 +26,7 @@ func NewQueryScratchpad() *QueryScratchpad {
 		ProjectionBSIs:                NewProjectionBSICache(),
 		DomainMappings:                NewDomainMappingCache(),
 		RelationshipVectorProjections: NewRelationshipVectorProjectionCache(),
+		Instrumentation:               NewExecutionInstrumentation(),
 	}
 }
 

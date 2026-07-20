@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
@@ -24,8 +25,34 @@ func TestWithQueryScratchpadInstallsOneRequestCache(t *testing.T) {
 	if scratchpad.RelationshipVectorProjections == nil {
 		t.Fatal("relationship-vector projection cache was not installed")
 	}
+	if scratchpad.Instrumentation == nil {
+		t.Fatal("execution instrumentation was not installed")
+	}
 	if again := WithQueryScratchpad(ctx); again != ctx {
 		t.Fatal("scratchpad wrapper should preserve an existing request cache")
+	}
+}
+
+func TestExecutionInstrumentationRecordsStructuredObservations(t *testing.T) {
+	recorder := NewExecutionInstrumentation()
+	recorder.ObserveDuration("direct_bitmap", "phase_bitmap_query_elapsed", 12*time.Millisecond, "query")
+	recorder.ObserveCount("direct_bitmap", "bitmap_count", 42, "rownums=42")
+	recorder.ObserveEvent("direct_bitmap", "strategy", "seed_cache", "warm")
+
+	snapshot := recorder.Snapshot()
+	if len(snapshot.Timings) != 1 || snapshot.Timings[0].Duration != 12*time.Millisecond {
+		t.Fatalf("timings = %#v, want one 12ms timing", snapshot.Timings)
+	}
+	if len(snapshot.Counters) != 1 || snapshot.Counters[0].Value != 42 {
+		t.Fatalf("counters = %#v, want bitmap_count=42", snapshot.Counters)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Value != "seed_cache" {
+		t.Fatalf("events = %#v, want strategy event", snapshot.Events)
+	}
+
+	snapshot.Timings[0].Duration = time.Second
+	if got := recorder.Snapshot().Timings[0].Duration; got != 12*time.Millisecond {
+		t.Fatalf("mutating snapshot changed recorder duration to %s", got)
 	}
 }
 
