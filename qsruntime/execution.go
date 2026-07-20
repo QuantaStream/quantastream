@@ -160,6 +160,49 @@ func materializationRequestFromPreparedQuery(runtimeRequest ExecutionRequest, pr
 	return materialization
 }
 
+func materializationFieldsFromExecutionRequest(request ExecutionRequest) []qsbridge.QuantaProjectionField {
+	rootIndex, _ := request.RootIndex()
+	refs := materializationFieldRefsFromExecutionRequest(request)
+	if len(refs) == 0 {
+		return nil
+	}
+	return materializationFieldsFromRequiredFields(rootIndex, refs, materializationVisibleFieldKeys(request.Projection))
+}
+
+func materializationFieldRefsFromExecutionRequest(request ExecutionRequest) []qsbridge.FieldRef {
+	refs := make([]qsbridge.FieldRef, 0)
+	for _, predicate := range request.Predicates {
+		switch predicate.Placement {
+		case qsbridge.PredicateResidualScan, qsbridge.PredicateResidualJoin:
+			refs = appendMaterializationExprFieldRefs(refs, predicate.Expr)
+		}
+	}
+	for _, projection := range request.Projection {
+		refs = appendMaterializationExprFieldRefs(refs, projection.Expr)
+	}
+	for _, expr := range request.GroupBy {
+		refs = appendMaterializationExprFieldRefs(refs, expr)
+	}
+	for _, aggregate := range request.SQLAggregates {
+		refs = appendMaterializationExprFieldRefs(refs, aggregate.Input)
+		refs = appendMaterializationExprFieldRefs(refs, aggregate.Filter)
+	}
+	for _, predicate := range request.Having {
+		refs = appendMaterializationExprFieldRefs(refs, predicate.Expr)
+	}
+	for _, sort := range request.OrderBy {
+		refs = appendMaterializationExprFieldRefs(refs, sort.Expr)
+	}
+	for _, hidden := range request.Result.Hidden {
+		refs = append(refs, hidden)
+	}
+	return refs
+}
+
+func appendMaterializationExprFieldRefs(refs []qsbridge.FieldRef, expr qsbridge.Expr) []qsbridge.FieldRef {
+	return append(refs, qsbridge.FieldRefs(expr)...)
+}
+
 func materializationFieldsFromRequiredFields(defaultIndex string, refs []qsbridge.FieldRef, visible map[string]struct{}) []qsbridge.QuantaProjectionField {
 	seen := make(map[string]struct{})
 	fields := make([]qsbridge.QuantaProjectionField, 0, len(refs))

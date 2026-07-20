@@ -89,5 +89,6 @@ func directBitmapWithoutSameRowResidualPredicates(request ExecutionRequest) Exec
 		}
 	}
 	request.Predicates = predicates
+	request.Materialization.ProjectionFields = materializationFieldsFromExecutionRequest(request)
 	return request
 }

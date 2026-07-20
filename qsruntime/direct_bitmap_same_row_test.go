@@ -68,6 +68,54 @@ func TestDirectBitmapRuntimeAppliesSameRowResidualBeforeCountAggregate(t *testin
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "direct_bitmap_same_row_1_fake", "called")
 }
 
+func TestDirectBitmapSameRowPruningRefreshesExplicitMaterializationFields(t *testing.T) {
+	lineitem := qsbridge.TableInstance{ID: "lineitem_1", Table: "lineitem", Alias: "l"}
+	shipmode := qsbridge.FieldRef{Table: lineitem, Name: "l_shipmode", PhysicalName: "l_shipmode", Type: qsbridge.DataTypeString}
+	receiptDate := qsbridge.FieldRef{Table: lineitem, Name: "l_receiptdate", PhysicalName: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	commitDate := qsbridge.FieldRef{Table: lineitem, Name: "l_commitdate", PhysicalName: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_shipmode",
+			Operation: qsbridge.QuantaOperationIntersect,
+			Values:    nil,
+		}},
+	})
+	request.Sources = []qsbridge.TableInstance{lineitem}
+	request.SourceIndexes = []string{"lineitem"}
+	request.Predicates = []qsbridge.Predicate{
+		{
+			Placement: qsbridge.PredicatePushdown,
+			Scope:     qsbridge.PredicateScopeWhere,
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpGreaterEqual, qsbridge.Field(receiptDate), qsbridge.Literal(qsbridge.ValueString, "1994-01-01")),
+		},
+		{
+			Placement: qsbridge.PredicateResidualScan,
+			Scope:     qsbridge.PredicateScopeWhere,
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpLess, qsbridge.Field(commitDate), qsbridge.Field(receiptDate)),
+		},
+	}
+	request.Projection = []qsbridge.ProjectionColumn{{Expr: qsbridge.Field(shipmode)}}
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(shipmode)}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "line_count", Type: qsbridge.DataTypeInt}}
+	request.Materialization = qsbridge.QuantaMaterializationRequest{
+		Index: "lineitem",
+		ProjectionFields: []qsbridge.QuantaProjectionField{
+			{Index: "lineitem", Role: "l", Field: "l_shipmode", Visible: true},
+			{Index: "lineitem", Role: "l", Field: "l_commitdate"},
+			{Index: "lineitem", Role: "l", Field: "l_receiptdate"},
+		},
+	}
+
+	pruned := directBitmapWithoutSameRowResidualPredicates(request)
+	if len(pruned.Predicates) != 1 || pruned.Predicates[0].Placement != qsbridge.PredicatePushdown {
+		t.Fatalf("predicates after pruning = %#v, want only pushdown predicate", pruned.Predicates)
+	}
+	if got := pruned.Materialization.ProjectionFields; len(got) != 1 || got[0].Field != "l_shipmode" {
+		t.Fatalf("materialization fields = %#v, want only l_shipmode", got)
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesSameRowResidualBeforeMembership(t *testing.T) {
 	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
