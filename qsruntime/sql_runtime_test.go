@@ -62,6 +62,10 @@ func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
 	if len(result.Instrumentation.Counters) != 1 {
 		t.Fatalf("instrumentation counters = %#v, want duplicate returned counter suppressed", result.Instrumentation.Counters)
 	}
+	assertExecutionTimingName(t, result.Instrumentation, "sql_runtime", "phase_prepare_elapsed")
+	assertExecutionTimingName(t, result.Instrumentation, "sql_runtime", "phase_select_lower_elapsed")
+	assertExecutionTimingName(t, result.Instrumentation, "sql_runtime", "phase_execute_prepared_elapsed")
+	assertExecutionTimingName(t, result.Instrumentation, "sql_runtime", "phase_total_elapsed")
 	assertExecutionTimingName(t, result.Instrumentation, "test_executor", "phase_probe_elapsed")
 }
 

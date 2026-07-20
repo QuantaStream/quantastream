@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
@@ -76,15 +77,21 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	if r.ContextWrapper != nil {
 		ctx = r.ContextWrapper(ctx)
 	}
+	totalStart := time.Now()
 	defer func() {
+		observeSQLRuntimeElapsed(ctx, "phase_total_elapsed", totalStart, "")
 		result.Instrumentation = executionInstrumentationSnapshotWithMissingProbes(
 			ExecutionInstrumentationSnapshotFromContext(ctx),
 			result.Runtime.Probes,
 		)
 	}()
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
+	prepareStart := time.Now()
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
+	observeSQLRuntimeElapsed(ctx, "phase_prepare_elapsed", prepareStart, "")
+	preflightStart := time.Now()
 	request, nativeSubqueries, nativeSubqueryDiagnostics, err := r.materializeCorrelatedAggregatePredicates(ctx, request, values...)
+	observeSQLRuntimeElapsed(ctx, "phase_correlated_aggregate_preflight_elapsed", preflightStart, "")
 	if err != nil || nativeSubqueryDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
 			Prepared:         request.Bound.Prepared,
@@ -94,7 +101,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		}, err
 	}
 	prepared = request.Bound.Prepared
+	preflightStart = time.Now()
 	request, scalarDiagnostics, err := r.materializeScalarSubqueries(ctx, request)
+	observeSQLRuntimeElapsed(ctx, "phase_scalar_subquery_preflight_elapsed", preflightStart, "")
 	if err != nil || scalarDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
 			Prepared:         request.Bound.Prepared,
@@ -104,7 +113,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		}, err
 	}
 	var existsGate existsSubqueryGateState
+	preflightStart = time.Now()
 	request, existsGate, existsDiagnostics, err := r.materializeExistsSubqueryGates(ctx, request)
+	observeSQLRuntimeElapsed(ctx, "phase_exists_subquery_preflight_elapsed", preflightStart, "")
 	if err != nil || existsDiagnostics.BlocksNative() {
 		return SQLExecutionResult{
 			Prepared:         request.Bound.Prepared,
@@ -122,7 +133,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	if result.Diagnostics.BlocksNative() {
 		if r.EnableFilterExpressions && prepared.Kind == qsbridge.QueryKindSelect && request.Bound.Prepared.Query.Kind == qsbridge.QueryKindSelect {
+			lowerStart := time.Now()
 			intermediate, diagnostics := r.Lowerer.LowerQuery(request.Bound.Prepared.Query, request.Bound.Parameters)
+			observeSQLRuntimeElapsed(ctx, "phase_filter_lower_elapsed", lowerStart, "")
 			result.Intermediate = intermediate
 			result.Diagnostics = append(result.Diagnostics, diagnostics...)
 			if diagnostics.BlocksNative() || intermediate.Filter.Empty() {
@@ -136,7 +149,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			if existsGate.EmptyCandidateSet {
 				runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 			}
+			executeStart := time.Now()
 			runtimeResult, err := r.ExecutePrepared(ctx, runtimeRequest)
+			observeSQLRuntimeElapsed(ctx, "phase_execute_prepared_elapsed", executeStart, "filter_expression")
 			result.Runtime = runtimeResult
 			result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 			return result, err
@@ -148,13 +163,17 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 	if prepared.Kind != qsbridge.QueryKindSelect {
+		lowerStart := time.Now()
 		intermediate, diagnostics := r.Lowerer.LowerExecutionRequest(request)
+		observeSQLRuntimeElapsed(ctx, "phase_mutation_lower_elapsed", lowerStart, "")
 		result.Intermediate = intermediate
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		if result.Diagnostics.BlocksNative() {
 			return result, nil
 		}
+		executeStart := time.Now()
 		runtimeResult, err := r.ExecutePrepared(ctx, applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates))
+		observeSQLRuntimeElapsed(ctx, "phase_execute_prepared_elapsed", executeStart, "statement")
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 		return result, err
@@ -166,7 +185,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 
+	lowerStart := time.Now()
 	intermediate, diagnostics := r.Lowerer.LowerExecutionRequest(request)
+	observeSQLRuntimeElapsed(ctx, "phase_select_lower_elapsed", lowerStart, "")
 	result.Intermediate = intermediate
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if result.Diagnostics.BlocksNative() {
@@ -177,10 +198,20 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	if existsGate.EmptyCandidateSet {
 		runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 	}
+	executeStart := time.Now()
 	runtimeResult, err := r.ExecutePrepared(ctx, runtimeRequest)
+	observeSQLRuntimeElapsed(ctx, "phase_execute_prepared_elapsed", executeStart, "select")
 	result.Runtime = runtimeResult
 	result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 	return result, err
+}
+
+func observeSQLRuntimeElapsed(ctx context.Context, name string, start time.Time, detail string) {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.ObserveDuration("sql_runtime", name, time.Since(start), detail)
 }
 
 func applyNativeSubqueryPlanningState(request qsbridge.ExecutionRequest, query qsbridge.QueryIR, optimization qsbridge.OptimizationTrace) qsbridge.ExecutionRequest {
