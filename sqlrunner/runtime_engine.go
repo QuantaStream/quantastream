@@ -14,22 +14,30 @@ import (
 )
 
 type runtimeRoadmapEngine struct {
-	Runtime qsruntime.SQLRuntime
-	Inspect bool
-	Logf    func(string, ...interface{})
-	Test    roadmap.TestCase
+	Runtime     qsruntime.SQLRuntime
+	Inspect     bool
+	Logf        func(string, ...interface{})
+	Test        roadmap.TestCase
+	lastProfile []roadmap.ProfileRow
 }
 
-func (e runtimeRoadmapEngine) WithTestCase(test roadmap.TestCase) roadmap.Engine {
-	e.Test = test
-	return e
+func (e *runtimeRoadmapEngine) WithTestCase(test roadmap.TestCase) roadmap.Engine {
+	if e == nil {
+		return e
+	}
+	next := *e
+	next.Test = test
+	next.lastProfile = nil
+	return &next
 }
 
-func (e runtimeRoadmapEngine) Query(ctx context.Context, statement string) (roadmap.QueryResult, error) {
+func (e *runtimeRoadmapEngine) Query(ctx context.Context, statement string) (roadmap.QueryResult, error) {
+	e.clearProfile()
 	if e.Inspect {
 		return e.inspect(ctx, statement)
 	}
 	result, err := e.Runtime.ExecuteSQL(ctx, statement, qsbridge.ExecutionOptions{})
+	e.rememberProfile(result)
 	e.logRuntimePlan(result)
 	if err != nil {
 		return roadmap.QueryResult{}, err
@@ -41,6 +49,65 @@ func (e runtimeRoadmapEngine) Query(ctx context.Context, statement string) (road
 		return roadmap.QueryResult{}, diagnosticsError(result.Runtime.Diagnostics)
 	}
 	return runtimeQueryResult(result)
+}
+
+func (e *runtimeRoadmapEngine) QueryProfile(ctx context.Context) ([]roadmap.ProfileRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(e.lastProfile) == 0 {
+		return nil, nil
+	}
+	return append([]roadmap.ProfileRow(nil), e.lastProfile...), nil
+}
+
+func (e *runtimeRoadmapEngine) clearProfile() {
+	if e == nil {
+		return
+	}
+	e.lastProfile = nil
+}
+
+func (e *runtimeRoadmapEngine) rememberProfile(result qsruntime.SQLExecutionResult) {
+	if e == nil {
+		return
+	}
+	e.lastProfile = runtimeInstrumentationProfileRows(result.Instrumentation)
+}
+
+func runtimeInstrumentationProfileRows(snapshot qsruntime.ExecutionInstrumentationSnapshot) []roadmap.ProfileRow {
+	if snapshot.Empty() {
+		return nil
+	}
+	rows := make([]roadmap.ProfileRow, 0, len(snapshot.Timings)+len(snapshot.Counters)+len(snapshot.Events))
+	for _, timing := range snapshot.Timings {
+		rows = append(rows, roadmap.ProfileRow{
+			Kind:    "timing",
+			Section: timing.Section,
+			Name:    timing.Name,
+			Value:   timing.Duration.String(),
+			Detail:  timing.Detail,
+		})
+	}
+	for _, counter := range snapshot.Counters {
+		rows = append(rows, roadmap.ProfileRow{
+			Kind:    "counter",
+			Section: counter.Section,
+			Name:    counter.Name,
+			Value:   strconv.FormatUint(counter.Value, 10),
+			Detail:  counter.Detail,
+		})
+	}
+	for _, event := range snapshot.Events {
+		rows = append(rows, roadmap.ProfileRow{
+			Kind:    "event",
+			Section: event.Section,
+			Name:    event.Name,
+			Value:   event.Value,
+			Detail:  event.Detail,
+		})
+	}
+	return rows
 }
 
 func (e runtimeRoadmapEngine) logRuntimePlan(result qsruntime.SQLExecutionResult) {
@@ -162,11 +229,13 @@ func (e runtimeRoadmapEngine) expectedDiagnosticsMatch(diagnostics qsbridge.Diag
 	return true
 }
 
-func (e runtimeRoadmapEngine) Exec(ctx context.Context, statement string) (int64, error) {
+func (e *runtimeRoadmapEngine) Exec(ctx context.Context, statement string) (int64, error) {
+	e.clearProfile()
 	if e.Inspect {
 		return 0, fmt.Errorf("runtime inspection does not execute statements")
 	}
 	result, err := e.Runtime.ExecuteSQL(ctx, statement, qsbridge.ExecutionOptions{})
+	e.rememberProfile(result)
 	e.logRuntimePlan(result)
 	if err != nil {
 		return 0, err

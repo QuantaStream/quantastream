@@ -47,10 +47,11 @@ func buildInaboxDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHar
 	}
 	return runnerHarness{
 		Runner: roadmap.Runner{
-			Engine:     state.runtime,
-			Verbose:    cfg.Verbose,
-			DumpActual: cfg.DumpActual,
-			Logf:       log.Printf,
+			Engine:         state.runtime,
+			Verbose:        cfg.Verbose,
+			DumpActual:     cfg.DumpActual,
+			CaptureProfile: cfg.CaptureProfile,
+			Logf:           log.Printf,
 		},
 	}, nil
 }

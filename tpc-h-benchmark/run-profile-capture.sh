@@ -21,6 +21,8 @@ Environment:
   REPORT_DIR        Output JSON profile report directory. Defaults to tpc-h-benchmark/local/profile-reports.
   REPORT_FILE       Optional exact JSON profile report path.
   BENCHMARK_PROFILE Profile label recorded in the JSON report. Defaults to profile-capture.
+  BENCHMARK_WARMUP  Warm-up suite runs before measured profile capture. Defaults to 0.
+  BENCHMARK_RUNS    Measured suite runs recorded in the JSON report. Defaults to 1.
   BENCHMARK_METADATA
                     Optional comma-separated key=value metadata recorded in the JSON report.
   VERBOSE           Set to 0 to suppress verbose SQL/profile output. Defaults to 1.
@@ -50,6 +52,8 @@ CONSUL="${CONSUL:-${QUANTA_CONSUL:-127.0.0.1:8500}}"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/local/logs}"
 REPORT_DIR="${REPORT_DIR:-${SCRIPT_DIR}/local/profile-reports}"
 BENCHMARK_PROFILE="${BENCHMARK_PROFILE:-profile-capture}"
+BENCHMARK_WARMUP="${BENCHMARK_WARMUP:-0}"
+BENCHMARK_RUNS="${BENCHMARK_RUNS:-1}"
 BENCHMARK_METADATA="${BENCHMARK_METADATA:-}"
 VERBOSE="${VERBOSE:-1}"
 SLOW_THRESHOLD="${SLOW_THRESHOLD:-}"
@@ -85,7 +89,8 @@ args=(
   -capture_profile
   -precise_timing
   -benchmark_report "${REPORT_FILE}"
-  -benchmark_runs "1"
+  -benchmark_warmup "${BENCHMARK_WARMUP}"
+  -benchmark_runs "${BENCHMARK_RUNS}"
   -benchmark_profile "${BENCHMARK_PROFILE}"
 )
 
@@ -112,6 +117,8 @@ fi
   echo "host=${HOST}"
   echo "port=${PORT}"
   echo "db=${DB}"
+  echo "benchmark_warmup=${BENCHMARK_WARMUP}"
+  echo "benchmark_runs=${BENCHMARK_RUNS}"
   echo "report=${REPORT_FILE}"
   if [[ -n "${GOWORK:-}" ]]; then
     echo "gowork=${GOWORK}"

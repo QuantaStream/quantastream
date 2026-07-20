@@ -99,7 +99,7 @@ func main() {
 	benchmarkCompare := flag.String("benchmark_compare", "", "Read comma-separated JSON benchmark reports and print a comparison using the first report as baseline.")
 	benchmarkLimit := flag.Int("benchmark_limit", 20, "Maximum slower-case rows to print for -benchmark_compare; set 0 to print all.")
 	preciseTiming := flag.Bool("precise_timing", false, "Print millisecond case durations in suite summaries without verbose SQL logging.")
-	captureProfile := flag.Bool("capture_profile", false, "After each supported socket-engine case, query SHOW QUANTASTREAM PROFILE on the same session.")
+	captureProfile := flag.Bool("capture_profile", false, "After each supported QuantaStream engine case, capture query profile rows.")
 	flag.Parse()
 
 	cfg := runnerConfig{
@@ -230,7 +230,7 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 		return fmt.Errorf("benchmark_report cannot be combined with engine_diff")
 	}
 	if cfg.CaptureProfile && !engineSupportsProfileCapture(cfg.Engine) {
-		return fmt.Errorf("capture_profile is only supported by QuantaStream socket engines")
+		return fmt.Errorf("capture_profile is only supported by QuantaStream engines with runtime profiling")
 	}
 	if cfg.EngineDiff != "" {
 		diff, err := parseEngineDiff(cfg.EngineDiff)
@@ -247,7 +247,7 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 
 func engineSupportsProfileCapture(engine string) bool {
 	switch strings.ToLower(strings.TrimSpace(engine)) {
-	case engineProxy, engineDistributed, engineInaboxLocal, engineInaboxStandard:
+	case engineProxy, engineDistributed, engineInaboxLocal, engineInaboxStandard, engineInaboxDirect, engineRuntime:
 		return true
 	default:
 		return false
@@ -424,7 +424,7 @@ func buildRuntimeHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarness, err
 	if err != nil {
 		return runnerHarness{}, err
 	}
-	engine := runtimeRoadmapEngine{Runtime: runtime}
+	engine := &runtimeRoadmapEngine{Runtime: runtime}
 	if cfg.Verbose {
 		engine.Logf = log.Printf
 	}
