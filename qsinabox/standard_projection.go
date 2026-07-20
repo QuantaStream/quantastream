@@ -30,106 +30,237 @@ type StandardProjectionBSIReader struct {
 
 // ReadProjectionBSI projects one BSI-backed field through the local BitmapIndex.
 func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request qsruntime.NativeProjectionBSIReadRequest) (qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
-	foundSet := standardProjectionBitmap(request.Rownums)
-	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
-	cacheKey := qsruntime.ProjectionBSICacheKeyFor(request, fromTime, toTime)
-	cache := qsruntime.ProjectionBSICacheFromContext(ctx)
-	detail := standardProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
-	cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
-	if ok {
-		qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
-		return qsruntime.NativeProjectionBSIReadResult{
-			BSI: cachedBSI,
-			Probes: []qsruntime.ExecutionProbe{
-				standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-				standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
-				standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
-			},
-		}, nil, nil
+	results, diagnostics, err := r.ReadProjectionBSIs(ctx, []qsruntime.NativeProjectionBSIReadRequest{request})
+	if len(results) == 0 {
+		return qsruntime.NativeProjectionBSIReadResult{}, diagnostics, err
 	}
-	qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
-	fetchSet := foundSet
-	fetchRownums := request.Rownums
-	partial := qsruntime.ProjectionBSICachePartial{}
-	partialOK := false
-	if mode == "coverage_miss" {
-		partialResult, partialMode, ok := cache.GetPartial(cacheKey, foundSet)
+	return results[0], diagnostics, err
+}
+
+// ReadProjectionBSIs projects several BSI-backed fields while sharing
+// request-scoped projection cache and aligned storage work.
+func (r StandardProjectionBSIReader) ReadProjectionBSIs(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	results := make([]qsruntime.NativeProjectionBSIReadResult, len(requests))
+	if len(requests) == 0 {
+		return results, nil, nil
+	}
+	cache := qsruntime.ProjectionBSICacheFromContext(ctx)
+	works := make([]standardProjectionBSIReadWork, 0, len(requests))
+	for i, request := range requests {
+		foundSet := standardProjectionBitmap(request.Rownums)
+		fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
+		cacheKey := qsruntime.ProjectionBSICacheKeyFor(request, fromTime, toTime)
+		detail := standardProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
+		cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
 		if ok {
-			partial = partialResult
-			partialOK = true
-			qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache_partial", true, partialMode, standardProjectionBSIPartialCacheDetail(detail, partial))
-			if partial.MissingCardinality() == 0 {
-				return qsruntime.NativeProjectionBSIReadResult{
-					BSI: partial.BSI,
-					Probes: []qsruntime.ExecutionProbe{
-						standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-						standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
-						standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, partialMode),
-					},
-				}, nil, nil
+			qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
+			results[i] = qsruntime.NativeProjectionBSIReadResult{
+				BSI: cachedBSI,
+				Probes: []qsruntime.ExecutionProbe{
+					standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+					standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+					standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
+				},
 			}
-			fetchSet = partial.MissingRownumSet
-			fetchRownums = partial.MissingRownums()
+			continue
+		}
+		qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
+		work := standardProjectionBSIReadWork{
+			Position:     i,
+			Request:      request,
+			FromTime:     fromTime,
+			ToTime:       toTime,
+			FoundSet:     foundSet,
+			FetchSet:     foundSet,
+			FetchRownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			CacheKey:     cacheKey,
+			CacheDetail:  detail,
+			CacheMode:    mode,
+		}
+		if mode == "coverage_miss" {
+			partial, partialMode, partialOK := cache.GetPartial(cacheKey, foundSet)
+			if partialOK {
+				qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache_partial", true, partialMode, standardProjectionBSIPartialCacheDetail(detail, partial))
+				if partial.MissingCardinality() == 0 {
+					results[i] = qsruntime.NativeProjectionBSIReadResult{
+						BSI: partial.BSI,
+						Probes: []qsruntime.ExecutionProbe{
+							standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+							standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+							standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, partialMode),
+						},
+					}
+					continue
+				}
+				work.FetchSet = partial.MissingRownumSet
+				work.FetchRownums = partial.MissingRownums()
+				work.Partial = partial
+				work.PartialOK = true
+			}
+		}
+		works = append(works, work)
+	}
+	var diagnostics qsbridge.DiagnosticSet
+	for _, group := range standardProjectionBSIReadWorkGroups(works) {
+		groupDiagnostics, err := r.readProjectionBSIWorkGroup(ctx, group, cache, results)
+		diagnostics = append(diagnostics, groupDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return results, diagnostics, err
 		}
 	}
+	return results, diagnostics, nil
+}
+
+type standardProjectionBSIReadWork struct {
+	Position     int
+	Request      qsruntime.NativeProjectionBSIReadRequest
+	FromTime     int64
+	ToTime       int64
+	FoundSet     *roaring64.Bitmap
+	FetchSet     *roaring64.Bitmap
+	FetchRownums []qsbridge.QuantaRownum
+	CacheKey     qsruntime.ProjectionBSICacheKey
+	CacheDetail  string
+	CacheMode    string
+	Partial      qsruntime.ProjectionBSICachePartial
+	PartialOK    bool
+}
+
+func standardProjectionBSIReadWorkGroups(works []standardProjectionBSIReadWork) [][]standardProjectionBSIReadWork {
+	groups := make([][]standardProjectionBSIReadWork, 0, len(works))
+	for _, work := range works {
+		matched := false
+		for i := range groups {
+			if standardProjectionBSIReadWorkSameGroup(groups[i][0], work) {
+				groups[i] = append(groups[i], work)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			groups = append(groups, []standardProjectionBSIReadWork{work})
+		}
+	}
+	return groups
+}
+
+func standardProjectionBSIReadWorkSameGroup(left, right standardProjectionBSIReadWork) bool {
+	return strings.EqualFold(left.Request.Index, right.Request.Index) &&
+		left.FromTime == right.FromTime &&
+		left.ToTime == right.ToTime &&
+		standardProjectionSameRownums(left.FetchRownums, right.FetchRownums)
+}
+
+func standardProjectionSameRownums(left, right []qsbridge.QuantaRownum) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r StandardProjectionBSIReader) readProjectionBSIWorkGroup(ctx context.Context, group []standardProjectionBSIReadWork, cache *qsruntime.ProjectionBSICache, results []qsruntime.NativeProjectionBSIReadResult) (qsbridge.DiagnosticSet, error) {
+	if len(group) == 0 {
+		return nil, nil
+	}
 	if r.Direct != nil {
-		bsi, stats, err := r.Direct.ProjectBSIWithStats(request.Index, request.PhysicalField, fromTime, toTime, fetchSet, false)
+		return r.readProjectionBSIWorkGroupDirect(ctx, group, cache, results)
+	}
+	return r.readProjectionBSIWorkGroupSession(ctx, group, cache, results)
+}
+
+func (r StandardProjectionBSIReader) readProjectionBSIWorkGroupDirect(ctx context.Context, group []standardProjectionBSIReadWork, cache *qsruntime.ProjectionBSICache, results []qsruntime.NativeProjectionBSIReadResult) (qsbridge.DiagnosticSet, error) {
+	groupStart := time.Now()
+	type directProjectionResult struct {
+		BSI   *roaring64.BSI
+		Stats server.ProjectBSIStats
+	}
+	projected := make([]directProjectionResult, len(group))
+	for i, work := range group {
+		bsi, stats, err := r.Direct.ProjectBSIWithStats(work.Request.Index, work.Request.PhysicalField, work.FromTime, work.ToTime, work.FetchSet, false)
 		if err != nil {
-			return qsruntime.NativeProjectionBSIReadResult{}, nil, err
+			return nil, err
 		}
 		if bsi == nil {
 			bsi = roaring64.NewDefaultBSI()
 		}
-		if partialOK {
-			bsi = partial.MergeFetchedMissing(bsi)
+		projected[i] = directProjectionResult{BSI: bsi, Stats: stats}
+	}
+	projectionElapsed := time.Since(groupStart)
+	for i, work := range group {
+		bsi := projected[i].BSI
+		if work.PartialOK {
+			bsi = work.Partial.MergeFetchedMissing(bsi)
 		}
+		cache.Set(work.CacheKey, work.FoundSet, bsi)
+		qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", work.CacheDetail)
 		probes := []qsruntime.ExecutionProbe{
-			standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-			standardProjectionBSIFetchRowsProbe(request.Index, request.PhysicalField, len(fetchRownums)),
-			standardProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
-			standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
+			standardProjectionBSIRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.Request.Rownums)),
+			standardProjectionBSIFetchRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.FetchRownums)),
+			standardProjectionBSICacheProbe(work.Request.Index, work.Request.PhysicalField, false),
+			standardProjectionBSICacheModeProbe(work.Request.Index, work.Request.PhysicalField, work.CacheMode),
+			standardProjectionBSIBatchFieldsProbe(work.Request.Index, work.Request.PhysicalField, len(group)),
+			standardProjectionBSIBatchElapsedProbe(work.Request.Index, work.Request.PhysicalField, projectionElapsed),
 			{
 				Section: "native_projection_materialization",
 				Name:    "standard_bsi_projection_transport",
 				Value:   "local_direct",
-				Detail:  request.Index + "." + request.PhysicalField,
+				Detail:  work.Request.Index + "." + work.Request.PhysicalField,
 			},
 		}
-		probes = append(probes, standardProjectionBSIStatsProbes(request.Index, request.PhysicalField, stats)...)
-		cache.Set(cacheKey, foundSet, bsi)
-		qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
-		return qsruntime.NativeProjectionBSIReadResult{
+		probes = append(probes, standardProjectionBSIStatsProbes(work.Request.Index, work.Request.PhysicalField, projected[i].Stats)...)
+		results[work.Position] = qsruntime.NativeProjectionBSIReadResult{
 			BSI:    bsi,
 			Probes: probes,
-		}, nil, nil
+		}
 	}
+	return nil, nil
+}
+
+func (r StandardProjectionBSIReader) readProjectionBSIWorkGroupSession(ctx context.Context, group []standardProjectionBSIReadWork, cache *qsruntime.ProjectionBSICache, results []qsruntime.NativeProjectionBSIReadResult) (qsbridge.DiagnosticSet, error) {
+	request := group[0].Request
 	session, diagnostics, err := r.borrow(ctx, request.Index)
 	if err != nil || diagnostics.BlocksNative() {
-		return qsruntime.NativeProjectionBSIReadResult{}, diagnostics, err
+		return diagnostics, err
 	}
 	defer r.release(request.Index, session)
-	bsiByField, _, err := session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, fetchSet, false)
+	fields := make([]string, 0, len(group))
+	for _, work := range group {
+		fields = append(fields, work.Request.PhysicalField)
+	}
+	projectionStart := time.Now()
+	bsiByField, _, err := session.BitIndex.Projection(request.Index, fields, group[0].FromTime, group[0].ToTime, group[0].FetchSet, false)
+	projectionElapsed := time.Since(projectionStart)
 	if err != nil {
-		return qsruntime.NativeProjectionBSIReadResult{}, nil, err
+		return nil, err
 	}
-	bsi := bsiByField[request.PhysicalField]
-	if bsi == nil {
-		bsi = roaring64.NewDefaultBSI()
+	for _, work := range group {
+		bsi := bsiByField[work.Request.PhysicalField]
+		if bsi == nil {
+			bsi = roaring64.NewDefaultBSI()
+		}
+		if work.PartialOK {
+			bsi = work.Partial.MergeFetchedMissing(bsi)
+		}
+		cache.Set(work.CacheKey, work.FoundSet, bsi)
+		qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", work.CacheDetail)
+		results[work.Position] = qsruntime.NativeProjectionBSIReadResult{
+			BSI: bsi,
+			Probes: []qsruntime.ExecutionProbe{
+				standardProjectionBSIRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.Request.Rownums)),
+				standardProjectionBSIFetchRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.FetchRownums)),
+				standardProjectionBSICacheProbe(work.Request.Index, work.Request.PhysicalField, false),
+				standardProjectionBSICacheModeProbe(work.Request.Index, work.Request.PhysicalField, work.CacheMode),
+				standardProjectionBSIBatchFieldsProbe(work.Request.Index, work.Request.PhysicalField, len(group)),
+				standardProjectionBSIBatchElapsedProbe(work.Request.Index, work.Request.PhysicalField, projectionElapsed),
+			},
+		}
 	}
-	if partialOK {
-		bsi = partial.MergeFetchedMissing(bsi)
-	}
-	cache.Set(cacheKey, foundSet, bsi)
-	qsruntime.RecordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
-	return qsruntime.NativeProjectionBSIReadResult{
-		BSI: bsi,
-		Probes: []qsruntime.ExecutionProbe{
-			standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-			standardProjectionBSIFetchRowsProbe(request.Index, request.PhysicalField, len(fetchRownums)),
-			standardProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
-			standardProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
-		},
-	}, nil, nil
+	return nil, nil
 }
 
 func standardProjectionBSICacheInstrumentationDetail(key qsruntime.ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) string {
@@ -186,6 +317,24 @@ func standardProjectionBSICacheModeProbe(index, field string, mode string) qsrun
 		Section: "native_projection_materialization",
 		Name:    "standard_bsi_projection_cache_mode",
 		Value:   mode,
+		Detail:  index + "." + field,
+	}
+}
+
+func standardProjectionBSIBatchFieldsProbe(index, field string, fields int) qsruntime.ExecutionProbe {
+	return qsruntime.ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "standard_bsi_projection_batch_fields",
+		Value:   strconv.Itoa(fields),
+		Detail:  index + "." + field,
+	}
+}
+
+func standardProjectionBSIBatchElapsedProbe(index, field string, elapsed time.Duration) qsruntime.ExecutionProbe {
+	return qsruntime.ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "standard_bsi_projection_batch_elapsed",
+		Value:   elapsed.String(),
 		Detail:  index + "." + field,
 	}
 }
