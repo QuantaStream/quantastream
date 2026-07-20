@@ -42,10 +42,11 @@ func buildMySQLReferenceHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarne
 	}
 	return runnerHarness{
 		Runner: roadmap.Runner{
-			Engine:     engine,
-			Verbose:    cfg.Verbose,
-			DumpActual: cfg.DumpActual,
-			Logf:       log.Printf,
+			Engine:         engine,
+			Verbose:        cfg.Verbose,
+			DumpActual:     cfg.DumpActual,
+			CaptureProfile: cfg.CaptureProfile,
+			Logf:           log.Printf,
 		},
 		Close: closeFn,
 	}, nil

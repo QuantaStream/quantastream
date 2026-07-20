@@ -45,15 +45,17 @@ type benchmarkRunReport struct {
 }
 
 type benchmarkCaseReport struct {
-	ID          string         `json:"id"`
-	Status      string         `json:"status"`
-	Runs        int            `json:"runs"`
-	MinMS       int64          `json:"min_ms"`
-	MedianMS    int64          `json:"median_ms"`
-	P95MS       int64          `json:"p95_ms"`
-	MaxMS       int64          `json:"max_ms"`
-	Statuses    map[string]int `json:"statuses,omitempty"`
-	FirstDetail string         `json:"first_detail,omitempty"`
+	ID           string               `json:"id"`
+	Status       string               `json:"status"`
+	Runs         int                  `json:"runs"`
+	MinMS        int64                `json:"min_ms"`
+	MedianMS     int64                `json:"median_ms"`
+	P95MS        int64                `json:"p95_ms"`
+	MaxMS        int64                `json:"max_ms"`
+	Statuses     map[string]int       `json:"statuses,omitempty"`
+	FirstDetail  string               `json:"first_detail,omitempty"`
+	Profile      []roadmap.ProfileRow `json:"profile,omitempty"`
+	ProfileError string               `json:"profile_error,omitempty"`
 }
 
 func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roadmap.Runner, cfg runnerConfig) error {
@@ -274,6 +276,8 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 	caseDurations := map[string][]time.Duration{}
 	caseStatuses := map[string]map[string]int{}
 	caseDetails := map[string]string{}
+	caseProfiles := map[string][]roadmap.ProfileRow{}
+	caseProfileErrors := map[string]string{}
 	caseOrder := []string{}
 
 	for _, run := range runs {
@@ -298,6 +302,12 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 			if result.Details != "" && caseDetails[result.ID] == "" {
 				caseDetails[result.ID] = result.Details
 			}
+			if len(result.Profile) > 0 && len(caseProfiles[result.ID]) == 0 {
+				caseProfiles[result.ID] = cloneProfileRows(result.Profile)
+			}
+			if result.ProfileError != "" && caseProfileErrors[result.ID] == "" {
+				caseProfileErrors[result.ID] = result.ProfileError
+			}
 		}
 	}
 
@@ -305,18 +315,27 @@ func buildBenchmarkReport(suite, engine, profile string, metadata map[string]str
 	for _, id := range caseOrder {
 		durations := caseDurations[id]
 		report.Cases = append(report.Cases, benchmarkCaseReport{
-			ID:          id,
-			Status:      aggregateBenchmarkStatus(caseStatuses[id]),
-			Runs:        len(durations),
-			MinMS:       durationMillis(durationPercentile(durations, 0.0)),
-			MedianMS:    durationMillis(durationPercentile(durations, 0.50)),
-			P95MS:       durationMillis(durationPercentile(durations, 0.95)),
-			MaxMS:       durationMillis(durationPercentile(durations, 1.0)),
-			Statuses:    cloneStatusCounts(caseStatuses[id]),
-			FirstDetail: caseDetails[id],
+			ID:           id,
+			Status:       aggregateBenchmarkStatus(caseStatuses[id]),
+			Runs:         len(durations),
+			MinMS:        durationMillis(durationPercentile(durations, 0.0)),
+			MedianMS:     durationMillis(durationPercentile(durations, 0.50)),
+			P95MS:        durationMillis(durationPercentile(durations, 0.95)),
+			MaxMS:        durationMillis(durationPercentile(durations, 1.0)),
+			Statuses:     cloneStatusCounts(caseStatuses[id]),
+			FirstDetail:  caseDetails[id],
+			Profile:      cloneProfileRows(caseProfiles[id]),
+			ProfileError: caseProfileErrors[id],
 		})
 	}
 	return report
+}
+
+func cloneProfileRows(rows []roadmap.ProfileRow) []roadmap.ProfileRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]roadmap.ProfileRow(nil), rows...)
 }
 
 func benchmarkProfile(profile string) string {

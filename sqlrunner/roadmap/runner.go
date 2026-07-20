@@ -12,11 +12,12 @@ import (
 )
 
 type Runner struct {
-	DB         *sql.DB
-	Engine     Engine
-	Verbose    bool
-	DumpActual bool
-	Logf       func(string, ...interface{})
+	DB             *sql.DB
+	Engine         Engine
+	Verbose        bool
+	DumpActual     bool
+	CaptureProfile bool
+	Logf           func(string, ...interface{})
 }
 
 type Engine interface {
@@ -32,7 +33,14 @@ type SQLEngine struct {
 	DB *sql.DB
 }
 
+// ConnSQLEngine executes all statements through one pinned database/sql connection.
+type ConnSQLEngine struct {
+	Conn *sql.Conn
+}
+
 const defaultCaseTimeout = 30 * time.Second
+const profileCaptureTimeout = 5 * time.Second
+const profileFieldMaxLength = 240
 
 func (r Runner) Run(ctx context.Context, suite *Suite) Summary {
 	summary := Summary{Suite: suite.Name, Results: make([]CaseResult, 0, len(suite.Tests))}
@@ -69,12 +77,16 @@ func (r Runner) Run(ctx context.Context, suite *Suite) Summary {
 		}
 		result := classify(test, details)
 		result.Duration = time.Since(started)
+		if r.CaptureProfile {
+			result.Profile, result.ProfileError = captureQueryProfile(ctx, caseEngine)
+		}
 		if r.Verbose {
 			if result.Details == "" {
 				r.logf("DONE   %s %s in %s", result.Status, result.ID, result.Duration.Round(time.Millisecond))
 			} else {
 				r.logf("DONE   %s %s in %s: %s", result.Status, result.ID, result.Duration.Round(time.Millisecond), result.Details)
 			}
+			r.logProfile(result)
 		}
 		summary.Results = append(summary.Results, result)
 		caseErr := caseCtx.Err()
@@ -107,6 +119,43 @@ func (e SQLEngine) Query(ctx context.Context, statement string) (QueryResult, er
 	if err != nil {
 		return QueryResult{}, err
 	}
+	return queryResultFromRows(rows)
+}
+
+func (e ConnSQLEngine) Query(ctx context.Context, statement string) (QueryResult, error) {
+	if e.Conn == nil {
+		return QueryResult{}, fmt.Errorf("sql engine has no pinned connection")
+	}
+	rows, err := e.Conn.QueryContext(ctx, statement)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return queryResultFromRows(rows)
+}
+
+func (e SQLEngine) Exec(ctx context.Context, statement string) (int64, error) {
+	if e.DB == nil {
+		return 0, fmt.Errorf("sql engine has no database")
+	}
+	result, err := e.DB.ExecContext(ctx, statement)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (e ConnSQLEngine) Exec(ctx context.Context, statement string) (int64, error) {
+	if e.Conn == nil {
+		return 0, fmt.Errorf("sql engine has no pinned connection")
+	}
+	result, err := e.Conn.ExecContext(ctx, statement)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func queryResultFromRows(rows *sql.Rows) (QueryResult, error) {
 	defer rows.Close()
 
 	columns, err := rows.Columns()
@@ -144,15 +193,56 @@ func (e SQLEngine) Query(ctx context.Context, statement string) (QueryResult, er
 	return result, nil
 }
 
-func (e SQLEngine) Exec(ctx context.Context, statement string) (int64, error) {
-	if e.DB == nil {
-		return 0, fmt.Errorf("sql engine has no database")
+type profileAwareEngine interface {
+	QueryProfile(context.Context) ([]ProfileRow, error)
+}
+
+func captureQueryProfile(ctx context.Context, engine Engine) ([]ProfileRow, string) {
+	profiler, ok := engine.(profileAwareEngine)
+	if !ok {
+		return nil, ""
 	}
-	result, err := e.DB.ExecContext(ctx, statement)
+	profileCtx, cancel := context.WithTimeout(ctx, profileCaptureTimeout)
+	defer cancel()
+	rows, err := profiler.QueryProfile(profileCtx)
 	if err != nil {
-		return 0, err
+		return nil, err.Error()
 	}
-	return result.RowsAffected()
+	return compactProfileRows(rows), ""
+}
+
+func (r Runner) logProfile(result CaseResult) {
+	if result.ProfileError != "" {
+		r.logf("PROFILE %s error: %s", result.ID, result.ProfileError)
+		return
+	}
+	for _, row := range result.Profile {
+		r.logf("PROFILE %s %s section=%s name=%s value=%s detail=%s", result.ID, row.Kind, row.Section, row.Name, row.Value, row.Detail)
+	}
+}
+
+func compactProfileRows(rows []ProfileRow) []ProfileRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	compacted := make([]ProfileRow, len(rows))
+	for i, row := range rows {
+		compacted[i] = ProfileRow{
+			Kind:    compactProfileField(row.Kind),
+			Section: compactProfileField(row.Section),
+			Name:    compactProfileField(row.Name),
+			Value:   compactProfileField(row.Value),
+			Detail:  compactProfileField(row.Detail),
+		}
+	}
+	return compacted
+}
+
+func compactProfileField(value string) string {
+	if len(value) <= profileFieldMaxLength {
+		return value
+	}
+	return value[:profileFieldMaxLength] + fmt.Sprintf("...<truncated %d bytes>", len(value)-profileFieldMaxLength)
 }
 
 const defaultNumericRelativeTolerance = 1e-9

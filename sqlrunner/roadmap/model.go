@@ -59,6 +59,15 @@ type Cell struct {
 	Text string
 }
 
+// ProfileRow is one structured row from an engine-owned query profile.
+type ProfileRow struct {
+	Kind    string `json:"kind"`
+	Section string `json:"section"`
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	Detail  string `json:"detail,omitempty"`
+}
+
 type QueryResult struct {
 	Columns []string
 	Types   []string
@@ -66,10 +75,12 @@ type QueryResult struct {
 }
 
 type CaseResult struct {
-	ID       string
-	Status   string
-	Details  string
-	Duration time.Duration
+	ID           string
+	Status       string
+	Details      string
+	Duration     time.Duration
+	Profile      []ProfileRow
+	ProfileError string
 }
 
 type Summary struct {

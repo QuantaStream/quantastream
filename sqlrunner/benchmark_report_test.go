@@ -108,7 +108,17 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 			Index:    1,
 			Duration: 300 * time.Millisecond,
 			Summary: roadmap.Summary{Suite: "smoke", Results: []roadmap.CaseResult{
-				{ID: "001.select", Status: roadmap.ResultPass, Duration: 100 * time.Millisecond},
+				{
+					ID:       "001.select",
+					Status:   roadmap.ResultPass,
+					Duration: 100 * time.Millisecond,
+					Profile: []roadmap.ProfileRow{{
+						Kind:    "timing",
+						Section: "direct_bitmap",
+						Name:    "phase_bitmap_query_elapsed",
+						Value:   "2ms",
+					}},
+				},
 				{ID: "002.select", Status: roadmap.ResultPass, Duration: 200 * time.Millisecond},
 			}},
 		},
@@ -134,6 +144,9 @@ func TestBuildBenchmarkReportAggregatesCaseDurations(t *testing.T) {
 	}
 	if report.Cases[0].ID != "001.select" || report.Cases[0].MedianMS != 100 || report.Cases[0].P95MS != 150 {
 		t.Fatalf("first case = %#v", report.Cases[0])
+	}
+	if len(report.Cases[0].Profile) != 1 || report.Cases[0].Profile[0].Section != "direct_bitmap" {
+		t.Fatalf("first case profile = %#v", report.Cases[0].Profile)
 	}
 	if report.Cases[1].Status != roadmap.ResultFail || report.Cases[1].FirstDetail != "mismatch" {
 		t.Fatalf("second case = %#v", report.Cases[1])

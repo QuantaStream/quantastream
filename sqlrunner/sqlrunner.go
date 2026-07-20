@@ -61,6 +61,7 @@ type runnerConfig struct {
 	BenchmarkCompare  string
 	BenchmarkLimit    int
 	PreciseTiming     bool
+	CaptureProfile    bool
 }
 
 type runnerHarness struct {
@@ -98,6 +99,7 @@ func main() {
 	benchmarkCompare := flag.String("benchmark_compare", "", "Read comma-separated JSON benchmark reports and print a comparison using the first report as baseline.")
 	benchmarkLimit := flag.Int("benchmark_limit", 20, "Maximum slower-case rows to print for -benchmark_compare; set 0 to print all.")
 	preciseTiming := flag.Bool("precise_timing", false, "Print millisecond case durations in suite summaries without verbose SQL logging.")
+	captureProfile := flag.Bool("capture_profile", false, "After each supported socket-engine case, query SHOW QUANTASTREAM PROFILE on the same session.")
 	flag.Parse()
 
 	cfg := runnerConfig{
@@ -126,6 +128,7 @@ func main() {
 		BenchmarkCompare:  strings.TrimSpace(*benchmarkCompare),
 		BenchmarkLimit:    *benchmarkLimit,
 		PreciseTiming:     *preciseTiming,
+		CaptureProfile:    *captureProfile,
 	}
 	cfg = applyEngineDefaults(cfg)
 
@@ -226,6 +229,9 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 	if cfg.BenchmarkReport != "" && cfg.EngineDiff != "" {
 		return fmt.Errorf("benchmark_report cannot be combined with engine_diff")
 	}
+	if cfg.CaptureProfile && !engineSupportsProfileCapture(cfg.Engine) {
+		return fmt.Errorf("capture_profile is only supported by QuantaStream socket engines")
+	}
 	if cfg.EngineDiff != "" {
 		diff, err := parseEngineDiff(cfg.EngineDiff)
 		if err != nil {
@@ -237,6 +243,15 @@ func validateFlags(suiteFile string, cfg runnerConfig) error {
 		return validateEngineForFlags(diff.Target, cfg)
 	}
 	return validateEngineForFlags(cfg.Engine, cfg)
+}
+
+func engineSupportsProfileCapture(engine string) bool {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case engineProxy, engineDistributed, engineInaboxLocal, engineInaboxStandard:
+		return true
+	default:
+		return false
+	}
 }
 
 func printUsage(err error) {
@@ -255,6 +270,7 @@ func printUsage(err error) {
 	u.Warn("Benchmark example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_tpch_kernels.yaml -benchmark_report expected/local/tpch.json -benchmark_runs 3 -benchmark_profile developer-local")
 	u.Warn("Benchmark summary example: ./sqlrunner -benchmark_summary expected/local/tpch.json")
 	u.Warn("Benchmark compare example: ./sqlrunner -benchmark_compare expected/local/direct.json,expected/local/standard.json")
+	u.Warn("Profile capture example: ./sqlrunner -engine inabox-standard -suite_file ../tpc-h-benchmark/sqltests/tpch_queries.yaml -case tpch_queries.q21.080_formal_supplier_wait_exists_not_exists_count -verbose -capture_profile")
 }
 
 func configureLogging(logLevel string) {
@@ -344,15 +360,22 @@ func buildInaboxStandardHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerH
 	if err != nil {
 		return runnerHarness{}, err
 	}
+	engine, closeFn, err := sqlRunnerProfileEngine(context.Background(), db, cfg.CaptureProfile)
+	if err != nil {
+		_ = db.Close()
+		return runnerHarness{}, err
+	}
 
 	return runnerHarness{
 		Runner: roadmap.Runner{
-			DB:         db,
-			Verbose:    cfg.Verbose,
-			DumpActual: cfg.DumpActual,
-			Logf:       log.Printf,
+			DB:             db,
+			Engine:         engine,
+			Verbose:        cfg.Verbose,
+			DumpActual:     cfg.DumpActual,
+			CaptureProfile: cfg.CaptureProfile,
+			Logf:           log.Printf,
 		},
-		Close: db.Close,
+		Close: closeFn,
 	}, nil
 }
 
@@ -377,15 +400,22 @@ func buildProxyHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHarness, e
 	if err != nil {
 		return runnerHarness{}, err
 	}
+	engine, closeFn, err := sqlRunnerProfileEngine(context.Background(), db, cfg.CaptureProfile)
+	if err != nil {
+		_ = db.Close()
+		return runnerHarness{}, err
+	}
 
 	return runnerHarness{
 		Runner: roadmap.Runner{
-			DB:         db,
-			Verbose:    cfg.Verbose,
-			DumpActual: cfg.DumpActual,
-			Logf:       log.Printf,
+			DB:             db,
+			Engine:         engine,
+			Verbose:        cfg.Verbose,
+			DumpActual:     cfg.DumpActual,
+			CaptureProfile: cfg.CaptureProfile,
+			Logf:           log.Printf,
 		},
-		Close: db.Close,
+		Close: closeFn,
 	}, nil
 }
 
@@ -403,10 +433,11 @@ func buildRuntimeHarness(_ *roadmap.Suite, cfg runnerConfig) (runnerHarness, err
 	}
 	return runnerHarness{
 		Runner: roadmap.Runner{
-			Engine:     engine,
-			Verbose:    cfg.Verbose,
-			DumpActual: cfg.DumpActual,
-			Logf:       log.Printf,
+			Engine:         engine,
+			Verbose:        cfg.Verbose,
+			DumpActual:     cfg.DumpActual,
+			CaptureProfile: cfg.CaptureProfile,
+			Logf:           log.Printf,
 		},
 	}, nil
 }

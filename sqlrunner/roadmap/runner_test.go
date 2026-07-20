@@ -2,6 +2,7 @@ package roadmap
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -107,6 +108,53 @@ func TestRunnerPassesCaseMetadataToAwareEngine(t *testing.T) {
 	}
 	if len(seen) != 1 || seen[0].ID != "query.diagnostic" || len(seen[0].Diagnostics) != 1 {
 		t.Fatalf("seen cases = %#v", seen)
+	}
+}
+
+func TestRunnerCapturesQueryProfileFromProfileAwareEngine(t *testing.T) {
+	suite := &Suite{
+		Version: 1,
+		Name:    "profile",
+		Tests: []TestCase{{
+			ID:     "query.profiled",
+			Status: CaseSupported,
+			Kind:   "query",
+			SQL:    "select id from orders",
+			Expect: Expected{
+				Columns: []string{"id"},
+				Types:   []string{"INT"},
+				Rows:    [][]interface{}{{7}},
+			},
+		}},
+	}
+	engine := &profileFakeEngine{}
+
+	summary := (Runner{Engine: engine, CaptureProfile: true}).Run(context.Background(), suite)
+
+	if summary.HasFailures() {
+		t.Fatalf("summary = %#v, want pass", summary.Results)
+	}
+	if engine.profileCalls != 1 {
+		t.Fatalf("profile calls = %d, want 1", engine.profileCalls)
+	}
+	profile := summary.Results[0].Profile
+	if len(profile) != 1 || profile[0].Kind != "timing" || profile[0].Section != "direct_bitmap" {
+		t.Fatalf("profile = %#v", profile)
+	}
+}
+
+func TestRunnerCompactsCapturedQueryProfileFields(t *testing.T) {
+	longDetail := strings.Repeat("x", profileFieldMaxLength+25)
+	rows, profileErr := captureQueryProfile(context.Background(), &longProfileFakeEngine{detail: longDetail})
+
+	if profileErr != "" {
+		t.Fatalf("profileErr = %q", profileErr)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v", rows)
+	}
+	if len(rows[0].Detail) >= len(longDetail) || !strings.Contains(rows[0].Detail, "truncated 25 bytes") {
+		t.Fatalf("detail was not compacted: %q", rows[0].Detail)
 	}
 }
 
@@ -220,6 +268,37 @@ func TestCompareRowsRejectsDifferentTextValues(t *testing.T) {
 type caseAwareRecorder struct {
 	seen *[]TestCase
 	test TestCase
+}
+
+type profileFakeEngine struct {
+	fakeEngine
+	profileCalls int
+}
+
+type longProfileFakeEngine struct {
+	fakeEngine
+	detail string
+}
+
+func (e longProfileFakeEngine) QueryProfile(_ context.Context) ([]ProfileRow, error) {
+	return []ProfileRow{{
+		Kind:    "counter",
+		Section: "query_scratchpad",
+		Name:    "domain_mapping_cache_miss",
+		Value:   "1",
+		Detail:  e.detail,
+	}}, nil
+}
+
+func (e *profileFakeEngine) QueryProfile(_ context.Context) ([]ProfileRow, error) {
+	e.profileCalls++
+	return []ProfileRow{{
+		Kind:    "timing",
+		Section: "direct_bitmap",
+		Name:    "phase_bitmap_query_elapsed",
+		Value:   "2ms",
+		Detail:  "unit",
+	}}, nil
 }
 
 func (e caseAwareRecorder) WithTestCase(test TestCase) Engine {
