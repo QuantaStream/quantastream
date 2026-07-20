@@ -209,6 +209,79 @@ Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and
 performance.
 
+## Query Profile Capture
+
+Use query profile capture when a case passes but the wall time needs
+explanation. This is different from benchmark comparison: the output is a
+per-query execution trace, not a correctness verdict or a publishable timing
+claim.
+
+Profile capture currently works through QuantaStream socket engines because the
+profile is stored on the MySQL-compatible session that executed the query.
+Supported engines include `inabox-standard`, `inabox-local`, and `distributed`.
+`inabox-direct` has no running SQL endpoint, so direct-mode investigation should
+use SQLRunner timings and runtime probes instead.
+
+For TPC-H profile targets, prefer the helper script:
+
+```bash
+cd tpc-h-benchmark
+CASE=tpch_profile.q5.formal_revenue \
+  ./run-profile-capture.sh
+```
+
+The helper defaults to:
+
+- `ENGINE=inabox-standard`
+- `SUITE=sqltests/tpch_profile.yaml`
+- `HOST=127.0.0.1`
+- `PORT=4000`
+- `DB=quanta`
+- `VERBOSE=1`
+
+It writes ignored local logs under `tpc-h-benchmark/local/logs`. Use `CASE=` to
+target one query, `SUITE=` to switch profile suites, and `SLOW_THRESHOLD=2s` to
+include SQLRunner's slow-case summary.
+
+Raw SQLRunner profile capture is also available:
+
+```bash
+cd sqlrunner
+go run . \
+  -engine inabox-standard \
+  -suite_file ../tpc-h-benchmark/sqltests/tpch_profile.yaml \
+  -case tpch_profile.q21.formal_supplier_wait_exists_not_exists_count \
+  -port 4000 \
+  -verbose \
+  -capture_profile
+```
+
+The profile rows are also queryable manually on the same MySQL session after a
+query runs:
+
+```sql
+SHOW QUANTASTREAM PROFILE;
+SELECT * FROM quantastream_last_query_profile;
+```
+
+Useful profile sections include:
+
+- `direct_bitmap` for candidate-set seeding and bitmap predicate fragments.
+- `relationship_join` for graph reduction, relationship-vector projection,
+  parent-key mapping, and grouped relationship aggregation phases.
+- `same_row_comparison` for BSI-to-BSI same-row comparisons.
+- `native_projection_materialization` for field reads and dictionary or
+  backing-string rehydration.
+- `aggregate` and `grouped_aggregate` for materialization and residual-scan
+  phases outside relationship-vector graph execution.
+- `query_scratchpad` for per-query cache hits, misses, and stores.
+
+When interpreting profiles, look for the largest elapsed phases first, then
+check whether they are repeated within one query. Repeated misses or repeated
+large field reads usually point to a missing scratchpad reuse opportunity.
+Elapsed profile rows should guide follow-up hypotheses; they are not stable
+enough on a laptop to be benchmark evidence by themselves.
+
 ## Initial Work Items
 
 1. Add a MySQL reference deployment template once the preferred cloud baseline is

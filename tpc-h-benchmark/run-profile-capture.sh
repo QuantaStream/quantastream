@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ./run-profile-capture.sh
+  CASE=tpch_profile.q5.formal_revenue ./run-profile-capture.sh
+
+Environment:
+  SUITE             TPC-H SQLRunner profile suite. Defaults to sqltests/tpch_profile.yaml.
+  CASE              Optional exact SQLRunner case id.
+  ENGINE            QuantaStream socket engine. Defaults to inabox-standard.
+  HOST              QuantaStream host. Defaults to QUANTA_HOST or 127.0.0.1.
+  PORT              QuantaStream port. Defaults to QUANTA_PORT or 4000.
+  USER              QuantaStream user. Defaults to QUANTA_USER or MOLIG004.
+  PASSWORD          QuantaStream password. Defaults to QUANTA_PASSWORD or empty.
+  DB                QuantaStream database. Defaults to QUANTA_DB or quanta.
+  CONSUL            Consul address for engines that need it. Defaults to QUANTA_CONSUL or 127.0.0.1:8500.
+  LOG_DIR           Output log directory. Defaults to tpc-h-benchmark/local/logs.
+  VERBOSE           Set to 0 to suppress verbose SQL/profile output. Defaults to 1.
+  SLOW_THRESHOLD    Optional SQLRunner slow-case summary threshold, such as 2s.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SQLRUNNER_DIR="${REPO_ROOT}/sqlrunner"
+
+SUITE="${SUITE:-sqltests/tpch_profile.yaml}"
+CASE="${CASE:-}"
+ENGINE="${ENGINE:-inabox-standard}"
+HOST="${HOST:-${QUANTA_HOST:-127.0.0.1}}"
+PORT="${PORT:-${QUANTA_PORT:-4000}}"
+USER="${USER:-${QUANTA_USER:-MOLIG004}}"
+PASSWORD="${PASSWORD:-${QUANTA_PASSWORD:-}}"
+DB="${DB:-${QUANTA_DB:-quanta}}"
+CONSUL="${CONSUL:-${QUANTA_CONSUL:-127.0.0.1:8500}}"
+LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/local/logs}"
+VERBOSE="${VERBOSE:-1}"
+SLOW_THRESHOLD="${SLOW_THRESHOLD:-}"
+
+if [[ "${SUITE}" = /* ]]; then
+  SUITE_ARG="${SUITE}"
+  SUITE_NAME="$(basename "${SUITE}" .yaml)"
+else
+  SUITE_ARG="../tpc-h-benchmark/${SUITE}"
+  SUITE_NAME="$(basename "${SUITE}" .yaml)"
+fi
+
+mkdir -p "${LOG_DIR}"
+STAMP="$(date -u +%Y%m%d-%H%M%S)"
+ENGINE_LABEL="$(printf '%s' "${ENGINE}" | tr -c '[:alnum:]_.-' '-')"
+CASE_LABEL="all"
+if [[ -n "${CASE}" ]]; then
+  CASE_LABEL="$(printf '%s' "${CASE}" | tr -c '[:alnum:]_.-' '-')"
+fi
+LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${CASE_LABEL}-profile-${STAMP}.log"
+
+args=(
+  -engine "${ENGINE}"
+  -suite_file "${SUITE_ARG}"
+  -host "${HOST}"
+  -port "${PORT}"
+  -user "${USER}"
+  -password "${PASSWORD}"
+  -db "${DB}"
+  -consul "${CONSUL}"
+  -capture_profile
+  -precise_timing
+)
+
+if [[ "${VERBOSE}" != "0" ]]; then
+  args+=(-verbose)
+fi
+if [[ -n "${CASE}" ]]; then
+  args+=(-case "${CASE}")
+fi
+if [[ -n "${SLOW_THRESHOLD}" ]]; then
+  args+=(-slow_threshold "${SLOW_THRESHOLD}")
+fi
+
+{
+  echo "TPC-H profile capture"
+  echo "timestamp_utc=${STAMP}"
+  echo "repo=${REPO_ROOT}"
+  echo "suite=${SUITE}"
+  echo "case=${CASE:-all}"
+  echo "engine=${ENGINE}"
+  echo "host=${HOST}"
+  echo "port=${PORT}"
+  echo "db=${DB}"
+  if git -C "${REPO_ROOT}" rev-parse --short HEAD >/dev/null 2>&1; then
+    echo "git_commit=$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+    echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
+  fi
+  echo
+} | tee "${LOG_FILE}"
+
+(cd "${SQLRUNNER_DIR}" && go run . "${args[@]}") 2>&1 | tee -a "${LOG_FILE}"
+
+echo "profile capture log=${LOG_FILE}" | tee -a "${LOG_FILE}"
