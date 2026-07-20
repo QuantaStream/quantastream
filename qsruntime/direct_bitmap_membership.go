@@ -128,8 +128,9 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	narrowFragment, narrowPlanProbes, foldedNarrow := directBitmapCorrelatedMembershipRightKeyNarrowFragment(membership, leftKeys)
 	probes = append(probes, narrowPlanProbes...)
 	rightCandidateStart := time.Now()
-	rightResult, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragments(ctx, rightMembership, narrowFragment)
+	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, narrowFragment)
 	rightCandidateElapsed := time.Since(rightCandidateStart)
+	probes = append(probes, candidateProbes...)
 	probes = append(probes,
 		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
@@ -541,46 +542,81 @@ func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResult(ctx cont
 }
 
 func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithExtraFragments(ctx context.Context, membership qsbridge.MembershipEdge, extraFragments []qsbridge.QuantaQueryFragment) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	result, _, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, membership, extraFragments)
+	return result, diagnostics, err
+}
+
+func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx context.Context, membership qsbridge.MembershipEdge, extraFragments []qsbridge.QuantaQueryFragment) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	detail := directBitmapMembershipNarrowProbeDetail(membership)
 	rightRequest, diagnostics := directBitmapMembershipRightRequestWithExtraFragments(membership, extraFragments)
-	if diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, nil
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("membership_right_candidate_fragment_count", strconv.Itoa(len(rightRequest.Query.Fragments)), detail),
+		directBitmapMembershipProbe("membership_right_candidate_extra_fragment_count", strconv.Itoa(len(extraFragments)), detail),
 	}
+	if diagnostics.BlocksNative() {
+		return BitmapQueryResult{}, probes, diagnostics, nil
+	}
+	borrowStart := time.Now()
 	session, diagnostics, err := r.Sessions.BorrowDirectSession(ctx, rightRequest)
+	probes = append(probes, directBitmapMembershipProbe("membership_right_candidate_borrow_elapsed", time.Since(borrowStart).String(), detail))
 	if err != nil || diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, err
+		return BitmapQueryResult{}, probes, diagnostics, err
 	}
 	if session == nil {
-		return BitmapQueryResult{}, directBitmapMembershipDiagnostics("direct session provider returned nil membership session"), nil
+		return BitmapQueryResult{}, probes, directBitmapMembershipDiagnostics("direct session provider returned nil membership session"), nil
 	}
+	queryStart := time.Now()
 	rightResult, queryDiagnostics, queryErr := session.QueryBitmap(ctx, rightRequest)
+	queryElapsed := time.Since(queryStart)
+	releaseStart := time.Now()
 	releaseDiagnostics := session.Release(ctx)
+	releaseElapsed := time.Since(releaseStart)
+	probes = append(probes,
+		directBitmapMembershipProbe("membership_right_candidate_query_elapsed", queryElapsed.String(), detail),
+		directBitmapMembershipProbe("membership_right_candidate_query_rows", strconv.Itoa(len(rightResult.Rownums)), detail),
+		directBitmapMembershipProbe("membership_right_candidate_release_elapsed", releaseElapsed.String(), detail),
+	)
 	diagnostics = append(diagnostics, queryDiagnostics...)
 	diagnostics = append(diagnostics, releaseDiagnostics...)
 	if queryErr != nil || diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, queryErr
+		return BitmapQueryResult{}, probes, diagnostics, queryErr
 	}
 	residuals := directBitmapMembershipResidualPredicates(membership.Predicates)
+	probes = append(probes, directBitmapMembershipProbe("membership_right_candidate_residual_count", strconv.Itoa(len(residuals)), detail))
 	if len(residuals) == 0 {
-		return rightResult, nil, nil
+		return rightResult, probes, nil, nil
 	}
+	sameRowStart := time.Now()
+	beforeSameRowCount := len(rightResult.Rownums)
 	rightResult, residuals, diagnostics, err = r.directBitmapApplyMembershipRightSameRowResiduals(ctx, rightRequest, rightResult, residuals)
+	sameRowElapsed := time.Since(sameRowStart)
+	probes = append(probes,
+		directBitmapMembershipProbe("membership_right_candidate_same_row_elapsed", sameRowElapsed.String(), detail),
+		directBitmapMembershipProbe("membership_right_candidate_same_row_rows_before", strconv.Itoa(beforeSameRowCount), detail),
+		directBitmapMembershipProbe("membership_right_candidate_same_row_rows_after", strconv.Itoa(len(rightResult.Rownums)), detail),
+		directBitmapMembershipProbe("membership_right_candidate_residual_remaining", strconv.Itoa(len(residuals)), detail),
+	)
 	if err != nil || diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, err
+		return BitmapQueryResult{}, probes, diagnostics, err
 	}
 	if len(residuals) == 0 {
-		return rightResult, nil, nil
+		return rightResult, probes, nil, nil
 	}
+	materializationStart := time.Now()
 	rowSet, diagnostics, err := r.directBitmapMembershipMaterialize(ctx, rightResult, membership.Right, residuals)
+	probes = append(probes, directBitmapMembershipProbe("membership_right_candidate_residual_materialization_elapsed", time.Since(materializationStart).String(), detail))
 	if err != nil || diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, err
+		return BitmapQueryResult{}, probes, diagnostics, err
 	}
+	residualScanStart := time.Now()
 	rowSet, diagnostics = directBitmapFilterResidualScanPredicates(ExecutionRequest{Predicates: residuals}, rowSet)
+	probes = append(probes, directBitmapMembershipProbe("membership_right_candidate_residual_scan_elapsed", time.Since(residualScanStart).String(), detail))
 	if diagnostics.BlocksNative() {
-		return BitmapQueryResult{}, diagnostics, nil
+		return BitmapQueryResult{}, probes, diagnostics, nil
 	}
 	rightResult.Rownums = append([]qsbridge.QuantaRownum(nil), rowSet.Rownums...)
 	rightResult.Count = uint64(len(rightResult.Rownums))
-	return rightResult, nil, nil
+	return rightResult, probes, nil, nil
 }
 
 // directBitmapApplyMembershipRightSameRowResiduals applies right-only same-row
