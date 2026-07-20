@@ -77,7 +77,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		ctx = r.ContextWrapper(ctx)
 	}
 	defer func() {
-		result.Instrumentation = ExecutionInstrumentationSnapshotFromContext(ctx)
+		result.Instrumentation = executionInstrumentationSnapshotWithMissingProbes(
+			ExecutionInstrumentationSnapshotFromContext(ctx),
+			result.Runtime.Probes,
+		)
 	}()
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)

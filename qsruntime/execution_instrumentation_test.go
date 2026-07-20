@@ -33,3 +33,42 @@ func TestRecordExecutionProbesClassifiesTimingsCountersAndEvents(t *testing.T) {
 		t.Fatalf("events = %#v, want strategy event", snapshot.Events)
 	}
 }
+
+func TestExecutionInstrumentationSnapshotWithMissingProbesSuppressesDuplicates(t *testing.T) {
+	snapshot := ExecutionInstrumentationSnapshot{
+		Timings: []ExecutionTiming{{
+			Section:  "relationship_join",
+			Name:     "phase_reduce_elapsed",
+			Duration: 3 * time.Millisecond,
+			Detail:   "edge=1",
+		}},
+		Counters: []ExecutionCounter{{
+			Section: "relationship_join",
+			Name:    "matched_rows",
+			Value:   42,
+			Detail:  "edge=1",
+		}},
+		Events: []ExecutionEvent{{
+			Section: "relationship_join",
+			Name:    "strategy",
+			Value:   "bsi_bitwise",
+			Detail:  "edge=1",
+		}},
+	}
+
+	merged := executionInstrumentationSnapshotWithMissingProbes(snapshot, []ExecutionProbe{
+		{Section: "relationship_join", Name: "phase_reduce_elapsed", Value: "3ms", Detail: "edge=1"},
+		{Section: "relationship_join", Name: "matched_rows", Value: "42", Detail: "edge=1"},
+		{Section: "relationship_join", Name: "strategy", Value: "bsi_bitwise", Detail: "edge=1"},
+		{Section: "relationship_join", Name: "phase_projection_elapsed", Value: "2ms", Detail: "edge=1"},
+		{Section: "relationship_join", Name: "projection_rows", Value: "10", Detail: "edge=1"},
+		{Section: "relationship_join", Name: "projection_mode", Value: "partial", Detail: "edge=1"},
+	})
+
+	if len(merged.Timings) != 2 || len(merged.Counters) != 2 || len(merged.Events) != 2 {
+		t.Fatalf("merged snapshot = %#v, want one new timing/counter/event without duplicates", merged)
+	}
+	if merged.Timings[1].Name != "phase_projection_elapsed" || merged.Counters[1].Name != "projection_rows" || merged.Events[1].Name != "projection_mode" {
+		t.Fatalf("merged snapshot appended wrong probes: %#v", merged)
+	}
+}

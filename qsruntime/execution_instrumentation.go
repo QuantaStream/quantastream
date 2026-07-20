@@ -145,6 +145,76 @@ func cloneExecutionInstrumentationSnapshot(snapshot ExecutionInstrumentationSnap
 	}
 }
 
+func executionInstrumentationSnapshotWithMissingProbes(snapshot ExecutionInstrumentationSnapshot, probes []ExecutionProbe) ExecutionInstrumentationSnapshot {
+	if len(probes) == 0 {
+		return cloneExecutionInstrumentationSnapshot(snapshot)
+	}
+	merged := cloneExecutionInstrumentationSnapshot(snapshot)
+	for _, probe := range probes {
+		if probe.Section == "" || probe.Name == "" {
+			continue
+		}
+		if duration, ok := executionProbeDuration(probe); ok {
+			if !executionTimingSnapshotContains(merged.Timings, probe.Section, probe.Name, duration, probe.Detail) {
+				merged.Timings = append(merged.Timings, ExecutionTiming{
+					Section:  probe.Section,
+					Name:     probe.Name,
+					Duration: duration,
+					Detail:   probe.Detail,
+				})
+			}
+			continue
+		}
+		if value, err := strconv.ParseUint(probe.Value, 10, 64); err == nil {
+			if !executionCounterSnapshotContains(merged.Counters, probe.Section, probe.Name, value, probe.Detail) {
+				merged.Counters = append(merged.Counters, ExecutionCounter{
+					Section: probe.Section,
+					Name:    probe.Name,
+					Value:   value,
+					Detail:  probe.Detail,
+				})
+			}
+			continue
+		}
+		if !executionEventSnapshotContains(merged.Events, probe.Section, probe.Name, probe.Value, probe.Detail) {
+			merged.Events = append(merged.Events, ExecutionEvent{
+				Section: probe.Section,
+				Name:    probe.Name,
+				Value:   probe.Value,
+				Detail:  probe.Detail,
+			})
+		}
+	}
+	return merged
+}
+
+func executionTimingSnapshotContains(timings []ExecutionTiming, section, name string, duration time.Duration, detail string) bool {
+	for _, timing := range timings {
+		if timing.Section == section && timing.Name == name && timing.Duration == duration && timing.Detail == detail {
+			return true
+		}
+	}
+	return false
+}
+
+func executionCounterSnapshotContains(counters []ExecutionCounter, section, name string, value uint64, detail string) bool {
+	for _, counter := range counters {
+		if counter.Section == section && counter.Name == name && counter.Value == value && counter.Detail == detail {
+			return true
+		}
+	}
+	return false
+}
+
+func executionEventSnapshotContains(events []ExecutionEvent, section, name, value, detail string) bool {
+	for _, event := range events {
+		if event.Section == section && event.Name == name && event.Value == value && event.Detail == detail {
+			return true
+		}
+	}
+	return false
+}
+
 func recordExecutionProbes(ctx context.Context, probes []ExecutionProbe) {
 	recorder := ExecutionInstrumentationFromContext(ctx)
 	if recorder == nil || len(probes) == 0 {

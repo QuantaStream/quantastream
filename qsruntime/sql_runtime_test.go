@@ -41,7 +41,13 @@ func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
 			t.Fatal("execution instrumentation was not installed")
 		}
 		recorder.ObserveCount("test_executor", "rows", 7, "fake executor")
-		return ExecutionResult{Count: 7}, nil
+		return ExecutionResult{
+			Count: 7,
+			Probes: []ExecutionProbe{
+				{Section: "test_executor", Name: "rows", Value: "7", Detail: "fake executor"},
+				{Section: "test_executor", Name: "phase_probe_elapsed", Value: "5ms", Detail: "returned probe"},
+			},
+		}, nil
 	})
 	runtime.ContextWrapper = WithQueryScratchpad
 
@@ -53,6 +59,10 @@ func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
 		t.Fatal("instrumentation snapshot was empty")
 	}
 	assertExecutionCounter(t, result.Instrumentation, "test_executor", "rows", 7)
+	if len(result.Instrumentation.Counters) != 1 {
+		t.Fatalf("instrumentation counters = %#v, want duplicate returned counter suppressed", result.Instrumentation.Counters)
+	}
+	assertExecutionTimingName(t, result.Instrumentation, "test_executor", "phase_probe_elapsed")
 }
 
 func TestCorrelatedAverageQuantityTypedMatchBuildsDescriptorAndFilters(t *testing.T) {
