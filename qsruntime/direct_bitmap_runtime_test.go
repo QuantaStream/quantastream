@@ -432,6 +432,14 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_mode", "folded_right_request")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_right_candidates_after", "1")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_applied", "true")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_index_keys", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_index_rows", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_index_max_bucket_size", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_index_multirow_keys", "0")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_evaluation_bucket_hits", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_evaluation_bucket_misses", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_evaluation_matched_rows", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_evaluation_first_candidate_matches", "1")
 	if !sameRownumSlicesEqual(filtered.Rownums, []qsbridge.QuantaRownum{1}) {
 		t.Fatalf("filtered rownums = %#v, want row 1", filtered.Rownums)
 	}

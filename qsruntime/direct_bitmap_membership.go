@@ -176,25 +176,63 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	}
 	indexStart := time.Now()
 	rightRowsByKey := make(map[string][]int, len(rightKeys))
+	rightIndexedRows := 0
+	rightNullKeyRows := 0
 	for i, value := range rightKeys {
 		if value.Kind == qsbridge.ValueNull || value.Value == nil {
+			rightNullKeyRows++
 			continue
 		}
 		key := directBitmapGroupKey(value)
 		rightRowsByKey[key] = append(rightRowsByKey[key], i)
+		rightIndexedRows++
+	}
+	rightMaxBucketSize := 0
+	rightMultirowKeys := 0
+	rightMultirowRows := 0
+	for _, rows := range rightRowsByKey {
+		if len(rows) > rightMaxBucketSize {
+			rightMaxBucketSize = len(rows)
+		}
+		if len(rows) > 1 {
+			rightMultirowKeys++
+			rightMultirowRows += len(rows)
+		}
 	}
 	indexElapsed := time.Since(indexStart)
 	filtered := result.Clone()
 	filtered.Rownums = filtered.Rownums[:0]
 	evaluationStart := time.Now()
 	comparisons := 0
+	leftNullKeyRows := 0
+	leftBucketHits := 0
+	leftBucketMisses := 0
+	leftSingleCandidateBuckets := 0
+	leftMultiCandidateBuckets := 0
+	matchedRows := 0
+	unmatchedRows := 0
+	firstCandidateMatches := 0
+	laterCandidateMatches := 0
 	for i, rownum := range leftRowSet.Rownums {
 		key := ""
 		if i < len(leftKeys) && leftKeys[i].Kind != qsbridge.ValueNull && leftKeys[i].Value != nil {
 			key = directBitmapGroupKey(leftKeys[i])
+		} else {
+			leftNullKeyRows++
+		}
+		candidates := rightRowsByKey[key]
+		if len(candidates) == 0 {
+			leftBucketMisses++
+		} else {
+			leftBucketHits++
+			if len(candidates) == 1 {
+				leftSingleCandidateBuckets++
+			} else {
+				leftMultiCandidateBuckets++
+			}
 		}
 		matched := false
-		for _, rightIndex := range rightRowsByKey[key] {
+		for candidateIndex, rightIndex := range candidates {
 			comparisons++
 			ok, diagnostics := directBitmapEvaluateCorrelatedMembershipPredicates(correlatedPredicates, leftRowSet, i, rightRowSet, rightIndex, membership)
 			if diagnostics.BlocksNative() {
@@ -202,8 +240,18 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 			}
 			if ok {
 				matched = true
+				if candidateIndex == 0 {
+					firstCandidateMatches++
+				} else {
+					laterCandidateMatches++
+				}
 				break
 			}
+		}
+		if matched {
+			matchedRows++
+		} else {
+			unmatchedRows++
 		}
 		keep := matched
 		if membership.Kind == qsbridge.MembershipAnti {
@@ -218,8 +266,22 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	probes = append(probes,
 		directBitmapMembershipProbe("correlated_sibling_right_index_elapsed", indexElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_right_index_keys", strconv.Itoa(len(rightRowsByKey)), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_rows", strconv.Itoa(rightIndexedRows), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_null_rows", strconv.Itoa(rightNullKeyRows), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_max_bucket_size", strconv.Itoa(rightMaxBucketSize), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_multirow_keys", strconv.Itoa(rightMultirowKeys), detail),
+		directBitmapMembershipProbe("correlated_sibling_right_index_multirow_rows", strconv.Itoa(rightMultirowRows), detail),
 		directBitmapMembershipProbe("correlated_sibling_evaluation_elapsed", evaluationElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_evaluation_comparisons", strconv.Itoa(comparisons), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_left_null_key_rows", strconv.Itoa(leftNullKeyRows), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_bucket_hits", strconv.Itoa(leftBucketHits), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_bucket_misses", strconv.Itoa(leftBucketMisses), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_single_candidate_buckets", strconv.Itoa(leftSingleCandidateBuckets), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_multi_candidate_buckets", strconv.Itoa(leftMultiCandidateBuckets), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_matched_rows", strconv.Itoa(matchedRows), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_unmatched_rows", strconv.Itoa(unmatchedRows), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_first_candidate_matches", strconv.Itoa(firstCandidateMatches), detail),
+		directBitmapMembershipProbe("correlated_sibling_evaluation_later_candidate_matches", strconv.Itoa(laterCandidateMatches), detail),
 		directBitmapMembershipProbe("correlated_sibling_left_candidates_after", strconv.Itoa(len(filtered.Rownums)), detail),
 		directBitmapMembershipProbe("correlated_sibling_elapsed", time.Since(start).String(), detail),
 	)
