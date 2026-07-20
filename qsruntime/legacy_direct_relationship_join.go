@@ -1796,10 +1796,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	cache := e.relationshipVectorProjectionCache(ctx)
 	if cache != nil {
 		if fkBSI, ok := cache.Get(cacheKey); ok {
-			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
+			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 			return fkBSI, true, nil, nil
 		}
-		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 	}
 	if e.Source == nil && e.RelationshipProjectionReader == nil {
 		return nil, false, nil, nil
@@ -1812,10 +1812,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	cache := e.relationshipVectorProjectionCache(ctx)
 	if cache != nil {
 		if fkBSI, ok := cache.Get(cacheKey); ok {
-			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
+			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 			return fkBSI, true, nil, nil
 		}
-		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 	}
 	if fullFKBSI, ok := e.legacyDirectRelationshipCachedFullFKBSI(ctx, edge, fromTime, toTime, childFoundSet); ok {
 		return fullFKBSI, true, nil, nil
@@ -1838,7 +1838,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 		}
 		if cache != nil {
 			cache.Put(cacheKey, fkBSI)
-			recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key="+cacheKey)
+			recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 		}
 		return fkBSI, false, nil, nil
 	}
@@ -1881,7 +1881,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	if cache != nil {
 		cache.Put(cacheKey, fkBSI)
-		recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key="+cacheKey)
+		recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 	}
 	return fkBSI, false, nil, nil
 }
@@ -1935,14 +1935,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCach
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, nil)
 	fkBSI, ok := cache.Get(cacheKey)
 	if !ok || fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
-		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 		return nil, false
 	}
 	if legacyDirectRelationshipBitmapCovers(fkBSI.GetExistenceBitmap(), childFoundSet) {
-		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "retained_subset", "key="+cacheKey)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "retained_subset", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 		return fkBSI, true
 	}
-	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "coverage_miss", "key="+cacheKey)
+	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "coverage_miss", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 	return nil, false
 }
 
@@ -1970,10 +1970,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, initialRows)
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, legacyDirectRelationshipBitmap(initialRows))
 	if _, ok := cache.Get(cacheKey); !ok {
-		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 		return legacyDirectRelationshipProjectionRowsForAppliedPolicy(edge, childRows, scratchpad, policy), policy
 	}
-	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
+	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", legacyDirectRelationshipProjectionCacheDetail(cacheKey))
 	policy.Strategy = legacyDirectRelationshipProjectionStrategyBroadFromScratchpad
 	policy.AppliedStrategy = legacyDirectRelationshipProjectionStrategyBroadFromScratchpad
 	policy.Reason = "broad_projection_cache_hit"

@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -305,5 +306,43 @@ func TestRelationshipVectorProjectionCacheStoresProjectedFKBSIs(t *testing.T) {
 	}
 	if got, ok := NewLegacyDirectRelationshipVectorProjectionCache().Get(key); ok || got != nil {
 		t.Fatalf("empty compatibility cache lookup = %#v/%t, want miss", got, ok)
+	}
+}
+
+func TestRelationshipVectorProjectionCacheDetailSummarizesFoundset(t *testing.T) {
+	foundSet := roaring64.NewBitmap()
+	foundSet.Add(101)
+	foundSet.Add(202)
+	foundSet.Add(303)
+	key := strings.Join([]string{
+		"lineitem",
+		"l_orderkey",
+		"10",
+		"20",
+		legacyDirectRelationshipVectorFoundSetCacheKey(foundSet),
+	}, "\x00")
+
+	detail := legacyDirectRelationshipProjectionCacheDetail(key)
+	for _, want := range []string{
+		"index=lineitem",
+		"field=l_orderkey",
+		"from=10",
+		"to=20",
+		"scope=foundset",
+		"rows=3",
+		"key_hash=",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("cache detail %q missing %q", detail, want)
+		}
+	}
+	if strings.Contains(detail, "101,202,303") || len(detail) > 160 {
+		t.Fatalf("cache detail should summarize foundset rows, got %q", detail)
+	}
+
+	allKey := strings.Join([]string{"lineitem", "l_orderkey", "10", "20", "all"}, "\x00")
+	allDetail := legacyDirectRelationshipProjectionCacheDetail(allKey)
+	if !strings.Contains(allDetail, "scope=all") || !strings.Contains(allDetail, "rows=all") {
+		t.Fatalf("all cache detail = %q, want all scope", allDetail)
 	}
 }

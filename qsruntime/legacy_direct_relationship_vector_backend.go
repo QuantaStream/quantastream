@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -110,7 +111,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 
 // cachedRelationshipVectorProjection returns a projected FK BSI when request-scoped reuse is available.
 func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorProjection(ctx context.Context, key string) (*roaring64.BSI, bool) {
-	detail := "key=" + key
+	detail := legacyDirectRelationshipProjectionCacheDetail(key)
 	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
 		bsi, ok := cache.Get(key)
 		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", ok, relationshipVectorProjectionCacheMode(ok), detail)
@@ -123,7 +124,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorP
 
 // storeRelationshipVectorProjection stores a projected FK BSI when a request-scoped cache is present.
 func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorProjection(ctx context.Context, key string, bsi *roaring64.BSI) {
-	detail := "key=" + key
+	detail := legacyDirectRelationshipProjectionCacheDetail(key)
 	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
 		cache.Put(key, bsi)
 		recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", detail)
@@ -167,6 +168,39 @@ func legacyDirectRelationshipVectorFoundSetCacheKey(foundSet *roaring64.Bitmap) 
 		builder.WriteByte(',')
 	}
 	return builder.String()
+}
+
+func legacyDirectRelationshipProjectionCacheDetail(key string) string {
+	parts := strings.Split(key, "\x00")
+	if len(parts) != 5 {
+		return "key_hash=" + legacyDirectRelationshipProjectionCacheKeyHash(key) +
+			" key_len=" + strconv.Itoa(len(key))
+	}
+	scope := "foundset"
+	rows := "0"
+	foundSetKey := parts[4]
+	switch {
+	case foundSetKey == "all":
+		scope = "all"
+		rows = "all"
+	default:
+		if count, _, ok := strings.Cut(foundSetKey, ":"); ok {
+			rows = count
+		}
+	}
+	return "index=" + parts[0] +
+		" field=" + parts[1] +
+		" from=" + parts[2] +
+		" to=" + parts[3] +
+		" scope=" + scope +
+		" rows=" + rows +
+		" key_hash=" + legacyDirectRelationshipProjectionCacheKeyHash(key)
+}
+
+func legacyDirectRelationshipProjectionCacheKeyHash(key string) string {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(key))
+	return strconv.FormatUint(hash.Sum64(), 16)
 }
 
 type legacyDirectRelationshipVectorProjectionReader interface {
