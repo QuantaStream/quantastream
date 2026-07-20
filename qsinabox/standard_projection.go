@@ -35,10 +35,11 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 	cacheKey := qsruntime.ProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := qsruntime.ProjectionBSICacheFromContext(ctx)
 	detail := standardProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
-	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
+	cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
+	if ok {
 		qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
 		return qsruntime.NativeProjectionBSIReadResult{
-			BSI: bsi,
+			BSI: cachedBSI,
 			Probes: []qsruntime.ExecutionProbe{
 				standardProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
 				standardProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
@@ -46,7 +47,7 @@ func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, requ
 			},
 		}, nil, nil
 	}
-	qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, "miss", detail)
+	qsruntime.RecordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
 	if r.Direct != nil {
 		bsi, stats, err := r.Direct.ProjectBSIWithStats(request.Index, request.PhysicalField, fromTime, toTime, foundSet, false)
 		if err != nil {

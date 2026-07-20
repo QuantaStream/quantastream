@@ -110,6 +110,10 @@ func TestProjectionBSICacheVerifiesRownumCoverage(t *testing.T) {
 	rownumSet := legacyDirectRelationshipBitmap(request.Rownums)
 	cache.Set(key, rownumSet, bsi)
 
+	var absentCache *ProjectionBSICache
+	if _, mode, ok := absentCache.Get(key, rownumSet); ok || mode != "cache_absent" {
+		t.Fatalf("nil cache lookup mode = %q/%t, want cache_absent miss", mode, ok)
+	}
 	if got, mode, ok := cache.Get(key, rownumSet); !ok || mode != "exact" || got != bsi {
 		t.Fatalf("cache lookup = %#v/%q/%t, want exact stored BSI", got, mode, ok)
 	}
@@ -119,15 +123,15 @@ func TestProjectionBSICacheVerifiesRownumCoverage(t *testing.T) {
 	}
 	fieldChanged := request
 	fieldChanged.PhysicalField = "l_suppkey"
-	if _, _, ok := cache.Get(ProjectionBSICacheKeyFor(fieldChanged, 10, 20), rownumSet); ok {
-		t.Fatal("cache should distinguish projected fields")
+	if _, mode, ok := cache.Get(ProjectionBSICacheKeyFor(fieldChanged, 10, 20), rownumSet); ok || mode != "key_miss" {
+		t.Fatalf("field-changed lookup mode = %q/%t, want key_miss", mode, ok)
 	}
 	rownumsChanged := legacyDirectRelationshipBitmap([]qsbridge.QuantaRownum{101, 999, 103})
-	if _, _, ok := cache.Get(key, rownumsChanged); ok {
-		t.Fatal("cache should verify rownum coverage before returning an entry")
+	if _, mode, ok := cache.Get(key, rownumsChanged); ok || mode != "coverage_miss" {
+		t.Fatalf("rownum-changed lookup mode = %q/%t, want coverage_miss", mode, ok)
 	}
-	if _, _, ok := cache.Get(ProjectionBSICacheKeyFor(request, 10, 30), rownumSet); ok {
-		t.Fatal("cache should distinguish projection windows")
+	if _, mode, ok := cache.Get(ProjectionBSICacheKeyFor(request, 10, 30), rownumSet); ok || mode != "key_miss" {
+		t.Fatalf("window-changed lookup mode = %q/%t, want key_miss", mode, ok)
 	}
 }
 

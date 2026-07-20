@@ -160,25 +160,29 @@ func NewProjectionBSICache() *ProjectionBSICache {
 }
 
 // Get returns an exact cached projection or a retained copy from a cached
-// superset. The mode string is probe-friendly: "exact", "retained_subset", or
-// empty on miss.
+// superset. The mode string is probe-friendly: "exact" or "retained_subset" on
+// hits, and "cache_absent", "key_miss", or "coverage_miss" on misses.
 func (c *ProjectionBSICache) Get(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) (*roaring64.BSI, string, bool) {
 	if c == nil {
-		return nil, "", false
+		return nil, "cache_absent", false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, entry := range c.entries[key] {
+	entries := c.entries[key]
+	if len(entries) == 0 {
+		return nil, "key_miss", false
+	}
+	for _, entry := range entries {
 		if projectionRownumSetsEqual(entry.RownumSet, rownumSet) {
 			return entry.BSI, "exact", true
 		}
 	}
-	for _, entry := range c.entries[key] {
+	for _, entry := range entries {
 		if projectionRownumSetCovers(entry.RownumSet, rownumSet) {
 			return entry.BSI.NewBSIRetainSet(rownumSet), "retained_subset", true
 		}
 	}
-	return nil, "", false
+	return nil, "coverage_miss", false
 }
 
 // Set records a projected BSI for one candidate rownum set.

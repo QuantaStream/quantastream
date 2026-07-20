@@ -245,10 +245,11 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := directProjectionBSICacheFromContext(ctx)
 	detail := directProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
-	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
+	cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
+	if ok {
 		recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
 		return NativeProjectionBSIReadResult{
-			BSI: bsi,
+			BSI: cachedBSI,
 			Probes: []ExecutionProbe{
 				directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
 				directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
@@ -256,7 +257,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			},
 		}, nil, nil
 	}
-	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, "miss", detail)
+	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     request.Index,
 		Field:     request.PhysicalField,
