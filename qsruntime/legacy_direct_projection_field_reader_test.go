@@ -59,6 +59,82 @@ func TestLegacyDirectProjectionBSIFieldReaderReadsValuesInRequestedOrder(t *test
 	}
 }
 
+func TestLegacyDirectProjectionBSIFieldReaderBatchesSimpleBSIFields(t *testing.T) {
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"lineitem": {
+			BasicTable: &shared.BasicTable{Name: "lineitem"},
+			AttributeNameMap: map[string]*core.Attribute{
+				"l_orderkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "l_orderkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+				"l_suppkey":  {BasicAttribute: &shared.BasicAttribute{FieldName: "l_suppkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+			},
+		},
+	}}
+	orderKey := roaring64.NewDefaultBSI()
+	orderKey.SetValue(1, int64(10))
+	orderKey.SetValue(2, int64(20))
+	suppKey := roaring64.NewDefaultBSI()
+	suppKey.SetValue(1, int64(100))
+	suppKey.SetValue(2, int64(200))
+	bsiReader := &recordingNativeProjectionBSIBatchReader{
+		values: map[string]*roaring64.BSI{
+			"l_orderkey": orderKey,
+			"l_suppkey":  suppKey,
+		},
+	}
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader:     bsiReader,
+	}
+
+	results, diagnostics, err := reader.ReadProjectionFields(context.Background(), []NativeProjectionFieldReadRequest{{
+		Index:   "lineitem",
+		Field:   qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_orderkey", Type: qsbridge.DataTypeInt},
+		Rownums: []qsbridge.QuantaRownum{1, 2},
+	}, {
+		Index:   "lineitem",
+		Field:   qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_suppkey", Type: qsbridge.DataTypeInt},
+		Rownums: []qsbridge.QuantaRownum{1, 2},
+	}})
+	if err != nil {
+		t.Fatalf("ReadProjectionFields error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if bsiReader.singleCalls != 0 {
+		t.Fatalf("single BSI reads = %d, want 0", bsiReader.singleCalls)
+	}
+	if len(bsiReader.batchRequests) != 1 || len(bsiReader.batchRequests[0]) != 2 {
+		t.Fatalf("batch requests = %#v, want one two-field BSI batch", bsiReader.batchRequests)
+	}
+	if got := results[0].Values[1].Value; got != int64(20) {
+		t.Fatalf("l_orderkey row 2 = %#v, want 20", got)
+	}
+	if got := results[1].Values[1].Value; got != int64(200) {
+		t.Fatalf("l_suppkey row 2 = %#v, want 200", got)
+	}
+}
+
+type recordingNativeProjectionBSIBatchReader struct {
+	singleCalls   int
+	batchRequests [][]NativeProjectionBSIReadRequest
+	values        map[string]*roaring64.BSI
+}
+
+func (r *recordingNativeProjectionBSIBatchReader) ReadProjectionBSI(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	r.singleCalls++
+	return NativeProjectionBSIReadResult{BSI: r.values[request.PhysicalField]}, nil, nil
+}
+
+func (r *recordingNativeProjectionBSIBatchReader) ReadProjectionBSIs(_ context.Context, requests []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	r.batchRequests = append(r.batchRequests, append([]NativeProjectionBSIReadRequest(nil), requests...))
+	results := make([]NativeProjectionBSIReadResult, 0, len(requests))
+	for _, request := range requests {
+		results = append(results, NativeProjectionBSIReadResult{BSI: r.values[request.PhysicalField]})
+	}
+	return results, nil, nil
+}
+
 func TestLegacyDirectProjectionBSIFieldReaderReadsRownumPseudoField(t *testing.T) {
 	reader := NativeProjectionBSIFieldReader{}
 

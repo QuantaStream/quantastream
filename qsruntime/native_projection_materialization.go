@@ -34,6 +34,14 @@ type NativeProjectionFieldReader interface {
 	ReadProjectionField(context.Context, NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error)
 }
 
+// NativeProjectionBatchFieldReader optionally reads several projection fields
+// that share a materialization request. Implementations can use this to collapse
+// multiple storage calls while the single-field reader remains the baseline
+// contract.
+type NativeProjectionBatchFieldReader interface {
+	ReadProjectionFields(context.Context, []NativeProjectionFieldReadRequest) ([]NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error)
+}
+
 // NativeProjectionFieldReaderFunc adapts a function to NativeProjectionFieldReader.
 type NativeProjectionFieldReaderFunc func(context.Context, NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error)
 
@@ -180,6 +188,8 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 	}
 	var diagnostics qsbridge.DiagnosticSet
 	var timingProbes []ExecutionProbe
+	states := make([]nativeProjectionMaterializationFieldState, 0, len(request.ProjectionFields))
+	readStateIndexes := []int{}
 	for _, field := range request.ProjectionFields {
 		valueCache := ProjectionValueCacheFromContext(ctx)
 		valueCacheKey := ProjectionValueCacheKeyFor(request.Index, field, request.FromEpochMillis, request.ToEpochMillis)
@@ -188,9 +198,10 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 		recordQueryScratchpadCacheLookup(ctx, "projection_value_cache", valueCacheHit, valueCacheMode, valueCacheDetail)
 		item.Probes = append(item.Probes, nativeProjectionValueCacheProbes(request, field, valueCacheHit, valueCacheMode, cachedValues)...)
 		if valueCacheHit && cachedValues.MissingCount() == 0 {
-			rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
-				Field:  field,
-				Values: cachedValues.Values,
+			states = append(states, nativeProjectionMaterializationFieldState{
+				Field:    field,
+				Values:   cachedValues.Values,
+				Complete: true,
 			})
 			continue
 		}
@@ -207,16 +218,61 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 		}
 		readProbeRequest := request
 		readProbeRequest.Rownums = readRownums
-		readStart := time.Now()
-		readResult, readDiagnostics, err := k.Reader.ReadProjectionField(ctx, read)
-		readElapsed := time.Since(readStart)
-		timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_read_elapsed", readElapsed.String(), readProbeRequest, field))
+		states = append(states, nativeProjectionMaterializationFieldState{
+			Field:            field,
+			ValueCache:       valueCache,
+			ValueCacheKey:    valueCacheKey,
+			CachedValues:     cachedValues,
+			ValueCacheHit:    valueCacheHit,
+			ReadRequest:      read,
+			ReadProbeRequest: readProbeRequest,
+		})
+		readStateIndexes = append(readStateIndexes, len(states)-1)
+	}
+	if len(readStateIndexes) > 0 {
+		readRequests := make([]NativeProjectionFieldReadRequest, 0, len(readStateIndexes))
+		for _, index := range readStateIndexes {
+			readRequests = append(readRequests, states[index].ReadRequest)
+		}
+		readResults, readElapsed, readDiagnostics, err := k.readProjectionFields(ctx, readRequests)
 		diagnostics = append(diagnostics, readDiagnostics...)
-		item.Probes = append(item.Probes, readResult.Probes...)
+		for i, readResult := range readResults {
+			if i >= len(readStateIndexes) {
+				break
+			}
+			state := &states[readStateIndexes[i]]
+			state.ReadResult = readResult
+			if i < len(readElapsed) {
+				state.ReadElapsed = readElapsed[i]
+			}
+			item.Probes = append(item.Probes, readResult.Probes...)
+		}
 		if err != nil || diagnostics.BlocksNative() {
 			item.Diagnostics = diagnostics
 			return item, diagnostics, err
 		}
+		if len(readResults) != len(readRequests) {
+			diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"native projection materialization returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(readRequests))+" requests",
+			))
+			item.Diagnostics = diagnostics
+			return item, diagnostics, nil
+		}
+	}
+	for i := range states {
+		state := &states[i]
+		field := state.Field
+		if state.Complete {
+			rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+				Field:  field,
+				Values: state.Values,
+			})
+			continue
+		}
+		timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_read_elapsed", state.ReadElapsed.String(), state.ReadProbeRequest, field))
+		readResult := state.ReadResult
 		values := append([]qsbridge.ResultCell(nil), readResult.Values...)
 		if readResult.Encoded {
 			if k.Rehydrator == nil {
@@ -238,7 +294,7 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 				Values:     values,
 			})
 			rehydrateElapsed := time.Since(rehydrateStart)
-			timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_rehydration_elapsed", rehydrateElapsed.String(), readProbeRequest, field))
+			timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_rehydration_elapsed", rehydrateElapsed.String(), state.ReadProbeRequest, field))
 			diagnostics = append(diagnostics, rehydrateDiagnostics...)
 			item.Probes = append(item.Probes, rehydrated.Probes...)
 			if err != nil || diagnostics.BlocksNative() {
@@ -247,11 +303,11 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 			}
 			values = rehydrated.Values
 		}
-		if len(values) != len(readRownums) {
+		if len(values) != len(state.ReadRequest.Rownums) {
 			diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticInternalInvariant,
 				qsbridge.PhaseExecute,
-				"native projection materialization returned "+strconv.Itoa(len(values))+" values for "+strconv.Itoa(len(readRownums))+" rownums",
+				"native projection materialization returned "+strconv.Itoa(len(values))+" values for "+strconv.Itoa(len(state.ReadRequest.Rownums))+" rownums",
 			))
 			item.Diagnostics = diagnostics
 			return item, diagnostics, nil
@@ -259,10 +315,10 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 		if readResult.Field.Field != "" || readResult.Field.PhysicalName != "" {
 			field = readResult.Field
 		}
-		valueCache.Set(valueCacheKey, readRownums, values)
-		recordQueryScratchpadCacheStore(ctx, "projection_value_cache", nativeProjectionValueCacheDetail(valueCacheKey, len(readRownums)))
-		if valueCacheHit {
-			merged, ok := nativeProjectionMergeCachedValues(cachedValues, values)
+		state.ValueCache.Set(state.ValueCacheKey, state.ReadRequest.Rownums, values)
+		recordQueryScratchpadCacheStore(ctx, "projection_value_cache", nativeProjectionValueCacheDetail(state.ValueCacheKey, len(state.ReadRequest.Rownums)))
+		if state.ValueCacheHit {
+			merged, ok := nativeProjectionMergeCachedValues(state.CachedValues, values)
 			if !ok {
 				diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
 					qsbridge.DiagnosticInternalInvariant,
@@ -283,6 +339,58 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 	item.RowSet = rowSet
 	item.Diagnostics = diagnostics
 	return item, diagnostics, nil
+}
+
+type nativeProjectionMaterializationFieldState struct {
+	Field            qsbridge.QuantaProjectionField
+	ValueCache       *ProjectionValueCache
+	ValueCacheKey    ProjectionValueCacheKey
+	CachedValues     ProjectionValueCacheLookup
+	ValueCacheHit    bool
+	Complete         bool
+	Values           []qsbridge.ResultCell
+	ReadRequest      NativeProjectionFieldReadRequest
+	ReadProbeRequest qsbridge.QuantaMaterializationRequest
+	ReadResult       NativeProjectionFieldReadResult
+	ReadElapsed      time.Duration
+}
+
+func (k NativeProjectionMaterializationKernel) readProjectionFields(ctx context.Context, requests []NativeProjectionFieldReadRequest) ([]NativeProjectionFieldReadResult, []time.Duration, qsbridge.DiagnosticSet, error) {
+	if len(requests) == 0 {
+		return nil, nil, nil, nil
+	}
+	if batchReader, ok := k.Reader.(NativeProjectionBatchFieldReader); ok && len(requests) > 1 {
+		start := time.Now()
+		results, diagnostics, err := batchReader.ReadProjectionFields(ctx, requests)
+		elapsed := time.Since(start)
+		timings := make([]time.Duration, len(requests))
+		for i := range timings {
+			timings[i] = elapsed
+		}
+		if err != nil || diagnostics.BlocksNative() || len(results) == len(requests) {
+			return results, timings, diagnostics, err
+		}
+		diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+			qsbridge.DiagnosticInternalInvariant,
+			qsbridge.PhaseExecute,
+			"native projection batch reader returned "+strconv.Itoa(len(results))+" field reads for "+strconv.Itoa(len(requests))+" requests",
+		))
+		return results, timings, diagnostics, nil
+	}
+	results := make([]NativeProjectionFieldReadResult, 0, len(requests))
+	timings := make([]time.Duration, 0, len(requests))
+	var diagnostics qsbridge.DiagnosticSet
+	for _, request := range requests {
+		start := time.Now()
+		result, readDiagnostics, err := k.Reader.ReadProjectionField(ctx, request)
+		timings = append(timings, time.Since(start))
+		results = append(results, result)
+		diagnostics = append(diagnostics, readDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return results, timings, diagnostics, err
+		}
+	}
+	return results, timings, diagnostics, nil
 }
 
 func nativeProjectionMaterializationFieldProbe(name, value string, request qsbridge.QuantaMaterializationRequest, field qsbridge.QuantaProjectionField) ExecutionProbe {

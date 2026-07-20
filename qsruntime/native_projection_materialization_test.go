@@ -129,6 +129,71 @@ func TestNativeProjectionMaterializationKernelReusesCachedProjectionValues(t *te
 	}
 }
 
+func TestNativeProjectionMaterializationKernelUsesBatchFieldReader(t *testing.T) {
+	ctx := WithQueryScratchpad(context.Background())
+	fields := []qsbridge.QuantaProjectionField{
+		{Index: "lineitem", Field: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+		{Index: "lineitem", Field: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Visible: true},
+	}
+	reader := &recordingNativeProjectionBatchFieldReader{}
+	kernel := NativeProjectionMaterializationKernel{Reader: reader}
+
+	result, err := kernel.MaterializeProjectionBatches(ctx, ProjectionMaterializationKernelRequest{
+		ID: "projection_materialization",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index:            "lineitem",
+			Rownums:          []qsbridge.QuantaRownum{1, 2},
+			ProjectionFields: fields,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("MaterializeProjectionBatches error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if reader.singleCalls != 0 {
+		t.Fatalf("single reader calls = %d, want 0", reader.singleCalls)
+	}
+	if len(reader.batchRequests) != 1 || len(reader.batchRequests[0]) != 2 {
+		t.Fatalf("batch requests = %#v, want one two-field batch", reader.batchRequests)
+	}
+	rowSet := result.Results[0].RowSet
+	if got := rowSet.ProjectionVectors[0].Values[1].Value; got != int64(20) {
+		t.Fatalf("l_orderkey row 2 = %#v, want 20", got)
+	}
+	if got := rowSet.ProjectionVectors[1].Values[1].Value; got != int64(200) {
+		t.Fatalf("l_suppkey row 2 = %#v, want 200", got)
+	}
+}
+
+type recordingNativeProjectionBatchFieldReader struct {
+	singleCalls   int
+	batchRequests [][]NativeProjectionFieldReadRequest
+}
+
+func (r *recordingNativeProjectionBatchFieldReader) ReadProjectionField(_ context.Context, request NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	r.singleCalls++
+	return NativeProjectionFieldReadResult{Field: request.Field}, nil, nil
+}
+
+func (r *recordingNativeProjectionBatchFieldReader) ReadProjectionFields(_ context.Context, requests []NativeProjectionFieldReadRequest) ([]NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	r.batchRequests = append(r.batchRequests, append([]NativeProjectionFieldReadRequest(nil), requests...))
+	results := make([]NativeProjectionFieldReadResult, 0, len(requests))
+	for _, request := range requests {
+		multiplier := int64(10)
+		if strings.EqualFold(request.Field.Field, "l_suppkey") {
+			multiplier = 100
+		}
+		values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
+		for _, rownum := range request.Rownums {
+			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum) * multiplier})
+		}
+		results = append(results, NativeProjectionFieldReadResult{Field: request.Field, Values: values})
+	}
+	return results, nil, nil
+}
+
 func nativeProjectionMaterializationTestProbeName(probes []ExecutionProbe, name string) bool {
 	for _, probe := range probes {
 		if probe.Name == name {

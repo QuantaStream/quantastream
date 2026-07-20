@@ -63,6 +63,12 @@ type NativeProjectionBSIReader interface {
 	ReadProjectionBSI(context.Context, NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error)
 }
 
+// NativeProjectionBSIBatchReader optionally reads several raw BSI vectors that
+// share a storage request.
+type NativeProjectionBSIBatchReader interface {
+	ReadProjectionBSIs(context.Context, []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error)
+}
+
 // NativeProjectionBSIReaderFunc adapts a function to NativeProjectionBSIReader.
 type NativeProjectionBSIReaderFunc func(context.Context, NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error)
 
@@ -145,6 +151,180 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionField(ctx context.Context,
 		Values: values,
 		Probes: readResult.Probes,
 	}, nil, nil
+}
+
+// ReadProjectionFields batches simple BSI-backed projection fields when they
+// share the same candidate rownums and time window. Unsupported field shapes
+// deliberately fall back to ReadProjectionField so the single-field contract
+// remains authoritative.
+func (r NativeProjectionBSIFieldReader) ReadProjectionFields(ctx context.Context, requests []NativeProjectionFieldReadRequest) ([]NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	results := make([]NativeProjectionFieldReadResult, len(requests))
+	pending := make([]nativeProjectionBSIFieldReadPlan, 0, len(requests))
+	var diagnostics qsbridge.DiagnosticSet
+	for i, request := range requests {
+		plan, ok := r.nativeProjectionBSIFieldReadPlan(request, i)
+		if ok {
+			pending = append(pending, plan)
+			continue
+		}
+		result, readDiagnostics, err := r.ReadProjectionField(ctx, request)
+		results[i] = result
+		diagnostics = append(diagnostics, readDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return results, diagnostics, err
+		}
+	}
+	if len(pending) == 0 {
+		return results, diagnostics, nil
+	}
+	batchReader, batchOK := r.Reader.(NativeProjectionBSIBatchReader)
+	for _, group := range nativeProjectionBSIFieldReadPlanGroups(pending) {
+		if batchOK && len(group) > 1 {
+			bsiRequests := make([]NativeProjectionBSIReadRequest, 0, len(group))
+			for _, plan := range group {
+				bsiRequests = append(bsiRequests, plan.BSIRequest)
+			}
+			readResults, readDiagnostics, err := batchReader.ReadProjectionBSIs(ctx, bsiRequests)
+			diagnostics = append(diagnostics, readDiagnostics...)
+			if err != nil || diagnostics.BlocksNative() {
+				return results, diagnostics, err
+			}
+			if len(readResults) != len(group) {
+				diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticInternalInvariant,
+					qsbridge.PhaseExecute,
+					"native BSI batch reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(group))+" requests",
+				))
+				return results, diagnostics, nil
+			}
+			for i, readResult := range readResults {
+				result, resultDiagnostics := nativeProjectionBSIFieldResult(group[i], readResult)
+				results[group[i].Position] = result
+				diagnostics = append(diagnostics, resultDiagnostics...)
+				if diagnostics.BlocksNative() {
+					return results, diagnostics, nil
+				}
+			}
+			continue
+		}
+		for _, plan := range group {
+			readResult, readDiagnostics, err := r.Reader.ReadProjectionBSI(ctx, plan.BSIRequest)
+			diagnostics = append(diagnostics, readDiagnostics...)
+			if err != nil || diagnostics.BlocksNative() {
+				return results, diagnostics, err
+			}
+			result, resultDiagnostics := nativeProjectionBSIFieldResult(plan, readResult)
+			results[plan.Position] = result
+			diagnostics = append(diagnostics, resultDiagnostics...)
+			if diagnostics.BlocksNative() {
+				return results, diagnostics, nil
+			}
+		}
+	}
+	return results, diagnostics, nil
+}
+
+type nativeProjectionBSIFieldReadPlan struct {
+	Position   int
+	Request    NativeProjectionFieldReadRequest
+	BSIRequest NativeProjectionBSIReadRequest
+	Table      *core.Table
+	Attribute  *core.Attribute
+}
+
+func (r NativeProjectionBSIFieldReader) nativeProjectionBSIFieldReadPlan(request NativeProjectionFieldReadRequest, position int) (nativeProjectionBSIFieldReadPlan, bool) {
+	index := strings.TrimSpace(request.Index)
+	if index == "" {
+		index = strings.TrimSpace(request.Field.Index)
+	}
+	fieldName := nativeProjectionPhysicalField(request.Field)
+	if index == "" || fieldName == "" || nativeProjectionRownumPseudoField(fieldName) || len(request.Rownums) == 0 || r.Reader == nil {
+		return nativeProjectionBSIFieldReadPlan{}, false
+	}
+	table := legacyDirectRelationshipCachedTable(r.TableCache, index)
+	if table == nil {
+		return nativeProjectionBSIFieldReadPlan{}, false
+	}
+	attr, diagnostics := nativeProjectionAttribute(table, fieldName)
+	if diagnostics.BlocksNative() ||
+		nativeProjectionAttributeIsStringEnum(attr) ||
+		nativeProjectionAttributeIsBackingString(attr) ||
+		nativeProjectionAttributeIsDirectBitmap(attr) ||
+		attr == nil ||
+		nativeProjectionAttributeRequiresFallback(attr) {
+		return nativeProjectionBSIFieldReadPlan{}, false
+	}
+	return nativeProjectionBSIFieldReadPlan{
+		Position: position,
+		Request:  request,
+		BSIRequest: NativeProjectionBSIReadRequest{
+			Index:           index,
+			Field:           request.Field,
+			PhysicalField:   fieldName,
+			Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			FromEpochMillis: request.FromEpochMillis,
+			ToEpochMillis:   request.ToEpochMillis,
+		},
+		Table:     table,
+		Attribute: attr,
+	}, true
+}
+
+func nativeProjectionBSIFieldReadPlanGroups(plans []nativeProjectionBSIFieldReadPlan) [][]nativeProjectionBSIFieldReadPlan {
+	groups := make([][]nativeProjectionBSIFieldReadPlan, 0, len(plans))
+	for _, plan := range plans {
+		matched := false
+		for i := range groups {
+			if nativeProjectionBSIFieldReadPlanSameGroup(groups[i][0], plan) {
+				groups[i] = append(groups[i], plan)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			groups = append(groups, []nativeProjectionBSIFieldReadPlan{plan})
+		}
+	}
+	return groups
+}
+
+func nativeProjectionBSIFieldReadPlanSameGroup(left, right nativeProjectionBSIFieldReadPlan) bool {
+	return strings.EqualFold(left.BSIRequest.Index, right.BSIRequest.Index) &&
+		left.BSIRequest.FromEpochMillis == right.BSIRequest.FromEpochMillis &&
+		left.BSIRequest.ToEpochMillis == right.BSIRequest.ToEpochMillis &&
+		nativeProjectionSameRownums(left.BSIRequest.Rownums, right.BSIRequest.Rownums)
+}
+
+func nativeProjectionSameRownums(left, right []qsbridge.QuantaRownum) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeProjectionBSIFieldResult(plan nativeProjectionBSIFieldReadPlan, readResult NativeProjectionBSIReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet) {
+	if readResult.BSI == nil {
+		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, nativeProjectionUnsupported("native BSI projection returned no BSI for " + plan.BSIRequest.Index + "." + plan.BSIRequest.PhysicalField)
+	}
+	values := make([]qsbridge.ResultCell, 0, len(plan.BSIRequest.Rownums))
+	for _, rownum := range plan.BSIRequest.Rownums {
+		value, ok := readResult.BSI.GetBigValue(uint64(rownum))
+		if !ok {
+			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
+			continue
+		}
+		values = append(values, nativeProjectionBSICell(plan.Table, plan.Attribute, plan.Request.Field, value))
+	}
+	return NativeProjectionFieldReadResult{
+		Field:  plan.Request.Field,
+		Values: values,
+		Probes: readResult.Probes,
+	}, nil
 }
 
 func (r NativeProjectionBSIFieldReader) readProjectionDictionaryIDs(ctx context.Context, request NativeProjectionFieldReadRequest, index string, fieldName string) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
@@ -235,52 +415,137 @@ type LegacyDirectProjectionBSIReader struct {
 
 // ReadProjectionBSI projects one BSI-backed field through BitIndex.Projection.
 func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	results, diagnostics, err := r.ReadProjectionBSIs(ctx, []NativeProjectionBSIReadRequest{request})
+	if len(results) == 0 {
+		return NativeProjectionBSIReadResult{}, diagnostics, err
+	}
+	return results[0], diagnostics, err
+}
+
+// ReadProjectionBSIs projects several BSI-backed fields through one or more
+// BitIndex.Projection calls when their candidate rownums and time windows align.
+func (r LegacyDirectProjectionBSIReader) ReadProjectionBSIs(ctx context.Context, requests []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	results := make([]NativeProjectionBSIReadResult, len(requests))
+	if len(requests) == 0 {
+		return results, nil, nil
+	}
 	if r.Source == nil {
-		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
+		return results, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no source"),
 		}, nil
 	}
-	fromTime, toTime := nativeProjectionWindowNanos(r.TableCache, request)
-	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
-	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := directProjectionBSICacheFromContext(ctx)
-	detail := directProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
-	cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
-	if ok {
-		recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
-		return NativeProjectionBSIReadResult{
-			BSI: cachedBSI,
-			Probes: []ExecutionProbe{
-				directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-				directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
-				directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
-			},
-		}, nil, nil
-	}
-	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
-	fetchSet := foundSet
-	fetchRownums := request.Rownums
-	partial := ProjectionBSICachePartial{}
-	partialMode := ""
-	partialOK := false
-	if mode == "coverage_miss" {
-		partial, partialMode, partialOK = cache.GetPartial(cacheKey, foundSet)
-		if partialOK {
-			recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache_partial", true, partialMode, directProjectionBSIPartialCacheDetail(detail, partial))
-			if partial.MissingCardinality() == 0 {
-				return NativeProjectionBSIReadResult{
-					BSI: partial.BSI,
-					Probes: []ExecutionProbe{
-						directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-						directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
-						directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, partialMode),
-					},
-				}, nil, nil
+	works := make([]nativeProjectionBSIReadWork, 0, len(requests))
+	for i, request := range requests {
+		fromTime, toTime := nativeProjectionWindowNanos(r.TableCache, request)
+		foundSet := legacyDirectRelationshipBitmap(request.Rownums)
+		cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
+		detail := directProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
+		cachedBSI, mode, ok := cache.Get(cacheKey, foundSet)
+		if ok {
+			recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
+			results[i] = NativeProjectionBSIReadResult{
+				BSI: cachedBSI,
+				Probes: []ExecutionProbe{
+					directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+					directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+					directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
+				},
 			}
-			fetchSet = partial.MissingRownumSet
-			fetchRownums = partial.MissingRownums()
+			continue
+		}
+		recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
+		work := nativeProjectionBSIReadWork{
+			Position:     i,
+			Request:      request,
+			FromTime:     fromTime,
+			ToTime:       toTime,
+			FoundSet:     foundSet,
+			FetchSet:     foundSet,
+			FetchRownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			CacheKey:     cacheKey,
+			CacheDetail:  detail,
+			CacheMode:    mode,
+		}
+		if mode == "coverage_miss" {
+			partial, partialMode, partialOK := cache.GetPartial(cacheKey, foundSet)
+			if partialOK {
+				recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache_partial", true, partialMode, directProjectionBSIPartialCacheDetail(detail, partial))
+				if partial.MissingCardinality() == 0 {
+					results[i] = NativeProjectionBSIReadResult{
+						BSI: partial.BSI,
+						Probes: []ExecutionProbe{
+							directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+							directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+							directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, partialMode),
+						},
+					}
+					continue
+				}
+				work.FetchSet = partial.MissingRownumSet
+				work.FetchRownums = partial.MissingRownums()
+				work.Partial = partial
+				work.PartialOK = true
+			}
+		}
+		works = append(works, work)
+	}
+	var diagnostics qsbridge.DiagnosticSet
+	for _, group := range nativeProjectionBSIReadWorkGroups(works) {
+		groupDiagnostics, err := r.readProjectionBSIWorkGroup(ctx, group, cache, results)
+		diagnostics = append(diagnostics, groupDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return results, diagnostics, err
 		}
 	}
+	return results, diagnostics, nil
+}
+
+type nativeProjectionBSIReadWork struct {
+	Position     int
+	Request      NativeProjectionBSIReadRequest
+	FromTime     int64
+	ToTime       int64
+	FoundSet     *roaring64.Bitmap
+	FetchSet     *roaring64.Bitmap
+	FetchRownums []qsbridge.QuantaRownum
+	CacheKey     ProjectionBSICacheKey
+	CacheDetail  string
+	CacheMode    string
+	Partial      ProjectionBSICachePartial
+	PartialOK    bool
+}
+
+func nativeProjectionBSIReadWorkGroups(works []nativeProjectionBSIReadWork) [][]nativeProjectionBSIReadWork {
+	groups := make([][]nativeProjectionBSIReadWork, 0, len(works))
+	for _, work := range works {
+		matched := false
+		for i := range groups {
+			if nativeProjectionBSIReadWorkSameGroup(groups[i][0], work) {
+				groups[i] = append(groups[i], work)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			groups = append(groups, []nativeProjectionBSIReadWork{work})
+		}
+	}
+	return groups
+}
+
+func nativeProjectionBSIReadWorkSameGroup(left, right nativeProjectionBSIReadWork) bool {
+	return strings.EqualFold(left.Request.Index, right.Request.Index) &&
+		left.FromTime == right.FromTime &&
+		left.ToTime == right.ToTime &&
+		nativeProjectionSameRownums(left.FetchRownums, right.FetchRownums)
+}
+
+func (r LegacyDirectProjectionBSIReader) readProjectionBSIWorkGroup(ctx context.Context, group []nativeProjectionBSIReadWork, cache *DirectProjectionBSICache, results []NativeProjectionBSIReadResult) (qsbridge.DiagnosticSet, error) {
+	if len(group) == 0 {
+		return nil, nil
+	}
+	request := group[0].Request
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     request.Index,
 		Field:     request.PhysicalField,
@@ -291,42 +556,53 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	provider := LegacyQuantaSourceSessionProvider{Source: r.Source}
 	session, diagnostics, err := provider.BorrowDirectSession(ctx, executionRequest)
 	if err != nil || diagnostics.BlocksNative() {
-		return NativeProjectionBSIReadResult{}, diagnostics, err
+		return diagnostics, err
 	}
 	if session == nil {
-		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
+		return qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
-		return NativeProjectionBSIReadResult{}, qsbridge.DiagnosticSet{
+		return qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no bitmap index"),
 		}, nil
 	}
-	bsiByField, _, err := legacySession.Session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, fetchSet, false)
+	fields := make([]string, 0, len(group))
+	for _, work := range group {
+		fields = append(fields, work.Request.PhysicalField)
+	}
+	projectionStart := time.Now()
+	bsiByField, _, err := legacySession.Session.BitIndex.Projection(request.Index, fields, group[0].FromTime, group[0].ToTime, group[0].FetchSet, false)
+	projectionElapsed := time.Since(projectionStart)
 	if err != nil {
-		return NativeProjectionBSIReadResult{}, nil, err
+		return nil, err
 	}
-	bsi := bsiByField[request.PhysicalField]
-	if bsi == nil {
-		bsi = roaring64.NewDefaultBSI()
+	for _, work := range group {
+		bsi := bsiByField[work.Request.PhysicalField]
+		if bsi == nil {
+			bsi = roaring64.NewDefaultBSI()
+		}
+		if work.PartialOK {
+			bsi = work.Partial.MergeFetchedMissing(bsi)
+		}
+		cache.Set(work.CacheKey, work.FoundSet, bsi)
+		recordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", work.CacheDetail)
+		results[work.Position] = NativeProjectionBSIReadResult{
+			BSI: bsi,
+			Probes: []ExecutionProbe{
+				directProjectionBSIRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.Request.Rownums)),
+				directProjectionBSIFetchRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.FetchRownums)),
+				directProjectionBSICacheProbe(work.Request.Index, work.Request.PhysicalField, false),
+				directProjectionBSICacheModeProbe(work.Request.Index, work.Request.PhysicalField, work.CacheMode),
+				directProjectionBSIBatchFieldsProbe(work.Request.Index, work.Request.PhysicalField, len(group)),
+				directProjectionBSIBatchElapsedProbe(work.Request.Index, work.Request.PhysicalField, projectionElapsed),
+			},
+		}
 	}
-	if partialOK {
-		bsi = partial.MergeFetchedMissing(bsi)
-	}
-	cache.Set(cacheKey, foundSet, bsi)
-	recordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
-	return NativeProjectionBSIReadResult{
-		BSI: bsi,
-		Probes: []ExecutionProbe{
-			directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
-			directProjectionBSIFetchRowsProbe(request.Index, request.PhysicalField, len(fetchRownums)),
-			directProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
-			directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
-		},
-	}, nil, nil
+	return nil, nil
 }
 
 func directProjectionBSICacheInstrumentationDetail(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) string {
@@ -383,6 +659,24 @@ func directProjectionBSICacheModeProbe(index, field string, mode string) Executi
 		Section: "native_projection_materialization",
 		Name:    "bsi_projection_cache_mode",
 		Value:   mode,
+		Detail:  index + "." + field,
+	}
+}
+
+func directProjectionBSIBatchFieldsProbe(index, field string, fields int) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_batch_fields",
+		Value:   strconv.Itoa(fields),
+		Detail:  index + "." + field,
+	}
+}
+
+func directProjectionBSIBatchElapsedProbe(index, field string, elapsed time.Duration) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_batch_elapsed",
+		Value:   elapsed.String(),
 		Detail:  index + "." + field,
 	}
 }
