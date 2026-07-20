@@ -117,6 +117,26 @@ func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
 	if got, want := matches.GetCardinality(), uint64(3); got != want {
 		t.Fatalf("matches cardinality = %d, want %d", got, want)
 	}
+
+	matches, stats, err := index.CompareBSIFieldsWithStats("lineitem", "l_receiptdate", "l_commitdate", 10, 20, roaring64.BitmapOf(1, 2, 3), roaring64.GT, false)
+	if err != nil {
+		t.Fatalf("CompareBSIFieldsWithStats() error = %v", err)
+	}
+	if got, want := fake.callCount(), 6; got != want {
+		t.Fatalf("compare fanout calls after stats call = %d, want %d", got, want)
+	}
+	if got, want := matches.GetCardinality(), uint64(3); got != want {
+		t.Fatalf("stats matches cardinality = %d, want %d", got, want)
+	}
+	if stats.Nodes != 3 || stats.OutputRows != 3 {
+		t.Fatalf("stats nodes/output = %d/%d, want 3/3", stats.Nodes, stats.OutputRows)
+	}
+	if stats.Left.ShardsVisited != 3 || stats.Right.ShardsRetained != 6 {
+		t.Fatalf("stats projections = left visited %d right retained %d, want 3/6", stats.Left.ShardsVisited, stats.Right.ShardsRetained)
+	}
+	if stats.CompareElapsed != 6*time.Millisecond {
+		t.Fatalf("compare elapsed = %s, want 6ms", stats.CompareElapsed)
+	}
 }
 
 type compareFanoutBitmapIndexServer struct {
@@ -136,7 +156,19 @@ func (s *compareFanoutBitmapIndexServer) CompareBSIFields(context.Context, *pb.C
 	if err != nil {
 		return nil, err
 	}
-	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+	return &pb.CompareBSIFieldsResponse{
+		Rownums: data,
+		Stats: &pb.CompareBSIFieldsStats{
+			Left: &pb.BSIProjectionStats{
+				ShardsVisited: 1,
+			},
+			Right: &pb.BSIProjectionStats{
+				ShardsRetained: 2,
+			},
+			CompareElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+			OutputRows:          1,
+		},
+	}, nil
 }
 
 func (s *compareFanoutBitmapIndexServer) callCount() int {

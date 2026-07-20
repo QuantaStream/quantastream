@@ -707,7 +707,7 @@ func (m *BitmapIndex) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFi
 			return nil, err
 		}
 	}
-	matches, _, err := m.CompareBSIFieldsWithStats(
+	matches, stats, err := m.CompareBSIFieldsWithStats(
 		req.GetIndex(),
 		req.GetLeftField(),
 		req.GetRightField(),
@@ -727,7 +727,31 @@ func (m *BitmapIndex) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFi
 	if err != nil {
 		return nil, err
 	}
-	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+	return &pb.CompareBSIFieldsResponse{
+		Rownums: data,
+		Stats:   compareBSIFieldsStatsToProto(stats),
+	}, nil
+}
+
+func compareBSIFieldsStatsToProto(stats CompareBSIFieldsStats) *pb.CompareBSIFieldsStats {
+	return &pb.CompareBSIFieldsStats{
+		Left:                projectBSIStatsToProto(stats.Left),
+		Right:               projectBSIStatsToProto(stats.Right),
+		CompareElapsedNanos: stats.CompareElapsed.Nanoseconds(),
+		OutputRows:          stats.OutputRows,
+	}
+}
+
+func projectBSIStatsToProto(stats ProjectBSIStats) *pb.BSIProjectionStats {
+	return &pb.BSIProjectionStats{
+		ShardsVisited:      uint64(stats.ShardsVisited),
+		ShardsInWindow:     uint64(stats.ShardsInWindow),
+		ShardsLocal:        uint64(stats.ShardsLocal),
+		ShardsRetained:     uint64(stats.ShardsRetained),
+		RetainedRows:       stats.RetainedRows,
+		RetainElapsedNanos: stats.RetainElapsed.Nanoseconds(),
+		MergeElapsedNanos:  stats.MergeElapsed.Nanoseconds(),
+	}
 }
 
 // ProjectBSI returns a projected BSI directly for in-process callers.

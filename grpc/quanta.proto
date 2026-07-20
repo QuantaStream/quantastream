@@ -247,8 +247,26 @@ message CompareBSIFieldsRequest {
   bool     invert = 8;
 }
 
+message BSIProjectionStats {
+  uint64   shardsVisited = 1;
+  uint64   shardsInWindow = 2;
+  uint64   shardsLocal = 3;
+  uint64   shardsRetained = 4;
+  uint64   retainedRows = 5;
+  int64    retainElapsedNanos = 6;
+  int64    mergeElapsedNanos = 7;
+}
+
+message CompareBSIFieldsStats {
+  BSIProjectionStats left = 1;
+  BSIProjectionStats right = 2;
+  int64    compareElapsedNanos = 3;
+  uint64   outputRows = 4;
+}
+
 message CompareBSIFieldsResponse {
   bytes    rownums = 1;
+  CompareBSIFieldsStats stats = 2;
 }
 
 message CheckoutSequenceRequest {

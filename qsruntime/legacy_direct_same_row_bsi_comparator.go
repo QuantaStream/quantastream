@@ -59,7 +59,7 @@ func (c LegacyDirectSharedSameRowBSIComparator) CompareSameRowBSI(ctx context.Co
 		}, nil
 	}
 	start := time.Now()
-	matches, err := legacySession.Session.BitIndex.CompareBSIFields(
+	matches, stats, err := legacySession.Session.BitIndex.CompareBSIFieldsWithStats(
 		request.Index,
 		request.LeftField,
 		request.RightField,
@@ -84,7 +84,7 @@ func (c LegacyDirectSharedSameRowBSIComparator) CompareSameRowBSI(ctx context.Co
 	}
 	return NativeSameRowBSICompareResult{
 		Rownums: rownums,
-		Probes: []ExecutionProbe{
+		Probes: append([]ExecutionProbe{
 			{
 				Section: "same_row_comparison",
 				Name:    request.ProbePrefix + "shared_compare_transport",
@@ -109,6 +109,76 @@ func (c LegacyDirectSharedSameRowBSIComparator) CompareSameRowBSI(ctx context.Co
 				Value:   strconv.Itoa(len(rownums)),
 				Detail:  request.Index,
 			},
-		},
+		}, sameRowSharedCompareStatsProbes(request, sameRowSharedCompareProbeStats{
+			Nodes:          stats.Nodes,
+			CompareElapsed: stats.CompareElapsed,
+			OutputRows:     stats.OutputRows,
+			Left: sameRowSharedCompareProjectionProbeStats{
+				ShardsVisited:  stats.Left.ShardsVisited,
+				ShardsInWindow: stats.Left.ShardsInWindow,
+				ShardsLocal:    stats.Left.ShardsLocal,
+				ShardsRetained: stats.Left.ShardsRetained,
+				RetainedRows:   stats.Left.RetainedRows,
+				RetainElapsed:  stats.Left.RetainElapsed,
+				MergeElapsed:   stats.Left.MergeElapsed,
+			},
+			Right: sameRowSharedCompareProjectionProbeStats{
+				ShardsVisited:  stats.Right.ShardsVisited,
+				ShardsInWindow: stats.Right.ShardsInWindow,
+				ShardsLocal:    stats.Right.ShardsLocal,
+				ShardsRetained: stats.Right.ShardsRetained,
+				RetainedRows:   stats.Right.RetainedRows,
+				RetainElapsed:  stats.Right.RetainElapsed,
+				MergeElapsed:   stats.Right.MergeElapsed,
+			},
+		})...),
 	}, nil, nil
+}
+
+type sameRowSharedCompareProbeStats struct {
+	Nodes          uint64
+	Left           sameRowSharedCompareProjectionProbeStats
+	Right          sameRowSharedCompareProjectionProbeStats
+	CompareElapsed time.Duration
+	OutputRows     uint64
+}
+
+type sameRowSharedCompareProjectionProbeStats struct {
+	ShardsVisited  uint64
+	ShardsInWindow uint64
+	ShardsLocal    uint64
+	ShardsRetained uint64
+	RetainedRows   uint64
+	RetainElapsed  time.Duration
+	MergeElapsed   time.Duration
+}
+
+func sameRowSharedCompareStatsProbes(request NativeSameRowBSICompareRequest, stats sameRowSharedCompareProbeStats) []ExecutionProbe {
+	prefix := request.ProbePrefix + "shared_compare_"
+	probes := []ExecutionProbe{
+		{Section: "same_row_comparison", Name: prefix + "stats_available", Value: strconv.FormatBool(stats.Nodes > 0), Detail: request.Index},
+	}
+	if stats.Nodes == 0 {
+		return probes
+	}
+	probes = append(probes,
+		ExecutionProbe{Section: "same_row_comparison", Name: prefix + "nodes", Value: strconv.FormatUint(stats.Nodes, 10), Detail: request.Index},
+		ExecutionProbe{Section: "same_row_comparison", Name: prefix + "node_compare_elapsed", Value: stats.CompareElapsed.String(), Detail: request.Index},
+		ExecutionProbe{Section: "same_row_comparison", Name: prefix + "aggregate_output_rows", Value: strconv.FormatUint(stats.OutputRows, 10), Detail: request.Index},
+	)
+	probes = append(probes, sameRowSharedCompareProjectionStatsProbes(prefix+"left_", request.Index, stats.Left)...)
+	probes = append(probes, sameRowSharedCompareProjectionStatsProbes(prefix+"right_", request.Index, stats.Right)...)
+	return probes
+}
+
+func sameRowSharedCompareProjectionStatsProbes(prefix string, detail string, stats sameRowSharedCompareProjectionProbeStats) []ExecutionProbe {
+	return []ExecutionProbe{
+		{Section: "same_row_comparison", Name: prefix + "shards_visited", Value: strconv.FormatUint(stats.ShardsVisited, 10), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "shards_in_window", Value: strconv.FormatUint(stats.ShardsInWindow, 10), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "shards_local", Value: strconv.FormatUint(stats.ShardsLocal, 10), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "shards_retained", Value: strconv.FormatUint(stats.ShardsRetained, 10), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "retained_rows", Value: strconv.FormatUint(stats.RetainedRows, 10), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "retain_elapsed", Value: stats.RetainElapsed.String(), Detail: detail},
+		{Section: "same_row_comparison", Name: prefix + "merge_elapsed", Value: stats.MergeElapsed.String(), Detail: detail},
+	}
 }

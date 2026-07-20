@@ -43,6 +43,28 @@ type BitmapIndex struct {
 	local  LocalBitmapIndexService
 }
 
+// CompareBSIFieldsProjectionStats summarizes projection work reported by
+// readable nodes during a same-row BSI comparison.
+type CompareBSIFieldsProjectionStats struct {
+	ShardsVisited  uint64
+	ShardsInWindow uint64
+	ShardsLocal    uint64
+	ShardsRetained uint64
+	RetainedRows   uint64
+	RetainElapsed  time.Duration
+	MergeElapsed   time.Duration
+}
+
+// CompareBSIFieldsStats summarizes client-visible same-row BSI comparison work
+// across all readable nodes that answered a comparison request.
+type CompareBSIFieldsStats struct {
+	Nodes          uint64
+	Left           CompareBSIFieldsProjectionStats
+	Right          CompareBSIFieldsProjectionStats
+	CompareElapsed time.Duration
+	OutputRows     uint64
+}
+
 // NewBitmapIndex - Initializer for client side API wrappers.
 func NewBitmapIndex(conn *Conn) *BitmapIndex {
 
@@ -663,13 +685,21 @@ func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime
 // local shard fragments and returns the union of matching rownums.
 func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, fromTime, toTime int64,
 	foundSet *roaring64.Bitmap, op roaring64.Operation, invert bool) (*roaring64.Bitmap, error) {
+	result, _, err := c.CompareBSIFieldsWithStats(index, leftField, rightField, fromTime, toTime, foundSet, op, invert)
+	return result, err
+}
+
+// CompareBSIFieldsWithStats asks readable nodes to compare two BSI fields and
+// returns both the union of matching rownums and aggregated node-reported work.
+func (c *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField string, fromTime, toTime int64,
+	foundSet *roaring64.Bitmap, op roaring64.Operation, invert bool) (*roaring64.Bitmap, CompareBSIFieldsStats, error) {
 
 	var data []byte
 	if foundSet != nil {
 		var err error
 		data, err = foundSet.MarshalBinary()
 		if err != nil {
-			return nil, err
+			return nil, CompareBSIFieldsStats{}, err
 		}
 	}
 	req := &pb.CompareBSIFieldsRequest{
@@ -687,14 +717,14 @@ func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, from
 		defer cancel()
 		response, err := c.local.CompareBSIFields(ctx, req)
 		if err != nil {
-			return nil, err
+			return nil, CompareBSIFieldsStats{}, err
 		}
-		return aggregateCompareBSIFieldsResponses([]*pb.CompareBSIFieldsResponse{response})
+		return aggregateCompareBSIFieldsResponsesWithStats([]*pb.CompareBSIFieldsResponse{response})
 	}
 
 	clients := c.activeClientsSnapshot()
 	if len(clients) == 0 {
-		return nil, fmt.Errorf("CompareBSIFields: no active bitmap nodes")
+		return nil, CompareBSIFieldsStats{}, fmt.Errorf("CompareBSIFields: no active bitmap nodes")
 	}
 	resultChan := make(chan *pb.CompareBSIFieldsResponse, len(clients))
 	var eg errgroup.Group
@@ -714,7 +744,7 @@ func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, from
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		return nil, err
+		return nil, CompareBSIFieldsStats{}, err
 	}
 	close(resultChan)
 
@@ -722,21 +752,55 @@ func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, from
 	for response := range resultChan {
 		responses = append(responses, response)
 	}
-	return aggregateCompareBSIFieldsResponses(responses)
+	return aggregateCompareBSIFieldsResponsesWithStats(responses)
 }
 
 func aggregateCompareBSIFieldsResponses(responses []*pb.CompareBSIFieldsResponse) (*roaring64.Bitmap, error) {
+	result, _, err := aggregateCompareBSIFieldsResponsesWithStats(responses)
+	return result, err
+}
+
+func aggregateCompareBSIFieldsResponsesWithStats(responses []*pb.CompareBSIFieldsResponse) (*roaring64.Bitmap, CompareBSIFieldsStats, error) {
 	bitmaps := make([]*roaring64.Bitmap, 0, len(responses))
+	stats := CompareBSIFieldsStats{}
 	for _, response := range responses {
 		bitmap := roaring64.NewBitmap()
 		if response != nil && len(response.GetRownums()) > 0 {
 			if err := bitmap.UnmarshalBinary(response.GetRownums()); err != nil {
-				return nil, fmt.Errorf("unmarshalling BSI comparison rownums - %v", err)
+				return nil, CompareBSIFieldsStats{}, fmt.Errorf("unmarshalling BSI comparison rownums - %v", err)
 			}
 		}
 		bitmaps = append(bitmaps, bitmap)
+		stats.addProto(response.GetStats())
 	}
-	return roaring64.ParOr(0, bitmaps...), nil
+	result := roaring64.ParOr(0, bitmaps...)
+	if result != nil {
+		stats.OutputRows = result.GetCardinality()
+	}
+	return result, stats, nil
+}
+
+func (s *CompareBSIFieldsStats) addProto(stats *pb.CompareBSIFieldsStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.Nodes++
+	s.Left.addProto(stats.GetLeft())
+	s.Right.addProto(stats.GetRight())
+	s.CompareElapsed += time.Duration(stats.GetCompareElapsedNanos())
+}
+
+func (s *CompareBSIFieldsProjectionStats) addProto(stats *pb.BSIProjectionStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.ShardsVisited += stats.GetShardsVisited()
+	s.ShardsInWindow += stats.GetShardsInWindow()
+	s.ShardsLocal += stats.GetShardsLocal()
+	s.ShardsRetained += stats.GetShardsRetained()
+	s.RetainedRows += stats.GetRetainedRows()
+	s.RetainElapsed += time.Duration(stats.GetRetainElapsedNanos())
+	s.MergeElapsed += time.Duration(stats.GetMergeElapsedNanos())
 }
 
 func compareBSIFieldsResponseCardinalityDebug(response *pb.CompareBSIFieldsResponse) string {
