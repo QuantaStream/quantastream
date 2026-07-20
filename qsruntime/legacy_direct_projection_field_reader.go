@@ -244,7 +244,9 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)
 	cacheKey := directProjectionBSICacheKeyFor(request, fromTime, toTime)
 	cache := directProjectionBSICacheFromContext(ctx)
+	detail := directProjectionBSICacheInstrumentationDetail(cacheKey, foundSet)
 	if bsi, mode, ok := cache.Get(cacheKey, foundSet); ok {
+		recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, mode, detail)
 		return NativeProjectionBSIReadResult{
 			BSI: bsi,
 			Probes: []ExecutionProbe{
@@ -254,6 +256,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			},
 		}, nil, nil
 	}
+	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, "miss", detail)
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     request.Index,
 		Field:     request.PhysicalField,
@@ -287,6 +290,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 		bsi = roaring64.NewDefaultBSI()
 	}
 	cache.Set(cacheKey, foundSet, bsi)
+	recordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
 		Probes: []ExecutionProbe{
@@ -295,6 +299,18 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, "miss"),
 		},
 	}, nil, nil
+}
+
+func directProjectionBSICacheInstrumentationDetail(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) string {
+	rows := uint64(0)
+	if rownumSet != nil {
+		rows = rownumSet.GetCardinality()
+	}
+	return "index=" + key.Index +
+		" field=" + key.Field +
+		" rows=" + strconv.FormatUint(rows, 10) +
+		" from=" + strconv.FormatInt(key.FromTimeNanos, 10) +
+		" to=" + strconv.FormatInt(key.ToTimeNanos, 10)
 }
 
 func directProjectionBSIRowsProbe(index, field string, rows int) ExecutionProbe {

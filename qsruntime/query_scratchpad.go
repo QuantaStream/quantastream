@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -77,6 +78,42 @@ func RelationshipVectorProjectionCacheFromContext(ctx context.Context) *Relation
 		return nil
 	}
 	return scratchpad.RelationshipVectorProjections
+}
+
+func recordQueryScratchpadCacheLookup(ctx context.Context, cacheName string, hit bool, mode string, detail string) {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil || cacheName == "" {
+		return
+	}
+	value := "miss"
+	counter := cacheName + "_miss"
+	if hit {
+		value = "hit"
+		counter = cacheName + "_hit"
+	}
+	detail = queryScratchpadCacheObservationDetail(mode, detail)
+	recorder.ObserveEvent("query_scratchpad", cacheName+"_lookup", value, detail)
+	recorder.ObserveCount("query_scratchpad", counter, 1, detail)
+}
+
+func recordQueryScratchpadCacheStore(ctx context.Context, cacheName string, detail string) {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil || cacheName == "" {
+		return
+	}
+	recorder.ObserveEvent("query_scratchpad", cacheName+"_store", "stored", detail)
+	recorder.ObserveCount("query_scratchpad", cacheName+"_store", 1, detail)
+}
+
+func queryScratchpadCacheObservationDetail(mode string, detail string) string {
+	parts := []string{}
+	if mode != "" {
+		parts = append(parts, "mode="+mode)
+	}
+	if detail != "" {
+		parts = append(parts, detail)
+	}
+	return strings.Join(parts, " ")
 }
 
 // ProjectionBSICacheKey identifies a BSI projection by logical field and time

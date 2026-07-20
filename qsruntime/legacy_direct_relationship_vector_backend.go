@@ -110,19 +110,34 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 
 // cachedRelationshipVectorProjection returns a projected FK BSI when request-scoped reuse is available.
 func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorProjection(ctx context.Context, key string) (*roaring64.BSI, bool) {
+	detail := "key=" + key
 	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
-		return cache.Get(key)
+		bsi, ok := cache.Get(key)
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", ok, relationshipVectorProjectionCacheMode(ok), detail)
+		return bsi, ok
 	}
-	return b.ProjectionCache.Get(key)
+	bsi, ok := b.ProjectionCache.Get(key)
+	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", ok, relationshipVectorProjectionCacheMode(ok), detail)
+	return bsi, ok
 }
 
 // storeRelationshipVectorProjection stores a projected FK BSI when a request-scoped cache is present.
 func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorProjection(ctx context.Context, key string, bsi *roaring64.BSI) {
+	detail := "key=" + key
 	if cache := RelationshipVectorProjectionCacheFromContext(ctx); cache != nil {
 		cache.Put(key, bsi)
+		recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", detail)
 		return
 	}
 	b.ProjectionCache.Put(key, bsi)
+	recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", detail)
+}
+
+func relationshipVectorProjectionCacheMode(hit bool) string {
+	if hit {
+		return "exact"
+	}
+	return "miss"
 }
 
 // relationshipVectorProjectionCacheKey identifies a projection read independent of source candidate values.

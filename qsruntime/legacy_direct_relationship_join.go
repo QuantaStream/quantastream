@@ -1788,8 +1788,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	cache := e.relationshipVectorProjectionCache(ctx)
 	if cache != nil {
 		if fkBSI, ok := cache.Get(cacheKey); ok {
+			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
 			return fkBSI, true, nil, nil
 		}
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
 	}
 	if e.Source == nil && e.RelationshipProjectionReader == nil {
 		return nil, false, nil, nil
@@ -1802,8 +1804,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	cache := e.relationshipVectorProjectionCache(ctx)
 	if cache != nil {
 		if fkBSI, ok := cache.Get(cacheKey); ok {
+			recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
 			return fkBSI, true, nil, nil
 		}
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
 	}
 	if fullFKBSI, ok := e.legacyDirectRelationshipCachedFullFKBSI(ctx, edge, fromTime, toTime, childFoundSet); ok {
 		return fullFKBSI, true, nil, nil
@@ -1826,6 +1830,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 		}
 		if cache != nil {
 			cache.Put(cacheKey, fkBSI)
+			recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key="+cacheKey)
 		}
 		return fkBSI, false, nil, nil
 	}
@@ -1868,6 +1873,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	if cache != nil {
 		cache.Put(cacheKey, fkBSI)
+		recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key="+cacheKey)
 	}
 	return fkBSI, false, nil, nil
 }
@@ -1921,11 +1927,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipCach
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, nil)
 	fkBSI, ok := cache.Get(cacheKey)
 	if !ok || fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
 		return nil, false
 	}
 	if legacyDirectRelationshipBitmapCovers(fkBSI.GetExistenceBitmap(), childFoundSet) {
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "retained_subset", "key="+cacheKey)
 		return fkBSI, true
 	}
+	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "coverage_miss", "key="+cacheKey)
 	return nil, false
 }
 
@@ -1953,8 +1962,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, initialRows)
 	cacheKey := e.legacyDirectRelationshipProjectionCacheKey(edge.childTable, edge.childField, fromTime, toTime, legacyDirectRelationshipBitmap(initialRows))
 	if _, ok := cache.Get(cacheKey); !ok {
+		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", false, "miss", "key="+cacheKey)
 		return legacyDirectRelationshipProjectionRowsForAppliedPolicy(edge, childRows, scratchpad, policy), policy
 	}
+	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_projection_cache", true, "exact", "key="+cacheKey)
 	policy.Strategy = legacyDirectRelationshipProjectionStrategyBroadFromScratchpad
 	policy.AppliedStrategy = legacyDirectRelationshipProjectionStrategyBroadFromScratchpad
 	policy.Reason = "broad_projection_cache_hit"
@@ -2833,14 +2844,19 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	timing.domainMappingCacheMode = "miss"
 	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, projectionRows)
 	domainCacheKey := legacyDirectRelationshipDomainMappingCacheKey(edge, fromTime, toTime)
-	if parentByChild, mode, ok := DomainMappingCacheFromContext(ctx).Get(domainCacheKey, parentRows, childRows); ok {
-		_, joined, pairs := legacyDirectRelationshipRowsFromParentMap(childRows, parentByChild)
-		timing.domainMappingCacheHit = true
-		timing.domainMappingCacheMode = mode
-		timing.parentKeyRows = len(legacyDirectRelationshipUniqueRownums(parentRows))
-		timing.matchedRows = len(joined)
-		timing.fkProjectionScope = "domain_mapping_cache"
-		return joined, pairs, timing, nil, nil
+	domainCacheDetail := legacyDirectRelationshipDomainMappingCacheDetail(domainCacheKey, parentRows, childRows)
+	if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+		if parentByChild, mode, ok := domainCache.Get(domainCacheKey, parentRows, childRows); ok {
+			recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", true, mode, domainCacheDetail)
+			_, joined, pairs := legacyDirectRelationshipRowsFromParentMap(childRows, parentByChild)
+			timing.domainMappingCacheHit = true
+			timing.domainMappingCacheMode = mode
+			timing.parentKeyRows = len(legacyDirectRelationshipUniqueRownums(parentRows))
+			timing.matchedRows = len(joined)
+			timing.fkProjectionScope = "domain_mapping_cache"
+			return joined, pairs, timing, nil, nil
+		}
+		recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", domainCacheDetail)
 	}
 	childFoundSet := legacyDirectRelationshipBitmap(childRows)
 	projectionStart := time.Now()
@@ -2891,7 +2907,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	if diagnostics.BlocksNative() {
 		return nil, nil, timing, diagnostics, nil
 	}
-	DomainMappingCacheFromContext(ctx).Set(domainCacheKey, parentRows, childRows, legacyDirectRelationshipParentMapFromPairs(pairs))
+	if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+		domainCache.Set(domainCacheKey, parentRows, childRows, legacyDirectRelationshipParentMapFromPairs(pairs))
+		recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
+	}
 	return joined, pairs, timing, nil, nil
 }
 
@@ -2905,6 +2924,15 @@ func legacyDirectRelationshipDomainMappingCacheKey(edge legacyDirectRelationship
 		FromTimeNanos: fromTime,
 		ToTimeNanos:   toTime,
 	}
+}
+
+func legacyDirectRelationshipDomainMappingCacheDetail(key DomainMappingCacheKey, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum) string {
+	return "source=" + key.SourceDomain +
+		" target=" + key.TargetDomain +
+		" vector=" + key.VectorIndex + "." + key.VectorField +
+		" direction=" + key.Direction +
+		" parent_rows=" + strconv.Itoa(len(parentRows)) +
+		" child_rows=" + strconv.Itoa(len(childRows))
 }
 
 func legacyDirectRelationshipParentMapFromPairs(pairs []legacyDirectRelationshipPair) map[qsbridge.QuantaRownum]qsbridge.QuantaRownum {

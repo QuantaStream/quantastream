@@ -56,6 +56,37 @@ func TestExecutionInstrumentationRecordsStructuredObservations(t *testing.T) {
 	}
 }
 
+func TestQueryScratchpadCacheObservationHelpersRecordLookupAndStore(t *testing.T) {
+	ctx := WithQueryScratchpad(context.Background())
+
+	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", true, "exact", "index=lineitem field=l_orderkey")
+	recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", "source=l target=o")
+	recordQueryScratchpadCacheStore(ctx, "relationship_vector_projection_cache", "key=lineitem:l_orderkey")
+
+	snapshot := ExecutionInstrumentationSnapshotFromContext(ctx)
+	assertExecutionCounter(t, snapshot, "query_scratchpad", "projection_bsi_cache_hit", 1)
+	assertExecutionCounter(t, snapshot, "query_scratchpad", "domain_mapping_cache_miss", 1)
+	assertExecutionCounter(t, snapshot, "query_scratchpad", "relationship_vector_projection_cache_store", 1)
+	if !executionEventFound(snapshot, "query_scratchpad", "projection_bsi_cache_lookup", "hit") {
+		t.Fatalf("projection cache hit event not found in %#v", snapshot.Events)
+	}
+	if !executionEventFound(snapshot, "query_scratchpad", "domain_mapping_cache_lookup", "miss") {
+		t.Fatalf("domain mapping miss event not found in %#v", snapshot.Events)
+	}
+	if !executionEventFound(snapshot, "query_scratchpad", "relationship_vector_projection_cache_store", "stored") {
+		t.Fatalf("relationship-vector store event not found in %#v", snapshot.Events)
+	}
+}
+
+func executionEventFound(snapshot ExecutionInstrumentationSnapshot, section string, name string, value string) bool {
+	for _, event := range snapshot.Events {
+		if event.Section == section && event.Name == name && event.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestWithDirectProjectionBSICacheInstallsSharedScratchpad(t *testing.T) {
 	ctx := WithDirectProjectionBSICache(context.Background())
 	if QueryScratchpadFromContext(ctx) == nil {
