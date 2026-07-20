@@ -282,7 +282,15 @@ func legacyDirectRelationshipSyntheticEndpointProjection(field qsbridge.QuantaPr
 }
 
 // ExecuteRelationshipVectorJoin executes a supported direct relationship-vector shape or reports the explicit boundary.
-func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoin(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) ExecuteRelationshipVectorJoin(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (result ExecutionResult, err error) {
+	start := time.Now()
+	defer func() {
+		recordExecutionProbes(ctx, result.Probes)
+		recorder := ExecutionInstrumentationFromContext(ctx)
+		if recorder != nil {
+			recorder.ObserveDuration("relationship_join", "phase_execute_relationship_vector_elapsed", time.Since(start), fmt.Sprintf("edges=%d", vector.EdgeCount()))
+		}
+	}()
 	if (e.Source != nil || e.RelationshipProjectionReader != nil) && e.TableCache != nil {
 		if e.relationshipVectorProjectionCache(ctx) == nil {
 			e.ProjectionCache = NewLegacyDirectRelationshipVectorProjectionCache()

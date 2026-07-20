@@ -125,6 +125,8 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	}
 	bitmapResult, membershipProbes, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult)
 	directBitmapRecordCoreInstrumentation(ctx, request, bitmapResult, queryElapsed)
+	recordExecutionProbes(ctx, sameRowProbes)
+	recordExecutionProbes(ctx, membershipProbes)
 	result := r.Adapter.ToExecutionResult(bitmapResult)
 	result.Probes = append(result.Probes, request.Probes...)
 	result.Probes = append(result.Probes, sameRowProbes...)
@@ -179,6 +181,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	}
 	rowSet, materializationDiagnostics, materializationProbes, materializationErr := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), materializationRequest)
 	result.Probes = append(result.Probes, materializationProbes...)
+	recordExecutionProbes(ctx, materializationProbes)
 	result.RowSet = rowSet
 	result.Diagnostics = append(result.Diagnostics, materializationDiagnostics...)
 	if materializationErr != nil {
@@ -186,6 +189,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	}
 	rowSet, nativePredicateProbes, nativePredicateDiagnostics := filterRowSetByNativePredicates(request, rowSet)
 	result.Probes = append(result.Probes, nativePredicateProbes...)
+	recordExecutionProbes(ctx, nativePredicateProbes)
 	result.Diagnostics = append(result.Diagnostics, nativePredicateDiagnostics...)
 	if result.Diagnostics.BlocksNative() {
 		return result, err
@@ -309,6 +313,7 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	rowSet, materializationDiagnostics, materializationProbes, materializationErr := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), materializationRequest)
 	materializationElapsed := time.Since(materializationStart)
 	result.Probes = append(result.Probes, materializationProbes...)
+	recordExecutionProbes(ctx, materializationProbes)
 	result.Diagnostics = append(result.Diagnostics, materializationDiagnostics...)
 	if materializationErr != nil {
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
@@ -322,6 +327,7 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	var nativePredicateProbes []ExecutionProbe
 	rowSet, nativePredicateProbes, diagnostics = filterRowSetByNativePredicates(request, rowSet)
 	result.Probes = append(result.Probes, nativePredicateProbes...)
+	recordExecutionProbes(ctx, nativePredicateProbes)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if result.Diagnostics.BlocksNative() {
 		return result
@@ -333,16 +339,20 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 		return result
 	}
 	if len(request.GroupBy) > 0 {
-		result.Probes = append(result.Probes,
+		probes := []ExecutionProbe{
 			ExecutionProbe{Section: "grouped_aggregate", Name: "phase_materialization_elapsed", Value: materializationElapsed.String()},
 			ExecutionProbe{Section: "grouped_aggregate", Name: "phase_residual_elapsed", Value: residualElapsed.String()},
-		)
+		}
+		result.Probes = append(result.Probes, probes...)
+		recordExecutionProbes(ctx, probes)
 		return directBitmapMaterializedGroupedAggregateResult(request, rowSet, result)
 	}
-	result.Probes = append(result.Probes,
+	probes := []ExecutionProbe{
 		ExecutionProbe{Section: "aggregate", Name: "phase_materialization_elapsed", Value: materializationElapsed.String()},
 		ExecutionProbe{Section: "aggregate", Name: "phase_residual_elapsed", Value: residualElapsed.String()},
-	)
+	}
+	result.Probes = append(result.Probes, probes...)
+	recordExecutionProbes(ctx, probes)
 	if directBitmapSingleTopNAggregate(request.SQLAggregates) {
 		return directBitmapTopNAggregateResult(request, rowSet, result)
 	}
@@ -369,9 +379,34 @@ func directBitmapMaterializeWithKernel(ctx context.Context, kernel ProjectionMat
 		return qsbridge.QuantaProjectedRowSet{}, diagnostics, probes, err
 	}
 	item := result.Results[0]
-	probes = append(probes, item.Probes...)
+	if !executionProbeSliceContainsAll(probes, item.Probes) {
+		probes = append(probes, item.Probes...)
+	}
 	diagnostics = append(diagnostics, item.Diagnostics...)
 	return item.RowSet, diagnostics, probes, err
+}
+
+func executionProbeSliceContainsAll(haystack, needles []ExecutionProbe) bool {
+	for _, needle := range needles {
+		found := false
+		for _, candidate := range haystack {
+			if executionProbesEqual(candidate, needle) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func executionProbesEqual(left, right ExecutionProbe) bool {
+	return left.Section == right.Section &&
+		left.Name == right.Name &&
+		left.Value == right.Value &&
+		left.Detail == right.Detail
 }
 
 func directBitmapCountAggregateResult(request ExecutionRequest, result ExecutionResult) ExecutionResult {

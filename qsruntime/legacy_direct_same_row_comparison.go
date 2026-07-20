@@ -69,13 +69,19 @@ func (k LegacyDirectSameRowBSIComparisonKernel) CompareSameRowFields(ctx context
 		))
 		return result, nil
 	}
+	leftStart := time.Now()
 	left, leftDiagnostics, err := reader.ReadProjectionBSI(ctx, legacyDirectSameRowComparisonBSIReadRequest(request, request.Left))
+	leftElapsed := time.Since(leftStart)
+	result.Probes = append(result.Probes, sameRowComparisonProbe(request, "left_read_elapsed", leftElapsed.String(), request.Left.QualifiedName()))
 	result.Probes = append(result.Probes, left.Probes...)
 	result.Diagnostics = append(result.Diagnostics, leftDiagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, err
 	}
+	rightStart := time.Now()
 	right, rightDiagnostics, err := reader.ReadProjectionBSI(ctx, legacyDirectSameRowComparisonBSIReadRequest(request, request.Right))
+	rightElapsed := time.Since(rightStart)
+	result.Probes = append(result.Probes, sameRowComparisonProbe(request, "right_read_elapsed", rightElapsed.String(), request.Right.QualifiedName()))
 	result.Probes = append(result.Probes, right.Probes...)
 	result.Diagnostics = append(result.Diagnostics, rightDiagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {

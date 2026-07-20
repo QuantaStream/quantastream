@@ -52,9 +52,20 @@ func TestNativeProjectionMaterializationKernelReadsSimpleFields(t *testing.T) {
 	if got := rowSet.ProjectionVectors[0].Values[1].Value; got != int64(1002) {
 		t.Fatalf("second value = %#v, want 1002", got)
 	}
-	if len(result.Probes) != 2 || result.Probes[1].Name != "field_read" {
+	if !nativeProjectionMaterializationTestProbeName(result.Probes, "projection_materialization_request_count") ||
+		!nativeProjectionMaterializationTestProbeName(result.Probes, "field_read") ||
+		!nativeProjectionMaterializationTestProbeName(result.Probes, "projection_materialization_elapsed") {
 		t.Fatalf("probes = %#v, want request-count and field-read probes", result.Probes)
 	}
+}
+
+func nativeProjectionMaterializationTestProbeName(probes []ExecutionProbe, name string) bool {
+	for _, probe := range probes {
+		if probe.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNativeProjectionMaterializationKernelRehydratesEncodedStrings(t *testing.T) {

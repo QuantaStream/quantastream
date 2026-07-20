@@ -2,6 +2,8 @@ package qsruntime
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -141,4 +143,37 @@ func cloneExecutionInstrumentationSnapshot(snapshot ExecutionInstrumentationSnap
 		Counters: append([]ExecutionCounter(nil), snapshot.Counters...),
 		Events:   append([]ExecutionEvent(nil), snapshot.Events...),
 	}
+}
+
+func recordExecutionProbes(ctx context.Context, probes []ExecutionProbe) {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil || len(probes) == 0 {
+		return
+	}
+	for _, probe := range probes {
+		recordExecutionProbe(recorder, probe)
+	}
+}
+
+func recordExecutionProbe(recorder *ExecutionInstrumentation, probe ExecutionProbe) {
+	if recorder == nil || probe.Section == "" || probe.Name == "" {
+		return
+	}
+	if duration, ok := executionProbeDuration(probe); ok {
+		recorder.ObserveDuration(probe.Section, probe.Name, duration, probe.Detail)
+		return
+	}
+	if value, err := strconv.ParseUint(probe.Value, 10, 64); err == nil {
+		recorder.ObserveCount(probe.Section, probe.Name, value, probe.Detail)
+		return
+	}
+	recorder.ObserveEvent(probe.Section, probe.Name, probe.Value, probe.Detail)
+}
+
+func executionProbeDuration(probe ExecutionProbe) (time.Duration, bool) {
+	if !strings.HasSuffix(probe.Name, "_elapsed") && probe.Name != "elapsed" {
+		return 0, false
+	}
+	duration, err := time.ParseDuration(probe.Value)
+	return duration, err == nil
 }

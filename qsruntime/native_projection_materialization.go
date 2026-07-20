@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
@@ -126,8 +127,9 @@ type NativeProjectionMaterializationKernel struct {
 }
 
 // MaterializeProjectionBatches executes grouped native field-vector reads.
-func (k NativeProjectionMaterializationKernel) MaterializeProjectionBatches(ctx context.Context, request ProjectionMaterializationKernelRequest) (ProjectionMaterializationKernelResult, error) {
-	result := ProjectionMaterializationKernelResult{
+func (k NativeProjectionMaterializationKernel) MaterializeProjectionBatches(ctx context.Context, request ProjectionMaterializationKernelRequest) (result ProjectionMaterializationKernelResult, err error) {
+	start := time.Now()
+	result = ProjectionMaterializationKernelResult{
 		ID: request.ID,
 		Probes: []ExecutionProbe{{
 			Section: "native_projection_materialization",
@@ -135,6 +137,14 @@ func (k NativeProjectionMaterializationKernel) MaterializeProjectionBatches(ctx 
 			Value:   strconv.Itoa(request.RequestCount()),
 		}},
 	}
+	defer func() {
+		result.Probes = append(result.Probes, ExecutionProbe{
+			Section: "native_projection_materialization",
+			Name:    request.ProbePrefix + "elapsed",
+			Value:   time.Since(start).String(),
+			Detail:  "requests=" + strconv.Itoa(request.RequestCount()),
+		})
+	}()
 	if k.Reader == nil {
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticUnsupportedSQL,
@@ -169,6 +179,7 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 		Request: request,
 	}
 	var diagnostics qsbridge.DiagnosticSet
+	var timingProbes []ExecutionProbe
 	for _, field := range request.ProjectionFields {
 		read := NativeProjectionFieldReadRequest{
 			Index:           request.Index,
@@ -177,7 +188,10 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 			FromEpochMillis: request.FromEpochMillis,
 			ToEpochMillis:   request.ToEpochMillis,
 		}
+		readStart := time.Now()
 		readResult, readDiagnostics, err := k.Reader.ReadProjectionField(ctx, read)
+		readElapsed := time.Since(readStart)
+		timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_read_elapsed", readElapsed.String(), request, field))
 		diagnostics = append(diagnostics, readDiagnostics...)
 		item.Probes = append(item.Probes, readResult.Probes...)
 		if err != nil || diagnostics.BlocksNative() {
@@ -195,6 +209,7 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 				item.Diagnostics = diagnostics
 				return item, diagnostics, nil
 			}
+			rehydrateStart := time.Now()
 			rehydrated, rehydrateDiagnostics, err := k.Rehydrator.RehydrateProjectionValues(ctx, NativeProjectionValueRehydrationRequest{
 				Index:      request.Index,
 				Field:      field,
@@ -203,6 +218,8 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 				LookupRef:  nativeProjectionLookupRef(readResult),
 				Values:     values,
 			})
+			rehydrateElapsed := time.Since(rehydrateStart)
+			timingProbes = append(timingProbes, nativeProjectionMaterializationFieldProbe("field_rehydration_elapsed", rehydrateElapsed.String(), request, field))
 			diagnostics = append(diagnostics, rehydrateDiagnostics...)
 			item.Probes = append(item.Probes, rehydrated.Probes...)
 			if err != nil || diagnostics.BlocksNative() {
@@ -228,9 +245,27 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 			Values: values,
 		})
 	}
+	item.Probes = append(item.Probes, timingProbes...)
 	item.RowSet = rowSet
 	item.Diagnostics = diagnostics
 	return item, diagnostics, nil
+}
+
+func nativeProjectionMaterializationFieldProbe(name, value string, request qsbridge.QuantaMaterializationRequest, field qsbridge.QuantaProjectionField) ExecutionProbe {
+	fieldName := field.Field
+	if fieldName == "" {
+		fieldName = field.PhysicalName
+	}
+	detail := fieldName + " rows=" + strconv.Itoa(len(request.Rownums))
+	if request.Index != "" {
+		detail = request.Index + "." + detail
+	}
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    name,
+		Value:   value,
+		Detail:  detail,
+	}
 }
 
 func nativeProjectionLookupKind(readResult NativeProjectionFieldReadResult) NativeProjectionLookupKind {
