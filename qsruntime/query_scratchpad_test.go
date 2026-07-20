@@ -165,6 +165,80 @@ func TestProjectionBSICacheRetainsCoveredSubset(t *testing.T) {
 	}
 }
 
+func TestProjectionBSICacheReturnsPartialMissingRows(t *testing.T) {
+	request := NativeProjectionBSIReadRequest{
+		Index:         "lineitem",
+		PhysicalField: "l_orderkey",
+		Rownums:       []qsbridge.QuantaRownum{101, 102},
+	}
+	key := ProjectionBSICacheKeyFor(request, 10, 20)
+	cache := NewProjectionBSICache()
+	cached := roaring64.NewDefaultBSI()
+	cached.SetBigValue(101, big.NewInt(1001))
+	cached.SetBigValue(102, big.NewInt(1002))
+	cache.Set(key, legacyDirectRelationshipBitmap(request.Rownums), cached)
+
+	requested := legacyDirectRelationshipBitmap([]qsbridge.QuantaRownum{101, 102, 103, 104})
+	partial, mode, ok := cache.GetPartial(key, requested)
+	if !ok || mode != "partial_hit" {
+		t.Fatalf("partial lookup mode = %q/%t, want partial_hit", mode, ok)
+	}
+	if partial.CoveredCardinality() != 2 || partial.MissingCardinality() != 2 {
+		t.Fatalf("partial coverage = %d/%d, want 2 covered and 2 missing", partial.CoveredCardinality(), partial.MissingCardinality())
+	}
+	if got := partial.MissingRownums(); len(got) != 2 || got[0] != 103 || got[1] != 104 {
+		t.Fatalf("missing rownums = %#v, want 103 and 104", got)
+	}
+	if value, ok := partial.BSI.GetBigValue(101); !ok || value.Int64() != 1001 {
+		t.Fatalf("cached partial value for 101 = %v/%t, want 1001", value, ok)
+	}
+	if _, ok := partial.BSI.GetBigValue(103); ok {
+		t.Fatal("cached partial should not include missing rownum 103")
+	}
+
+	fetched := roaring64.NewDefaultBSI()
+	fetched.SetBigValue(103, big.NewInt(1003))
+	fetched.SetBigValue(104, big.NewInt(1004))
+	merged := partial.MergeFetchedMissing(fetched)
+	for rownum, want := range map[uint64]int64{101: 1001, 102: 1002, 103: 1003, 104: 1004} {
+		value, ok := merged.GetBigValue(rownum)
+		if !ok || value.Int64() != want {
+			t.Fatalf("merged value for %d = %v/%t, want %d", rownum, value, ok, want)
+		}
+	}
+}
+
+func TestProjectionBSICacheMergesMultipleEntries(t *testing.T) {
+	request := NativeProjectionBSIReadRequest{
+		Index:         "lineitem",
+		PhysicalField: "l_orderkey",
+	}
+	key := ProjectionBSICacheKeyFor(request, 10, 20)
+	cache := NewProjectionBSICache()
+	first := roaring64.NewDefaultBSI()
+	first.SetBigValue(101, big.NewInt(1001))
+	first.SetBigValue(102, big.NewInt(1002))
+	cache.Set(key, legacyDirectRelationshipBitmap([]qsbridge.QuantaRownum{101, 102}), first)
+	second := roaring64.NewDefaultBSI()
+	second.SetBigValue(103, big.NewInt(1003))
+	cache.Set(key, legacyDirectRelationshipBitmap([]qsbridge.QuantaRownum{103}), second)
+
+	requested := legacyDirectRelationshipBitmap([]qsbridge.QuantaRownum{101, 102, 103})
+	partial, mode, ok := cache.GetPartial(key, requested)
+	if !ok || mode != "merged_entries" {
+		t.Fatalf("merged lookup mode = %q/%t, want merged_entries", mode, ok)
+	}
+	if partial.CoveredCardinality() != 3 || partial.MissingCardinality() != 0 {
+		t.Fatalf("merged coverage = %d/%d, want 3 covered and 0 missing", partial.CoveredCardinality(), partial.MissingCardinality())
+	}
+	for rownum, want := range map[uint64]int64{101: 1001, 102: 1002, 103: 1003} {
+		value, ok := partial.BSI.GetBigValue(rownum)
+		if !ok || value.Int64() != want {
+			t.Fatalf("merged cache value for %d = %v/%t, want %d", rownum, value, ok, want)
+		}
+	}
+}
+
 func TestDomainMappingCacheRetainsCoveredSubset(t *testing.T) {
 	cache := NewDomainMappingCache()
 	key := DomainMappingCacheKey{

@@ -145,6 +145,47 @@ type projectionBSICacheEntry struct {
 	BSI       *roaring64.BSI
 }
 
+// ProjectionBSICachePartial carries cached disjoint projection slices plus the
+// rownums still required to satisfy a broader request.
+type ProjectionBSICachePartial struct {
+	BSI              *roaring64.BSI
+	CoveredRownumSet *roaring64.Bitmap
+	MissingRownumSet *roaring64.Bitmap
+}
+
+// CoveredCardinality returns the number of requested rownums reused from cache.
+func (p ProjectionBSICachePartial) CoveredCardinality() uint64 {
+	if p.CoveredRownumSet == nil {
+		return 0
+	}
+	return p.CoveredRownumSet.GetCardinality()
+}
+
+// MissingCardinality returns the number of rownums that must still be fetched.
+func (p ProjectionBSICachePartial) MissingCardinality() uint64 {
+	if p.MissingRownumSet == nil {
+		return 0
+	}
+	return p.MissingRownumSet.GetCardinality()
+}
+
+// MissingRownums returns the rownums that must still be fetched.
+func (p ProjectionBSICachePartial) MissingRownums() []qsbridge.QuantaRownum {
+	return projectionBSICacheBitmapRownums(p.MissingRownumSet)
+}
+
+// MergeFetchedMissing merges a BSI fetched for MissingRownumSet into the cached
+// partial projection. It assumes the fetched BSI only contains missing rownums.
+func (p ProjectionBSICachePartial) MergeFetchedMissing(fetched *roaring64.BSI) *roaring64.BSI {
+	if p.BSI == nil {
+		return fetched
+	}
+	if fetched != nil {
+		p.BSI.Add(fetched)
+	}
+	return p.BSI
+}
+
 // ProjectionBSICache deduplicates read-only BSI projections within one SQL
 // execution request.
 type ProjectionBSICache struct {
@@ -183,6 +224,51 @@ func (c *ProjectionBSICache) Get(key ProjectionBSICacheKey, rownumSet *roaring64
 		}
 	}
 	return nil, "coverage_miss", false
+}
+
+// GetPartial returns cached disjoint projection slices for part of a request and
+// the rownums still missing from cache.
+func (c *ProjectionBSICache) GetPartial(key ProjectionBSICacheKey, rownumSet *roaring64.Bitmap) (ProjectionBSICachePartial, string, bool) {
+	if c == nil {
+		return ProjectionBSICachePartial{}, "cache_absent", false
+	}
+	if rownumSet == nil {
+		return ProjectionBSICachePartial{}, "empty_request", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries := c.entries[key]
+	if len(entries) == 0 {
+		return ProjectionBSICachePartial{}, "key_miss", false
+	}
+	missing := rownumSet.Clone()
+	covered := roaring64.NewBitmap()
+	merged := roaring64.NewDefaultBSI()
+	for _, entry := range entries {
+		if entry.RownumSet == nil || entry.BSI == nil || missing.IsEmpty() {
+			continue
+		}
+		overlap := missing.Clone()
+		overlap.And(entry.RownumSet)
+		if overlap.IsEmpty() {
+			continue
+		}
+		merged.Add(entry.BSI.NewBSIRetainSet(overlap))
+		covered.Or(overlap)
+		missing.AndNot(overlap)
+	}
+	if covered.IsEmpty() {
+		return ProjectionBSICachePartial{}, "coverage_miss", false
+	}
+	mode := "partial_hit"
+	if missing.IsEmpty() {
+		mode = "merged_entries"
+	}
+	return ProjectionBSICachePartial{
+		BSI:              merged,
+		CoveredRownumSet: covered,
+		MissingRownumSet: missing,
+	}, mode, true
 }
 
 // Set records a projected BSI for one candidate rownum set.
@@ -231,6 +317,18 @@ func projectionRownumSetCovers(container, subset *roaring64.Bitmap) bool {
 	overlap := subset.Clone()
 	overlap.And(container)
 	return overlap.GetCardinality() == subset.GetCardinality()
+}
+
+func projectionBSICacheBitmapRownums(bitmap *roaring64.Bitmap) []qsbridge.QuantaRownum {
+	if bitmap == nil || bitmap.IsEmpty() {
+		return nil
+	}
+	values := bitmap.ToArray()
+	rownums := make([]qsbridge.QuantaRownum, 0, len(values))
+	for _, value := range values {
+		rownums = append(rownums, qsbridge.QuantaRownum(value))
+	}
+	return rownums
 }
 
 // DomainMappingCacheKey identifies a relationship-vector rownum-domain

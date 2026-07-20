@@ -258,6 +258,29 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 		}, nil, nil
 	}
 	recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache", false, mode, detail)
+	fetchSet := foundSet
+	fetchRownums := request.Rownums
+	partial := ProjectionBSICachePartial{}
+	partialMode := ""
+	partialOK := false
+	if mode == "coverage_miss" {
+		partial, partialMode, partialOK = cache.GetPartial(cacheKey, foundSet)
+		if partialOK {
+			recordQueryScratchpadCacheLookup(ctx, "projection_bsi_cache_partial", true, partialMode, directProjectionBSIPartialCacheDetail(detail, partial))
+			if partial.MissingCardinality() == 0 {
+				return NativeProjectionBSIReadResult{
+					BSI: partial.BSI,
+					Probes: []ExecutionProbe{
+						directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+						directProjectionBSICacheProbe(request.Index, request.PhysicalField, true),
+						directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, partialMode),
+					},
+				}, nil, nil
+			}
+			fetchSet = partial.MissingRownumSet
+			fetchRownums = partial.MissingRownums()
+		}
+	}
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     request.Index,
 		Field:     request.PhysicalField,
@@ -282,7 +305,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no bitmap index"),
 		}, nil
 	}
-	bsiByField, _, err := legacySession.Session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, foundSet, false)
+	bsiByField, _, err := legacySession.Session.BitIndex.Projection(request.Index, []string{request.PhysicalField}, fromTime, toTime, fetchSet, false)
 	if err != nil {
 		return NativeProjectionBSIReadResult{}, nil, err
 	}
@@ -290,14 +313,18 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSI(ctx context.Context, 
 	if bsi == nil {
 		bsi = roaring64.NewDefaultBSI()
 	}
+	if partialOK {
+		bsi = partial.MergeFetchedMissing(bsi)
+	}
 	cache.Set(cacheKey, foundSet, bsi)
 	recordQueryScratchpadCacheStore(ctx, "projection_bsi_cache", detail)
 	return NativeProjectionBSIReadResult{
 		BSI: bsi,
 		Probes: []ExecutionProbe{
 			directProjectionBSIRowsProbe(request.Index, request.PhysicalField, len(request.Rownums)),
+			directProjectionBSIFetchRowsProbe(request.Index, request.PhysicalField, len(fetchRownums)),
 			directProjectionBSICacheProbe(request.Index, request.PhysicalField, false),
-			directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, "miss"),
+			directProjectionBSICacheModeProbe(request.Index, request.PhysicalField, mode),
 		},
 	}, nil, nil
 }
@@ -314,10 +341,25 @@ func directProjectionBSICacheInstrumentationDetail(key ProjectionBSICacheKey, ro
 		" to=" + strconv.FormatInt(key.ToTimeNanos, 10)
 }
 
+func directProjectionBSIPartialCacheDetail(detail string, partial ProjectionBSICachePartial) string {
+	return detail +
+		" covered_rows=" + strconv.FormatUint(partial.CoveredCardinality(), 10) +
+		" missing_rows=" + strconv.FormatUint(partial.MissingCardinality(), 10)
+}
+
 func directProjectionBSIRowsProbe(index, field string, rows int) ExecutionProbe {
 	return ExecutionProbe{
 		Section: "native_projection_materialization",
 		Name:    "bsi_projection_rows",
+		Value:   strconv.Itoa(rows),
+		Detail:  index + "." + field,
+	}
+}
+
+func directProjectionBSIFetchRowsProbe(index, field string, rows int) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "bsi_projection_fetch_rows",
 		Value:   strconv.Itoa(rows),
 		Detail:  index + "." + field,
 	}
