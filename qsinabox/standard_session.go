@@ -120,12 +120,13 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	return StandardDirectRuntimeMount{
 		Pool: pool,
 		Runtime: qsruntime.DirectBitmapRuntime{
-			Sessions:           sessions,
-			Adapter:            qsruntime.BitmapQueryResultAdapter{},
-			FilterAdapter:      qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
-			Materialization:    materialization,
-			SameRowComparison:  sameRowComparison,
-			RelationshipReader: relationshipReader,
+			Sessions:            sessions,
+			Adapter:             qsruntime.BitmapQueryResultAdapter{},
+			FilterAdapter:       qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
+			Materialization:     materialization,
+			ProjectionBSIReader: bsiReader,
+			SameRowComparison:   sameRowComparison,
+			RelationshipReader:  relationshipReader,
 			RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
 				Sessions:                     sessions,
 				TableCache:                   tableCache,

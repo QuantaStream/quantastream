@@ -115,12 +115,13 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		},
 	}
 	return DirectBitmapRuntime{
-		Sessions:           sessions,
-		Adapter:            BitmapQueryResultAdapter{},
-		FilterAdapter:      LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization),
-		Materialization:    materialization,
-		SameRowComparison:  sameRowComparison,
-		RelationshipReader: relationshipReader,
+		Sessions:            sessions,
+		Adapter:             BitmapQueryResultAdapter{},
+		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization),
+		Materialization:     materialization,
+		ProjectionBSIReader: bsiReader,
+		SameRowComparison:   sameRowComparison,
+		RelationshipReader:  relationshipReader,
 		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
 			Source:                    quantaSource,
 			TableCache:                tableCache,
