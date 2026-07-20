@@ -47,6 +47,7 @@ func (e runtimeRoadmapEngine) logRuntimePlan(result qsruntime.SQLExecutionResult
 	e.logPredicates(result.Request.Bound.Prepared.Query.Predicates)
 	e.logIntermediate(result.Intermediate)
 	e.logExecutionProbes(result.Runtime.Probes)
+	e.logExecutionInstrumentation(result.Instrumentation)
 }
 
 func (e runtimeRoadmapEngine) logPredicates(predicates []qsbridge.Predicate) {
@@ -98,6 +99,24 @@ func (e runtimeRoadmapEngine) logExecutionProbes(probes []qsruntime.ExecutionPro
 	for _, probe := range probes {
 		e.Logf("RUNTIME probe section=%s name=%s value=%s detail=%s",
 			probe.Section, probe.Name, probe.Value, probe.Detail)
+	}
+}
+
+func (e runtimeRoadmapEngine) logExecutionInstrumentation(snapshot qsruntime.ExecutionInstrumentationSnapshot) {
+	if e.Logf == nil || snapshot.Empty() {
+		return
+	}
+	for _, timing := range snapshot.Timings {
+		e.Logf("RUNTIME timing section=%s name=%s value=%s detail=%s",
+			timing.Section, timing.Name, timing.Duration, timing.Detail)
+	}
+	for _, counter := range snapshot.Counters {
+		e.Logf("RUNTIME counter section=%s name=%s value=%d detail=%s",
+			counter.Section, counter.Name, counter.Value, counter.Detail)
+	}
+	for _, event := range snapshot.Events {
+		e.Logf("RUNTIME event section=%s name=%s value=%s detail=%s",
+			event.Section, event.Name, event.Value, event.Detail)
 	}
 }
 
