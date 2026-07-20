@@ -34,6 +34,27 @@ func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		recorder := ExecutionInstrumentationFromContext(ctx)
+		if recorder == nil {
+			t.Fatal("execution instrumentation was not installed")
+		}
+		recorder.ObserveCount("test_executor", "rows", 7, "fake executor")
+		return ExecutionResult{Count: 7}, nil
+	})
+	runtime.ContextWrapper = WithQueryScratchpad
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select count(*) from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Instrumentation.Empty() {
+		t.Fatal("instrumentation snapshot was empty")
+	}
+	assertExecutionCounter(t, result.Instrumentation, "test_executor", "rows", 7)
+}
+
 func TestCorrelatedAverageQuantityTypedMatchBuildsDescriptorAndFilters(t *testing.T) {
 	sql := `select sum(l.l_extendedprice) / 7.0 as avg_yearly
 from lineitem as l

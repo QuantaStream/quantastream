@@ -54,6 +54,16 @@ func ExecutionInstrumentationFromContext(ctx context.Context) *ExecutionInstrume
 	return scratchpad.Instrumentation
 }
 
+// ExecutionInstrumentationSnapshotFromContext returns a stable copy of the
+// request-scoped instrumentation, when installed.
+func ExecutionInstrumentationSnapshotFromContext(ctx context.Context) ExecutionInstrumentationSnapshot {
+	recorder := ExecutionInstrumentationFromContext(ctx)
+	if recorder == nil {
+		return ExecutionInstrumentationSnapshot{}
+	}
+	return recorder.Snapshot()
+}
+
 // ObserveDuration records an elapsed execution phase.
 func (i *ExecutionInstrumentation) ObserveDuration(section, name string, duration time.Duration, detail string) {
 	if i == nil || section == "" || name == "" {
@@ -118,4 +128,9 @@ type ExecutionInstrumentationSnapshot struct {
 	Timings  []ExecutionTiming
 	Counters []ExecutionCounter
 	Events   []ExecutionEvent
+}
+
+// Empty reports whether the snapshot contains no observations.
+func (s ExecutionInstrumentationSnapshot) Empty() bool {
+	return len(s.Timings) == 0 && len(s.Counters) == 0 && len(s.Events) == 0
 }

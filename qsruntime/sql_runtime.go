@@ -28,6 +28,7 @@ type SQLExecutionResult struct {
 	Request          qsbridge.ExecutionRequest
 	Intermediate     qsbridge.QuantaIntermediateQuery
 	Runtime          ExecutionResult
+	Instrumentation  ExecutionInstrumentationSnapshot
 	Diagnostics      qsbridge.DiagnosticSet
 	NativeSubqueries NativeSubqueryPreparationSummary
 	Preflight        PreflightRewriteSummary
@@ -71,10 +72,13 @@ func (r SQLRuntime) Plan(sql string) qsbridge.PlanResult {
 }
 
 // ExecuteSQL prepares, lowers, and executes SQL through the runtime environment.
-func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
+func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (result SQLExecutionResult, err error) {
 	if r.ContextWrapper != nil {
 		ctx = r.ContextWrapper(ctx)
 	}
+	defer func() {
+		result.Instrumentation = ExecutionInstrumentationSnapshotFromContext(ctx)
+	}()
 	service := qsbridge.NewPlanningService(r.Planner(), nil)
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
 	request, nativeSubqueries, nativeSubqueryDiagnostics, err := r.materializeCorrelatedAggregatePredicates(ctx, request, values...)
@@ -107,7 +111,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		}, err
 	}
 	prepared = request.Bound.Prepared
-	result := SQLExecutionResult{
+	result = SQLExecutionResult{
 		Prepared:         prepared,
 		Request:          request,
 		Diagnostics:      append(qsbridge.DiagnosticSet(nil), request.Diagnostics...),
