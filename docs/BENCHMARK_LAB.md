@@ -230,6 +230,15 @@ CASE=tpch_profile.q5.formal_revenue \
   ./run-profile-capture.sh
 ```
 
+When testing a local Go workspace overlay, pass `GOWORK` through the helper:
+
+```bash
+cd tpc-h-benchmark
+GOWORK=/tmp/qs-roaring.work \
+CASE=tpch_profile.q21.formal_supplier_wait_exists_not_exists_count \
+  ./run-profile-capture.sh
+```
+
 The helper defaults to:
 
 - `ENGINE=inabox-standard`

@@ -20,6 +20,7 @@ Environment:
   LOG_DIR           Output log directory. Defaults to tpc-h-benchmark/local/logs.
   VERBOSE           Set to 0 to suppress verbose SQL/profile output. Defaults to 1.
   SLOW_THRESHOLD    Optional SQLRunner slow-case summary threshold, such as 2s.
+  GOWORK            Optional Go workspace overlay inherited by go run.
 USAGE
 }
 
@@ -95,6 +96,9 @@ fi
   echo "host=${HOST}"
   echo "port=${PORT}"
   echo "db=${DB}"
+  if [[ -n "${GOWORK:-}" ]]; then
+    echo "gowork=${GOWORK}"
+  fi
   if git -C "${REPO_ROOT}" rev-parse --short HEAD >/dev/null 2>&1; then
     echo "git_commit=$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
     echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
