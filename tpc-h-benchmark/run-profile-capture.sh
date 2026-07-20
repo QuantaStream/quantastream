@@ -18,6 +18,11 @@ Environment:
   DB                QuantaStream database. Defaults to QUANTA_DB or quanta.
   CONSUL            Consul address for engines that need it. Defaults to QUANTA_CONSUL or 127.0.0.1:8500.
   LOG_DIR           Output log directory. Defaults to tpc-h-benchmark/local/logs.
+  REPORT_DIR        Output JSON profile report directory. Defaults to tpc-h-benchmark/local/profile-reports.
+  REPORT_FILE       Optional exact JSON profile report path.
+  BENCHMARK_PROFILE Profile label recorded in the JSON report. Defaults to profile-capture.
+  BENCHMARK_METADATA
+                    Optional comma-separated key=value metadata recorded in the JSON report.
   VERBOSE           Set to 0 to suppress verbose SQL/profile output. Defaults to 1.
   SLOW_THRESHOLD    Optional SQLRunner slow-case summary threshold, such as 2s.
   GOWORK            Optional Go workspace overlay inherited by go run.
@@ -43,6 +48,9 @@ PASSWORD="${PASSWORD:-${QUANTA_PASSWORD:-}}"
 DB="${DB:-${QUANTA_DB:-quanta}}"
 CONSUL="${CONSUL:-${QUANTA_CONSUL:-127.0.0.1:8500}}"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/local/logs}"
+REPORT_DIR="${REPORT_DIR:-${SCRIPT_DIR}/local/profile-reports}"
+BENCHMARK_PROFILE="${BENCHMARK_PROFILE:-profile-capture}"
+BENCHMARK_METADATA="${BENCHMARK_METADATA:-}"
 VERBOSE="${VERBOSE:-1}"
 SLOW_THRESHOLD="${SLOW_THRESHOLD:-}"
 
@@ -55,6 +63,7 @@ else
 fi
 
 mkdir -p "${LOG_DIR}"
+mkdir -p "${REPORT_DIR}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 ENGINE_LABEL="$(printf '%s' "${ENGINE}" | tr -c '[:alnum:]_.-' '-')"
 CASE_LABEL="all"
@@ -62,6 +71,7 @@ if [[ -n "${CASE}" ]]; then
   CASE_LABEL="$(printf '%s' "${CASE}" | tr -c '[:alnum:]_.-' '-')"
 fi
 LOG_FILE="${LOG_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${CASE_LABEL}-profile-${STAMP}.log"
+REPORT_FILE="${REPORT_FILE:-${REPORT_DIR}/${SUITE_NAME}-${ENGINE_LABEL}-${CASE_LABEL}-profile-${STAMP}.json}"
 
 args=(
   -engine "${ENGINE}"
@@ -74,6 +84,9 @@ args=(
   -consul "${CONSUL}"
   -capture_profile
   -precise_timing
+  -benchmark_report "${REPORT_FILE}"
+  -benchmark_runs "1"
+  -benchmark_profile "${BENCHMARK_PROFILE}"
 )
 
 if [[ "${VERBOSE}" != "0" ]]; then
@@ -84,6 +97,9 @@ if [[ -n "${CASE}" ]]; then
 fi
 if [[ -n "${SLOW_THRESHOLD}" ]]; then
   args+=(-slow_threshold "${SLOW_THRESHOLD}")
+fi
+if [[ -n "${BENCHMARK_METADATA}" ]]; then
+  args+=(-benchmark_metadata "${BENCHMARK_METADATA}")
 fi
 
 {
@@ -96,6 +112,7 @@ fi
   echo "host=${HOST}"
   echo "port=${PORT}"
   echo "db=${DB}"
+  echo "report=${REPORT_FILE}"
   if [[ -n "${GOWORK:-}" ]]; then
     echo "gowork=${GOWORK}"
   fi
@@ -109,3 +126,4 @@ fi
 (cd "${SQLRUNNER_DIR}" && go run . "${args[@]}") 2>&1 | tee -a "${LOG_FILE}"
 
 echo "profile capture log=${LOG_FILE}" | tee -a "${LOG_FILE}"
+echo "profile capture report=${REPORT_FILE}" | tee -a "${LOG_FILE}"
