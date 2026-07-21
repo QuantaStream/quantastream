@@ -23,6 +23,43 @@ func (e testFilterLeafEvaluator) EvaluateFilterLeaf(_ context.Context, fragment 
 	return set, nil, nil
 }
 
+type testConstrainedFilterLeafCall struct {
+	field   string
+	rownums []qsbridge.QuantaRownum
+}
+
+type testConstrainedFilterLeafEvaluator struct {
+	broadSets        map[string]qsbridge.QuantaCandidateSet
+	constrainedSets  map[string]qsbridge.QuantaCandidateSet
+	broadCalls       []string
+	constrainedCalls []testConstrainedFilterLeafCall
+}
+
+func (e *testConstrainedFilterLeafEvaluator) EvaluateFilterLeaf(_ context.Context, fragment qsbridge.QuantaQueryFragment) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	e.broadCalls = append(e.broadCalls, fragment.Field)
+	set, ok := e.broadSets[fragment.Field]
+	if !ok {
+		return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogFieldNotFound, qsbridge.PhaseExecute, "missing broad test fragment: "+fragment.Field),
+		}, nil
+	}
+	return set, nil, nil
+}
+
+func (e *testConstrainedFilterLeafEvaluator) EvaluateFilterLeafWithinCandidateSet(_ context.Context, fragment qsbridge.QuantaQueryFragment, candidates qsbridge.QuantaCandidateSet) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	e.constrainedCalls = append(e.constrainedCalls, testConstrainedFilterLeafCall{
+		field:   fragment.Field,
+		rownums: append([]qsbridge.QuantaRownum(nil), candidates.Rownums...),
+	})
+	set, ok := e.constrainedSets[fragment.Field]
+	if !ok {
+		return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogFieldNotFound, qsbridge.PhaseExecute, "missing constrained test fragment: "+fragment.Field),
+		}, nil
+	}
+	return set, nil, nil
+}
+
 func TestQuantaFilterTreeEvaluatorMergesNestedFilters(t *testing.T) {
 	evaluator := QuantaFilterTreeEvaluator{
 		Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
@@ -94,6 +131,138 @@ func TestQuantaFilterTreeEvaluatorMergesCandidateSetLeaves(t *testing.T) {
 	}
 }
 
+func TestQuantaFilterTreeEvaluatorEvaluatesCandidateSetFirstForIntersect(t *testing.T) {
+	leaves := &testConstrainedFilterLeafEvaluator{
+		broadSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{1, 2, 4, 8}},
+			"b": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{4, 9}},
+		},
+		constrainedSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{2, 4}},
+			"b": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{4}},
+		},
+	}
+	evaluator := QuantaFilterTreeEvaluator{Leaves: leaves}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			testFilterLeaf("a"),
+			testFilterLeaf("b"),
+			testFilterCandidateSet("lineitem", 2, 4, 8),
+		},
+	}
+
+	set, diagnostics, err := evaluator.EvaluateFilter(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("EvaluateFilter error: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("EvaluateFilter diagnostics: %v", diagnostics)
+	}
+	if len(leaves.broadCalls) != 0 {
+		t.Fatalf("broadCalls = %#v, want none", leaves.broadCalls)
+	}
+	wantCalls := []testConstrainedFilterLeafCall{
+		{field: "a", rownums: []qsbridge.QuantaRownum{2, 4, 8}},
+		{field: "b", rownums: []qsbridge.QuantaRownum{2, 4}},
+	}
+	if !reflect.DeepEqual(leaves.constrainedCalls, wantCalls) {
+		t.Fatalf("constrainedCalls = %#v, want %#v", leaves.constrainedCalls, wantCalls)
+	}
+	want := []qsbridge.QuantaRownum{4}
+	if !reflect.DeepEqual(set.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+}
+
+func TestQuantaFilterTreeEvaluatorFlattensNestedIntersectBeforeCandidateSetOrdering(t *testing.T) {
+	leaves := &testConstrainedFilterLeafEvaluator{
+		broadSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{1, 2, 4, 8}},
+			"b": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{4, 9}},
+		},
+		constrainedSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{2, 4}},
+			"b": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{4}},
+		},
+	}
+	evaluator := QuantaFilterTreeEvaluator{Leaves: leaves}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			testFilterLeaf("a"),
+			{
+				Operation: qsbridge.QuantaFilterIntersect,
+				Children: []qsbridge.QuantaFilterExpression{
+					testFilterLeaf("b"),
+					testFilterCandidateSet("lineitem", 2, 4, 8),
+				},
+			},
+		},
+	}
+
+	set, diagnostics, err := evaluator.EvaluateFilter(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("EvaluateFilter error: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("EvaluateFilter diagnostics: %v", diagnostics)
+	}
+	if len(leaves.broadCalls) != 0 {
+		t.Fatalf("broadCalls = %#v, want none", leaves.broadCalls)
+	}
+	wantCalls := []testConstrainedFilterLeafCall{
+		{field: "a", rownums: []qsbridge.QuantaRownum{2, 4, 8}},
+		{field: "b", rownums: []qsbridge.QuantaRownum{2, 4}},
+	}
+	if !reflect.DeepEqual(leaves.constrainedCalls, wantCalls) {
+		t.Fatalf("constrainedCalls = %#v, want %#v", leaves.constrainedCalls, wantCalls)
+	}
+	want := []qsbridge.QuantaRownum{4}
+	if !reflect.DeepEqual(set.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+}
+
+func TestQuantaFilterTreeEvaluatorShortCircuitsEmptyCandidateSetIntersect(t *testing.T) {
+	leaves := &testConstrainedFilterLeafEvaluator{
+		broadSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{1, 2, 4, 8}},
+		},
+		constrainedSets: map[string]qsbridge.QuantaCandidateSet{
+			"a": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{}},
+		},
+	}
+	evaluator := QuantaFilterTreeEvaluator{Leaves: leaves}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			testFilterLeaf("a"),
+			testFilterCandidateSet("lineitem"),
+		},
+	}
+
+	set, diagnostics, err := evaluator.EvaluateFilter(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("EvaluateFilter error: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("EvaluateFilter diagnostics: %v", diagnostics)
+	}
+	if len(leaves.broadCalls) != 0 {
+		t.Fatalf("broadCalls = %#v, want none", leaves.broadCalls)
+	}
+	if len(leaves.constrainedCalls) != 0 {
+		t.Fatalf("constrainedCalls = %#v, want none", leaves.constrainedCalls)
+	}
+	if set.Index != "lineitem" {
+		t.Fatalf("index = %q, want lineitem", set.Index)
+	}
+	if len(set.Rownums) != 0 {
+		t.Fatalf("rownums = %#v, want empty", set.Rownums)
+	}
+}
+
 func TestQuantaFilterTreeEvaluatorReportsMissingLeafEvaluator(t *testing.T) {
 	_, diagnostics, err := (QuantaFilterTreeEvaluator{}).EvaluateFilter(context.Background(), testFilterLeaf("a"))
 	if err != nil {
@@ -127,5 +296,12 @@ func testFilterLeaf(field string) qsbridge.QuantaFilterExpression {
 	return qsbridge.QuantaFilterExpression{
 		Operation: qsbridge.QuantaFilterLeaf,
 		Fragment:  qsbridge.QuantaQueryFragment{Field: field},
+	}
+}
+
+func testFilterCandidateSet(index string, rownums ...qsbridge.QuantaRownum) qsbridge.QuantaFilterExpression {
+	return qsbridge.QuantaFilterExpression{
+		Operation:    qsbridge.QuantaFilterCandidateSet,
+		CandidateSet: qsbridge.QuantaCandidateSet{Index: index, Rownums: append([]qsbridge.QuantaRownum(nil), rownums...)},
 	}
 }

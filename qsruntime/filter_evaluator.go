@@ -81,11 +81,15 @@ func (e QuantaFilterTreeEvaluator) evaluateFilterIntersectChildren(ctx context.C
 	if len(children) == 0 {
 		return qsbridge.QuantaCandidateSet{}, nil, nil
 	}
-	current, diagnostics, err := e.EvaluateFilter(ctx, children[0])
+	ordered := quantaFilterIntersectEvaluationOrder(children)
+	current, diagnostics, err := e.EvaluateFilter(ctx, ordered[0])
 	if err != nil || diagnostics.BlocksNative() {
 		return current, diagnostics, err
 	}
-	for _, child := range children[1:] {
+	if len(current.Rownums) == 0 {
+		return current, diagnostics, nil
+	}
+	for _, child := range ordered[1:] {
 		if err := ctx.Err(); err != nil {
 			return qsbridge.QuantaCandidateSet{}, nil, err
 		}
@@ -95,8 +99,45 @@ func (e QuantaFilterTreeEvaluator) evaluateFilterIntersectChildren(ctx context.C
 			return current, diagnostics, err
 		}
 		current = quantaFilterIntersectCandidateSets(current, next)
+		if len(current.Rownums) == 0 {
+			return current, diagnostics, nil
+		}
 	}
 	return current, diagnostics, nil
+}
+
+func quantaFilterIntersectEvaluationOrder(children []qsbridge.QuantaFilterExpression) []qsbridge.QuantaFilterExpression {
+	if len(children) < 2 {
+		return children
+	}
+	flattened := quantaFilterFlattenIntersectChildren(children)
+	ordered := make([]qsbridge.QuantaFilterExpression, 0, len(flattened))
+	for _, child := range flattened {
+		if child.CandidateSetLeaf() {
+			ordered = append(ordered, child)
+		}
+	}
+	if len(ordered) == 0 {
+		return children
+	}
+	for _, child := range flattened {
+		if !child.CandidateSetLeaf() {
+			ordered = append(ordered, child)
+		}
+	}
+	return ordered
+}
+
+func quantaFilterFlattenIntersectChildren(children []qsbridge.QuantaFilterExpression) []qsbridge.QuantaFilterExpression {
+	flattened := make([]qsbridge.QuantaFilterExpression, 0, len(children))
+	for _, child := range children {
+		if child.Operation == qsbridge.QuantaFilterIntersect {
+			flattened = append(flattened, quantaFilterFlattenIntersectChildren(child.Children)...)
+			continue
+		}
+		flattened = append(flattened, child)
+	}
+	return flattened
 }
 
 func (e QuantaFilterTreeEvaluator) evaluateFilterIntersectChild(ctx context.Context, child qsbridge.QuantaFilterExpression, current qsbridge.QuantaCandidateSet) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
