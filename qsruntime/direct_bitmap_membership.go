@@ -738,6 +738,9 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 	if len(rownums) == 0 || len(requests) == 0 {
 		return vectors, nil, nil, nil
 	}
+	if valueReader, ok := r.ProjectionBSIReader.(NativeProjectionBSIValueBatchReader); ok {
+		return directBitmapReadMembershipBSIValueVectors(ctx, valueReader, requests, positions, vectors)
+	}
 	var readResults []NativeProjectionBSIReadResult
 	var diagnostics qsbridge.DiagnosticSet
 	var err error
@@ -785,6 +788,48 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_rows", strconv.Itoa(hydratedRows), hydrationDetail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_missing_rows", strconv.Itoa(missingRows), hydrationDetail),
+		)
+		vectors[positions[i]] = vector
+	}
+	return vectors, probes, nil, nil
+}
+
+func directBitmapReadMembershipBSIValueVectors(ctx context.Context, valueReader NativeProjectionBSIValueBatchReader, requests []NativeProjectionBSIReadRequest, positions []string, vectors map[string]directBitmapMembershipBSIVector) (map[string]directBitmapMembershipBSIVector, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	readResults, diagnostics, err := valueReader.ReadProjectionBSIValues(ctx, requests)
+	if err != nil || diagnostics.BlocksNative() {
+		return vectors, nil, diagnostics, err
+	}
+	if len(readResults) != len(requests) {
+		return vectors, nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "correlated sibling BSI value reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(requests))+" requests"),
+		}, nil
+	}
+	probes := make([]ExecutionProbe, 0, len(readResults))
+	for i, readResult := range readResults {
+		probes = append(probes, readResult.Probes...)
+		if len(readResult.Values) != len(requests[i].Rownums) {
+			return vectors, probes, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "correlated sibling BSI value reader returned "+strconv.Itoa(len(readResult.Values))+" values for "+strconv.Itoa(len(requests[i].Rownums))+" rownums"),
+			}, nil
+		}
+		vector := vectors[positions[i]]
+		hydrationStart := time.Now()
+		hydratedRows := 0
+		missingRows := 0
+		for _, value := range readResult.Values {
+			if value == nil {
+				missingRows++
+				continue
+			}
+			hydratedRows++
+		}
+		vector.Values = readResult.Values
+		hydrationDetail := requests[i].Index + "." + requests[i].PhysicalField
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_rows", strconv.Itoa(hydratedRows), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_missing_rows", strconv.Itoa(missingRows), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_read_mode", "direct_values", hydrationDetail),
 		)
 		vectors[positions[i]] = vector
 	}
