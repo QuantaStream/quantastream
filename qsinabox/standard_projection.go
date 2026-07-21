@@ -373,6 +373,12 @@ func standardProjectionBSIStatsProbes(index, field string, stats server.ProjectB
 		},
 		{
 			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_retain_bypass_rows",
+			Value:   strconv.FormatUint(stats.RetainBypassRows, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
 			Name:    "standard_bsi_projection_retain_elapsed",
 			Value:   stats.RetainElapsed.String(),
 			Detail:  detail,

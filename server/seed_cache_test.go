@@ -309,6 +309,35 @@ func TestProjectBSIsWithStatsReturnsAlignedProjectionFields(t *testing.T) {
 	}
 }
 
+func TestProjectBSIWithStatsBypassesRetainWhenFoundSetCoversShard(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"]["l_shipdate"][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230601,
+		2: 20230602,
+	})
+
+	bsi, stats, err := index.ProjectBSIWithStats(
+		"lineitem",
+		"l_shipdate",
+		day.UnixNano(),
+		day.UnixNano(),
+		roaring64.BitmapOf(1, 2, 99),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ProjectBSIWithStats returned error: %v", err)
+	}
+	assertProjectedBSIValue(t, bsi, 1, 20230601)
+	assertProjectedBSIValue(t, bsi, 2, 20230602)
+	if got, want := stats.RetainedRows, uint64(2); got != want {
+		t.Fatalf("retained rows = %d, want %d", got, want)
+	}
+	if got, want := stats.RetainBypassRows, uint64(2); got != want {
+		t.Fatalf("retain bypass rows = %d, want %d", got, want)
+	}
+}
+
 func assertProjectedBSIValue(t *testing.T, bsi *roaring64.BSI, rownum uint64, want int64) {
 	t.Helper()
 	if bsi == nil {

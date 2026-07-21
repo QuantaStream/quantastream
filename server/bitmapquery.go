@@ -333,13 +333,14 @@ func (m *BitmapIndex) listAllRowIDs(index, field string) []uint64 {
 
 // ProjectBSIStats captures in-process BSI projection work for runtime probes.
 type ProjectBSIStats struct {
-	ShardsVisited  int
-	ShardsInWindow int
-	ShardsLocal    int
-	ShardsRetained int
-	RetainedRows   uint64
-	RetainElapsed  time.Duration
-	MergeElapsed   time.Duration
+	ShardsVisited    int
+	ShardsInWindow   int
+	ShardsLocal      int
+	ShardsRetained   int
+	RetainedRows     uint64
+	RetainBypassRows uint64
+	RetainElapsed    time.Duration
+	MergeElapsed     time.Duration
 }
 
 // CompareBSIFieldsStats captures local same-row BSI comparison work.
@@ -389,26 +390,17 @@ func (m *BitmapIndex) timeRangeBSILocked(index, field string, fromTime, toTime t
 			}
 			if foundSet != nil {
 				retainStart := time.Now()
-				var retainSet *roaring64.Bitmap
-				if negate {
-					retainSet = roaring64.AndNot(bm.BSI.GetExistenceBitmap(), foundSet)
-				} else {
-					retainSet = roaring64.And(bm.BSI.GetExistenceBitmap(), foundSet)
-				}
-				if retainSet.GetCardinality() != 0 {
-					x := bm.BSI.NewBSIRetainSet(retainSet)
-					if stat != nil {
-						stat.RetainElapsed += time.Since(retainStart)
-					}
-					if x.GetCardinality() != 0 {
-						a = append(a, x)
-						if stat != nil {
-							stat.ShardsRetained++
-							stat.RetainedRows += x.GetCardinality()
-						}
-					}
-				} else if stat != nil {
+				x, retainedRows, bypassedRows := retainedProjectionBSI(bm.BSI, foundSet, negate)
+				if stat != nil {
 					stat.RetainElapsed += time.Since(retainStart)
+				}
+				if x != nil {
+					a = append(a, x)
+					if stat != nil {
+						stat.ShardsRetained++
+						stat.RetainedRows += retainedRows
+						stat.RetainBypassRows += bypassedRows
+					}
 				}
 			} else {
 				a = append(a, bm.BSI)
@@ -449,29 +441,18 @@ func (m *BitmapIndex) timeRangeBSILocked(index, field string, fromTime, toTime t
 				}
 				if foundSet != nil {
 					retainStart := time.Now()
-					var retainSet *roaring64.Bitmap
-					if negate {
-						retainSet = roaring64.AndNot(bsi.BSI.GetExistenceBitmap(), foundSet)
-					} else {
-						retainSet = roaring64.And(bsi.BSI.GetExistenceBitmap(), foundSet)
-					}
-					if retainSet.GetCardinality() == 0 {
-						if stat != nil {
-							stat.RetainElapsed += time.Since(retainStart)
-						}
-						continue
-					}
-					x := bsi.BSI.NewBSIRetainSet(retainSet)
+					x, retainedRows, bypassedRows := retainedProjectionBSI(bsi.BSI, foundSet, negate)
 					if stat != nil {
 						stat.RetainElapsed += time.Since(retainStart)
 					}
-					if x.GetCardinality() == 0 {
+					if x == nil {
 						continue
 					}
 					a = append(a, x)
 					if stat != nil {
 						stat.ShardsRetained++
-						stat.RetainedRows += x.GetCardinality()
+						stat.RetainedRows += retainedRows
+						stat.RetainBypassRows += bypassedRows
 					}
 					u.Debugf("timeRangeBSI %s selecting %s with foundSet = %d", tq, hashKey, foundSet.GetCardinality())
 				} else {
@@ -496,6 +477,39 @@ func (m *BitmapIndex) timeRangeBSILocked(index, field string, fromTime, toTime t
 		}
 	}
 	return result, nil
+}
+
+func retainedProjectionBSI(source *roaring64.BSI, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, uint64, uint64) {
+	if source == nil {
+		return nil, 0, 0
+	}
+	if foundSet == nil {
+		cardinality := source.GetCardinality()
+		if cardinality == 0 {
+			return nil, 0, 0
+		}
+		return source, cardinality, 0
+	}
+	existence := source.GetExistenceBitmap()
+	var retainSet *roaring64.Bitmap
+	if negate {
+		retainSet = roaring64.AndNot(existence, foundSet)
+	} else {
+		retainSet = roaring64.And(existence, foundSet)
+	}
+	retainedRows := retainSet.GetCardinality()
+	if retainedRows == 0 {
+		return nil, 0, 0
+	}
+	if !negate && retainedRows == existence.GetCardinality() {
+		return source, retainedRows, retainedRows
+	}
+	retained := source.NewBSIRetainSet(retainSet)
+	retainedRows = retained.GetCardinality()
+	if retainedRows == 0 {
+		return nil, 0, 0
+	}
+	return retained, retainedRows, 0
 }
 
 // Walk the time range and assemble a union of all BSI esistence
