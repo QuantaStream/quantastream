@@ -820,6 +820,48 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesBatchEqualForLargeChild
 	}
 }
 
+func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesSingleKeyEqualForLargeChildSets(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	childRows := make([]qsbridge.QuantaRownum, 0, 1200)
+	for row := 1200; row >= 1; row-- {
+		child := qsbridge.QuantaRownum(row)
+		childRows = append(childRows, child)
+		if row%10 == 0 {
+			fkBSI.SetValue(uint64(child), int64(1007))
+			continue
+		}
+		fkBSI.SetValue(uint64(child), int64(9999))
+	}
+	parentKeyRows := map[int64]qsbridge.QuantaRownum{
+		1007: 7,
+	}
+
+	joined, pairs, timing, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if !timing.singleKeyEqualUsed {
+		t.Fatalf("singleKeyEqualUsed = false, want single-key equality path")
+	}
+	if timing.batchEqualUsed {
+		t.Fatalf("batchEqualUsed = true, want single-key equality path")
+	}
+	if len(joined) != 120 || len(pairs) != len(joined) {
+		t.Fatalf("joined/pairs = %d/%d, want 120 matching rows", len(joined), len(pairs))
+	}
+	for i := 1; i < len(joined); i++ {
+		if joined[i-1] < joined[i] {
+			t.Fatalf("joined row order = %#v, want original child row order preserved", joined[:10])
+		}
+	}
+	for _, pair := range pairs {
+		if pair.child%10 != 0 || pair.parent != 7 {
+			t.Fatalf("unexpected pair = %#v, want child divisible by 10 and parent 7", pair)
+		}
+	}
+}
+
 func TestLegacyDirectRelationshipCountFastPathUsesVectorExistence(t *testing.T) {
 	calls := 0
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
