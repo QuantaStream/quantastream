@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -19,6 +20,7 @@ type QueryScratchpad struct {
 	ProjectionValues              *ProjectionValueCache
 	DomainMappings                *DomainMappingCache
 	RelationshipVectorProjections *RelationshipVectorProjectionCache
+	RelationshipVectorCandidates  *RelationshipVectorCandidateCache
 	MembershipRightCandidates     *MembershipRightCandidateCache
 	Instrumentation               *ExecutionInstrumentation
 }
@@ -30,6 +32,7 @@ func NewQueryScratchpad() *QueryScratchpad {
 		ProjectionValues:              NewProjectionValueCache(),
 		DomainMappings:                NewDomainMappingCache(),
 		RelationshipVectorProjections: NewRelationshipVectorProjectionCache(),
+		RelationshipVectorCandidates:  NewRelationshipVectorCandidateCache(),
 		MembershipRightCandidates:     NewMembershipRightCandidateCache(),
 		Instrumentation:               NewExecutionInstrumentation(),
 	}
@@ -92,6 +95,16 @@ func RelationshipVectorProjectionCacheFromContext(ctx context.Context) *Relation
 		return nil
 	}
 	return scratchpad.RelationshipVectorProjections
+}
+
+// RelationshipVectorCandidateCacheFromContext returns the request-scoped
+// relationship-vector candidate cache.
+func RelationshipVectorCandidateCacheFromContext(ctx context.Context) *RelationshipVectorCandidateCache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.RelationshipVectorCandidates
 }
 
 // MembershipRightCandidateCacheFromContext returns the request-scoped sibling
@@ -638,6 +651,76 @@ func (c *RelationshipVectorProjectionCache) Put(key string, bsi *roaring64.BSI) 
 	c.entries[key] = bsi
 }
 
+type relationshipVectorCandidateCacheEntry struct {
+	SourceValues map[string]struct{}
+	Rownums      []qsbridge.QuantaRownum
+	TargetValues []string
+}
+
+// RelationshipVectorCandidateCache reuses parent-to-child relationship-vector
+// candidate expansions during one execution request.
+type RelationshipVectorCandidateCache struct {
+	mu      sync.Mutex
+	entries map[string][]relationshipVectorCandidateCacheEntry
+}
+
+// NewRelationshipVectorCandidateCache creates an empty request-scoped
+// relationship-vector candidate cache.
+func NewRelationshipVectorCandidateCache() *RelationshipVectorCandidateCache {
+	return &RelationshipVectorCandidateCache{entries: make(map[string][]relationshipVectorCandidateCacheEntry)}
+}
+
+// Get returns an exact cached relationship-vector expansion, or filters a
+// cached superset when its source key values cover the current request.
+func (c *RelationshipVectorCandidateCache) Get(key string, targetDomain string, requestedValues []int64) (qsbridge.QuantaCandidateSet, string, bool) {
+	if c == nil || key == "" {
+		return qsbridge.QuantaCandidateSet{}, "cache_absent", false
+	}
+	requested := stringSetFromSlice(int64Strings(requestedValues))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries := c.entries[key]
+	if len(entries) == 0 {
+		return qsbridge.QuantaCandidateSet{}, "key_miss", false
+	}
+	for _, entry := range entries {
+		if stringSetsEqual(entry.SourceValues, requested) {
+			return qsbridge.QuantaCandidateSet{Index: targetDomain, Rownums: append([]qsbridge.QuantaRownum(nil), entry.Rownums...)}, "exact", true
+		}
+	}
+	for _, entry := range entries {
+		if !stringSetCovers(entry.SourceValues, requested) {
+			continue
+		}
+		rownums := make([]qsbridge.QuantaRownum, 0, len(entry.Rownums))
+		for i, rownum := range entry.Rownums {
+			if i >= len(entry.TargetValues) {
+				continue
+			}
+			if _, ok := requested[entry.TargetValues[i]]; ok {
+				rownums = append(rownums, rownum)
+			}
+		}
+		return qsbridge.QuantaCandidateSet{Index: targetDomain, Rownums: rownums}, "retained_subset", true
+	}
+	return qsbridge.QuantaCandidateSet{}, "coverage_miss", false
+}
+
+// Set stores relationship-vector expansion rows and their target-side source
+// key values for request-scoped reuse.
+func (c *RelationshipVectorCandidateCache) Set(key string, sourceValues []int64, rownums []qsbridge.QuantaRownum, targetValues []int64) {
+	if c == nil || key == "" || len(rownums) == 0 || len(rownums) != len(targetValues) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = append(c.entries[key], relationshipVectorCandidateCacheEntry{
+		SourceValues: stringSetFromSlice(int64Strings(sourceValues)),
+		Rownums:      append([]qsbridge.QuantaRownum(nil), rownums...),
+		TargetValues: append([]string(nil), int64Strings(targetValues)...),
+	})
+}
+
 type membershipRightCandidateCacheEntry struct {
 	NarrowValues map[string]struct{}
 	Rownums      []qsbridge.QuantaRownum
@@ -728,6 +811,14 @@ func stringSetCovers(container, subset map[string]struct{}) bool {
 		}
 	}
 	return true
+}
+
+func int64Strings(values []int64) []string {
+	strings := make([]string, 0, len(values))
+	for _, value := range values {
+		strings = append(strings, strconv.FormatInt(value, 10))
+	}
+	return strings
 }
 
 // LegacyDirectRelationshipVectorProjectionCache keeps existing compatibility

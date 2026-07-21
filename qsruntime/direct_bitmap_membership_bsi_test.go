@@ -183,6 +183,112 @@ func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testin
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "membership_right_candidate_seed_reuse", "true")
 }
 
+func TestDirectBitmapCorrelatedSiblingSeedAppliesRightOnlySameRowResiduals(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2ReceiptDate := qsbridge.FieldRef{Table: l2, Name: "l_receiptdate", PhysicalName: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	l2CommitDate := qsbridge.FieldRef{Table: l2, Name: "l_commitdate", PhysicalName: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+
+	sameRowCalled := false
+	runtime := DirectBitmapRuntime{
+		CorrelatedSiblingRightCandidateSeed: &BitmapQueryResult{
+			Success: true,
+			Count:   3,
+			Rownums: []qsbridge.QuantaRownum{10, 11, 12},
+		},
+		CorrelatedSiblingRightCandidateSeedMode: "test_graph_parent_vector_expansion",
+		SameRowComparison: SameRowComparisonKernelFunc(func(_ context.Context, comparison qsbridge.SameRowComparisonRequest) (qsbridge.SameRowComparisonResult, error) {
+			sameRowCalled = true
+			if got := comparison.Domain.Rownums; len(got) != 3 || got[0] != 10 || got[1] != 11 || got[2] != 12 {
+				t.Fatalf("same-row candidates = %#v, want [10 11 12]", got)
+			}
+			return qsbridge.SameRowComparisonResult{
+				ID: comparison.ID,
+				Domain: qsbridge.RownumDomainSet{
+					Domain:  comparison.Domain.Domain,
+					Rownums: []qsbridge.QuantaRownum{10, 12},
+				},
+			}, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			valuesByField := map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell{
+				"l_orderkey": {
+					1:  {Kind: qsbridge.ValueInt, Value: int64(100)},
+					2:  {Kind: qsbridge.ValueInt, Value: int64(200)},
+					10: {Kind: qsbridge.ValueInt, Value: int64(100)},
+					11: {Kind: qsbridge.ValueInt, Value: int64(100)},
+					12: {Kind: qsbridge.ValueInt, Value: int64(200)},
+				},
+				"l_suppkey": {
+					1:  {Kind: qsbridge.ValueInt, Value: int64(7)},
+					2:  {Kind: qsbridge.ValueInt, Value: int64(7)},
+					10: {Kind: qsbridge.ValueInt, Value: int64(8)},
+					11: {Kind: qsbridge.ValueInt, Value: int64(7)},
+					12: {Kind: qsbridge.ValueInt, Value: int64(7)},
+				},
+			}
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				name := field.PhysicalName
+				if name == "" {
+					name = field.Field
+				}
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					vector.Values = append(vector.Values, valuesByField[name][rownum])
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	membership := qsbridge.MembershipEdge{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{
+				Placement: qsbridge.PredicateResidualScan,
+				Expr:      qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.Field(l2ReceiptDate), qsbridge.Field(l2CommitDate)),
+			},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}
+
+	filtered, probes, diagnostics, err := runtime.directBitmapApplyCorrelatedSiblingMembership(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		BitmapQueryResult{Success: true, Count: 2, Rownums: []qsbridge.QuantaRownum{1, 2}},
+		membership,
+		BitmapQueryResult{},
+	)
+	if err != nil {
+		t.Fatalf("directBitmapApplyCorrelatedSiblingMembership error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !sameRowCalled {
+		t.Fatalf("right-only same-row residual was not applied to seeded candidates")
+	}
+	if got := filtered.Rownums; len(got) != 1 || got[0] != 1 {
+		t.Fatalf("filtered rownums = %#v, want [1]", got)
+	}
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_seed_reuse", "true")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_residual_count", "1")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_same_row_rows_before", "3")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_same_row_rows_after", "2")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_candidates", "2")
+}
+
 func TestDirectBitmapFinishCorrelatedSiblingMembershipBSIFallsBackToStringKeysForBigValues(t *testing.T) {
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}

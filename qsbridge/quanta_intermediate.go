@@ -507,6 +507,8 @@ type FilterDomainRelationshipVectorResult struct {
 	SourceKeyProjectionReason  string
 	SourceKeyProjectionElapsed time.Duration
 	SourceValueCount           int
+	CandidateCacheHit          bool
+	CandidateCacheMode         string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
 }

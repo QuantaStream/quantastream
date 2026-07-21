@@ -141,6 +141,13 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		rightResult = seeded
 		candidateProbes = seedProbes
 		rightCandidateSeedApplied = true
+		rightRequest, requestDiagnostics := directBitmapMembershipRightRequestWithExtraFragments(rightMembership, nil)
+		if requestDiagnostics.BlocksNative() {
+			return result, probes, requestDiagnostics, nil
+		}
+		var residualProbes []ExecutionProbe
+		rightResult, residualProbes, diagnostics, err = r.directBitmapApplyMembershipRightCandidateResiduals(ctx, rightRequest, rightResult, rightMembership, detail)
+		candidateProbes = append(candidateProbes, residualProbes...)
 	} else if foldedNarrow && narrowValuesOK {
 		rightResult, candidateProbes, diagnostics, err = r.directBitmapMembershipRightCandidateResultWithCacheAndProbes(ctx, rightMembership, narrowFragment, narrowValues, detail)
 	} else {
@@ -329,7 +336,6 @@ func (r DirectBitmapRuntime) directBitmapCorrelatedSiblingRightCandidateSeedResu
 		directBitmapMembershipProbe("membership_right_candidate_extra_fragment_count", "0", detail),
 		directBitmapMembershipProbe("membership_right_candidate_query_elapsed", "0s", detail),
 		directBitmapMembershipProbe("membership_right_candidate_query_rows", strconv.Itoa(len(seeded.Rownums)), detail),
-		directBitmapMembershipProbe("membership_right_candidate_residual_count", "0", detail),
 	}
 	return seeded, probes, true
 }
@@ -1498,6 +1504,10 @@ func directBitmapMembershipRightCandidateCellCacheStore(ctx context.Context, mem
 
 func directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates []qsbridge.Predicate) bool {
 	return len(directBitmapMembershipResidualPredicates(rightOnlyPredicates)) == 0
+}
+
+func directBitmapMembershipRightOnlyPredicatesCanApplyAfterSeed(rightOnlyPredicates []qsbridge.Predicate) bool {
+	return len(rightOnlyPredicates) == len(directBitmapMembershipResidualPredicates(rightOnlyPredicates))
 }
 
 func directBitmapMembershipRightCandidateBaseCacheKey(membership qsbridge.MembershipEdge) (string, string, bool) {

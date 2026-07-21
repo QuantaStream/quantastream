@@ -1332,10 +1332,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		return BitmapQueryResult{}, nil, false
 	}
 	rightOnlyPredicates, _ := directBitmapSplitMembershipPredicates(membership)
-	if len(rightOnlyPredicates) != 0 {
+	if !directBitmapMembershipRightOnlyPredicatesCanApplyAfterSeed(rightOnlyPredicates) {
 		return BitmapQueryResult{}, []ExecutionProbe{
 			legacyDirectRelationshipProbe(prefix+"candidate_derivation_applied", "false"),
-			legacyDirectRelationshipProbe(prefix+"candidate_derivation_apply_reason", "right_only_predicates_present"),
+			legacyDirectRelationshipProbe(prefix+"candidate_derivation_apply_reason", "right_only_predicates_need_pushdown"),
 		}, false
 	}
 	if e.Source == nil && e.RelationshipProjectionReader == nil {
@@ -1385,6 +1385,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_source_key_projection_used", strconv.FormatBool(vectorResult.SourceKeyProjectionUsed)),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_source_key_projection_reason", vectorResult.SourceKeyProjectionReason),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_source_value_count", strconv.Itoa(vectorResult.SourceValueCount)),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_cache_hit", strconv.FormatBool(vectorResult.CandidateCacheHit)),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_cache_mode", vectorResult.CandidateCacheMode),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_batch_equal_elapsed", vectorResult.BatchEqualElapsed.String()),
 	)
 	return BitmapQueryResult{

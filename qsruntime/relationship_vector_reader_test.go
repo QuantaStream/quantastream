@@ -419,6 +419,74 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendCachesProjectionWithinRequ
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendReusesCandidateSupersetWithinRequest(t *testing.T) {
+	calls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				2: 7,
+				4: 8,
+				6: 8,
+			}),
+			Calls: &calls,
+		},
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+	}
+	firstRead, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{7, 8},
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first read request diagnostics = %#v, want none", diagnostics)
+	}
+	secondRead, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{8},
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	ctx := WithQueryScratchpad(context.Background())
+	first, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(ctx, firstRead)
+	if err != nil {
+		t.Fatalf("first ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first diagnostics = %#v, want none", diagnostics)
+	}
+	if first.CandidateCacheHit || first.CandidateCacheMode != "miss" {
+		t.Fatalf("first candidate cache = %t/%q, want miss", first.CandidateCacheHit, first.CandidateCacheMode)
+	}
+	if !reflect.DeepEqual(first.TargetCandidates.Rownums, []qsbridge.QuantaRownum{2, 4, 6}) {
+		t.Fatalf("first candidates = %#v, want [2 4 6]", first.TargetCandidates.Rownums)
+	}
+
+	second, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(ctx, secondRead)
+	if err != nil {
+		t.Fatalf("second ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second diagnostics = %#v, want none", diagnostics)
+	}
+	if !second.CandidateCacheHit || second.CandidateCacheMode != "retained_subset" {
+		t.Fatalf("second candidate cache = %t/%q, want retained_subset hit", second.CandidateCacheHit, second.CandidateCacheMode)
+	}
+	if second.BatchEqualElapsed != 0 {
+		t.Fatalf("second BatchEqualElapsed = %s, want 0 for cached candidate subset", second.BatchEqualElapsed)
+	}
+	if !reflect.DeepEqual(second.TargetCandidates.Rownums, []qsbridge.QuantaRownum{4, 6}) {
+		t.Fatalf("second candidates = %#v, want [4 6]", second.TargetCandidates.Rownums)
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls = %d, want 1", calls)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendUsesProjectedSourceKeyValues(t *testing.T) {
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
 		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{

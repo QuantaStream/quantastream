@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,9 @@ func TestWithQueryScratchpadInstallsOneRequestCache(t *testing.T) {
 	}
 	if scratchpad.RelationshipVectorProjections == nil {
 		t.Fatal("relationship-vector projection cache was not installed")
+	}
+	if scratchpad.RelationshipVectorCandidates == nil {
+		t.Fatal("relationship-vector candidate cache was not installed")
 	}
 	if scratchpad.Instrumentation == nil {
 		t.Fatal("execution instrumentation was not installed")
@@ -357,6 +361,29 @@ func TestRelationshipVectorProjectionCacheStoresProjectedFKBSIs(t *testing.T) {
 	}
 	if got, ok := NewLegacyDirectRelationshipVectorProjectionCache().Get(key); ok || got != nil {
 		t.Fatalf("empty compatibility cache lookup = %#v/%t, want miss", got, ok)
+	}
+}
+
+func TestRelationshipVectorCandidateCacheRetainsCoveredSubset(t *testing.T) {
+	cache := NewRelationshipVectorCandidateCache()
+	key := "parent_to_child\x00orders\x00lineitem"
+	cache.Set(
+		key,
+		[]int64{10, 20},
+		[]qsbridge.QuantaRownum{101, 102, 103},
+		[]int64{10, 20, 20},
+	)
+
+	exact, mode, ok := cache.Get(key, "lineitem", []int64{20, 10})
+	if !ok || mode != "exact" || !reflect.DeepEqual(exact.Rownums, []qsbridge.QuantaRownum{101, 102, 103}) {
+		t.Fatalf("exact cache lookup = %#v/%q/%t, want all rows", exact, mode, ok)
+	}
+	subset, mode, ok := cache.Get(key, "lineitem", []int64{20})
+	if !ok || mode != "retained_subset" || !reflect.DeepEqual(subset.Rownums, []qsbridge.QuantaRownum{102, 103}) {
+		t.Fatalf("subset cache lookup = %#v/%q/%t, want rows [102 103]", subset, mode, ok)
+	}
+	if _, mode, ok := cache.Get(key, "lineitem", []int64{30}); ok || mode != "coverage_miss" {
+		t.Fatalf("uncovered lookup mode = %q/%t, want coverage_miss", mode, ok)
 	}
 }
 

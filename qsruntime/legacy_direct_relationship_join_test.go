@@ -2631,6 +2631,83 @@ func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSe
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_reason", "right_candidate_seed")
 }
 
+func TestLegacyDirectRelationshipTupleMembershipDerivedSeedAllowsResidualRightOnlyPredicate(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2ReceiptDate := qsbridge.FieldRef{Table: l2, Name: "l_receiptdate", PhysicalName: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	l2CommitDate := qsbridge.FieldRef{Table: l2, Name: "l_commitdate", PhysicalName: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				10: 9001,
+				11: 9001,
+				20: 2,
+			}),
+		},
+		RelationshipSourceKeyReader: fakeLegacyDirectRelationshipVectorSourceKeyReader{
+			Values: []int64{9001},
+		},
+	}
+	membership := qsbridge.MembershipEdge{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipAnti,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{
+				Placement: qsbridge.PredicateResidualScan,
+				Expr:      qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.Field(l2ReceiptDate), qsbridge.Field(l2CommitDate)),
+			},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}
+	tupleRows := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 1, "l1": 10}},
+	}}
+	observation := legacyDirectRelationshipTupleMembershipCandidateDerivationObservation{
+		available:        true,
+		mode:             "parent_role_vector_expansion",
+		parentRole:       "o",
+		leftRole:         "l1",
+		rightRole:        "l2",
+		edgeDetail:       "orders.o_orderkey->lineitem.l_orderkey",
+		parentRows:       1,
+		uniqueParentRows: 1,
+		edge: legacyDirectRelationshipEdge{
+			childRole:   "l1",
+			childTable:  "lineitem",
+			childField:  "l_orderkey",
+			parentRole:  "o",
+			parentTable: "orders",
+			parentField: "o_orderkey",
+			sqlKind:     qsbridge.JoinKindInner,
+		},
+	}
+
+	seed, probes, ok := executor.legacyDirectRelationshipTupleMembershipDerivedRightCandidateSeed(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		membership,
+		tupleRows,
+		"graph_membership_1_",
+		observation,
+	)
+	if !ok {
+		t.Fatalf("derived seed not applied; probes=%#v", probes)
+	}
+	if got := seed.Rownums; len(got) != 2 || got[0] != 10 || got[1] != 11 {
+		t.Fatalf("seed rownums = %#v, want [10 11]", got)
+	}
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_applied", "true")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_source_key_projection_used", "true")
+}
+
 func TestLegacyDirectRelationshipTupleMembershipBSIFastPathPolicyRequiresLargeReusableDomain(t *testing.T) {
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
