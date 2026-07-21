@@ -16,7 +16,7 @@ import (
 // narrowing so a large left domain does not turn into an oversized lookup list.
 const directBitmapMembershipMaxDynamicBatchEQValues = 4096
 
-func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, request ExecutionRequest, result BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	if len(request.Memberships) == 0 {
 		return result, nil, nil, nil
 	}
@@ -39,7 +39,7 @@ func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, r
 		if !strings.EqualFold(membership.Left.Table.Table, rootIndex) {
 			return result, probes, directBitmapMembershipDiagnostics("direct bitmap runtime only supports membership left side on the root table"), nil
 		}
-		filteredResult, membershipProbes, diagnostics, err := r.directBitmapApplyMembership(ctx, request, filtered, membership)
+		filteredResult, membershipProbes, diagnostics, err := r.directBitmapApplyMembership(ctx, request, filtered, membership, rootSeedResult)
 		probes = append(probes, membershipProbes...)
 		if err != nil || diagnostics.BlocksNative() {
 			return result, probes, diagnostics, err
@@ -49,9 +49,9 @@ func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, r
 	return filtered, probes, nil, nil
 }
 
-func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	if directBitmapMembershipHasCorrelatedPredicates(membership) {
-		return r.directBitmapApplyCorrelatedSiblingMembership(ctx, result, membership)
+		return r.directBitmapApplyCorrelatedSiblingMembership(ctx, request, result, membership, rootSeedResult)
 	}
 	if filtered, handled, diagnostics, err := r.directBitmapApplyRelationshipMembership(ctx, result, membership); handled || err != nil || diagnostics.BlocksNative() {
 		return filtered, nil, diagnostics, err
@@ -88,7 +88,7 @@ func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, re
 	return filtered, nil, nil, nil
 }
 
-func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	start := time.Now()
 	detail := directBitmapMembershipNarrowProbeDetail(membership)
 	probes := []ExecutionProbe{
@@ -101,7 +101,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if len(correlatedPredicates) == 0 {
 		return result, nil, directBitmapMembershipDiagnostics("correlated sibling membership requires a cross-domain predicate"), nil
 	}
-	if filtered, fastProbes, handled, diagnostics, err := r.directBitmapApplyCorrelatedSiblingMembershipBSIFastPath(ctx, result, membership, rightOnlyPredicates, correlatedPredicates); handled || err != nil || diagnostics.BlocksNative() {
+	if filtered, fastProbes, handled, diagnostics, err := r.directBitmapApplyCorrelatedSiblingMembershipBSIFastPath(ctx, request, result, membership, rightOnlyPredicates, correlatedPredicates, rootSeedResult); handled || err != nil || diagnostics.BlocksNative() {
 		probes = append(probes, fastProbes...)
 		return filtered, probes, diagnostics, err
 	}
@@ -327,7 +327,7 @@ type directBitmapMembershipBSIVector struct {
 	Values  []*big.Int
 }
 
-func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFastPath(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
+func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFastPath(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
 	if r.ProjectionBSIReader == nil {
 		return result, nil, false, nil, nil
 	}
@@ -354,7 +354,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
 	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
 	if directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(result.Rownums, rightOnlyPredicates, leftFields, rightFields) {
-		filtered, reuseProbes, diagnostics, err := r.directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx, start, result, membership, rightOnlyPredicates, correlatedPredicates, comparisons, leftFields, rightFields, detail)
+		filtered, reuseProbes, diagnostics, err := r.directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx, request, start, result, membership, rightOnlyPredicates, correlatedPredicates, comparisons, leftFields, rightFields, rootSeedResult, detail)
 		probes = append(probes, reuseProbes...)
 		return filtered, probes, true, diagnostics, err
 	}
@@ -571,14 +571,14 @@ func directBitmapMembershipBSIJoinKeyForValue(value *big.Int, useInt64 bool) (di
 	return directBitmapMembershipBSIJoinKey{stringValue: value.String()}, true
 }
 
-func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx context.Context, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx context.Context, request ExecutionRequest, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, rootSeedResult BitmapQueryResult, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	probes := []ExecutionProbe{
 		directBitmapMembershipProbe("correlated_sibling_bsi_right_vector_reuse", "true", detail),
 	}
 	rightMembership := membership
 	rightMembership.Predicates = rightOnlyPredicates
 	rightCandidateStart := time.Now()
-	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, nil)
+	rightResult, candidateProbes, reusedSeed, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithRootSeedReuse(ctx, request, rightMembership, rootSeedResult, detail)
 	rightCandidateElapsed := time.Since(rightCandidateStart)
 	probes = append(probes, candidateProbes...)
 	probes = append(probes,
@@ -587,6 +587,11 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRigh
 		directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "false", detail),
 		directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "right_vector_reuse_large_left_domain", detail),
 	)
+	if reusedSeed {
+		probes = append(probes, directBitmapMembershipProbe("correlated_sibling_right_candidate_source", "root_seed", detail))
+	} else {
+		probes = append(probes, directBitmapMembershipProbe("correlated_sibling_right_candidate_source", "query", detail))
+	}
 	if err != nil || diagnostics.BlocksNative() {
 		return result, probes, diagnostics, err
 	}
@@ -627,6 +632,59 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRigh
 
 	filtered, probes, diagnostics := directBitmapFinishCorrelatedSiblingMembershipBSI(start, result, membership, detail, probes, comparisons, leftVectors, leftKey, rightVectors, rightKey)
 	return filtered, probes, diagnostics, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithRootSeedReuse(ctx context.Context, request ExecutionRequest, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult, detail string) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
+	if rightResult, ok := directBitmapMembershipRootSeedCandidateResult(request, membership, rootSeedResult); ok {
+		probes := []ExecutionProbe{
+			directBitmapMembershipProbe("membership_right_candidate_seed_reuse", "true", detail),
+			directBitmapMembershipProbe("membership_right_candidate_fragment_count", strconv.Itoa(len(request.Query.Fragments)), detail),
+			directBitmapMembershipProbe("membership_right_candidate_extra_fragment_count", "0", detail),
+			directBitmapMembershipProbe("membership_right_candidate_query_elapsed", "0s", detail),
+			directBitmapMembershipProbe("membership_right_candidate_query_rows", strconv.Itoa(len(rightResult.Rownums)), detail),
+			directBitmapMembershipProbe("membership_right_candidate_residual_count", "0", detail),
+		}
+		return rightResult, probes, true, nil, nil
+	}
+	rightResult, probes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, membership, nil)
+	probes = append([]ExecutionProbe{directBitmapMembershipProbe("membership_right_candidate_seed_reuse", "false", detail)}, probes...)
+	return rightResult, probes, false, diagnostics, err
+}
+
+func directBitmapMembershipRootSeedCandidateResult(request ExecutionRequest, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult) (BitmapQueryResult, bool) {
+	if request.HasCandidateSet || len(membership.Predicates) != 0 || !rootSeedResult.Success {
+		return BitmapQueryResult{}, false
+	}
+	root, ok := request.RootIndex()
+	if !ok ||
+		!strings.EqualFold(root, membership.Left.Table.Table) ||
+		!strings.EqualFold(root, membership.Right.Table.Table) {
+		return BitmapQueryResult{}, false
+	}
+	if len(request.Query.Fragments) != 1 || len(request.Query.Seeds) != 0 {
+		return BitmapQueryResult{}, false
+	}
+	fragment := request.Query.Fragments[0]
+	if !strings.EqualFold(fragment.Index, root) ||
+		fragment.Operation != qsbridge.QuantaOperationIntersect ||
+		!fragment.NullCheck ||
+		!fragment.Negate ||
+		fragment.Value != nil ||
+		len(fragment.Values) != 0 ||
+		fragment.Begin != nil ||
+		fragment.End != nil ||
+		fragment.HasLiteral ||
+		fragment.HasLiteralRange {
+		return BitmapQueryResult{}, false
+	}
+	leftField := directBitmapFieldPhysicalName(membership.Left)
+	if leftField == "" {
+		leftField = membership.Left.Name
+	}
+	if !strings.EqualFold(fragment.Field, leftField) {
+		return BitmapQueryResult{}, false
+	}
+	return rootSeedResult.Clone(), true
 }
 
 func directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(leftRownums []qsbridge.QuantaRownum, rightOnlyPredicates []qsbridge.Predicate, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField) bool {

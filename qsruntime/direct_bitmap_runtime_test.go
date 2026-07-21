@@ -415,7 +415,7 @@ func TestDirectBitmapRuntimePrefiltersCorrelatedMembershipRightSameRowResidual(t
 		Success: true,
 		Count:   2,
 		Rownums: []qsbridge.QuantaRownum{1, 2},
-	}, membership)
+	}, membership, BitmapQueryResult{})
 	if err != nil {
 		t.Fatalf("apply membership: %v", err)
 	}

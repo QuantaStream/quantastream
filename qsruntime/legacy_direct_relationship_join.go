@@ -1186,7 +1186,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 			Success: true,
 			Count:   uint64(len(leftCandidates)),
 			Rownums: leftCandidates,
-		}, membership)
+		}, membership, BitmapQueryResult{})
 		probes = append(probes, membershipProbes...)
 		if err != nil || diagnostics.BlocksNative() {
 			return RelationshipTupleRowSet{}, nil, probes, diagnostics, err

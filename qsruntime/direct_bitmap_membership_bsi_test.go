@@ -133,14 +133,16 @@ func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testin
 			t.Fatalf("correlated sibling BSI right-vector reuse should not materialize rows for %s", request.Index)
 			return qsbridge.QuantaProjectedRowSet{}, nil, nil
 		}),
-		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
-			return DirectSessionHandleFunc{
-				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
-					return BitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: append([]qsbridge.QuantaRownum(nil), rownums...)}, nil, nil
-				},
-			}, nil, nil
-		}),
 	}
+	queryCalls := 0
+	runtime.Sessions = DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+		return DirectSessionHandleFunc{
+			QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+				queryCalls++
+				return BitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: append([]qsbridge.QuantaRownum(nil), rownums...)}, nil, nil
+			},
+		}, nil, nil
+	})
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: []qsbridge.QuantaQueryFragment{{
 			Index:     "lineitem",
@@ -172,9 +174,13 @@ func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testin
 	if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(2) {
 		t.Fatalf("count aggregate = %#v, want 2", got)
 	}
+	if queryCalls != 1 {
+		t.Fatalf("bitmap candidate queries = %d, want 1", queryCalls)
+	}
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_right_vector_reuse")
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_value_hydration_elapsed")
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_key_mode", "int64")
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "membership_right_candidate_seed_reuse", "true")
 }
 
 func TestDirectBitmapFinishCorrelatedSiblingMembershipBSIFallsBackToStringKeysForBigValues(t *testing.T) {
