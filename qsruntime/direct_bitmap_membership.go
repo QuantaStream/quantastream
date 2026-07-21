@@ -764,13 +764,25 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 			return vectors, probes, directBitmapMembershipDiagnostics("correlated sibling BSI fast path reader returned no BSI for " + requests[i].Index + "." + requests[i].PhysicalField), nil
 		}
 		vector := vectors[positions[i]]
+		hydrationStart := time.Now()
+		hydratedRows := 0
+		missingRows := 0
 		for j, rownum := range rownums {
 			value, ok := readResult.BSI.GetBigValue(uint64(rownum))
 			if !ok {
+				missingRows++
 				continue
 			}
-			vector.Values[j] = new(big.Int).Set(value)
+			// GetBigValue already returns a new big.Int; avoid copying every hydrated cell.
+			vector.Values[j] = value
+			hydratedRows++
 		}
+		hydrationDetail := requests[i].Index + "." + requests[i].PhysicalField
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_rows", strconv.Itoa(hydratedRows), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_missing_rows", strconv.Itoa(missingRows), hydrationDetail),
+		)
 		vectors[positions[i]] = vector
 	}
 	return vectors, probes, nil, nil

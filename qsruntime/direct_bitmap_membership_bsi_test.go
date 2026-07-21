@@ -93,6 +93,7 @@ func TestDirectBitmapRuntimeAppliesCorrelatedSiblingMembershipWithRawBSIVectors(
 				t.Fatalf("count aggregate = %#v, want %d", got, test.want)
 			}
 			assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_fast_path_applied")
+			assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_value_hydration_elapsed")
 		})
 	}
 }
@@ -171,6 +172,7 @@ func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testin
 		t.Fatalf("count aggregate = %#v, want 2", got)
 	}
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_right_vector_reuse")
+	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_value_hydration_elapsed")
 }
 
 type fakeMembershipProjectionBSIReader struct {
