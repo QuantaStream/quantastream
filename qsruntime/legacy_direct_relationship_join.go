@@ -402,11 +402,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			edge.parentKey(): parentRows,
 			edge.childKey():  childRows,
 		}
-		prefilterProbes, diagnostics, err = e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByRole, []legacyDirectRelationshipEdge{edge})
+		var appliedPrefilterPredicates []int
+		prefilterProbes, appliedPrefilterPredicates, diagnostics, err = e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByRole, []legacyDirectRelationshipEdge{edge})
 		prefilterElapsed = time.Since(prefilterStart)
 		if err != nil || diagnostics.BlocksNative() {
 			return ExecutionResult{Diagnostics: diagnostics}, err
 		}
+		request = legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, appliedPrefilterPredicates)
 		parentRows = rowsByRole[edge.parentKey()]
 		childRows = rowsByRole[edge.childKey()]
 		reduceStart := time.Now()
@@ -605,11 +607,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		return ExecutionResult{Diagnostics: diagnostics}, err
 	}
 	prefilterStart := time.Now()
-	prefilterProbes, diagnostics, err := e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByTable, edges)
+	prefilterProbes, appliedPrefilterPredicates, diagnostics, err := e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByTable, edges)
 	prefilterElapsed := time.Since(prefilterStart)
 	if err != nil || diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, err
 	}
+	request = legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, appliedPrefilterPredicates)
 	scratchpad := newLegacyDirectRelationshipGraphScratchpad(rowsByTable, edges)
 	result := ExecutionResult{Probes: []ExecutionProbe{
 		legacyDirectRelationshipProbe("graph_edges", strconv.Itoa(len(edges))),

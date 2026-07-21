@@ -31,6 +31,9 @@ func TestLegacyDirectRelationshipResidualRolePrefilterPlansSingleRoleResidual(t 
 	if len(plans[0].predicates) != 1 || len(plans[0].fields) != 1 {
 		t.Fatalf("predicates/fields = %d/%d, want 1/1", len(plans[0].predicates), len(plans[0].fields))
 	}
+	if len(plans[0].predicateIndexes) != 1 || plans[0].predicateIndexes[0] != 0 {
+		t.Fatalf("predicate indexes = %#v, want [0]", plans[0].predicateIndexes)
+	}
 	if plans[0].fields[0].Role != "p" || plans[0].fields[0].Field != "p_name" {
 		t.Fatalf("field = %#v, want role p field p_name", plans[0].fields[0])
 	}
@@ -100,7 +103,7 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersShrinksRoleRows(t *t
 		}),
 	}
 
-	probes, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, nil)
+	probes, applied, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, nil)
 
 	if err != nil {
 		t.Fatalf("prefilter: %v", err)
@@ -113,6 +116,13 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersShrinksRoleRows(t *t
 	}
 	if got := rowsByRole["l"]; len(got) != 3 {
 		t.Fatalf("lineitem rows changed = %#v, want unchanged", got)
+	}
+	if len(applied) != 1 || applied[0] != 0 {
+		t.Fatalf("applied predicates = %#v, want [0]", applied)
+	}
+	pruned := legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, applied)
+	if len(pruned.Predicates) != 0 {
+		t.Fatalf("pruned predicates = %#v, want none after applied prefilter", pruned.Predicates)
 	}
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_roles", "1")
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_1_rows_before", "3")
@@ -159,7 +169,7 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersDefersSameRoleFieldC
 		parentField: "o_orderkey",
 	}}
 
-	probes, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, edges)
+	probes, applied, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, edges)
 
 	if err != nil {
 		t.Fatalf("prefilter: %v", err)
@@ -169,6 +179,13 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersDefersSameRoleFieldC
 	}
 	if got := rowsByRole["l1"]; len(got) != 3 {
 		t.Fatalf("filtered l1 rows = %#v, want unchanged", got)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("applied predicates = %#v, want none for deferred same-row residual", applied)
+	}
+	pruned := legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, applied)
+	if len(pruned.Predicates) != 1 {
+		t.Fatalf("pruned predicates = %#v, want deferred residual retained", pruned.Predicates)
 	}
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_roles", "1")
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_1_field_count", "2")
@@ -323,7 +340,7 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersKeepsLiteralPredicat
 		parentField: "p_partkey",
 	}}
 
-	probes, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, edges)
+	probes, applied, diagnostics, err := executor.legacyDirectRelationshipApplyResidualRolePrefilters(context.Background(), request, rowsByRole, edges)
 
 	if err != nil {
 		t.Fatalf("prefilter: %v", err)
@@ -333,6 +350,9 @@ func TestLegacyDirectRelationshipApplyResidualRolePrefiltersKeepsLiteralPredicat
 	}
 	if got := rowsByRole["p"]; len(got) != 2 {
 		t.Fatalf("filtered p rows = %#v, want eager literal prefilter", got)
+	}
+	if len(applied) != 1 || applied[0] != 0 {
+		t.Fatalf("applied predicates = %#v, want [0]", applied)
 	}
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_1_fields", "1")
 	assertExecutionProbe(t, probes, "relationship_join", "residual_prefilter_1_rows_evaluated", "3")

@@ -11,10 +11,11 @@ import (
 )
 
 type legacyDirectRelationshipResidualRolePrefilter struct {
-	role       string
-	table      string
-	predicates []qsbridge.Predicate
-	fields     []qsbridge.QuantaProjectionField
+	role             string
+	table            string
+	predicates       []qsbridge.Predicate
+	predicateIndexes []int
+	fields           []qsbridge.QuantaProjectionField
 }
 
 type legacyDirectRelationshipResidualRolePrefilterTiming struct {
@@ -49,14 +50,15 @@ type sameRowComparisonPolicyDecision struct {
 	reason    string
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyResidualRolePrefilters(ctx context.Context, request ExecutionRequest, rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge) ([]ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyResidualRolePrefilters(ctx context.Context, request ExecutionRequest, rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge) ([]ExecutionProbe, []int, qsbridge.DiagnosticSet, error) {
 	plans := legacyDirectRelationshipResidualRolePrefilterPlans(request)
 	probes := []ExecutionProbe{
 		legacyDirectRelationshipProbe("residual_prefilter_roles", strconv.Itoa(len(plans))),
 	}
 	if len(plans) == 0 {
-		return probes, nil, nil
+		return probes, nil, nil, nil
 	}
+	appliedPredicateIndexes := make([]int, 0, len(plans))
 	materialization := e.projectionMaterializationKernel()
 	for i, plan := range plans {
 		rows := rowsByRole[plan.role]
@@ -84,9 +86,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 		filtered, timing, diagnostics, err := e.legacyDirectRelationshipFilterRoleRowsByResiduals(ctx, request, materialization, plan, rows)
 		filterElapsed := time.Since(filterStart)
 		if err != nil || diagnostics.BlocksNative() {
-			return probes, diagnostics, err
+			return probes, nil, diagnostics, err
 		}
 		rowsByRole[plan.role] = filtered
+		appliedPredicateIndexes = append(appliedPredicateIndexes, plan.predicateIndexes...)
 		probes = append(probes,
 			legacyDirectRelationshipProbe(prefix+"role", plan.role),
 			legacyDirectRelationshipProbe(prefix+"table", plan.table),
@@ -101,7 +104,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 			legacyDirectRelationshipProbe(prefix+"evaluation_elapsed", timing.evaluationElapsed.String()),
 		)
 	}
-	return probes, nil, nil
+	sort.Ints(appliedPredicateIndexes)
+	return probes, appliedPredicateIndexes, nil, nil
 }
 
 func legacyDirectRelationshipResidualPrefilterShouldDefer(plan legacyDirectRelationshipResidualRolePrefilter, edges []legacyDirectRelationshipEdge) (bool, string) {
@@ -526,7 +530,7 @@ func legacyDirectRelationshipFilterAlignedRowsByIndexes(alignedRows map[string][
 
 func legacyDirectRelationshipResidualRolePrefilterPlans(request ExecutionRequest) []legacyDirectRelationshipResidualRolePrefilter {
 	plansByRole := make(map[string]legacyDirectRelationshipResidualRolePrefilter)
-	for _, predicate := range request.Predicates {
+	for index, predicate := range request.Predicates {
 		if predicate.Placement != qsbridge.PredicateResidualScan {
 			continue
 		}
@@ -546,6 +550,7 @@ func legacyDirectRelationshipResidualRolePrefilterPlans(request ExecutionRequest
 			plan.table = table
 		}
 		plan.predicates = append(plan.predicates, predicate)
+		plan.predicateIndexes = append(plan.predicateIndexes, index)
 		plan.fields = legacyDirectRelationshipMergeProjectionFields(plan.fields, fields)
 		plansByRole[role] = plan
 	}
@@ -559,6 +564,25 @@ func legacyDirectRelationshipResidualRolePrefilterPlans(request ExecutionRequest
 		plans = append(plans, plansByRole[role])
 	}
 	return plans
+}
+
+func legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request ExecutionRequest, appliedPredicateIndexes []int) ExecutionRequest {
+	if len(appliedPredicateIndexes) == 0 {
+		return request
+	}
+	applied := make(map[int]struct{}, len(appliedPredicateIndexes))
+	for _, index := range appliedPredicateIndexes {
+		applied[index] = struct{}{}
+	}
+	predicates := make([]qsbridge.Predicate, 0, len(request.Predicates)-len(applied))
+	for index, predicate := range request.Predicates {
+		if _, ok := applied[index]; ok && predicate.Placement == qsbridge.PredicateResidualScan {
+			continue
+		}
+		predicates = append(predicates, predicate)
+	}
+	request.Predicates = predicates
+	return request
 }
 
 func legacyDirectRelationshipResidualPrefilterFields(predicate qsbridge.Predicate) (string, string, []qsbridge.QuantaProjectionField, bool) {
