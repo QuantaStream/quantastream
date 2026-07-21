@@ -77,6 +77,14 @@ type legacyDirectRelationshipReduceTiming struct {
 	pairElapsed                 time.Duration
 }
 
+type legacyDirectRelationshipProjectedFKReduceTiming struct {
+	batchEqualUsed    bool
+	batchEqualElapsed time.Duration
+	intersectElapsed  time.Duration
+	rownumElapsed     time.Duration
+	pairElapsed       time.Duration
+}
+
 type legacyDirectRelationshipRoleFallback struct {
 	table string
 	role  string
@@ -2321,6 +2329,23 @@ func legacyDirectRelationshipRowsFromParentMap(childRows []qsbridge.QuantaRownum
 	return legacyDirectRelationshipUniqueRownums(parentRows), joined, pairs
 }
 
+type legacyDirectRelationshipGraphMaterializationFieldState struct {
+	field       qsbridge.QuantaProjectionField
+	table       string
+	roleKey     string
+	tableRows   []qsbridge.QuantaRownum
+	probePrefix string
+	vector      qsbridge.QuantaProjectionVector
+	probes      []ExecutionProbe
+}
+
+type legacyDirectRelationshipGraphMaterializationGroup struct {
+	table     string
+	roleKey   string
+	tableRows []qsbridge.QuantaRownum
+	fields    []int
+}
+
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphMaterializedRowSet(ctx context.Context, request ExecutionRequest, sink string, sinkRows []qsbridge.QuantaRownum, fields []qsbridge.QuantaProjectionField, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, probePrefix string) (qsbridge.QuantaProjectedRowSet, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	materialization := e.projectionMaterializationKernel()
 	probes := make([]ExecutionProbe, 0, len(fields)*8)
@@ -2328,6 +2353,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		Index:   sink,
 		Rownums: append([]qsbridge.QuantaRownum(nil), sinkRows...),
 	}
+	states := make([]legacyDirectRelationshipGraphMaterializationFieldState, len(fields))
+	groups := map[string]*legacyDirectRelationshipGraphMaterializationGroup{}
+	groupOrder := []string{}
 	for i, field := range fields {
 		table := field.Index
 		if table == "" {
@@ -2346,38 +2374,71 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 			return qsbridge.QuantaProjectedRowSet{}, probes, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector graph cannot align materialization table %s role %s from sink %s; aligned roles=%s", table, roleKey, sink, legacyDirectRelationshipAlignedRoleDebug(alignedRows))), nil
 		}
 		fieldProbePrefix := legacyDirectRelationshipMaterializationFieldProbePrefix(probePrefix, i+1, field)
+		states[i] = legacyDirectRelationshipGraphMaterializationFieldState{
+			field:       field,
+			table:       table,
+			roleKey:     roleKey,
+			tableRows:   tableRows,
+			probePrefix: fieldProbePrefix,
+		}
 		if vector, syntheticProbes, ok := legacyDirectRelationshipSyntheticEndpointProjection(field, roleKey, tableRows, edges, alignedRows, fieldProbePrefix); ok {
-			rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
-			probes = append(probes, syntheticProbes...)
+			states[i].vector = vector
+			states[i].probes = append(states[i].probes, syntheticProbes...)
 			continue
 		}
+		groupKey := table + "\x00" + roleKey
+		group := groups[groupKey]
+		if group == nil {
+			group = &legacyDirectRelationshipGraphMaterializationGroup{
+				table:     table,
+				roleKey:   roleKey,
+				tableRows: tableRows,
+			}
+			groups[groupKey] = group
+			groupOrder = append(groupOrder, groupKey)
+		}
+		group.fields = append(group.fields, i)
+	}
+	for _, groupKey := range groupOrder {
+		group := groups[groupKey]
+		groupFields := make([]qsbridge.QuantaProjectionField, 0, len(group.fields))
+		for _, fieldIndex := range group.fields {
+			groupFields = append(groupFields, states[fieldIndex].field)
+		}
 		fetchStart := time.Now()
-		values, materializationProbes, diagnostics, err := e.legacyDirectRelationshipMaterializedValuesWithProbes(ctx, materialization, table, tableRows, []qsbridge.QuantaProjectionField{field}, e.legacyDirectRelationshipTimeMaterialization(request, table))
+		values, materializationProbes, diagnostics, err := e.legacyDirectRelationshipMaterializedValuesWithProbes(ctx, materialization, group.table, group.tableRows, groupFields, e.legacyDirectRelationshipTimeMaterialization(request, group.table))
 		fetchElapsed := time.Since(fetchStart)
 		if err != nil || diagnostics.BlocksNative() {
 			return qsbridge.QuantaProjectedRowSet{}, probes, diagnostics, err
 		}
 		probes = append(probes, materializationProbes...)
-		fieldValues := values[legacyDirectRelationshipProjectionFieldKey(field)]
-		vector := qsbridge.QuantaProjectionVector{Field: field}
-		attachStart := time.Now()
-		for _, rownum := range tableRows {
-			cell, ok := fieldValues[rownum]
-			if !ok {
-				return qsbridge.QuantaProjectedRowSet{}, probes, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector graph materialization missing value for %s.%s row %d", field.Index, field.Field, rownum)), nil
+		for _, fieldIndex := range group.fields {
+			state := &states[fieldIndex]
+			fieldValues := values[legacyDirectRelationshipProjectionFieldKey(state.field)]
+			vector := qsbridge.QuantaProjectionVector{Field: state.field}
+			attachStart := time.Now()
+			for _, rownum := range state.tableRows {
+				cell, ok := fieldValues[rownum]
+				if !ok {
+					return qsbridge.QuantaProjectedRowSet{}, probes, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector graph materialization missing value for %s.%s row %d", state.field.Index, state.field.Field, rownum)), nil
+				}
+				vector.Values = append(vector.Values, cell)
 			}
-			vector.Values = append(vector.Values, cell)
+			attachElapsed := time.Since(attachStart)
+			state.vector = vector
+			state.probes = append(state.probes,
+				legacyDirectRelationshipProbe(state.probePrefix+"role", state.roleKey),
+				legacyDirectRelationshipProbe(state.probePrefix+"table", state.table),
+				legacyDirectRelationshipProbe(state.probePrefix+"field", state.field.Field),
+				legacyDirectRelationshipProbe(state.probePrefix+"rows", strconv.Itoa(len(state.tableRows))),
+				legacyDirectRelationshipProbe(state.probePrefix+"fetch_elapsed", fetchElapsed.String()),
+				legacyDirectRelationshipProbe(state.probePrefix+"attach_elapsed", attachElapsed.String()),
+			)
 		}
-		attachElapsed := time.Since(attachStart)
-		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
-		probes = append(probes,
-			legacyDirectRelationshipProbe(fieldProbePrefix+"role", roleKey),
-			legacyDirectRelationshipProbe(fieldProbePrefix+"table", table),
-			legacyDirectRelationshipProbe(fieldProbePrefix+"field", field.Field),
-			legacyDirectRelationshipProbe(fieldProbePrefix+"rows", strconv.Itoa(len(tableRows))),
-			legacyDirectRelationshipProbe(fieldProbePrefix+"fetch_elapsed", fetchElapsed.String()),
-			legacyDirectRelationshipProbe(fieldProbePrefix+"attach_elapsed", attachElapsed.String()),
-		)
+	}
+	for _, state := range states {
+		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, state.vector)
+		probes = append(probes, state.probes...)
 	}
 	return rowSet, probes, rowSet.ValidateShape(), nil
 }
@@ -3203,12 +3264,19 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		return nil, nil, timing, diagnostics, err
 	}
 	matchStart := time.Now()
-	joined, pairs, diagnostics := legacyDirectRelationshipReduceProjectedFKBSI(fkBSI, childRows, parentKeyRows)
+	joined, pairs, projectedTiming, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
 	timing.matchedRows = len(joined)
-	timing.batchEqualElapsed = time.Since(matchStart)
-	timing.intersectElapsed = 0
-	timing.rownumElapsed = 0
-	timing.pairElapsed = 0
+	if projectedTiming.batchEqualElapsed == 0 &&
+		projectedTiming.intersectElapsed == 0 &&
+		projectedTiming.rownumElapsed == 0 &&
+		projectedTiming.pairElapsed == 0 {
+		timing.batchEqualElapsed = time.Since(matchStart)
+	} else {
+		timing.batchEqualElapsed = projectedTiming.batchEqualElapsed
+		timing.intersectElapsed = projectedTiming.intersectElapsed
+		timing.rownumElapsed = projectedTiming.rownumElapsed
+		timing.pairElapsed = projectedTiming.pairElapsed
+	}
 	if diagnostics.BlocksNative() {
 		return nil, nil, timing, diagnostics, nil
 	}
@@ -3282,14 +3350,61 @@ func legacyDirectRelationshipParentKeyValues(parentKeyRows map[int64]qsbridge.Qu
 }
 
 func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, qsbridge.DiagnosticSet) {
+	joined, pairs, _, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
+	return joined, pairs, diagnostics
+}
+
+func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipProjectedFKReduceTiming, qsbridge.DiagnosticSet) {
+	var timing legacyDirectRelationshipProjectedFKReduceTiming
 	if fkBSI == nil {
-		return nil, nil, legacyDirectRelationshipDiagnostic("relationship-vector FK projection returned nil BSI")
+		return nil, nil, timing, legacyDirectRelationshipDiagnostic("relationship-vector FK projection returned nil BSI")
 	}
 	if len(childRows) == 0 || len(parentKeyRows) == 0 {
-		return nil, nil, nil
+		return nil, nil, timing, nil
+	}
+	if legacyDirectRelationshipShouldUseBatchEqualReduce(childRows, parentKeyRows) {
+		timing.batchEqualUsed = true
+		batchStart := time.Now()
+		matched := fkBSI.BatchEqual(0, legacyDirectRelationshipParentKeyValues(parentKeyRows))
+		if matched == nil {
+			matched = roaring64.NewBitmap()
+		} else {
+			matched = matched.Clone()
+		}
+		timing.batchEqualElapsed = time.Since(batchStart)
+
+		intersectStart := time.Now()
+		matched.And(legacyDirectRelationshipBitmap(childRows))
+		timing.intersectElapsed = time.Since(intersectStart)
+
+		rownumStart := time.Now()
+		joined := make([]qsbridge.QuantaRownum, 0, int(matched.GetCardinality()))
+		for _, child := range childRows {
+			if matched.Contains(uint64(child)) {
+				joined = append(joined, child)
+			}
+		}
+		timing.rownumElapsed = time.Since(rownumStart)
+
+		pairStart := time.Now()
+		pairs := make([]legacyDirectRelationshipPair, 0, len(joined))
+		for _, child := range joined {
+			parentKey, ok := fkBSI.GetValue(uint64(child))
+			if !ok {
+				continue
+			}
+			parent, ok := parentKeyRows[parentKey]
+			if !ok {
+				continue
+			}
+			pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
+		}
+		timing.pairElapsed = time.Since(pairStart)
+		return joined, pairs, timing, nil
 	}
 	joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
 	pairs := make([]legacyDirectRelationshipPair, 0, len(childRows))
+	pairStart := time.Now()
 	for _, child := range childRows {
 		parentKey, ok := fkBSI.GetValue(uint64(child))
 		if !ok {
@@ -3302,7 +3417,12 @@ func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRow
 		joined = append(joined, child)
 		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
 	}
-	return joined, pairs, nil
+	timing.pairElapsed = time.Since(pairStart)
+	return joined, pairs, timing, nil
+}
+
+func legacyDirectRelationshipShouldUseBatchEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
+	return len(childRows) >= 1024 && len(parentKeyRows) > 1 && len(parentKeyRows) <= 512
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectionResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, joined []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult, optionalParentRows ...[]qsbridge.QuantaRownum) (ExecutionResult, error) {

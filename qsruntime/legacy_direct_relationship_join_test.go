@@ -767,6 +767,59 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIPreservesDuplicateChildFKVa
 	}
 }
 
+func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesBatchEqualForLargeChildSets(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	childRows := make([]qsbridge.QuantaRownum, 0, 1200)
+	for row := 1200; row >= 1; row-- {
+		child := qsbridge.QuantaRownum(row)
+		childRows = append(childRows, child)
+		switch {
+		case row%10 == 0:
+			fkBSI.SetValue(uint64(child), int64(1007))
+		case row%25 == 0:
+			fkBSI.SetValue(uint64(child), int64(2009))
+		default:
+			fkBSI.SetValue(uint64(child), int64(9999))
+		}
+	}
+	parentKeyRows := map[int64]qsbridge.QuantaRownum{
+		1007: 7,
+		2009: 9,
+	}
+
+	joined, pairs, timing, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if !timing.batchEqualUsed {
+		t.Fatalf("batchEqualUsed = false, want batch-equal path")
+	}
+	if len(joined) == 0 || len(joined) != len(pairs) {
+		t.Fatalf("joined/pairs = %d/%d, want matching non-zero counts", len(joined), len(pairs))
+	}
+	for i := 1; i < len(joined); i++ {
+		if joined[i-1] < joined[i] {
+			t.Fatalf("joined row order = %#v, want original child row order preserved", joined[:10])
+		}
+	}
+	for _, pair := range pairs {
+		if pair.child%10 == 0 {
+			if pair.parent != 7 {
+				t.Fatalf("pair for child %d = %#v, want parent 7", pair.child, pair)
+			}
+			continue
+		}
+		if pair.child%25 == 0 {
+			if pair.parent != 9 {
+				t.Fatalf("pair for child %d = %#v, want parent 9", pair.child, pair)
+			}
+			continue
+		}
+		t.Fatalf("unexpected pair = %#v", pair)
+	}
+}
+
 func TestLegacyDirectRelationshipCountFastPathUsesVectorExistence(t *testing.T) {
 	calls := 0
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
@@ -3541,8 +3594,8 @@ func TestLegacyDirectRelationshipQ18LargeOrderProjectionLateMaterializesSurvivor
 	if result.Diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
 	}
-	if len(materializations) != 4 {
-		t.Fatalf("materializations = %d, want quantity plus three final fields", len(materializations))
+	if len(materializations) != 3 {
+		t.Fatalf("materializations = %d, want quantity plus two final role batches", len(materializations))
 	}
 	if got := materializations[0].Rownums; len(got) != 4 || got[0] != 101 || got[3] != 104 {
 		t.Fatalf("quantity rownums = %#v, want all lineitem rows", got)
@@ -4300,6 +4353,78 @@ func TestLegacyDirectRelationshipGraphMaterializedRowSetAlignsAncestorGroupField
 	assertExecutionProbe(t, probes, "relationship_join", "test_graph_materialization_field_1_nation_nation_n_name_rows", "3")
 	assertExecutionProbeName(t, probes, "relationship_join", "test_graph_materialization_field_1_nation_nation_n_name_fetch_elapsed")
 	assertExecutionProbeName(t, probes, "relationship_join", "test_graph_materialization_field_1_nation_nation_n_name_attach_elapsed")
+}
+
+func TestLegacyDirectRelationshipGraphMaterializedRowSetBatchesFieldsByRole(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	calls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			calls++
+			if request.Index != "orders" {
+				t.Fatalf("materialization index = %s, want orders", request.Index)
+			}
+			if len(request.ProjectionFields) != 2 {
+				t.Fatalf("projection fields = %#v, want two batched fields", request.ProjectionFields)
+			}
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "o_orderdate":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueTime, Value: int64(rownum + 1000)})
+					case "o_shippriority":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum % 3)})
+					default:
+						t.Fatalf("unexpected materialized field %s.%s", field.Index, field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	rowSet, probes, diagnostics, err := executor.legacyDirectRelationshipGraphMaterializedRowSet(
+		context.Background(),
+		request,
+		"lineitem",
+		[]qsbridge.QuantaRownum{11, 12},
+		[]qsbridge.QuantaProjectionField{
+			{Index: "orders", Role: "o", Field: "o_orderdate", Type: qsbridge.DataTypeTime, Visible: true},
+			{Index: "orders", Role: "o", Field: "o_shippriority", Type: qsbridge.DataTypeInt, Visible: true},
+		},
+		map[string][]qsbridge.QuantaRownum{
+			"lineitem": []qsbridge.QuantaRownum{11, 12},
+			"orders":   []qsbridge.QuantaRownum{101, 102},
+			"o":        []qsbridge.QuantaRownum{101, 102},
+		},
+		nil,
+		"test_graph_materialization_",
+	)
+	if err != nil {
+		t.Fatalf("materialize graph row set: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if calls != 1 {
+		t.Fatalf("materialization calls = %d, want one batched role call", calls)
+	}
+	if len(rowSet.ProjectionVectors) != 2 {
+		t.Fatalf("projection vectors = %#v, want two vectors", rowSet.ProjectionVectors)
+	}
+	if got := rowSet.ProjectionVectors[0].Field.Field; got != "o_orderdate" {
+		t.Fatalf("first vector field = %s, want o_orderdate", got)
+	}
+	if got := rowSet.ProjectionVectors[1].Field.Field; got != "o_shippriority" {
+		t.Fatalf("second vector field = %s, want o_shippriority", got)
+	}
+	assertExecutionProbeName(t, probes, "relationship_join", "test_graph_materialization_field_1_o_orders_o_orderdate_fetch_elapsed")
+	assertExecutionProbeName(t, probes, "relationship_join", "test_graph_materialization_field_2_o_orders_o_shippriority_fetch_elapsed")
 }
 
 func TestLegacyDirectRelationshipGraphMaterializedRowSetSynthesizesRelationshipEndpoints(t *testing.T) {
