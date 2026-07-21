@@ -41,11 +41,11 @@ func (f LegacyQuantaSourceFactory) NewDirectRuntime(ctx context.Context, config 
 
 // LegacyDirectRuntimeOptions controls compatibility adapter wiring while the direct runtime is split out.
 type LegacyDirectRuntimeOptions struct {
-	DefaultSchema             string
-	SchemaDir                 string
-	ApplyRecommendedEdgeOrder bool
-	DictionaryResolver        qsbridge.DictionaryResolver
-	DictionaryInvalidator     RuntimeDictionaryInvalidator
+	DefaultSchema               string
+	SchemaDir                   string
+	DisableRecommendedEdgeOrder bool
+	DictionaryResolver          qsbridge.DictionaryResolver
+	DictionaryInvalidator       RuntimeDictionaryInvalidator
 }
 
 // NewLegacyDirectBitmapRuntimeFromSource builds the direct bitmap runtime around an existing Quanta source.
@@ -127,7 +127,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			TableCache:                tableCache,
 			Materialization:           materialization,
 			SameRowComparison:         sameRowComparison,
-			ApplyRecommendedEdgeOrder: options.ApplyRecommendedEdgeOrder,
+			ApplyRecommendedEdgeOrder: DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},
 	}, nil
 }
@@ -198,10 +198,10 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 			},
 			DirectFactory: DirectRuntimeFactoryFunc(func(context.Context, DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {
 				runtime, diagnostics := NewLegacyDirectBitmapRuntimeFromSource(quantaSource, tableCache, LegacyDirectRuntimeOptions{
-					DefaultSchema:             config.DefaultSchema,
-					SchemaDir:                 config.SchemaDir,
-					ApplyRecommendedEdgeOrder: config.ApplyRecommendedEdgeOrder,
-					DictionaryResolver:        cachedDictionaryResolver,
+					DefaultSchema:               config.DefaultSchema,
+					SchemaDir:                   config.SchemaDir,
+					DisableRecommendedEdgeOrder: config.DisableRecommendedEdgeOrder,
+					DictionaryResolver:          cachedDictionaryResolver,
 					DictionaryInvalidator: RuntimeDictionaryInvalidator{
 						Dictionaries:  cachedDictionaryResolver,
 						DefaultSchema: config.DefaultSchema,

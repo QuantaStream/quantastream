@@ -133,7 +133,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 				Materialization:              materialization,
 				SameRowComparison:            sameRowComparison,
 				RelationshipProjectionReader: relationshipProjectionReader,
-				ApplyRecommendedEdgeOrder:    true,
+				ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
 			},
 		},
 	}

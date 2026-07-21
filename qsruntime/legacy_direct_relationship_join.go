@@ -29,7 +29,7 @@ type LegacyDirectRelationshipVectorJoinExecutor struct {
 	ProjectionCache *LegacyDirectRelationshipVectorProjectionCache
 	// RelationshipProjectionReader projects relationship-vector FK BSIs without a source-backed session.
 	RelationshipProjectionReader legacyDirectRelationshipVectorProjectionReader
-	// ApplyRecommendedEdgeOrder enables experimental dependency-ordered graph reduction.
+	// ApplyRecommendedEdgeOrder enables dependency-ordered graph reduction.
 	ApplyRecommendedEdgeOrder bool
 }
 

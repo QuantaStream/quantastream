@@ -85,15 +85,14 @@ func (s *inaboxDirectHarnessState) rebuild(ctx context.Context) error {
 
 func inaboxDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config qsruntime.DirectRuntimeConfig, catalogTableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) (qsruntime.SQLRuntime, qsbridge.DiagnosticSet, error) {
 	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
-		Direct:                    config,
-		DefaultSchema:             inaboxDirectDefaultSchema(cfg.Database),
-		SchemaDir:                 inaboxDirectConfigDir(),
-		CatalogVersion:            qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
-		Functions:                 inaboxDirectSQLFunctions(),
-		Profile:                   qsruntime.LegacyDirectRuntimeProfile(),
-		ContextWrapper:            qsruntime.WithQueryScratchpad,
-		EnableFilterExpressions:   true,
-		ApplyRecommendedEdgeOrder: os.Getenv("QUANTASTREAM_INABOX_DIRECT_APPLY_EDGE_ORDER") == "1",
+		Direct:                  config,
+		DefaultSchema:           inaboxDirectDefaultSchema(cfg.Database),
+		SchemaDir:               inaboxDirectConfigDir(),
+		CatalogVersion:          qsbridge.CatalogVersion("sqlrunner-inabox-direct"),
+		Functions:               inaboxDirectSQLFunctions(),
+		Profile:                 qsruntime.LegacyDirectRuntimeProfile(),
+		ContextWrapper:          qsruntime.WithQueryScratchpad,
+		EnableFilterExpressions: true,
 	})
 	return proxyRuntime.Runtime, diagnostics, err
 }

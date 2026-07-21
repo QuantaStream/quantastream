@@ -23,6 +23,9 @@ func TestNativeProxyRuntimeConfigAppliesQIABDefaults(t *testing.T) {
 	if config.Profile.Implementation != LegacyDirectRuntimeProfile().Implementation {
 		t.Fatalf("Profile.Implementation = %q", config.Profile.Implementation)
 	}
+	if !DefaultApplyRecommendedEdgeOrder || config.DisableRecommendedEdgeOrder {
+		t.Fatalf("recommended edge order default should be applied")
+	}
 }
 
 func TestNativeProxyRuntimeExecutesThroughSQLRuntime(t *testing.T) {

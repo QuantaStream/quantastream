@@ -6,6 +6,10 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+// DefaultApplyRecommendedEdgeOrder is the engine default for guarded
+// dependency-ordered relationship-vector graph reduction.
+const DefaultApplyRecommendedEdgeOrder = true
+
 // NativeProxyRuntime is the SQL-facing runtime handle that a wire-protocol server owns.
 type NativeProxyRuntime struct {
 	Runtime SQLRuntime
@@ -28,15 +32,15 @@ func (r NativeProxyRuntime) InspectSQL(sql string, options qsbridge.ExecutionOpt
 
 // NativeProxyRuntimeConfig captures runtime defaults shared by future proxy/server adapters.
 type NativeProxyRuntimeConfig struct {
-	Direct                    DirectRuntimeConfig
-	DefaultSchema             string
-	SchemaDir                 string
-	CatalogVersion            qsbridge.CatalogVersion
-	Functions                 []qsbridge.FunctionDefinition
-	Profile                   RuntimeInspectionProfile
-	ContextWrapper            func(context.Context) context.Context
-	EnableFilterExpressions   bool
-	ApplyRecommendedEdgeOrder bool
+	Direct                      DirectRuntimeConfig
+	DefaultSchema               string
+	SchemaDir                   string
+	CatalogVersion              qsbridge.CatalogVersion
+	Functions                   []qsbridge.FunctionDefinition
+	Profile                     RuntimeInspectionProfile
+	ContextWrapper              func(context.Context) context.Context
+	EnableFilterExpressions     bool
+	DisableRecommendedEdgeOrder bool
 }
 
 // WithDefaults returns a config with QIAB-first native proxy defaults applied.
