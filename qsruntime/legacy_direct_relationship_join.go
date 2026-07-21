@@ -1767,6 +1767,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipPare
 	if len(projectionRows) == 0 {
 		projectionRows = childRows
 	}
+	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForEdge(request, edge, projectionRows)
+	domainCacheKey := legacyDirectRelationshipDomainMappingCacheKey(edge, fromTime, toTime)
+	domainCacheDetail := legacyDirectRelationshipDomainMappingCacheDetail(domainCacheKey, nil, childRows)
+	if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+		if parentByChild, mode, ok := domainCache.GetByChildSubset(domainCacheKey, childRows); ok {
+			recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", true, mode, domainCacheDetail)
+			return parentByChild, nil, nil
+		}
+		recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", domainCacheDetail)
+	}
 	fkBSI, _, diagnostics, err := e.legacyDirectRelationshipProjectedFKBSI(ctx, request, edge, projectionRows)
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, diagnostics, err

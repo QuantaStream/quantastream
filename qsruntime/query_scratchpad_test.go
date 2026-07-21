@@ -318,11 +318,27 @@ func TestDomainMappingCacheRetainsCoveredSubset(t *testing.T) {
 		t.Fatalf("parent-filtered mapping = %#v, want only parent 1 child", parentFiltered)
 	}
 
+	childSubset, mode, ok := cache.GetByChildSubset(key, []qsbridge.QuantaRownum{103, 101})
+	if !ok || mode != "retained_child_subset" {
+		t.Fatalf("child-subset cache lookup mode = %q/%t, want retained_child_subset", mode, ok)
+	}
+	if len(childSubset) != 2 || childSubset[101] != 1 || childSubset[103] != 3 {
+		t.Fatalf("child-subset mapping = %#v, want complete child-parent map", childSubset)
+	}
+
+	exactChildSet, mode, ok := cache.GetByChildSubset(key, []qsbridge.QuantaRownum{104, 103, 102, 101})
+	if ok || mode != "" || exactChildSet != nil {
+		t.Fatalf("exact child-set cache lookup = %#v/%q/%t, want miss because child 104 was not joined", exactChildSet, mode, ok)
+	}
+
 	if _, _, ok := cache.Get(key, []qsbridge.QuantaRownum{1, 5}, []qsbridge.QuantaRownum{101}); ok {
 		t.Fatal("cache should miss when requested parent set is not covered")
 	}
 	if _, _, ok := cache.Get(key, []qsbridge.QuantaRownum{1}, []qsbridge.QuantaRownum{101, 999}); ok {
 		t.Fatal("cache should miss when requested child set is not covered")
+	}
+	if _, _, ok := cache.GetByChildSubset(key, []qsbridge.QuantaRownum{101, 999}); ok {
+		t.Fatal("child-subset cache should miss when a requested child was not mapped")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -129,10 +130,17 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 
 	rightMembership := membership
 	rightMembership.Predicates = rightOnlyPredicates
+	narrowValues, narrowValuesOK := directBitmapMembershipBatchEQValues(leftKeys)
 	narrowFragment, narrowPlanProbes, foldedNarrow := directBitmapCorrelatedMembershipRightKeyNarrowFragment(membership, leftKeys)
 	probes = append(probes, narrowPlanProbes...)
 	rightCandidateStart := time.Now()
-	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, narrowFragment)
+	var rightResult BitmapQueryResult
+	var candidateProbes []ExecutionProbe
+	if foldedNarrow && narrowValuesOK {
+		rightResult, candidateProbes, diagnostics, err = r.directBitmapMembershipRightCandidateResultWithCacheAndProbes(ctx, rightMembership, narrowFragment, narrowValues, detail)
+	} else {
+		rightResult, candidateProbes, diagnostics, err = r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, narrowFragment)
+	}
 	rightCandidateElapsed := time.Since(rightCandidateStart)
 	probes = append(probes, candidateProbes...)
 	probes = append(probes,
@@ -177,6 +185,9 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	rightKeys, ok := directBitmapProjectedValues(rightRowSet, membership.Right)
 	if !ok {
 		return result, probes, directBitmapMembershipDiagnostics("correlated sibling membership right key is not present in materialized row set"), nil
+	}
+	if narrowValuesOK && directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates) {
+		probes = append(probes, directBitmapMembershipRightCandidateCellCacheStore(ctx, rightMembership, narrowValues, rightRowSet.Rownums, rightKeys, detail)...)
 	}
 	indexStart := time.Now()
 	rightRowsByKey := make(map[string][]int, len(rightKeys))
@@ -370,7 +381,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 	narrowFragment, narrowPlanProbes, foldedNarrow := directBitmapCorrelatedMembershipRightKeyNarrowFragmentValues(membership, narrowValues)
 	probes = append(probes, narrowPlanProbes...)
 	rightCandidateStart := time.Now()
-	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, narrowFragment)
+	rightResult, candidateProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithCacheAndProbes(ctx, rightMembership, narrowFragment, narrowValues, detail)
 	rightCandidateElapsed := time.Since(rightCandidateStart)
 	probes = append(probes, candidateProbes...)
 	probes = append(probes,
@@ -404,6 +415,9 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 	rightKey, ok := rightVectors[directBitmapMembershipBSIFieldKey(membership.Right)]
 	if !ok {
 		return result, probes, true, directBitmapMembershipDiagnostics("correlated sibling BSI fast path right key vector is missing"), nil
+	}
+	if directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates) {
+		probes = append(probes, directBitmapMembershipRightCandidateCacheStore(ctx, rightMembership, narrowValues, rightKey, detail)...)
 	}
 
 	filtered, probes, diagnostics := directBitmapFinishCorrelatedSiblingMembershipBSI(start, result, membership, detail, probes, comparisons, leftVectors, leftKey, rightVectors, rightKey)
@@ -1282,6 +1296,175 @@ func directBitmapMembershipFieldIsParentRelation(field qsbridge.FieldRef) bool {
 	return strings.EqualFold(field.Encoding.LegacyName, "ParentRelation")
 }
 
+func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithCacheAndProbes(ctx context.Context, membership qsbridge.MembershipEdge, extraFragments []qsbridge.QuantaQueryFragment, narrowValues []*big.Int, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	cacheKey, cacheDetail, cacheable := directBitmapMembershipRightCandidateBaseCacheKey(membership)
+	requestedValues := directBitmapMembershipBSIValueKeyStrings(narrowValues)
+	probes := []ExecutionProbe{}
+	if cacheable {
+		cacheStart := time.Now()
+		if cached, mode, ok := MembershipRightCandidateCacheFromContext(ctx).Get(cacheKey, requestedValues); ok {
+			recordQueryScratchpadCacheLookup(ctx, "membership_right_candidate_cache", true, mode, cacheDetail)
+			rightRequest, diagnostics := directBitmapMembershipRightRequestWithExtraFragments(membership, extraFragments)
+			probes = append(probes,
+				directBitmapMembershipProbe("membership_right_candidate_cache_hit", "true", detail),
+				directBitmapMembershipProbe("membership_right_candidate_cache_mode", mode, detail),
+				directBitmapMembershipProbe("membership_right_candidate_cache_elapsed", time.Since(cacheStart).String(), detail),
+				directBitmapMembershipProbe("membership_right_candidate_query_elapsed", "0s", detail),
+				directBitmapMembershipProbe("membership_right_candidate_query_rows", strconv.Itoa(len(cached.Rownums)), detail),
+			)
+			if diagnostics.BlocksNative() {
+				return BitmapQueryResult{}, probes, diagnostics, nil
+			}
+			cached, residualProbes, diagnostics, err := r.directBitmapApplyMembershipRightCandidateResiduals(ctx, rightRequest, cached, membership, detail)
+			probes = append(probes, residualProbes...)
+			return cached, probes, diagnostics, err
+		}
+		mode := "cache_absent"
+		if MembershipRightCandidateCacheFromContext(ctx) != nil {
+			mode = "miss"
+		}
+		recordQueryScratchpadCacheLookup(ctx, "membership_right_candidate_cache", false, mode, cacheDetail)
+		probes = append(probes,
+			directBitmapMembershipProbe("membership_right_candidate_cache_hit", "false", detail),
+			directBitmapMembershipProbe("membership_right_candidate_cache_mode", mode, detail),
+			directBitmapMembershipProbe("membership_right_candidate_cache_elapsed", time.Since(cacheStart).String(), detail),
+		)
+	}
+	result, queryProbes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, membership, extraFragments)
+	probes = append(probes, queryProbes...)
+	return result, probes, diagnostics, err
+}
+
+func directBitmapMembershipRightCandidateCacheStore(ctx context.Context, membership qsbridge.MembershipEdge, narrowValues []*big.Int, rightKey directBitmapMembershipBSIVector, detail string) []ExecutionProbe {
+	cacheKey, cacheDetail, ok := directBitmapMembershipRightCandidateBaseCacheKey(membership)
+	if !ok {
+		return nil
+	}
+	keyValues := directBitmapMembershipBSIVectorValueKeys(rightKey.Values)
+	if len(keyValues) != len(rightKey.Rownums) {
+		return nil
+	}
+	cache := MembershipRightCandidateCacheFromContext(ctx)
+	if cache == nil {
+		return nil
+	}
+	cache.Set(cacheKey, directBitmapMembershipBSIValueKeyStrings(narrowValues), rightKey.Rownums, keyValues)
+	recordQueryScratchpadCacheStore(ctx, "membership_right_candidate_cache", cacheDetail)
+	return []ExecutionProbe{
+		directBitmapMembershipProbe("membership_right_candidate_cache_store", "true", detail),
+		directBitmapMembershipProbe("membership_right_candidate_cache_store_rows", strconv.Itoa(len(rightKey.Rownums)), detail),
+	}
+}
+
+func directBitmapMembershipRightCandidateCellCacheStore(ctx context.Context, membership qsbridge.MembershipEdge, narrowValues []*big.Int, rownums []qsbridge.QuantaRownum, values []qsbridge.ResultCell, detail string) []ExecutionProbe {
+	cacheKey, cacheDetail, ok := directBitmapMembershipRightCandidateBaseCacheKey(membership)
+	if !ok {
+		return nil
+	}
+	keyValues, ok := directBitmapMembershipCellValueKeys(values)
+	if !ok || len(keyValues) != len(rownums) {
+		return nil
+	}
+	cache := MembershipRightCandidateCacheFromContext(ctx)
+	if cache == nil {
+		return nil
+	}
+	cache.Set(cacheKey, directBitmapMembershipBSIValueKeyStrings(narrowValues), rownums, keyValues)
+	recordQueryScratchpadCacheStore(ctx, "membership_right_candidate_cache", cacheDetail)
+	return []ExecutionProbe{
+		directBitmapMembershipProbe("membership_right_candidate_cache_store", "true", detail),
+		directBitmapMembershipProbe("membership_right_candidate_cache_store_rows", strconv.Itoa(len(rownums)), detail),
+	}
+}
+
+func directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates []qsbridge.Predicate) bool {
+	return len(directBitmapMembershipResidualPredicates(rightOnlyPredicates)) == 0
+}
+
+func directBitmapMembershipRightCandidateBaseCacheKey(membership qsbridge.MembershipEdge) (string, string, bool) {
+	baseRequest, diagnostics := directBitmapMembershipRightRequestWithExtraFragments(membership, nil)
+	if diagnostics.BlocksNative() {
+		return "", "", false
+	}
+	key := directBitmapMembershipRightCandidateRequestCacheKey(baseRequest)
+	if key == "" {
+		return "", "", false
+	}
+	return key, "key=" + key, true
+}
+
+func directBitmapMembershipRightCandidateRequestCacheKey(request ExecutionRequest) string {
+	var b strings.Builder
+	b.WriteString("fragments:")
+	for i, fragment := range request.Query.Fragments {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(i))
+		b.WriteByte('=')
+		b.WriteString(fragment.CacheIdentity(qsbridge.QuantaFragmentCacheBoundary{}).Digest)
+	}
+	b.WriteString("|seeds:")
+	for i, seed := range request.Query.Seeds {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(i))
+		b.WriteByte('=')
+		b.WriteString(seed.Index)
+		b.WriteByte('.')
+		b.WriteString(seed.Field)
+		b.WriteByte(':')
+		b.WriteString(string(seed.Kind))
+		b.WriteByte(':')
+		b.WriteString(directBitmapMembershipBigIntKey(seed.Begin))
+		b.WriteByte(':')
+		b.WriteString(directBitmapMembershipBigIntKey(seed.End))
+		b.WriteByte(':')
+		b.WriteString(strconv.FormatBool(seed.ShardWindow))
+	}
+	return b.String()
+}
+
+func directBitmapMembershipBSIValueKeyStrings(values []*big.Int) []string {
+	keys := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		keys = append(keys, value.String())
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func directBitmapMembershipBSIVectorValueKeys(values []*big.Int) []string {
+	keys := make([]string, len(values))
+	for i, value := range values {
+		keys[i] = directBitmapMembershipBigIntKey(value)
+	}
+	return keys
+}
+
+func directBitmapMembershipCellValueKeys(values []qsbridge.ResultCell) ([]string, bool) {
+	keys := make([]string, len(values))
+	for i, value := range values {
+		parsed, ok := directBitmapMembershipCellBigInt(value)
+		if !ok {
+			return nil, false
+		}
+		keys[i] = directBitmapMembershipBigIntKey(parsed)
+	}
+	return keys, true
+}
+
+func directBitmapMembershipBigIntKey(value *big.Int) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return value.String()
+}
+
 func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResult(ctx context.Context, membership qsbridge.MembershipEdge) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
 	return r.directBitmapMembershipRightCandidateResultWithExtraFragments(ctx, membership, nil)
 }
@@ -1326,6 +1509,13 @@ func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithExtra
 	if queryErr != nil || diagnostics.BlocksNative() {
 		return BitmapQueryResult{}, probes, diagnostics, queryErr
 	}
+	rightResult, residualProbes, diagnostics, err := r.directBitmapApplyMembershipRightCandidateResiduals(ctx, rightRequest, rightResult, membership, detail)
+	probes = append(probes, residualProbes...)
+	return rightResult, probes, diagnostics, err
+}
+
+func (r DirectBitmapRuntime) directBitmapApplyMembershipRightCandidateResiduals(ctx context.Context, rightRequest ExecutionRequest, rightResult BitmapQueryResult, membership qsbridge.MembershipEdge, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	probes := []ExecutionProbe{}
 	residuals := directBitmapMembershipResidualPredicates(membership.Predicates)
 	probes = append(probes, directBitmapMembershipProbe("membership_right_candidate_residual_count", strconv.Itoa(len(residuals)), detail))
 	if len(residuals) == 0 {
@@ -1333,7 +1523,7 @@ func (r DirectBitmapRuntime) directBitmapMembershipRightCandidateResultWithExtra
 	}
 	sameRowStart := time.Now()
 	beforeSameRowCount := len(rightResult.Rownums)
-	rightResult, residuals, diagnostics, err = r.directBitmapApplyMembershipRightSameRowResiduals(ctx, rightRequest, rightResult, residuals)
+	rightResult, residuals, diagnostics, err := r.directBitmapApplyMembershipRightSameRowResiduals(ctx, rightRequest, rightResult, residuals)
 	sameRowElapsed := time.Since(sameRowStart)
 	probes = append(probes,
 		directBitmapMembershipProbe("membership_right_candidate_same_row_elapsed", sameRowElapsed.String(), detail),

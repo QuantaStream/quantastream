@@ -257,6 +257,192 @@ func TestDirectBitmapRuntimeReadsCorrelatedSiblingMembershipValuesDirectly(t *te
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_value_read_mode")
 }
 
+func TestDirectBitmapRuntimeReusesCorrelatedSiblingRightCandidateSuperset(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l3 := qsbridge.TableInstance{Table: "lineitem", Alias: "l3"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l3OrderKey := qsbridge.FieldRef{Table: l3, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l3SuppKey := qsbridge.FieldRef{Table: l3, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+
+	reader := &fakeMembershipProjectionBSIValueReader{
+		Values: map[string]map[uint64]int64{
+			"l_orderkey": {1: 10, 2: 10, 3: 20, 4: 30},
+			"l_suppkey":  {1: 1, 2: 2, 3: 5, 4: 9},
+		},
+	}
+	rightCandidateQueries := 0
+	runtime := DirectBitmapRuntime{
+		Adapter:             BitmapQueryResultAdapter{},
+		ProjectionBSIReader: reader,
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("correlated sibling BSI cache path should not materialize rows for %s", request.Index)
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					values := directBitmapTestBatchEQValues(request.Query.Fragments, "l_orderkey")
+					if len(values) > 0 {
+						rightCandidateQueries++
+					}
+					rownums := []qsbridge.QuantaRownum{}
+					for _, rownum := range []qsbridge.QuantaRownum{1, 2, 3, 4} {
+						if len(values) > 0 {
+							if _, ok := values[reader.Values["l_orderkey"][uint64(rownum)]]; !ok {
+								continue
+							}
+						}
+						rownums = append(rownums, rownum)
+					}
+					return BitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: rownums}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.Memberships = []qsbridge.MembershipEdge{
+		{
+			Left:  l1OrderKey,
+			Right: l2OrderKey,
+			Kind:  qsbridge.MembershipSemi,
+			Legal: true,
+			Predicates: []qsbridge.Predicate{
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+			},
+		},
+		{
+			Left:  l1OrderKey,
+			Right: l3OrderKey,
+			Kind:  qsbridge.MembershipAnti,
+			Legal: true,
+			Predicates: []qsbridge.Predicate{
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l3OrderKey), qsbridge.Field(l1OrderKey))},
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l3SuppKey), qsbridge.Field(l1SuppKey))},
+			},
+		},
+	}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "qualified_rows", Type: qsbridge.DataTypeInt}}
+
+	result, err := runtime.ExecuteDirect(WithQueryScratchpad(context.Background()), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(0) {
+		t.Fatalf("count aggregate = %#v, want 0", got)
+	}
+	if rightCandidateQueries != 1 {
+		t.Fatalf("right candidate bitmap queries = %d, want 1", rightCandidateQueries)
+	}
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "membership_right_candidate_cache_mode", "retained_subset")
+}
+
+func TestDirectBitmapRuntimeReusesMaterializedSiblingRightCandidateSuperset(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l3 := qsbridge.TableInstance{Table: "lineitem", Alias: "l3"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt}
+	l3OrderKey := qsbridge.FieldRef{Table: l3, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt}
+	l3SuppKey := qsbridge.FieldRef{Table: l3, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt}
+	values := map[string]map[uint64]int64{
+		"l_orderkey": {1: 10, 2: 10, 3: 20, 4: 30},
+		"l_suppkey":  {1: 1, 2: 2, 3: 5, 4: 9},
+	}
+
+	rightCandidateQueries := 0
+	runtime := DirectBitmapRuntime{
+		Adapter: BitmapQueryResultAdapter{},
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return fakeMembershipProjectedRowSet(request.Index, request.Rownums, request.ProjectionFields, values), nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					batchValues := directBitmapTestBatchEQValues(request.Query.Fragments, "l_orderkey")
+					if len(batchValues) > 0 {
+						rightCandidateQueries++
+					}
+					rownums := []qsbridge.QuantaRownum{}
+					for _, rownum := range []qsbridge.QuantaRownum{1, 2, 3, 4} {
+						if len(batchValues) > 0 {
+							if _, ok := batchValues[values["l_orderkey"][uint64(rownum)]]; !ok {
+								continue
+							}
+						}
+						rownums = append(rownums, rownum)
+					}
+					return BitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: rownums}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.Memberships = []qsbridge.MembershipEdge{
+		{
+			Left:  l1OrderKey,
+			Right: l2OrderKey,
+			Kind:  qsbridge.MembershipSemi,
+			Legal: true,
+			Predicates: []qsbridge.Predicate{
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+			},
+		},
+		{
+			Left:  l1OrderKey,
+			Right: l3OrderKey,
+			Kind:  qsbridge.MembershipAnti,
+			Legal: true,
+			Predicates: []qsbridge.Predicate{
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l3OrderKey), qsbridge.Field(l1OrderKey))},
+				{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l3SuppKey), qsbridge.Field(l1SuppKey))},
+			},
+		},
+	}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "qualified_rows", Type: qsbridge.DataTypeInt}}
+
+	result, err := runtime.ExecuteDirect(WithQueryScratchpad(context.Background()), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(0) {
+		t.Fatalf("count aggregate = %#v, want 0", got)
+	}
+	if rightCandidateQueries != 1 {
+		t.Fatalf("right candidate bitmap queries = %d, want 1", rightCandidateQueries)
+	}
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "membership_right_candidate_cache_mode", "retained_subset")
+}
+
 type fakeMembershipProjectionBSIReader struct {
 	Values map[string]map[uint64]int64
 }
@@ -335,4 +521,27 @@ func directBitmapTestBatchEQValues(fragments []qsbridge.QuantaQueryFragment, fie
 		}
 	}
 	return values
+}
+
+func fakeMembershipProjectedRowSet(index string, rownums []qsbridge.QuantaRownum, fields []qsbridge.QuantaProjectionField, values map[string]map[uint64]int64) qsbridge.QuantaProjectedRowSet {
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   index,
+		Rownums: append([]qsbridge.QuantaRownum(nil), rownums...),
+	}
+	for _, field := range fields {
+		vector := qsbridge.QuantaProjectionVector{
+			Field:  field,
+			Values: make([]qsbridge.ResultCell, 0, len(rownums)),
+		}
+		for _, rownum := range rownums {
+			value, ok := values[field.Field][uint64(rownum)]
+			if !ok {
+				vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueNull})
+				continue
+			}
+			vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value})
+		}
+		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+	}
+	return rowSet
 }

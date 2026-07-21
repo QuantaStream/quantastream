@@ -19,6 +19,7 @@ type QueryScratchpad struct {
 	ProjectionValues              *ProjectionValueCache
 	DomainMappings                *DomainMappingCache
 	RelationshipVectorProjections *RelationshipVectorProjectionCache
+	MembershipRightCandidates     *MembershipRightCandidateCache
 	Instrumentation               *ExecutionInstrumentation
 }
 
@@ -29,6 +30,7 @@ func NewQueryScratchpad() *QueryScratchpad {
 		ProjectionValues:              NewProjectionValueCache(),
 		DomainMappings:                NewDomainMappingCache(),
 		RelationshipVectorProjections: NewRelationshipVectorProjectionCache(),
+		MembershipRightCandidates:     NewMembershipRightCandidateCache(),
 		Instrumentation:               NewExecutionInstrumentation(),
 	}
 }
@@ -90,6 +92,16 @@ func RelationshipVectorProjectionCacheFromContext(ctx context.Context) *Relation
 		return nil
 	}
 	return scratchpad.RelationshipVectorProjections
+}
+
+// MembershipRightCandidateCacheFromContext returns the request-scoped sibling
+// membership candidate cache.
+func MembershipRightCandidateCacheFromContext(ctx context.Context) *MembershipRightCandidateCache {
+	scratchpad := QueryScratchpadFromContext(ctx)
+	if scratchpad == nil {
+		return nil
+	}
+	return scratchpad.MembershipRightCandidates
 }
 
 // RecordQueryScratchpadCacheLookup records a request-scoped cache lookup in the
@@ -511,6 +523,33 @@ func (c *DomainMappingCache) Get(key DomainMappingCacheKey, parentRows []qsbridg
 	return nil, "", false
 }
 
+// GetByChildSubset returns a complete child->parent map for childRows when a
+// cached broader domain mapping already proved every requested child row.
+func (c *DomainMappingCache) GetByChildSubset(key DomainMappingCacheKey, childRows []qsbridge.QuantaRownum) (map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	childSet := projectionBitmapFromRownums(childRows)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, entry := range c.entries[key] {
+		if projectionRownumSetsEqual(entry.ChildSet, childSet) {
+			if retained, complete := retainedCompleteDomainMapping(entry.ParentByChild, childRows); complete {
+				return retained, "exact_child_set", true
+			}
+		}
+	}
+	for _, entry := range c.entries[key] {
+		if !projectionRownumSetCovers(entry.ChildSet, childSet) {
+			continue
+		}
+		if retained, complete := retainedCompleteDomainMapping(entry.ParentByChild, childRows); complete {
+			return retained, "retained_child_subset", true
+		}
+	}
+	return nil, "", false
+}
+
 // Set records a child->parent rownum mapping for one relationship edge request.
 func (c *DomainMappingCache) Set(key DomainMappingCacheKey, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum, parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum) {
 	if c == nil || parentByChild == nil {
@@ -553,6 +592,18 @@ func retainedDomainMapping(parentByChild map[qsbridge.QuantaRownum]qsbridge.Quan
 	return retained
 }
 
+func retainedCompleteDomainMapping(parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum) (map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, bool) {
+	retained := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(childRows))
+	for _, child := range childRows {
+		parent, ok := parentByChild[child]
+		if !ok {
+			return nil, false
+		}
+		retained[child] = parent
+	}
+	return retained, true
+}
+
 // RelationshipVectorProjectionCache reuses projected FK BSIs during one
 // execution request.
 type RelationshipVectorProjectionCache struct {
@@ -585,6 +636,98 @@ func (c *RelationshipVectorProjectionCache) Put(key string, bsi *roaring64.BSI) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[key] = bsi
+}
+
+type membershipRightCandidateCacheEntry struct {
+	NarrowValues map[string]struct{}
+	Rownums      []qsbridge.QuantaRownum
+	KeyValues    []string
+}
+
+// MembershipRightCandidateCache reuses raw right-side sibling membership
+// candidate rownums within one execution request.
+type MembershipRightCandidateCache struct {
+	mu      sync.Mutex
+	entries map[string][]membershipRightCandidateCacheEntry
+}
+
+// NewMembershipRightCandidateCache creates an empty per-query membership cache.
+func NewMembershipRightCandidateCache() *MembershipRightCandidateCache {
+	return &MembershipRightCandidateCache{entries: make(map[string][]membershipRightCandidateCacheEntry)}
+}
+
+// Get returns an exact cached right-candidate bitmap, or filters a cached
+// superset when its narrowed key set covers the current request.
+func (c *MembershipRightCandidateCache) Get(key string, requestedValues []string) (qsbridge.QuantaBitmapQueryResult, string, bool) {
+	if c == nil || key == "" {
+		return qsbridge.QuantaBitmapQueryResult{}, "cache_absent", false
+	}
+	requested := stringSetFromSlice(requestedValues)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries := c.entries[key]
+	if len(entries) == 0 {
+		return qsbridge.QuantaBitmapQueryResult{}, "key_miss", false
+	}
+	for _, entry := range entries {
+		if stringSetsEqual(entry.NarrowValues, requested) {
+			return qsbridge.QuantaBitmapQueryResult{Success: true, Count: uint64(len(entry.Rownums)), Rownums: append([]qsbridge.QuantaRownum(nil), entry.Rownums...)}, "exact", true
+		}
+	}
+	for _, entry := range entries {
+		if !stringSetCovers(entry.NarrowValues, requested) {
+			continue
+		}
+		rownums := make([]qsbridge.QuantaRownum, 0, len(entry.Rownums))
+		for i, rownum := range entry.Rownums {
+			if i >= len(entry.KeyValues) {
+				continue
+			}
+			if _, ok := requested[entry.KeyValues[i]]; ok {
+				rownums = append(rownums, rownum)
+			}
+		}
+		return qsbridge.QuantaBitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: rownums}, "retained_subset", true
+	}
+	return qsbridge.QuantaBitmapQueryResult{}, "coverage_miss", false
+}
+
+// Set stores raw right-candidate rows and their membership key values.
+func (c *MembershipRightCandidateCache) Set(key string, requestedValues []string, rownums []qsbridge.QuantaRownum, keyValues []string) {
+	if c == nil || key == "" || len(rownums) == 0 || len(rownums) != len(keyValues) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = append(c.entries[key], membershipRightCandidateCacheEntry{
+		NarrowValues: stringSetFromSlice(requestedValues),
+		Rownums:      append([]qsbridge.QuantaRownum(nil), rownums...),
+		KeyValues:    append([]string(nil), keyValues...),
+	})
+}
+
+func stringSetFromSlice(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+func stringSetsEqual(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	return stringSetCovers(left, right)
+}
+
+func stringSetCovers(container, subset map[string]struct{}) bool {
+	for value := range subset {
+		if _, ok := container[value]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // LegacyDirectRelationshipVectorProjectionCache keeps existing compatibility

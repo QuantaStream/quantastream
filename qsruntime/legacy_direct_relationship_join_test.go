@@ -1093,6 +1093,70 @@ func TestLegacyDirectRelationshipReduceUsesQueryScratchpadDomainMapping(t *testi
 	}
 }
 
+func TestLegacyDirectRelationshipParentMapUsesDomainMappingChildSubset(t *testing.T) {
+	calls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				101: 1,
+				102: 1,
+				103: 2,
+				104: 4,
+			}),
+			Calls: &calls,
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:  "o",
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		childRole:   "l",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+		sqlKind:     qsbridge.JoinKindInner,
+	}
+	scratchpad := NewQueryScratchpad()
+	scratchpad.RelationshipVectorProjections = nil
+	ctx := context.WithValue(context.Background(), queryScratchpadContextKey{}, scratchpad)
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	parentRows := []qsbridge.QuantaRownum{1, 2}
+	childRows := []qsbridge.QuantaRownum{101, 102, 103, 104}
+
+	joined, _, _, diagnostics, err := executor.legacyDirectRelationshipReduceWithTiming(ctx, request, edge, parentRows, childRows)
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("reduce diagnostics = %#v, want none", diagnostics)
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls after reduce = %d, want 1", calls)
+	}
+	if len(joined) != 3 {
+		t.Fatalf("joined rows = %d, want 3", len(joined))
+	}
+
+	parentByChild, diagnostics, err := executor.legacyDirectRelationshipParentMapWithProjectionRows(
+		ctx,
+		request,
+		edge,
+		[]qsbridge.QuantaRownum{101, 103},
+		childRows,
+	)
+	if err != nil {
+		t.Fatalf("parent map error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parent map diagnostics = %#v, want none", diagnostics)
+	}
+	if calls != 1 {
+		t.Fatalf("projection calls after parent map = %d, want still 1", calls)
+	}
+	if len(parentByChild) != 2 || parentByChild[101] != 1 || parentByChild[103] != 2 {
+		t.Fatalf("parent map = %#v, want child-subset domain mapping", parentByChild)
+	}
+}
+
 func TestLegacyDirectRelationshipVectorProjectionWindowUsesChildTimePredicate(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem", TimeQuantumField: "l_shipdate"},
