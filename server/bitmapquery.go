@@ -491,21 +491,43 @@ func retainedProjectionBSI(source *roaring64.BSI, foundSet *roaring64.Bitmap, ne
 		return source, cardinality, 0
 	}
 	existence := source.GetExistenceBitmap()
-	var retainSet *roaring64.Bitmap
 	if negate {
-		retainSet = roaring64.AndNot(existence, foundSet)
-	} else {
-		retainSet = roaring64.And(existence, foundSet)
+		retainSet := roaring64.AndNot(existence, foundSet)
+		retainedRows := retainSet.GetCardinality()
+		if retainedRows == 0 {
+			return nil, 0, 0
+		}
+		retained := source.NewBSIRetainSet(retainSet)
+		retainedRows = retained.GetCardinality()
+		if retainedRows == 0 {
+			return nil, 0, 0
+		}
+		return retained, retainedRows, 0
 	}
-	retainedRows := retainSet.GetCardinality()
-	if retainedRows == 0 {
+
+	if !existence.Intersects(foundSet) {
 		return nil, 0, 0
 	}
-	if !negate && retainedRows == existence.GetCardinality() {
-		return source, retainedRows, retainedRows
+	existenceRows := existence.GetCardinality()
+	if foundSet.GetCardinality() >= existenceRows {
+		retainedRows := existence.AndCardinality(foundSet)
+		if retainedRows == 0 {
+			return nil, 0, 0
+		}
+		if retainedRows == existenceRows {
+			return source, existenceRows, existenceRows
+		}
+		retainSet := roaring64.And(existence, foundSet)
+		retained := source.NewBSIRetainSet(retainSet)
+		retainedRows = retained.GetCardinality()
+		if retainedRows == 0 {
+			return nil, 0, 0
+		}
+		return retained, retainedRows, 0
 	}
-	retained := source.NewBSIRetainSet(retainSet)
-	retainedRows = retained.GetCardinality()
+
+	retained := source.NewBSIRetainSet(foundSet)
+	retainedRows := retained.GetCardinality()
 	if retainedRows == 0 {
 		return nil, 0, 0
 	}

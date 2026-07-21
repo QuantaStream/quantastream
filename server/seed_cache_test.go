@@ -338,6 +338,74 @@ func TestProjectBSIWithStatsBypassesRetainWhenFoundSetCoversShard(t *testing.T) 
 	}
 }
 
+func TestProjectBSIWithStatsRetainsSparseFoundSetWithoutIntermediateRetainSet(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"]["l_shipdate"][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230601,
+		2: 20230602,
+		3: 20230603,
+	})
+
+	bsi, stats, err := index.ProjectBSIWithStats(
+		"lineitem",
+		"l_shipdate",
+		day.UnixNano(),
+		day.UnixNano(),
+		roaring64.BitmapOf(2, 99),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ProjectBSIWithStats returned error: %v", err)
+	}
+	assertProjectedBSIValue(t, bsi, 2, 20230602)
+	if _, ok := bsi.GetValue(1); ok {
+		t.Fatalf("rownum 1 should not be retained")
+	}
+	if _, ok := bsi.GetValue(3); ok {
+		t.Fatalf("rownum 3 should not be retained")
+	}
+	if got, want := stats.RetainedRows, uint64(1); got != want {
+		t.Fatalf("retained rows = %d, want %d", got, want)
+	}
+	if got := stats.RetainBypassRows; got != 0 {
+		t.Fatalf("retain bypass rows = %d, want 0", got)
+	}
+}
+
+func TestProjectBSIWithStatsRetainsBroadPartialFoundSet(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"]["l_shipdate"][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230601,
+		2: 20230602,
+		3: 20230603,
+	})
+
+	bsi, stats, err := index.ProjectBSIWithStats(
+		"lineitem",
+		"l_shipdate",
+		day.UnixNano(),
+		day.UnixNano(),
+		roaring64.BitmapOf(1, 3, 99, 100),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ProjectBSIWithStats returned error: %v", err)
+	}
+	assertProjectedBSIValue(t, bsi, 1, 20230601)
+	assertProjectedBSIValue(t, bsi, 3, 20230603)
+	if _, ok := bsi.GetValue(2); ok {
+		t.Fatalf("rownum 2 should not be retained")
+	}
+	if got, want := stats.RetainedRows, uint64(2); got != want {
+		t.Fatalf("retained rows = %d, want %d", got, want)
+	}
+	if got := stats.RetainBypassRows; got != 0 {
+		t.Fatalf("retain bypass rows = %d, want 0", got)
+	}
+}
+
 func assertProjectedBSIValue(t *testing.T, bsi *roaring64.BSI, rownum uint64, want int64) {
 	t.Helper()
 	if bsi == nil {

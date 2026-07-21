@@ -599,6 +599,7 @@ func directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(leftRownums []qs
 
 func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.QuantaRownum, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, rightVectors map[string]directBitmapMembershipBSIVector) (map[string]directBitmapMembershipBSIVector, bool) {
 	derived := make(map[string]directBitmapMembershipBSIVector, len(leftFields))
+	var rightPositions map[qsbridge.QuantaRownum]int
 	for _, leftField := range leftFields {
 		rightField, ok := directBitmapMatchingRightBSIProjectionField(leftField, rightFields)
 		if !ok {
@@ -608,9 +609,11 @@ func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.
 		if !ok {
 			return nil, false
 		}
-		rightPositions := make(map[qsbridge.QuantaRownum]int, len(rightVector.Rownums))
-		for i, rownum := range rightVector.Rownums {
-			rightPositions[rownum] = i
+		if rightPositions == nil {
+			rightPositions = make(map[qsbridge.QuantaRownum]int, len(rightVector.Rownums))
+			for i, rownum := range rightVector.Rownums {
+				rightPositions[rownum] = i
+			}
 		}
 		values := make([]*big.Int, len(leftRownums))
 		for i, rownum := range leftRownums {
@@ -618,7 +621,7 @@ func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.
 			if !ok || rightIndex >= len(rightVector.Values) || rightVector.Values[rightIndex] == nil {
 				continue
 			}
-			values[i] = new(big.Int).Set(rightVector.Values[rightIndex])
+			values[i] = rightVector.Values[rightIndex]
 		}
 		derived[directBitmapMembershipBSIProjectionKey(leftField)] = directBitmapMembershipBSIVector{
 			Field: qsbridge.FieldRef{
