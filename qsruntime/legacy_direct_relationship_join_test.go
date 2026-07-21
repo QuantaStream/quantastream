@@ -2665,9 +2665,18 @@ func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSe
 			return DirectSessionHandleFunc{
 				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
 					queryCalls++
-					return BitmapQueryResult{}, qsbridge.DiagnosticSet{
-						qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "right candidate query should not run when graph-derived seed is available"),
-					}, nil
+					if len(request.Query.Fragments) != 1 {
+						t.Fatalf("candidate fragments = %#v, want one BATCH_EQ relationship-vector fragment", request.Query.Fragments)
+					}
+					fragment := request.Query.Fragments[0]
+					if fragment.Index != "lineitem" || fragment.Field != "l_orderkey" || fragment.BSIOp != qsbridge.QuantaBSIOpBatchEQ {
+						t.Fatalf("candidate fragment = %#v, want lineitem.l_orderkey BATCH_EQ", fragment)
+					}
+					return BitmapQueryResult{
+						Success: true,
+						Count:   3,
+						Rownums: []qsbridge.QuantaRownum{10, 11, 12},
+					}, nil, nil
 				},
 			}, nil, nil
 		}),
@@ -2707,8 +2716,8 @@ func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSe
 	if diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
-	if queryCalls != 0 {
-		t.Fatalf("right candidate query calls = %d, want 0", queryCalls)
+	if queryCalls != 1 {
+		t.Fatalf("relationship-vector candidate query calls = %d, want 1", queryCalls)
 	}
 	assertRelationshipTupleRows(t, filtered, []map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{
 		{"o": 1, "l1": 10},

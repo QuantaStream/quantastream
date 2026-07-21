@@ -111,6 +111,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	relationshipReader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
 			Source:     quantaSource,
+			Sessions:   sessions,
 			TableCache: tableCache,
 		},
 	}
@@ -124,6 +125,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
 			Source:                    quantaSource,
+			Sessions:                  sessions,
 			TableCache:                tableCache,
 			Materialization:           materialization,
 			ProjectionBSIReader:       bsiReader,

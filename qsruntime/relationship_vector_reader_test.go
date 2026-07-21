@@ -531,6 +531,78 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesProjectedSourceKeyValu
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendUsesDirectBatchEQForBoundedParentToChildExpansion(t *testing.T) {
+	projectionCalls := 0
+	borrowCalls := 0
+	queryCalls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   testRelationshipVectorBSI(map[uint64]int64{20: 8}),
+			Calls: &projectionCalls,
+		},
+		SourceKeyReader: fakeLegacyDirectRelationshipVectorSourceKeyReader{
+			Values: []int64{7, 8},
+		},
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			borrowCalls++
+			if len(request.Query.Fragments) != 1 {
+				t.Fatalf("fragments = %#v, want one BATCH_EQ fragment", request.Query.Fragments)
+			}
+			fragment := request.Query.Fragments[0]
+			if fragment.Index != "lineitem" || fragment.Field != "l_partkey" || fragment.BSIOp != qsbridge.QuantaBSIOpBatchEQ {
+				t.Fatalf("fragment = %#v, want lineitem.l_partkey BATCH_EQ", fragment)
+			}
+			if len(fragment.Values) != 2 || fragment.Values[0].Int64() != 7 || fragment.Values[1].Int64() != 8 {
+				t.Fatalf("fragment values = %#v, want [7 8]", fragment.Values)
+			}
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalls++
+					return BitmapQueryResult{
+						Success: true,
+						Count:   3,
+						Rownums: []qsbridge.QuantaRownum{2, 4, 6},
+					}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{100, 101},
+	)
+	request.Edge.Right.PhysicalName = "p_partkey"
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(context.Background(), read)
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !reflect.DeepEqual(result.TargetCandidates.Rownums, []qsbridge.QuantaRownum{2, 4, 6}) {
+		t.Fatalf("candidates = %#v, want [2 4 6]", result.TargetCandidates.Rownums)
+	}
+	if result.CandidateMode != "direct_batch_eq" || result.CandidateCacheMode != "direct_query" {
+		t.Fatalf("candidate mode/cache = %q/%q, want direct_batch_eq/direct_query", result.CandidateMode, result.CandidateCacheMode)
+	}
+	if !result.SourceKeyProjectionUsed || result.SourceKeyProjectionReason != "projected_source_key" {
+		t.Fatalf("source key projection = %t/%q, want projected source key", result.SourceKeyProjectionUsed, result.SourceKeyProjectionReason)
+	}
+	if result.ProjectionElapsed != 0 || result.ProjectionCacheHit {
+		t.Fatalf("projection timing/cache = %s/%t, want no FK projection", result.ProjectionElapsed, result.ProjectionCacheHit)
+	}
+	if projectionCalls != 0 || borrowCalls != 1 || queryCalls != 1 {
+		t.Fatalf("calls projection/borrow/query = %d/%d/%d, want 0/1/1", projectionCalls, borrowCalls, queryCalls)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendUsesValueSetScanForMediumParentToChildExpansion(t *testing.T) {
 	fkBSI := roaring64.NewDefaultBSI()
 	for rownum := uint64(1); rownum <= 2000; rownum++ {

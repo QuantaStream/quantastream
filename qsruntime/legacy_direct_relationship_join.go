@@ -1377,6 +1377,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 	}
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
 		Source:           e.Source,
+		Sessions:         e.Sessions,
 		TableCache:       e.TableCache,
 		ProjectionReader: e.RelationshipProjectionReader,
 		SourceKeyReader:  e.RelationshipSourceKeyReader,

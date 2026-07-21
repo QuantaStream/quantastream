@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ const legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue = 512
 // LegacyDirectBitIndexRelationshipVectorBackend reads relationship-vector BSIs through the legacy BitIndex.
 type LegacyDirectBitIndexRelationshipVectorBackend struct {
 	Source           *source.QuantaSource
+	Sessions         DirectSessionProvider
 	TableCache       *core.TableCacheStruct
 	ProjectionReader legacyDirectRelationshipVectorProjectionReader
 	SourceKeyReader  LegacyDirectRelationshipVectorSourceKeyReader
@@ -31,6 +33,7 @@ func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *sourc
 	reader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
 			Source:     source,
+			Sessions:   sessions,
 			TableCache: tableCache,
 		},
 	}
@@ -53,6 +56,52 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 
 // ReadRelationshipVectorCandidateResult translates source rownums and records FK projection/expansion timings.
 func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCandidateResult(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (qsbridge.FilterDomainRelationshipVectorResult, qsbridge.DiagnosticSet, error) {
+	sourceValueResult, diagnostics, err := b.relationshipVectorSourceValues(ctx, read)
+	if err != nil || diagnostics.BlocksNative() {
+		return qsbridge.FilterDomainRelationshipVectorResult{
+			SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
+			SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
+			SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
+			SourceValueCount:           sourceValueResult.ValueCount,
+		}, diagnostics, err
+	}
+	parentToChild := legacyDirectRelationshipVectorParentToChildRequest(read)
+	projectionCacheKey := b.relationshipVectorProjectionCacheKey(read)
+	candidateCacheKey := b.relationshipVectorCandidateCacheKey(read, projectionCacheKey)
+	if parentToChild {
+		candidateStart := time.Now()
+		if candidates, cacheMode, ok := b.cachedRelationshipVectorCandidates(ctx, candidateCacheKey, read.TargetDomain, sourceValueResult.Values); ok {
+			return qsbridge.FilterDomainRelationshipVectorResult{
+				TargetCandidates:           candidates,
+				VectorIndex:                read.VectorIndex,
+				VectorField:                read.VectorField,
+				Direction:                  read.Direction,
+				SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
+				SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
+				SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
+				SourceValueCount:           sourceValueResult.ValueCount,
+				CandidateCacheHit:          true,
+				CandidateCacheMode:         cacheMode,
+				CandidateMode:              "candidate_cache",
+				CandidateElapsed:           time.Since(candidateStart),
+			}, nil, nil
+		}
+		if candidates, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
+			return qsbridge.FilterDomainRelationshipVectorResult{
+				TargetCandidates:           candidates,
+				VectorIndex:                read.VectorIndex,
+				VectorField:                read.VectorField,
+				Direction:                  read.Direction,
+				SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
+				SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
+				SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
+				SourceValueCount:           sourceValueResult.ValueCount,
+				CandidateCacheMode:         "direct_query",
+				CandidateMode:              "direct_batch_eq",
+				CandidateElapsed:           time.Since(candidateStart),
+			}, candidateDiagnostics, candidateErr
+		}
+	}
 	projector := b.ProjectionReader
 	if projector == nil {
 		projector = legacyDirectBitIndexRelationshipVectorProjectionReader{
@@ -61,10 +110,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 		}
 	}
 	projectionStart := time.Now()
-	projectionCacheKey := b.relationshipVectorProjectionCacheKey(read)
 	fkBSI, projectionCacheHit := b.cachedRelationshipVectorProjection(ctx, projectionCacheKey)
-	var diagnostics qsbridge.DiagnosticSet
-	var err error
 	if fkBSI == nil {
 		fkBSI, diagnostics, err = projector.ReadRelationshipVectorProjection(ctx, read)
 		if err == nil && !diagnostics.BlocksNative() && fkBSI != nil {
@@ -85,36 +131,6 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 			}, qsbridge.DiagnosticSet{
 				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship-vector projection returned nil BSI"),
 			}, nil
-	}
-	sourceValueResult, diagnostics, err := b.relationshipVectorSourceValues(ctx, read)
-	if err != nil || diagnostics.BlocksNative() {
-		return qsbridge.FilterDomainRelationshipVectorResult{
-			ProjectionElapsed:  projectionElapsed,
-			ProjectionCacheHit: projectionCacheHit,
-		}, diagnostics, err
-	}
-	parentToChild := legacyDirectRelationshipVectorParentToChildRequest(read)
-	candidateCacheKey := b.relationshipVectorCandidateCacheKey(read, projectionCacheKey)
-	if parentToChild {
-		candidateStart := time.Now()
-		if candidates, cacheMode, ok := b.cachedRelationshipVectorCandidates(ctx, candidateCacheKey, read.TargetDomain, sourceValueResult.Values); ok {
-			return qsbridge.FilterDomainRelationshipVectorResult{
-				TargetCandidates:           candidates,
-				VectorIndex:                read.VectorIndex,
-				VectorField:                read.VectorField,
-				Direction:                  read.Direction,
-				ProjectionElapsed:          projectionElapsed,
-				ProjectionCacheHit:         projectionCacheHit,
-				SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
-				SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
-				SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
-				SourceValueCount:           sourceValueResult.ValueCount,
-				CandidateCacheHit:          true,
-				CandidateCacheMode:         cacheMode,
-				CandidateMode:              "candidate_cache",
-				CandidateElapsed:           time.Since(candidateStart),
-			}, nil, nil
-		}
 	}
 	candidateStart := time.Now()
 	candidates, candidateTiming := legacyDirectRelationshipVectorCandidateResult(read, fkBSI, sourceValueResult.Values)
@@ -216,6 +232,51 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorCa
 	}
 	cache.Set(key, sourceValues, rownums, targetValues)
 	recordQueryScratchpadCacheStore(ctx, "relationship_vector_candidate_cache", legacyDirectRelationshipProjectionCacheDetail(key))
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorParentToChildCandidatesDirect(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error, bool) {
+	if b.Sessions == nil {
+		return qsbridge.QuantaCandidateSet{}, nil, nil, false
+	}
+	if len(sourceValues) == 0 {
+		return qsbridge.QuantaCandidateSet{Index: read.TargetDomain}, nil, nil, true
+	}
+	if len(sourceValues) > directBitmapMembershipMaxDynamicBatchEQValues {
+		return qsbridge.QuantaCandidateSet{}, nil, nil, false
+	}
+	values := make([]*big.Int, 0, len(sourceValues))
+	for _, sourceValue := range sourceValues {
+		values = append(values, big.NewInt(sourceValue))
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     read.VectorIndex,
+			Field:     read.VectorField,
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+			Values:    values,
+		}},
+	})
+	session, diagnostics, err := b.Sessions.BorrowDirectSession(ctx, request)
+	if err != nil || diagnostics.BlocksNative() {
+		return qsbridge.QuantaCandidateSet{}, diagnostics, err, true
+	}
+	if session == nil {
+		return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship-vector candidate query received nil session"),
+		}, nil, true
+	}
+	result, queryDiagnostics, queryErr := session.QueryBitmap(ctx, request)
+	releaseDiagnostics := session.Release(ctx)
+	diagnostics = append(diagnostics, queryDiagnostics...)
+	diagnostics = append(diagnostics, releaseDiagnostics...)
+	if queryErr != nil || diagnostics.BlocksNative() {
+		return qsbridge.QuantaCandidateSet{}, diagnostics, queryErr, true
+	}
+	return qsbridge.QuantaCandidateSet{
+		Index:   read.TargetDomain,
+		Rownums: append([]qsbridge.QuantaRownum(nil), result.Rownums...),
+	}, diagnostics, nil, true
 }
 
 // legacyDirectRelationshipVectorFoundSetCacheKey produces a stable key for projection narrowing foundsets.
