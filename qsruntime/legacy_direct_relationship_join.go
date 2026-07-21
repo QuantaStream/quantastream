@@ -1080,7 +1080,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	}
 	membershipStart := time.Now()
 	var membershipProbes []ExecutionProbe
-	tupleRows, alignedRows, membershipProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleMemberships(ctx, request, tupleRows, alignedRows)
+	tupleRows, alignedRows, membershipProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleMemberships(ctx, request, tupleRows, alignedRows, edges)
 	membershipElapsed := time.Since(membershipStart)
 	result.Probes = append(result.Probes, membershipProbes...)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -1153,7 +1153,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 
 // legacyDirectRelationshipApplyTupleMemberships applies SQL membership filters
 // to a reduced graph tuple stream while preserving role-rownum alignment.
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyTupleMemberships(ctx context.Context, request ExecutionRequest, tupleRows RelationshipTupleRowSet, alignedRows map[string][]qsbridge.QuantaRownum) (RelationshipTupleRowSet, map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyTupleMemberships(ctx context.Context, request ExecutionRequest, tupleRows RelationshipTupleRowSet, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge) (RelationshipTupleRowSet, map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	if len(request.Memberships) == 0 {
 		return tupleRows, alignedRows, nil, nil, nil
 	}
@@ -1175,7 +1175,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 	}
 	currentTuples := tupleRows
 	currentAligned := legacyDirectRelationshipCloneAlignedRows(alignedRows)
-	probes := make([]ExecutionProbe, 0, len(request.Memberships)*6)
+	probes := make([]ExecutionProbe, 0, len(request.Memberships)*12)
 	for index, membership := range request.Memberships {
 		prefix := fmt.Sprintf("graph_membership_%d_", index+1)
 		role, diagnostics := legacyDirectRelationshipMembershipTupleRole(membership.Left.Table, currentAligned)
@@ -1183,6 +1183,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 			return RelationshipTupleRowSet{}, nil, probes, diagnostics, nil
 		}
 		leftCandidates := legacyDirectRelationshipTupleUniqueRownums(currentTuples, role)
+		derivation := legacyDirectRelationshipObserveTupleMembershipCandidateDerivation(membership, role, currentTuples, currentAligned, edges)
+		probes = append(probes, legacyDirectRelationshipTupleMembershipCandidateDerivationProbes(prefix, derivation)...)
 		runtime := baseRuntime
 		if e.ProjectionBSIReader != nil && legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(leftCandidates, membership) {
 			runtime.ProjectionBSIReader = e.ProjectionBSIReader
@@ -1233,6 +1235,129 @@ func legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(leftCandidates 
 	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
 	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
 	return directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(leftCandidates, rightOnlyPredicates, leftFields, rightFields)
+}
+
+type legacyDirectRelationshipTupleMembershipCandidateDerivationObservation struct {
+	available        bool
+	reason           string
+	mode             string
+	parentRole       string
+	leftRole         string
+	rightRole        string
+	edge             string
+	parentRows       int
+	uniqueParentRows int
+}
+
+func legacyDirectRelationshipObserveTupleMembershipCandidateDerivation(membership qsbridge.MembershipEdge, leftRole string, tupleRows RelationshipTupleRowSet, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge) legacyDirectRelationshipTupleMembershipCandidateDerivationObservation {
+	observation := legacyDirectRelationshipTupleMembershipCandidateDerivationObservation{
+		reason:    "no_matching_parent_edge",
+		leftRole:  leftRole,
+		rightRole: legacyDirectRelationshipTableRoleKey(membership.Right.Table),
+	}
+	if len(edges) == 0 {
+		observation.reason = "no_graph_edges"
+		return observation
+	}
+	if !strings.EqualFold(membership.Left.Table.Table, membership.Right.Table.Table) || directBitmapSameTableInstance(membership.Left.Table, membership.Right.Table) {
+		observation.reason = "not_repeated_table_sibling_membership"
+		return observation
+	}
+	leftField := directBitmapFieldPhysicalName(membership.Left)
+	rightField := directBitmapFieldPhysicalName(membership.Right)
+	for _, edge := range edges {
+		if !legacyDirectRelationshipEdgeChildMatchesRole(edge, leftRole) ||
+			!strings.EqualFold(edge.childTable, membership.Left.Table.Table) ||
+			!strings.EqualFold(edge.childField, leftField) ||
+			!strings.EqualFold(edge.childField, rightField) {
+			continue
+		}
+		if !legacyDirectRelationshipMembershipHasSiblingFKEquality(membership, edge) {
+			observation.reason = "missing_sibling_fk_equality"
+			continue
+		}
+		parentRole := edge.parentKey()
+		parentRows, ok := alignedRows[parentRole]
+		if !ok {
+			observation.reason = "parent_role_not_aligned"
+			continue
+		}
+		observation.available = true
+		observation.reason = ""
+		observation.mode = "parent_role_vector_expansion"
+		observation.parentRole = parentRole
+		observation.edge = fmt.Sprintf("%s.%s->%s.%s", edge.parentTable, edge.parentField, edge.childTable, edge.childField)
+		observation.parentRows = len(parentRows)
+		observation.uniqueParentRows = len(legacyDirectRelationshipTupleUniqueRownums(tupleRows, parentRole))
+		return observation
+	}
+	return observation
+}
+
+func legacyDirectRelationshipTupleMembershipCandidateDerivationProbes(prefix string, observation legacyDirectRelationshipTupleMembershipCandidateDerivationObservation) []ExecutionProbe {
+	probes := []ExecutionProbe{
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_available", strconv.FormatBool(observation.available)),
+	}
+	if !observation.available {
+		if observation.reason != "" {
+			probes = append(probes, legacyDirectRelationshipProbe(prefix+"candidate_derivation_reason", observation.reason))
+		}
+		return probes
+	}
+	probes = append(probes,
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_mode", observation.mode),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_parent_role", observation.parentRole),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_left_role", observation.leftRole),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_right_role", observation.rightRole),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_edge", observation.edge),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_parent_rows", strconv.Itoa(observation.parentRows)),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_unique_parent_rows", strconv.Itoa(observation.uniqueParentRows)),
+	)
+	return probes
+}
+
+func legacyDirectRelationshipEdgeChildMatchesRole(edge legacyDirectRelationshipEdge, role string) bool {
+	return strings.EqualFold(edge.childKey(), role) || strings.EqualFold(edge.childRole, role) || strings.EqualFold(edge.childTable, role)
+}
+
+func legacyDirectRelationshipMembershipHasSiblingFKEquality(membership qsbridge.MembershipEdge, edge legacyDirectRelationshipEdge) bool {
+	for _, predicate := range membership.Predicates {
+		binary, ok := directBitmapBinaryExpr(predicate.Expr)
+		if !ok || binary.Op != qsbridge.BinaryOpEqual {
+			continue
+		}
+		left, leftOK := directBitmapExprField(binary.Left)
+		right, rightOK := directBitmapExprField(binary.Right)
+		if !leftOK || !rightOK {
+			continue
+		}
+		if legacyDirectRelationshipMembershipFieldMatches(left, membership.Left) &&
+			legacyDirectRelationshipMembershipFieldMatches(right, membership.Right) &&
+			strings.EqualFold(directBitmapFieldPhysicalName(left), edge.childField) &&
+			strings.EqualFold(directBitmapFieldPhysicalName(right), edge.childField) {
+			return true
+		}
+		if legacyDirectRelationshipMembershipFieldMatches(left, membership.Right) &&
+			legacyDirectRelationshipMembershipFieldMatches(right, membership.Left) &&
+			strings.EqualFold(directBitmapFieldPhysicalName(left), edge.childField) &&
+			strings.EqualFold(directBitmapFieldPhysicalName(right), edge.childField) {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyDirectRelationshipMembershipFieldMatches(candidate qsbridge.FieldRef, target qsbridge.FieldRef) bool {
+	return legacyDirectRelationshipTableInstanceMatches(candidate.Table, target.Table) &&
+		strings.EqualFold(directBitmapFieldPhysicalName(candidate), directBitmapFieldPhysicalName(target))
+}
+
+func legacyDirectRelationshipTableInstanceMatches(candidate qsbridge.TableInstance, target qsbridge.TableInstance) bool {
+	if candidate.ID != "" && target.ID != "" {
+		return candidate.ID == target.ID
+	}
+	return strings.EqualFold(candidate.Table, target.Table) &&
+		strings.EqualFold(candidate.RefName(), target.RefName())
 }
 
 // legacyDirectRelationshipMembershipTupleRole resolves a membership field's

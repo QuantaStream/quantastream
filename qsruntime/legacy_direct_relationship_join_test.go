@@ -2438,7 +2438,7 @@ func TestLegacyDirectRelationshipTupleMembershipUsesBSIFastPath(t *testing.T) {
 		"l1": append([]qsbridge.QuantaRownum(nil), rownums...),
 	}
 
-	filtered, filteredAligned, probes, diagnostics, err := executor.legacyDirectRelationshipApplyTupleMemberships(context.Background(), request, tupleRows, alignedRows)
+	filtered, filteredAligned, probes, diagnostics, err := executor.legacyDirectRelationshipApplyTupleMemberships(context.Background(), request, tupleRows, alignedRows, nil)
 	if err != nil {
 		t.Fatalf("apply tuple memberships: %v", err)
 	}
@@ -2455,6 +2455,63 @@ func TestLegacyDirectRelationshipTupleMembershipUsesBSIFastPath(t *testing.T) {
 	assertExecutionProbeName(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_fast_path_applied")
 	assertExecutionProbeName(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_right_vector_reuse")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_key_mode", "int64")
+}
+
+func TestLegacyDirectRelationshipTupleMembershipObservesGraphCandidateDerivation(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	membership := qsbridge.MembershipEdge{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}
+	tupleRows := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 101, "l1": 1001}},
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 101, "l1": 1002}},
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 202, "l1": 2001}},
+	}}
+	alignedRows := map[string][]qsbridge.QuantaRownum{
+		"o":  {101, 101, 202},
+		"l1": {1001, 1002, 2001},
+	}
+	edges := []legacyDirectRelationshipEdge{{
+		childRole:   "l1",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+		parentRole:  "o",
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		sqlKind:     qsbridge.JoinKindInner,
+	}}
+
+	observation := legacyDirectRelationshipObserveTupleMembershipCandidateDerivation(membership, "l1", tupleRows, alignedRows, edges)
+	probes := legacyDirectRelationshipTupleMembershipCandidateDerivationProbes("graph_membership_1_", observation)
+
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_available", "true")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_mode", "parent_role_vector_expansion")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_parent_role", "o")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_left_role", "l1")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_right_role", "l2")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_edge", "orders.o_orderkey->lineitem.l_orderkey")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_parent_rows", "3")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_unique_parent_rows", "2")
+
+	missingParent := map[string][]qsbridge.QuantaRownum{
+		"l1": {1001, 1002, 2001},
+	}
+	observation = legacyDirectRelationshipObserveTupleMembershipCandidateDerivation(membership, "l1", tupleRows, missingParent, edges)
+	probes = legacyDirectRelationshipTupleMembershipCandidateDerivationProbes("graph_membership_1_", observation)
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_available", "false")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_reason", "parent_role_not_aligned")
 }
 
 func TestLegacyDirectRelationshipTupleMembershipBSIFastPathPolicyRequiresLargeReusableDomain(t *testing.T) {
