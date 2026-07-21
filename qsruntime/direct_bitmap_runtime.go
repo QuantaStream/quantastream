@@ -42,15 +42,17 @@ func directBitmapSeedMembershipOnlyRequest(request ExecutionRequest) ExecutionRe
 
 // DirectBitmapRuntime executes direct requests through borrowed bitmap-query sessions.
 type DirectBitmapRuntime struct {
-	Sessions            DirectSessionProvider
-	Adapter             BitmapQueryResultAdapter
-	Materializer        ProjectionMaterializer
-	Materialization     ProjectionMaterializationKernel
-	ProjectionBSIReader NativeProjectionBSIReader
-	SameRowComparison   SameRowComparisonKernel
-	RelationshipJoins   RelationshipVectorJoinExecutor
-	RelationshipReader  RelationshipVectorReader
-	FilterAdapter       DirectBitmapFilterAdapter
+	Sessions                                DirectSessionProvider
+	Adapter                                 BitmapQueryResultAdapter
+	Materializer                            ProjectionMaterializer
+	Materialization                         ProjectionMaterializationKernel
+	ProjectionBSIReader                     NativeProjectionBSIReader
+	SameRowComparison                       SameRowComparisonKernel
+	RelationshipJoins                       RelationshipVectorJoinExecutor
+	RelationshipReader                      RelationshipVectorReader
+	FilterAdapter                           DirectBitmapFilterAdapter
+	CorrelatedSiblingRightCandidateSeed     *BitmapQueryResult
+	CorrelatedSiblingRightCandidateSeedMode string
 }
 
 // ExecuteDirect borrows a direct session, runs the bitmap query, and adapts the result.

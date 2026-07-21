@@ -136,7 +136,12 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	rightCandidateStart := time.Now()
 	var rightResult BitmapQueryResult
 	var candidateProbes []ExecutionProbe
-	if foldedNarrow && narrowValuesOK {
+	rightCandidateSeedApplied := false
+	if seeded, seedProbes, ok := r.directBitmapCorrelatedSiblingRightCandidateSeedResult(detail); ok {
+		rightResult = seeded
+		candidateProbes = seedProbes
+		rightCandidateSeedApplied = true
+	} else if foldedNarrow && narrowValuesOK {
 		rightResult, candidateProbes, diagnostics, err = r.directBitmapMembershipRightCandidateResultWithCacheAndProbes(ctx, rightMembership, narrowFragment, narrowValues, detail)
 	} else {
 		rightResult, candidateProbes, diagnostics, err = r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, rightMembership, narrowFragment)
@@ -147,18 +152,23 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		directBitmapMembershipProbe("correlated_sibling_right_candidate_elapsed", rightCandidateElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_right_candidates", strconv.Itoa(len(rightResult.Rownums)), detail),
 	)
-	if foldedNarrow {
+	if foldedNarrow && !rightCandidateSeedApplied {
 		probes = append(probes,
 			directBitmapMembershipProbe("correlated_sibling_right_narrow_right_candidates_after", strconv.Itoa(len(rightResult.Rownums)), detail),
 			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "true", detail),
 			directBitmapMembershipProbe("correlated_sibling_right_narrow_mode", "folded_right_request", detail),
 			directBitmapMembershipProbe("correlated_sibling_right_narrow_elapsed", rightCandidateElapsed.String(), detail),
 		)
+	} else if rightCandidateSeedApplied {
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_applied", "false", detail),
+			directBitmapMembershipProbe("correlated_sibling_right_narrow_reason", "right_candidate_seed", detail),
+		)
 	}
 	if err != nil || diagnostics.BlocksNative() {
 		return result, probes, diagnostics, err
 	}
-	if !foldedNarrow {
+	if !foldedNarrow && !rightCandidateSeedApplied {
 		var narrowProbes []ExecutionProbe
 		rightResult, narrowProbes, diagnostics, err = r.directBitmapNarrowCorrelatedMembershipRightCandidates(ctx, rightResult, membership, leftKeys)
 		probes = append(probes, narrowProbes...)
@@ -186,7 +196,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 	if !ok {
 		return result, probes, directBitmapMembershipDiagnostics("correlated sibling membership right key is not present in materialized row set"), nil
 	}
-	if narrowValuesOK && directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates) {
+	if !rightCandidateSeedApplied && narrowValuesOK && directBitmapMembershipRightCandidateCanStoreRaw(rightOnlyPredicates) {
 		probes = append(probes, directBitmapMembershipRightCandidateCellCacheStore(ctx, rightMembership, narrowValues, rightRowSet.Rownums, rightKeys, detail)...)
 	}
 	indexStart := time.Now()
@@ -301,6 +311,27 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx co
 		directBitmapMembershipProbe("correlated_sibling_elapsed", time.Since(start).String(), detail),
 	)
 	return filtered, probes, nil, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapCorrelatedSiblingRightCandidateSeedResult(detail string) (BitmapQueryResult, []ExecutionProbe, bool) {
+	if r.CorrelatedSiblingRightCandidateSeed == nil || !r.CorrelatedSiblingRightCandidateSeed.Success {
+		return BitmapQueryResult{}, nil, false
+	}
+	mode := r.CorrelatedSiblingRightCandidateSeedMode
+	if mode == "" {
+		mode = "provided"
+	}
+	seeded := r.CorrelatedSiblingRightCandidateSeed.Clone()
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("membership_right_candidate_seed_reuse", "true", detail),
+		directBitmapMembershipProbe("membership_right_candidate_seed_mode", mode, detail),
+		directBitmapMembershipProbe("membership_right_candidate_fragment_count", "0", detail),
+		directBitmapMembershipProbe("membership_right_candidate_extra_fragment_count", "0", detail),
+		directBitmapMembershipProbe("membership_right_candidate_query_elapsed", "0s", detail),
+		directBitmapMembershipProbe("membership_right_candidate_query_rows", strconv.Itoa(len(seeded.Rownums)), detail),
+		directBitmapMembershipProbe("membership_right_candidate_residual_count", "0", detail),
+	}
+	return seeded, probes, true
 }
 
 type directBitmapMembershipBSIOperandSide string

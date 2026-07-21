@@ -2470,7 +2470,6 @@ func TestLegacyDirectRelationshipTupleMembershipObservesGraphCandidateDerivation
 		Kind:  qsbridge.MembershipSemi,
 		Legal: true,
 		Predicates: []qsbridge.Predicate{
-			{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
 			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
 		},
 	}
@@ -2512,6 +2511,119 @@ func TestLegacyDirectRelationshipTupleMembershipObservesGraphCandidateDerivation
 	probes = legacyDirectRelationshipTupleMembershipCandidateDerivationProbes("graph_membership_1_", observation)
 	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_available", "false")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_reason", "parent_role_not_aligned")
+}
+
+func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSeed(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	queryCalls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				10: 1,
+				11: 1,
+				12: 1,
+				20: 2,
+			}),
+		},
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			valuesByField := map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell{
+				"l_orderkey": {
+					10: {Kind: qsbridge.ValueInt, Value: int64(1)},
+					11: {Kind: qsbridge.ValueInt, Value: int64(1)},
+					12: {Kind: qsbridge.ValueInt, Value: int64(1)},
+					20: {Kind: qsbridge.ValueInt, Value: int64(2)},
+				},
+				"l_suppkey": {
+					10: {Kind: qsbridge.ValueInt, Value: int64(7)},
+					11: {Kind: qsbridge.ValueInt, Value: int64(7)},
+					12: {Kind: qsbridge.ValueInt, Value: int64(8)},
+					20: {Kind: qsbridge.ValueInt, Value: int64(9)},
+				},
+			}
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				name := field.PhysicalName
+				if name == "" {
+					name = field.Field
+				}
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					vector.Values = append(vector.Values, valuesByField[name][rownum])
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalls++
+					return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+						qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "right candidate query should not run when graph-derived seed is available"),
+					}, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}}
+	tupleRows := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 1, "l1": 10}},
+		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"o": 1, "l1": 11}},
+	}}
+	alignedRows := map[string][]qsbridge.QuantaRownum{
+		"o":  {1, 1},
+		"l1": {10, 11},
+	}
+	edges := []legacyDirectRelationshipEdge{{
+		childRole:   "l1",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+		parentRole:  "o",
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		sqlKind:     qsbridge.JoinKindInner,
+	}}
+
+	filtered, filteredAligned, probes, diagnostics, err := executor.legacyDirectRelationshipApplyTupleMemberships(context.Background(), request, tupleRows, alignedRows, edges)
+	if err != nil {
+		t.Fatalf("apply tuple memberships: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if queryCalls != 0 {
+		t.Fatalf("right candidate query calls = %d, want 0", queryCalls)
+	}
+	assertRelationshipTupleRows(t, filtered, []map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{
+		{"o": 1, "l1": 10},
+		{"o": 1, "l1": 11},
+	})
+	if got := filteredAligned["l1"]; len(got) != 2 || got[0] != 10 || got[1] != 11 {
+		t.Fatalf("filtered aligned rows = %#v, want l1 [10 11]", filteredAligned)
+	}
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_applied", "true")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_rows", "3")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_seed_reuse", "true")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_seed_mode", "graph_parent_vector_expansion")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_reason", "right_candidate_seed")
 }
 
 func TestLegacyDirectRelationshipTupleMembershipBSIFastPathPolicyRequiresLargeReusableDomain(t *testing.T) {
