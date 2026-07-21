@@ -131,6 +131,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 				Sessions:                     sessions,
 				TableCache:                   tableCache,
 				Materialization:              materialization,
+				ProjectionBSIReader:          bsiReader,
 				SameRowComparison:            sameRowComparison,
 				RelationshipProjectionReader: relationshipProjectionReader,
 				ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,

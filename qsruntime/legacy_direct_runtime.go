@@ -126,6 +126,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			Source:                    quantaSource,
 			TableCache:                tableCache,
 			Materialization:           materialization,
+			ProjectionBSIReader:       bsiReader,
 			SameRowComparison:         sameRowComparison,
 			ApplyRecommendedEdgeOrder: DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},

@@ -17,12 +17,13 @@ import (
 
 // LegacyDirectRelationshipVectorJoinExecutor executes relationship-vector joins.
 type LegacyDirectRelationshipVectorJoinExecutor struct {
-	KernelAdapter   RelationshipVectorKernel
-	Source          *source.QuantaSource
-	Sessions        DirectSessionProvider
-	TableCache      *core.TableCacheStruct
-	Materializer    ProjectionMaterializer
-	Materialization ProjectionMaterializationKernel
+	KernelAdapter       RelationshipVectorKernel
+	Source              *source.QuantaSource
+	Sessions            DirectSessionProvider
+	TableCache          *core.TableCacheStruct
+	Materializer        ProjectionMaterializer
+	Materialization     ProjectionMaterializationKernel
+	ProjectionBSIReader NativeProjectionBSIReader
 	// SameRowComparison filters same-row BSI predicates without materializing compared values.
 	SameRowComparison SameRowComparisonKernel
 	// ProjectionCache reuses relationship-vector FK BSI projections during one execution request.
@@ -1167,7 +1168,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 	if sessions == nil {
 		return RelationshipTupleRowSet{}, nil, nil, legacyDirectRelationshipDiagnostic("relationship-vector graph membership requires a direct session provider"), nil
 	}
-	runtime := DirectBitmapRuntime{
+	baseRuntime := DirectBitmapRuntime{
 		Sessions:          sessions,
 		Materialization:   materialization,
 		SameRowComparison: e.sameRowComparisonKernel(),
@@ -1182,6 +1183,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 			return RelationshipTupleRowSet{}, nil, probes, diagnostics, nil
 		}
 		leftCandidates := legacyDirectRelationshipTupleUniqueRownums(currentTuples, role)
+		runtime := baseRuntime
+		if e.ProjectionBSIReader != nil && legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(leftCandidates, membership) {
+			runtime.ProjectionBSIReader = e.ProjectionBSIReader
+		}
 		filtered, membershipProbes, diagnostics, err := runtime.directBitmapApplyMembership(ctx, request, BitmapQueryResult{
 			Success: true,
 			Count:   uint64(len(leftCandidates)),
@@ -1218,6 +1223,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 		)
 	}
 	return currentTuples, currentAligned, probes, nil, nil
+}
+
+func legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(leftCandidates []qsbridge.QuantaRownum, membership qsbridge.MembershipEdge) bool {
+	rightOnlyPredicates, correlatedPredicates := directBitmapSplitMembershipPredicates(membership)
+	if len(correlatedPredicates) == 0 {
+		return false
+	}
+	leftFields := directBitmapCorrelatedMembershipProjectionFields(membership.Left, correlatedPredicates, membership.Left.Table)
+	rightFields := directBitmapCorrelatedMembershipProjectionFields(membership.Right, correlatedPredicates, membership.Right.Table)
+	return directBitmapCorrelatedMembershipShouldReuseRightBSIVectors(leftCandidates, rightOnlyPredicates, leftFields, rightFields)
 }
 
 // legacyDirectRelationshipMembershipTupleRole resolves a membership field's
@@ -3647,9 +3662,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 	}
 	materialization := e.projectionMaterializationKernel()
 	runtime := DirectBitmapRuntime{
-		Sessions:          LegacyQuantaSourceSessionProvider{Source: e.Source},
-		Materialization:   materialization,
-		SameRowComparison: e.sameRowComparisonKernel(),
+		Sessions:            LegacyQuantaSourceSessionProvider{Source: e.Source},
+		Materialization:     materialization,
+		ProjectionBSIReader: e.ProjectionBSIReader,
+		SameRowComparison:   e.sameRowComparisonKernel(),
 	}
 	filteredPairs := append([]legacyDirectRelationshipPair(nil), pairs...)
 	for _, membership := range request.Memberships {

@@ -2369,6 +2369,136 @@ func TestLegacyDirectRelationshipShapeDiagnosticsAllowsMembershipComposition(t *
 	}
 }
 
+func TestLegacyDirectRelationshipTupleMembershipUsesBSIFastPath(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	rownums := make([]qsbridge.QuantaRownum, 0, directBitmapMembershipMaxDynamicBatchEQValues+2)
+	orderKeys := make(map[uint64]int64, directBitmapMembershipMaxDynamicBatchEQValues+2)
+	suppKeys := make(map[uint64]int64, directBitmapMembershipMaxDynamicBatchEQValues+2)
+	for i := 1; i <= directBitmapMembershipMaxDynamicBatchEQValues+2; i++ {
+		rownum := qsbridge.QuantaRownum(i)
+		rownums = append(rownums, rownum)
+		orderKeys[uint64(rownum)] = int64(1000 + i)
+		suppKeys[uint64(rownum)] = 1
+	}
+	orderKeys[1] = 10
+	orderKeys[2] = 10
+	suppKeys[1] = 1
+	suppKeys[2] = 2
+	reader := fakeMembershipProjectionBSIReader{
+		Values: map[string]map[uint64]int64{
+			"l_orderkey": orderKeys,
+			"l_suppkey":  suppKeys,
+		},
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ProjectionBSIReader: reader,
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("relationship graph membership should use raw BSI vectors instead of materializing %s", request.Index)
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					values := directBitmapTestBatchEQValues(request.Query.Fragments, "l_orderkey")
+					filtered := make([]qsbridge.QuantaRownum, 0, len(rownums))
+					for _, rownum := range rownums {
+						if len(values) > 0 {
+							if _, ok := values[reader.Values["l_orderkey"][uint64(rownum)]]; !ok {
+								continue
+							}
+						}
+						filtered = append(filtered, rownum)
+					}
+					return BitmapQueryResult{Success: true, Count: uint64(len(filtered)), Rownums: filtered}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}}
+	tupleRows := RelationshipTupleRowSet{Rows: make([]RelationshipTupleRow, 0, len(rownums))}
+	for _, rownum := range rownums {
+		tupleRows.Rows = append(tupleRows.Rows, RelationshipTupleRow{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"l1": rownum}})
+	}
+	alignedRows := map[string][]qsbridge.QuantaRownum{
+		"l1": append([]qsbridge.QuantaRownum(nil), rownums...),
+	}
+
+	filtered, filteredAligned, probes, diagnostics, err := executor.legacyDirectRelationshipApplyTupleMemberships(context.Background(), request, tupleRows, alignedRows)
+	if err != nil {
+		t.Fatalf("apply tuple memberships: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	assertRelationshipTupleRows(t, filtered, []map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{
+		{"l1": 1},
+		{"l1": 2},
+	})
+	if got := filteredAligned["l1"]; len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("filtered aligned rows = %#v, want [1 2]", filteredAligned)
+	}
+	assertExecutionProbeName(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_fast_path_applied")
+	assertExecutionProbeName(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_right_vector_reuse")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_key_mode", "int64")
+}
+
+func TestLegacyDirectRelationshipTupleMembershipBSIFastPathPolicyRequiresLargeReusableDomain(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	membership := qsbridge.MembershipEdge{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}
+
+	small := []qsbridge.QuantaRownum{1, 2, 3}
+	if legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(small, membership) {
+		t.Fatalf("small graph membership candidate set should stay on materialized path")
+	}
+	large := make([]qsbridge.QuantaRownum, 0, directBitmapMembershipMaxDynamicBatchEQValues+1)
+	for i := 1; i <= directBitmapMembershipMaxDynamicBatchEQValues+1; i++ {
+		large = append(large, qsbridge.QuantaRownum(i))
+	}
+	if !legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(large, membership) {
+		t.Fatalf("large reusable graph membership candidate set should use BSI fast path")
+	}
+
+	l2OtherOrderKey := qsbridge.FieldRef{Table: l2, Name: "other_orderkey", PhysicalName: "other_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	mismatch := membership
+	mismatch.Right = l2OtherOrderKey
+	mismatch.Predicates = []qsbridge.Predicate{
+		{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OtherOrderKey), qsbridge.Field(l1OrderKey))},
+		{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+	}
+	if legacyDirectRelationshipTupleMembershipShouldUseBSIFastPath(large, mismatch) {
+		t.Fatalf("graph membership BSI fast path should require reusable matching BSI fields")
+	}
+}
+
 func TestLegacyDirectRelationshipApplyMembershipFiltersJoinedPairs(t *testing.T) {
 	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
 	supplier := qsbridge.TableInstance{Table: "supplier", Alias: "s"}
