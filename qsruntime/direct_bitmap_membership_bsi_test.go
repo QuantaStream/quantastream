@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
@@ -173,6 +174,75 @@ func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testin
 	}
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_right_vector_reuse")
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_value_hydration_elapsed")
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_key_mode", "int64")
+}
+
+func TestDirectBitmapFinishCorrelatedSiblingMembershipBSIFallsBackToStringKeysForBigValues(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	bigKey := new(big.Int).Lsh(big.NewInt(1), 80)
+
+	leftKey := directBitmapMembershipBSIVector{
+		Field:   l1OrderKey,
+		Rownums: []qsbridge.QuantaRownum{1},
+		Values:  []*big.Int{bigKey},
+	}
+	rightKey := directBitmapMembershipBSIVector{
+		Field:   l2OrderKey,
+		Rownums: []qsbridge.QuantaRownum{2},
+		Values:  []*big.Int{new(big.Int).Set(bigKey)},
+	}
+	leftVectors := map[string]directBitmapMembershipBSIVector{
+		directBitmapMembershipBSIFieldKey(l1OrderKey): leftKey,
+		directBitmapMembershipBSIFieldKey(l1SuppKey): {
+			Field:   l1SuppKey,
+			Rownums: []qsbridge.QuantaRownum{1},
+			Values:  []*big.Int{big.NewInt(10)},
+		},
+	}
+	rightVectors := map[string]directBitmapMembershipBSIVector{
+		directBitmapMembershipBSIFieldKey(l2OrderKey): rightKey,
+		directBitmapMembershipBSIFieldKey(l2SuppKey): {
+			Field:   l2SuppKey,
+			Rownums: []qsbridge.QuantaRownum{2},
+			Values:  []*big.Int{big.NewInt(20)},
+		},
+	}
+	comparisons := []directBitmapMembershipBSIComparison{
+		{
+			Op:    qsbridge.BinaryOpEqual,
+			Left:  directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandRight, Field: l2OrderKey},
+			Right: directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandLeft, Field: l1OrderKey},
+		},
+		{
+			Op:    qsbridge.BinaryOpNotEqual,
+			Left:  directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandRight, Field: l2SuppKey},
+			Right: directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandLeft, Field: l1SuppKey},
+		},
+	}
+	filtered, probes, diagnostics := directBitmapFinishCorrelatedSiblingMembershipBSI(
+		time.Now(),
+		BitmapQueryResult{Success: true, Count: 1, Rownums: []qsbridge.QuantaRownum{1}},
+		qsbridge.MembershipEdge{Left: l1OrderKey, Right: l2OrderKey, Kind: qsbridge.MembershipSemi},
+		"",
+		nil,
+		comparisons,
+		leftVectors,
+		leftKey,
+		rightVectors,
+		rightKey,
+	)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(filtered.Rownums) != 1 || filtered.Rownums[0] != 1 {
+		t.Fatalf("filtered rownums = %#v, want [1]", filtered.Rownums)
+	}
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_key_mode", "string")
 }
 
 func TestDirectBitmapRuntimeReadsCorrelatedSiblingMembershipValuesDirectly(t *testing.T) {

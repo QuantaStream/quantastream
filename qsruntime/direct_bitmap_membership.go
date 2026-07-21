@@ -425,16 +425,21 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 }
 
 func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, detail string, probes []ExecutionProbe, comparisons []directBitmapMembershipBSIComparison, leftVectors map[string]directBitmapMembershipBSIVector, leftKey directBitmapMembershipBSIVector, rightVectors map[string]directBitmapMembershipBSIVector, rightKey directBitmapMembershipBSIVector) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet) {
+	useInt64Key := directBitmapMembershipBSIVectorValuesFitInt64(leftKey.Values) && directBitmapMembershipBSIVectorValuesFitInt64(rightKey.Values)
+	keyMode := "string"
+	if useInt64Key {
+		keyMode = "int64"
+	}
 	indexStart := time.Now()
-	rightRowsByKey := make(map[string][]int, len(rightKey.Values))
+	rightRowsByKey := make(map[directBitmapMembershipBSIJoinKey][]int, len(rightKey.Values))
 	rightIndexedRows := 0
 	rightNullKeyRows := 0
 	for i, value := range rightKey.Values {
-		if value == nil {
+		key, ok := directBitmapMembershipBSIJoinKeyForValue(value, useInt64Key)
+		if !ok {
 			rightNullKeyRows++
 			continue
 		}
-		key := value.String()
 		rightRowsByKey[key] = append(rightRowsByKey[key], i)
 		rightIndexedRows++
 	}
@@ -467,13 +472,13 @@ func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result Bi
 	laterCandidateMatches := 0
 	for i, rownum := range leftKey.Rownums {
 		value := leftKey.Values[i]
-		key := ""
-		if value == nil {
+		key, ok := directBitmapMembershipBSIJoinKeyForValue(value, useInt64Key)
+		var candidates []int
+		if !ok {
 			leftNullKeyRows++
 		} else {
-			key = value.String()
+			candidates = rightRowsByKey[key]
 		}
-		candidates := rightRowsByKey[key]
 		if len(candidates) == 0 {
 			leftBucketMisses++
 		} else {
@@ -517,6 +522,7 @@ func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result Bi
 	evaluationElapsed := time.Since(evaluationStart)
 	filtered.Count = uint64(len(filtered.Rownums))
 	probes = append(probes,
+		directBitmapMembershipProbe("correlated_sibling_bsi_key_mode", keyMode, detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_right_index_elapsed", indexElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_right_index_keys", strconv.Itoa(len(rightRowsByKey)), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_right_index_rows", strconv.Itoa(rightIndexedRows), detail),
@@ -539,6 +545,30 @@ func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result Bi
 		directBitmapMembershipProbe("correlated_sibling_bsi_elapsed", time.Since(start).String(), detail),
 	)
 	return filtered, probes, nil
+}
+
+func directBitmapMembershipBSIVectorValuesFitInt64(values []*big.Int) bool {
+	for _, value := range values {
+		if value != nil && !value.IsInt64() {
+			return false
+		}
+	}
+	return true
+}
+
+type directBitmapMembershipBSIJoinKey struct {
+	int64Value  int64
+	stringValue string
+}
+
+func directBitmapMembershipBSIJoinKeyForValue(value *big.Int, useInt64 bool) (directBitmapMembershipBSIJoinKey, bool) {
+	if value == nil {
+		return directBitmapMembershipBSIJoinKey{}, false
+	}
+	if useInt64 {
+		return directBitmapMembershipBSIJoinKey{int64Value: value.Int64()}, true
+	}
+	return directBitmapMembershipBSIJoinKey{stringValue: value.String()}, true
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIRightVectorReuse(ctx context.Context, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, leftFields []qsbridge.QuantaProjectionField, rightFields []qsbridge.QuantaProjectionField, detail string) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
