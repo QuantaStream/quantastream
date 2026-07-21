@@ -138,9 +138,8 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionField(ctx context.Context,
 		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, nativeProjectionUnsupported("native BSI projection returned no BSI for " + index + "." + fieldName), nil
 	}
 	values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
-	for _, rownum := range request.Rownums {
-		value, ok := readResult.BSI.GetBigValue(uint64(rownum))
-		if !ok {
+	for _, value := range readResult.BSI.GetBigValues(nativeProjectionRownumColumnIDs(request.Rownums)) {
+		if value == nil {
 			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
 			continue
 		}
@@ -312,9 +311,8 @@ func nativeProjectionBSIFieldResult(plan nativeProjectionBSIFieldReadPlan, readR
 		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, nativeProjectionUnsupported("native BSI projection returned no BSI for " + plan.BSIRequest.Index + "." + plan.BSIRequest.PhysicalField)
 	}
 	values := make([]qsbridge.ResultCell, 0, len(plan.BSIRequest.Rownums))
-	for _, rownum := range plan.BSIRequest.Rownums {
-		value, ok := readResult.BSI.GetBigValue(uint64(rownum))
-		if !ok {
+	for _, value := range readResult.BSI.GetBigValues(nativeProjectionRownumColumnIDs(plan.BSIRequest.Rownums)) {
+		if value == nil {
 			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
 			continue
 		}
@@ -325,6 +323,14 @@ func nativeProjectionBSIFieldResult(plan nativeProjectionBSIFieldReadPlan, readR
 		Values: values,
 		Probes: readResult.Probes,
 	}, nil
+}
+
+func nativeProjectionRownumColumnIDs(rownums []qsbridge.QuantaRownum) []uint64 {
+	columnIDs := make([]uint64, len(rownums))
+	for i, rownum := range rownums {
+		columnIDs[i] = uint64(rownum)
+	}
+	return columnIDs
 }
 
 func (r NativeProjectionBSIFieldReader) readProjectionDictionaryIDs(ctx context.Context, request NativeProjectionFieldReadRequest, index string, fieldName string) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {

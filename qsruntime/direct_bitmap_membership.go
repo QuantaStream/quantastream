@@ -757,6 +757,7 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "correlated sibling BSI fast path reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(requests))+" requests"),
 		}, nil
 	}
+	columnIDs := directBitmapRownumColumnIDs(rownums)
 	probes := make([]ExecutionProbe, 0, len(readResults))
 	for i, readResult := range readResults {
 		probes = append(probes, readResult.Probes...)
@@ -767,16 +768,15 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 		hydrationStart := time.Now()
 		hydratedRows := 0
 		missingRows := 0
-		for j, rownum := range rownums {
-			value, ok := readResult.BSI.GetBigValue(uint64(rownum))
-			if !ok {
+		values := readResult.BSI.GetBigValues(columnIDs)
+		for _, value := range values {
+			if value == nil {
 				missingRows++
 				continue
 			}
-			// GetBigValue already returns a new big.Int; avoid copying every hydrated cell.
-			vector.Values[j] = value
 			hydratedRows++
 		}
+		vector.Values = values
 		hydrationDetail := requests[i].Index + "." + requests[i].PhysicalField
 		probes = append(probes,
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
@@ -786,6 +786,14 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 		vectors[positions[i]] = vector
 	}
 	return vectors, probes, nil, nil
+}
+
+func directBitmapRownumColumnIDs(rownums []qsbridge.QuantaRownum) []uint64 {
+	columnIDs := make([]uint64, len(rownums))
+	for i, rownum := range rownums {
+		columnIDs[i] = uint64(rownum)
+	}
+	return columnIDs
 }
 
 func directBitmapMembershipBSIFieldKey(field qsbridge.FieldRef) string {
