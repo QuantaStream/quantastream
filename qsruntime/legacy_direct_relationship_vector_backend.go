@@ -19,7 +19,7 @@ type LegacyDirectBitIndexRelationshipVectorBackend struct {
 	Source           *source.QuantaSource
 	TableCache       *core.TableCacheStruct
 	ProjectionReader legacyDirectRelationshipVectorProjectionReader
-	SourceKeyReader  legacyDirectRelationshipVectorSourceKeyReader
+	SourceKeyReader  LegacyDirectRelationshipVectorSourceKeyReader
 	ProjectionCache  *LegacyDirectRelationshipVectorProjectionCache
 }
 
@@ -208,10 +208,14 @@ type legacyDirectRelationshipVectorProjectionReader interface {
 	ReadRelationshipVectorProjection(context.Context, LegacyDirectRelationshipVectorReadRequest) (*roaring64.BSI, qsbridge.DiagnosticSet, error)
 }
 
-type legacyDirectRelationshipVectorSourceKeyReader interface {
+// LegacyDirectRelationshipVectorSourceKeyReader projects relationship-vector
+// source key values when source rownums are not themselves the relationship key.
+type LegacyDirectRelationshipVectorSourceKeyReader interface {
 	// ReadRelationshipVectorSourceKeyValues returns relationship-vector values for source candidate rownums.
 	ReadRelationshipVectorSourceKeyValues(context.Context, LegacyDirectRelationshipVectorReadRequest) ([]int64, qsbridge.DiagnosticSet, error)
 }
+
+type legacyDirectRelationshipVectorSourceKeyReader = LegacyDirectRelationshipVectorSourceKeyReader
 
 type legacyDirectRelationshipVectorSourceValuesResult struct {
 	Values            []int64

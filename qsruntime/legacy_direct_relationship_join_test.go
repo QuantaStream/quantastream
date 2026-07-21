@@ -2525,18 +2525,21 @@ func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSe
 		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
 		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
 			BSI: testRelationshipVectorBSI(map[uint64]int64{
-				10: 1,
-				11: 1,
-				12: 1,
+				10: 9001,
+				11: 9001,
+				12: 9001,
 				20: 2,
 			}),
+		},
+		RelationshipSourceKeyReader: fakeLegacyDirectRelationshipVectorSourceKeyReader{
+			Values: []int64{9001},
 		},
 		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
 			valuesByField := map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell{
 				"l_orderkey": {
-					10: {Kind: qsbridge.ValueInt, Value: int64(1)},
-					11: {Kind: qsbridge.ValueInt, Value: int64(1)},
-					12: {Kind: qsbridge.ValueInt, Value: int64(1)},
+					10: {Kind: qsbridge.ValueInt, Value: int64(9001)},
+					11: {Kind: qsbridge.ValueInt, Value: int64(9001)},
+					12: {Kind: qsbridge.ValueInt, Value: int64(9001)},
 					20: {Kind: qsbridge.ValueInt, Value: int64(2)},
 				},
 				"l_suppkey": {
@@ -2621,6 +2624,8 @@ func TestLegacyDirectRelationshipTupleMembershipUsesGraphDerivedRightCandidateSe
 	}
 	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_applied", "true")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_rows", "3")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_source_key_projection_used", "true")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_membership_1_candidate_derivation_source_key_projection_reason", "projected_source_key")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_seed_reuse", "true")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "membership_right_candidate_seed_mode", "graph_parent_vector_expansion")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_right_narrow_reason", "right_candidate_seed")

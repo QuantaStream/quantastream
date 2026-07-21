@@ -111,10 +111,14 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		TableCache: tableCache,
 		Direct:     b.Adapter.BitmapIndex,
 	}
+	relationshipSourceKeyReader := StandardRelationshipVectorSourceKeyReader{
+		Reader: bsiReader,
+	}
 	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
 		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
 			TableCache:       tableCache,
 			ProjectionReader: relationshipProjectionReader,
+			SourceKeyReader:  relationshipSourceKeyReader,
 		},
 	}
 	return StandardDirectRuntimeMount{
@@ -134,6 +138,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 				ProjectionBSIReader:          bsiReader,
 				SameRowComparison:            sameRowComparison,
 				RelationshipProjectionReader: relationshipProjectionReader,
+				RelationshipSourceKeyReader:  relationshipSourceKeyReader,
 				ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
 			},
 		},

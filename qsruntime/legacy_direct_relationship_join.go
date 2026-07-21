@@ -30,6 +30,8 @@ type LegacyDirectRelationshipVectorJoinExecutor struct {
 	ProjectionCache *LegacyDirectRelationshipVectorProjectionCache
 	// RelationshipProjectionReader projects relationship-vector FK BSIs without a source-backed session.
 	RelationshipProjectionReader legacyDirectRelationshipVectorProjectionReader
+	// RelationshipSourceKeyReader projects source-domain keys for relationship-vector expansion.
+	RelationshipSourceKeyReader LegacyDirectRelationshipVectorSourceKeyReader
 	// ApplyRecommendedEdgeOrder enables dependency-ordered graph reduction.
 	ApplyRecommendedEdgeOrder bool
 }
@@ -1357,6 +1359,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		Source:           e.Source,
 		TableCache:       e.TableCache,
 		ProjectionReader: e.RelationshipProjectionReader,
+		SourceKeyReader:  e.RelationshipSourceKeyReader,
 		ProjectionCache:  projectionCache,
 	}
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(observation.edge, parentRows)
