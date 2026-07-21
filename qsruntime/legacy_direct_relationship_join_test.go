@@ -911,6 +911,125 @@ func TestLegacyDirectRelationshipReduceTimingIncludesParentKeyAndMatchMetrics(t 
 	}
 }
 
+func TestLegacyDirectRelationshipSingleEdgePrefiltersParentResidualBeforeReduction(t *testing.T) {
+	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	partName := qsbridge.FieldRef{Table: part, Name: "p_name", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{
+			{Index: "part", Role: "p", Field: "p_partkey", Type: qsbridge.DataTypeInt, Visible: true},
+			{Index: "part", Role: "p", Field: "p_name", Type: qsbridge.DataTypeString, Visible: true},
+			{Index: "lineitem", Role: "l", Field: "l_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+			{Index: "lineitem", Role: "l", Field: "l_suppkey", Type: qsbridge.DataTypeInt, Visible: true},
+		},
+	})
+	request.Sources = []qsbridge.TableInstance{part, lineitem}
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpLike, qsbridge.Field(partName), qsbridge.Literal(qsbridge.ValueString, "%green%")),
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}}
+	cache := core.NewTableCacheStruct()
+	cache.TableCache["part"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "part", PrimaryKey: "p_partkey"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"p_partkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "p_partkey", SourceName: "p_partkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+			"p_name":    {BasicAttribute: &shared.BasicAttribute{FieldName: "p_name", SourceName: "p_name", Type: "String", MappingStrategy: "StringHashBSI"}},
+		},
+	}
+	cache.TableCache["lineitem"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "lineitem", PrimaryKey: "l_orderkey"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"l_orderkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "l_orderkey", SourceName: "l_orderkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+			"l_suppkey":  {BasicAttribute: &shared.BasicAttribute{FieldName: "l_suppkey", SourceName: "l_suppkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+			"l_partkey":  {BasicAttribute: &shared.BasicAttribute{FieldName: "l_partkey", SourceName: "l_partkey", Type: "Integer", MappingStrategy: "ParentRelation", ForeignKey: "part.p_partkey"}},
+		},
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		TableCache: cache,
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			index, _ := request.RootIndex()
+			return DirectSessionHandleFunc{QueryFunc: func(context.Context, ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+				switch index {
+				case "part":
+					return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				case "lineitem":
+					return BitmapQueryResult{Success: true, Count: 4, Rownums: []qsbridge.QuantaRownum{101, 102, 103, 104}}, nil, nil
+				default:
+					t.Fatalf("unexpected bitmap query index %q", index)
+					return BitmapQueryResult{}, nil, nil
+				}
+			}}, nil, nil
+		}),
+		ProjectionCache: NewLegacyDirectRelationshipVectorProjectionCache(),
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				101: 1,
+				102: 2,
+				103: 3,
+				104: 3,
+			}),
+		},
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field, Values: make([]qsbridge.ResultCell, 0, len(request.Rownums))}
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "p_partkey":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum)})
+					case "p_name":
+						name := "green part"
+						if rownum == 2 {
+							name = "red part"
+						}
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: name})
+					case "l_orderkey":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum)})
+					case "l_suppkey":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(rownum + 1000)})
+					default:
+						t.Fatalf("unexpected materialization field %q", field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	vector := RelationshipVectorJoinRequest{RootIndex: "lineitem", Edges: []qsbridge.RelationshipJoinPlanEdge{{
+		Left:          qsbridge.FieldRef{Table: lineitem, Name: "l_partkey", Type: qsbridge.DataTypeInt},
+		LeftRole:      "l",
+		Right:         qsbridge.FieldRef{Table: part, Name: "p_partkey", Type: qsbridge.DataTypeInt},
+		RightRole:     "p",
+		SQLKind:       qsbridge.JoinKindInner,
+		ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+	}}}
+
+	result, err := executor.ExecuteRelationshipVectorJoin(context.Background(), request, vector)
+	if err != nil {
+		t.Fatalf("relationship join: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "residual_prefilter_1_rows_before", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "residual_prefilter_1_rows_after", "2")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "parent_rows", "2")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "joined_rows", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "child_materialization_rows", "3")
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 3 {
+		t.Fatalf("rows = %#v, want 3 joined rows after parent residual prefilter", chunk.Rows)
+	}
+}
+
 func TestLegacyDirectRelationshipReduceUsesQueryScratchpadDomainMapping(t *testing.T) {
 	calls := 0
 	executor := LegacyDirectRelationshipVectorJoinExecutor{

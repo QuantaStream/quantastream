@@ -370,6 +370,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		return ExecutionResult{Diagnostics: diagnostics}, err
 	}
 	childElapsed := time.Duration(0)
+	prefilterElapsed := time.Duration(0)
+	var prefilterProbes []ExecutionProbe
 	reduceElapsed := time.Duration(0)
 	reduceTiming := legacyDirectRelationshipReduceTiming{}
 	if !usedChildCandidateSet {
@@ -384,6 +386,18 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		if err != nil || diagnostics.BlocksNative() {
 			return ExecutionResult{Diagnostics: diagnostics}, err
 		}
+		prefilterStart := time.Now()
+		rowsByRole := map[string][]qsbridge.QuantaRownum{
+			edge.parentKey(): parentRows,
+			edge.childKey():  childRows,
+		}
+		prefilterProbes, diagnostics, err = e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByRole, []legacyDirectRelationshipEdge{edge})
+		prefilterElapsed = time.Since(prefilterStart)
+		if err != nil || diagnostics.BlocksNative() {
+			return ExecutionResult{Diagnostics: diagnostics}, err
+		}
+		parentRows = rowsByRole[edge.parentKey()]
+		childRows = rowsByRole[edge.childKey()]
 		reduceStart := time.Now()
 		joined, pairs, reduceTiming, diagnostics, err = e.legacyDirectRelationshipReduceWithTiming(ctx, request, edge, parentRows, childRows)
 		reduceElapsed = time.Since(reduceStart)
@@ -438,10 +452,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			legacyDirectRelationshipProbe("single_pair_elapsed", reduceTiming.pairElapsed.String()),
 			legacyDirectRelationshipProbe("phase_parent_rows_elapsed", parentElapsed.String()),
 			legacyDirectRelationshipProbe("phase_child_rows_elapsed", childElapsed.String()),
+			legacyDirectRelationshipProbe("phase_single_residual_prefilter_elapsed", prefilterElapsed.String()),
 			legacyDirectRelationshipProbe("phase_reduce_elapsed", reduceElapsed.String()),
 			legacyDirectRelationshipProbe("phase_membership_elapsed", membershipElapsed.String()),
 		},
 	}
+	result.Probes = append(result.Probes, prefilterProbes...)
 	if len(request.SQLAggregates) == 0 {
 		return e.legacyDirectRelationshipProjectionResult(ctx, request, edge, joined, pairs, result, parentRows)
 	}
