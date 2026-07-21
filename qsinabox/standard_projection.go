@@ -3,6 +3,7 @@ package qsinabox
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,6 +112,104 @@ func (r StandardProjectionBSIReader) ReadProjectionBSIs(ctx context.Context, req
 	return results, diagnostics, nil
 }
 
+// ReadProjectionBSIValues projects BSI-backed values directly through the local
+// BitmapIndex. This avoids constructing retained BSIs when late materialization
+// only needs row-aligned values.
+func (r StandardProjectionBSIReader) ReadProjectionBSIValues(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIValueReadResult, qsbridge.DiagnosticSet, error) {
+	results := make([]qsruntime.NativeProjectionBSIValueReadResult, len(requests))
+	if len(requests) == 0 {
+		return results, nil, nil
+	}
+	if r.Direct == nil {
+		return r.readProjectionBSIValuesViaBSI(ctx, requests)
+	}
+
+	works := make([]standardProjectionBSIReadWork, 0, len(requests))
+	for i, request := range requests {
+		foundSet := standardProjectionBitmap(request.Rownums)
+		fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
+		works = append(works, standardProjectionBSIReadWork{
+			Position:     i,
+			Request:      request,
+			FromTime:     fromTime,
+			ToTime:       toTime,
+			FoundSet:     foundSet,
+			FetchSet:     foundSet,
+			FetchRownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+		})
+	}
+	for _, group := range standardProjectionBSIReadWorkGroups(works) {
+		groupStart := time.Now()
+		fields := make([]string, 0, len(group))
+		for _, work := range group {
+			fields = append(fields, work.Request.PhysicalField)
+		}
+		valuesByField, statsByField, err := r.Direct.ProjectBSIValuesWithStats(
+			group[0].Request.Index,
+			fields,
+			group[0].FromTime,
+			group[0].ToTime,
+			standardProjectionUint64Rownums(group[0].FetchRownums),
+			group[0].FetchSet,
+			false,
+		)
+		projectionElapsed := time.Since(groupStart)
+		if err != nil {
+			return results, nil, err
+		}
+		for _, work := range group {
+			values := valuesByField[work.Request.PhysicalField]
+			if values == nil {
+				values = make([]*big.Int, len(work.Request.Rownums))
+			}
+			probes := []qsruntime.ExecutionProbe{
+				standardProjectionBSIRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.Request.Rownums)),
+				standardProjectionBSIFetchRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.FetchRownums)),
+				standardProjectionBSICacheProbe(work.Request.Index, work.Request.PhysicalField, false),
+				standardProjectionBSICacheModeProbe(work.Request.Index, work.Request.PhysicalField, "value_direct"),
+				standardProjectionBSIBatchFieldsProbe(work.Request.Index, work.Request.PhysicalField, len(group)),
+				standardProjectionBSIBatchElapsedProbe(work.Request.Index, work.Request.PhysicalField, projectionElapsed),
+				{
+					Section: "native_projection_materialization",
+					Name:    "standard_bsi_projection_transport",
+					Value:   "local_direct_values",
+					Detail:  work.Request.Index + "." + work.Request.PhysicalField,
+				},
+			}
+			probes = append(probes, standardProjectionBSIStatsProbes(work.Request.Index, work.Request.PhysicalField, statsByField[work.Request.PhysicalField])...)
+			results[work.Position] = qsruntime.NativeProjectionBSIValueReadResult{
+				Values: values,
+				Probes: probes,
+			}
+		}
+	}
+	return results, nil, nil
+}
+
+func (r StandardProjectionBSIReader) readProjectionBSIValuesViaBSI(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIValueReadResult, qsbridge.DiagnosticSet, error) {
+	bsiResults, diagnostics, err := r.ReadProjectionBSIs(ctx, requests)
+	results := make([]qsruntime.NativeProjectionBSIValueReadResult, len(requests))
+	if err != nil || diagnostics.BlocksNative() {
+		return results, diagnostics, err
+	}
+	if len(bsiResults) != len(requests) {
+		return results, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "standard BSI value fallback returned "+strconv.Itoa(len(bsiResults))+" field reads for "+strconv.Itoa(len(requests))+" requests"),
+		}, nil
+	}
+	for i, readResult := range bsiResults {
+		values := make([]*big.Int, len(requests[i].Rownums))
+		if readResult.BSI != nil {
+			values = readResult.BSI.GetBigValues(standardProjectionUint64Rownums(requests[i].Rownums))
+		}
+		results[i] = qsruntime.NativeProjectionBSIValueReadResult{
+			Values: values,
+			Probes: readResult.Probes,
+		}
+	}
+	return results, diagnostics, nil
+}
+
 type standardProjectionBSIReadWork struct {
 	Position     int
 	Request      qsruntime.NativeProjectionBSIReadRequest
@@ -124,6 +223,14 @@ type standardProjectionBSIReadWork struct {
 	CacheMode    string
 	Partial      qsruntime.ProjectionBSICachePartial
 	PartialOK    bool
+}
+
+func standardProjectionUint64Rownums(rownums []qsbridge.QuantaRownum) []uint64 {
+	ids := make([]uint64, len(rownums))
+	for i, rownum := range rownums {
+		ids[i] = uint64(rownum)
+	}
+	return ids
 }
 
 func standardProjectionBSIReadWorkGroups(works []standardProjectionBSIReadWork) [][]standardProjectionBSIReadWork {
@@ -381,6 +488,12 @@ func standardProjectionBSIStatsProbes(index, field string, stats server.ProjectB
 			Section: "native_projection_materialization",
 			Name:    "standard_bsi_projection_retain_elapsed",
 			Value:   stats.RetainElapsed.String(),
+			Detail:  detail,
+		},
+		{
+			Section: "native_projection_materialization",
+			Name:    "standard_bsi_projection_value_elapsed",
+			Value:   stats.ValueElapsed.String(),
 			Detail:  detail,
 		},
 		{

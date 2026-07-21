@@ -31,6 +31,14 @@ type NativeProjectionBSIReadResult struct {
 	Probes []ExecutionProbe
 }
 
+// NativeProjectionBSIValueReadResult returns BSI values already aligned to the
+// requested rownums. It lets local backends avoid constructing retained BSIs
+// when the caller only needs materialized values.
+type NativeProjectionBSIValueReadResult struct {
+	Values []*big.Int
+	Probes []ExecutionProbe
+}
+
 // NativeProjectionDictionaryIDReadRequest asks storage for encoded dictionary ids.
 type NativeProjectionDictionaryIDReadRequest struct {
 	Index         string
@@ -67,6 +75,12 @@ type NativeProjectionBSIReader interface {
 // share a storage request.
 type NativeProjectionBSIBatchReader interface {
 	ReadProjectionBSIs(context.Context, []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error)
+}
+
+// NativeProjectionBSIValueBatchReader optionally reads BSI-backed values
+// directly for late materialization.
+type NativeProjectionBSIValueBatchReader interface {
+	ReadProjectionBSIValues(context.Context, []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIValueReadResult, qsbridge.DiagnosticSet, error)
 }
 
 // NativeProjectionBSIReaderFunc adapts a function to NativeProjectionBSIReader.
@@ -123,14 +137,34 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionField(ctx context.Context,
 	if r.Reader == nil {
 		return NativeProjectionFieldReadResult{}, nativeProjectionUnsupported("native BSI projection has no BSI reader"), nil
 	}
-	readResult, readDiagnostics, err := r.Reader.ReadProjectionBSI(ctx, NativeProjectionBSIReadRequest{
+	bsiRequest := NativeProjectionBSIReadRequest{
 		Index:           index,
 		Field:           request.Field,
 		PhysicalField:   fieldName,
 		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
 		FromEpochMillis: request.FromEpochMillis,
 		ToEpochMillis:   request.ToEpochMillis,
-	})
+	}
+	if valueReader, ok := r.Reader.(NativeProjectionBSIValueBatchReader); ok {
+		readResults, readDiagnostics, err := valueReader.ReadProjectionBSIValues(ctx, []NativeProjectionBSIReadRequest{bsiRequest})
+		if err != nil || readDiagnostics.BlocksNative() {
+			probes := []ExecutionProbe(nil)
+			if len(readResults) > 0 {
+				probes = readResults[0].Probes
+			}
+			return NativeProjectionFieldReadResult{Probes: probes}, readDiagnostics, err
+		}
+		if len(readResults) == 1 {
+			result, resultDiagnostics := nativeProjectionBSIFieldResultFromValues(nativeProjectionBSIFieldReadPlan{
+				Request:    request,
+				BSIRequest: bsiRequest,
+				Table:      table,
+				Attribute:  attr,
+			}, readResults[0])
+			return result, resultDiagnostics, nil
+		}
+	}
+	readResult, readDiagnostics, err := r.Reader.ReadProjectionBSI(ctx, bsiRequest)
 	if err != nil || readDiagnostics.BlocksNative() {
 		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, readDiagnostics, err
 	}
@@ -177,7 +211,36 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionFields(ctx context.Context
 		return results, diagnostics, nil
 	}
 	batchReader, batchOK := r.Reader.(NativeProjectionBSIBatchReader)
+	valueReader, valueOK := r.Reader.(NativeProjectionBSIValueBatchReader)
 	for _, group := range nativeProjectionBSIFieldReadPlanGroups(pending) {
+		if valueOK {
+			valueRequests := make([]NativeProjectionBSIReadRequest, 0, len(group))
+			for _, plan := range group {
+				valueRequests = append(valueRequests, plan.BSIRequest)
+			}
+			readResults, readDiagnostics, err := valueReader.ReadProjectionBSIValues(ctx, valueRequests)
+			diagnostics = append(diagnostics, readDiagnostics...)
+			if err != nil || diagnostics.BlocksNative() {
+				return results, diagnostics, err
+			}
+			if len(readResults) != len(group) {
+				diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticInternalInvariant,
+					qsbridge.PhaseExecute,
+					"native BSI value batch reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(group))+" requests",
+				))
+				return results, diagnostics, nil
+			}
+			for i, readResult := range readResults {
+				result, resultDiagnostics := nativeProjectionBSIFieldResultFromValues(group[i], readResult)
+				results[group[i].Position] = result
+				diagnostics = append(diagnostics, resultDiagnostics...)
+				if diagnostics.BlocksNative() {
+					return results, diagnostics, nil
+				}
+			}
+			continue
+		}
 		if batchOK && len(group) > 1 {
 			bsiRequests := make([]NativeProjectionBSIReadRequest, 0, len(group))
 			for _, plan := range group {
@@ -312,6 +375,27 @@ func nativeProjectionBSIFieldResult(plan nativeProjectionBSIFieldReadPlan, readR
 	}
 	values := make([]qsbridge.ResultCell, 0, len(plan.BSIRequest.Rownums))
 	for _, value := range readResult.BSI.GetBigValues(nativeProjectionRownumColumnIDs(plan.BSIRequest.Rownums)) {
+		if value == nil {
+			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
+			continue
+		}
+		values = append(values, nativeProjectionBSICell(plan.Table, plan.Attribute, plan.Request.Field, value))
+	}
+	return NativeProjectionFieldReadResult{
+		Field:  plan.Request.Field,
+		Values: values,
+		Probes: readResult.Probes,
+	}, nil
+}
+
+func nativeProjectionBSIFieldResultFromValues(plan nativeProjectionBSIFieldReadPlan, readResult NativeProjectionBSIValueReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet) {
+	if len(readResult.Values) != len(plan.BSIRequest.Rownums) {
+		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI value projection returned "+strconv.Itoa(len(readResult.Values))+" values for "+strconv.Itoa(len(plan.BSIRequest.Rownums))+" rownums"),
+		}
+	}
+	values := make([]qsbridge.ResultCell, 0, len(readResult.Values))
+	for _, value := range readResult.Values {
 		if value == nil {
 			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
 			continue

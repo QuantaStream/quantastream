@@ -340,6 +340,7 @@ type ProjectBSIStats struct {
 	RetainedRows     uint64
 	RetainBypassRows uint64
 	RetainElapsed    time.Duration
+	ValueElapsed     time.Duration
 	MergeElapsed     time.Duration
 }
 
@@ -510,20 +511,9 @@ func retainedProjectionBSI(source *roaring64.BSI, foundSet *roaring64.Bitmap, ne
 	}
 	existenceRows := existence.GetCardinality()
 	if foundSet.GetCardinality() >= existenceRows {
-		retainedRows := existence.AndCardinality(foundSet)
-		if retainedRows == 0 {
-			return nil, 0, 0
-		}
-		if retainedRows == existenceRows {
+		if existence.AndCardinality(foundSet) == existenceRows {
 			return source, existenceRows, existenceRows
 		}
-		retainSet := roaring64.And(existence, foundSet)
-		retained := source.NewBSIRetainSet(retainSet)
-		retainedRows = retained.GetCardinality()
-		if retainedRows == 0 {
-			return nil, 0, 0
-		}
-		return retained, retainedRows, 0
 	}
 
 	retained := source.NewBSIRetainSet(foundSet)
@@ -848,6 +838,143 @@ func (m *BitmapIndex) ProjectBSIsWithStats(index string, fields []string, fromTi
 		statsByField[field] = stats
 	}
 	return results, statsByField, nil
+}
+
+// ProjectBSIValuesWithStats returns BSI values aligned to rownums without
+// constructing retained BSIs. In-process standard mode uses this for late
+// materialization because the executor needs value vectors, not transport BSIs.
+func (m *BitmapIndex) ProjectBSIValuesWithStats(index string, fields []string, fromTime, toTime int64, rownums []uint64, foundSet *roaring64.Bitmap, negate bool) (map[string][]*big.Int, map[string]ProjectBSIStats, error) {
+	results := make(map[string][]*big.Int, len(fields))
+	statsByField := make(map[string]ProjectBSIStats, len(fields))
+	if index == "" {
+		return nil, nil, fmt.Errorf("index not specified for projection value criteria")
+	}
+	if len(fields) == 0 {
+		return results, statsByField, nil
+	}
+	if foundSet == nil {
+		foundSet = roaring64.BitmapOf(rownums...)
+	}
+	from := time.Unix(0, fromTime).UTC()
+	to := time.Unix(0, toTime).UTC()
+	positions := make(map[uint64][]int, len(rownums))
+	for i, rownum := range rownums {
+		positions[rownum] = append(positions[rownum], i)
+	}
+
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+	for _, field := range fields {
+		if field == "" {
+			return nil, nil, fmt.Errorf("field not specified for projection value criteria")
+		}
+		if _, seen := results[field]; seen {
+			continue
+		}
+		stats := ProjectBSIStats{}
+		values, err := m.projectBSIValuesLocked(index, field, from, to, rownums, positions, foundSet, negate, true, &stats)
+		if err != nil {
+			return nil, nil, err
+		}
+		results[field] = values
+		statsByField[field] = stats
+	}
+	return results, statsByField, nil
+}
+
+func (m *BitmapIndex) projectBSIValuesLocked(index, field string, fromTime, toTime time.Time, rownums []uint64, positions map[uint64][]int, foundSet *roaring64.Bitmap, negate bool, ownedOnly bool, stat *ProjectBSIStats) ([]*big.Int, error) {
+	attr, err := m.getFieldConfig(index, field)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]*big.Int, len(rownums))
+	tq := attr.TimeQuantumType
+	fromTime = truncateTime(fromTime, tq)
+	toTime = truncateTime(toTime, tq)
+
+	readShard := func(ts int64, bsi *BSIBitmap) error {
+		if bsi == nil || bsi.BSI == nil {
+			return nil
+		}
+		if stat != nil {
+			stat.ShardsVisited++
+		}
+		if tq != "" {
+			rts := truncateTime(time.Unix(0, ts).UTC(), tq).UnixNano()
+			if rts < fromTime.UnixNano() || rts > toTime.UnixNano() {
+				return nil
+			}
+		}
+		if stat != nil {
+			stat.ShardsInWindow++
+		}
+		if ownedOnly && tq != "" {
+			hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, ts)))
+			if !m.Member(hashKey) {
+				return nil
+			}
+		}
+		if stat != nil {
+			stat.ShardsLocal++
+		}
+		retainStart := time.Now()
+		existence := bsi.BSI.GetExistenceBitmap()
+		var retainSet *roaring64.Bitmap
+		if foundSet == nil {
+			retainSet = existence.Clone()
+		} else if negate {
+			retainSet = roaring64.AndNot(existence, foundSet)
+		} else {
+			retainSet = roaring64.And(existence, foundSet)
+		}
+		if stat != nil {
+			stat.RetainElapsed += time.Since(retainStart)
+		}
+		if retainSet == nil || retainSet.IsEmpty() {
+			return nil
+		}
+		retainRows := retainSet.GetCardinality()
+		if stat != nil {
+			stat.ShardsRetained++
+			stat.RetainedRows += retainRows
+			if retainRows == existence.GetCardinality() {
+				stat.RetainBypassRows += retainRows
+			}
+		}
+
+		valueStart := time.Now()
+		retainedRownums := retainSet.ToArray()
+		retainedValues := bsi.BSI.GetBigValues(retainedRownums)
+		if stat != nil {
+			stat.ValueElapsed += time.Since(valueStart)
+		}
+		for i, rownum := range retainedRownums {
+			if i >= len(retainedValues) || retainedValues[i] == nil {
+				continue
+			}
+			for _, position := range positions[rownum] {
+				values[position] = retainedValues[i]
+			}
+		}
+		return nil
+	}
+
+	if tq == "" {
+		if bm, ok := m.bsiCache[index][field][0]; ok {
+			if err := readShard(0, bm); err != nil {
+				return nil, err
+			}
+		}
+		return values, nil
+	}
+	if tm, ok := m.bsiCache[index][field]; ok {
+		for ts, bsi := range tm {
+			if err := readShard(ts, bsi); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return values, nil
 }
 
 func (m *BitmapIndex) projectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool, ownedOnly bool) (*roaring64.BSI, ProjectBSIStats, error) {
