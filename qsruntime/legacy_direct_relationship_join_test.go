@@ -2931,6 +2931,60 @@ func TestLegacyDirectRelationshipPostReductionFieldsDropsUnusedJoinKeys(t *testi
 	assertNoLegacyDirectRelationshipProjectionField(t, pruned, psPartkey.Table.Table, psPartkey.Name)
 }
 
+func TestLegacyDirectRelationshipPostReductionFieldsDropsPushedDownPredicateOnlyFields(t *testing.T) {
+	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}
+	order := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	cMktSegment := qsbridge.FieldRef{Table: customer, Name: "c_mktsegment", Type: qsbridge.DataTypeString}
+	lOrderKey := qsbridge.FieldRef{Table: lineitem, Name: "l_orderkey", Type: qsbridge.DataTypeInt}
+	lExtendedPrice := qsbridge.FieldRef{Table: lineitem, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
+	oOrderDate := qsbridge.FieldRef{Table: order, Name: "o_orderdate", Type: qsbridge.DataTypeTime}
+	oShipPriority := qsbridge.FieldRef{Table: order, Name: "o_shippriority", Type: qsbridge.DataTypeInt}
+	request := ExecutionRequest{
+		Result: qsbridge.ResultShape{
+			Columns: []qsbridge.FieldRef{lOrderKey, oOrderDate, oShipPriority},
+			Hidden:  []qsbridge.FieldRef{lExtendedPrice},
+		},
+		Predicates: []qsbridge.Predicate{{
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(cMktSegment), qsbridge.Literal(qsbridge.ValueString, "BUILDING")),
+			Placement: qsbridge.PredicatePushdown,
+			Scope:     qsbridge.PredicateScopeWhere,
+		}},
+		GroupBy: []qsbridge.Expr{
+			qsbridge.Field(lOrderKey),
+			qsbridge.Field(oOrderDate),
+			qsbridge.Field(oShipPriority),
+		},
+		SQLAggregates: []qsbridge.Aggregate{{
+			Function: "sum",
+			Input:    qsbridge.Field(lExtendedPrice),
+			Alias:    "revenue",
+			Type:     qsbridge.DataTypeFloat,
+		}},
+	}
+	fields := []qsbridge.QuantaProjectionField{
+		{Index: "customer", Role: "c", Field: "c_mktsegment", Type: qsbridge.DataTypeString},
+		{Index: "lineitem", Role: "l", Field: "l_extendedprice", Type: qsbridge.DataTypeFloat},
+		{Index: "lineitem", Role: "l", Field: "l_orderkey", Type: qsbridge.DataTypeInt},
+		{Index: "orders", Role: "o", Field: "o_orderdate", Type: qsbridge.DataTypeTime},
+		{Index: "orders", Role: "o", Field: "o_shippriority", Type: qsbridge.DataTypeInt},
+	}
+
+	required := legacyDirectRelationshipPostReductionMaterializationFieldKeys(request)
+	if len(required) == 0 {
+		t.Fatalf("required keys unexpectedly empty")
+	}
+	pruned := legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
+	if len(pruned) != 4 {
+		t.Fatalf("pruned fields = %#v, want only four grouped aggregate fields", pruned)
+	}
+	assertNoLegacyDirectRelationshipProjectionField(t, pruned, "customer", "c_mktsegment")
+	assertLegacyDirectRelationshipProjectionField(t, pruned, "lineitem", "l_extendedprice")
+	assertLegacyDirectRelationshipProjectionField(t, pruned, "lineitem", "l_orderkey")
+	assertLegacyDirectRelationshipProjectionField(t, pruned, "orders", "o_orderdate")
+	assertLegacyDirectRelationshipProjectionField(t, pruned, "orders", "o_shippriority")
+}
+
 func TestLegacyDirectRelationshipGraphSinkTableFindsConvergedSink(t *testing.T) {
 	sink, diagnostics := legacyDirectRelationshipGraphSinkTable([]legacyDirectRelationshipEdge{
 		{parentTable: "region", childTable: "nation"},
@@ -4520,7 +4574,7 @@ func TestLegacyDirectRelationshipGraphGroupedAggregateKeepsAncestorGroupField(t 
 	if result.Diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
 	}
-	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_materialization_field_list", "c.city,l.order_id,o.cust_id")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_materialization_field_list", "c.city")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "groups", "2")
 	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
 	if diagnostics.BlocksNative() {

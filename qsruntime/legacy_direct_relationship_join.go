@@ -731,7 +731,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipMult
 	if len(request.Materialization.ProjectionFields) > 0 {
 		fields = request.Materialization.ProjectionFields
 	}
-	fields = legacyDirectRelationshipPostReductionFields(request, fields)
+	fields = legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
 	if len(fields) == 0 {
 		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("relationship-vector multi-sink graph aggregate requires materialized aggregate input fields")...)
 		return result, nil
@@ -1096,7 +1096,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 			rownums = rows
 		}
 	}
-	fields = legacyDirectRelationshipPostReductionFields(request, fields)
+	fields = legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
 	if len(fields) == 0 {
 		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("relationship-vector graph grouped aggregate requires materialized group or aggregate fields")...)
 		return result, nil
@@ -3810,6 +3810,15 @@ func legacyDirectRelationshipFieldsForEdge(fields []qsbridge.QuantaProjectionFie
 
 func legacyDirectRelationshipPostReductionFields(request ExecutionRequest, fields []qsbridge.QuantaProjectionField) []qsbridge.QuantaProjectionField {
 	required := legacyDirectRelationshipPostReductionFieldKeys(request)
+	return legacyDirectRelationshipFilterPostReductionFields(required, fields)
+}
+
+func legacyDirectRelationshipPostReductionMaterializationFields(request ExecutionRequest, fields []qsbridge.QuantaProjectionField) []qsbridge.QuantaProjectionField {
+	required := legacyDirectRelationshipPostReductionMaterializationFieldKeys(request)
+	return legacyDirectRelationshipFilterPostReductionFields(required, fields)
+}
+
+func legacyDirectRelationshipFilterPostReductionFields(required map[string]struct{}, fields []qsbridge.QuantaProjectionField) []qsbridge.QuantaProjectionField {
 	if len(required) == 0 {
 		return fields
 	}
@@ -3826,6 +3835,16 @@ func legacyDirectRelationshipPostReductionFields(request ExecutionRequest, field
 }
 
 func legacyDirectRelationshipPostReductionFieldKeys(request ExecutionRequest) map[string]struct{} {
+	return legacyDirectRelationshipPostReductionFieldKeysWithPredicateFilter(request, func(qsbridge.Predicate) bool {
+		return true
+	})
+}
+
+func legacyDirectRelationshipPostReductionMaterializationFieldKeys(request ExecutionRequest) map[string]struct{} {
+	return legacyDirectRelationshipPostReductionFieldKeysWithPredicateFilter(request, legacyDirectRelationshipPredicateNeedsPostReductionMaterialization)
+}
+
+func legacyDirectRelationshipPostReductionFieldKeysWithPredicateFilter(request ExecutionRequest, predicateRequired func(qsbridge.Predicate) bool) map[string]struct{} {
 	keys := make(map[string]struct{})
 	addField := func(ref qsbridge.FieldRef) {
 		name := directBitmapFieldPhysicalName(ref)
@@ -3847,7 +3866,9 @@ func legacyDirectRelationshipPostReductionFieldKeys(request ExecutionRequest) ma
 		addExpr(projection.Expr)
 	}
 	for _, predicate := range request.Predicates {
-		addExpr(predicate.Expr)
+		if predicateRequired == nil || predicateRequired(predicate) {
+			addExpr(predicate.Expr)
+		}
 	}
 	for _, predicate := range request.NativePredicates.CorrelatedAggregate {
 		addField(predicate.KeyField)
@@ -3855,7 +3876,9 @@ func legacyDirectRelationshipPostReductionFieldKeys(request ExecutionRequest) ma
 	}
 	for _, join := range request.Joins {
 		for _, predicate := range join.On {
-			addExpr(predicate.Expr)
+			if predicateRequired == nil || predicateRequired(predicate) {
+				addExpr(predicate.Expr)
+			}
 		}
 	}
 	for _, expr := range request.GroupBy {
@@ -3880,6 +3903,10 @@ func legacyDirectRelationshipPostReductionFieldKeys(request ExecutionRequest) ma
 	return keys
 }
 
+func legacyDirectRelationshipPredicateNeedsPostReductionMaterialization(predicate qsbridge.Predicate) bool {
+	return predicate.Placement == qsbridge.PredicateResidualScan || predicate.Placement == qsbridge.PredicateResidualJoin
+}
+
 func legacyDirectRelationshipProjectionFieldIsRequired(required map[string]struct{}, field qsbridge.QuantaProjectionField) bool {
 	for _, key := range legacyDirectRelationshipProjectionFieldRequiredKeys(field) {
 		if _, ok := required[key]; ok {
@@ -3900,7 +3927,6 @@ func legacyDirectRelationshipProjectionFieldRequiredKeys(field qsbridge.QuantaPr
 	keys := make([]string, 0, 2)
 	if field.Role != "" {
 		keys = append(keys, strings.ToLower(string(field.Role)+"."+name))
-		return keys
 	}
 	if field.Index != "" {
 		keys = append(keys, strings.ToLower(field.Index+"."+name))
