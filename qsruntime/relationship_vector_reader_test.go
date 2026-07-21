@@ -115,8 +115,8 @@ func TestLegacyDirectRelationshipVectorReaderRecordsRequestShape(t *testing.T) {
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want unsupported boundary", diagnostics)
 	}
-	if !strings.Contains(diagnostics[0].Message, "inabox-direct relationship-vector reader is not wired yet") {
-		t.Fatalf("diagnostic message = %q, want inabox-direct boundary", diagnostics[0].Message)
+	if !strings.Contains(diagnostics[0].Message, "relationship-vector reader is not wired yet") {
+		t.Fatalf("diagnostic message = %q, want relationship-vector boundary", diagnostics[0].Message)
 	}
 	if !strings.Contains(diagnostics[0].Message, "vector=lineitem.l_partkey") {
 		t.Fatalf("diagnostic message = %q, want vector field", diagnostics[0].Message)

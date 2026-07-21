@@ -587,7 +587,7 @@ func (c *RelationshipVectorProjectionCache) Put(key string, bsi *roaring64.BSI) 
 	c.entries[key] = bsi
 }
 
-// LegacyDirectRelationshipVectorProjectionCache keeps existing inabox-direct
+// LegacyDirectRelationshipVectorProjectionCache keeps existing compatibility
 // call sites stable while they migrate to QueryScratchpad naming.
 type LegacyDirectRelationshipVectorProjectionCache = RelationshipVectorProjectionCache
 
@@ -598,7 +598,7 @@ func NewLegacyDirectRelationshipVectorProjectionCache() *LegacyDirectRelationshi
 	return NewRelationshipVectorProjectionCache()
 }
 
-// DirectProjectionBSICache keeps existing inabox-direct call sites stable while
+// DirectProjectionBSICache keeps existing compatibility call sites stable while
 // they migrate to QueryScratchpad/ProjectionBSICache naming.
 type DirectProjectionBSICache = ProjectionBSICache
 

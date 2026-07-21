@@ -21,7 +21,7 @@ type LegacyDirectSharedSameRowBSIComparator struct {
 func (c LegacyDirectSharedSameRowBSIComparator) CompareSameRowBSI(ctx context.Context, request NativeSameRowBSICompareRequest) (NativeSameRowBSICompareResult, qsbridge.DiagnosticSet, error) {
 	if c.Source == nil {
 		return NativeSameRowBSICompareResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct same-row BSI comparator has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "same-row BSI comparator has no source"),
 		}, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -48,14 +48,14 @@ func (c LegacyDirectSharedSameRowBSIComparator) CompareSameRowBSI(ctx context.Co
 	}
 	if session == nil {
 		return NativeSameRowBSICompareResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct same-row BSI comparator received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "same-row BSI comparator received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return NativeSameRowBSICompareResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct same-row BSI comparator has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "same-row BSI comparator has no bitmap index"),
 		}, nil
 	}
 	start := time.Now()

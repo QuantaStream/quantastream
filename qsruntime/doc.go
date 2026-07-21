@@ -4,7 +4,7 @@
 // owns the boundary where those neutral requests are routed to direct QIAB
 // execution, local-node execution, or temporary compatibility adapters.
 //
-// The inabox-direct adapters are intentionally narrow compatibility islands.
+// Runtime adapters are intentionally narrow compatibility islands.
 // They let SQLRunner run the new SQL stack against a live local node cluster by
 // borrowing core sessions, executing lowered bitmap fragments, and routing
 // projection work through explicit native materialization kernels. They should
@@ -27,7 +27,7 @@
 // scaffolding, runtime composition, metadata bridges, and legacy compatibility
 // quarantine visibly separate while the package is still intentionally mixed.
 //
-// QueryScratchpad centralizes request-scoped memoization so inabox-direct,
-// inabox-standard, and future distributed adapters do not grow separate cache
-// implementations for the same execution algebra.
+// QueryScratchpad centralizes request-scoped memoization so direct, standard,
+// and future distributed adapters do not grow separate cache implementations
+// for the same execution algebra.
 package qsruntime

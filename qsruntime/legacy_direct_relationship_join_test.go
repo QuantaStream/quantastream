@@ -3273,7 +3273,7 @@ func TestLegacyDirectRelationshipGraphDispatchReportsSiblingRootTupleBlocker(t *
 	if !result.Diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want sibling-root tuple blocker", result.Diagnostics)
 	}
-	if got := result.Diagnostics[0].Message; got != "inabox-direct relationship-vector sibling-root tuple execution is not wired in this slice: p:part->l,ps" {
+	if got := result.Diagnostics[0].Message; got != "relationship-vector sibling-root tuple execution is not wired in this slice: p:part->l,ps" {
 		t.Fatalf("diagnostic = %q, want sibling-root tuple blocker", got)
 	}
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_shape", "sibling_root")
@@ -3449,7 +3449,7 @@ func TestLegacyDirectRelationshipGraphSinkTableRejectsSiblingSinks(t *testing.T)
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want sibling sink blocker", diagnostics)
 	}
-	if got := diagnostics[0].Message; got != "inabox-direct relationship-vector graph execution requires a single sink table" {
+	if got := diagnostics[0].Message; got != "relationship-vector graph execution requires a single sink table" {
 		t.Fatalf("diagnostic = %q, want single sink blocker", got)
 	}
 }

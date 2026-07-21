@@ -413,7 +413,7 @@ func (r NativeProjectionBSIFieldReader) readProjectionDirectBitmapIDs(ctx contex
 	}, nil, nil
 }
 
-// LegacyDirectProjectionBSIReader reads native projection BSIs through the inabox-direct BitIndex.
+// LegacyDirectProjectionBSIReader reads native projection BSIs through the direct BitIndex.
 type LegacyDirectProjectionBSIReader struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
@@ -437,7 +437,7 @@ func (r LegacyDirectProjectionBSIReader) ReadProjectionBSIs(ctx context.Context,
 	}
 	if r.Source == nil {
 		return results, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection BSI reader has no source"),
 		}, nil
 	}
 	cache := directProjectionBSICacheFromContext(ctx)
@@ -566,14 +566,14 @@ func (r LegacyDirectProjectionBSIReader) readProjectionBSIWorkGroup(ctx context.
 	}
 	if session == nil {
 		return qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection BSI reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection BSI reader has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection BSI reader has no bitmap index"),
 		}, nil
 	}
 	fields := make([]string, 0, len(group))
@@ -688,7 +688,7 @@ func directProjectionBSIBatchElapsedProbe(index, field string, elapsed time.Dura
 }
 
 // LegacyDirectProjectionDictionaryIDReader reads StringEnum dictionary IDs
-// through the inabox-direct BitIndex projection path.
+// through the direct BitIndex projection path.
 type LegacyDirectProjectionDictionaryIDReader struct {
 	Source     *source.QuantaSource
 	TableCache *core.TableCacheStruct
@@ -702,7 +702,7 @@ func (r LegacyDirectProjectionDictionaryIDReader) ReadProjectionDictionaryIDs(ct
 	}
 	if r.Source == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader has no source"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection dictionary reader has no source"),
 		}, nil
 	}
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
@@ -719,14 +719,14 @@ func (r LegacyDirectProjectionDictionaryIDReader) ReadProjectionDictionaryIDs(ct
 	}
 	if session == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader received nil session"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection dictionary reader received nil session"),
 		}, nil
 	}
 	defer session.Release(ctx)
 	legacySession, ok := session.(LegacyQuantaSessionHandle)
 	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
 		return NativeProjectionDictionaryIDReadResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "inabox-direct projection dictionary reader has no bitmap index"),
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "projection dictionary reader has no bitmap index"),
 		}, nil
 	}
 	foundSet := legacyDirectRelationshipBitmap(request.Rownums)

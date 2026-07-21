@@ -556,7 +556,7 @@ func directBitmapFilterBigIntLiteral(value *big.Int) qsbridge.LiteralExpr {
 	return qsbridge.Literal(qsbridge.ValueInt, value.Int64())
 }
 
-// UnsupportedDirectBitmapFilterAdapter preserves the inabox-direct blocker until bitmap wiring exists.
+// UnsupportedDirectBitmapFilterAdapter preserves the grouped-filter blocker until bitmap wiring exists.
 type UnsupportedDirectBitmapFilterAdapter struct{}
 
 // AdaptFilterExpression reports unsupported grouped filters and passes flat fragment requests through.

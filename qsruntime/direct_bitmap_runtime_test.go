@@ -1233,7 +1233,7 @@ func TestDirectBitmapFilterTreeAdapterKeepsLegacyReaderBoundaryExplicit(t *testi
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want legacy reader boundary", diagnostics)
 	}
-	if !strings.Contains(diagnostics[0].Message, "inabox-direct relationship-vector reader is not wired yet") {
+	if !strings.Contains(diagnostics[0].Message, "relationship-vector reader is not wired yet") {
 		t.Fatalf("diagnostic message = %q, want legacy reader boundary", diagnostics[0].Message)
 	}
 	if adapted.HasCandidateSet {
