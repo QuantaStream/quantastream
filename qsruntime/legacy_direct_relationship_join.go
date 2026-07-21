@@ -3422,7 +3422,7 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 }
 
 func legacyDirectRelationshipShouldUseBatchEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
-	return len(childRows) >= 1024 && len(parentKeyRows) > 1 && len(parentKeyRows) <= 512
+	return len(childRows) >= 1024 && len(parentKeyRows) > 1 && len(parentKeyRows) <= 32
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProjectionResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, joined []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult, optionalParentRows ...[]qsbridge.QuantaRownum) (ExecutionResult, error) {
