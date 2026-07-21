@@ -248,8 +248,10 @@ func directBitmapFilterDomainBranchProbeDetail(branch qsbridge.FilterDomainNorma
 		"source_key_projection_reason=" + branch.SourceKeyProjectionReason,
 		"source_key_projection_elapsed=" + branch.SourceKeyProjectionElapsed.String(),
 		"source_values=" + strconv.Itoa(branch.SourceValueCount),
+		"candidate_mode=" + branch.CandidateMode,
 		"candidate_elapsed=" + branch.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + branch.BatchEqualElapsed.String(),
+		"candidate_scan_elapsed=" + branch.CandidateScanElapsed.String(),
 		"target_index=" + branch.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")
@@ -271,8 +273,10 @@ func directBitmapFilterDomainLeafProbeDetail(leaf qsbridge.FilterDomainNormalize
 		"source_key_projection_reason=" + leaf.SourceKeyProjectionReason,
 		"source_key_projection_elapsed=" + leaf.SourceKeyProjectionElapsed.String(),
 		"source_values=" + strconv.Itoa(leaf.SourceValueCount),
+		"candidate_mode=" + leaf.CandidateMode,
 		"candidate_elapsed=" + leaf.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + leaf.BatchEqualElapsed.String(),
+		"candidate_scan_elapsed=" + leaf.CandidateScanElapsed.String(),
 		"target_index=" + leaf.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")

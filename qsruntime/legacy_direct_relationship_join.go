@@ -1407,7 +1407,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_source_value_count", strconv.Itoa(vectorResult.SourceValueCount)),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_cache_hit", strconv.FormatBool(vectorResult.CandidateCacheHit)),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_cache_mode", vectorResult.CandidateCacheMode),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_mode", vectorResult.CandidateMode),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_elapsed", vectorResult.CandidateElapsed.String()),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_batch_equal_elapsed", vectorResult.BatchEqualElapsed.String()),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_scan_elapsed", vectorResult.CandidateScanElapsed.String()),
 	)
 	return BitmapQueryResult{
 		Success: true,

@@ -531,6 +531,94 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesProjectedSourceKeyValu
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendUsesValueSetScanForMediumParentToChildExpansion(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	for rownum := uint64(1); rownum <= 2000; rownum++ {
+		fkBSI.SetValue(rownum, int64(rownum%200))
+	}
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{BSI: fkBSI},
+	}
+	sourceRows := make([]qsbridge.QuantaRownum, 0, 64)
+	for value := 10; value < 74; value++ {
+		sourceRows = append(sourceRows, qsbridge.QuantaRownum(value))
+	}
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		sourceRows,
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(context.Background(), read)
+
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if result.CandidateMode != "value_set_scan" {
+		t.Fatalf("CandidateMode = %q, want value_set_scan", result.CandidateMode)
+	}
+	if result.BatchEqualElapsed != 0 {
+		t.Fatalf("BatchEqualElapsed = %s, want 0 for scan path", result.BatchEqualElapsed)
+	}
+	if len(result.TargetCandidates.Rownums) != 640 {
+		t.Fatalf("candidate rows = %d, want 640", len(result.TargetCandidates.Rownums))
+	}
+	for _, rownum := range result.TargetCandidates.Rownums {
+		value, ok := fkBSI.GetValue(uint64(rownum))
+		if !ok || value < 10 || value >= 74 {
+			t.Fatalf("candidate row %d value = %d/%t, want value in [10,74)", rownum, value, ok)
+		}
+	}
+}
+
+func TestLegacyDirectBitIndexRelationshipVectorBackendKeepsBatchEqualForLargeParentToChildExpansion(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	for rownum := uint64(1); rownum <= 33000; rownum++ {
+		fkBSI.SetValue(rownum, int64(rownum%2000))
+	}
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{BSI: fkBSI},
+	}
+	sourceRows := make([]qsbridge.QuantaRownum, 0, 64)
+	for value := 10; value < 74; value++ {
+		sourceRows = append(sourceRows, qsbridge.QuantaRownum(value))
+	}
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		sourceRows,
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(context.Background(), read)
+
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if result.CandidateMode != "batch_equal" {
+		t.Fatalf("CandidateMode = %q, want batch_equal", result.CandidateMode)
+	}
+	if result.CandidateScanElapsed != 0 {
+		t.Fatalf("CandidateScanElapsed = %s, want 0 for BatchEqual path", result.CandidateScanElapsed)
+	}
+	if len(result.TargetCandidates.Rownums) == 0 {
+		t.Fatalf("candidate rows = 0, want non-empty BatchEqual result")
+	}
+}
+
 func testFilterDomainVectorRequest(source string, target string, direction qsbridge.FilterDomainRelationshipVectorDirection, sourceRows []qsbridge.QuantaRownum) qsbridge.FilterDomainRelationshipVectorRequest {
 	return qsbridge.FilterDomainRelationshipVectorRequest{
 		SourceFragment:   qsbridge.QuantaQueryFragment{Index: source, Field: "p_brand"},

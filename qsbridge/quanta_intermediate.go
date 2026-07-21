@@ -509,8 +509,10 @@ type FilterDomainRelationshipVectorResult struct {
 	SourceValueCount           int
 	CandidateCacheHit          bool
 	CandidateCacheMode         string
+	CandidateMode              string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
+	CandidateScanElapsed       time.Duration
 }
 
 // RelationshipVectorRequest derives a concrete one-hop vector translation request.
@@ -579,8 +581,10 @@ type FilterDomainNormalizedLeaf struct {
 	SourceKeyProjectionReason  string
 	SourceKeyProjectionElapsed time.Duration
 	SourceValueCount           int
+	CandidateMode              string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
+	CandidateScanElapsed       time.Duration
 	CandidateSet               QuantaCandidateSet
 }
 
@@ -601,8 +605,10 @@ type FilterDomainNormalizedBranch struct {
 	SourceKeyProjectionReason  string
 	SourceKeyProjectionElapsed time.Duration
 	SourceValueCount           int
+	CandidateMode              string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
+	CandidateScanElapsed       time.Duration
 	CandidateSet               QuantaCandidateSet
 }
 

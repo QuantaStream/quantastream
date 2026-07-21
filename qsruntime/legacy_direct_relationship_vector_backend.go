@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/QuantaStream/quantastream/source"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
+
+const legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue = 512
 
 // LegacyDirectBitIndexRelationshipVectorBackend reads relationship-vector BSIs through the legacy BitIndex.
 type LegacyDirectBitIndexRelationshipVectorBackend struct {
@@ -108,6 +111,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 				SourceValueCount:           sourceValueResult.ValueCount,
 				CandidateCacheHit:          true,
 				CandidateCacheMode:         cacheMode,
+				CandidateMode:              "candidate_cache",
 				CandidateElapsed:           time.Since(candidateStart),
 			}, nil, nil
 		}
@@ -132,8 +136,10 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 		SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
 		SourceValueCount:           sourceValueResult.ValueCount,
 		CandidateCacheMode:         "miss",
+		CandidateMode:              candidateTiming.Mode,
 		CandidateElapsed:           candidateElapsed,
 		BatchEqualElapsed:          candidateTiming.BatchEqualElapsed,
+		CandidateScanElapsed:       candidateTiming.ScanElapsed,
 	}, nil, nil
 }
 
@@ -361,7 +367,7 @@ func legacyDirectRelationshipVectorProjectionFoundSet(read LegacyDirectRelations
 func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorSourceValues(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (legacyDirectRelationshipVectorSourceValuesResult, qsbridge.DiagnosticSet, error) {
 	needsProjection, projectionReason := legacyDirectRelationshipVectorSourceKeyProjectionRequirement(read)
 	if !needsProjection {
-		values := legacyDirectRelationshipSignedIDs(read.SourceCandidates.Rownums)
+		values := legacyDirectRelationshipUniqueInt64s(legacyDirectRelationshipSignedIDs(read.SourceCandidates.Rownums))
 		return legacyDirectRelationshipVectorSourceValuesResult{
 			Values:           values,
 			ProjectionReason: projectionReason,
@@ -376,7 +382,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorSourceV
 		}
 	}
 	if reader == nil {
-		values := legacyDirectRelationshipSignedIDs(read.SourceCandidates.Rownums)
+		values := legacyDirectRelationshipUniqueInt64s(legacyDirectRelationshipSignedIDs(read.SourceCandidates.Rownums))
 		return legacyDirectRelationshipVectorSourceValuesResult{
 			Values:           values,
 			ProjectionReason: "no_source_key_reader",
@@ -393,6 +399,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorSourceV
 			ProjectionElapsed: projectionElapsed,
 		}, diagnostics, err
 	}
+	values = legacyDirectRelationshipUniqueInt64s(values)
 	return legacyDirectRelationshipVectorSourceValuesResult{
 		Values:            values,
 		ProjectionUsed:    true,
@@ -400,6 +407,23 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorSourceV
 		ProjectionElapsed: projectionElapsed,
 		ValueCount:        len(values),
 	}, nil, nil
+}
+
+func legacyDirectRelationshipUniqueInt64s(values []int64) []int64 {
+	if len(values) == 0 {
+		return nil
+	}
+	unique := append([]int64(nil), values...)
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	write := 1
+	for read := 1; read < len(unique); read++ {
+		if unique[read] == unique[write-1] {
+			continue
+		}
+		unique[write] = unique[read]
+		write++
+	}
+	return unique[:write]
 }
 
 func legacyDirectRelationshipVectorNeedsSourceKeyProjection(read LegacyDirectRelationshipVectorReadRequest) bool {
@@ -533,6 +557,8 @@ func legacyDirectRelationshipVectorCandidates(read LegacyDirectRelationshipVecto
 
 type legacyDirectRelationshipVectorCandidateTiming struct {
 	BatchEqualElapsed time.Duration
+	ScanElapsed       time.Duration
+	Mode              string
 }
 
 func legacyDirectRelationshipVectorCandidateResult(read LegacyDirectRelationshipVectorReadRequest, fkBSI *roaring64.BSI, sourceValues []int64) (qsbridge.QuantaCandidateSet, legacyDirectRelationshipVectorCandidateTiming) {
@@ -586,15 +612,54 @@ func legacyDirectRelationshipVectorParentToChildCandidates(read LegacyDirectRela
 }
 
 func legacyDirectRelationshipVectorParentToChildCandidateResult(read LegacyDirectRelationshipVectorReadRequest, fkBSI *roaring64.BSI, sourceValues []int64) (qsbridge.QuantaCandidateSet, legacyDirectRelationshipVectorCandidateTiming) {
+	sourceValues = legacyDirectRelationshipUniqueInt64s(sourceValues)
 	if len(sourceValues) == 0 {
 		return qsbridge.QuantaCandidateSet{Index: read.TargetDomain}, legacyDirectRelationshipVectorCandidateTiming{}
+	}
+	if legacyDirectRelationshipVectorShouldUseValueSetScan(fkBSI, sourceValues) {
+		scanStart := time.Now()
+		candidates := legacyDirectRelationshipVectorParentToChildCandidateScan(read, fkBSI, sourceValues)
+		return candidates, legacyDirectRelationshipVectorCandidateTiming{
+			Mode:        "value_set_scan",
+			ScanElapsed: time.Since(scanStart),
+		}
 	}
 	batchStart := time.Now()
 	matched := fkBSI.BatchEqual(0, sourceValues).Clone()
 	batchElapsed := time.Since(batchStart)
 	return qsbridge.QuantaCandidateSet{Index: read.TargetDomain, Rownums: legacyDirectRelationshipRownums(matched)}, legacyDirectRelationshipVectorCandidateTiming{
 		BatchEqualElapsed: batchElapsed,
+		Mode:              "batch_equal",
 	}
+}
+
+func legacyDirectRelationshipVectorShouldUseValueSetScan(fkBSI *roaring64.BSI, sourceValues []int64) bool {
+	if fkBSI == nil || fkBSI.GetExistenceBitmap() == nil {
+		return false
+	}
+	existenceRows := fkBSI.GetExistenceBitmap().GetCardinality()
+	maxScanRows := uint64(len(sourceValues)) * legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue
+	return len(sourceValues) >= 64 && existenceRows > 0 && existenceRows <= maxScanRows
+}
+
+func legacyDirectRelationshipVectorParentToChildCandidateScan(read LegacyDirectRelationshipVectorReadRequest, fkBSI *roaring64.BSI, sourceValues []int64) qsbridge.QuantaCandidateSet {
+	sourceSet := make(map[int64]struct{}, len(sourceValues))
+	for _, value := range sourceValues {
+		sourceSet[value] = struct{}{}
+	}
+	rownums := make([]qsbridge.QuantaRownum, 0)
+	it := fkBSI.GetExistenceBitmap().Iterator()
+	for it.HasNext() {
+		rownum := it.Next()
+		value, ok := fkBSI.GetValue(rownum)
+		if !ok {
+			continue
+		}
+		if _, found := sourceSet[value]; found {
+			rownums = append(rownums, qsbridge.QuantaRownum(rownum))
+		}
+	}
+	return qsbridge.QuantaCandidateSet{Index: read.TargetDomain, Rownums: rownums}
 }
 
 func legacyDirectRelationshipVectorTargetValues(fkBSI *roaring64.BSI, rownums []qsbridge.QuantaRownum) ([]int64, bool) {

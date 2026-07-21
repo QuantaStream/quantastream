@@ -156,8 +156,10 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterLeaf(c
 		SourceKeyProjectionReason:  vectorResult.SourceKeyProjectionReason,
 		SourceKeyProjectionElapsed: vectorResult.SourceKeyProjectionElapsed,
 		SourceValueCount:           vectorResult.SourceValueCount,
+		CandidateMode:              vectorResult.CandidateMode,
 		CandidateElapsed:           vectorResult.CandidateElapsed,
 		BatchEqualElapsed:          vectorResult.BatchEqualElapsed,
+		CandidateScanElapsed:       vectorResult.CandidateScanElapsed,
 		CandidateSet:               targetCandidates,
 	}, diagnostics, nil
 }
@@ -228,8 +230,10 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterExpres
 		SourceKeyProjectionReason:  vectorResult.SourceKeyProjectionReason,
 		SourceKeyProjectionElapsed: vectorResult.SourceKeyProjectionElapsed,
 		SourceValueCount:           vectorResult.SourceValueCount,
+		CandidateMode:              vectorResult.CandidateMode,
 		CandidateElapsed:           vectorResult.CandidateElapsed,
 		BatchEqualElapsed:          vectorResult.BatchEqualElapsed,
+		CandidateScanElapsed:       vectorResult.CandidateScanElapsed,
 		CandidateSet:               targetCandidates,
 	}, diagnostics, nil
 }
