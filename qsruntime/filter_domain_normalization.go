@@ -414,6 +414,9 @@ func filterDomainBranchesForSource(filter qsbridge.QuantaFilterExpression, sourc
 	if filterDomainExpressionOnlySource(filter, sourceDomain) && filterDomainExpressionLeafCount(filter) > 1 {
 		return []qsbridge.QuantaFilterExpression{filter}
 	}
+	if branch, ok := filterDomainIntersectSourceBranch(filter, sourceDomain); ok {
+		return []qsbridge.QuantaFilterExpression{branch}
+	}
 	var branches []qsbridge.QuantaFilterExpression
 	for _, child := range filter.Children {
 		branches = append(branches, filterDomainBranchesForSource(child, sourceDomain)...)
@@ -421,9 +424,40 @@ func filterDomainBranchesForSource(filter qsbridge.QuantaFilterExpression, sourc
 	return branches
 }
 
+func filterDomainIntersectSourceBranch(filter qsbridge.QuantaFilterExpression, sourceDomain string) (qsbridge.QuantaFilterExpression, bool) {
+	if filter.Operation != qsbridge.QuantaFilterIntersect || len(filter.Children) == 0 {
+		return qsbridge.QuantaFilterExpression{}, false
+	}
+	sourceChildren := filterDomainConjunctiveSourceExpressions(filter, sourceDomain)
+	if filterDomainExpressionSliceLeafCount(sourceChildren) <= 1 {
+		return qsbridge.QuantaFilterExpression{}, false
+	}
+	if len(sourceChildren) == 1 {
+		return sourceChildren[0], true
+	}
+	return qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children:  sourceChildren,
+	}, true
+}
+
+func filterDomainConjunctiveSourceExpressions(filter qsbridge.QuantaFilterExpression, sourceDomain string) []qsbridge.QuantaFilterExpression {
+	if filterDomainExpressionOnlySource(filter, sourceDomain) {
+		return []qsbridge.QuantaFilterExpression{filter}
+	}
+	if filter.Operation != qsbridge.QuantaFilterIntersect {
+		return nil
+	}
+	var sourceChildren []qsbridge.QuantaFilterExpression
+	for _, child := range filter.Children {
+		sourceChildren = append(sourceChildren, filterDomainConjunctiveSourceExpressions(child, sourceDomain)...)
+	}
+	return sourceChildren
+}
+
 func filterDomainFragmentsForSourceExcludingBranches(filter qsbridge.QuantaFilterExpression, sourceDomain string, branches []qsbridge.QuantaFilterExpression) []qsbridge.QuantaQueryFragment {
 	for _, branch := range branches {
-		if filterDomainExpressionMatchesRuntime(filter, branch) {
+		if filterDomainExpressionMatchesRuntime(filter, branch) || filterDomainExpressionContainsRuntime(branch, filter) {
 			return nil
 		}
 	}
@@ -438,6 +472,18 @@ func filterDomainFragmentsForSourceExcludingBranches(filter qsbridge.QuantaFilte
 		fragments = append(fragments, filterDomainFragmentsForSourceExcludingBranches(child, sourceDomain, branches)...)
 	}
 	return fragments
+}
+
+func filterDomainExpressionContainsRuntime(container, candidate qsbridge.QuantaFilterExpression) bool {
+	if filterDomainExpressionMatchesRuntime(container, candidate) {
+		return true
+	}
+	for _, child := range container.Children {
+		if filterDomainExpressionContainsRuntime(child, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterDomainExpressionOnlySource(filter qsbridge.QuantaFilterExpression, sourceDomain string) bool {
@@ -465,6 +511,14 @@ func filterDomainExpressionLeafCount(filter qsbridge.QuantaFilterExpression) int
 	count := 0
 	for _, child := range filter.Children {
 		count += filterDomainExpressionLeafCount(child)
+	}
+	return count
+}
+
+func filterDomainExpressionSliceLeafCount(filters []qsbridge.QuantaFilterExpression) int {
+	count := 0
+	for _, filter := range filters {
+		count += filterDomainExpressionLeafCount(filter)
 	}
 	return count
 }

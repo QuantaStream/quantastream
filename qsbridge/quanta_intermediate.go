@@ -625,6 +625,11 @@ func (r FilterDomainRewriteResult) Apply(filter QuantaFilterExpression) QuantaFi
 			}
 		}
 	}
+	if filter.Operation == QuantaFilterIntersect {
+		if rewritten, ok := r.applyIntersectBranchSubset(filter); ok {
+			return rewritten
+		}
+	}
 	if filter.Leaf() {
 		for _, leaf := range r.Leaves {
 			if filterDomainFragmentMatches(filter.Fragment, leaf.OriginalFragment) {
@@ -649,6 +654,108 @@ func (r FilterDomainRewriteResult) Apply(filter QuantaFilterExpression) QuantaFi
 	}
 	filter.Children = children
 	return filter
+}
+
+func (r FilterDomainRewriteResult) applyIntersectBranchSubset(filter QuantaFilterExpression) (QuantaFilterExpression, bool) {
+	for _, branch := range r.Branches {
+		if branch.OriginalFilter.Operation != QuantaFilterIntersect || len(branch.OriginalFilter.Children) == 0 {
+			continue
+		}
+		if !filterDomainConjunctiveTreeContainsAll(filter, branch.OriginalFilter.Children) {
+			continue
+		}
+		candidateSet := branch.CandidateSet
+		if candidateSet.Index == "" {
+			candidateSet.Index = branch.TargetDomain
+		}
+		candidateLeaf := QuantaFilterExpression{
+			Operation:    QuantaFilterCandidateSet,
+			CandidateSet: candidateSet,
+		}
+		pruned := filterDomainPruneConjunctiveBranchChildren(filter, branch.OriginalFilter.Children)
+		remaining := filterDomainPrunedChildren(pruned)
+		children := make([]QuantaFilterExpression, 0, len(remaining)+1)
+		children = append(children, candidateLeaf)
+		for _, child := range remaining {
+			children = append(children, r.Apply(child))
+		}
+		filter.Children = children
+		return filter, true
+	}
+	return filter, false
+}
+
+func filterDomainConjunctiveTreeContainsAll(filter QuantaFilterExpression, branchChildren []QuantaFilterExpression) bool {
+	matched := make([]bool, len(branchChildren))
+	filterDomainMarkConjunctiveBranchMatches(filter, branchChildren, matched)
+	for _, ok := range matched {
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func filterDomainMarkConjunctiveBranchMatches(filter QuantaFilterExpression, branchChildren []QuantaFilterExpression, matched []bool) {
+	for i := range branchChildren {
+		if matched[i] {
+			continue
+		}
+		if filterDomainExpressionMatches(filter, branchChildren[i]) {
+			matched[i] = true
+			return
+		}
+	}
+	if filter.Operation != QuantaFilterIntersect {
+		return
+	}
+	for _, child := range filter.Children {
+		filterDomainMarkConjunctiveBranchMatches(child, branchChildren, matched)
+	}
+}
+
+func filterDomainPruneConjunctiveBranchChildren(filter QuantaFilterExpression, branchChildren []QuantaFilterExpression) QuantaFilterExpression {
+	if filterDomainExpressionMatchesAny(filter, branchChildren) {
+		return QuantaFilterExpression{}
+	}
+	if filter.Operation != QuantaFilterIntersect || len(filter.Children) == 0 {
+		return filter
+	}
+	children := make([]QuantaFilterExpression, 0, len(filter.Children))
+	for _, child := range filter.Children {
+		pruned := filterDomainPruneConjunctiveBranchChildren(child, branchChildren)
+		if pruned.Empty() {
+			continue
+		}
+		children = append(children, pruned)
+	}
+	filter.Children = children
+	if len(filter.Children) == 0 {
+		return QuantaFilterExpression{}
+	}
+	if len(filter.Children) == 1 {
+		return filter.Children[0]
+	}
+	return filter
+}
+
+func filterDomainPrunedChildren(filter QuantaFilterExpression) []QuantaFilterExpression {
+	if filter.Empty() {
+		return nil
+	}
+	if filter.Operation == QuantaFilterIntersect {
+		return filter.Children
+	}
+	return []QuantaFilterExpression{filter}
+}
+
+func filterDomainExpressionMatchesAny(filter QuantaFilterExpression, candidates []QuantaFilterExpression) bool {
+	for _, candidate := range candidates {
+		if filterDomainExpressionMatches(filter, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterDomainExpressionMatches(left, right QuantaFilterExpression) bool {

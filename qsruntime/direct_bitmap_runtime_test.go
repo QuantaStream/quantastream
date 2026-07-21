@@ -1491,6 +1491,139 @@ func TestKernelFilterDomainNormalizationExecutorNormalizesSourceBranches(t *test
 	}
 }
 
+func TestKernelFilterDomainNormalizationExecutorCombinesSourcePredicatesInsideMixedUnionBranches(t *testing.T) {
+	edge := qsbridge.RelationshipJoinPlanEdge{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+			Name:  "l_partkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "part", Alias: "p"},
+			Name:  "p_partkey",
+		},
+		ExecutionKind: qsbridge.RelationshipJoinExecutionVector,
+	}
+	partBrand := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_brand"},
+	}
+	partContainer := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_container"},
+	}
+	partSizeLower := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_size_lower"},
+	}
+	partSizeUpper := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "part", Field: "p_size_upper"},
+	}
+	lineQuantity := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_quantity"},
+	}
+	lineShipmode := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  qsbridge.QuantaQueryFragment{Index: "lineitem", Field: "l_shipmode"},
+	}
+	mixedBranch := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			{
+				Operation: qsbridge.QuantaFilterIntersect,
+				Children:  []qsbridge.QuantaFilterExpression{partBrand, partContainer},
+			},
+			lineQuantity,
+			{
+				Operation: qsbridge.QuantaFilterIntersect,
+				Children:  []qsbridge.QuantaFilterExpression{partSizeLower, lineShipmode, partSizeUpper},
+			},
+		},
+	}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterUnion,
+		Children: []qsbridge.QuantaFilterExpression{
+			mixedBranch,
+			mixedBranch,
+		},
+	}
+	translator := &FixtureFilterDomainRelationshipVectorTranslator{
+		Vectors: map[string]map[qsbridge.QuantaRownum][]qsbridge.QuantaRownum{
+			"part.p_brand": {
+				2: {20},
+			},
+		},
+	}
+	executor := KernelFilterDomainNormalizationExecutor{
+		Kernel: RelationshipVectorFilterDomainNormalizationKernel{
+			Leaves: testFilterLeafEvaluator{sets: map[string]qsbridge.QuantaCandidateSet{
+				"p_brand":      {Index: "part", Rownums: []qsbridge.QuantaRownum{1, 2, 3}},
+				"p_container":  {Index: "part", Rownums: []qsbridge.QuantaRownum{2, 3}},
+				"p_size_lower": {Index: "part", Rownums: []qsbridge.QuantaRownum{2, 4}},
+				"p_size_upper": {Index: "part", Rownums: []qsbridge.QuantaRownum{2, 5}},
+			}},
+			Translator: translator,
+		},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Filter: filter})
+	plan := FilterDomainNormalizationPlan{
+		Translation: qsbridge.QuantaFilterDomainTranslation{
+			Required:      true,
+			SourceDomains: []string{"lineitem", "part"},
+			TargetDomain:  "lineitem",
+			Strategies:    []qsbridge.PhysicalStrategy{qsbridge.PhysicalStrategyRelationshipVectorNormalization},
+		},
+		Requests: []FilterDomainNormalizationRequest{{
+			Operation:        FilterDomainNormalizeGroupedFilter,
+			SourceDomain:     "part",
+			TargetDomain:     "lineitem",
+			RelationshipPath: []qsbridge.RelationshipJoinPlanEdge{edge},
+			Strategy:         qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		}},
+	}
+
+	rewrite, diagnostics, err := executor.NormalizeFilterDomains(context.Background(), request, plan)
+	if err != nil {
+		t.Fatalf("NormalizeFilterDomains error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(rewrite.Branches) != 2 {
+		t.Fatalf("branches = %d, want one combined part branch per OR arm", len(rewrite.Branches))
+	}
+	if len(rewrite.Leaves) != 0 {
+		t.Fatalf("leaves = %d, want no separately normalized part leaves", len(rewrite.Leaves))
+	}
+	if len(translator.Calls) != 2 {
+		t.Fatalf("translator calls = %d, want 2", len(translator.Calls))
+	}
+	for _, call := range translator.Calls {
+		if got := call.SourceCandidates.Rownums; len(got) != 1 || got[0] != 2 {
+			t.Fatalf("source candidates = %#v, want [2]", got)
+		}
+	}
+	rewritten := rewrite.Apply(filter)
+	if rewritten.Operation != qsbridge.QuantaFilterUnion || len(rewritten.Children) != 2 {
+		t.Fatalf("rewritten root = %#v, want two-arm union", rewritten)
+	}
+	for _, child := range rewritten.Children {
+		if child.Operation != qsbridge.QuantaFilterIntersect || len(child.Children) != 3 {
+			t.Fatalf("rewritten mixed branch = %#v, want candidate plus two lineitem leaves", child)
+		}
+		if !child.Children[0].CandidateSetLeaf() {
+			t.Fatalf("first rewritten child = %#v, want translated candidate-set leaf", child.Children[0])
+		}
+		if !child.Children[1].Leaf() || child.Children[1].Fragment.Index != "lineitem" {
+			t.Fatalf("second rewritten child = %#v, want lineitem leaf", child.Children[1])
+		}
+		if !child.Children[2].Leaf() || child.Children[2].Fragment.Index != "lineitem" {
+			t.Fatalf("third rewritten child = %#v, want lineitem leaf", child.Children[2])
+		}
+	}
+}
+
 func TestDirectBitmapFilterTreeAdapterReportsIncompleteNormalizationRewrite(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
