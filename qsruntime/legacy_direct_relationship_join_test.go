@@ -820,6 +820,56 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesBatchEqualForLargeChild
 	}
 }
 
+func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesValueVectorForManyParentKeys(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	parentKeyRows := make(map[int64]qsbridge.QuantaRownum, 64)
+	for key := int64(1000); key < 1064; key++ {
+		parentKeyRows[key] = qsbridge.QuantaRownum(key - 900)
+	}
+
+	childRows := make([]qsbridge.QuantaRownum, 0, 1500)
+	wantJoined := []qsbridge.QuantaRownum{}
+	wantPairs := []legacyDirectRelationshipPair{}
+	for row := 1500; row >= 1; row-- {
+		child := qsbridge.QuantaRownum(row)
+		childRows = append(childRows, child)
+		parentKey := int64(9999)
+		if row%10 == 0 {
+			parentKey = 1000 + int64(row%64)
+		} else if row%25 == 0 {
+			parentKey = 1000 + int64((row+7)%64)
+		}
+		fkBSI.SetValue(uint64(child), parentKey)
+		if parent, ok := parentKeyRows[parentKey]; ok {
+			wantJoined = append(wantJoined, child)
+			wantPairs = append(wantPairs, legacyDirectRelationshipPair{child: child, parent: parent})
+		}
+	}
+
+	joined, pairs, timing, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if !timing.valueVectorUsed {
+		t.Fatalf("valueVectorUsed = false, want value-vector path")
+	}
+	if timing.batchEqualUsed || timing.singleKeyEqualUsed {
+		t.Fatalf("batch/single paths = %t/%t, want false/false", timing.batchEqualUsed, timing.singleKeyEqualUsed)
+	}
+	if len(joined) != len(wantJoined) || len(pairs) != len(wantPairs) {
+		t.Fatalf("joined/pairs = %d/%d, want %d/%d", len(joined), len(pairs), len(wantJoined), len(wantPairs))
+	}
+	for i := range wantJoined {
+		if joined[i] != wantJoined[i] {
+			t.Fatalf("joined[%d] = %d, want %d", i, joined[i], wantJoined[i])
+		}
+		if pairs[i] != wantPairs[i] {
+			t.Fatalf("pairs[%d] = %#v, want %#v", i, pairs[i], wantPairs[i])
+		}
+	}
+}
+
 func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesSingleKeyEqualForLargeChildSets(t *testing.T) {
 	fkBSI := roaring64.NewDefaultBSI()
 	childRows := make([]qsbridge.QuantaRownum, 0, 1200)

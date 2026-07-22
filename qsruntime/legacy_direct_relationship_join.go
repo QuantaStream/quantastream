@@ -74,6 +74,7 @@ type legacyDirectRelationshipReduceTiming struct {
 	batchEqualElapsed           time.Duration
 	singleKeyFoundSetElapsed    time.Duration
 	singleKeyEqualElapsed       time.Duration
+	valueVectorElapsed          time.Duration
 	intersectElapsed            time.Duration
 	rownumElapsed               time.Duration
 	pairElapsed                 time.Duration
@@ -82,9 +83,11 @@ type legacyDirectRelationshipReduceTiming struct {
 type legacyDirectRelationshipProjectedFKReduceTiming struct {
 	batchEqualUsed           bool
 	singleKeyEqualUsed       bool
+	valueVectorUsed          bool
 	batchEqualElapsed        time.Duration
 	singleKeyFoundSetElapsed time.Duration
 	singleKeyEqualElapsed    time.Duration
+	valueVectorElapsed       time.Duration
 	intersectElapsed         time.Duration
 	rownumElapsed            time.Duration
 	pairElapsed              time.Duration
@@ -467,6 +470,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			legacyDirectRelationshipProbe("single_batch_equal_elapsed", reduceTiming.batchEqualElapsed.String()),
 			legacyDirectRelationshipProbe("single_single_key_foundset_elapsed", reduceTiming.singleKeyFoundSetElapsed.String()),
 			legacyDirectRelationshipProbe("single_single_key_equal_elapsed", reduceTiming.singleKeyEqualElapsed.String()),
+			legacyDirectRelationshipProbe("single_value_vector_elapsed", reduceTiming.valueVectorElapsed.String()),
 			legacyDirectRelationshipProbe("single_intersect_elapsed", reduceTiming.intersectElapsed.String()),
 			legacyDirectRelationshipProbe("single_rownum_elapsed", reduceTiming.rownumElapsed.String()),
 			legacyDirectRelationshipProbe("single_pair_elapsed", reduceTiming.pairElapsed.String()),
@@ -681,6 +685,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"batch_equal_elapsed", reduceTiming.batchEqualElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"single_key_foundset_elapsed", reduceTiming.singleKeyFoundSetElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"single_key_equal_elapsed", reduceTiming.singleKeyEqualElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_elapsed", reduceTiming.valueVectorElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"intersect_elapsed", reduceTiming.intersectElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"rownum_elapsed", reduceTiming.rownumElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"pair_elapsed", reduceTiming.pairElapsed.String()),
@@ -3286,6 +3291,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	if projectedTiming.batchEqualElapsed == 0 &&
 		projectedTiming.singleKeyFoundSetElapsed == 0 &&
 		projectedTiming.singleKeyEqualElapsed == 0 &&
+		projectedTiming.valueVectorElapsed == 0 &&
 		projectedTiming.intersectElapsed == 0 &&
 		projectedTiming.rownumElapsed == 0 &&
 		projectedTiming.pairElapsed == 0 {
@@ -3294,6 +3300,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.batchEqualElapsed = projectedTiming.batchEqualElapsed
 		timing.singleKeyFoundSetElapsed = projectedTiming.singleKeyFoundSetElapsed
 		timing.singleKeyEqualElapsed = projectedTiming.singleKeyEqualElapsed
+		timing.valueVectorElapsed = projectedTiming.valueVectorElapsed
 		timing.intersectElapsed = projectedTiming.intersectElapsed
 		timing.rownumElapsed = projectedTiming.rownumElapsed
 		timing.pairElapsed = projectedTiming.pairElapsed
@@ -3455,6 +3462,29 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 		timing.pairElapsed = time.Since(pairStart)
 		return joined, pairs, timing, nil
 	}
+	if legacyDirectRelationshipShouldUseValueVectorReduce(childRows, parentKeyRows) {
+		timing.valueVectorUsed = true
+		valueStart := time.Now()
+		parentKeys := fkBSI.GetBigValues(nativeProjectionRownumColumnIDs(childRows))
+		timing.valueVectorElapsed = time.Since(valueStart)
+
+		joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
+		pairs := make([]legacyDirectRelationshipPair, 0, len(childRows))
+		pairStart := time.Now()
+		for i, child := range childRows {
+			if i >= len(parentKeys) || parentKeys[i] == nil {
+				continue
+			}
+			parent, ok := parentKeyRows[parentKeys[i].Int64()]
+			if !ok {
+				continue
+			}
+			joined = append(joined, child)
+			pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
+		}
+		timing.pairElapsed = time.Since(pairStart)
+		return joined, pairs, timing, nil
+	}
 	joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
 	pairs := make([]legacyDirectRelationshipPair, 0, len(childRows))
 	pairStart := time.Now()
@@ -3476,6 +3506,10 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 
 func legacyDirectRelationshipShouldUseBatchEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
 	return len(childRows) >= 1024 && len(parentKeyRows) > 1 && len(parentKeyRows) <= 32
+}
+
+func legacyDirectRelationshipShouldUseValueVectorReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
+	return len(childRows) >= 1024 && len(parentKeyRows) > 32
 }
 
 func legacyDirectRelationshipShouldUseSingleKeyEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
