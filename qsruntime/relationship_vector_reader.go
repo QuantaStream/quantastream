@@ -37,6 +37,10 @@ type LegacyDirectRelationshipVectorReadRequest struct {
 	Strategy         qsbridge.PhysicalStrategy
 	VectorIndex      string
 	VectorField      string
+	// AllowCandidateSuperset permits membership seed reads to reuse a broader
+	// target candidate set because the correlated membership evaluator rechecks
+	// the relationship key before accepting rows.
+	AllowCandidateSuperset bool
 }
 
 // LegacyDirectRelationshipVectorReader is the future bridge into relationship-vector reads.

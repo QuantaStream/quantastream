@@ -1456,10 +1456,11 @@ func legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge legacy
 			SQLKind:         edge.sqlKind,
 			ProjectionScope: edge.projectionScope,
 		},
-		Direction:   qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
-		Strategy:    qsbridge.PhysicalStrategyRelationshipVectorNormalization,
-		VectorIndex: edge.childTable,
-		VectorField: edge.childField,
+		Direction:              qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		Strategy:               qsbridge.PhysicalStrategyRelationshipVectorNormalization,
+		VectorIndex:            edge.childTable,
+		VectorField:            edge.childField,
+		AllowCandidateSuperset: true,
 	}
 }
 

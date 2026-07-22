@@ -673,6 +673,17 @@ func NewRelationshipVectorCandidateCache() *RelationshipVectorCandidateCache {
 // Get returns an exact cached relationship-vector expansion, or filters a
 // cached superset when its source key values cover the current request.
 func (c *RelationshipVectorCandidateCache) Get(key string, targetDomain string, requestedValues []int64) (qsbridge.QuantaCandidateSet, string, bool) {
+	return c.get(key, targetDomain, requestedValues, false)
+}
+
+// GetAllowingSuperset returns an exact or retained-subset expansion when
+// available, or a broader candidate seed when the caller can recheck
+// relationship keys downstream.
+func (c *RelationshipVectorCandidateCache) GetAllowingSuperset(key string, targetDomain string, requestedValues []int64) (qsbridge.QuantaCandidateSet, string, bool) {
+	return c.get(key, targetDomain, requestedValues, true)
+}
+
+func (c *RelationshipVectorCandidateCache) get(key string, targetDomain string, requestedValues []int64, allowSuperset bool) (qsbridge.QuantaCandidateSet, string, bool) {
 	if c == nil || key == "" {
 		return qsbridge.QuantaCandidateSet{}, "cache_absent", false
 	}
@@ -692,16 +703,23 @@ func (c *RelationshipVectorCandidateCache) Get(key string, targetDomain string, 
 		if !stringSetCovers(entry.SourceValues, requested) {
 			continue
 		}
+		if len(entry.TargetValues) != len(entry.Rownums) {
+			continue
+		}
 		rownums := make([]qsbridge.QuantaRownum, 0, len(entry.Rownums))
 		for i, rownum := range entry.Rownums {
-			if i >= len(entry.TargetValues) {
-				continue
-			}
 			if _, ok := requested[entry.TargetValues[i]]; ok {
 				rownums = append(rownums, rownum)
 			}
 		}
 		return qsbridge.QuantaCandidateSet{Index: targetDomain, Rownums: rownums}, "retained_subset", true
+	}
+	if allowSuperset {
+		for _, entry := range entries {
+			if stringSetCovers(entry.SourceValues, requested) {
+				return qsbridge.QuantaCandidateSet{Index: targetDomain, Rownums: append([]qsbridge.QuantaRownum(nil), entry.Rownums...)}, "covered_superset", true
+			}
+		}
 	}
 	return qsbridge.QuantaCandidateSet{}, "coverage_miss", false
 }
@@ -718,6 +736,20 @@ func (c *RelationshipVectorCandidateCache) Set(key string, sourceValues []int64,
 		SourceValues: stringSetFromSlice(int64Strings(sourceValues)),
 		Rownums:      append([]qsbridge.QuantaRownum(nil), rownums...),
 		TargetValues: append([]string(nil), int64Strings(targetValues)...),
+	})
+}
+
+// SetSuperset stores a candidate expansion without per-row target values. It
+// can only be reused by callers that explicitly allow a covered superset.
+func (c *RelationshipVectorCandidateCache) SetSuperset(key string, sourceValues []int64, rownums []qsbridge.QuantaRownum) {
+	if c == nil || key == "" || len(rownums) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = append(c.entries[key], relationshipVectorCandidateCacheEntry{
+		SourceValues: stringSetFromSlice(int64Strings(sourceValues)),
+		Rownums:      append([]qsbridge.QuantaRownum(nil), rownums...),
 	})
 }
 

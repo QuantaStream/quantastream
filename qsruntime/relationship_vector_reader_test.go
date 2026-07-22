@@ -603,6 +603,73 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesDirectBatchEQForBounde
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendReusesDirectBatchEQCoveredSuperset(t *testing.T) {
+	queryCalls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalls++
+					return BitmapQueryResult{
+						Success: true,
+						Count:   3,
+						Rownums: []qsbridge.QuantaRownum{2, 4, 6},
+					}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	firstRead, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{7, 8},
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first read request diagnostics = %#v, want none", diagnostics)
+	}
+	firstRead.AllowCandidateSuperset = true
+	secondRead, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{8},
+	))
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second read request diagnostics = %#v, want none", diagnostics)
+	}
+	secondRead.AllowCandidateSuperset = true
+
+	ctx := WithQueryScratchpad(context.Background())
+	first, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(ctx, firstRead)
+	if err != nil {
+		t.Fatalf("first ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first diagnostics = %#v, want none", diagnostics)
+	}
+	if first.CandidateCacheHit || first.CandidateCacheMode != "direct_query" || first.CandidateMode != "direct_batch_eq" {
+		t.Fatalf("first candidate cache/mode = %t/%q/%q, want direct query", first.CandidateCacheHit, first.CandidateCacheMode, first.CandidateMode)
+	}
+
+	second, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(ctx, secondRead)
+	if err != nil {
+		t.Fatalf("second ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second diagnostics = %#v, want none", diagnostics)
+	}
+	if !second.CandidateCacheHit || second.CandidateCacheMode != "covered_superset" || second.CandidateMode != "candidate_cache" {
+		t.Fatalf("second candidate cache/mode = %t/%q/%q, want covered superset cache hit", second.CandidateCacheHit, second.CandidateCacheMode, second.CandidateMode)
+	}
+	if !reflect.DeepEqual(second.TargetCandidates.Rownums, []qsbridge.QuantaRownum{2, 4, 6}) {
+		t.Fatalf("second candidates = %#v, want broad seed [2 4 6]", second.TargetCandidates.Rownums)
+	}
+	if queryCalls != 1 {
+		t.Fatalf("direct query calls = %d, want 1", queryCalls)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendUsesValueSetScanForMediumParentToChildExpansion(t *testing.T) {
 	fkBSI := roaring64.NewDefaultBSI()
 	for rownum := uint64(1); rownum <= 2000; rownum++ {

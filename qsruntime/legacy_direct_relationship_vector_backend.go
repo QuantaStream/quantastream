@@ -70,7 +70,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 	candidateCacheKey := b.relationshipVectorCandidateCacheKey(read, projectionCacheKey)
 	if parentToChild {
 		candidateStart := time.Now()
-		if candidates, cacheMode, ok := b.cachedRelationshipVectorCandidates(ctx, candidateCacheKey, read.TargetDomain, sourceValueResult.Values); ok {
+		if candidates, cacheMode, ok := b.cachedRelationshipVectorCandidates(ctx, candidateCacheKey, read.TargetDomain, sourceValueResult.Values, read.AllowCandidateSuperset); ok {
 			return qsbridge.FilterDomainRelationshipVectorResult{
 				TargetCandidates:           candidates,
 				VectorIndex:                read.VectorIndex,
@@ -87,6 +87,9 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 			}, nil, nil
 		}
 		if candidates, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
+			if read.AllowCandidateSuperset && candidateErr == nil && !candidateDiagnostics.BlocksNative() {
+				b.storeRelationshipVectorCandidateSuperset(ctx, candidateCacheKey, sourceValueResult.Values, candidates.Rownums)
+			}
 			return qsbridge.FilterDomainRelationshipVectorResult{
 				TargetCandidates:           candidates,
 				VectorIndex:                read.VectorIndex,
@@ -214,13 +217,20 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorCandida
 	}, "\x00")
 }
 
-func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorCandidates(ctx context.Context, key string, targetDomain string, sourceValues []int64) (qsbridge.QuantaCandidateSet, string, bool) {
+func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorCandidates(ctx context.Context, key string, targetDomain string, sourceValues []int64, allowSuperset bool) (qsbridge.QuantaCandidateSet, string, bool) {
 	cache := RelationshipVectorCandidateCacheFromContext(ctx)
 	if cache == nil {
 		recordQueryScratchpadCacheLookup(ctx, "relationship_vector_candidate_cache", false, "cache_absent", legacyDirectRelationshipProjectionCacheDetail(key))
 		return qsbridge.QuantaCandidateSet{}, "cache_absent", false
 	}
-	candidates, mode, ok := cache.Get(key, targetDomain, sourceValues)
+	var candidates qsbridge.QuantaCandidateSet
+	var mode string
+	var ok bool
+	if allowSuperset {
+		candidates, mode, ok = cache.GetAllowingSuperset(key, targetDomain, sourceValues)
+	} else {
+		candidates, mode, ok = cache.Get(key, targetDomain, sourceValues)
+	}
 	recordQueryScratchpadCacheLookup(ctx, "relationship_vector_candidate_cache", ok, mode, legacyDirectRelationshipProjectionCacheDetail(key))
 	return candidates, mode, ok
 }
@@ -231,6 +241,15 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorCa
 		return
 	}
 	cache.Set(key, sourceValues, rownums, targetValues)
+	recordQueryScratchpadCacheStore(ctx, "relationship_vector_candidate_cache", legacyDirectRelationshipProjectionCacheDetail(key))
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorCandidateSuperset(ctx context.Context, key string, sourceValues []int64, rownums []qsbridge.QuantaRownum) {
+	cache := RelationshipVectorCandidateCacheFromContext(ctx)
+	if cache == nil {
+		return
+	}
+	cache.SetSuperset(key, sourceValues, rownums)
 	recordQueryScratchpadCacheStore(ctx, "relationship_vector_candidate_cache", legacyDirectRelationshipProjectionCacheDetail(key))
 }
 

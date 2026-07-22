@@ -387,6 +387,42 @@ func TestRelationshipVectorCandidateCacheRetainsCoveredSubset(t *testing.T) {
 	}
 }
 
+func TestRelationshipVectorCandidateCacheRejectsIncompleteTargetValues(t *testing.T) {
+	cache := &RelationshipVectorCandidateCache{
+		entries: map[string][]relationshipVectorCandidateCacheEntry{
+			"parent_to_child\x00orders\x00lineitem": {
+				{
+					SourceValues: map[string]struct{}{"10": {}, "20": {}},
+					Rownums:      []qsbridge.QuantaRownum{101, 102, 103},
+					TargetValues: []string{"10", "20"},
+				},
+			},
+		},
+	}
+
+	if _, mode, ok := cache.Get("parent_to_child\x00orders\x00lineitem", "lineitem", []int64{20}); ok || mode != "coverage_miss" {
+		t.Fatalf("incomplete target value lookup mode = %q/%t, want coverage_miss", mode, ok)
+	}
+}
+
+func TestRelationshipVectorCandidateCacheReturnsCoveredSupersetWhenAllowed(t *testing.T) {
+	cache := NewRelationshipVectorCandidateCache()
+	key := "parent_to_child\x00orders\x00lineitem"
+	cache.SetSuperset(
+		key,
+		[]int64{10, 20},
+		[]qsbridge.QuantaRownum{101, 102, 103},
+	)
+
+	if _, mode, ok := cache.Get(key, "lineitem", []int64{20}); ok || mode != "coverage_miss" {
+		t.Fatalf("strict subset lookup mode = %q/%t, want coverage_miss", mode, ok)
+	}
+	candidates, mode, ok := cache.GetAllowingSuperset(key, "lineitem", []int64{20})
+	if !ok || mode != "covered_superset" || !reflect.DeepEqual(candidates.Rownums, []qsbridge.QuantaRownum{101, 102, 103}) {
+		t.Fatalf("superset lookup = %#v/%q/%t, want all covered seed rows", candidates, mode, ok)
+	}
+}
+
 func TestRelationshipVectorProjectionCacheDetailSummarizesFoundset(t *testing.T) {
 	foundSet := roaring64.NewBitmap()
 	foundSet.Add(101)
