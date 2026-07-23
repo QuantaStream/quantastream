@@ -30,7 +30,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 
 	defer func() {
 		if r := recover(); r != nil {
-			err := fmt.Errorf("Panic recover: \n" + string(debug.Stack()))
+			err := fmt.Errorf("Panic recover: \n%s", debug.Stack())
 			u.Error(err)
 		}
 	}()

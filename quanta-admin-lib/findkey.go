@@ -72,16 +72,16 @@ func (f *FindKeyCmd) Run(ctx *Context) error {
 		var status, ip, modTime, nodeState string
 		var card uint64
 		if result, err := conn.Admin[index].Status(cx, &empty.Empty{}); err != nil {
-			fmt.Printf(fmt.Sprintf("%v.Status(_) = _, %v, node = %s\n", conn.Admin[index], err,
-				conn.ClientConnections()[index].Target()))
+			fmt.Printf("%v.Status(_) = _, %v, node = %s\n", conn.Admin[index], err,
+				conn.ClientConnections()[index].Target())
 		} else {
 			status = result.NodeState
 			nodeState = result.NodeState
 			ip = result.LocalIP
 		}
 		if res, err2 := bitClient.Client(index).SyncStatus(cx, req); err2 != nil {
-			fmt.Printf(fmt.Sprintf("%v.SyncStatus(_) = _, %v, node = %s\n", bitClient.Client(index), err2,
-				conn.ClientConnections()[index].Target()))
+			fmt.Printf("%v.SyncStatus(_) = _, %v, node = %s\n", bitClient.Client(index), err2,
+				conn.ClientConnections()[index].Target())
 		} else {
 			if res.Cardinality == 0 && res.ModTime == 0 {
 				status = "Missing"

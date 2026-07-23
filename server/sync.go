@@ -161,7 +161,7 @@ func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue
 	status, err := m.Admin[ci].Status(cx, &empty.Empty{})
 	if err != nil {
 		return &wrappers.Int64Value{Value: int64(-1)},
-			fmt.Errorf(fmt.Sprintf("%v.Status(_) = _, %v, node = %s\n", m.Admin[ci], err, targetIP))
+			fmt.Errorf("%v.Status(_) = _, %v, node = %s", m.Admin[ci], err, targetIP)
 	}
 
 	// atw turned this off
@@ -233,7 +233,7 @@ func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue
 		// unlock
 		if err != nil {
 			return &wrappers.Int64Value{Value: int64(-1)},
-				fmt.Errorf(fmt.Sprintf("%v.SyncStatus(_) = _, %v, node = %s\n", newNode, err, targetIP))
+				fmt.Errorf("%v.SyncStatus(_) = _, %v, node = %s", newNode, err, targetIP)
 		}
 		if res.Ok {
 			u.Debugf("bmi No differences for key %s.", key)
@@ -384,7 +384,7 @@ func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue
 		res, err := newNode.SyncStatus(cx, reqs)
 		if err != nil {
 			return &wrappers.Int64Value{Value: int64(-1)},
-				fmt.Errorf(fmt.Sprintf("%v.SyncStatus(_) = _, %v, node = %s\n", newNode, err, targetIP))
+				fmt.Errorf("%v.SyncStatus(_) = _, %v, node = %s", newNode, err, targetIP)
 		}
 		if res.Ok {
 			u.Debugf("No differences for key %s.", key)

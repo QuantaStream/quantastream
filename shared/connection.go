@@ -804,8 +804,7 @@ func (m *Conn) getNodeStatusForIndex(clientIndex int) (*pb.StatusMessage, error)
 		if clientIndex < len(m.clientConn) {
 			target = m.clientConn[clientIndex].Target()
 		}
-		e := fmt.Sprintf("getNodeStatusForIndex Status, err = %v, target = %s\n", err, target)
-		return nil, fmt.Errorf(e)
+		return nil, fmt.Errorf("getNodeStatusForIndex Status, err = %v, target = %s", err, target)
 	}
 	return result, nil
 }

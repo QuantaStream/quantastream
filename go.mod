@@ -1,12 +1,10 @@
 module github.com/QuantaStream/quantastream
 
-go 1.22.12
-
-toolchain go1.23.2
+go 1.24.0
 
 require (
 	github.com/Jeffail/tunny v0.0.0-20190930221602-f13eb662a36a
-	github.com/RoaringBitmap/roaring/v2 v2.4.2
+	github.com/RoaringBitmap/roaring/v2 v2.24.0
 	github.com/akrylysov/pogreb v0.9.1
 	github.com/alecthomas/kong v0.2.17
 	github.com/araddon/dateparse v0.0.0-20210207001429-0eec95c9db7e
@@ -48,14 +46,14 @@ require (
 	github.com/siddontang/go-mysql v1.1.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/steakknife/bloomfilter v0.0.0-20180922174646-6819c0d2a570
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.11.1
 	github.com/stvp/rendezvous v0.0.0-20151118195501-67b5f26b3e18
 	github.com/vmware/vmware-go-kcl v1.5.0
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	golang.org/x/net v0.34.0
-	golang.org/x/sync v0.10.0
-	golang.org/x/text v0.21.0
+	golang.org/x/sync v0.11.0
+	golang.org/x/text v0.22.0
 	google.golang.org/api v0.103.0
 	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.34.2
@@ -90,7 +88,7 @@ require (
 	github.com/aws/smithy-go v1.22.1 // indirect
 	github.com/awslabs/kinesis-aggregation/go v0.0.0-20210630091500-54e17340d32f // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.12.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect

@@ -69,8 +69,8 @@ func (f *VerifyEnumCmd) Run(ctx *Context) error {
 	for _, i := range indices {
 		var ip, nodeState string
 		if result, err := conn.Admin[i].Status(cx, &empty.Empty{}); err != nil {
-			fmt.Printf(fmt.Sprintf("%v.Status(_) = _, %v, node = %s\n", conn.Admin[i], err,
-				conn.ClientConnections()[i].Target()))
+			fmt.Printf("%v.Status(_) = _, %v, node = %s\n", conn.Admin[i], err,
+				conn.ClientConnections()[i].Target())
 		} else {
 			nodeState = result.NodeState
 			ip = result.LocalIP
