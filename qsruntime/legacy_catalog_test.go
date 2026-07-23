@@ -346,6 +346,13 @@ func legacyCatalogTestCache() *core.TableCacheStruct {
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "p_partkey", Type: "Integer", MappingStrategy: "IntBSI", Required: true}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "p_brand", Type: "String", MappingStrategy: "StringHashBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{
+				FieldName:       "p_name",
+				Type:            "String",
+				MappingStrategy: "StringLexBSI",
+				Size:            55,
+				MapperConfig:    map[string]string{"length": "8"},
+			}},
+			{BasicAttribute: &shared.BasicAttribute{
 				FieldName:       "p_container",
 				Type:            "String",
 				MappingStrategy: "StringEnum",
@@ -380,6 +387,28 @@ func legacyCatalogTestCache() *core.TableCacheStruct {
 		},
 	}
 	return cache
+}
+
+func TestLegacyTableCacheCatalogMapsStringLexBSI(t *testing.T) {
+	cache := legacyCatalogTestCache()
+	catalog := LegacyTableCacheCatalog{TableCache: cache}
+
+	table, diagnostics := catalog.Table("quanta", "part")
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("Table diagnostics = %#v, want none", diagnostics)
+	}
+	partName, ok := table.Field("p_name")
+	if !ok {
+		t.Fatal("missing p_name field")
+	}
+	if partName.Index != qsbridge.IndexBSI || partName.Encoding.Kind != qsbridge.EncodingStringLexBSI {
+		t.Fatalf("p_name = %#v, want BSI-backed StringLexBSI", partName)
+	}
+	if partName.Encoding.PrefixLength != 8 || partName.Encoding.MaxLength != 55 ||
+		!partName.Encoding.NeedsStringRemainderLookup() {
+		t.Fatalf("p_name encoding = %#v, want eight-byte prefix with bounded remainder", partName.Encoding)
+	}
 }
 
 func legacyCatalogRelationshipByField(relationships []qsbridge.RelationshipDefinition, field string) (qsbridge.RelationshipDefinition, bool) {

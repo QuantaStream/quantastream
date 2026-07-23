@@ -264,6 +264,11 @@ func NewStringLexBSIProfile(options StringLexBSIOptions) EncodingProfile {
 	if options.Searchable {
 		profile.PredicateCapabilities = append(profile.PredicateCapabilities, PredicateCapabilityTextSearch)
 	}
+	if options.PrefixLength <= 0 {
+		profile.Rehydration = RehydrationProfile{Kind: RehydrationInline}
+		profile.ProjectionCapabilities = append(profile.ProjectionCapabilities, ProjectionCapabilityInline)
+		return profile
+	}
 	if profile.StoresFullStringInline() {
 		profile.Rehydration = RehydrationProfile{Kind: RehydrationInline}
 		profile.ProjectionCapabilities = append(profile.ProjectionCapabilities, ProjectionCapabilityInline)
@@ -356,7 +361,10 @@ func (e EncodingProfile) HasBoundedStringLength() bool {
 
 // StoresFullStringInline reports whether a StringLexBSI profile can encode the whole value in BSI state.
 func (e EncodingProfile) StoresFullStringInline() bool {
-	return e.Kind == EncodingStringLexBSI && e.PrefixLength > 0 && e.HasBoundedStringLength() && e.PrefixLength >= e.MaxLength
+	if e.Kind != EncodingStringLexBSI {
+		return false
+	}
+	return e.PrefixLength <= 0 || (e.PrefixLength > 0 && e.HasBoundedStringLength() && e.PrefixLength >= e.MaxLength)
 }
 
 // NeedsStringRemainderLookup reports whether a StringLexBSI profile needs a side store for suffix bytes.

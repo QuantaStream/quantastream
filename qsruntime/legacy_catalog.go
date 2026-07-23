@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -192,9 +193,12 @@ func legacyFieldDefinition(schema string, table *core.Table, attribute core.Attr
 		name = attribute.SourceName
 	}
 	encoding := qsbridge.LegacyEncodingProfile(attribute.MappingStrategy, qsbridge.LegacyEncodingOptions{
-		NonExclusive: attribute.NonExclusive,
-		Searchable:   attribute.Searchable,
-		Scale:        attribute.Scale,
+		NonExclusive:   attribute.NonExclusive,
+		Searchable:     attribute.Searchable,
+		Scale:          attribute.Scale,
+		PrefixLength:   legacyStringLexBSIPrefixLength(attribute.MapperConfig),
+		MaxLength:      legacyStringLexBSIMaxLength(attribute),
+		RemainderStore: "kv",
 	})
 	field := qsbridge.FieldDefinition{
 		Name:         name,
@@ -299,13 +303,40 @@ func legacyDataType(legacyType string) qsbridge.DataType {
 	}
 }
 
+func legacyStringLexBSIPrefixLength(config map[string]string) int {
+	for _, key := range []string{"length", "prefixLength", "chars", "characters"} {
+		if raw, ok := config[key]; ok {
+			value, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err == nil {
+				return value
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+func legacyStringLexBSIMaxLength(attribute core.Attribute) int {
+	if !strings.EqualFold(strings.TrimSpace(attribute.MappingStrategy), "StringLexBSI") {
+		return 0
+	}
+	prefixLength := legacyStringLexBSIPrefixLength(attribute.MapperConfig)
+	if prefixLength <= 0 {
+		return 0
+	}
+	if attribute.Size > 0 {
+		return attribute.Size
+	}
+	return -1
+}
+
 func legacyIndexKind(encoding qsbridge.EncodingProfile) qsbridge.IndexKind {
 	switch encoding.Kind {
 	case qsbridge.EncodingStringEnum:
 		return qsbridge.IndexStringEnum
 	case qsbridge.EncodingBackingString:
 		return qsbridge.IndexBackingString
-	case qsbridge.EncodingNumericBSI, qsbridge.EncodingRelation:
+	case qsbridge.EncodingNumericBSI, qsbridge.EncodingStringLexBSI, qsbridge.EncodingRelation:
 		return qsbridge.IndexBSI
 	case qsbridge.EncodingTimeBSI:
 		return qsbridge.IndexDateTime

@@ -5,6 +5,7 @@ import "strings"
 const (
 	legacyStringEnum     = "StringEnum"
 	legacyStringHashBSI  = "StringHashBSI"
+	legacyStringLexBSI   = "StringLexBSI"
 	legacyFloatScaleBSI  = "FloatScaleBSI"
 	legacyIntBSI         = "IntBSI"
 	legacyTimeStampBSI   = "TimeStampBSI"
@@ -17,10 +18,13 @@ const (
 
 // LegacyEncodingOptions carries schema details needed to map old storage names.
 type LegacyEncodingOptions struct {
-	NonExclusive bool
-	Searchable   bool
-	Scale        int
-	Granularity  TimeGranularity
+	NonExclusive   bool
+	Searchable     bool
+	Scale          int
+	Granularity    TimeGranularity
+	PrefixLength   int
+	MaxLength      int
+	RemainderStore string
 }
 
 // LegacyEncodingProfile maps current Quanta storage names into the qsbridge encoding model.
@@ -66,6 +70,17 @@ func LegacyEncodingProfile(legacyName string, options LegacyEncodingOptions) Enc
 				ProjectionCapabilityOriginalValue,
 			},
 		}
+	case strings.ToLower(legacyStringLexBSI):
+		profile := NewStringLexBSIProfile(StringLexBSIOptions{
+			PrefixLength:   options.PrefixLength,
+			MaxLength:      options.MaxLength,
+			RemainderStore: legacyStringLexBSIRemainderStore(options.RemainderStore, options.PrefixLength),
+			Searchable:     options.Searchable,
+			SearchMode:     legacySearchMode(options.Searchable),
+		})
+		profile.LegacyName = legacyStringLexBSI
+		profile.Multiplicity = multiplicity
+		return profile
 	case strings.ToLower(legacyFloatScaleBSI):
 		profile := NewNumericBSIProfile(options.Scale, true)
 		profile.LegacyName = legacyFloatScaleBSI
@@ -136,4 +151,14 @@ func legacySearchMode(searchable bool) string {
 		return "text"
 	}
 	return ""
+}
+
+func legacyStringLexBSIRemainderStore(store string, prefixLength int) string {
+	if prefixLength <= 0 {
+		return ""
+	}
+	if strings.TrimSpace(store) != "" {
+		return store
+	}
+	return "kv"
 }

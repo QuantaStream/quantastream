@@ -109,6 +109,11 @@ func TestNewStringLexBSIProfileChoosesInlineOrLookupRehydration(t *testing.T) {
 	if lookup.SupportsPredicate(PredicateCapabilityContains) {
 		t.Fatalf("string lex text-search capability must not imply contains LIKE support: %#v", lookup.PredicateCapabilities)
 	}
+
+	fullInline := NewStringLexBSIProfile(StringLexBSIOptions{PrefixLength: 0})
+	if !fullInline.StoresFullStringInline() || fullInline.RequiresLookup() || fullInline.NeedsStringRemainderLookup() {
+		t.Fatalf("nonpositive prefix profile = %#v, want full inline StringLexBSI", fullInline)
+	}
 }
 
 func TestEncodingProfileTimeGranularityAndNumericScale(t *testing.T) {

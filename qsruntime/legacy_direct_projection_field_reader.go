@@ -886,7 +886,7 @@ func nativeProjectionAttributeRequiresFallback(attr *core.Attribute) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
-	case "stringhashbsi", "stringenum":
+	case "stringhashbsi", "stringlexbsi", "stringenum":
 		return true
 	case "parentrelation":
 		return false

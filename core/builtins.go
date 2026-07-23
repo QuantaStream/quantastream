@@ -94,6 +94,150 @@ func (m StringHashBSIMapper) MapValue(attr *Attribute, val interface{}, c *Sessi
 	return
 }
 
+const stringLexBSIRemainderPath = "lex_remainders"
+
+// StringLexBSIMapper maps UTF-8 bytes into a lexicographically ordered BSI prefix.
+type StringLexBSIMapper struct {
+	DefaultMapper
+	prefixLength int
+}
+
+// NewStringLexBSIMapper constructs a lexical string mapper. The length configuration
+// is the number of UTF-8 bytes encoded into the BSI prefix; zero or negative encodes
+// the entire value into the BSI and does not write a KV remainder.
+func NewStringLexBSIMapper(conf map[string]string) (Mapper, error) {
+	prefixLength, err := stringLexBSIPrefixLength(conf)
+	if err != nil {
+		return nil, err
+	}
+	return StringLexBSIMapper{DefaultMapper: DefaultMapper{StringLexBSI}, prefixLength: prefixLength}, nil
+}
+
+// MapValue maps a string value to its lexical BSI integer.
+func (m StringLexBSIMapper) MapValue(attr *Attribute, val interface{}, c *Session,
+	isUpdate bool) (result *big.Int, err error) {
+
+	strVal, ok, err := stringLexBSIStringValue(attr, val)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if c != nil {
+			err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, nil, false)
+		}
+		return nil, err
+	}
+
+	result, remainder := encodeStringLexBSI(strVal, m.prefixLength)
+	if c != nil {
+		tbuf, ok := c.TableBuffers[attr.Parent.Name]
+		if !ok {
+			return nil, fmt.Errorf("table %s not open for this connection", attr.Parent.Name)
+		}
+		if attr.Searchable {
+			if err = c.StringIndex.Index(strVal); err != nil {
+				return nil, err
+			}
+		}
+		if m.prefixLength > 0 {
+			remainderPath := indexPath(tbuf, attr.FieldName, stringLexBSIRemainderPath)
+			if err = c.BatchBuffer.SetPartitionedString(remainderPath, tbuf.CurrentColumnID, remainder); err != nil {
+				return nil, err
+			}
+		}
+		err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, result, isUpdate)
+	}
+	return
+}
+
+func (m StringLexBSIMapper) Render(attr *Attribute, value interface{}) string {
+	if val, ok := value.(*big.Int); ok {
+		return decodeStringLexBSIPrefix(val)
+	}
+	return "???"
+}
+
+func stringLexBSIPrefixLength(conf map[string]string) (int, error) {
+	if conf == nil {
+		return 0, fmt.Errorf("'length' config param must be supplied for StringLexBSIMapper")
+	}
+	for _, key := range []string{"length", "prefixLength", "chars", "characters"} {
+		if raw, ok := conf[key]; ok {
+			value, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err != nil {
+				return 0, fmt.Errorf("StringLexBSIMapper %s config must be an integer: %w", key, err)
+			}
+			return value, nil
+		}
+	}
+	return 0, fmt.Errorf("'length' config param must be supplied for StringLexBSIMapper")
+}
+
+func stringLexBSIStringValue(attr *Attribute, val interface{}) (string, bool, error) {
+	switch typed := val.(type) {
+	case string:
+		if typed == "" {
+			return "", false, nil
+		}
+		return typed, true, nil
+	case int64:
+		return fmt.Sprintf("%d", typed), true, nil
+	case float64:
+		return fmt.Sprintf("%.2f", typed), true, nil
+	case map[string]interface{}:
+		if len(typed) == 0 {
+			return "", false, nil
+		}
+		b, err := json.Marshal(typed)
+		if err != nil {
+			return "", false, err
+		}
+		return string(b), true, nil
+	case nil:
+		return "", false, nil
+	default:
+		return "", false, fmt.Errorf("StringLexBSIMapper not expecting a '%T' for '%s'", val, attr.FieldName)
+	}
+}
+
+func encodeStringLexBSI(value string, prefixLength int) (*big.Int, string) {
+	if value == "" {
+		return nil, ""
+	}
+	if prefixLength <= 0 {
+		return new(big.Int).SetBytes([]byte(value)), ""
+	}
+	copied := len(value)
+	if copied > prefixLength {
+		copied = prefixLength
+	}
+	remainder := ""
+	if len(value) > copied {
+		remainder = value[copied:]
+	}
+	if prefixLength <= 8 {
+		var encoded uint64
+		for i := 0; i < copied; i++ {
+			encoded |= uint64(value[i]) << uint(8*(prefixLength-i-1))
+		}
+		return new(big.Int).SetUint64(encoded), remainder
+	}
+	prefix := make([]byte, prefixLength)
+	copy(prefix, value)
+	return new(big.Int).SetBytes(prefix), remainder
+}
+
+func decodeStringLexBSIPrefix(value *big.Int) string {
+	if value == nil {
+		return ""
+	}
+	encoded := value.Bytes()
+	if zero := strings.IndexByte(string(encoded), 0); zero >= 0 {
+		encoded = encoded[:zero]
+	}
+	return string(encoded)
+}
+
 // BoolDirectMapper - Map values 0/1 to true/false rowID 0 = false, rowID 1 = true
 type BoolDirectMapper struct {
 	DefaultMapper

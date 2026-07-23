@@ -373,7 +373,7 @@ func (a *BasicAttribute) IsBSI() bool {
 
 	// TODO:  Add IsBSI() to Mapper interface and let mappers self describe
 	switch a.MappingStrategy {
-	case "IntBSI", "FloatScaleBSI", "SysMillisBSI", "SysMicroBSI", "SysSecBSI", "StringHashBSI", "UUIDBSI", "CustomBSI", "ParentRelation":
+	case "IntBSI", "FloatScaleBSI", "SysMillisBSI", "SysMicroBSI", "SysSecBSI", "StringHashBSI", "StringLexBSI", "UUIDBSI", "CustomBSI", "ParentRelation":
 		return true
 	default:
 		return false

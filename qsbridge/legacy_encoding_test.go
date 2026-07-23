@@ -53,6 +53,28 @@ func TestLegacyEncodingProfileMapsStringHashConservatively(t *testing.T) {
 	}
 }
 
+func TestLegacyEncodingProfileMapsStringLexBSI(t *testing.T) {
+	profile := LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{
+		Searchable:     true,
+		PrefixLength:   8,
+		MaxLength:      -1,
+		RemainderStore: "kv",
+	})
+
+	if profile.Kind != EncodingStringLexBSI || profile.LegacyName != "StringLexBSI" {
+		t.Fatalf("profile = %#v, want StringLexBSI encoding", profile)
+	}
+	if profile.PrefixLength != 8 || !profile.NeedsStringRemainderLookup() || profile.Rehydration.Store != "kv" {
+		t.Fatalf("profile = %#v, want eight-byte prefix with KV remainder", profile)
+	}
+	if !profile.SupportsPredicate(PredicateCapabilityRange) || !profile.SupportsPredicate(PredicateCapabilityPrefix) {
+		t.Fatalf("predicate capabilities = %#v, want range and prefix", profile.PredicateCapabilities)
+	}
+	if !profile.Searchable() || !profile.SupportsPredicate(PredicateCapabilityTextSearch) {
+		t.Fatalf("profile = %#v, want searchable lex BSI", profile)
+	}
+}
+
 func TestLegacyEncodingProfileMapsNumericAndTimeBSIs(t *testing.T) {
 	floatProfile := LegacyEncodingProfile("FloatScaleBSI", LegacyEncodingOptions{Scale: 4})
 	if floatProfile.Kind != EncodingNumericBSI || floatProfile.Scale != 4 {

@@ -101,6 +101,9 @@ const (
 	// StringHashBSI - Hash string to rowID (>500 cardinality)
 	StringHashBSI
 
+	// StringLexBSI - UTF-8 string prefix to BSI with optional KV remainder
+	StringLexBSI
+
 	// StringToIntDirect - Parse string to int and use directly
 	StringToIntDirect
 
@@ -196,6 +199,8 @@ func (mt MapperType) String() string {
 		return "StringEnum"
 	case StringHashBSI:
 		return "StringHashBSI"
+	case StringLexBSI:
+		return "StringLexBSI"
 	case StringToIntDirect:
 		return "StringToIntDirect"
 	case BoolRegex:
@@ -261,6 +266,8 @@ func MapperTypeFromString(mt string) MapperType {
 		return StringEnum
 	case "StringHashBSI":
 		return StringHashBSI
+	case "StringLexBSI":
+		return StringLexBSI
 	case "BoolRegex":
 		return BoolRegex
 	case "Contains":
@@ -282,7 +289,7 @@ func (mt MapperType) MapValue(attr *Attribute, val interface{}, c *Session, isUp
 // IsBSI - Is this mapper for BSI types?
 func (mt MapperType) IsBSI() bool {
 	switch mt {
-	case IntBSI, FloatScaleBSI, SysMillisBSI, SysMicroBSI, SysSecBSI, StringHashBSI, UUIDBSI, CustomBSI:
+	case IntBSI, FloatScaleBSI, SysMillisBSI, SysMicroBSI, SysSecBSI, StringHashBSI, StringLexBSI, UUIDBSI, CustomBSI:
 		return true
 	default:
 		return false
@@ -406,6 +413,7 @@ func Register(name string, factory MapperFactory) {
 // Register builtins
 func init() {
 	Register(StringHashBSI.String(), NewStringHashBSIMapper)
+	Register(StringLexBSI.String(), NewStringLexBSIMapper)
 	Register(IntDirect.String(), NewIntDirectMapper)
 	Register(IntToBoolDirect.String(), NewIntToBoolDirectMapper)
 	Register(StringToIntDirect.String(), NewStringToIntDirectMapper)
