@@ -3424,39 +3424,29 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 	}
 	if legacyDirectRelationshipShouldUseBatchEqualReduce(childRows, parentKeyRows) {
 		timing.batchEqualUsed = true
+		childFoundSet := legacyDirectRelationshipBitmap(childRows)
+		parentKeyValues := legacyDirectRelationshipParentKeyValues(parentKeyRows)
 		batchStart := time.Now()
-		matched := fkBSI.BatchEqual(0, legacyDirectRelationshipParentKeyValues(parentKeyRows))
-		if matched == nil {
-			matched = roaring64.NewBitmap()
-		} else {
-			matched = matched.Clone()
-		}
+		valuePairs := fkBSI.BatchEqualValues(0, parentKeyValues, childFoundSet)
 		timing.batchEqualElapsed = time.Since(batchStart)
 
-		intersectStart := time.Now()
-		matched.And(legacyDirectRelationshipBitmap(childRows))
-		timing.intersectElapsed = time.Since(intersectStart)
-
-		rownumStart := time.Now()
-		joined := make([]qsbridge.QuantaRownum, 0, int(matched.GetCardinality()))
-		for _, child := range childRows {
-			if matched.Contains(uint64(child)) {
-				joined = append(joined, child)
-			}
-		}
-		timing.rownumElapsed = time.Since(rownumStart)
-
 		pairStart := time.Now()
-		pairs := make([]legacyDirectRelationshipPair, 0, len(joined))
-		for _, child := range joined {
-			parentKey, ok := fkBSI.GetValue(uint64(child))
+		parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(valuePairs))
+		for _, valuePair := range valuePairs {
+			parent, ok := parentKeyRows[valuePair.Value]
 			if !ok {
 				continue
 			}
-			parent, ok := parentKeyRows[parentKey]
+			parentByChild[qsbridge.QuantaRownum(valuePair.ColumnID)] = parent
+		}
+		joined := make([]qsbridge.QuantaRownum, 0, len(parentByChild))
+		pairs := make([]legacyDirectRelationshipPair, 0, len(parentByChild))
+		for _, child := range childRows {
+			parent, ok := parentByChild[child]
 			if !ok {
 				continue
 			}
+			joined = append(joined, child)
 			pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
 		}
 		timing.pairElapsed = time.Since(pairStart)
