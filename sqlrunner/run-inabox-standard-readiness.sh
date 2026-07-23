@@ -31,7 +31,15 @@ cleanup_server() {
 
 cleanup_work_dir() {
   if [[ "${CLEANUP}" == "1" ]] && [[ -n "${WORK_DIR}" ]] && [[ -d "${WORK_DIR}" ]]; then
-    rm -rf "${WORK_DIR}"
+    local attempt
+    for attempt in $(seq 1 10); do
+      rm -rf "${WORK_DIR}" >/dev/null 2>&1 && break
+      sleep 0.25
+    done
+    if [[ -d "${WORK_DIR}" ]]; then
+      rm -rf "${WORK_DIR}" >/dev/null 2>&1 ||
+        echo "warning: unable to remove readiness work directory after retries: ${WORK_DIR}" >&2
+    fi
   elif [[ -n "${WORK_DIR}" ]]; then
     echo "preserved readiness work directory: ${WORK_DIR}"
   fi
