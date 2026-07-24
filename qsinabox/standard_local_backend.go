@@ -71,10 +71,13 @@ func (b *StandardLocalBackend) Close() {
 		if b.Node == nil {
 			return
 		}
+		b.Node.ShutdownServices()
 		if b.Node.Stop != nil {
 			close(b.Node.Stop)
 		}
-		b.Node.ShutdownServices()
+		if bitmapIndex, ok := b.Node.GetNodeService("BitmapIndex").(*server.BitmapIndex); ok {
+			bitmapIndex.WaitForShutdown()
+		}
 	})
 }
 

@@ -81,6 +81,7 @@ type BitmapIndex struct {
 	bsiCount        int
 	workers         []*WorkerThread
 	cleanupLock     sync.RWMutex
+	backgroundWG    sync.WaitGroup
 	updBitmapTime   atomic.Uint64
 	updBSITime      atomic.Uint64
 	saveBitmapECnt  atomic.Uint64
@@ -196,7 +197,11 @@ func (m *BitmapIndex) Init() error {
 		m.workers[i] = NewWorkerThread(i)
 	}
 	for i := 0; i < m.workersCount; i++ {
-		go m.batchProcessLoop(m.workers[i])
+		m.backgroundWG.Add(1)
+		go func(worker *WorkerThread) {
+			defer m.backgroundWG.Done()
+			m.batchProcessLoop(worker)
+		}(m.workers[i])
 	}
 
 	// Read files from disk
@@ -204,12 +209,22 @@ func (m *BitmapIndex) Init() error {
 	if err != nil {
 		return fmt.Errorf("cannot initialize bitmap server error: %v", err)
 	}
-	go m.memoryUsageProcessLoop(time.Minute)
+	m.backgroundWG.Add(1)
+	go func() {
+		defer m.backgroundWG.Done()
+		m.memoryUsageProcessLoop(time.Minute)
+	}()
 
 	// Partition operation worker thread
-	go m.partitionProcessLoop()
+	m.backgroundWG.Add(1)
+	go func() {
+		defer m.backgroundWG.Done()
+		m.partitionProcessLoop()
+	}()
 
+	m.backgroundWG.Add(1)
 	go func() { // wait for signal to persist cache
+		defer m.backgroundWG.Done()
 		for {
 			select {
 			case <-m.Stop:
@@ -218,12 +233,8 @@ func (m *BitmapIndex) Init() error {
 			case forceSync := <-m.writeSignal:
 				// fmt.Println(m.Node.hashKey, "had writeSignal, checkPersist*Cache(", forceSync, ")")
 				// go
-				if _, _, err := m.checkPersistBitmapCache(forceSync); err != nil {
+				if _, _, _, _, err := m.persistCaches(forceSync); err != nil {
 					u.Errorf("bitmap cache persist failed: %v", err)
-				}
-				// go
-				if _, _, err := m.checkPersistBSICache(forceSync); err != nil {
-					u.Errorf("BSI cache persist failed: %v", err)
 				}
 				// fmt.Println(m.Node.hashKey, "had writeSignal DONE")
 			}
@@ -231,6 +242,11 @@ func (m *BitmapIndex) Init() error {
 	}()
 
 	return nil
+}
+
+// WaitForShutdown waits until BitmapIndex background loops observe Stop and exit.
+func (m *BitmapIndex) WaitForShutdown() {
+	m.backgroundWG.Wait()
 }
 
 // Shutdown - Shut down and clean up.
@@ -241,11 +257,14 @@ func (m *BitmapIndex) Shutdown() {
 	}
 	// flush waits for queued worker updates to finish; shutdown should then persist
 	// dirty cache entries without rewriting every clean shard.
-	if _, _, err := m.checkPersistBitmapCache(false); err != nil {
-		u.Errorf("BitmapIndex shutdown bitmap persist failed: %v", err)
+	_, bitmapWrites, _, bsiWrites, err := m.persistCaches(false)
+	if err != nil {
+		u.Errorf("BitmapIndex shutdown persist failed: %v", err)
 	}
-	if _, _, err := m.checkPersistBSICache(false); err != nil {
-		u.Errorf("BitmapIndex shutdown BSI persist failed: %v", err)
+	if bitmapWrites+bsiWrites > 0 {
+		if err := m.saveBitmapShardManifestFromCache("shutdown"); err != nil {
+			u.Warnf("BitmapIndex shutdown manifest refresh failed: %v", err)
+		}
 	}
 }
 
@@ -467,6 +486,10 @@ func (m *BitmapIndex) batchProcessLoop(worker *WorkerThread) {
 		// uintptr(unsafe.Pointer(m)
 		// This is a way to make sure that the fraq queue has priority over persistence.
 		select {
+		case _, open := <-m.Stop:
+			if !open {
+				return
+			}
 		case nop := <-worker.aux:
 			select {
 			case nop.Done <- true:
@@ -494,6 +517,10 @@ func (m *BitmapIndex) batchProcessLoop(worker *WorkerThread) {
 
 		// this is where it waits for a frag or a write signal
 		select {
+		case _, open := <-m.Stop:
+			if !open {
+				return
+			}
 		case nop := <-worker.aux:
 			select {
 			case nop.Done <- true:
@@ -566,6 +593,10 @@ func (m *BitmapIndex) partitionProcessLoop() {
 		}
 
 		select {
+		case _, open := <-m.Stop:
+			if !open {
+				return
+			}
 		case p := <-m.partitionQueue:
 			m.executeOperation(p)
 			m.purgePartition(p.Partition)
@@ -1502,6 +1533,9 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 			if err := m.invalidateBitmapShardManifest("table drop"); err != nil {
 				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
 			}
+			if err := m.saveBitmapShardManifestFromCache("table_drop"); err != nil {
+				u.Warnf("BitmapIndex manifest refresh failed after table drop: %v", err)
+			}
 			u.Infof("Table %s dropped.", req.Table)
 		}
 	case pb.TableOperationRequest_TRUNCATE:
@@ -1514,6 +1548,9 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 		} else {
 			if err := m.invalidateBitmapShardManifest("table truncate"); err != nil {
 				u.Warnf("BitmapIndex manifest invalidation failed: %v", err)
+			}
+			if err := m.saveBitmapShardManifestFromCache("table_truncate"); err != nil {
+				u.Warnf("BitmapIndex manifest refresh failed after table truncate: %v", err)
 			}
 			u.Infof("Table %s truncated.", req.Table)
 		}

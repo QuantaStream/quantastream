@@ -101,6 +101,8 @@ func (m *KVStore) cleanupProcessLoop() {
 		default:
 		}
 		select {
+		case <-m.exit:
+			return
 		case <-time.After(time.Second * 10):
 			clusterState, _, _ := m.GetClusterState()
 			if m.State == Active && clusterState == shared.Green {

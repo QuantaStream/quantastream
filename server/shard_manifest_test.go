@@ -225,6 +225,69 @@ func TestBSIPersistInvalidatesShardManifestWhenBSIWrites(t *testing.T) {
 	}
 }
 
+func TestSaveBitmapShardManifestFromCacheRefreshesAfterDirtyWrites(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customers": {
+			"isActive": {
+				0: {
+					now.UnixNano(): {
+						Bits:        roaring64.BitmapOf(1, 2),
+						ModTime:     now,
+						PersistTime: now.Add(-time.Second),
+					},
+				},
+			},
+		},
+	}
+	index.bsiCache = map[string]map[string]map[int64]*BSIBitmap{
+		"orders": {
+			"o_orderkey": {
+				now.UnixNano(): {
+					BSI:         values,
+					ModTime:     now,
+					PersistTime: now.Add(-time.Second),
+				},
+			},
+		},
+	}
+
+	_, bitmapWrites, err := index.checkPersistBitmapCache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBitmapCache returned error: %v", err)
+	}
+	_, bsiWrites, err := index.checkPersistBSICache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBSICache returned error: %v", err)
+	}
+	if bitmapWrites != 1 || bsiWrites != 1 {
+		t.Fatalf("writes = bitmap:%d bsi:%d, want 1 and 1", bitmapWrites, bsiWrites)
+	}
+	if _, err := os.Stat(filepath.Join(index.dataDir, BitmapShardManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("expected low-level persistence to invalidate manifest before refresh, stat err=%v", err)
+	}
+	if err := index.saveBitmapShardManifestFromCache("test_refresh"); err != nil {
+		t.Fatalf("saveBitmapShardManifestFromCache returned error: %v", err)
+	}
+	manifest, err := index.loadBitmapShardManifest()
+	if err != nil {
+		t.Fatalf("loadBitmapShardManifest returned error: %v", err)
+	}
+	if manifest.Source != "test_refresh" {
+		t.Fatalf("manifest source = %q, want test_refresh", manifest.Source)
+	}
+	if manifest.Stats.StandardEntries != 1 || manifest.Stats.BSIEntries != 1 {
+		t.Fatalf("unexpected manifest stats after persist refresh: %+v", manifest.Stats)
+	}
+	observation := index.observeBitmapShardManifest(manifest)
+	if observation.Status != "ok" {
+		t.Fatalf("refreshed manifest observation status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+}
+
 func TestObserveBitmapShardManifestReportsMissing(t *testing.T) {
 	index := newManifestPersistenceTestIndex(t)
 	scan := BitmapShardManifest{

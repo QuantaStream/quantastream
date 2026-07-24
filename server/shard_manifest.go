@@ -125,6 +125,31 @@ func (b *bitmapShardManifestBuilder) addBSIFile(path string, info os.FileInfo, t
 	}
 }
 
+func (b *bitmapShardManifestBuilder) addStandardCacheEntry(path string, table, field string, rowID int64, shardTime time.Time, modTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindStandard, rowID, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         "bitmap",
+		ModTime:      modTime.UTC(),
+	}}
+	if info, err := os.Stat(path); err == nil {
+		entry.Files[0].SizeBytes = info.Size()
+		entry.Files[0].ModTime = info.ModTime().UTC()
+	}
+}
+
+func (b *bitmapShardManifestBuilder) addBSICacheEntry(basePath string, table, field string, shardTime time.Time, maxBitSlice int, modTime time.Time) {
+	if maxBitSlice < 0 {
+		maxBitSlice = 0
+	}
+	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
+	entry.BaseRelativePath = b.relativePath(basePath)
+	entry.FileCount = maxBitSlice + 1
+	entry.MaxBitSlice = maxBitSlice
+	entry.HasExistence = true
+	entry.ModTime = modTime.UTC()
+}
+
 func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source string) BitmapShardManifest {
 	if generatedAt.IsZero() {
 		generatedAt = time.Now()
@@ -238,6 +263,80 @@ func (m *BitmapIndex) saveBitmapShardManifest(manifest BitmapShardManifest) erro
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace bitmap shard manifest: %w", err)
 	}
+	return nil
+}
+
+func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
+	if m.persistenceDisabled() {
+		return nil
+	}
+	start := time.Now()
+	builder := newBitmapShardManifestBuilder(m.dataDir)
+	standardEntries := 0
+	bsiEntries := 0
+
+	m.bitmapCacheLock.RLock()
+	for indexName, index := range m.bitmapCache {
+		for fieldName, field := range index {
+			for rowID, ts := range field {
+				for shardNano, bitmap := range ts {
+					if bitmap == nil {
+						continue
+					}
+					bitmap.Lock.RLock()
+					shardTime := time.Unix(0, shardNano)
+					modTime := bitmap.PersistTime
+					if modTime.IsZero() {
+						modTime = bitmap.ModTime
+					}
+					tqType := bitmap.TQType
+					bitmap.Lock.RUnlock()
+					partition := &Partition{Index: indexName, Field: fieldName, RowIDOrBits: int64(rowID), Time: shardTime, TQType: tqType}
+					path := filepath.Join(m.generateBitmapFilePath(partition, false), formatShardTime(shardTime))
+					builder.addStandardCacheEntry(path, indexName, fieldName, int64(rowID), shardTime, modTime)
+					standardEntries++
+				}
+			}
+		}
+	}
+	m.bitmapCacheLock.RUnlock()
+
+	m.bsiCacheLock.RLock()
+	for indexName, index := range m.bsiCache {
+		for fieldName, field := range index {
+			for shardNano, bsi := range field {
+				if bsi == nil || bsi.BSI == nil {
+					continue
+				}
+				bsi.Lock.RLock()
+				shardTime := time.Unix(0, shardNano)
+				modTime := bsi.PersistTime
+				if modTime.IsZero() {
+					modTime = bsi.ModTime
+				}
+				maxBitSlice := int(bsi.BitCount())
+				tqType := bsi.TQType
+				bsi.Lock.RUnlock()
+				partition := &Partition{Index: indexName, Field: fieldName, RowIDOrBits: -1, Time: shardTime, TQType: tqType}
+				builder.addBSICacheEntry(m.generateBitmapFilePath(partition, false), indexName, fieldName, shardTime, maxBitSlice, modTime)
+				bsiEntries++
+			}
+		}
+	}
+	m.bsiCacheLock.RUnlock()
+
+	manifest := builder.manifest(time.Now().UTC(), source)
+	if len(manifest.Entries) == 0 {
+		if err := m.invalidateBitmapShardManifest("empty cache manifest refresh"); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := m.saveBitmapShardManifest(manifest); err != nil {
+		return fmt.Errorf("save bitmap shard manifest from cache: %w", err)
+	}
+	fmt.Printf("BitmapIndex refreshed shard manifest source=%s entries=%d files=%d standard_entries=%d bsi_entries=%d elapsed=%v\n",
+		source, manifest.Stats.TotalEntries, manifest.Stats.TotalFiles, standardEntries, bsiEntries, time.Since(start))
 	return nil
 }
 
