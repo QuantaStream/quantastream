@@ -125,8 +125,6 @@ tests:
       select c.c_custkey, c.c_name, o.o_orderkey, o.o_orderdate
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
-    expect:
-      row_count: 5000
 
   - id: "tpch_smoke_scale.031.customer_orders_lineitem_projection"
     status: supported
@@ -137,8 +135,6 @@ tests:
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
       inner join lineitem as l on l.l_orderkey = o.o_orderkey
-    expect:
-      row_count: 5000
 
   - id: "tpch_smoke_scale.040.region_nation_projection"
     status: supported

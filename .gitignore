@@ -4,7 +4,7 @@
 /start-local
 /tpc-h-benchmark/local/logs/
 /tpc-h-benchmark/local/profile-reports/
-/tpc-h-benchmark/local/standard-data/
+/tpc-h-benchmark/local/standard-data*/
 /sqlrunner/expected/local/
 /sqlrunner/expected/generated/
 /sqlrunner/expected/*.local.yaml
