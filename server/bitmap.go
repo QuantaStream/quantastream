@@ -971,7 +971,10 @@ func (m *BitmapIndex) cleanupOp(p *Partition) error {
 
 	hashKey := partitionHashKey(p)
 
-	nodeKeys := m.HashTable.GetN(m.Replicas, hashKey)
+	owned, nodeKeys := m.cleanupPartitionOwned(hashKey)
+	if owned {
+		return nil
+	}
 
 	// fmt.Println("cleanupOp ", m.hashKey, " hashKey ", hashKey, " nodeKeys ", nodeKeys)
 
@@ -995,6 +998,22 @@ func (m *BitmapIndex) cleanupOp(p *Partition) error {
 		m.partitionQueue <- m.NewPartitionOperation(p, true)
 	}
 	return nil
+}
+
+func (m *BitmapIndex) cleanupPartitionOwned(hashKey string) (bool, []string) {
+	if m == nil || m.Node == nil || m.Conn == nil || m.consul == nil || m.HashTable == nil || m.Replicas <= 0 {
+		return true, nil
+	}
+	nodeKeys := m.HashTable.GetN(m.Replicas, hashKey)
+	if len(nodeKeys) == 0 {
+		return true, nodeKeys
+	}
+	for _, k := range nodeKeys {
+		if k == m.hashKey {
+			return true, nodeKeys
+		}
+	}
+	return false, nodeKeys
 }
 
 func partitionHashKey(p *Partition) string {

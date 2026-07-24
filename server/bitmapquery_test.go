@@ -95,6 +95,78 @@ func TestCompareBSIFieldsWithStatsReturnsMatchingRownums(t *testing.T) {
 	}
 }
 
+func TestCleanupOpTreatsMissingHashTableAsLocalOwner(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "part", nil)
+	if err != nil {
+		t.Fatalf("load part schema: %v", err)
+	}
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("cleanup-local-test"),
+			consul:  &api.Client{},
+			hashKey: "this-node",
+		},
+		partitionQueue: make(chan *PartitionOperation, 1),
+		tableCache: map[string]*shared.BasicTable{
+			"part": table,
+		},
+	}
+
+	err = index.cleanupOp(&Partition{
+		Index:       "part",
+		Field:       "p_size",
+		Time:        time.Unix(0, 0),
+		RowIDOrBits: -1,
+	})
+	if err != nil {
+		t.Fatalf("cleanupOp returned error: %v", err)
+	}
+	select {
+	case op := <-index.partitionQueue:
+		t.Fatalf("cleanupOp queued unexpected partition operation: %#v", op)
+	default:
+	}
+}
+
+func TestCleanupOpQueuesRemoveForDistributedNonOwner(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "part", nil)
+	if err != nil {
+		t.Fatalf("load part schema: %v", err)
+	}
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn: &shared.Conn{
+				HashTable: rendezvous.New([]string{"other-node"}),
+				Replicas:  1,
+			},
+			consul:  &api.Client{},
+			hashKey: "this-node",
+		},
+		partitionQueue: make(chan *PartitionOperation, 1),
+		tableCache: map[string]*shared.BasicTable{
+			"part": table,
+		},
+	}
+
+	err = index.cleanupOp(&Partition{
+		Index:       "part",
+		Field:       "p_size",
+		Time:        time.Unix(0, 0),
+		RowIDOrBits: -1,
+	})
+	if err != nil {
+		t.Fatalf("cleanupOp returned error: %v", err)
+	}
+	select {
+	case op := <-index.partitionQueue:
+		if op == nil || !op.RemoveOnly {
+			t.Fatalf("cleanupOp queued operation = %#v, want remove-only operation", op)
+		}
+	default:
+		t.Fatal("cleanupOp did not queue remove operation for distributed non-owner")
+	}
+}
+
 func TestCompareBSIFieldsWithStatsUsesLocalReplicasForTimeShardedFields(t *testing.T) {
 	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "lineitem", nil)
 	if err != nil {
