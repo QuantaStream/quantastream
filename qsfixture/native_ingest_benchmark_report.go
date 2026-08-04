@@ -189,6 +189,9 @@ func NativeIngestBenchmarkMetrics(
 	metrics["put_stage_primary_key_microseconds_per_order"] = durationMicrosPerCount(pk.TotalElapsed, totalOrders)
 	metrics["put_stage_alternate_keys_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.AlternateKeysElapsed, totalOrders)
 	metrics["put_stage_child_expansion_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.ChildExpansionElapsed, totalOrders)
+	metrics["put_stage_child_traversal_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.ChildTraversalElapsed, totalOrders)
+	metrics["put_stage_child_recursive_write_microseconds_per_order"] = durationMicrosPerCount(
+		nonNegativeDuration(putSnapshot.ChildExpansionElapsed-putSnapshot.ChildTraversalElapsed), totalOrders)
 	metrics["put_stage_parent_relation_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.RelationElapsed, totalOrders)
 	metrics["put_stage_attribute_mapping_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.AttributeElapsed, totalOrders)
 	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
@@ -268,6 +271,8 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "put_stage_primary_key_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_alternate_keys_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_child_expansion_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_child_traversal_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_child_recursive_write_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_parent_relation_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_attribute_mapping_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "primary_key_resolves_per_logical_row", unit: "resolves/row", higherIsBetter: false},
@@ -296,6 +301,8 @@ var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "put_stage_identity_microseconds_per_order", label: "Identity us/order"},
 	{name: "put_stage_primary_key_microseconds_per_order", label: "PK stage us/order"},
 	{name: "put_stage_child_expansion_microseconds_per_order", label: "Child expansion us/order"},
+	{name: "put_stage_child_traversal_microseconds_per_order", label: "Child traversal us/order"},
+	{name: "put_stage_child_recursive_write_microseconds_per_order", label: "Child recursive write us/order"},
 	{name: "put_stage_parent_relation_microseconds_per_order", label: "Parent relation us/order"},
 	{name: "put_stage_attribute_mapping_microseconds_per_order", label: "Attribute mapping us/order"},
 	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
@@ -508,6 +515,13 @@ func formatNativeIngestBenchmarkRatio(value float64) string {
 
 func durationMicrosPerCount(duration time.Duration, count int) float64 {
 	return float64(duration.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, count))
+}
+
+func nonNegativeDuration(duration time.Duration) time.Duration {
+	if duration < 0 {
+		return 0
+	}
+	return duration
 }
 
 func percentForCounts(numerator int, denominator int) float64 {

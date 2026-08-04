@@ -28,6 +28,7 @@ type RouterPutRowProfileSummary struct {
 	IdentityElapsed       time.Duration                         `json:"identity_elapsed_nanos"`
 	AlternateKeysElapsed  time.Duration                         `json:"alternate_keys_elapsed_nanos"`
 	ChildExpansionElapsed time.Duration                         `json:"child_expansion_elapsed_nanos"`
+	ChildTraversalElapsed time.Duration                         `json:"child_traversal_elapsed_nanos"`
 	RelationElapsed       time.Duration                         `json:"relation_elapsed_nanos"`
 	AttributeElapsed      time.Duration                         `json:"attribute_elapsed_nanos"`
 	PrimaryKey            PrimaryKeyResolveProfile              `json:"primary_key"`
@@ -82,6 +83,7 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	p.summary.IdentityElapsed += result.IdentityElapsed
 	p.summary.AlternateKeysElapsed += result.AlternateKeysElapsed
 	p.summary.ChildExpansionElapsed += result.ChildExpansionElapsed
+	p.summary.ChildTraversalElapsed += result.ChildTraversalElapsed
 	p.summary.RelationElapsed += result.RelationElapsed
 	p.summary.AttributeElapsed += result.AttributeElapsed
 	p.summary.PrimaryKey = p.summary.PrimaryKey.add(result.PrimaryKey)

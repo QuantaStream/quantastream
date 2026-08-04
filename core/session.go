@@ -140,6 +140,7 @@ type PutRowResult struct {
 	IdentityElapsed       time.Duration
 	AlternateKeysElapsed  time.Duration
 	ChildExpansionElapsed time.Duration
+	ChildTraversalElapsed time.Duration
 	RelationElapsed       time.Duration
 	AttributeElapsed      time.Duration
 	TotalElapsed          time.Duration
@@ -174,6 +175,7 @@ type putRowStageTimings struct {
 	identityElapsed       time.Duration
 	alternateKeysElapsed  time.Duration
 	childExpansionElapsed time.Duration
+	childTraversalElapsed time.Duration
 	relationElapsed       time.Duration
 	attributeElapsed      time.Duration
 	childRowCount         int
@@ -604,6 +606,13 @@ func (req putRowRequest) addChildRows(count int) {
 	req.timings.childRowCount += count
 }
 
+func (req putRowRequest) addChildTraversalTiming(elapsed time.Duration) {
+	if req.timings == nil || elapsed <= 0 {
+		return
+	}
+	req.timings.childTraversalElapsed += elapsed
+}
+
 func (req putRowRequest) addPrimaryKeyProfile(profile PrimaryKeyResolveProfile) {
 	if req.timings == nil {
 		return
@@ -629,6 +638,7 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 	result.IdentityElapsed = req.timings.identityElapsed
 	result.AlternateKeysElapsed = req.timings.alternateKeysElapsed
 	result.ChildExpansionElapsed = req.timings.childExpansionElapsed
+	result.ChildTraversalElapsed = req.timings.childTraversalElapsed
 	result.RelationElapsed = req.timings.relationElapsed
 	result.AttributeElapsed = req.timings.attributeElapsed
 	result.PrimaryKey = req.timings.primaryKeyProfile
@@ -701,7 +711,9 @@ func shouldSkipPutRowAttributeMapping(tbuf *TableBuffer, attr *Attribute) bool {
 
 func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
 
+	traversalStart := time.Now()
 	expansion, ok, err := s.preparePutRowChildExpansion(tbuf, attr)
+	req.addChildTraversalTiming(time.Since(traversalStart))
 	if err != nil {
 		return err
 	}
@@ -709,11 +721,15 @@ func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *At
 		return nil
 	}
 	for _, childRow := range expansion.childRows {
+		traversalStart = time.Now()
 		childPayload, err := buildPutRowChildPayload(req.row, expansion.sourcePath, childRow)
+		req.addChildTraversalTiming(time.Since(traversalStart))
 		if err != nil {
 			return err
 		}
+		traversalStart = time.Now()
 		expansion.childBuffer.rowCache = childPayload
+		req.addChildTraversalTiming(time.Since(traversalStart))
 		childResult, err := s.recursivePutRow(expansion.childTable, childPayload, expansion.sourcePath,
 			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization, req.primaryKeyMode)
 		if err != nil {

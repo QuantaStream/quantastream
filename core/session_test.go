@@ -226,6 +226,7 @@ func TestExpandChildRowsPropagatesAssumeNewPrimaryKeyMode(t *testing.T) {
 	assert.Equal(t, "line-1", resolver.requests[0].LookupValue)
 	assert.Equal(t, "line-2", resolver.requests[1].LookupValue)
 	assert.Equal(t, 2, timings.childRowCount)
+	assert.Greater(t, timings.childTraversalElapsed, time.Duration(0))
 	assert.Equal(t, 2, timings.primaryKeyProfile.ResolveCount)
 }
 
@@ -250,6 +251,7 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 			identityElapsed:       2 * time.Millisecond,
 			alternateKeysElapsed:  3 * time.Millisecond,
 			childExpansionElapsed: 4 * time.Millisecond,
+			childTraversalElapsed: 1500 * time.Microsecond,
 			relationElapsed:       5 * time.Millisecond,
 			attributeElapsed:      6 * time.Millisecond,
 			childRowCount:         7,
@@ -270,6 +272,7 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 		IdentityElapsed:       2 * time.Millisecond,
 		AlternateKeysElapsed:  3 * time.Millisecond,
 		ChildExpansionElapsed: 4 * time.Millisecond,
+		ChildTraversalElapsed: 1500 * time.Microsecond,
 		RelationElapsed:       5 * time.Millisecond,
 		AttributeElapsed:      6 * time.Millisecond,
 		TotalElapsed:          21 * time.Millisecond,
