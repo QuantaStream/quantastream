@@ -1314,6 +1314,19 @@ func (l QuantaIntermediateLowerer) lowerBetweenPredicate(predicate Predicate, pa
 			return QuantaQueryFragment{}, diagnostics, false
 		}
 	}
+	if field.Encoding.Kind == EncodingStringLexBSI {
+		if field.Encoding.NeedsStringRemainderLookup() {
+			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI BETWEEN predicates requiring remainder lookup are not lowered in this slice"), false
+		}
+		lower, diagnostics, ok = quantaIntermediateNormalizeStringLexBSIValue(field, lower)
+		if !ok {
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+		upper, diagnostics, ok = quantaIntermediateNormalizeStringLexBSIValue(field, upper)
+		if !ok {
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+	}
 	begin, ok := quantaIntermediateBigInt(lower)
 	if !ok {
 		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("only integer BSI BETWEEN values are lowered in this slice"), false
@@ -1338,6 +1351,17 @@ func (l QuantaIntermediateLowerer) lowerBetweenPredicate(predicate Predicate, pa
 		EndLiteral:      endLiteral,
 		HasLiteralRange: true,
 	}, nil, true
+}
+
+func quantaIntermediateNormalizeStringLexBSIValue(field FieldRef, value LiteralExpr) (LiteralExpr, DiagnosticSet, bool) {
+	if value.Kind != ValueString {
+		return LiteralExpr{}, quantaIntermediateDiagnostics("StringLexBSI BETWEEN predicates require string values"), false
+	}
+	text, ok := value.Value.(string)
+	if !ok {
+		return LiteralExpr{}, quantaIntermediateDiagnostics("StringLexBSI BETWEEN predicates require string values"), false
+	}
+	return Literal(ValueInt, quantaIntermediateStringLexBSIValue(text, field.Encoding.PrefixLength)), nil, true
 }
 
 func quantaIntermediateApplyCombinator(fragment QuantaQueryFragment, predicate Predicate) QuantaQueryFragment {
@@ -2208,6 +2232,11 @@ func quantaIntermediateReferenceNow() time.Time {
 
 func quantaIntermediateBigInt(literal LiteralExpr) (*big.Int, bool) {
 	switch typed := literal.Value.(type) {
+	case *big.Int:
+		if typed == nil {
+			return nil, false
+		}
+		return new(big.Int).Set(typed), true
 	case int:
 		return big.NewInt(int64(typed)), true
 	case int8:

@@ -978,6 +978,58 @@ func TestQuantaIntermediateLowererLowersNotBetweenToBSIDifferenceRange(t *testin
 	}
 }
 
+func TestQuantaIntermediateLowererLowersStringLexBSIBetweenPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "customers_qa"},
+		Name:     "cust_id",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 0}),
+	}
+	predicate := Predicate{Expr: Binary(
+		BinaryOpBetween,
+		Field(field),
+		List(Literal(ValueString, "105"), Literal(ValueString, "108")),
+	)}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerBetweenPredicate(predicate, ParameterBindingSet{})
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want StringLexBSI RANGE intersect", fragment)
+	}
+	if fragment.Begin.Cmp(quantaIntermediateStringLexBSIValue("105", 0)) != 0 ||
+		fragment.End.Cmp(quantaIntermediateStringLexBSIValue("108", 0)) != 0 {
+		t.Fatalf("range = %v..%v, want lex-encoded string bounds", fragment.Begin, fragment.End)
+	}
+}
+
+func TestQuantaIntermediateLowererLowersStringLexBSINotBetweenPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "customers_qa"},
+		Name:     "cust_id",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 0}),
+	}
+	predicate := Predicate{Expr: Binary(
+		BinaryOpNotBetween,
+		Field(field),
+		List(Literal(ValueString, "104"), Literal(ValueString, "105")),
+	)}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerBetweenPredicate(predicate, ParameterBindingSet{})
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationDifference {
+		t.Fatalf("fragment = %#v, want StringLexBSI RANGE difference", fragment)
+	}
+	if fragment.Begin.Cmp(quantaIntermediateStringLexBSIValue("104", 0)) != 0 ||
+		fragment.End.Cmp(quantaIntermediateStringLexBSIValue("105", 0)) != 0 {
+		t.Fatalf("range = %v..%v, want lex-encoded string bounds", fragment.Begin, fragment.End)
+	}
+}
+
 func TestQuantaIntermediateLowererLowersBSIInPredicate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
