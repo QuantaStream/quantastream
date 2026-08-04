@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/core"
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
@@ -95,6 +96,113 @@ func TestStandardProcessNativeGRPCServesNodeAPIs(t *testing.T) {
 	if got != "loaded" {
 		t.Fatalf("KVStore.Lookup() = %#v, want loaded", got)
 	}
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
+	}
+}
+
+func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewSingleNodeConnection(dialCtx, "standard-native-loader-test", process.NativeNode.Address)
+	if err != nil {
+		t.Fatalf("NewSingleNodeConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	loaderSession, err := core.OpenSession(
+		core.NewTableCacheStruct(),
+		process.Backend.ConfigBaseDir(config),
+		"sample",
+		false,
+		remoteConn,
+	)
+	if err != nil {
+		t.Fatalf("OpenSession() over native gRPC error = %v", err)
+	}
+	loaderSessionClosed := false
+	defer func() {
+		if !loaderSessionClosed {
+			_ = loaderSession.CloseSession()
+		}
+	}()
+
+	putResult, err := loaderSession.PutRowWithOptions("sample", map[string]interface{}{
+		"id":   101,
+		"city": "Buenos Aires",
+	}, 0, false, false, core.PutRowOptions{
+		EventID:      "native-loader-smoke-101",
+		Source:       "native-loader-smoke",
+		EventTime:    time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
+		SourceOffset: "unit-test:101",
+	})
+	if err != nil {
+		t.Fatalf("PutRowWithOptions() over native gRPC error = %v", err)
+	}
+	if !putResult.Inserted || putResult.ColumnID == 0 {
+		t.Fatalf("PutRowWithOptions() result = %+v, want inserted row with column ID", putResult)
+	}
+	if err := loaderSession.Flush(); err != nil {
+		t.Fatalf("loader Flush() over native gRPC error = %v", err)
+	}
+
+	result, err := process.FrontDoor.Server.ExecuteSQL(
+		context.Background(),
+		"select id, city from sample where id = 101",
+		qsbridge.ExecutionOptions{},
+	)
+	if err != nil {
+		t.Fatalf("verification SELECT error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("verification SELECT diagnostics = %#v runtime=%#v, want none", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("verification SELECT chunk diagnostics = %#v", chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("verification rows = %#v, want one projected row", chunk.Rows)
+	}
+	if fmt.Sprint(chunk.Rows[0][0].Value) != "101" || fmt.Sprint(chunk.Rows[0][1].Value) != "Buenos Aires" {
+		t.Fatalf("verification row = %#v, want [101 Buenos Aires]", chunk.Rows[0])
+	}
+	if err := loaderSession.CloseSession(); err != nil {
+		t.Fatalf("loader CloseSession() over native gRPC error = %v", err)
+	}
+	loaderSessionClosed = true
 
 	cancel()
 	process.NativeNode.Close()
