@@ -78,6 +78,7 @@ type PrimaryKeyResolveRequest struct {
 type PrimaryKeyResolveResult struct {
 	ColumnID    uint64
 	ExistingRow bool
+	Profile     PrimaryKeyResolveProfile
 }
 
 // KVPrimaryKeyResolver preserves the current KV-backed primary-key lookup and
@@ -114,6 +115,7 @@ type PutRowResult struct {
 	RelationElapsed       time.Duration
 	AttributeElapsed      time.Duration
 	TotalElapsed          time.Duration
+	PrimaryKey            PrimaryKeyResolveProfile
 }
 
 type putRowRequest struct {
@@ -130,11 +132,12 @@ type putRowRequest struct {
 }
 
 type putRowIdentity struct {
-	columnID         uint64
-	timestamp        time.Time
-	primaryKeyValues []interface{}
-	lookupValue      string
-	updateExisting   bool
+	columnID          uint64
+	timestamp         time.Time
+	primaryKeyValues  []interface{}
+	lookupValue       string
+	updateExisting    bool
+	primaryKeyProfile PrimaryKeyResolveProfile
 }
 
 type putRowStageTimings struct {
@@ -145,6 +148,7 @@ type putRowStageTimings struct {
 	relationElapsed       time.Duration
 	attributeElapsed      time.Duration
 	childRowCount         int
+	primaryKeyProfile     PrimaryKeyResolveProfile
 }
 
 // TableBuffer - State info for table.
@@ -429,6 +433,7 @@ func (s *Session) normalizePutRowSource(req *putRowRequest) error {
 func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath string, providedColID uint64,
 	isChild, ignoreSourcePath, useNerdCapitalization bool) (PutRowResult, error) {
 
+	var timings putRowStageTimings
 	return s.putRow(putRowRequest{
 		tableName:             name,
 		row:                   row,
@@ -437,6 +442,7 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 		isChild:               isChild,
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerdCapitalization,
+		timings:               &timings,
 	})
 }
 
@@ -488,6 +494,13 @@ func (req putRowRequest) addChildRows(count int) {
 	req.timings.childRowCount += count
 }
 
+func (req putRowRequest) addPrimaryKeyProfile(profile PrimaryKeyResolveProfile) {
+	if req.timings == nil {
+		return
+	}
+	req.timings.primaryKeyProfile = req.timings.primaryKeyProfile.add(profile)
+}
+
 func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity, totalElapsed time.Duration) PutRowResult {
 	result := PutRowResult{
 		TableName:       req.tableName,
@@ -508,13 +521,16 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 	result.ChildExpansionElapsed = req.timings.childExpansionElapsed
 	result.RelationElapsed = req.timings.relationElapsed
 	result.AttributeElapsed = req.timings.attributeElapsed
+	result.PrimaryKey = req.timings.primaryKeyProfile
 	return result
 }
 
 func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
 
-	return s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
+	identity, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
 		req.ignoreSourcePath, req.useNerdCapitalization)
+	req.addPrimaryKeyProfile(identity.primaryKeyProfile)
+	return identity, err
 }
 
 func (s *Session) mapAlternateKeys(req putRowRequest, tbuf *TableBuffer) error {
@@ -587,6 +603,7 @@ func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *At
 		if childLogicalRows <= 0 {
 			childLogicalRows = 1
 		}
+		req.addPrimaryKeyProfile(childResult.PrimaryKey)
 		req.addChildRows(childLogicalRows)
 	}
 	return nil
@@ -1054,17 +1071,18 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		}
 	}
 
-	updateExisting, err := s.resolvePrimaryKeyColumnID(tbuf, pkLookupVal.String(), providedColID, directColumnID)
+	updateExisting, primaryKeyProfile, err := s.resolvePrimaryKeyColumnID(tbuf, pkLookupVal.String(), providedColID, directColumnID)
 	if err != nil {
 		return putRowIdentity{}, err
 	}
 	if updateExisting {
 		return putRowIdentity{
-			columnID:         tbuf.CurrentColumnID,
-			timestamp:        tbuf.CurrentTimestamp,
-			primaryKeyValues: tbuf.CurrentPKValue,
-			lookupValue:      pkLookupVal.String(),
-			updateExisting:   true,
+			columnID:          tbuf.CurrentColumnID,
+			timestamp:         tbuf.CurrentTimestamp,
+			primaryKeyValues:  tbuf.CurrentPKValue,
+			lookupValue:       pkLookupVal.String(),
+			updateExisting:    true,
+			primaryKeyProfile: primaryKeyProfile,
 		}, nil
 	}
 
@@ -1079,15 +1097,16 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 	}
 
 	return putRowIdentity{
-		columnID:         tbuf.CurrentColumnID,
-		timestamp:        tbuf.CurrentTimestamp,
-		primaryKeyValues: tbuf.CurrentPKValue,
-		lookupValue:      pkLookupVal.String(),
+		columnID:          tbuf.CurrentColumnID,
+		timestamp:         tbuf.CurrentTimestamp,
+		primaryKeyValues:  tbuf.CurrentPKValue,
+		lookupValue:       pkLookupVal.String(),
+		primaryKeyProfile: primaryKeyProfile,
 	}, nil
 }
 
 func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue string, providedColID uint64,
-	directColumnID bool) (bool, error) {
+	directColumnID bool) (bool, PrimaryKeyResolveProfile, error) {
 
 	resolver := s.primaryKeyColumnIDResolver()
 	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
@@ -1098,12 +1117,12 @@ func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue strin
 		DirectColumnID:   directColumnID,
 	})
 	if err != nil {
-		return false, err
+		return false, result.Profile, err
 	}
 	if result.ColumnID != 0 {
 		tbuf.CurrentColumnID = result.ColumnID
 	}
-	return result.ExistingRow, nil
+	return result.ExistingRow, result.Profile, nil
 }
 
 func (s *Session) primaryKeyColumnIDResolver() PrimaryKeyResolver {
@@ -1124,53 +1143,89 @@ func (s *Session) SetPrimaryKeyResolver(resolver PrimaryKeyResolver) {
 }
 
 func (KVPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
+	totalStart := time.Now()
+	profile := PrimaryKeyResolveProfile{ResolveCount: 1}
+
+	finish := func(columnID uint64, existingRow bool) PrimaryKeyResolveResult {
+		profile.TotalElapsed = time.Since(totalStart)
+		return PrimaryKeyResolveResult{
+			ColumnID:    columnID,
+			ExistingRow: existingRow,
+			Profile:     profile,
+		}
+	}
+
 	session := req.Session
 	tbuf := req.TableBuffer
 	if session == nil {
-		return PrimaryKeyResolveResult{}, fmt.Errorf("primary key resolver session is nil")
+		return finish(0, false), fmt.Errorf("primary key resolver session is nil")
 	}
 	if tbuf == nil {
-		return PrimaryKeyResolveResult{}, fmt.Errorf("primary key resolver table buffer is nil")
+		return finish(0, false), fmt.Errorf("primary key resolver table buffer is nil")
 	}
 	if tbuf.ShouldLookupPrimaryKey() {
+		profile.LookupRequiredCount++
 		// Can't use batch operation here unfortunately, but at least we have local batch cache.
 		localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
+		localLookupStart := time.Now()
+		profile.LocalCacheLookupCount++
 		if lColID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, req.LookupValue); ok {
+			profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
+			profile.LocalCacheHitCount++
 			tbuf.CurrentColumnID = lColID
 			u.Warnf("PK %s found in cache.  PK mapping error for %s?", req.LookupValue, tbuf.Table.Name)
-			return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
+			return finish(tbuf.CurrentColumnID, false), nil
 		}
+		profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
+		kvLookupStart := time.Now()
+		profile.KVLookupCount++
 		colID, found, err := session.lookupColumnID(tbuf, req.LookupValue, "")
+		profile.KVLookupElapsed += time.Since(kvLookupStart)
 		if err != nil {
-			return PrimaryKeyResolveResult{}, fmt.Errorf("Dedup lookup error - %v", err)
+			return finish(0, false), fmt.Errorf("Dedup lookup error - %v", err)
 		}
 		if found {
+			profile.KVHitCount++
 			tbuf.CurrentColumnID = colID
-			return PrimaryKeyResolveResult{ColumnID: colID, ExistingRow: true}, nil
+			return finish(colID, true), nil
 		}
 		if req.ProvidedColumnID == 0 {
+			allocationStart := time.Now()
+			profile.RownumAllocationCount++
 			if err := tbuf.NextColumnID(session.BitIndex); err != nil {
-				return PrimaryKeyResolveResult{}, err
+				profile.RownumAllocationElapsed += time.Since(allocationStart)
+				return finish(0, false), err
 			}
+			profile.RownumAllocationElapsed += time.Since(allocationStart)
 		} else {
+			profile.ProvidedColumnIDCount++
 			tbuf.CurrentColumnID = req.ProvidedColumnID
 		}
 		// Add the PK via local cache batch operation.
+		batchCacheWriteStart := time.Now()
+		profile.BatchCacheWriteCount++
 		session.BatchBuffer.SetPartitionedString(localKey, req.LookupValue, tbuf.CurrentColumnID)
-		return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
+		profile.BatchCacheWriteElapsed += time.Since(batchCacheWriteStart)
+		return finish(tbuf.CurrentColumnID, false), nil
 	}
 
 	if req.DirectColumnID {
-		return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
+		profile.DirectColumnIDCount++
+		return finish(tbuf.CurrentColumnID, false), nil
 	}
 	if req.ProvidedColumnID == 0 {
+		allocationStart := time.Now()
+		profile.RownumAllocationCount++
 		if err := tbuf.NextColumnID(session.BitIndex); err != nil {
-			return PrimaryKeyResolveResult{}, err
+			profile.RownumAllocationElapsed += time.Since(allocationStart)
+			return finish(0, false), err
 		}
+		profile.RownumAllocationElapsed += time.Since(allocationStart)
 	} else {
+		profile.ProvidedColumnIDCount++
 		tbuf.CurrentColumnID = req.ProvidedColumnID
 	}
-	return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
+	return finish(tbuf.CurrentColumnID, false), nil
 }
 
 // Handle Secondary Keys.  Create the index in backing store

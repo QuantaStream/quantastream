@@ -238,6 +238,12 @@ The script writes the JSON report and console log under
 The benchmark verifies final SQL counts after timing stops. Normal `go test`
 does not run it.
 
+Native ingest reports include PutRow stage timings, flush timings, and a
+primary-key resolver profile. The resolver profile breaks identity work into
+lookup-required rows, local batch-cache lookups and hits, KV lookups and hits,
+rownum allocation, provided/direct column-id paths, and staged primary-key
+cache writes. Use those counters before changing the primary-key storage design.
+
 Compare two native ingest benchmark reports with:
 
 ```bash

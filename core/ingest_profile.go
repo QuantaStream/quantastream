@@ -30,16 +30,18 @@ type RouterPutRowProfileSummary struct {
 	ChildExpansionElapsed time.Duration                         `json:"child_expansion_elapsed_nanos"`
 	RelationElapsed       time.Duration                         `json:"relation_elapsed_nanos"`
 	AttributeElapsed      time.Duration                         `json:"attribute_elapsed_nanos"`
+	PrimaryKey            PrimaryKeyResolveProfile              `json:"primary_key"`
 	ByTable               map[string]RouterPutRowProfileCounter `json:"by_table,omitempty"`
 	ByShard               map[string]RouterPutRowProfileCounter `json:"by_shard,omitempty"`
 }
 
 // RouterPutRowProfileCounter is a grouped count/timing accumulator.
 type RouterPutRowProfileCounter struct {
-	RecordCount     int           `json:"record_count"`
-	ChildRowCount   int           `json:"child_row_count"`
-	LogicalRowCount int           `json:"logical_row_count"`
-	TotalElapsed    time.Duration `json:"total_elapsed_nanos"`
+	RecordCount     int                      `json:"record_count"`
+	ChildRowCount   int                      `json:"child_row_count"`
+	LogicalRowCount int                      `json:"logical_row_count"`
+	TotalElapsed    time.Duration            `json:"total_elapsed_nanos"`
+	PrimaryKey      PrimaryKeyResolveProfile `json:"primary_key"`
 }
 
 // Callback returns the function shape expected by SessionRouterConfig.
@@ -82,6 +84,7 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	p.summary.ChildExpansionElapsed += result.ChildExpansionElapsed
 	p.summary.RelationElapsed += result.RelationElapsed
 	p.summary.AttributeElapsed += result.AttributeElapsed
+	p.summary.PrimaryKey = p.summary.PrimaryKey.add(result.PrimaryKey)
 	tableName := firstNonEmpty(result.TableName, record.TableName)
 	if tableName != "" {
 		p.summary.ByTable[tableName] = addRouterPutRowProfileCounter(p.summary.ByTable[tableName], result)
@@ -137,6 +140,7 @@ func addRouterPutRowProfileCounter(counter RouterPutRowProfileCounter, result Pu
 	counter.ChildRowCount += result.ChildRowCount
 	counter.LogicalRowCount += logicalRows
 	counter.TotalElapsed += result.TotalElapsed
+	counter.PrimaryKey = counter.PrimaryKey.add(result.PrimaryKey)
 	return counter
 }
 

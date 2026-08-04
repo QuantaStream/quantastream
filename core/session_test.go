@@ -182,11 +182,13 @@ func TestResolvePrimaryKeyColumnIDUsesProvidedIDWhenLookupDisabled(t *testing.T)
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 
-	updateExisting, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
 
 	require.NoError(t, err)
 	assert.False(t, updateExisting)
 	assert.Equal(t, uint64(99), tbuf.CurrentColumnID)
+	assert.Equal(t, 1, profile.ResolveCount)
+	assert.Equal(t, 1, profile.ProvidedColumnIDCount)
 }
 
 func TestResolvePrimaryKeyColumnIDPreservesDirectColumnID(t *testing.T) {
@@ -201,16 +203,26 @@ func TestResolvePrimaryKeyColumnIDPreservesDirectColumnID(t *testing.T) {
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}, CurrentColumnID: 7}
 
-	updateExisting, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, true)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, true)
 
 	require.NoError(t, err)
 	assert.False(t, updateExisting)
 	assert.Equal(t, uint64(7), tbuf.CurrentColumnID)
+	assert.Equal(t, 1, profile.ResolveCount)
+	assert.Equal(t, 1, profile.DirectColumnIDCount)
 }
 
 func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	resolver := &recordingPrimaryKeyResolver{
-		result: PrimaryKeyResolveResult{ColumnID: 55, ExistingRow: true},
+		result: PrimaryKeyResolveResult{
+			ColumnID:    55,
+			ExistingRow: true,
+			Profile: PrimaryKeyResolveProfile{
+				ResolveCount:  1,
+				KVLookupCount: 1,
+				KVHitCount:    1,
+			},
+		},
 	}
 	session := &Session{}
 	session.SetPrimaryKeyResolver(resolver)
@@ -224,12 +236,13 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 
-	updateExisting, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
 
 	require.NoError(t, err)
 	assert.True(t, resolver.called)
 	assert.True(t, updateExisting)
 	assert.Equal(t, uint64(55), tbuf.CurrentColumnID)
+	assert.Equal(t, resolver.result.Profile, profile)
 	assert.Same(t, session, resolver.request.Session)
 	assert.Same(t, tbuf, resolver.request.TableBuffer)
 	assert.Equal(t, "1001", resolver.request.LookupValue)

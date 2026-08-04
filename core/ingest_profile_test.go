@@ -24,11 +24,34 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 		RelationElapsed:       5 * time.Millisecond,
 		AttributeElapsed:      6 * time.Millisecond,
 		TotalElapsed:          21 * time.Millisecond,
+		PrimaryKey: PrimaryKeyResolveProfile{
+			ResolveCount:            4,
+			LookupRequiredCount:     4,
+			LocalCacheLookupCount:   4,
+			LocalCacheHitCount:      1,
+			KVLookupCount:           3,
+			KVHitCount:              1,
+			RownumAllocationCount:   2,
+			BatchCacheWriteCount:    2,
+			TotalElapsed:            8 * time.Millisecond,
+			KVLookupElapsed:         3 * time.Millisecond,
+			RownumAllocationElapsed: time.Millisecond,
+			BatchCacheWriteElapsed:  time.Millisecond,
+		},
 	})
 	callback("shard1", IngestRecord{TableName: "orders"}, PutRowResult{
 		TableName:    "orders",
 		ExistingRow:  true,
 		TotalElapsed: 7 * time.Millisecond,
+		PrimaryKey: PrimaryKeyResolveProfile{
+			ResolveCount:          1,
+			LookupRequiredCount:   1,
+			LocalCacheLookupCount: 1,
+			KVLookupCount:         1,
+			KVHitCount:            1,
+			TotalElapsed:          2 * time.Millisecond,
+			KVLookupElapsed:       time.Millisecond,
+		},
 	})
 
 	snapshot := profile.Snapshot()
@@ -45,11 +68,39 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	require.Equal(t, 4*time.Millisecond, snapshot.ChildExpansionElapsed)
 	require.Equal(t, 5*time.Millisecond, snapshot.RelationElapsed)
 	require.Equal(t, 6*time.Millisecond, snapshot.AttributeElapsed)
+	require.Equal(t, PrimaryKeyResolveProfile{
+		ResolveCount:            5,
+		LookupRequiredCount:     5,
+		LocalCacheLookupCount:   5,
+		LocalCacheHitCount:      1,
+		KVLookupCount:           4,
+		KVHitCount:              2,
+		RownumAllocationCount:   2,
+		BatchCacheWriteCount:    2,
+		TotalElapsed:            10 * time.Millisecond,
+		KVLookupElapsed:         4 * time.Millisecond,
+		RownumAllocationElapsed: time.Millisecond,
+		BatchCacheWriteElapsed:  time.Millisecond,
+	}, snapshot.PrimaryKey)
 	require.Equal(t, RouterPutRowProfileCounter{
 		RecordCount:     2,
 		ChildRowCount:   3,
 		LogicalRowCount: 5,
 		TotalElapsed:    28 * time.Millisecond,
+		PrimaryKey: PrimaryKeyResolveProfile{
+			ResolveCount:            5,
+			LookupRequiredCount:     5,
+			LocalCacheLookupCount:   5,
+			LocalCacheHitCount:      1,
+			KVLookupCount:           4,
+			KVHitCount:              2,
+			RownumAllocationCount:   2,
+			BatchCacheWriteCount:    2,
+			TotalElapsed:            10 * time.Millisecond,
+			KVLookupElapsed:         4 * time.Millisecond,
+			RownumAllocationElapsed: time.Millisecond,
+			BatchCacheWriteElapsed:  time.Millisecond,
+		},
 	}, snapshot.ByTable["orders"])
 	require.Equal(t, 1, snapshot.ByShard["shard0"].RecordCount)
 	require.Equal(t, 1, snapshot.ByShard["shard1"].RecordCount)

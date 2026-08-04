@@ -64,7 +64,22 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 		10,
 		40,
 		50,
-		core.RouterPutRowProfileSummary{TotalElapsed: 1500 * time.Microsecond},
+		core.RouterPutRowProfileSummary{
+			TotalElapsed: 1500 * time.Microsecond,
+			PrimaryKey: core.PrimaryKeyResolveProfile{
+				ResolveCount:            50,
+				LocalCacheLookupCount:   30,
+				LocalCacheHitCount:      10,
+				KVLookupCount:           20,
+				KVHitCount:              5,
+				RownumAllocationCount:   15,
+				BatchCacheWriteCount:    15,
+				TotalElapsed:            5000 * time.Microsecond,
+				KVLookupElapsed:         2000 * time.Microsecond,
+				RownumAllocationElapsed: 750 * time.Microsecond,
+				BatchCacheWriteElapsed:  300 * time.Microsecond,
+			},
+		},
 		core.RouterFlushProfileSummary{
 			FlushCount:                5,
 			TotalElapsed:              2500 * time.Microsecond,
@@ -85,6 +100,18 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["flushes_per_operation"], 2.5; got != want {
 		t.Fatalf("flushes/op = %v, want %v", got, want)
 	}
+	if got, want := metrics["primary_key_resolves_per_logical_row"], 1.0; got != want {
+		t.Fatalf("primary key resolves/logical row = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_total_microseconds_per_resolve"], 100.0; got != want {
+		t.Fatalf("primary key total us/resolve = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_local_cache_hit_percent"], 100.0/3.0; got != want {
+		t.Fatalf("primary key local cache hit percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_kv_lookup_microseconds_per_lookup"], 100.0; got != want {
+		t.Fatalf("primary key kv lookup us/lookup = %v, want %v", got, want)
+	}
 }
 
 func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
@@ -92,18 +119,20 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		Profile: "baseline",
 		Mode:    "inabox-standard",
 		Metrics: map[string]float64{
-			"logical_rows_per_second":    1000,
-			"put_microseconds_per_order": 50,
-			"custom_metric":              2,
+			"logical_rows_per_second":                    1000,
+			"put_microseconds_per_order":                 50,
+			"primary_key_total_microseconds_per_resolve": 10,
+			"custom_metric":                              2,
 		},
 	}
 	target := NativeIngestBenchmarkReport{
 		Profile: "target",
 		Mode:    "inabox-standard",
 		Metrics: map[string]float64{
-			"logical_rows_per_second":    1500,
-			"put_microseconds_per_order": 40,
-			"custom_metric":              3,
+			"logical_rows_per_second":                    1500,
+			"put_microseconds_per_order":                 40,
+			"primary_key_total_microseconds_per_resolve": 8,
+			"custom_metric":                              3,
 		},
 	}
 
@@ -127,6 +156,7 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"Target: target (inabox-standard)",
 		"| logical_rows_per_second | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",
 		"| put_microseconds_per_order | 50 us/order | 40 us/order | -10 us/order | 0.80x | better |",
+		"| primary_key_total_microseconds_per_resolve | 10 us/resolve | 8 us/resolve | -2 us/resolve | 0.80x | better |",
 	} {
 		if !strings.Contains(markdown, fragment) {
 			t.Fatalf("markdown missing %q:\n%s", fragment, markdown)

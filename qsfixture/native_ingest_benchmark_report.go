@@ -138,7 +138,7 @@ func NativeIngestBenchmarkMetrics(
 	if elapsedSeconds <= 0 {
 		return map[string]float64{}
 	}
-	return map[string]float64{
+	metrics := map[string]float64{
 		"orders_per_second":            float64(totalOrders) / elapsedSeconds,
 		"lineitems_per_second":         float64(totalLineitems) / elapsedSeconds,
 		"logical_rows_per_second":      float64(totalLogicalRows) / elapsedSeconds,
@@ -149,6 +149,15 @@ func NativeIngestBenchmarkMetrics(
 		"bsi_entries_per_logical_row":  float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
 		"kv_entries_per_logical_row":   float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
 	}
+	pk := putSnapshot.PrimaryKey
+	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
+	metrics["primary_key_total_microseconds_per_resolve"] = durationMicrosPerCount(pk.TotalElapsed, pk.ResolveCount)
+	metrics["primary_key_local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
+	metrics["primary_key_kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
+	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
+	metrics["primary_key_allocation_microseconds_per_allocation"] = durationMicrosPerCount(pk.RownumAllocationElapsed, pk.RownumAllocationCount)
+	metrics["primary_key_batch_cache_write_microseconds_per_write"] = durationMicrosPerCount(pk.BatchCacheWriteElapsed, pk.BatchCacheWriteCount)
+	return metrics
 }
 
 // NativeIngestBenchmarkComparison summarizes two native ingest reports.
@@ -195,6 +204,13 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "bsi_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "kv_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "logical_rows_per_order", unit: "rows/order", higherIsBetter: true},
+	{name: "primary_key_resolves_per_logical_row", unit: "resolves/row", higherIsBetter: false},
+	{name: "primary_key_total_microseconds_per_resolve", unit: "us/resolve", higherIsBetter: false},
+	{name: "primary_key_local_cache_hit_percent", unit: "percent", higherIsBetter: true},
+	{name: "primary_key_kv_hit_percent", unit: "percent", higherIsBetter: false},
+	{name: "primary_key_kv_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
+	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},
+	{name: "primary_key_batch_cache_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
 }
 
 // CompareNativeIngestBenchmarkReports compares metrics from two reports.
@@ -349,6 +365,17 @@ func formatNativeIngestBenchmarkRatio(value float64) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%.2fx", value)
+}
+
+func durationMicrosPerCount(duration time.Duration, count int) float64 {
+	return float64(duration.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, count))
+}
+
+func percentForCounts(numerator int, denominator int) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return 100 * float64(numerator) / float64(denominator)
 }
 
 func copyNativeIngestBenchmarkMetrics(src map[string]float64) map[string]float64 {
