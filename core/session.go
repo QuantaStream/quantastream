@@ -57,6 +57,16 @@ type Session struct {
 	tableCache *TableCacheStruct
 }
 
+type putRowRequest struct {
+	tableName             string
+	row                   interface{}
+	pqTablePath           string
+	providedColID         uint64
+	isChild               bool
+	ignoreSourcePath      bool
+	useNerdCapitalization bool
+}
+
 // TableBuffer - State info for table.
 type TableBuffer struct {
 	Table            *Table // table schema
@@ -283,9 +293,16 @@ func (s *Session) CurrentColumnID(name string) (uint64, error) {
 func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ignoreSourcePath, useNerd bool) error {
 
 	s.ResetRowCache()
-	pqTablePath := "/"
+	req := putRowRequest{
+		tableName:             name,
+		row:                   row,
+		pqTablePath:           "/",
+		providedColID:         providedColID,
+		ignoreSourcePath:      ignoreSourcePath,
+		useNerdCapitalization: useNerd,
+	}
 	if r, ok := row.(*reader.ParquetReader); ok {
-		pqTablePath = fmt.Sprintf("%s.%s", r.SchemaHandler.GetRootExName(), name)
+		req.pqTablePath = fmt.Sprintf("%s.%s", r.SchemaHandler.GetRootExName(), name)
 	} else if r, ok := row.(map[string]interface{}); ok {
 		if tbuf, ok2 := s.TableBuffers[name]; ok2 {
 			tbuf.rowCache = r
@@ -295,29 +312,42 @@ func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ign
 	} else {
 		return fmt.Errorf("cannot process row type %T", row)
 	}
-	return s.recursivePutRow(name, row, pqTablePath, providedColID, false, ignoreSourcePath, useNerd)
+	return s.putRow(req)
 }
 
 func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath string, providedColID uint64,
 	isChild, ignoreSourcePath, useNerdCapitalization bool) error {
 
-	tbuf, ok := s.TableBuffers[name]
+	return s.putRow(putRowRequest{
+		tableName:             name,
+		row:                   row,
+		pqTablePath:           pqTablePath,
+		providedColID:         providedColID,
+		isChild:               isChild,
+		ignoreSourcePath:      ignoreSourcePath,
+		useNerdCapitalization: useNerdCapitalization,
+	})
+}
+
+func (s *Session) putRow(req putRowRequest) error {
+
+	tbuf, ok := s.TableBuffers[req.tableName]
 	if !ok {
-		return fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", name, pqTablePath)
+		return fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName, req.pqTablePath)
 	}
 	recurse := len(s.TableBuffers) > 1
 	curTable := tbuf.Table
 
 	// Here we force the primary key to be handled first for table so that columnID is established in tbuf
-	isUpdate, err := s.processPrimaryKey(tbuf, row, pqTablePath, providedColID, isChild,
-		ignoreSourcePath, useNerdCapitalization)
+	isUpdate, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
+		req.ignoreSourcePath, req.useNerdCapitalization)
 	if err != nil {
 		return err
 	}
 
 	if curTable.SecondaryKeys != "" {
-		if err := s.processAlternateKeys(tbuf, row, pqTablePath, isChild, ignoreSourcePath,
-			useNerdCapitalization); err != nil {
+		if err := s.processAlternateKeys(tbuf, req.row, req.pqTablePath, req.isChild, req.ignoreSourcePath,
+			req.useNerdCapitalization); err != nil {
 			return err
 		}
 	}
@@ -338,10 +368,10 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 					}
 					for _, z := range vz {
 						// need to populate the rowcache for the child table
-						childBuf.rowCache = row.(map[string]interface{})
+						childBuf.rowCache = req.row.(map[string]interface{})
 						childBuf.rowCache[v.SourceName] = z
 						if err := s.recursivePutRow(v.ChildTable, childBuf.rowCache, v.SourceName,
-							providedColID, true, ignoreSourcePath, useNerdCapitalization); err != nil {
+							req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization); err != nil {
 							return err
 						}
 					}
@@ -360,10 +390,10 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 			var relColumnID uint64
 			okToMap := true
 			//if !s.Nested {
-			if !isChild {
+			if !req.isChild {
 				// Directly provided parent columnID
 				if v.Type == "Integer" && (!relBuf.ShouldLookupPrimaryKey() || fkFieldSpec == "@rownum") {
-					vals, _, err := s.readColumn(row, pqTablePath, &v, false, ignoreSourcePath, useNerdCapitalization)
+					vals, _, err := s.readColumn(req.row, req.pqTablePath, &v, false, req.ignoreSourcePath, req.useNerdCapitalization)
 					//vals, _, err := s.readColumn(row, pqTablePath, &v, false, true, false)
 					if err != nil {
 						return err
@@ -394,7 +424,7 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 					//}
 
 					//lookupKey, err := s.resolveFKLookupKey(&v, tbuf, row, ignoreSourcePath, useNerdCapitalization)
-					lookupKey, err := s.resolveFKLookupKey(&v, tbuf, row, true, false)
+					lookupKey, err := s.resolveFKLookupKey(&v, tbuf, req.row, true, false)
 					if err != nil {
 						return fmt.Errorf("resolveFKLookupKey %v", err)
 					}
@@ -424,8 +454,8 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 				}
 			}
 		} else {
-			vals, pqps, err := s.readColumn(row, pqTablePath, &v, isChild, ignoreSourcePath,
-				useNerdCapitalization)
+			vals, pqps, err := s.readColumn(req.row, req.pqTablePath, &v, req.isChild, req.ignoreSourcePath,
+				req.useNerdCapitalization)
 			if err != nil {
 				return fmt.Errorf("Parquet reader error - %v", err)
 			}
