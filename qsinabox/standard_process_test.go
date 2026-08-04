@@ -291,39 +291,35 @@ func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testi
 		}
 	}()
 
-	for _, envelope := range fixture.Envelopes {
-		route, routeDiagnostics, err := core.BuildSelectedIngestRecordFromEnvelope(envelope, core.IngestEnvelopeRouteOptions{
+	ingestResult, ingestDiagnostics, err := qsfixture.IngestEnvelopesWithSession(qsfixture.SessionEnvelopeIngestRequest{
+		Session:   loaderSession,
+		Envelopes: fixture.Envelopes,
+		RouteOptions: core.IngestEnvelopeRouteOptions{
 			Tables: fixture.Tables,
-		})
-		if routeDiagnostics.BlocksNative() {
-			t.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
-		}
-		if err != nil {
-			t.Fatalf("route envelope %s: %v", envelope.EventID, err)
-		}
+		},
+	})
+	if ingestDiagnostics.BlocksNative() {
+		t.Fatalf("ingest diagnostics = %#v, want none", ingestDiagnostics)
+	}
+	if err != nil {
+		t.Fatalf("IngestEnvelopesWithSession() over native gRPC error = %v", err)
+	}
+	if len(ingestResult.Routes) != 2 || len(ingestResult.PutRows) != 2 {
+		t.Fatalf("ingest result = %+v, want two routed PutRow results", ingestResult)
+	}
+	for i, route := range ingestResult.Routes {
 		if route.Record.TableName != "orders" {
-			t.Fatalf("route table = %s, want orders", route.Record.TableName)
+			t.Fatalf("route %d table = %s, want orders", i, route.Record.TableName)
 		}
-
-		putResult, err := loaderSession.PutRowWithOptions(route.Record.TableName, route.Record.Data, 0, false, false, core.PutRowOptions{
-			EventID:      route.Record.EventID,
-			Source:       route.Record.Source,
-			EventTime:    route.Record.EventTime,
-			SourceOffset: route.Record.SourceOffset,
-			PayloadHash:  route.Record.PayloadHash,
-			DedupTTL:     route.Record.DedupTTL,
-		})
-		if err != nil {
-			t.Fatalf("PutRowWithOptions(%s) over native gRPC error = %v", envelope.EventID, err)
-		}
+		putResult := ingestResult.PutRows[i]
 		if !putResult.Inserted || putResult.ColumnID == 0 {
-			t.Fatalf("PutRowWithOptions(%s) result = %+v, want inserted order with column ID", envelope.EventID, putResult)
+			t.Fatalf("PutRow result %d = %+v, want inserted order with column ID", i, putResult)
 		}
 	}
-	if err := loaderSession.Flush(); err != nil {
-		t.Fatalf("loader Flush() over native gRPC error = %v", err)
+	if ingestResult.Profile.RecordCount != 2 || ingestResult.Profile.InsertedCount != 2 {
+		t.Fatalf("ingest profile = %+v, want two inserted records", ingestResult.Profile)
 	}
-	flushProfile := loaderSession.LastFlushProfile()
+	flushProfile := ingestResult.FlushProfile
 	if flushProfile.PartitionStringEntryCount == 0 || flushProfile.BSIValueEntryCount == 0 || flushProfile.TotalElapsed <= 0 {
 		t.Fatalf("loader flush profile = %+v, want PK sidecar and BSI write activity", flushProfile)
 	}
