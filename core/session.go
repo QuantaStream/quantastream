@@ -180,6 +180,20 @@ type putRowStageTimings struct {
 	primaryKeyProfile     PrimaryKeyResolveProfile
 }
 
+type putRowStageName string
+
+const (
+	putRowStageIdentity      putRowStageName = "identity"
+	putRowStageAlternateKeys putRowStageName = "alternate_keys"
+	putRowStageRowMappings   putRowStageName = "row_mappings"
+)
+
+type putRowPipelineStage struct {
+	name   putRowStageName
+	record func(*putRowStageTimings, time.Duration)
+	run    func() error
+}
+
 // TableBuffer - State info for table.
 type TableBuffer struct {
 	Table            *Table // table schema
@@ -479,36 +493,78 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 
 func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
 
-	totalStart := req.startedAt
-	if totalStart.IsZero() {
-		totalStart = time.Now()
-	}
-	tbuf, ok := s.TableBuffers[req.tableName]
-	if !ok {
-		return PutRowResult{}, fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName,
-			req.pqTablePath)
-	}
-
-	identityStart := time.Now()
-	identity, err := s.establishRowIdentity(req, tbuf)
-	req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.identityElapsed += elapsed },
-		time.Since(identityStart))
+	totalStart := req.startTime()
+	tbuf, err := s.putRowTableBuffer(req)
 	if err != nil {
 		return PutRowResult{}, err
 	}
-	alternateStart := time.Now()
-	if err := s.mapAlternateKeys(req, tbuf); err != nil {
-		req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.alternateKeysElapsed += elapsed },
-			time.Since(alternateStart))
-		return PutRowResult{}, err
-	}
-	req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.alternateKeysElapsed += elapsed },
-		time.Since(alternateStart))
-	if err := s.mapRowAttributes(req, tbuf, identity); err != nil {
+
+	var identity putRowIdentity
+	if err := s.runPutRowPipeline(req,
+		putRowPipelineStage{
+			name: putRowStageIdentity,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.identityElapsed += elapsed
+			},
+			run: func() error {
+				var err error
+				identity, err = s.establishRowIdentity(req, tbuf)
+				return err
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageAlternateKeys,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.alternateKeysElapsed += elapsed
+			},
+			run: func() error {
+				return s.mapAlternateKeys(req, tbuf)
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageRowMappings,
+			run: func() error {
+				return s.mapRowAttributes(req, tbuf, identity)
+			},
+		},
+	); err != nil {
 		return PutRowResult{}, err
 	}
 
 	return req.putRowResult(tbuf, identity, time.Since(totalStart)), nil
+}
+
+func (req putRowRequest) startTime() time.Time {
+	if req.startedAt.IsZero() {
+		return time.Now()
+	}
+	return req.startedAt
+}
+
+func (s *Session) putRowTableBuffer(req putRowRequest) (*TableBuffer, error) {
+	tbuf, ok := s.TableBuffers[req.tableName]
+	if !ok {
+		return nil, fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName,
+			req.pqTablePath)
+	}
+	return tbuf, nil
+}
+
+func (s *Session) runPutRowPipeline(req putRowRequest, stages ...putRowPipelineStage) error {
+	for _, stage := range stages {
+		if stage.run == nil {
+			return fmt.Errorf("put row stage %s has no runner", stage.name)
+		}
+		stageStart := time.Now()
+		err := stage.run()
+		if stage.record != nil {
+			req.addStageTiming(stage.record, time.Since(stageStart))
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (req putRowRequest) addStageTiming(apply func(*putRowStageTimings, time.Duration), elapsed time.Duration) {

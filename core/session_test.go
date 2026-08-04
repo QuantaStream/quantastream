@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -136,6 +137,80 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 		AttributeElapsed:      6 * time.Millisecond,
 		TotalElapsed:          21 * time.Millisecond,
 	}, result)
+}
+
+func TestRunPutRowPipelineRunsStagesInOrderAndRecordsTimings(t *testing.T) {
+	session := &Session{}
+	req := putRowRequest{timings: &putRowStageTimings{}}
+	var order []putRowStageName
+
+	err := session.runPutRowPipeline(req,
+		putRowPipelineStage{
+			name: putRowStageIdentity,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.identityElapsed += elapsed
+			},
+			run: func() error {
+				time.Sleep(time.Nanosecond)
+				order = append(order, putRowStageIdentity)
+				return nil
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageAlternateKeys,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.alternateKeysElapsed += elapsed
+			},
+			run: func() error {
+				time.Sleep(time.Nanosecond)
+				order = append(order, putRowStageAlternateKeys)
+				return nil
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageRowMappings,
+			run: func() error {
+				order = append(order, putRowStageRowMappings)
+				return nil
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []putRowStageName{putRowStageIdentity, putRowStageAlternateKeys, putRowStageRowMappings}, order)
+	assert.Greater(t, req.timings.identityElapsed, time.Duration(0))
+	assert.Greater(t, req.timings.alternateKeysElapsed, time.Duration(0))
+}
+
+func TestRunPutRowPipelineStopsOnErrorAndRecordsFailedStageTiming(t *testing.T) {
+	session := &Session{}
+	req := putRowRequest{timings: &putRowStageTimings{}}
+	stageErr := errors.New("identity failed")
+	secondStageRan := false
+
+	err := session.runPutRowPipeline(req,
+		putRowPipelineStage{
+			name: putRowStageIdentity,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.identityElapsed += elapsed
+			},
+			run: func() error {
+				time.Sleep(time.Nanosecond)
+				return stageErr
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageAlternateKeys,
+			run: func() error {
+				secondStageRan = true
+				return nil
+			},
+		},
+	)
+
+	require.ErrorIs(t, err, stageErr)
+	assert.False(t, secondStageRan)
+	assert.Greater(t, req.timings.identityElapsed, time.Duration(0))
 }
 
 func TestIngestRecordBuildsPutRowOptions(t *testing.T) {
