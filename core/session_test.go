@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/assert"
-	_ "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 // FIXME: make this work or delete. It never finishes. (nobody home at port 4000)
@@ -38,3 +38,62 @@ func xTestCreateSession(t *testing.T) {
 // 	assert.NotNil(t, c)
 // 	assert.Equal(t, len(c.TableBuffers), 6)
 // }
+
+func TestNormalizePutRowSourceCachesMapRow(t *testing.T) {
+	session := &Session{
+		TableBuffers: map[string]*TableBuffer{
+			"customers": {},
+		},
+	}
+	row := map[string]interface{}{
+		"id":   "1",
+		"name": "Alice",
+	}
+	req := putRowRequest{
+		tableName: "customers",
+		row:       row,
+	}
+
+	err := session.normalizePutRowSource(&req)
+
+	require.NoError(t, err)
+	assert.Equal(t, "/", req.pqTablePath)
+	assert.Equal(t, row, session.TableBuffers["customers"].rowCache)
+}
+
+func TestNormalizePutRowSourceRejectsMissingTableBuffer(t *testing.T) {
+	session := &Session{TableBuffers: map[string]*TableBuffer{}}
+	req := putRowRequest{
+		tableName: "customers",
+		row:       map[string]interface{}{"id": "1"},
+	}
+
+	err := session.normalizePutRowSource(&req)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot locate buffer for table customers")
+}
+
+func TestPutRowWithOptionsRejectsUnsupportedRowType(t *testing.T) {
+	session := &Session{TableBuffers: map[string]*TableBuffer{}}
+
+	result, err := session.PutRowWithOptions("customers", struct{}{}, 0, false, false, PutRowOptions{
+		EventID: "event-1",
+		Source:  "unit-test",
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, PutRowResult{}, result)
+	assert.Contains(t, err.Error(), "cannot process row type")
+}
+
+func TestMapAlternateKeysSkipsTablesWithoutSecondaryKeys(t *testing.T) {
+	session := &Session{}
+	tbuf := &TableBuffer{
+		Table: &Table{BasicTable: &shared.BasicTable{Name: "customers"}},
+	}
+
+	err := session.mapAlternateKeys(putRowRequest{}, tbuf)
+
+	require.NoError(t, err)
+}

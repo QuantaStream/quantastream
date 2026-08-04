@@ -57,6 +57,29 @@ type Session struct {
 	tableCache *TableCacheStruct
 }
 
+// PutRowOptions carries optional ingestion metadata for future streaming
+// idempotency and observability. The current load path preserves existing
+// behavior and does not yet enforce deduplication from these fields.
+type PutRowOptions struct {
+	EventID      string
+	Source       string
+	EventTime    time.Time
+	SourceOffset string
+	PayloadHash  uint64
+	DedupTTL     time.Duration
+}
+
+// PutRowResult describes the row identity observed by the load path. Duplicate
+// and conflict semantics are reserved for the streaming dedup boundary.
+type PutRowResult struct {
+	TableName   string
+	ColumnID    uint64
+	Inserted    bool
+	ExistingRow bool
+	Duplicate   bool
+	Conflict    bool
+}
+
 type putRowRequest struct {
 	tableName             string
 	row                   interface{}
@@ -65,6 +88,15 @@ type putRowRequest struct {
 	isChild               bool
 	ignoreSourcePath      bool
 	useNerdCapitalization bool
+	options               PutRowOptions
+}
+
+type putRowIdentity struct {
+	columnID         uint64
+	timestamp        time.Time
+	primaryKeyValues []interface{}
+	lookupValue      string
+	updateExisting   bool
 }
 
 // TableBuffer - State info for table.
@@ -292,6 +324,15 @@ func (s *Session) CurrentColumnID(name string) (uint64, error) {
 // PutRow - Entry point.  Load a row of data from source (Parquet/Kinesis/Kafka)
 func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ignoreSourcePath, useNerd bool) error {
 
+	_, err := s.PutRowWithOptions(name, row, providedColID, ignoreSourcePath, useNerd, PutRowOptions{})
+	return err
+}
+
+// PutRowWithOptions loads a row while accepting optional ingestion metadata for
+// future streaming idempotency. Today it preserves PutRow storage behavior.
+func (s *Session) PutRowWithOptions(name string, row interface{}, providedColID uint64, ignoreSourcePath, useNerd bool,
+	options PutRowOptions) (PutRowResult, error) {
+
 	s.ResetRowCache()
 	req := putRowRequest{
 		tableName:             name,
@@ -300,25 +341,40 @@ func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ign
 		providedColID:         providedColID,
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerd,
+		options:               options,
 	}
-	if r, ok := row.(*reader.ParquetReader); ok {
-		req.pqTablePath = fmt.Sprintf("%s.%s", r.SchemaHandler.GetRootExName(), name)
-	} else if r, ok := row.(map[string]interface{}); ok {
-		if tbuf, ok2 := s.TableBuffers[name]; ok2 {
-			tbuf.rowCache = r
-		} else {
-			return fmt.Errorf("cannot locate buffer for table %s", name)
-		}
-	} else {
-		return fmt.Errorf("cannot process row type %T", row)
+	if err := s.normalizePutRowSource(&req); err != nil {
+		return PutRowResult{}, err
 	}
 	return s.putRow(req)
+}
+
+func (s *Session) normalizePutRowSource(req *putRowRequest) error {
+
+	if req == nil {
+		return fmt.Errorf("put row request is nil")
+	}
+	if req.pqTablePath == "" {
+		req.pqTablePath = "/"
+	}
+	if r, ok := req.row.(*reader.ParquetReader); ok {
+		req.pqTablePath = fmt.Sprintf("%s.%s", r.SchemaHandler.GetRootExName(), req.tableName)
+	} else if r, ok := req.row.(map[string]interface{}); ok {
+		if tbuf, ok2 := s.TableBuffers[req.tableName]; ok2 {
+			tbuf.rowCache = r
+		} else {
+			return fmt.Errorf("cannot locate buffer for table %s", req.tableName)
+		}
+	} else {
+		return fmt.Errorf("cannot process row type %T", req.row)
+	}
+	return nil
 }
 
 func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath string, providedColID uint64,
 	isChild, ignoreSourcePath, useNerdCapitalization bool) error {
 
-	return s.putRow(putRowRequest{
+	_, err := s.putRow(putRowRequest{
 		tableName:             name,
 		row:                   row,
 		pqTablePath:           pqTablePath,
@@ -327,146 +383,191 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerdCapitalization,
 	})
+	return err
 }
 
-func (s *Session) putRow(req putRowRequest) error {
+func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
 
 	tbuf, ok := s.TableBuffers[req.tableName]
 	if !ok {
-		return fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName, req.pqTablePath)
+		return PutRowResult{}, fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName,
+			req.pqTablePath)
 	}
-	recurse := len(s.TableBuffers) > 1
-	curTable := tbuf.Table
 
-	// Here we force the primary key to be handled first for table so that columnID is established in tbuf
-	isUpdate, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
-		req.ignoreSourcePath, req.useNerdCapitalization)
+	identity, err := s.establishRowIdentity(req, tbuf)
 	if err != nil {
-		return err
+		return PutRowResult{}, err
+	}
+	if err := s.mapAlternateKeys(req, tbuf); err != nil {
+		return PutRowResult{}, err
+	}
+	if err := s.mapRowAttributes(req, tbuf, identity); err != nil {
+		return PutRowResult{}, err
 	}
 
-	if curTable.SecondaryKeys != "" {
-		if err := s.processAlternateKeys(tbuf, req.row, req.pqTablePath, req.isChild, req.ignoreSourcePath,
-			req.useNerdCapitalization); err != nil {
-			return err
-		}
-	}
+	return PutRowResult{
+		TableName:   req.tableName,
+		ColumnID:    tbuf.CurrentColumnID,
+		Inserted:    !identity.updateExisting,
+		ExistingRow: identity.updateExisting,
+	}, nil
+}
 
-	for _, v := range curTable.Attributes {
+func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
+
+	return s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
+		req.ignoreSourcePath, req.useNerdCapitalization)
+}
+
+func (s *Session) mapAlternateKeys(req putRowRequest, tbuf *TableBuffer) error {
+
+	if tbuf.Table.SecondaryKeys == "" {
+		return nil
+	}
+	// Preserved for existing catalog behavior. Streaming ingest should not rely
+	// on alternate keys until this path is intentionally finished behind tests.
+	return s.processAlternateKeys(tbuf, req.row, req.pqTablePath, req.isChild, req.ignoreSourcePath,
+		req.useNerdCapitalization)
+}
+
+func (s *Session) mapRowAttributes(req putRowRequest, tbuf *TableBuffer, identity putRowIdentity) error {
+
+	recurse := len(s.TableBuffers) > 1
+	for _, v := range tbuf.Table.Attributes {
 		if _, found := tbuf.PKMap[v.FieldName]; found {
 			continue // Already handled at this point
 		}
-		// Construct parquet column path
 		if recurse && v.MappingStrategy == "ChildRelation" && v.ChildTable != "" {
-			// Should we verify that it is a parquet repetition type if child relation?
-			if val, err := shared.GetPath(v.SourceName, tbuf.rowCache, false, false); err == nil {
-				if vz, ok := val.([]interface{}); ok {
-					childBuf, ok := s.TableBuffers[v.ChildTable]
-					if !ok {
-						return fmt.Errorf("child table %s invalid or not opened. (recursivePutRow) %s",
-							v.ChildTable, v.SourceName)
-					}
-					for _, z := range vz {
-						// need to populate the rowcache for the child table
-						childBuf.rowCache = req.row.(map[string]interface{})
-						childBuf.rowCache[v.SourceName] = z
-						if err := s.recursivePutRow(v.ChildTable, childBuf.rowCache, v.SourceName,
-							req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization); err != nil {
-							return err
-						}
-					}
-				}
-			} else {
-				u.Errorf("recursion into child  = %s, %v, %#v", v.SourceName, err, tbuf.rowCache)
+			return s.expandChildRows(req, tbuf, &v)
+		}
+		if v.MappingStrategy == "ParentRelation" && v.ForeignKey != "" {
+			if err := s.mapParentRelation(req, tbuf, &v); err != nil {
+				return err
 			}
-			return nil
-		} else if v.MappingStrategy == "ParentRelation" && v.ForeignKey != "" {
-			// Foreign key processing
-			fkTable, fkFieldSpec, _ := v.GetFKSpec()
-			relBuf, ok := s.TableBuffers[fkTable]
-			if !ok {
-				return fmt.Errorf("Could not locate parent table buffer for [%s]", fkTable)
-			}
-			var relColumnID uint64
-			okToMap := true
-			//if !s.Nested {
-			if !req.isChild {
-				// Directly provided parent columnID
-				if v.Type == "Integer" && (!relBuf.ShouldLookupPrimaryKey() || fkFieldSpec == "@rownum") {
-					vals, _, err := s.readColumn(req.row, req.pqTablePath, &v, false, req.ignoreSourcePath, req.useNerdCapitalization)
-					//vals, _, err := s.readColumn(row, pqTablePath, &v, false, true, false)
-					if err != nil {
-						return err
-					}
-					if len(vals) != 1 {
-						return fmt.Errorf("Expected 1 value from direct parent id mapping.")
-					}
-					if vals[0] == nil {
-						continue
-					}
-					switch reflect.ValueOf(vals[0]).Kind() {
-					case reflect.String:
-						if colId, err := strconv.ParseInt(vals[0].(string), 10, 64); err == nil {
-							relColumnID = uint64(colId)
-						} else {
-							return fmt.Errorf("cannot parse string %v for parent relation %v type is %T",
-								vals[0], v.FieldName, vals[0])
-						}
-					case reflect.Int64:
-						relColumnID = uint64(vals[0].(int64))
-					default:
-						return fmt.Errorf("cannot cast %v to uint64 for parent relation %v type is %T",
-							vals[0], v.FieldName, vals[0])
-					}
-				} else { // Lookup based
-					//if v.SourceName == "" {
-					//	return fmt.Errorf("Not a nested import, source must be specified for %s", v.FieldName)
-					//}
+			continue
+		}
+		if err := s.mapAttributeValue(req, &v, identity.updateExisting); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-					//lookupKey, err := s.resolveFKLookupKey(&v, tbuf, row, ignoreSourcePath, useNerdCapitalization)
-					lookupKey, err := s.resolveFKLookupKey(&v, tbuf, req.row, true, false)
-					if err != nil {
-						return fmt.Errorf("resolveFKLookupKey %v", err)
-					}
-					// Not a nested import structure, must lookup the columnID of the relation
-					// TODO: Very expensive, implement lookup cache
-					colID, found, err := s.lookupColumnID(relBuf, lookupKey, fkFieldSpec)
-					if err != nil {
-						return fmt.Errorf("lookupColumnID %s,  %v", lookupKey, err)
-					}
-					if !found {
-						return fmt.Errorf("cannot find value '%s' in parent table '%v' for column %s.%s",
-							lookupKey, v.ForeignKey, v.Parent.Name, v.FieldName)
-					}
-					relColumnID = colID
-					okToMap = found
-					// At the moment, if the FK lookup fails the value is not mapped.
-					// TODO: Make this enforced by default and provide configurability
-				}
-			} else {
-				relColumnID = relBuf.CurrentColumnID
-				// TODO: Verify this with nested structure
-			}
-			if okToMap {
-				// Store the parent table ColumnID in the IntBSI for join queries
-				if _, err := v.MapValue(relColumnID, s, false); err != nil {
-					return fmt.Errorf("Error Mapping FK [%s].[%s] - %v", v.Parent.Name, v.FieldName, err)
-				}
-			}
-		} else {
-			vals, pqps, err := s.readColumn(req.row, req.pqTablePath, &v, req.isChild, req.ignoreSourcePath,
-				req.useNerdCapitalization)
+func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
+
+	val, err := shared.GetPath(attr.SourceName, tbuf.rowCache, false, false)
+	if err != nil {
+		u.Errorf("recursion into child  = %s, %v, %#v", attr.SourceName, err, tbuf.rowCache)
+		return nil
+	}
+	childRows, ok := val.([]interface{})
+	if !ok {
+		return nil
+	}
+	childBuf, ok := s.TableBuffers[attr.ChildTable]
+	if !ok {
+		return fmt.Errorf("child table %s invalid or not opened. (recursivePutRow) %s",
+			attr.ChildTable, attr.SourceName)
+	}
+	for _, childRow := range childRows {
+		// need to populate the rowcache for the child table
+		childBuf.rowCache = req.row.(map[string]interface{})
+		childBuf.rowCache[attr.SourceName] = childRow
+		if err := s.recursivePutRow(attr.ChildTable, childBuf.rowCache, attr.SourceName,
+			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Session) mapParentRelation(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
+
+	fkTable, fkFieldSpec, _ := attr.GetFKSpec()
+	relBuf, ok := s.TableBuffers[fkTable]
+	if !ok {
+		return fmt.Errorf("Could not locate parent table buffer for [%s]", fkTable)
+	}
+	relColumnID, okToMap, err := s.resolveParentRelationColumnID(req, tbuf, relBuf, attr, fkFieldSpec)
+	if err != nil {
+		return err
+	}
+	if !okToMap {
+		return nil
+	}
+	// Store the parent table ColumnID in the IntBSI for join queries
+	if _, err := attr.MapValue(relColumnID, s, false); err != nil {
+		return fmt.Errorf("Error Mapping FK [%s].[%s] - %v", attr.Parent.Name, attr.FieldName, err)
+	}
+	return nil
+}
+
+func (s *Session) resolveParentRelationColumnID(req putRowRequest, tbuf, relBuf *TableBuffer, attr *Attribute,
+	fkFieldSpec string) (uint64, bool, error) {
+
+	if req.isChild {
+		// TODO: Verify this with nested structure.
+		return relBuf.CurrentColumnID, true, nil
+	}
+	if attr.Type == "Integer" && (!relBuf.ShouldLookupPrimaryKey() || fkFieldSpec == "@rownum") {
+		vals, _, err := s.readColumn(req.row, req.pqTablePath, attr, false, req.ignoreSourcePath,
+			req.useNerdCapitalization)
+		if err != nil {
+			return 0, false, err
+		}
+		if len(vals) != 1 {
+			return 0, false, fmt.Errorf("Expected 1 value from direct parent id mapping.")
+		}
+		if vals[0] == nil {
+			return 0, false, nil
+		}
+		switch reflect.ValueOf(vals[0]).Kind() {
+		case reflect.String:
+			colID, err := strconv.ParseInt(vals[0].(string), 10, 64)
 			if err != nil {
-				return fmt.Errorf("Parquet reader error - %v", err)
+				return 0, false, fmt.Errorf("cannot parse string %v for parent relation %v type is %T",
+					vals[0], attr.FieldName, vals[0])
 			}
-			for _, cval := range vals {
-				if cval != nil {
-					// Map and index the value
-					if _, err := v.MapValue(cval, s, isUpdate); err != nil {
-						return fmt.Errorf("%s - %v", pqps[0], err)
-					}
-				}
-			}
+			return uint64(colID), true, nil
+		case reflect.Int64:
+			return uint64(vals[0].(int64)), true, nil
+		default:
+			return 0, false, fmt.Errorf("cannot cast %v to uint64 for parent relation %v type is %T",
+				vals[0], attr.FieldName, vals[0])
+		}
+	}
+
+	lookupKey, err := s.resolveFKLookupKey(attr, tbuf, req.row, true, false)
+	if err != nil {
+		return 0, false, fmt.Errorf("resolveFKLookupKey %v", err)
+	}
+	// Not a nested import structure, must lookup the columnID of the relation.
+	// TODO: Very expensive, implement lookup cache.
+	colID, found, err := s.lookupColumnID(relBuf, lookupKey, fkFieldSpec)
+	if err != nil {
+		return 0, false, fmt.Errorf("lookupColumnID %s,  %v", lookupKey, err)
+	}
+	if !found {
+		return 0, false, fmt.Errorf("cannot find value '%s' in parent table '%v' for column %s.%s",
+			lookupKey, attr.ForeignKey, attr.Parent.Name, attr.FieldName)
+	}
+	return colID, true, nil
+}
+
+func (s *Session) mapAttributeValue(req putRowRequest, attr *Attribute, update bool) error {
+
+	vals, pqps, err := s.readColumn(req.row, req.pqTablePath, attr, req.isChild, req.ignoreSourcePath,
+		req.useNerdCapitalization)
+	if err != nil {
+		return fmt.Errorf("Parquet reader error - %v", err)
+	}
+	for _, cval := range vals {
+		if cval == nil {
+			continue
+		}
+		// Map and index the value
+		if _, err := attr.MapValue(cval, s, update); err != nil {
+			return fmt.Errorf("%s - %v", pqps[0], err)
 		}
 	}
 	return nil
@@ -723,10 +824,8 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 //  1. Uniqueness check against value in KVStore
 //  2. ColumnID establishment for all fields in this row.  Generate if provided value = 0
 //  3. Value mapping.
-//
-// returns true if there are values to process.
 func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTablePath string,
-	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool) (bool, error) {
+	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool) (putRowIdentity, error) {
 
 	if tbuf.Table.TimeQuantumType == "" {
 		tbuf.CurrentTimestamp = time.Unix(0, 0)
@@ -740,18 +839,18 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		var cval interface{}
 		vals, pqps, err := s.readColumn(row, pqTablePath, pk, isChild, ignoreSourcePath, useNerdCapitalization)
 		if err != nil {
-			return false, fmt.Errorf("readColumn for PK - %v", err)
+			return putRowIdentity{}, fmt.Errorf("readColumn for PK - %v", err)
 		}
 		pqColPaths[i] = pqps[0]
 		if vals == nil || len(vals) == 0 || (len(vals) == 1 && vals[0] == nil) {
 			if isChild { // Nothing to do here, no child value
-				return false, nil
+				return putRowIdentity{}, nil
 			}
-			return false, fmt.Errorf("empty or nil value for PK field %s - %s, len %d", pk.FieldName, pqColPaths[i],
+			return putRowIdentity{}, fmt.Errorf("empty or nil value for PK field %s - %s, len %d", pk.FieldName, pqColPaths[i],
 				len(vals))
 		}
 		if len(vals) > 1 {
-			return false, fmt.Errorf("multiple values for PK field %s [%v], Schema mapping issue?",
+			return putRowIdentity{}, fmt.Errorf("multiple values for PK field %s [%v], Schema mapping issue?",
 				pqColPaths[0], err)
 		}
 		cval = vals[0]
@@ -760,7 +859,7 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		var strVal string
 		mval, err := pk.MapValue(cval, nil, false)
 		if err != nil {
-			return false, fmt.Errorf("error mapping PK field %s [%v], Schema mapping issue?",
+			return putRowIdentity{}, fmt.Errorf("error mapping PK field %s [%v], Schema mapping issue?",
 				pqColPaths[0], err)
 		}
 		switch shared.TypeFromString(pk.Type) {
@@ -805,17 +904,23 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		if lColID, ok := s.BatchBuffer.LookupLocalCIDForString(localKey, pkLookupVal.String()); !ok {
 			colID, found, errx := s.lookupColumnID(tbuf, pkLookupVal.String(), "")
 			if errx != nil {
-				return false, fmt.Errorf("Dedup lookup error - %v", errx)
+				return putRowIdentity{}, fmt.Errorf("Dedup lookup error - %v", errx)
 			}
 			if found {
 				tbuf.CurrentColumnID = colID
-				return true, nil
+				return putRowIdentity{
+					columnID:         tbuf.CurrentColumnID,
+					timestamp:        tbuf.CurrentTimestamp,
+					primaryKeyValues: tbuf.CurrentPKValue,
+					lookupValue:      pkLookupVal.String(),
+					updateExisting:   true,
+				}, nil
 			} else {
 				if providedColID == 0 {
 					// Generate new ColumnID.   Lookup the sequencer from the local cache by TQ
 					errx = tbuf.NextColumnID(s.BitIndex)
 					if errx != nil {
-						return false, errx
+						return putRowIdentity{}, errx
 					}
 				} else {
 					tbuf.CurrentColumnID = providedColID
@@ -833,7 +938,7 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 				// Generate new ColumnID.   Lookup the sequencer from the local cache by TQ
 				errx := tbuf.NextColumnID(s.BitIndex)
 				if errx != nil {
-					return false, errx
+					return putRowIdentity{}, errx
 				}
 			} else {
 				tbuf.CurrentColumnID = providedColID
@@ -844,14 +949,19 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 	// Map the value(s) and update table
 	for i, v := range tbuf.CurrentPKValue {
 		if v == nil {
-			return false, fmt.Errorf("PK mapping error %s - nil value", pqColPaths[i])
+			return putRowIdentity{}, fmt.Errorf("PK mapping error %s - nil value", pqColPaths[i])
 		}
 		if _, err := tbuf.PKAttributes[i].MapValue(v, s, false); err != nil {
-			return false, fmt.Errorf("PK mapping error %s - %v", pqColPaths[i], err)
+			return putRowIdentity{}, fmt.Errorf("PK mapping error %s - %v", pqColPaths[i], err)
 		}
 	}
 
-	return false, nil
+	return putRowIdentity{
+		columnID:         tbuf.CurrentColumnID,
+		timestamp:        tbuf.CurrentTimestamp,
+		primaryKeyValues: tbuf.CurrentPKValue,
+		lookupValue:      pkLookupVal.String(),
+	}, nil
 }
 
 // Handle Secondary Keys.  Create the index in backing store
