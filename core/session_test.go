@@ -182,7 +182,7 @@ func TestResolvePrimaryKeyColumnIDUsesProvidedIDWhenLookupDisabled(t *testing.T)
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 
-	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, "")
 
 	require.NoError(t, err)
 	assert.False(t, updateExisting)
@@ -203,7 +203,7 @@ func TestResolvePrimaryKeyColumnIDPreservesDirectColumnID(t *testing.T) {
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}, CurrentColumnID: 7}
 
-	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, true)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, true, "")
 
 	require.NoError(t, err)
 	assert.False(t, updateExisting)
@@ -236,7 +236,7 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 
-	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, PrimaryKeyModeAssumeNew)
 
 	require.NoError(t, err)
 	assert.True(t, resolver.called)
@@ -248,6 +248,38 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	assert.Equal(t, "1001", resolver.request.LookupValue)
 	assert.Equal(t, uint64(99), resolver.request.ProvidedColumnID)
 	assert.False(t, resolver.request.DirectColumnID)
+	assert.Equal(t, PrimaryKeyModeAssumeNew, resolver.request.PrimaryKeyMode)
+}
+
+func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	pk := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName: "order_id",
+		},
+		Parent: table,
+	}
+	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
+	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
+
+	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, PrimaryKeyModeAssumeNew)
+
+	require.NoError(t, err)
+	assert.False(t, updateExisting)
+	assert.Equal(t, uint64(99), tbuf.CurrentColumnID)
+	assert.Equal(t, 1, profile.ResolveCount)
+	assert.Equal(t, 1, profile.LookupRequiredCount)
+	assert.Equal(t, 1, profile.AssumeNewCount)
+	assert.Equal(t, 1, profile.SkippedLocalCacheLookupCount)
+	assert.Equal(t, 1, profile.SkippedKVLookupCount)
+	assert.Zero(t, profile.LocalCacheLookupCount)
+	assert.Zero(t, profile.KVLookupCount)
+	assert.Equal(t, 1, profile.ProvidedColumnIDCount)
+	assert.Equal(t, 1, profile.BatchCacheWriteCount)
+	localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
+	columnID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, "1001")
+	require.True(t, ok)
+	assert.Equal(t, uint64(99), columnID)
 }
 
 func TestReadColumnEvaluatesBlindDefaultExpression(t *testing.T) {

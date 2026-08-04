@@ -23,6 +23,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	LineitemsPerOrder int
 	ShardCount        int
 	RunCount          int
+	PrimaryKeyMode    string
 	Elapsed           time.Duration
 	PutRow            core.RouterPutRowProfileSummary
 	Flush             core.RouterFlushProfileSummary
@@ -46,10 +47,11 @@ type NativeIngestBenchmarkReport struct {
 
 // NativeIngestBenchmarkConfig records benchmark input parameters.
 type NativeIngestBenchmarkConfig struct {
-	OrderCount        int `json:"order_count"`
-	LineitemsPerOrder int `json:"lineitems_per_order"`
-	ShardCount        int `json:"shard_count"`
-	RunCount          int `json:"run_count"`
+	OrderCount        int    `json:"order_count"`
+	LineitemsPerOrder int    `json:"lineitems_per_order"`
+	ShardCount        int    `json:"shard_count"`
+	RunCount          int    `json:"run_count"`
+	PrimaryKeyMode    string `json:"primary_key_mode,omitempty"`
 }
 
 // NativeIngestBenchmarkCounts records logical row totals produced by a run.
@@ -79,6 +81,7 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			LineitemsPerOrder: request.LineitemsPerOrder,
 			ShardCount:        request.ShardCount,
 			RunCount:          request.RunCount,
+			PrimaryKeyMode:    request.PrimaryKeyMode,
 		},
 		Counts: NativeIngestBenchmarkCounts{
 			TotalOrders:      totalOrders,
@@ -153,6 +156,8 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
 	metrics["primary_key_total_microseconds_per_resolve"] = durationMicrosPerCount(pk.TotalElapsed, pk.ResolveCount)
 	metrics["primary_key_local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
+	metrics["primary_key_assume_new_percent"] = percentForCounts(pk.AssumeNewCount, pk.LookupRequiredCount)
+	metrics["primary_key_skipped_kv_lookup_percent"] = percentForCounts(pk.SkippedKVLookupCount, pk.LookupRequiredCount)
 	metrics["primary_key_kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
 	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	metrics["primary_key_allocation_microseconds_per_allocation"] = durationMicrosPerCount(pk.RownumAllocationElapsed, pk.RownumAllocationCount)
@@ -207,6 +212,8 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "primary_key_resolves_per_logical_row", unit: "resolves/row", higherIsBetter: false},
 	{name: "primary_key_total_microseconds_per_resolve", unit: "us/resolve", higherIsBetter: false},
 	{name: "primary_key_local_cache_hit_percent", unit: "percent", higherIsBetter: true},
+	{name: "primary_key_assume_new_percent", unit: "percent", higherIsBetter: true},
+	{name: "primary_key_skipped_kv_lookup_percent", unit: "percent", higherIsBetter: true},
 	{name: "primary_key_kv_hit_percent", unit: "percent", higherIsBetter: false},
 	{name: "primary_key_kv_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
 	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},

@@ -21,6 +21,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	shardCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS", 1)
 	profileName := stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE", "standard-native-tpch-ingest")
 	reportPath := strings.TrimSpace(os.Getenv("QUANTASTREAM_TPCH_INGEST_BENCH_REPORT"))
+	primaryKeyMode := core.PrimaryKeyMode(stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE", "verify_existing")).Normalize()
 
 	root := b.TempDir()
 	configDir := filepath.Join(root, "schemas")
@@ -70,6 +71,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		ShardCount:     shardCount,
 		ChannelSize:    orderCount,
 		FlushInterval:  10 * time.Millisecond,
+		PrimaryKeyMode: primaryKeyMode,
 		OnPutRowResult: putRowProfile.Callback(),
 		OnFlushProfile: flushProfile.Callback(),
 	})
@@ -143,6 +145,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		LineitemsPerOrder: lineitemsPerOrder,
 		ShardCount:        shardCount,
 		RunCount:          b.N,
+		PrimaryKeyMode:    string(primaryKeyMode),
 		Elapsed:           benchmarkElapsed,
 		PutRow:            putSnapshot,
 		Flush:             flushSnapshot,
@@ -204,6 +207,8 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["primary_key_resolves_per_logical_row"], "pk_resolves/logical_row")
 	b.ReportMetric(metrics["primary_key_total_microseconds_per_resolve"], "pk_total_us/resolve")
 	b.ReportMetric(metrics["primary_key_local_cache_hit_percent"], "pk_local_cache_hit_percent")
+	b.ReportMetric(metrics["primary_key_assume_new_percent"], "pk_assume_new_percent")
+	b.ReportMetric(metrics["primary_key_skipped_kv_lookup_percent"], "pk_skipped_kv_lookup_percent")
 	b.ReportMetric(metrics["primary_key_kv_hit_percent"], "pk_kv_hit_percent")
 	b.ReportMetric(metrics["primary_key_kv_lookup_microseconds_per_lookup"], "pk_kv_lookup_us/lookup")
 	b.ReportMetric(metrics["primary_key_allocation_microseconds_per_allocation"], "pk_alloc_us/allocation")

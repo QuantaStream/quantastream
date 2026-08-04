@@ -17,6 +17,7 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		LineitemsPerOrder: 3,
 		ShardCount:        1,
 		RunCount:          4,
+		PrimaryKeyMode:    "assume_new",
 		Elapsed:           10 * time.Millisecond,
 		PutRow: core.RouterPutRowProfileSummary{
 			RecordCount:     8,
@@ -37,6 +38,9 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	})
 	if report.Profile != "unit-profile" || report.Config.OrderCount != 2 || report.Counts.TotalLogicalRows != 32 {
 		t.Fatalf("report = %+v, want captured config/counts", report)
+	}
+	if report.Config.PrimaryKeyMode != "assume_new" {
+		t.Fatalf("report primary key mode = %q, want assume_new", report.Config.PrimaryKeyMode)
 	}
 	if report.PutRow.RecordCount != 8 || report.Flush.FlushCount != 2 {
 		t.Fatalf("report profiles = %+v/%+v, want captured summaries", report.PutRow, report.Flush)
@@ -68,8 +72,11 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 			TotalElapsed: 1500 * time.Microsecond,
 			PrimaryKey: core.PrimaryKeyResolveProfile{
 				ResolveCount:            50,
+				LookupRequiredCount:     20,
+				AssumeNewCount:          10,
 				LocalCacheLookupCount:   30,
 				LocalCacheHitCount:      10,
+				SkippedKVLookupCount:    10,
 				KVLookupCount:           20,
 				KVHitCount:              5,
 				RownumAllocationCount:   15,
@@ -108,6 +115,12 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["primary_key_local_cache_hit_percent"], 100.0/3.0; got != want {
 		t.Fatalf("primary key local cache hit percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_assume_new_percent"], 50.0; got != want {
+		t.Fatalf("primary key assume-new percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_skipped_kv_lookup_percent"], 50.0; got != want {
+		t.Fatalf("primary key skipped kv lookup percent = %v, want %v", got, want)
 	}
 	if got, want := metrics["primary_key_kv_lookup_microseconds_per_lookup"], 100.0; got != want {
 		t.Fatalf("primary key kv lookup us/lookup = %v, want %v", got, want)

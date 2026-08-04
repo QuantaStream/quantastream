@@ -64,8 +64,9 @@ func TestHashIngestPayloadRejectsUnsupportedNestedMapKey(t *testing.T) {
 
 func TestIngestRecordBuildsStablePayloadHashWhenMissing(t *testing.T) {
 	record := IngestRecord{
-		EventID: "evt-1",
-		Source:  "tpch-stream",
+		EventID:        "evt-1",
+		Source:         "tpch-stream",
+		PrimaryKeyMode: PrimaryKeyModeAssumeNew,
 		Data: map[string]interface{}{
 			"kind":  "order",
 			"order": map[string]interface{}{"id": 1001},
@@ -80,6 +81,7 @@ func TestIngestRecordBuildsStablePayloadHashWhenMissing(t *testing.T) {
 	require.Equal(t, "evt-1", options.EventID)
 	require.Equal(t, "tpch-stream", options.Source)
 	require.Equal(t, wantHash, options.PayloadHash)
+	require.Equal(t, PrimaryKeyModeAssumeNew, options.PrimaryKeyMode)
 }
 
 func TestIngestRecordPreservesExplicitPayloadHash(t *testing.T) {

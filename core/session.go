@@ -72,6 +72,7 @@ type PrimaryKeyResolveRequest struct {
 	LookupValue      string
 	ProvidedColumnID uint64
 	DirectColumnID   bool
+	PrimaryKeyMode   PrimaryKeyMode
 }
 
 // PrimaryKeyResolveResult describes the row identity selected by a resolver.
@@ -85,16 +86,43 @@ type PrimaryKeyResolveResult struct {
 // rownum assignment behavior.
 type KVPrimaryKeyResolver struct{}
 
+// PrimaryKeyMode selects how PutRow resolves lookup-backed primary keys.
+type PrimaryKeyMode string
+
+const (
+	// PrimaryKeyModeVerifyExisting preserves the default idempotent lookup path.
+	PrimaryKeyModeVerifyExisting PrimaryKeyMode = "verify_existing"
+	// PrimaryKeyModeAssumeNew skips existing-row lookup for validated fresh loads.
+	PrimaryKeyModeAssumeNew PrimaryKeyMode = "assume_new"
+)
+
+func (m PrimaryKeyMode) assumeNew() bool {
+	return strings.EqualFold(string(m), string(PrimaryKeyModeAssumeNew))
+}
+
+// Normalize returns a supported primary-key mode, defaulting to verify-existing.
+func (m PrimaryKeyMode) Normalize() PrimaryKeyMode {
+	if m.assumeNew() {
+		return PrimaryKeyModeAssumeNew
+	}
+	return PrimaryKeyModeVerifyExisting
+}
+
+func (m PrimaryKeyMode) normalize() PrimaryKeyMode {
+	return m.Normalize()
+}
+
 // PutRowOptions carries optional ingestion metadata for future streaming
 // idempotency and observability. The current load path preserves existing
 // behavior and does not yet enforce deduplication from these fields.
 type PutRowOptions struct {
-	EventID      string
-	Source       string
-	EventTime    time.Time
-	SourceOffset string
-	PayloadHash  uint64
-	DedupTTL     time.Duration
+	EventID        string
+	Source         string
+	EventTime      time.Time
+	SourceOffset   string
+	PayloadHash    uint64
+	DedupTTL       time.Duration
+	PrimaryKeyMode PrimaryKeyMode
 }
 
 // PutRowResult describes the row identity observed by the load path. Duplicate
@@ -127,6 +155,7 @@ type putRowRequest struct {
 	isChild               bool
 	ignoreSourcePath      bool
 	useNerdCapitalization bool
+	primaryKeyMode        PrimaryKeyMode
 	options               PutRowOptions
 	timings               *putRowStageTimings
 }
@@ -397,6 +426,7 @@ func (s *Session) PutRowWithOptions(name string, row interface{}, providedColID 
 		providedColID:         providedColID,
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerd,
+		primaryKeyMode:        options.PrimaryKeyMode.normalize(),
 		options:               options,
 		timings:               &timings,
 	}
@@ -431,7 +461,7 @@ func (s *Session) normalizePutRowSource(req *putRowRequest) error {
 }
 
 func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath string, providedColID uint64,
-	isChild, ignoreSourcePath, useNerdCapitalization bool) (PutRowResult, error) {
+	isChild, ignoreSourcePath, useNerdCapitalization bool, primaryKeyMode PrimaryKeyMode) (PutRowResult, error) {
 
 	var timings putRowStageTimings
 	return s.putRow(putRowRequest{
@@ -442,6 +472,7 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 		isChild:               isChild,
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerdCapitalization,
+		primaryKeyMode:        primaryKeyMode.normalize(),
 		timings:               &timings,
 	})
 }
@@ -528,7 +559,7 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
 
 	identity, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
-		req.ignoreSourcePath, req.useNerdCapitalization)
+		req.ignoreSourcePath, req.useNerdCapitalization, req.primaryKeyMode)
 	req.addPrimaryKeyProfile(identity.primaryKeyProfile)
 	return identity, err
 }
@@ -595,7 +626,7 @@ func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *At
 		}
 		expansion.childBuffer.rowCache = childPayload
 		childResult, err := s.recursivePutRow(expansion.childTable, childPayload, expansion.sourcePath,
-			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization)
+			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization, req.primaryKeyMode)
 		if err != nil {
 			return err
 		}
@@ -998,7 +1029,8 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 //  2. ColumnID establishment for all fields in this row.  Generate if provided value = 0
 //  3. Value mapping.
 func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTablePath string,
-	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool) (putRowIdentity, error) {
+	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool,
+	primaryKeyMode PrimaryKeyMode) (putRowIdentity, error) {
 
 	if tbuf.Table.TimeQuantumType == "" {
 		tbuf.CurrentTimestamp = time.Unix(0, 0)
@@ -1071,7 +1103,8 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		}
 	}
 
-	updateExisting, primaryKeyProfile, err := s.resolvePrimaryKeyColumnID(tbuf, pkLookupVal.String(), providedColID, directColumnID)
+	updateExisting, primaryKeyProfile, err := s.resolvePrimaryKeyColumnID(
+		tbuf, pkLookupVal.String(), providedColID, directColumnID, primaryKeyMode)
 	if err != nil {
 		return putRowIdentity{}, err
 	}
@@ -1106,7 +1139,7 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 }
 
 func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue string, providedColID uint64,
-	directColumnID bool) (bool, PrimaryKeyResolveProfile, error) {
+	directColumnID bool, primaryKeyMode PrimaryKeyMode) (bool, PrimaryKeyResolveProfile, error) {
 
 	resolver := s.primaryKeyColumnIDResolver()
 	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
@@ -1115,6 +1148,7 @@ func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue strin
 		LookupValue:      lookupValue,
 		ProvidedColumnID: providedColID,
 		DirectColumnID:   directColumnID,
+		PrimaryKeyMode:   primaryKeyMode.normalize(),
 	})
 	if err != nil {
 		return false, result.Profile, err
@@ -1165,29 +1199,35 @@ func (KVPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveReque
 	}
 	if tbuf.ShouldLookupPrimaryKey() {
 		profile.LookupRequiredCount++
-		// Can't use batch operation here unfortunately, but at least we have local batch cache.
 		localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
-		localLookupStart := time.Now()
-		profile.LocalCacheLookupCount++
-		if lColID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, req.LookupValue); ok {
+		if req.PrimaryKeyMode.assumeNew() {
+			profile.AssumeNewCount++
+			profile.SkippedLocalCacheLookupCount++
+			profile.SkippedKVLookupCount++
+		} else {
+			// Can't use batch operation here unfortunately, but at least we have local batch cache.
+			localLookupStart := time.Now()
+			profile.LocalCacheLookupCount++
+			if lColID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, req.LookupValue); ok {
+				profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
+				profile.LocalCacheHitCount++
+				tbuf.CurrentColumnID = lColID
+				u.Warnf("PK %s found in cache.  PK mapping error for %s?", req.LookupValue, tbuf.Table.Name)
+				return finish(tbuf.CurrentColumnID, false), nil
+			}
 			profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
-			profile.LocalCacheHitCount++
-			tbuf.CurrentColumnID = lColID
-			u.Warnf("PK %s found in cache.  PK mapping error for %s?", req.LookupValue, tbuf.Table.Name)
-			return finish(tbuf.CurrentColumnID, false), nil
-		}
-		profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
-		kvLookupStart := time.Now()
-		profile.KVLookupCount++
-		colID, found, err := session.lookupColumnID(tbuf, req.LookupValue, "")
-		profile.KVLookupElapsed += time.Since(kvLookupStart)
-		if err != nil {
-			return finish(0, false), fmt.Errorf("Dedup lookup error - %v", err)
-		}
-		if found {
-			profile.KVHitCount++
-			tbuf.CurrentColumnID = colID
-			return finish(colID, true), nil
+			kvLookupStart := time.Now()
+			profile.KVLookupCount++
+			colID, found, err := session.lookupColumnID(tbuf, req.LookupValue, "")
+			profile.KVLookupElapsed += time.Since(kvLookupStart)
+			if err != nil {
+				return finish(0, false), fmt.Errorf("Dedup lookup error - %v", err)
+			}
+			if found {
+				profile.KVHitCount++
+				tbuf.CurrentColumnID = colID
+				return finish(colID, true), nil
+			}
 		}
 		if req.ProvidedColumnID == 0 {
 			allocationStart := time.Now()

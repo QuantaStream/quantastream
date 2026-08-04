@@ -13,15 +13,16 @@ import (
 // IngestRecord is a transport-neutral row mutation routed through a single
 // session owner.
 type IngestRecord struct {
-	TableName    string
-	Data         map[string]interface{}
-	ShardKey     string
-	EventID      string
-	Source       string
-	EventTime    time.Time
-	SourceOffset string
-	PayloadHash  uint64
-	DedupTTL     time.Duration
+	TableName      string
+	Data           map[string]interface{}
+	ShardKey       string
+	EventID        string
+	Source         string
+	EventTime      time.Time
+	SourceOffset   string
+	PayloadHash    uint64
+	DedupTTL       time.Duration
+	PrimaryKeyMode PrimaryKeyMode
 }
 
 // SessionRouterConfig configures deterministic fanout across session workers.
@@ -32,6 +33,7 @@ type SessionRouterConfig struct {
 	ShardCount     int
 	ChannelSize    int
 	FlushInterval  time.Duration
+	PrimaryKeyMode PrimaryKeyMode
 	OnSessionOpen  func()
 	OnSessionClose func()
 	OnPutRowResult func(shardID string, record IngestRecord, result PutRowResult)
@@ -67,6 +69,7 @@ func NewSessionRouter(cfg SessionRouterConfig) (*SessionRouter, error) {
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = time.Second
 	}
+	cfg.PrimaryKeyMode = cfg.PrimaryKeyMode.normalize()
 
 	router := &SessionRouter{
 		cfg:           cfg,
@@ -159,7 +162,13 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 	if err != nil {
 		return fmt.Errorf("ERROR in PutRow payload hash, shard %s - %v", shardID, err)
 	}
+	if options.PrimaryKeyMode == "" {
+		options.PrimaryKeyMode = r.cfg.PrimaryKeyMode
+	} else {
+		options.PrimaryKeyMode = options.PrimaryKeyMode.normalize()
+	}
 	record.PayloadHash = options.PayloadHash
+	record.PrimaryKeyMode = options.PrimaryKeyMode
 	result, err := conn.(*Session).PutRowWithOptions(record.TableName, record.Data, 0, false, false, options)
 	if err != nil {
 		return fmt.Errorf("ERROR in PutRow, shard %s - %v", shardID, err)
@@ -203,12 +212,13 @@ func (r IngestRecord) PutRowOptionsWithPayloadHash() (PutRowOptions, error) {
 		}
 	}
 	return PutRowOptions{
-		EventID:      r.EventID,
-		Source:       r.Source,
-		EventTime:    r.EventTime,
-		SourceOffset: r.SourceOffset,
-		PayloadHash:  payloadHash,
-		DedupTTL:     r.DedupTTL,
+		EventID:        r.EventID,
+		Source:         r.Source,
+		EventTime:      r.EventTime,
+		SourceOffset:   r.SourceOffset,
+		PayloadHash:    payloadHash,
+		DedupTTL:       r.DedupTTL,
+		PrimaryKeyMode: r.PrimaryKeyMode,
 	}, nil
 }
 

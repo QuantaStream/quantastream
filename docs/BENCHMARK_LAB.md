@@ -232,6 +232,10 @@ PROFILE=standard-native-tpch-ingest \
   ./run-native-ingest-benchmark.sh
 ```
 
+Set `PRIMARY_KEY_MODE=assume_new` only for validated fresh-load runs where the
+input is known not to contain existing primary keys. The default
+`verify_existing` mode preserves idempotent KV-backed primary-key checks.
+
 The script writes the JSON report and console log under
 `tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Set
 `BENCHMARK_REPORT` or `BENCHMARK_OUTPUT_DIR` to choose a specific destination.
@@ -242,7 +246,9 @@ Native ingest reports include PutRow stage timings, flush timings, and a
 primary-key resolver profile. The resolver profile breaks identity work into
 lookup-required rows, local batch-cache lookups and hits, KV lookups and hits,
 rownum allocation, provided/direct column-id paths, and staged primary-key
-cache writes. Use those counters before changing the primary-key storage design.
+cache writes. Fresh-load runs also report explicit assume-new and skipped KV
+lookup counters. Use those counters before changing the primary-key storage
+design.
 
 Compare two native ingest benchmark reports with:
 
