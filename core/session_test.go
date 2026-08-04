@@ -159,6 +159,13 @@ func TestIngestRecordBuildsPutRowOptions(t *testing.T) {
 	}, record.PutRowOptions())
 }
 
+func TestPrimaryKeyModeDefaultsToVerifyExisting(t *testing.T) {
+	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyMode("").Normalize())
+	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyMode("surprise").Normalize())
+	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyModeVerifyExisting.Normalize())
+	assert.Equal(t, PrimaryKeyModeAssumeNew, PrimaryKeyMode("ASSUME_NEW").Normalize())
+}
+
 func TestMapAlternateKeysSkipsTablesWithoutSecondaryKeys(t *testing.T) {
 	session := &Session{}
 	tbuf := &TableBuffer{
@@ -249,6 +256,32 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	assert.Equal(t, uint64(99), resolver.request.ProvidedColumnID)
 	assert.False(t, resolver.request.DirectColumnID)
 	assert.Equal(t, PrimaryKeyModeAssumeNew, resolver.request.PrimaryKeyMode)
+}
+
+func TestResolvePrimaryKeyColumnIDDefaultsResolverRequestToVerifyExisting(t *testing.T) {
+	resolver := &recordingPrimaryKeyResolver{
+		result: PrimaryKeyResolveResult{
+			ColumnID: 99,
+			Profile:  PrimaryKeyResolveProfile{ResolveCount: 1},
+		},
+	}
+	session := &Session{}
+	session.SetPrimaryKeyResolver(resolver)
+	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	pk := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName: "order_id",
+			ColumnID:  true,
+		},
+		Parent: table,
+	}
+	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
+
+	_, _, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, "")
+
+	require.NoError(t, err)
+	require.True(t, resolver.called)
+	assert.Equal(t, PrimaryKeyModeVerifyExisting, resolver.request.PrimaryKeyMode)
 }
 
 func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) {

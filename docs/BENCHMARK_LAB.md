@@ -236,11 +236,23 @@ Set `PRIMARY_KEY_MODE=assume_new` only for validated fresh-load runs where the
 input is known not to contain existing primary keys. The default
 `verify_existing` mode preserves idempotent KV-backed primary-key checks.
 
-The script writes the JSON report and console log under
+Compare the guarded fresh-load path against the conservative default with:
+
+```bash
+cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
+ORDERS=1000 \
+LINEITEMS=4 \
+SHARDS=1 \
+RUNS=3 \
+  ./run-native-ingest-pk-mode-compare.sh
+```
+
+The single-mode benchmark script writes its JSON report and console log under
 `tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Set
 `BENCHMARK_REPORT` or `BENCHMARK_OUTPUT_DIR` to choose a specific destination.
-The benchmark verifies final SQL counts after timing stops. Normal `go test`
-does not run it.
+The PK-mode comparison wrapper writes both JSON reports and `comparison.md`
+under one ignored local output directory. The benchmark verifies final SQL
+counts after timing stops. Normal `go test` does not run it.
 
 Native ingest reports include PutRow stage timings, flush timings, and a
 primary-key resolver profile. The resolver profile breaks identity work into

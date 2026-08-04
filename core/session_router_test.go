@@ -83,3 +83,32 @@ func TestSessionRouterSplitsShardTableKey(t *testing.T) {
 	require.Equal(t, "shard2", shardID)
 	require.Equal(t, "lineitem", tableName)
 }
+
+func TestSessionRouterDefaultsPrimaryKeyModeToVerifyExisting(t *testing.T) {
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{},
+		ShardCount:    1,
+		ChannelSize:   1,
+		FlushInterval: time.Nanosecond,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, router.Close()) }()
+
+	require.Equal(t, PrimaryKeyModeVerifyExisting, router.cfg.PrimaryKeyMode)
+}
+
+func TestSessionRouterPreservesExplicitAssumeNewPrimaryKeyMode(t *testing.T) {
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:     NewTableCacheStruct(),
+		Conn:           &shared.Conn{},
+		ShardCount:     1,
+		ChannelSize:    1,
+		FlushInterval:  time.Nanosecond,
+		PrimaryKeyMode: PrimaryKeyModeAssumeNew,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, router.Close()) }()
+
+	require.Equal(t, PrimaryKeyModeAssumeNew, router.cfg.PrimaryKeyMode)
+}
