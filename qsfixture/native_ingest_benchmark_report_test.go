@@ -85,7 +85,13 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 		40,
 		50,
 		core.RouterPutRowProfileSummary{
-			TotalElapsed: 1500 * time.Microsecond,
+			TotalElapsed:          1500 * time.Microsecond,
+			SourceElapsed:         100 * time.Microsecond,
+			IdentityElapsed:       200 * time.Microsecond,
+			AlternateKeysElapsed:  30 * time.Microsecond,
+			ChildExpansionElapsed: 400 * time.Microsecond,
+			RelationElapsed:       50 * time.Microsecond,
+			AttributeElapsed:      300 * time.Microsecond,
 			PrimaryKey: core.PrimaryKeyResolveProfile{
 				ResolveCount:            50,
 				LookupRequiredCount:     20,
@@ -166,6 +172,27 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["flushes_per_operation"], 2.5; got != want {
 		t.Fatalf("flushes/op = %v, want %v", got, want)
 	}
+	if got, want := metrics["put_stage_normalize_microseconds_per_order"], 10.0; got != want {
+		t.Fatalf("normalize us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_identity_microseconds_per_order"], 20.0; got != want {
+		t.Fatalf("identity us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_primary_key_microseconds_per_order"], 500.0; got != want {
+		t.Fatalf("primary key stage us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_alternate_keys_microseconds_per_order"], 3.0; got != want {
+		t.Fatalf("alternate keys us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_child_expansion_microseconds_per_order"], 40.0; got != want {
+		t.Fatalf("child expansion us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_parent_relation_microseconds_per_order"], 5.0; got != want {
+		t.Fatalf("parent relation us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["put_stage_attribute_mapping_microseconds_per_order"], 30.0; got != want {
+		t.Fatalf("attribute mapping us/order = %v, want %v", got, want)
+	}
 	if got, want := metrics["primary_key_resolves_per_logical_row"], 1.0; got != want {
 		t.Fatalf("primary key resolves/logical row = %v, want %v", got, want)
 	}
@@ -191,38 +218,50 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		Profile: "baseline",
 		Mode:    "inabox-standard",
 		Metrics: map[string]float64{
-			"logical_rows_per_second":                    1000,
-			"enqueue_microseconds_per_order":             12,
-			"drain_microseconds_per_order":               100,
-			"drain_worker_max_microseconds":              900,
-			"drain_worker_sum_to_wall_percent":           70,
-			"drain_worker_max_to_avg_percent":            140,
-			"put_microseconds_per_order":                 50,
-			"flush_microseconds_per_order":               20,
-			"flush_summed_to_drain_percent":              25,
-			"flush_shard_max_to_avg_percent":             160,
-			"primary_key_total_microseconds_per_resolve": 10,
-			"primary_key_skipped_kv_lookup_percent":      0,
-			"custom_metric":                              2,
+			"logical_rows_per_second":                            1000,
+			"enqueue_microseconds_per_order":                     12,
+			"drain_microseconds_per_order":                       100,
+			"drain_worker_max_microseconds":                      900,
+			"drain_worker_sum_to_wall_percent":                   70,
+			"drain_worker_max_to_avg_percent":                    140,
+			"put_microseconds_per_order":                         50,
+			"flush_microseconds_per_order":                       20,
+			"flush_summed_to_drain_percent":                      25,
+			"flush_shard_max_to_avg_percent":                     160,
+			"put_stage_normalize_microseconds_per_order":         5,
+			"put_stage_identity_microseconds_per_order":          20,
+			"put_stage_primary_key_microseconds_per_order":       50,
+			"put_stage_child_expansion_microseconds_per_order":   200,
+			"put_stage_parent_relation_microseconds_per_order":   30,
+			"put_stage_attribute_mapping_microseconds_per_order": 40,
+			"primary_key_total_microseconds_per_resolve":         10,
+			"primary_key_skipped_kv_lookup_percent":              0,
+			"custom_metric":                                      2,
 		},
 	}
 	target := NativeIngestBenchmarkReport{
 		Profile: "target",
 		Mode:    "inabox-standard",
 		Metrics: map[string]float64{
-			"logical_rows_per_second":                    1500,
-			"enqueue_microseconds_per_order":             8,
-			"drain_microseconds_per_order":               60,
-			"drain_worker_max_microseconds":              600,
-			"drain_worker_sum_to_wall_percent":           45,
-			"drain_worker_max_to_avg_percent":            110,
-			"put_microseconds_per_order":                 40,
-			"flush_microseconds_per_order":               15,
-			"flush_summed_to_drain_percent":              18,
-			"flush_shard_max_to_avg_percent":             120,
-			"primary_key_total_microseconds_per_resolve": 8,
-			"primary_key_skipped_kv_lookup_percent":      100,
-			"custom_metric":                              3,
+			"logical_rows_per_second":                            1500,
+			"enqueue_microseconds_per_order":                     8,
+			"drain_microseconds_per_order":                       60,
+			"drain_worker_max_microseconds":                      600,
+			"drain_worker_sum_to_wall_percent":                   45,
+			"drain_worker_max_to_avg_percent":                    110,
+			"put_microseconds_per_order":                         40,
+			"flush_microseconds_per_order":                       15,
+			"flush_summed_to_drain_percent":                      18,
+			"flush_shard_max_to_avg_percent":                     120,
+			"put_stage_normalize_microseconds_per_order":         3,
+			"put_stage_identity_microseconds_per_order":          10,
+			"put_stage_primary_key_microseconds_per_order":       5,
+			"put_stage_child_expansion_microseconds_per_order":   160,
+			"put_stage_parent_relation_microseconds_per_order":   25,
+			"put_stage_attribute_mapping_microseconds_per_order": 35,
+			"primary_key_total_microseconds_per_resolve":         8,
+			"primary_key_skipped_kv_lookup_percent":              100,
+			"custom_metric":                                      3,
 		},
 	}
 
@@ -253,6 +292,12 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"| Drain worker max/avg | 140 percent | 110 percent | -30 percent | 0.79x | better |",
 		"| Flush us/order | 20 us/order | 15 us/order | -5 us/order | 0.75x | better |",
 		"| Flush shard max/avg | 160 percent | 120 percent | -40 percent | 0.75x | better |",
+		"| Normalize us/order | 5 us/order | 3 us/order | -2 us/order | 0.60x | better |",
+		"| Identity us/order | 20 us/order | 10 us/order | -10 us/order | 0.50x | better |",
+		"| PK stage us/order | 50 us/order | 5 us/order | -45 us/order | 0.10x | better |",
+		"| Child expansion us/order | 200 us/order | 160 us/order | -40 us/order | 0.80x | better |",
+		"| Parent relation us/order | 30 us/order | 25 us/order | -5 us/order | 0.83x | better |",
+		"| Attribute mapping us/order | 40 us/order | 35 us/order | -5 us/order | 0.88x | better |",
 		"| Skipped PK KV lookup | 0 percent | 100 percent | 100 percent | n/a | better |",
 		"## Detailed Metrics",
 		"| logical_rows_per_second | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",

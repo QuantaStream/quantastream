@@ -184,6 +184,13 @@ func NativeIngestBenchmarkMetrics(
 		"kv_entries_per_logical_row":     float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
 	}
 	pk := putSnapshot.PrimaryKey
+	metrics["put_stage_normalize_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.SourceElapsed, totalOrders)
+	metrics["put_stage_identity_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.IdentityElapsed, totalOrders)
+	metrics["put_stage_primary_key_microseconds_per_order"] = durationMicrosPerCount(pk.TotalElapsed, totalOrders)
+	metrics["put_stage_alternate_keys_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.AlternateKeysElapsed, totalOrders)
+	metrics["put_stage_child_expansion_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.ChildExpansionElapsed, totalOrders)
+	metrics["put_stage_parent_relation_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.RelationElapsed, totalOrders)
+	metrics["put_stage_attribute_mapping_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.AttributeElapsed, totalOrders)
 	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
 	metrics["primary_key_total_microseconds_per_resolve"] = durationMicrosPerCount(pk.TotalElapsed, pk.ResolveCount)
 	metrics["primary_key_local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
@@ -256,6 +263,13 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "bsi_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "kv_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "logical_rows_per_order", unit: "rows/order", higherIsBetter: true},
+	{name: "put_stage_normalize_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_identity_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_primary_key_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_alternate_keys_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_child_expansion_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_parent_relation_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "put_stage_attribute_mapping_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "primary_key_resolves_per_logical_row", unit: "resolves/row", higherIsBetter: false},
 	{name: "primary_key_total_microseconds_per_resolve", unit: "us/resolve", higherIsBetter: false},
 	{name: "primary_key_local_cache_hit_percent", unit: "percent", higherIsBetter: true},
@@ -278,6 +292,12 @@ var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "flush_microseconds_per_order", label: "Flush us/order"},
 	{name: "flush_summed_to_drain_percent", label: "Flush sum/drain"},
 	{name: "flush_shard_max_to_avg_percent", label: "Flush shard max/avg"},
+	{name: "put_stage_normalize_microseconds_per_order", label: "Normalize us/order"},
+	{name: "put_stage_identity_microseconds_per_order", label: "Identity us/order"},
+	{name: "put_stage_primary_key_microseconds_per_order", label: "PK stage us/order"},
+	{name: "put_stage_child_expansion_microseconds_per_order", label: "Child expansion us/order"},
+	{name: "put_stage_parent_relation_microseconds_per_order", label: "Parent relation us/order"},
+	{name: "put_stage_attribute_mapping_microseconds_per_order", label: "Attribute mapping us/order"},
 	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
 	{name: "primary_key_skipped_kv_lookup_percent", label: "Skipped PK KV lookup"},
 }
