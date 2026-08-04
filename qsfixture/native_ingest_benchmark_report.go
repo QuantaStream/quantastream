@@ -228,6 +228,11 @@ type nativeIngestBenchmarkMetricDefinition struct {
 	higherIsBetter bool
 }
 
+type nativeIngestBenchmarkSummaryMetric struct {
+	name  string
+	label string
+}
+
 var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefinition{
 	{name: "logical_rows_per_second", unit: "rows/s", higherIsBetter: true},
 	{name: "orders_per_second", unit: "orders/s", higherIsBetter: true},
@@ -256,6 +261,19 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "primary_key_kv_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
 	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},
 	{name: "primary_key_batch_cache_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
+}
+
+var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
+	{name: "logical_rows_per_second", label: "Logical rows/sec"},
+	{name: "enqueue_microseconds_per_order", label: "Enqueue us/order"},
+	{name: "drain_microseconds_per_order", label: "Drain us/order"},
+	{name: "drain_worker_max_microseconds", label: "Slowest worker drain"},
+	{name: "drain_worker_sum_to_wall_percent", label: "Worker drain sum/wall"},
+	{name: "put_microseconds_per_order", label: "PutRow us/order"},
+	{name: "flush_microseconds_per_order", label: "Flush us/order"},
+	{name: "flush_summed_to_drain_percent", label: "Flush sum/drain"},
+	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
+	{name: "primary_key_skipped_kv_lookup_percent", label: "Skipped PK KV lookup"},
 }
 
 // CompareNativeIngestBenchmarkReports compares metrics from two reports.
@@ -307,20 +325,70 @@ func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchm
 	builder.WriteString("# Native Ingest Benchmark Comparison\n\n")
 	builder.WriteString(fmt.Sprintf("Baseline: %s (%s)\n\n", fallbackReportLabel(comparison.Baseline.Profile), fallbackReportLabel(comparison.Baseline.Mode)))
 	builder.WriteString(fmt.Sprintf("Target: %s (%s)\n\n", fallbackReportLabel(comparison.Target.Profile), fallbackReportLabel(comparison.Target.Mode)))
+	renderNativeIngestBenchmarkSummaryMarkdown(&builder, comparison)
+	builder.WriteString("## Detailed Metrics\n\n")
 	builder.WriteString("| Metric | Baseline | Target | Delta | Ratio | Direction |\n")
 	builder.WriteString("| --- | ---: | ---: | ---: | ---: | --- |\n")
 	for _, metric := range comparison.Metrics {
-		builder.WriteString(fmt.Sprintf(
-			"| %s | %s | %s | %s | %s | %s |\n",
-			metric.Name,
-			formatNativeIngestBenchmarkMetric(metric.Baseline, metric.Unit),
-			formatNativeIngestBenchmarkMetric(metric.Target, metric.Unit),
-			formatNativeIngestBenchmarkMetric(metric.Delta, metric.Unit),
-			formatNativeIngestBenchmarkRatio(metric.Ratio),
-			metric.Outcome,
-		))
+		writeNativeIngestBenchmarkMetricMarkdownRow(&builder, metric.Name, metric)
 	}
 	return builder.String()
+}
+
+func renderNativeIngestBenchmarkSummaryMarkdown(builder *strings.Builder, comparison NativeIngestBenchmarkComparison) {
+	summaryMetrics := nativeIngestBenchmarkSummaryMetricComparisons(comparison)
+	if len(summaryMetrics) == 0 {
+		return
+	}
+	builder.WriteString("## Load Path Summary\n\n")
+	builder.WriteString("| Signal | Baseline | Target | Delta | Ratio | Direction |\n")
+	builder.WriteString("| --- | ---: | ---: | ---: | ---: | --- |\n")
+	for _, metric := range summaryMetrics {
+		writeNativeIngestBenchmarkMetricMarkdownRow(builder, metric.label, metric.comparison)
+	}
+	builder.WriteString("\n")
+}
+
+type nativeIngestBenchmarkSummaryMetricComparison struct {
+	label      string
+	comparison NativeIngestBenchmarkMetricComparison
+}
+
+func nativeIngestBenchmarkSummaryMetricComparisons(
+	comparison NativeIngestBenchmarkComparison,
+) []nativeIngestBenchmarkSummaryMetricComparison {
+	metricsByName := make(map[string]NativeIngestBenchmarkMetricComparison, len(comparison.Metrics))
+	for _, metric := range comparison.Metrics {
+		metricsByName[metric.Name] = metric
+	}
+	summaryMetrics := make([]nativeIngestBenchmarkSummaryMetricComparison, 0, len(nativeIngestBenchmarkSummaryMetrics))
+	for _, summaryMetric := range nativeIngestBenchmarkSummaryMetrics {
+		metric, ok := metricsByName[summaryMetric.name]
+		if !ok {
+			continue
+		}
+		summaryMetrics = append(summaryMetrics, nativeIngestBenchmarkSummaryMetricComparison{
+			label:      summaryMetric.label,
+			comparison: metric,
+		})
+	}
+	return summaryMetrics
+}
+
+func writeNativeIngestBenchmarkMetricMarkdownRow(
+	builder *strings.Builder,
+	label string,
+	metric NativeIngestBenchmarkMetricComparison,
+) {
+	builder.WriteString(fmt.Sprintf(
+		"| %s | %s | %s | %s | %s | %s |\n",
+		label,
+		formatNativeIngestBenchmarkMetric(metric.Baseline, metric.Unit),
+		formatNativeIngestBenchmarkMetric(metric.Target, metric.Unit),
+		formatNativeIngestBenchmarkMetric(metric.Delta, metric.Unit),
+		formatNativeIngestBenchmarkRatio(metric.Ratio),
+		metric.Outcome,
+	))
 }
 
 // WriteNativeIngestBenchmarkComparisonMarkdown writes a comparison when path is non-empty.

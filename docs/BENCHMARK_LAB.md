@@ -279,9 +279,11 @@ cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
 ```
 
 The comparison treats throughput metrics as higher-is-better and per-operation
-cost metrics as lower-is-better. The JSON reports and rendered markdown are
-local benchmark artifacts and should stay out of source control unless a
-reference run is intentionally being archived.
+cost metrics as lower-is-better. The rendered markdown starts with a curated
+load-path summary for enqueue, drain, flush, and primary-key signals, then keeps
+the complete metric table below it for detailed analysis. The JSON reports and
+rendered markdown are local benchmark artifacts and should stay out of source
+control unless a reference run is intentionally being archived.
 
 ## Query Profile Capture
 
