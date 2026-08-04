@@ -3,19 +3,27 @@ primaryKey: cust_id
 attributes:
 - fieldName: cust_id
   sourceName: cust_id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: first_name
   sourceName: first_name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: last_name
   sourceName: last_name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String  
 - fieldName: address
   sourceName: address
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: city
   sourceName: city
@@ -23,28 +31,40 @@ attributes:
   type: String
 - fieldName: state
   sourceName: state
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: zip
   sourceName: zip
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: createdAtTimestamp
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   defaultValue: now()
   type: DateTime
 - fieldName: timestamp_micro
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   type: DateTime
 - fieldName: timestamp_millis
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime  
 # - fieldName: hashedCustId
 #   mappingStrategy: StringHashBSI
 #   type: String
 #  defaultValue: hash.sha256(cust_id)
 - fieldName: phone
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: phoneType
   mappingStrategy: StringEnum
@@ -56,7 +76,9 @@ attributes:
   defaultValue: 1
   type: Boolean
 - fieldName: birthdate
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   type: Date  
 - fieldName: isLegalAge
   mappingStrategy: BoolDirect

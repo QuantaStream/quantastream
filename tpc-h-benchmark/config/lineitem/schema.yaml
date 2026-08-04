@@ -62,17 +62,23 @@ attributes:
   sourceOrdinal: 10
 - fieldName: l_shipdate
   sourceName: /data/l_shipdate
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime
   sourceOrdinal: 11
 - fieldName: l_commitdate
   sourceName: /data/l_commitdate
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime
   sourceOrdinal: 12
 - fieldName: l_receiptdate
   sourceName: /data/l_receiptdate
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime
   sourceOrdinal: 13
 - fieldName: l_shipinstruct
@@ -87,7 +93,10 @@ attributes:
   sourceOrdinal: 15
 - fieldName: l_comment
   sourceName: /data/l_comment
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
+  maxLen: 256
   sourceOrdinal: 16
 

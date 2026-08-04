@@ -18,6 +18,8 @@ const (
 	EncodingBackingString EncodingKind = "backing_string"
 	// EncodingStringLexBSI stores strings using a lexical BSI prefix and optional remainder lookup.
 	EncodingStringLexBSI EncodingKind = "string_lex_bsi"
+	// EncodingUUIDBSI stores UUID values as BSI integers with inline rehydration.
+	EncodingUUIDBSI EncodingKind = "uuid_bsi"
 	// EncodingTextSearch stores searchable text index state separate from SQL LIKE semantics.
 	EncodingTextSearch EncodingKind = "text_search"
 	// EncodingRelation stores parent or child relationship mappings.

@@ -694,7 +694,9 @@ func standardProjectionTimeQuantumField(table *core.Table) string {
 		if fieldName == "" {
 			fieldName = attribute.SourceName
 		}
-		if fieldName != "" && strings.EqualFold(attribute.Type, "time") && strings.HasPrefix(attribute.MappingStrategy, "Sys") {
+		if fieldName != "" && qsbridge.LegacyEncodingProfile(attribute.MappingStrategy, qsbridge.LegacyEncodingOptions{
+			Granularity: qsruntime.LegacyTimeBSIGranularity(attribute.MapperConfig),
+		}).Kind == qsbridge.EncodingTimeBSI {
 			return fieldName
 		}
 	}

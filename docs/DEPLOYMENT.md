@@ -159,7 +159,7 @@ standard-mode TPC-H loads until local multi-session writes are validated; cluste
 direct loads can still use multiple workers.
 The self-contained QA smoke uses `customers_qa` so the local path exercises
 StringEnum dictionary loading, multiplicity-set inserts, default expressions,
-and StringHashBSI materialization through the MySQL socket.
+and StringLexBSI materialization through the MySQL socket.
 
 The readiness runner starts a fresh temporary `quantastream` process per suite,
 copies the SQLRunner schema config, writes a suite-specific `CATALOG_OBJECTS`
@@ -180,7 +180,7 @@ gates where the current gRPC stream-shaped calls need direct local helpers or
 local stream shims.
 
 The first mounted backend now covers the essential local read, DDL, insert
-write, StringEnum dictionary warmup, StringHashBSI batch materialization, and
+write, StringEnum dictionary warmup, StringLexBSI batch materialization, and
 default-expression path. UPDATE, DELETE, streaming ingestion, and text-search
 paths should be promoted only after the remaining local batch/streaming shims
 above are implemented and covered by SQLRunner or compatibility-lab tests.

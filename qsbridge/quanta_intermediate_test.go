@@ -1269,6 +1269,88 @@ func TestQuantaIntermediateLowererLowersBackingStringInequalityPredicate(t *test
 	}
 }
 
+func TestQuantaIntermediateLowererLowersStringLexBSIEqualityPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "part"},
+		Name:     "p_brand",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 10, MaxLength: 10}),
+	}
+
+	fragment, diagnostics, ok := quantaIntermediateStringLexBSIComparisonFragment(BinaryOpEqual, field, Literal(ValueString, "Brand#45"))
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpEQ || fragment.Value == nil || fragment.HasLiteral {
+		t.Fatalf("fragment = %#v, want StringLexBSI BSI equality payload", fragment)
+	}
+	if want := quantaIntermediateStringLexBSIValue("Brand#45", 10); fragment.Value.Cmp(want) != 0 {
+		t.Fatalf("value = %v, want lex value %v", fragment.Value, want)
+	}
+}
+
+func TestQuantaIntermediateLowererLowersStringLexBSIInPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "part"},
+		Name:     "p_brand",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 10, MaxLength: 10}),
+	}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSIInPredicate(
+		field,
+		List(Literal(ValueString, "Brand#45"), Literal(ValueString, "Brand#12")),
+		ParameterBindingSet{},
+		false,
+	)
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpBatchEQ || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want StringLexBSI BATCH_EQ intersect", fragment)
+	}
+	if len(fragment.Values) != 2 {
+		t.Fatalf("values = %d, want 2", len(fragment.Values))
+	}
+	if fragment.Values[0].Cmp(quantaIntermediateStringLexBSIValue("Brand#45", 10)) != 0 ||
+		fragment.Values[1].Cmp(quantaIntermediateStringLexBSIValue("Brand#12", 10)) != 0 {
+		t.Fatalf("values = %#v, want lex-encoded brands", fragment.Values)
+	}
+}
+
+func TestQuantaIntermediateLowererBlocksStringLexBSIRemainderEqualityPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "lineitem"},
+		Name:     "l_comment",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 256}),
+	}
+
+	_, diagnostics, ok := quantaIntermediateStringLexBSIComparisonFragment(BinaryOpEqual, field, Literal(ValueString, "carefully pending packages"))
+	if ok || !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v, want prefix+remainder StringLex equality blocked", diagnostics, ok)
+	}
+}
+
+func TestQuantaIntermediateLowererBlocksStringLexBSIRemainderInPredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "lineitem"},
+		Name:     "l_comment",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 256}),
+	}
+
+	_, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSIInPredicate(
+		field,
+		List(Literal(ValueString, "carefully pending packages")),
+		ParameterBindingSet{},
+		false,
+	)
+	if ok || !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v, want prefix+remainder StringLex IN blocked", diagnostics, ok)
+	}
+}
+
 func TestQuantaIntermediateLowererLowersLiteralInPredicate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(

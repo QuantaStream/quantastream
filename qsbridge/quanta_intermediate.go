@@ -1201,6 +1201,10 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		fragment, diagnostics, ok := quantaIntermediateStringHashBSIComparisonFragment(op, field, value)
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
 	}
+	if field.Encoding.Kind == EncodingStringLexBSI {
+		fragment, diagnostics, ok := quantaIntermediateStringLexBSIComparisonFragment(op, field, value)
+		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
+	}
 	if field.Type == DataTypeBool && field.Encoding.LegacyName == "BoolDirect" {
 		fragment, diagnostics, ok := quantaIntermediateBoolDirectComparisonFragment(op, field, value)
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
@@ -1457,6 +1461,52 @@ func quantaIntermediateStringHashBSIValue(value string) *big.Int {
 	return big.NewInt(int64(hash.MurmurHash2([]byte(value), 0)))
 }
 
+func quantaIntermediateStringLexBSIComparisonFragment(op BinaryOp, field FieldRef, value LiteralExpr) (QuantaQueryFragment, DiagnosticSet, bool) {
+	switch op {
+	case BinaryOpEqual, BinaryOpNotEqual:
+	default:
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("only equality predicates are lowered for StringLexBSI fields"), false
+	}
+	if field.Encoding.NeedsStringRemainderLookup() {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI predicates requiring remainder lookup are not lowered in this slice"), false
+	}
+	if value.Kind != ValueString {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI predicates require string values"), false
+	}
+	text, ok := value.Value.(string)
+	if !ok {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI predicates require string values"), false
+	}
+	return QuantaQueryFragment{
+		Index:     field.Table.Table,
+		Role:      quantaIntermediateTableRole(field.Table),
+		Field:     quantaIntermediateFieldName(field),
+		Operation: quantaIntermediateEqualityOperation(op),
+		BSIOp:     QuantaBSIOpEQ,
+		Value:     quantaIntermediateStringLexBSIValue(text, field.Encoding.PrefixLength),
+	}, nil, true
+}
+
+func quantaIntermediateStringLexBSIValue(value string, prefixLength int) *big.Int {
+	if prefixLength <= 0 {
+		return new(big.Int).SetBytes([]byte(value))
+	}
+	copied := len(value)
+	if copied > prefixLength {
+		copied = prefixLength
+	}
+	if prefixLength <= 8 {
+		var encoded uint64
+		for i := 0; i < copied; i++ {
+			encoded |= uint64(value[i]) << uint(8*(prefixLength-i-1))
+		}
+		return new(big.Int).SetUint64(encoded)
+	}
+	prefix := make([]byte, prefixLength)
+	copy(prefix, value)
+	return new(big.Int).SetBytes(prefix)
+}
+
 func (l QuantaIntermediateLowerer) lowerStringEnumPredicate(predicate Predicate, parameters ParameterBindingSet) (QuantaQueryFragment, DiagnosticSet, bool) {
 	if fragment, diagnostics, ok := l.lowerStringEnumInPredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
 		return fragment, diagnostics, ok
@@ -1589,6 +1639,9 @@ func (l QuantaIntermediateLowerer) lowerInPredicate(predicate Predicate, paramet
 	if field.Index == IndexBackingString && field.Encoding.LegacyName == legacyStringHashBSI {
 		return l.lowerStringHashBSIInPredicate(field, list, parameters, quantaIntermediateInNegated(predicate))
 	}
+	if field.Encoding.Kind == EncodingStringLexBSI {
+		return l.lowerStringLexBSIInPredicate(field, list, parameters, quantaIntermediateInNegated(predicate))
+	}
 	if field.Index != IndexBSI && field.Index != IndexDateTime {
 		return l.lowerLiteralInPredicate(field, list, parameters, quantaIntermediateInNegated(predicate))
 	}
@@ -1640,6 +1693,39 @@ func (l QuantaIntermediateLowerer) lowerStringHashBSIInPredicate(field FieldRef,
 			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringHashBSI IN predicates require string values"), false
 		}
 		values = append(values, quantaIntermediateStringHashBSIValue(text))
+	}
+	operation := QuantaOperationIntersect
+	if negate {
+		operation = QuantaOperationDifference
+	}
+	return QuantaQueryFragment{
+		Index:     field.Table.Table,
+		Role:      quantaIntermediateTableRole(field.Table),
+		Field:     quantaIntermediateFieldName(field),
+		Operation: operation,
+		BSIOp:     QuantaBSIOpBatchEQ,
+		Values:    values,
+	}, nil, true
+}
+
+func (l QuantaIntermediateLowerer) lowerStringLexBSIInPredicate(field FieldRef, list ListExpr, parameters ParameterBindingSet, negate bool) (QuantaQueryFragment, DiagnosticSet, bool) {
+	if field.Encoding.NeedsStringRemainderLookup() {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI IN predicates requiring remainder lookup are not lowered in this slice"), false
+	}
+	values := make([]*big.Int, 0, len(list.Items))
+	for _, item := range list.Items {
+		value, diagnostics, ok := quantaIntermediateValue(item, parameters)
+		if !ok {
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+		if value.Kind != ValueString {
+			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI IN predicates require string values"), false
+		}
+		text, ok := value.Value.(string)
+		if !ok {
+			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI IN predicates require string values"), false
+		}
+		values = append(values, quantaIntermediateStringLexBSIValue(text, field.Encoding.PrefixLength))
 	}
 	operation := QuantaOperationIntersect
 	if negate {

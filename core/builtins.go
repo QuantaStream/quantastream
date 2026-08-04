@@ -715,14 +715,6 @@ func extractSecondsAndNanosToBigInt(mapv map[string]interface{}, secsSource,
 	return bigTime, nil
 }
 
-func bigIntToSecondsAndNanos(big *big.Int) (seconds, nanos int64) {
-	buf := make([]byte, 12)
-	big.FillBytes(buf)
-	seconds = int64(binary.BigEndian.Uint64(buf[:8]))
-	nanos = int64(int32(binary.BigEndian.Uint32(buf[8:])))
-	return
-}
-
 func parseTimestampMapperString(value string) (time.Time, error) {
 	trimmed := strings.TrimSpace(value)
 	for _, layout := range []string{
@@ -739,31 +731,42 @@ func parseTimestampMapperString(value string) (time.Time, error) {
 	return dateparse.ParseIn(trimmed, time.UTC)
 }
 
-// SysMillisBSIMapper - Maps millisecond granularity timestamps to a BSI.
-type SysMillisBSIMapper struct {
+// TimestampBSIMapper maps timestamps to a BSI at a configured granularity.
+type TimestampBSIMapper struct {
 	DefaultMapper
+	granularity   string
+	nanosPerValue int64
 	secondsSource string
 	nanosSource   string
 }
 
-// NewSysMillisBSIMapper - Construct a NewSysMillisBSIMapper
-func NewSysMillisBSIMapper(conf map[string]string) (Mapper, error) {
+// NewTimestampBSIMapper constructs a timestamp mapper. The granularity
+// configuration accepts second, millisecond, microsecond, or nanosecond.
+func NewTimestampBSIMapper(conf map[string]string) (Mapper, error) {
+	granularity, nanosPerValue, err := timestampBSIGranularity(conf)
+	if err != nil {
+		return nil, err
+	}
+	mapper := TimestampBSIMapper{
+		DefaultMapper: DefaultMapper{TimestampBSI},
+		granularity:   granularity,
+		nanosPerValue: nanosPerValue,
+		secondsSource: "seconds",
+		nanosSource:   "nanos",
+	}
 	if conf != nil {
 		if v, ok := conf["seconds"]; ok {
-			return SysMillisBSIMapper{DefaultMapper: DefaultMapper{SysMillisBSI}, secondsSource: v}, nil
+			mapper.secondsSource = v
 		}
-		return nil, fmt.Errorf("'seconds' config param must be supplied for SysMillisBSIMapper")
 		if v, ok := conf["nanos"]; ok {
-			return SysMillisBSIMapper{DefaultMapper: DefaultMapper{SysMillisBSI}, nanosSource: v}, nil
+			mapper.nanosSource = v
 		}
-		return nil, fmt.Errorf("'nanos' config param must be supplied for SysMillisBSIMapper")
 	}
-	return SysMillisBSIMapper{DefaultMapper: DefaultMapper{SysMillisBSI}, secondsSource: "seconds",
-		nanosSource: "nanos"}, nil
+	return mapper, nil
 }
 
-// MapValue - Maps a value to an millisecond granularity timestamp
-func (m SysMillisBSIMapper) MapValue(attr *Attribute, val interface{},
+// MapValue maps a value to a timestamp BSI value at the configured granularity.
+func (m TimestampBSIMapper) MapValue(attr *Attribute, val interface{},
 	c *Session, isUpdate bool) (result *big.Int, err error) {
 
 	switch val.(type) {
@@ -775,7 +778,7 @@ func (m SysMillisBSIMapper) MapValue(attr *Attribute, val interface{},
 		mapv := val.(map[string]interface{})
 		result, err = extractSecondsAndNanosToBigInt(mapv, m.secondsSource, m.nanosSource)
 		if err == nil {
-			result.Div(result, big.NewInt(1000000))
+			result.Div(result, big.NewInt(m.nanosPerValue))
 		}
 	case string:
 		strVal := val.(string)
@@ -786,186 +789,24 @@ func (m SysMillisBSIMapper) MapValue(attr *Attribute, val interface{},
 		var t time.Time
 		t, err = parseTimestampMapperString(strVal)
 		if err == nil {
-			result = big.NewInt(t.UnixNano() / 1000000)
+			result = big.NewInt(t.UnixNano() / m.nanosPerValue)
 		}
 	case []byte:
 		t := time.Now()
 		err = t.UnmarshalBinary(val.([]byte))
 		if err == nil {
-			result = big.NewInt(t.UnixNano() / 1000000)
+			result = big.NewInt(t.UnixNano() / m.nanosPerValue)
 		}
 	case time.Time:
-		result = big.NewInt((val.(time.Time).UnixNano() / 1000000))
+		result = big.NewInt(val.(time.Time).UnixNano() / m.nanosPerValue)
 	case int64:
 		result = big.NewInt(val.(int64))
-	case float64:
-		result = big.NewInt(int64(val.(float64)))
-	case nil:
-		if c != nil {
-			err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, nil, false)
-		}
-		return
-	default:
-		err = fmt.Errorf("%s: No handling for type '%T'", m.String(), val)
-	}
-	if c != nil && err == nil {
-		err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, result, false)
-	}
-	return
-}
-
-func (m SysMillisBSIMapper) Render(attr *Attribute, value interface{}) string {
-	if val, ok := value.(*big.Int); ok {
-		switch shared.TypeFromString(attr.Type) {
-		case shared.DateTime, shared.Date:
-			t := time.Unix(0, val.Int64()*1000000).UTC()
-			if val.BitLen() > 64 {
-				seconds, nanos := bigIntToSecondsAndNanos(val)
-				t = time.Unix(seconds, nanos)
-			}
-			if shared.TypeFromString(attr.Type) == shared.DateTime {
-				return t.Format("2006-01-02T15:04:05.000Z")
-			}
-			if shared.TypeFromString(attr.Type) == shared.Date {
-				return t.Format("2006-01-02")
-			}
-
-		}
-	}
-	return "???"
-}
-
-// SysMicroBSIMapper - Maps microsecond granularity timestamps to a BSI.
-type SysMicroBSIMapper struct {
-	DefaultMapper
-	secondsSource string
-	nanosSource   string
-}
-
-// NewSysMicroBSIMapper - Construct a NewSysMicroBSIMapper
-func NewSysMicroBSIMapper(conf map[string]string) (Mapper, error) {
-	if conf != nil {
-		if v, ok := conf["seconds"]; ok {
-			return SysMicroBSIMapper{DefaultMapper: DefaultMapper{SysMicroBSI}, secondsSource: v}, nil
-		}
-		return nil, fmt.Errorf("'seconds' config param must be supplied for SysMicroBSIMapper")
-		if v, ok := conf["nanos"]; ok {
-			return SysMicroBSIMapper{DefaultMapper: DefaultMapper{SysMicroBSI}, nanosSource: v}, nil
-		}
-		return nil, fmt.Errorf("'nanos' config param must be supplied for SysMicroBSIMapper")
-	}
-	return SysMicroBSIMapper{DefaultMapper: DefaultMapper{SysMicroBSI}, secondsSource: "seconds",
-		nanosSource: "nanos"}, nil
-}
-
-// MapValue - Maps a value to an int64.
-func (m SysMicroBSIMapper) MapValue(attr *Attribute, val interface{},
-	c *Session, isUpdate bool) (result *big.Int, err error) {
-
-	switch val.(type) {
-	case map[string]interface{}: // composite seconds/nanos
-		if m.secondsSource == "" || m.nanosSource == "" {
-			err = fmt.Errorf("'seconds' or 'nanos' configuration not specified")
-			return
-		}
-		mapv := val.(map[string]interface{})
-		result, err = extractSecondsAndNanosToBigInt(mapv, m.secondsSource, m.nanosSource)
-		if err == nil {
-			result.Div(result, big.NewInt(1000))
-		}
-	case string:
-		strVal := val.(string)
-		if strVal == "" || strVal == "NULL" {
-			result = big.NewInt(0)
-			return
-		}
-		var t time.Time
-		t, err = parseTimestampMapperString(strVal)
-		if err == nil {
-			result = big.NewInt(t.UnixNano() / 1000)
-		}
-	case []byte:
-		t := time.Now()
-		err = t.UnmarshalBinary(val.([]byte))
-		if err == nil {
-			result = big.NewInt(t.UnixNano() / 1000)
-		}
-	case time.Time:
-		result = big.NewInt(val.(time.Time).UnixNano() / 1000)
-	case int64:
-		result = big.NewInt(val.(int64))
-	case float64:
-		result = big.NewInt(int64(val.(float64)))
-	case nil:
-		if c != nil {
-			err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, nil, false)
-		}
-		return
-	default:
-		err = fmt.Errorf("%s: No handling for type '%T'", m.String(), val)
-	}
-	if c != nil && err == nil {
-		err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, result, false)
-	}
-	return
-}
-
-func (m SysMicroBSIMapper) Render(attr *Attribute, value interface{}) string {
-	if val, ok := value.(*big.Int); ok {
-		switch shared.TypeFromString(attr.Type) {
-		case shared.DateTime, shared.Date:
-			t := time.Unix(0, val.Int64()*1000).UTC()
-			if val.BitLen() > 64 {
-				seconds, nanos := bigIntToSecondsAndNanos(val)
-				t = time.Unix(seconds, nanos)
-			}
-			if shared.TypeFromString(attr.Type) == shared.DateTime {
-				return t.Format("2006-01-02T15:04:05.000000Z")
-			}
-			if shared.TypeFromString(attr.Type) == shared.Date {
-				return t.Format("2006-01-02")
-			}
-		}
-	}
-	return "???"
-}
-
-// SysSecBSIMapper - Maps Unix (second granularity) timestamps to a BSI.
-type SysSecBSIMapper struct {
-	DefaultMapper
-}
-
-// NewSysSecBSIMapper - Construct a NewSysSecBSIMapper
-func NewSysSecBSIMapper(conf map[string]string) (Mapper, error) {
-	return SysSecBSIMapper{DefaultMapper{SysSecBSI}}, nil
-}
-
-// MapValue - Maps a value to an int64.
-func (m SysSecBSIMapper) MapValue(attr *Attribute, val interface{},
-	c *Session, isUpdate bool) (result *big.Int, err error) {
-
-	switch val.(type) {
-	case string:
-		strVal := val.(string)
-		if strVal == "" || strVal == "NULL" {
-			result = big.NewInt(0)
-			return
-		}
-		var t time.Time
-		t, err = parseTimestampMapperString(strVal)
-		if err == nil {
-			result = big.NewInt(t.Unix())
-		}
-	case []byte:
-		t := time.Now()
-		err = t.UnmarshalBinary(val.([]byte))
-		result = big.NewInt(t.Unix())
-	case time.Time:
-		result = big.NewInt(val.(time.Time).Unix())
-	case int64:
-		result = big.NewInt(val.(int64))
+	case int:
+		result = big.NewInt(int64(val.(int)))
 	case int32:
 		result = big.NewInt(int64(val.(int32)))
+	case float64:
+		result = big.NewInt(int64(val.(float64)))
 	case nil:
 		if c != nil {
 			err = m.MutateBitmap(c, attr.Parent.Name, attr.FieldName, nil, false)
@@ -980,17 +821,13 @@ func (m SysSecBSIMapper) MapValue(attr *Attribute, val interface{},
 	return
 }
 
-func (m SysSecBSIMapper) Render(attr *Attribute, value interface{}) string {
+func (m TimestampBSIMapper) Render(attr *Attribute, value interface{}) string {
 	if val, ok := value.(*big.Int); ok {
 		switch shared.TypeFromString(attr.Type) {
 		case shared.DateTime, shared.Date:
-			t := time.Unix(val.Int64(), 0).UTC()
-			if val.BitLen() > 64 {
-				seconds, nanos := bigIntToSecondsAndNanos(val)
-				t = time.Unix(seconds, nanos)
-			}
+			t := time.Unix(0, val.Int64()*m.nanosPerValue).UTC()
 			if shared.TypeFromString(attr.Type) == shared.DateTime {
-				return t.Format("2006-01-02T15:04:05Z")
+				return t.Format(time.RFC3339Nano)
 			}
 			if shared.TypeFromString(attr.Type) == shared.Date {
 				return t.Format("2006-01-02")
@@ -998,6 +835,31 @@ func (m SysSecBSIMapper) Render(attr *Attribute, value interface{}) string {
 		}
 	}
 	return "???"
+}
+
+func timestampBSIGranularity(conf map[string]string) (string, int64, error) {
+	raw := "nanosecond"
+	if conf != nil {
+		for _, key := range []string{"granularity", "precision", "unit"} {
+			if v, ok := conf[key]; ok && strings.TrimSpace(v) != "" {
+				raw = v
+				break
+			}
+		}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "s", "sec", "second", "seconds":
+		return "second", int64(time.Second), nil
+	case "ms", "milli", "millisecond", "milliseconds":
+		return "millisecond", int64(time.Millisecond), nil
+	case "us", "micro", "microsecond", "microseconds":
+		return "microsecond", int64(time.Microsecond), nil
+	case "ns", "nano", "nanosecond", "nanoseconds":
+		return "nanosecond", int64(time.Nanosecond), nil
+	default:
+		return "", 0, fmt.Errorf("TimestampBSI granularity must be second, millisecond, microsecond, or nanosecond, got %q", raw)
+	}
 }
 
 // IntToBoolDirectMapper - Maps 0/1 integer to boolean
@@ -1066,56 +928,80 @@ func (m IntToBoolDirectMapper) Transform(attr *Attribute, val interface{}, c *Se
 	return
 }
 
-func extractUpperAndLowerBitsToBigInt(mapv map[string]interface{}, upperSrc, lowerSrc string) *big.Int {
+func extractUpperAndLowerBitsToBigInt(mapv map[string]interface{}, upperSrc, lowerSrc string, format string) *big.Int {
 
 	upperVal, uok := mapv[upperSrc]
 	lowerVal, lok := mapv[lowerSrc]
 	if !uok || !lok {
 		return nil
 	}
-	upperBits, err := strconv.ParseInt(upperVal.(string), 10, 64)
+	upperBits, err := int64FromUUIDPart(upperVal)
 	if err != nil {
 		return nil
 	}
-	lowerBits, err := strconv.ParseInt(lowerVal.(string), 10, 64)
+	lowerBits, err := int64FromUUIDPart(lowerVal)
 	if err != nil {
 		return nil
 	}
 	b := make([]byte, 16)
 	binary.BigEndian.PutUint64(b[:8], uint64(upperBits))
 	binary.BigEndian.PutUint64(b[8:], uint64(lowerBits))
-
-	uuid, _ := endian.FromBytes(b)
-	bigUUID := new(big.Int)
-	middleEndian, _ := uuid.MiddleEndianBytes()
-	bigUUID.SetBytes(middleEndian)
-	return bigUUID
+	return uuidBytesToBigInt(b, format)
 }
 
-// UUIDBSIMapper - Maps millisecond granularity timestamps to a BSI.
+func int64FromUUIDPart(value interface{}) (int64, error) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, nil
+	case int:
+		return int64(typed), nil
+	case float64:
+		return int64(typed), nil
+	case string:
+		return strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+	default:
+		return 0, fmt.Errorf("UUID part has unsupported type %T", value)
+	}
+}
+
+// UUIDBSIMapper maps UUID values to a 128 bit BSI.
 type UUIDBSIMapper struct {
 	DefaultMapper
 	upperSrc string
 	lowerSrc string
+	format   string
 }
 
 // NewUUIDBSIMapper - Construct a NewUUIDBSIMapper
 func NewUUIDBSIMapper(conf map[string]string) (Mapper, error) {
+	mapper := UUIDBSIMapper{
+		DefaultMapper: DefaultMapper{UUIDBSI},
+		upperSrc:      "upperBits",
+		lowerSrc:      "lowerBits",
+		format:        "rfc4122",
+	}
 	if conf != nil {
 		if v, ok := conf["upperSource"]; ok {
-			return UUIDBSIMapper{DefaultMapper: DefaultMapper{UUIDBSI}, upperSrc: v}, nil
+			mapper.upperSrc = v
 		}
-		return nil, fmt.Errorf("'upperSource' config param must be supplied for UUIDBSIMapper")
 		if v, ok := conf["lowerSource"]; ok {
-			return UUIDBSIMapper{DefaultMapper: DefaultMapper{UUIDBSI}, lowerSrc: v}, nil
+			mapper.lowerSrc = v
 		}
-		return nil, fmt.Errorf("'lowerSource' config param must be supplied for UUIDBSIMapper")
+		for _, key := range []string{"format", "byteOrder", "encoding"} {
+			if v, ok := conf[key]; ok && strings.TrimSpace(v) != "" {
+				format, err := normalizeUUIDBSIFormat(v)
+				if err != nil {
+					return nil, err
+				}
+				mapper.format = format
+				break
+			}
+		}
 	}
-	return UUIDBSIMapper{DefaultMapper: DefaultMapper{UUIDBSI}, upperSrc: "upperBits",
-		lowerSrc: "lowerBits"}, nil
+	return mapper, nil
 }
 
-// MapValue - Maps a value to an millisecond granularity timestamp
+// MapValue maps a UUID value to a BSI integer.
 func (m UUIDBSIMapper) MapValue(attr *Attribute, val interface{},
 	c *Session, isUpdate bool) (result *big.Int, err error) {
 
@@ -1126,29 +1012,14 @@ func (m UUIDBSIMapper) MapValue(attr *Attribute, val interface{},
 			return
 		}
 		mapv := val.(map[string]interface{})
-		result = extractUpperAndLowerBitsToBigInt(mapv, m.upperSrc, m.lowerSrc)
+		result = extractUpperAndLowerBitsToBigInt(mapv, m.upperSrc, m.lowerSrc, m.format)
+		if result == nil {
+			err = fmt.Errorf("UUIDBSIMapper could not map upper/lower UUID bits for '%s'", attr.FieldName)
+		}
 	case string:
-
-		/*
-				if uuidVal, errx := endian.FromBytes([]byte(val.(string))); errx == nil {
-					b, _ := uuidVal.BigEndianBytes()
-					result = new(big.Int).SetBytes(b)
-				} else {
-					err = errx
-				}
-			   *?
-			   /*
-				nuuid, _ := endian.FromBytes(val.Bytes())
-				middleEndian, _ :=  nuuid.MiddleEndianBytes()
-				if newUUID, err := uuid.FromBytes(middleEndian); err == nil {
-					return newUUID.String()
-				}
-		*/
 		if uuidVal, errx := uuid.Parse(val.(string)); errx == nil {
 			b, _ := uuidVal.MarshalBinary()
-			nuuid, _ := endian.FromBytes(b)
-			middleEndian, _ := nuuid.MiddleEndianBytes()
-			result = new(big.Int).SetBytes(middleEndian)
+			result = uuidBytesToBigInt(b, m.format)
 		} else {
 			err = errx
 		}
@@ -1173,25 +1044,50 @@ func (m UUIDBSIMapper) Render(attr *Attribute, value interface{}) string {
 	if val, ok := value.(*big.Int); ok {
 		switch shared.TypeFromString(attr.Type) {
 		case shared.String:
-			b := val.Bytes()
-			if len(b) == 15 { // Must be a 16 byte buffer
-				b = append([]byte{0}, b...)
+			b := uuidBigIntBytes(val)
+			if m.format == "middle_endian" {
+				nuuid, _ := endian.FromBytes(b)
+				b, _ = nuuid.MiddleEndianBytes()
 			}
-			nuuid, _ := endian.FromBytes(b)
-			middleEndian, _ := nuuid.MiddleEndianBytes()
-			if newUUID, err := uuid.FromBytes(middleEndian); err != nil {
+			if newUUID, err := uuid.FromBytes(b); err != nil {
 				return fmt.Sprintf("ERR = %v", err)
 			} else {
 				return newUUID.String()
 			}
-			/*
-				if newUUID, err := uuid.FromBytes(val.Bytes()); err == nil {
-					return newUUID.String()
-				} else {
-					return fmt.Sprintf("%v", err)
-				}
-			*/
 		}
 	}
 	return "???"
+}
+
+func normalizeUUIDBSIFormat(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "canonical", "rfc4122", "big", "big_endian", "big-endian", "standard":
+		return "rfc4122", nil
+	case "middle", "middle_endian", "middle-endian", "guid", "legacy":
+		return "middle_endian", nil
+	default:
+		return "", fmt.Errorf("UUIDBSI format must be rfc4122 or middle_endian, got %q", raw)
+	}
+}
+
+func uuidBytesToBigInt(b []byte, format string) *big.Int {
+	if format == "middle_endian" {
+		nuuid, _ := endian.FromBytes(b)
+		middleEndian, _ := nuuid.MiddleEndianBytes()
+		return new(big.Int).SetBytes(middleEndian)
+	}
+	return new(big.Int).SetBytes(uuidBigIntBytes(new(big.Int).SetBytes(b)))
+}
+
+func uuidBigIntBytes(value *big.Int) []byte {
+	b := value.Bytes()
+	if len(b) >= 16 {
+		if len(b) == 16 {
+			return b
+		}
+		return b[len(b)-16:]
+	}
+	padded := make([]byte, 16)
+	copy(padded[16-len(b):], b)
+	return padded
 }

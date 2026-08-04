@@ -51,8 +51,8 @@ mysql> describe lineitem;
 +-----------------+--------+------+--------------+---------+----------------+
 | Field           | Type   | Null | Key          | Default | Extra          |
 +-----------------+--------+------+--------------+---------+----------------+
-| l_comment       | string | true | -            | ""      | StringHashBSI  |
-| l_commitdate    | time   | true | -            | ""      | SysMillisBSI   |
+| l_comment       | string | true | -            | ""      | StringLexBSI   |
+| l_commitdate    | time   | true | -            | ""      | TimestampBSI   |
 | l_discount      | number | true | -            | ""      | FloatScaleBSI  |
 | l_extendedprice | number | true | -            | ""      | FloatScaleBSI  |
 | l_linenumber    | int    | true | PK           | ""      | IntBSI         |
@@ -60,9 +60,9 @@ mysql> describe lineitem;
 | l_orderkey      | int    | true | FK: orders   | ""      | ParentRelation |
 | l_partkey       | int    | true | FK: part     | ""      | ParentRelation |
 | l_quantity      | int    | true | -            | ""      | IntBSI         |
-| l_receiptdate   | time   | true | -            | ""      | SysMillisBSI   |
+| l_receiptdate   | time   | true | -            | ""      | TimestampBSI   |
 | l_returnflag    | string | true | -            | ""      | StringEnum     |
-| l_shipdate      | time   | true | PK*          | ""      | SysMillisBSI   |
+| l_shipdate      | time   | true | PK*          | ""      | TimestampBSI   |
 | l_shipinstruct  | string | true | -            | ""      | StringEnum     |
 | l_shipmode      | string | true | -            | ""      | StringEnum     |
 | l_suppkey       | int    | true | FK: supplier | ""      | ParentRelation |
@@ -72,7 +72,7 @@ mysql> describe lineitem;
 
 This single view shows the layered design: low-cardinality dimensions use
 `StringEnum`, measures and dates use BSI-backed strategies, high-cardinality
-comments use `StringHashBSI`, and join paths use `ParentRelation`.
+comments use `StringLexBSI`, and join paths use `ParentRelation`.
 
 ## Choosing Mapping Strategies
 
@@ -83,7 +83,7 @@ aggregation, or arithmetic:
 
 - `IntBSI` for integer values and surrogate keys.
 - `FloatScaleBSI` for fixed-scale decimal values.
-- `TimeStampBSI` for timestamp values, with granularity such as second,
+- `TimestampBSI` for timestamp values, with granularity such as second,
   millisecond, microsecond, or nanosecond.
 - date/time bucket strategies such as `YearToDay` when bucketed bitmap
   semantics are intended instead of general range arithmetic.
@@ -93,7 +93,7 @@ quantities, balances, dates, timestamps, and numeric foreign keys.
 
 Legacy schemas may still contain names such as `SysSecBSI`, `SysMillisBSI`,
 `SysMicroBSI`, or `SysNanoBSI`. New planner/catalog code treats those as
-compatibility aliases for canonical `TimeStampBSI` plus the corresponding
+compatibility aliases for canonical `TimestampBSI` plus the corresponding
 granularity parameter. New schema work should prefer the canonical shape so the
 representation system does not grow one physical type per timestamp precision.
 
@@ -120,8 +120,8 @@ values and do not match the intended access pattern.
 
 ### High-Cardinality Projected Strings
 
-Use `StringHashBSI` when string values have higher cardinality and must still
-be projected back to SQL results.
+Use `StringLexBSI` when string values have higher cardinality and must still
+participate in bitmap-native filtering or projection.
 
 Examples:
 
@@ -131,9 +131,20 @@ Examples:
 - clerk/order labels
 - comments
 
-This strategy solves the need to reconstruct strings, but projection can become
-expensive because Quanta must use a backing store to rehydrate values. That
-cost matters most when large result sets project string columns.
+When the configured `length` is zero or negative, QuantaStream encodes the full
+UTF-8 value into the BSI and does not use a backing store. This is a good fit
+for bounded identifiers such as names, brands, phone numbers, and short labels.
+For longer free-form fields, configure a prefix length and `maxLen`; comments in
+the TPC-H schema use an eight-character BSI prefix with a KV-backed remainder.
+Exact equality and `IN` predicates are currently lowered only for full-inline
+`StringLexBSI` fields. Prefix-plus-remainder fields need a follow-up suffix
+rehydration check before they can be treated as exact matches.
+
+`StringHashBSI` still exists for compatibility with older schemas, but new
+schema work should prefer `StringLexBSI`. Hash strings solve equality lookups,
+but projection can become expensive because Quanta must use a backing store to
+rehydrate values. That cost matters most when large result sets project string
+columns.
 
 ### Searchable Strings
 
@@ -211,7 +222,7 @@ without early time pruning can still trigger broad BSI work across many shards.
 3. Choose physical representations.
 
    Use BSI for numeric/range/measure values, `StringEnum` for low-cardinality
-   dimensions, `StringHashBSI` for projected high-cardinality strings, and
+   dimensions, `StringLexBSI` for projected high-cardinality strings, and
    searchable string support for search-style high-cardinality fields.
 
 4. Model relationships deliberately.
@@ -232,7 +243,7 @@ without early time pruning can still trigger broad BSI work across many shards.
 ## Common Anti-Patterns
 
 - using `StringEnum` for high-cardinality free-form text
-- projecting large `StringHashBSI` fields in broad scans when the query only
+- projecting large high-cardinality string fields in broad scans when the query only
   needs them after filtering
 - time-partitioning tables that are usually queried without date predicates
 - using string keys in hot join paths when numeric surrogate keys are available
@@ -251,7 +262,7 @@ For TPC-H:
 - low-cardinality dimensions such as region, nation, segment, return flag, and
   ship mode fit `StringEnum`
 - high-cardinality names, addresses, phones, comments, and clerk fields fit
-  `StringHashBSI`
+  `StringLexBSI`
 - surrogate integer keys and `ParentRelation` links are central to efficient
   joins
 - date fields expose the importance of time-aware planning and shard pruning

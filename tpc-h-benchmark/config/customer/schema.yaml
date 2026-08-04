@@ -10,13 +10,19 @@ attributes:
   columnID: true
 - fieldName: c_name
   sourceName: /data/c_name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "25"
   type: String
+  maxLen: 25
   sourceOrdinal: 2
 - fieldName: c_address
   sourceName: /data/c_address
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "40"
   type: String
+  maxLen: 40
   sourceOrdinal: 3
 - fieldName: c_nationkey
   sourceName: /data/c_nationkey
@@ -26,8 +32,11 @@ attributes:
   sourceOrdinal: 4
 - fieldName: c_phone
   sourceName: /data/c_phone
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "15"
   type: String
+  maxLen: 15
   sourceOrdinal: 5
 - fieldName: c_acctbal
   sourceName: /data/c_acctbal
@@ -42,6 +51,9 @@ attributes:
   sourceOrdinal: 7
 - fieldName: c_comment
   sourceName: /data/c_comment
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
+  maxLen: 256
   sourceOrdinal: 8

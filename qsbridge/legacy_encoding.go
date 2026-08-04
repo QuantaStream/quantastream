@@ -8,6 +8,8 @@ const (
 	legacyStringLexBSI   = "StringLexBSI"
 	legacyFloatScaleBSI  = "FloatScaleBSI"
 	legacyIntBSI         = "IntBSI"
+	legacyUUIDBSI        = "UUIDBSI"
+	legacyTimestampBSI   = "TimestampBSI"
 	legacyTimeStampBSI   = "TimeStampBSI"
 	legacySysSecBSI      = "SysSecBSI"
 	legacySysMillisBSI   = "SysMillisBSI"
@@ -91,9 +93,24 @@ func LegacyEncodingProfile(legacyName string, options LegacyEncodingOptions) Enc
 		profile.LegacyName = legacyIntBSI
 		profile.Multiplicity = multiplicity
 		return profile
-	case strings.ToLower(legacyTimeStampBSI):
+	case strings.ToLower(legacyUUIDBSI):
+		return EncodingProfile{
+			Kind:         EncodingUUIDBSI,
+			LegacyName:   legacyUUIDBSI,
+			Multiplicity: multiplicity,
+			Rehydration:  RehydrationProfile{Kind: RehydrationInline},
+			PredicateCapabilities: PredicateCapabilities{
+				PredicateCapabilityEquality,
+				PredicateCapabilityRange,
+			},
+			ProjectionCapabilities: ProjectionCapabilities{
+				ProjectionCapabilityInline,
+				ProjectionCapabilityOriginalValue,
+			},
+		}
+	case strings.ToLower(legacyTimestampBSI), strings.ToLower(legacyTimeStampBSI):
 		profile := NewTimeBSIProfile(legacyTimeGranularityOrDefault(options.Granularity))
-		profile.LegacyName = legacyTimeStampBSI
+		profile.LegacyName = legacyTimestampBSI
 		profile.Multiplicity = multiplicity
 		return profile
 	case strings.ToLower(legacySysSecBSI):
@@ -130,7 +147,7 @@ func LegacyEncodingProfile(legacyName string, options LegacyEncodingOptions) Enc
 
 func legacyTimeBSICompatibilityProfile(granularity TimeGranularity, multiplicity ValueMultiplicity) EncodingProfile {
 	profile := NewTimeBSIProfile(granularity)
-	profile.LegacyName = legacyTimeStampBSI
+	profile.LegacyName = legacyTimestampBSI
 	profile.Multiplicity = multiplicity
 	return profile
 }

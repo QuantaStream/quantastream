@@ -2,7 +2,9 @@ tableName: deliveries_qa
 primaryKey: delivery_id
 attributes:
 - fieldName: delivery_id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: line_id
   mappingStrategy: ParentRelation

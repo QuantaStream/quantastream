@@ -393,6 +393,89 @@ func TestLegacyDirectProjectionBSIFieldReaderReadsBackingStringKeys(t *testing.T
 	}
 }
 
+func TestLegacyDirectProjectionBSIFieldReaderProjectsFullInlineStringLexBSI(t *testing.T) {
+	attr := &core.Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "p_brand",
+			Type:            "String",
+			MappingStrategy: "StringLexBSI",
+			MapperConfig:    map[string]string{"length": "10"},
+			Size:            10,
+		},
+		Parent: &core.Table{BasicTable: &shared.BasicTable{Name: "part"}},
+	}
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"part": {
+			BasicTable:       &shared.BasicTable{Name: "part"},
+			AttributeNameMap: map[string]*core.Attribute{"p_brand": attr},
+		},
+	}}
+	mapper, err := core.NewStringLexBSIMapper(map[string]string{"length": "10"})
+	if err != nil {
+		t.Fatalf("NewStringLexBSIMapper returned error: %v", err)
+	}
+	encoded, err := mapper.MapValue(attr, "Brand#45", nil, false)
+	if err != nil {
+		t.Fatalf("MapValue returned error: %v", err)
+	}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(7, encoded)
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader: NativeProjectionBSIReaderFunc(func(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			if request.Index != "part" || request.PhysicalField != "p_brand" {
+				t.Fatalf("read request = %#v, want part.p_brand", request)
+			}
+			return NativeProjectionBSIReadResult{BSI: bsi}, nil, nil
+		}),
+	}
+
+	result, diagnostics, err := reader.ReadProjectionField(context.Background(), NativeProjectionFieldReadRequest{
+		Index:   "part",
+		Field:   qsbridge.QuantaProjectionField{Index: "part", Field: "p_brand", Type: qsbridge.DataTypeString},
+		Rownums: []qsbridge.QuantaRownum{7},
+	})
+	if err != nil {
+		t.Fatalf("ReadProjectionField error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(result.Values) != 1 || result.Values[0].Kind != qsbridge.ValueString || result.Values[0].Value != "Brand#45" {
+		t.Fatalf("values = %#v, want Brand#45 string", result.Values)
+	}
+}
+
+func TestLegacyDirectProjectionBSIFieldReaderBlocksStringLexRemainderProjection(t *testing.T) {
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"lineitem": {
+			BasicTable: &shared.BasicTable{Name: "lineitem"},
+			AttributeNameMap: map[string]*core.Attribute{
+				"l_comment": {BasicAttribute: &shared.BasicAttribute{
+					FieldName:       "l_comment",
+					Type:            "String",
+					MappingStrategy: "StringLexBSI",
+					MapperConfig:    map[string]string{"length": "8"},
+					Size:            256,
+				}},
+			},
+		},
+	}}
+	reader := NativeProjectionBSIFieldReader{TableCache: tableCache}
+
+	_, diagnostics, err := reader.ReadProjectionField(context.Background(), NativeProjectionFieldReadRequest{
+		Index:   "lineitem",
+		Field:   qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_comment", Type: qsbridge.DataTypeString},
+		Rownums: []qsbridge.QuantaRownum{1},
+	})
+	if err != nil {
+		t.Fatalf("ReadProjectionField error = %v", err)
+	}
+	if !diagnostics.BlocksNative() || diagnostics.Codes()[0] != qsbridge.DiagnosticUnsupportedSQL {
+		t.Fatalf("diagnostics = %#v, want unsupported StringLex remainder projection", diagnostics)
+	}
+}
+
 func TestLegacyDirectProjectionBSIFieldReaderFallsBackForStringEnumWithoutDictionaryReader(t *testing.T) {
 	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
 		"lineitem": {

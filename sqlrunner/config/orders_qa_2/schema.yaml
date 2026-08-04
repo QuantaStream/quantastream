@@ -3,25 +3,35 @@ primaryKey: order_id
 attributes:
 - fieldName: order_id
   sourceName: order_id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: order_date
   sourceName: order_date
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   type: DateTime
 - fieldName: ship_date
   sourceName: ship_date
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   type: DateTime
 - fieldName: ship_via
   sourceName: ship_via
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - fieldName: cust_id
   mappingStrategy: ParentRelation
   type: String
   foreignKey: customers
 - fieldName: createdAtTimestamp
-  mappingStrategy: SysMicroBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "microsecond"
   default: now()
   type: DateTime

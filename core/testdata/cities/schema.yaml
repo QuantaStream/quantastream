@@ -5,11 +5,15 @@ encoding: contentType
 attributes:
 - sourceName: /id
   fieldName: id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - sourceName: /city
   fieldName: name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
   searchable: true
 - sourceName: /state_name
@@ -22,7 +26,9 @@ attributes:
   type: String
 - sourceName: /county_name
   fieldName: county
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - sourceName: /lat
   fieldName: latitude
@@ -63,9 +69,13 @@ attributes:
   desc: Comma separated list of city, county, state abbreviation and state name.
 - sourceName: /created_timestamp
   fieldName: created_timestamp
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime
 - sourceName: /created_date
   fieldName: created_date
-  mappingStrategy: SysSecBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "second"
   type: Integer

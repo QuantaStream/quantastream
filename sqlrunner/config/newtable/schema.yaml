@@ -4,18 +4,24 @@ attributes:
 
 - sourceName: /cust_id
   fieldName: cust_id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 
 - fieldName: first_name
   sourceName: /first_name
   type: String
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   exclusive: true
 
 - fieldName: last_name
   sourceName: /last_name
   type: String
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   exclusive: true
 

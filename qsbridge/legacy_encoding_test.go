@@ -93,8 +93,8 @@ func TestLegacyEncodingProfileMapsNumericAndTimeBSIs(t *testing.T) {
 	if timeProfile.Kind != EncodingTimeBSI || timeProfile.Granularity != TimeGranularityMillisecond {
 		t.Fatalf("time profile = %#v, want millisecond time BSI", timeProfile)
 	}
-	if timeProfile.LegacyName != "TimeStampBSI" {
-		t.Fatalf("LegacyName = %q, want canonical TimeStampBSI", timeProfile.LegacyName)
+	if timeProfile.LegacyName != "TimestampBSI" {
+		t.Fatalf("LegacyName = %q, want canonical TimestampBSI", timeProfile.LegacyName)
 	}
 	if !timeProfile.SupportsPredicate(PredicateCapabilityRange) {
 		t.Fatalf("expected time range capability")
@@ -113,8 +113,8 @@ func TestLegacyEncodingProfileConsolidatesTimestampBSIAliases(t *testing.T) {
 	}
 	for _, test := range tests {
 		profile := LegacyEncodingProfile(test.name, LegacyEncodingOptions{})
-		if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimeStampBSI" || profile.Granularity != test.granularity {
-			t.Fatalf("%s profile = %#v, want canonical TimeStampBSI/%s", test.name, profile, test.granularity)
+		if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimestampBSI" || profile.Granularity != test.granularity {
+			t.Fatalf("%s profile = %#v, want canonical TimestampBSI/%s", test.name, profile, test.granularity)
 		}
 		if !profile.SupportsPredicate(PredicateCapabilityEquality) || !profile.SupportsPredicate(PredicateCapabilityRange) {
 			t.Fatalf("%s profile = %#v, want equality and range capabilities", test.name, profile)
@@ -122,10 +122,10 @@ func TestLegacyEncodingProfileConsolidatesTimestampBSIAliases(t *testing.T) {
 	}
 }
 
-func TestLegacyEncodingProfileMapsCanonicalTimeStampBSIWithGranularity(t *testing.T) {
-	profile := LegacyEncodingProfile("TimeStampBSI", LegacyEncodingOptions{Granularity: TimeGranularityMicrosecond})
-	if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimeStampBSI" {
-		t.Fatalf("profile = %#v, want canonical TimeStampBSI", profile)
+func TestLegacyEncodingProfileMapsCanonicalTimestampBSIWithGranularity(t *testing.T) {
+	profile := LegacyEncodingProfile("TimestampBSI", LegacyEncodingOptions{Granularity: TimeGranularityMicrosecond})
+	if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimestampBSI" {
+		t.Fatalf("profile = %#v, want canonical TimestampBSI", profile)
 	}
 	if profile.Granularity != TimeGranularityMicrosecond {
 		t.Fatalf("Granularity = %q, want %q", profile.Granularity, TimeGranularityMicrosecond)

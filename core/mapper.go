@@ -195,6 +195,8 @@ func (mt MapperType) String() string {
 		return "SysMicroBSI"
 	case SysSecBSI:
 		return "SysSecBSI"
+	case TimestampBSI:
+		return "TimestampBSI"
 	case StringEnum:
 		return "StringEnum"
 	case StringHashBSI:
@@ -262,6 +264,8 @@ func MapperTypeFromString(mt string) MapperType {
 		return SysMicroBSI
 	case "SysSecBSI":
 		return SysSecBSI
+	case "TimestampBSI", "TimeStampBSI":
+		return TimestampBSI
 	case "StringEnum":
 		return StringEnum
 	case "StringHashBSI":
@@ -289,7 +293,7 @@ func (mt MapperType) MapValue(attr *Attribute, val interface{}, c *Session, isUp
 // IsBSI - Is this mapper for BSI types?
 func (mt MapperType) IsBSI() bool {
 	switch mt {
-	case IntBSI, FloatScaleBSI, SysMillisBSI, SysMicroBSI, SysSecBSI, StringHashBSI, StringLexBSI, UUIDBSI, CustomBSI:
+	case IntBSI, FloatScaleBSI, SysMillisBSI, SysMicroBSI, SysSecBSI, TimestampBSI, StringHashBSI, StringLexBSI, UUIDBSI, CustomBSI:
 		return true
 	default:
 		return false
@@ -422,9 +426,7 @@ func init() {
 	Register(IntBSI.String(), NewIntBSIMapper)
 	Register(StringEnum.String(), NewStringEnumMapper)
 	Register(BoolRegex.String(), NewBoolRegexMapper)
-	Register(SysMillisBSI.String(), NewSysMillisBSIMapper)
-	Register(SysMicroBSI.String(), NewSysMicroBSIMapper)
-	Register(SysSecBSI.String(), NewSysSecBSIMapper)
+	Register(TimestampBSI.String(), NewTimestampBSIMapper)
 	Register(UUIDBSI.String(), NewUUIDBSIMapper)
 }
 

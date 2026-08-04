@@ -3093,7 +3093,10 @@ func legacyDirectRelationshipTimeQuantumField(table *core.Table) string {
 		if fieldName == "" {
 			continue
 		}
-		if legacyDataType(attribute.Type) == qsbridge.DataTypeTime && strings.HasPrefix(attribute.MappingStrategy, "Sys") {
+		if legacyDataType(attribute.Type) == qsbridge.DataTypeTime &&
+			qsbridge.LegacyEncodingProfile(attribute.MappingStrategy, qsbridge.LegacyEncodingOptions{
+				Granularity: LegacyTimeBSIGranularity(attribute.MapperConfig),
+			}).Kind == qsbridge.EncodingTimeBSI {
 			return fieldName
 		}
 	}
@@ -3129,32 +3132,41 @@ func legacyDirectRelationshipFullTimeRangeEncoded(table *core.Table, field strin
 }
 
 func legacyDirectRelationshipTimeMillisToEncoded(table *core.Table, field string, epochMillis int64) int64 {
-	switch strings.ToLower(strings.TrimSpace(legacyDirectRelationshipTimeMappingStrategy(table, field))) {
-	case "sysmicrobsi":
+	switch legacyDirectRelationshipTimeGranularity(table, field) {
+	case qsbridge.TimeGranularityMicrosecond:
 		return epochMillis * int64(time.Millisecond/time.Microsecond)
-	case "syssecbsi":
+	case qsbridge.TimeGranularitySecond:
 		return epochMillis / int64(time.Second/time.Millisecond)
+	case qsbridge.TimeGranularityNanosecond:
+		return epochMillis * int64(time.Millisecond)
 	default:
 		return epochMillis
 	}
 }
 
 func legacyDirectRelationshipEncodedTimeToNanos(table *core.Table, field string, encoded int64) int64 {
-	switch strings.ToLower(strings.TrimSpace(legacyDirectRelationshipTimeMappingStrategy(table, field))) {
-	case "sysmicrobsi":
+	switch legacyDirectRelationshipTimeGranularity(table, field) {
+	case qsbridge.TimeGranularityMicrosecond:
 		return encoded * int64(time.Microsecond)
-	case "syssecbsi":
+	case qsbridge.TimeGranularitySecond:
 		return encoded * int64(time.Second)
+	case qsbridge.TimeGranularityNanosecond:
+		return encoded
 	default:
 		return encoded * int64(time.Millisecond)
 	}
 }
 
-func legacyDirectRelationshipTimeMappingStrategy(table *core.Table, field string) string {
+func legacyDirectRelationshipTimeGranularity(table *core.Table, field string) qsbridge.TimeGranularity {
 	if attr := legacyDirectRelationshipTimeAttribute(table, field); attr != nil {
-		return attr.MappingStrategy
+		profile := qsbridge.LegacyEncodingProfile(attr.MappingStrategy, qsbridge.LegacyEncodingOptions{
+			Granularity: LegacyTimeBSIGranularity(attr.MapperConfig),
+		})
+		if profile.Granularity != qsbridge.TimeGranularityUnknown {
+			return profile.Granularity
+		}
 	}
-	return ""
+	return qsbridge.TimeGranularityMillisecond
 }
 
 func legacyDirectRelationshipCandidateRownumsForTable(request ExecutionRequest, table string) ([]qsbridge.QuantaRownum, bool) {

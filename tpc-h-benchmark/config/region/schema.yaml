@@ -16,6 +16,9 @@ attributes:
   sourceOrdinal: 2
 - fieldName: r_comment
   sourceName: /data/r_comment
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
+  maxLen: 256
   sourceOrdinal: 3

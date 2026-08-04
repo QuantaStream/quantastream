@@ -56,11 +56,11 @@ hydrated values, which covers probes such as `p_name like 'green%'` and
 `p_name like '%green%'`. This path is useful for correctness but should not be
 confused with an indexed text-search plan.
 
-Fields configured as searchable `StringHashBSI` values still have a
-bloom-filter-style search path. That path is useful as a pragmatic
-high-cardinality string search experiment, but it should eventually be exposed
-through a clearer text-search operator or function rather than treated as the
-default relational `LIKE` implementation.
+Fields configured as searchable high-cardinality strings still have a
+bloom-filter-style search path. That path is useful as a pragmatic string-search
+experiment, but it should eventually be exposed through a clearer text-search
+operator or function rather than treated as the default relational `LIKE`
+implementation.
 
 Remaining pattern-matching gaps include escape semantics, broad collation
 behavior, and efficient indexed planning for high-cardinality backing strings.
@@ -74,6 +74,11 @@ value >= 'PROMO' and value < next_prefix('PROMO')
 
 That should be treated as a new storage/index capability, not a bloom-filter
 extension.
+
+`StringLexBSI` equality and `IN` predicates are native only when the full string
+is encoded inline. Prefix-plus-remainder fields, such as long comment fields,
+must add suffix rehydration before exact string predicates can be lowered
+without false positives.
 
 ## Function Predicate Membership
 

@@ -99,7 +99,9 @@ Example:
 - sourceName: last_updated_dt
   fieldName: last_updated_dt
   type: DateTime
-  mappingStrategy: SysSecBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "second"
   maxValue: 4294967295
   highCard: false
   # Call the bridge "now()" function that returns the current timestamp
@@ -138,10 +140,11 @@ There is a list of the "built-in" strategies:
 | `DayOfWeek`         | Date/Datetime integer day of week granularity                                             |
 | `TimeOfDay`         | Datetime time of day in seconds granularity                                               |
 | `HourOfDay`         | Datetime hour in day                                                                      |
-| `SysMillisBSI`      | Datetime to BSI range milliseconds granularity                                            |
-| `SysSecBSI`         | Datetime to BSI range seconds granularity (UNIX time)                                     |
+| `TimestampBSI`      | Datetime to BSI range encoding with configurable second/millisecond/microsecond/nanosecond granularity |
 | `StringEnum`        | Direct mapping of set of enumerated strings to rowID (<500 cardinality)                   |
-| `StringHashBSI`     | Hash string to 32 bit rowID (>500 cardinality)                                            |
+| `StringLexBSI`      | Lexical string BSI encoding with optional KV-backed remainder for long strings            |
+| `StringHashBSI`     | Compatibility hash-string BSI mapper for older schemas                                    |
+| `UUIDBSI`           | UUID to 128-bit BSI encoding with configurable RFC 4122 or middle-endian byte order        |
 | `StringToIntDirect` | Parse string to int and use directly.                                                     |
 | `BoolRegex`         | Map string to a boolean value via a pattern (requires configuration)                      |
 | `Contains`          | Map string to an array of contained strings (non overlapping) (requires configuration)    |
@@ -151,4 +154,3 @@ There is a list of the "built-in" strategies:
 
 ## Sample files
 Files contained in this subproject can be copied to your configuration root directory.
-

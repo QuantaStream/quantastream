@@ -212,7 +212,7 @@ statements. New suites should prefer `kind: statement` with SQL DDL directly.
 The default standard smoke suite is `sqltests/inabox_standard_qa_smoke.yaml`.
 It checks a self-contained `customers_qa` slice over the MySQL socket,
 including StringEnum dictionary loading, multiplicity-set inserts, default
-expressions, and StringHashBSI materialization. Override the target with
+expressions, and StringLexBSI materialization. Override the target with
 `HOST`, `PORT`, `SQL_USER`, `DB`, `SUITE`, and optionally `CASE`:
 
 ```bash

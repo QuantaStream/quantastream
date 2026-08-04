@@ -886,8 +886,10 @@ func nativeProjectionAttributeRequiresFallback(attr *core.Attribute) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
-	case "stringhashbsi", "stringlexbsi", "stringenum":
+	case "stringhashbsi", "stringenum":
 		return true
+	case "stringlexbsi":
+		return nativeProjectionStringLexNeedsRemainder(attr)
 	case "parentrelation":
 		return false
 	default:
@@ -907,6 +909,30 @@ func nativeProjectionAttributeIsBackingString(attr *core.Attribute) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(attr.MappingStrategy), "StringHashBSI")
+}
+
+func nativeProjectionStringLexNeedsRemainder(attr *core.Attribute) bool {
+	if attr == nil || !strings.EqualFold(strings.TrimSpace(attr.MappingStrategy), "StringLexBSI") {
+		return false
+	}
+	prefixLength := nativeProjectionStringLexPrefixLength(attr.MapperConfig)
+	if prefixLength <= 0 {
+		return false
+	}
+	return attr.Size <= 0 || attr.Size > prefixLength
+}
+
+func nativeProjectionStringLexPrefixLength(config map[string]string) int {
+	for _, key := range []string{"length", "prefixLength", "chars", "characters"} {
+		if raw, ok := config[key]; ok {
+			value, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err == nil {
+				return value
+			}
+			return 0
+		}
+	}
+	return 0
 }
 
 func nativeProjectionAttributeIsDirectBitmap(attr *core.Attribute) bool {
@@ -982,6 +1008,11 @@ func nativeProjectionBSICell(table *core.Table, attr *core.Attribute, field qsbr
 			scale = 0
 		}
 		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: float64(value.Int64()) / math.Pow10(scale)}
+	case qsbridge.DataTypeString:
+		if strings.EqualFold(strings.TrimSpace(attr.MappingStrategy), "StringLexBSI") {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: nativeProjectionStringLexRender(attr, value)}
+		}
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value.Int64()}
 	case qsbridge.DataTypeTime:
 		nanos := legacyDirectRelationshipEncodedTimeToNanos(table, attr.FieldName, value.Int64())
 		return qsbridge.ResultCell{Kind: qsbridge.ValueTime, Value: time.Unix(0, nanos).UTC()}
@@ -990,6 +1021,17 @@ func nativeProjectionBSICell(table *core.Table, attr *core.Attribute, field qsbr
 	default:
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value.Int64()}
 	}
+}
+
+func nativeProjectionStringLexRender(attr *core.Attribute, value *big.Int) string {
+	if attr == nil {
+		return ""
+	}
+	mapper, err := core.ResolveMapper(attr)
+	if err != nil || mapper == nil {
+		return ""
+	}
+	return mapper.Render(attr, value)
 }
 
 func nativeProjectionWindowNanos(cache *core.TableCacheStruct, request NativeProjectionBSIReadRequest) (int64, int64) {

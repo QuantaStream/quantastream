@@ -196,6 +196,7 @@ func legacyFieldDefinition(schema string, table *core.Table, attribute core.Attr
 		NonExclusive:   attribute.NonExclusive,
 		Searchable:     attribute.Searchable,
 		Scale:          attribute.Scale,
+		Granularity:    LegacyTimeBSIGranularity(attribute.MapperConfig),
 		PrefixLength:   legacyStringLexBSIPrefixLength(attribute.MapperConfig),
 		MaxLength:      legacyStringLexBSIMaxLength(attribute),
 		RemainderStore: "kv",
@@ -330,13 +331,33 @@ func legacyStringLexBSIMaxLength(attribute core.Attribute) int {
 	return -1
 }
 
+// LegacyTimeBSIGranularity reads the catalog granularity option for TimestampBSI fields.
+func LegacyTimeBSIGranularity(config map[string]string) qsbridge.TimeGranularity {
+	for _, key := range []string{"granularity", "precision", "unit"} {
+		if raw, ok := config[key]; ok {
+			switch strings.ToLower(strings.TrimSpace(raw)) {
+			case "s", "sec", "second", "seconds":
+				return qsbridge.TimeGranularitySecond
+			case "ms", "milli", "millisecond", "milliseconds":
+				return qsbridge.TimeGranularityMillisecond
+			case "us", "micro", "microsecond", "microseconds":
+				return qsbridge.TimeGranularityMicrosecond
+			case "ns", "nano", "nanosecond", "nanoseconds":
+				return qsbridge.TimeGranularityNanosecond
+			}
+			return qsbridge.TimeGranularityUnknown
+		}
+	}
+	return qsbridge.TimeGranularityUnknown
+}
+
 func legacyIndexKind(encoding qsbridge.EncodingProfile) qsbridge.IndexKind {
 	switch encoding.Kind {
 	case qsbridge.EncodingStringEnum:
 		return qsbridge.IndexStringEnum
 	case qsbridge.EncodingBackingString:
 		return qsbridge.IndexBackingString
-	case qsbridge.EncodingNumericBSI, qsbridge.EncodingStringLexBSI, qsbridge.EncodingRelation:
+	case qsbridge.EncodingNumericBSI, qsbridge.EncodingStringLexBSI, qsbridge.EncodingUUIDBSI, qsbridge.EncodingRelation:
 		return qsbridge.IndexBSI
 	case qsbridge.EncodingTimeBSI:
 		return qsbridge.IndexDateTime

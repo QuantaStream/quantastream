@@ -856,7 +856,8 @@ func (s *Session) processAlternateKeys(tbuf *TableBuffer, row interface{}, pqTab
 			switch reflect.ValueOf(cval).Kind() {
 			case reflect.String:
 				// Do nothing already a string
-				if v.MappingStrategy == "SysMillisBSI" || v.MappingStrategy == "SysMicroBSI" {
+				if v.MappingStrategy == "TimestampBSI" || v.MappingStrategy == "TimeStampBSI" ||
+					v.MappingStrategy == "SysMillisBSI" || v.MappingStrategy == "SysMicroBSI" {
 					strVal := cval.(string)
 					loc, _ := time.LoadLocation("Local")
 					ts, err := dateparse.ParseIn(strVal, loc)

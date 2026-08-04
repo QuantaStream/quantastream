@@ -10,18 +10,27 @@ attributes:
   columnID: true
 - fieldName: p_name
   sourceName: /data/p_name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "55"
   type: String
+  maxLen: 55
   sourceOrdinal: 2
 - fieldName: p_mfgr
   sourceName: /data/p_mfgr
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "25"
   type: String
+  maxLen: 25
   sourceOrdinal: 3
 - fieldName: p_brand
   sourceName: /data/p_brand
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "10"
   type: String
+  maxLen: 10
   sourceOrdinal: 4
 - fieldName: p_type
   sourceName: /data/p_type
@@ -46,6 +55,9 @@ attributes:
   sourceOrdinal: 8
 - fieldName: p_comment
   sourceName: /data/p_comment
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
+  maxLen: 256
   sourceOrdinal: 9

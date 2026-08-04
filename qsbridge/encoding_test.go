@@ -179,8 +179,8 @@ func TestNewTimeAndNumericBSIProfilesPreserveRepresentationOptions(t *testing.T)
 
 func TestLegacyEncodingProfileMapsSysMicroBSIToTimeBSI(t *testing.T) {
 	profile := LegacyEncodingProfile("SysMicroBSI", LegacyEncodingOptions{})
-	if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimeStampBSI" {
-		t.Fatalf("profile = %#v, want canonical TimeStampBSI time BSI", profile)
+	if profile.Kind != EncodingTimeBSI || profile.LegacyName != "TimestampBSI" {
+		t.Fatalf("profile = %#v, want canonical TimestampBSI time BSI", profile)
 	}
 	if profile.Granularity != TimeGranularityMicrosecond {
 		t.Fatalf("Granularity = %q, want %q", profile.Granularity, TimeGranularityMicrosecond)

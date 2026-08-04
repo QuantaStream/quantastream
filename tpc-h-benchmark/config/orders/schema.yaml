@@ -29,7 +29,9 @@ attributes:
   sourceOrdinal: 4
 - fieldName: o_orderdate
   sourceName: /data/o_orderdate
-  mappingStrategy: SysMillisBSI
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
   type: DateTime
   sourceOrdinal: 5
 - fieldName: o_orderpriority
@@ -49,6 +51,9 @@ attributes:
   sourceOrdinal: 8
 - fieldName: o_comment
   sourceName: /data/o_comment
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
+  maxLen: 256
   sourceOrdinal: 9

@@ -4,11 +4,15 @@ primaryKey: id
 attributes:
 - sourceName: /id
   fieldName: id
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - sourceName: /city
   fieldName: name
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - sourceName: /state_name
   fieldName: state_name
@@ -20,7 +24,9 @@ attributes:
   type: String
 - sourceName: /county_name
   fieldName: county
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
   type: String
 - sourceName: /lat
   fieldName: latitude
