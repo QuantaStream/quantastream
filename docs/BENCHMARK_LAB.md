@@ -239,6 +239,21 @@ Set `QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE` to label the JSON profile. The
 benchmark verifies final SQL counts after timing stops. Normal `go test` does
 not run it.
 
+Compare two native ingest benchmark reports with:
+
+```bash
+cd /home/gmolinari/projects/quantastream
+go run ./cmd/ingest-benchmark-compare \
+  -baseline /tmp/quantastream-tpch-ingest-before.json \
+  -target /tmp/quantastream-tpch-ingest-after.json \
+  -out /tmp/quantastream-tpch-ingest-comparison.md
+```
+
+The comparison treats throughput metrics as higher-is-better and per-operation
+cost metrics as lower-is-better. The JSON reports and rendered markdown are
+local benchmark artifacts and should stay out of source control unless a
+reference run is intentionally being archived.
+
 ## Query Profile Capture
 
 Use query profile capture when a case passes but the wall time needs

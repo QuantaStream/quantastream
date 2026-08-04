@@ -1,0 +1,370 @@
+package qsfixture
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/QuantaStream/quantastream/core"
+)
+
+const nativeIngestBenchmarkReportVersion = 1
+
+// NativeIngestBenchmarkReportRequest captures one native ingest benchmark run.
+type NativeIngestBenchmarkReportRequest struct {
+	Profile           string
+	Mode              string
+	OrderCount        int
+	LineitemsPerOrder int
+	ShardCount        int
+	RunCount          int
+	Elapsed           time.Duration
+	PutRow            core.RouterPutRowProfileSummary
+	Flush             core.RouterFlushProfileSummary
+	Metrics           map[string]float64
+}
+
+// NativeIngestBenchmarkReport is the portable JSON shape emitted by native
+// ingest benchmarks.
+type NativeIngestBenchmarkReport struct {
+	Version     int                             `json:"version"`
+	Profile     string                          `json:"profile"`
+	Mode        string                          `json:"mode"`
+	GeneratedAt time.Time                       `json:"generated_at"`
+	Config      NativeIngestBenchmarkConfig     `json:"config"`
+	Counts      NativeIngestBenchmarkCounts     `json:"counts"`
+	Timings     NativeIngestBenchmarkTimings    `json:"timings"`
+	Metrics     map[string]float64              `json:"metrics"`
+	PutRow      core.RouterPutRowProfileSummary `json:"put_row"`
+	Flush       core.RouterFlushProfileSummary  `json:"flush"`
+}
+
+// NativeIngestBenchmarkConfig records benchmark input parameters.
+type NativeIngestBenchmarkConfig struct {
+	OrderCount        int `json:"order_count"`
+	LineitemsPerOrder int `json:"lineitems_per_order"`
+	ShardCount        int `json:"shard_count"`
+	RunCount          int `json:"run_count"`
+}
+
+// NativeIngestBenchmarkCounts records logical row totals produced by a run.
+type NativeIngestBenchmarkCounts struct {
+	TotalOrders      int `json:"total_orders"`
+	TotalLineitems   int `json:"total_lineitems"`
+	TotalLogicalRows int `json:"total_logical_rows"`
+}
+
+// NativeIngestBenchmarkTimings records wall-clock benchmark timings.
+type NativeIngestBenchmarkTimings struct {
+	Elapsed      string `json:"elapsed"`
+	ElapsedNanos int64  `json:"elapsed_nanos"`
+}
+
+// BuildNativeIngestBenchmarkReport builds the portable report shape for a run.
+func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest) NativeIngestBenchmarkReport {
+	totalOrders := request.OrderCount * request.RunCount
+	totalLineitems := totalOrders * request.LineitemsPerOrder
+	return NativeIngestBenchmarkReport{
+		Version:     nativeIngestBenchmarkReportVersion,
+		Profile:     request.Profile,
+		Mode:        request.Mode,
+		GeneratedAt: time.Now().UTC(),
+		Config: NativeIngestBenchmarkConfig{
+			OrderCount:        request.OrderCount,
+			LineitemsPerOrder: request.LineitemsPerOrder,
+			ShardCount:        request.ShardCount,
+			RunCount:          request.RunCount,
+		},
+		Counts: NativeIngestBenchmarkCounts{
+			TotalOrders:      totalOrders,
+			TotalLineitems:   totalLineitems,
+			TotalLogicalRows: totalOrders + totalLineitems,
+		},
+		Timings: NativeIngestBenchmarkTimings{
+			Elapsed:      request.Elapsed.String(),
+			ElapsedNanos: request.Elapsed.Nanoseconds(),
+		},
+		Metrics: copyNativeIngestBenchmarkMetrics(request.Metrics),
+		PutRow:  request.PutRow,
+		Flush:   request.Flush,
+	}
+}
+
+// WriteNativeIngestBenchmarkReport writes a report when path is non-empty.
+func WriteNativeIngestBenchmarkReport(path string, report NativeIngestBenchmarkReport) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0644)
+}
+
+// ReadNativeIngestBenchmarkReport reads a previously written report.
+func ReadNativeIngestBenchmarkReport(path string) (NativeIngestBenchmarkReport, error) {
+	var report NativeIngestBenchmarkReport
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return report, err
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return report, err
+	}
+	return report, nil
+}
+
+// NativeIngestBenchmarkMetrics derives normalized throughput and cost metrics.
+func NativeIngestBenchmarkMetrics(
+	elapsed time.Duration,
+	totalOrders int,
+	totalLineitems int,
+	totalLogicalRows int,
+	putSnapshot core.RouterPutRowProfileSummary,
+	flushSnapshot core.RouterFlushProfileSummary,
+	runCount int,
+) map[string]float64 {
+	elapsedSeconds := elapsed.Seconds()
+	if elapsedSeconds <= 0 {
+		return map[string]float64{}
+	}
+	return map[string]float64{
+		"orders_per_second":            float64(totalOrders) / elapsedSeconds,
+		"lineitems_per_second":         float64(totalLineitems) / elapsedSeconds,
+		"logical_rows_per_second":      float64(totalLogicalRows) / elapsedSeconds,
+		"logical_rows_per_order":       float64(totalLogicalRows) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"put_microseconds_per_order":   float64(putSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"flush_microseconds_per_flush": float64(flushSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, flushSnapshot.FlushCount)),
+		"flushes_per_operation":        float64(flushSnapshot.FlushCount) / float64(maxNativeIngestBenchmarkInt(1, runCount)),
+		"bsi_entries_per_logical_row":  float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+		"kv_entries_per_logical_row":   float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+	}
+}
+
+// NativeIngestBenchmarkComparison summarizes two native ingest reports.
+type NativeIngestBenchmarkComparison struct {
+	Baseline NativeIngestBenchmarkComparisonReport   `json:"baseline"`
+	Target   NativeIngestBenchmarkComparisonReport   `json:"target"`
+	Metrics  []NativeIngestBenchmarkMetricComparison `json:"metrics"`
+}
+
+// NativeIngestBenchmarkComparisonReport identifies one side of a comparison.
+type NativeIngestBenchmarkComparisonReport struct {
+	Profile string                       `json:"profile"`
+	Mode    string                       `json:"mode"`
+	Config  NativeIngestBenchmarkConfig  `json:"config"`
+	Counts  NativeIngestBenchmarkCounts  `json:"counts"`
+	Timings NativeIngestBenchmarkTimings `json:"timings"`
+}
+
+// NativeIngestBenchmarkMetricComparison records one metric delta.
+type NativeIngestBenchmarkMetricComparison struct {
+	Name           string  `json:"name"`
+	Unit           string  `json:"unit,omitempty"`
+	Baseline       float64 `json:"baseline"`
+	Target         float64 `json:"target"`
+	Delta          float64 `json:"delta"`
+	Ratio          float64 `json:"ratio"`
+	HigherIsBetter bool    `json:"higher_is_better"`
+	Outcome        string  `json:"outcome"`
+}
+
+type nativeIngestBenchmarkMetricDefinition struct {
+	name           string
+	unit           string
+	higherIsBetter bool
+}
+
+var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefinition{
+	{name: "logical_rows_per_second", unit: "rows/s", higherIsBetter: true},
+	{name: "orders_per_second", unit: "orders/s", higherIsBetter: true},
+	{name: "lineitems_per_second", unit: "lineitems/s", higherIsBetter: true},
+	{name: "put_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "flush_microseconds_per_flush", unit: "us/flush", higherIsBetter: false},
+	{name: "flushes_per_operation", unit: "flushes/op", higherIsBetter: false},
+	{name: "bsi_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
+	{name: "kv_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
+	{name: "logical_rows_per_order", unit: "rows/order", higherIsBetter: true},
+}
+
+// CompareNativeIngestBenchmarkReports compares metrics from two reports.
+func CompareNativeIngestBenchmarkReports(
+	baseline NativeIngestBenchmarkReport,
+	target NativeIngestBenchmarkReport,
+) NativeIngestBenchmarkComparison {
+	comparison := NativeIngestBenchmarkComparison{
+		Baseline: nativeIngestBenchmarkComparisonReport(baseline),
+		Target:   nativeIngestBenchmarkComparisonReport(target),
+	}
+	seen := map[string]bool{}
+	for _, definition := range nativeIngestBenchmarkMetricDefinitions {
+		metric, ok := compareNativeIngestBenchmarkMetric(definition, baseline.Metrics, target.Metrics)
+		if !ok {
+			continue
+		}
+		comparison.Metrics = append(comparison.Metrics, metric)
+		seen[definition.name] = true
+	}
+	var extraNames []string
+	for name := range baseline.Metrics {
+		if !seen[name] {
+			extraNames = append(extraNames, name)
+		}
+	}
+	for name := range target.Metrics {
+		if !seen[name] {
+			extraNames = append(extraNames, name)
+		}
+	}
+	sort.Strings(extraNames)
+	for _, name := range extraNames {
+		if seen[name] {
+			continue
+		}
+		metric, ok := compareNativeIngestBenchmarkMetric(nativeIngestBenchmarkMetricDefinition{name: name}, baseline.Metrics, target.Metrics)
+		if ok {
+			comparison.Metrics = append(comparison.Metrics, metric)
+		}
+		seen[name] = true
+	}
+	return comparison
+}
+
+// RenderNativeIngestBenchmarkComparisonMarkdown renders a compact comparison.
+func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchmarkComparison) string {
+	var builder strings.Builder
+	builder.WriteString("# Native Ingest Benchmark Comparison\n\n")
+	builder.WriteString(fmt.Sprintf("Baseline: %s (%s)\n\n", fallbackReportLabel(comparison.Baseline.Profile), fallbackReportLabel(comparison.Baseline.Mode)))
+	builder.WriteString(fmt.Sprintf("Target: %s (%s)\n\n", fallbackReportLabel(comparison.Target.Profile), fallbackReportLabel(comparison.Target.Mode)))
+	builder.WriteString("| Metric | Baseline | Target | Delta | Ratio | Direction |\n")
+	builder.WriteString("| --- | ---: | ---: | ---: | ---: | --- |\n")
+	for _, metric := range comparison.Metrics {
+		builder.WriteString(fmt.Sprintf(
+			"| %s | %s | %s | %s | %s | %s |\n",
+			metric.Name,
+			formatNativeIngestBenchmarkMetric(metric.Baseline, metric.Unit),
+			formatNativeIngestBenchmarkMetric(metric.Target, metric.Unit),
+			formatNativeIngestBenchmarkMetric(metric.Delta, metric.Unit),
+			formatNativeIngestBenchmarkRatio(metric.Ratio),
+			metric.Outcome,
+		))
+	}
+	return builder.String()
+}
+
+// WriteNativeIngestBenchmarkComparisonMarkdown writes a comparison when path is non-empty.
+func WriteNativeIngestBenchmarkComparisonMarkdown(path string, comparison NativeIngestBenchmarkComparison) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(RenderNativeIngestBenchmarkComparisonMarkdown(comparison)), 0644)
+}
+
+func nativeIngestBenchmarkComparisonReport(report NativeIngestBenchmarkReport) NativeIngestBenchmarkComparisonReport {
+	return NativeIngestBenchmarkComparisonReport{
+		Profile: report.Profile,
+		Mode:    report.Mode,
+		Config:  report.Config,
+		Counts:  report.Counts,
+		Timings: report.Timings,
+	}
+}
+
+func compareNativeIngestBenchmarkMetric(
+	definition nativeIngestBenchmarkMetricDefinition,
+	baseline map[string]float64,
+	target map[string]float64,
+) (NativeIngestBenchmarkMetricComparison, bool) {
+	baselineValue, baselineOK := baseline[definition.name]
+	targetValue, targetOK := target[definition.name]
+	if !baselineOK && !targetOK {
+		return NativeIngestBenchmarkMetricComparison{}, false
+	}
+	delta := targetValue - baselineValue
+	ratio := 0.0
+	if baselineValue != 0 {
+		ratio = targetValue / baselineValue
+	}
+	return NativeIngestBenchmarkMetricComparison{
+		Name:           definition.name,
+		Unit:           definition.unit,
+		Baseline:       baselineValue,
+		Target:         targetValue,
+		Delta:          delta,
+		Ratio:          ratio,
+		HigherIsBetter: definition.higherIsBetter,
+		Outcome:        nativeIngestBenchmarkMetricOutcome(delta, definition.higherIsBetter),
+	}, true
+}
+
+func nativeIngestBenchmarkMetricOutcome(delta float64, higherIsBetter bool) string {
+	if math.Abs(delta) < 0.000000001 {
+		return "flat"
+	}
+	if higherIsBetter {
+		if delta > 0 {
+			return "better"
+		}
+		return "worse"
+	}
+	if delta < 0 {
+		return "better"
+	}
+	return "worse"
+}
+
+func fallbackReportLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "(unknown)"
+	}
+	return value
+}
+
+func formatNativeIngestBenchmarkMetric(value float64, unit string) string {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Sprint(value)
+	}
+	if unit == "" {
+		return fmt.Sprintf("%.4g", value)
+	}
+	return fmt.Sprintf("%.4g %s", value, unit)
+}
+
+func formatNativeIngestBenchmarkRatio(value float64) string {
+	if value == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.2fx", value)
+}
+
+func copyNativeIngestBenchmarkMetrics(src map[string]float64) map[string]float64 {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]float64, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func maxNativeIngestBenchmarkInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
