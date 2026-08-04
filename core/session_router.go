@@ -34,6 +34,7 @@ type SessionRouterConfig struct {
 	FlushInterval  time.Duration
 	OnSessionOpen  func()
 	OnSessionClose func()
+	OnPutRowResult func(shardID string, record IngestRecord, result PutRowResult)
 	OnProcessed    func()
 	OnError        func(error)
 }
@@ -153,26 +154,54 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 			r.cfg.OnSessionOpen()
 		}
 	}
-	if _, err := conn.(*Session).PutRowWithOptions(record.TableName, record.Data, 0, false, false, record.PutRowOptions()); err != nil {
+	options, err := record.PutRowOptionsWithPayloadHash()
+	if err != nil {
+		return fmt.Errorf("ERROR in PutRow payload hash, shard %s - %v", shardID, err)
+	}
+	record.PayloadHash = options.PayloadHash
+	result, err := conn.(*Session).PutRowWithOptions(record.TableName, record.Data, 0, false, false, options)
+	if err != nil {
 		return fmt.Errorf("ERROR in PutRow, shard %s - %v", shardID, err)
 	}
+	r.publishPutRowResult(shardID, record, result)
 	if r.cfg.OnProcessed != nil {
 		r.cfg.OnProcessed()
 	}
 	return nil
 }
 
+func (r *SessionRouter) publishPutRowResult(shardID string, record IngestRecord, result PutRowResult) {
+	if r.cfg.OnPutRowResult != nil {
+		r.cfg.OnPutRowResult(shardID, record, result)
+	}
+}
+
 // PutRowOptions returns optional streaming metadata for the state-changing
 // load boundary. Empty fields preserve the current PutRow behavior.
 func (r IngestRecord) PutRowOptions() PutRowOptions {
+	options, _ := r.PutRowOptionsWithPayloadHash()
+	return options
+}
+
+// PutRowOptionsWithPayloadHash returns optional streaming metadata and computes
+// a deterministic payload hash when one was not provided.
+func (r IngestRecord) PutRowOptionsWithPayloadHash() (PutRowOptions, error) {
+	payloadHash := r.PayloadHash
+	if payloadHash == 0 && r.Data != nil {
+		var err error
+		payloadHash, err = HashIngestPayload(r.Data)
+		if err != nil {
+			return PutRowOptions{}, err
+		}
+	}
 	return PutRowOptions{
 		EventID:      r.EventID,
 		Source:       r.Source,
 		EventTime:    r.EventTime,
 		SourceOffset: r.SourceOffset,
-		PayloadHash:  r.PayloadHash,
+		PayloadHash:  payloadHash,
 		DedupTTL:     r.DedupTTL,
-	}
+	}, nil
 }
 
 func (r *SessionRouter) flushIdleSessions(shardTableKeys *sync.Map) error {
