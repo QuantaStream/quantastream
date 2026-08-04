@@ -127,6 +127,10 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if putSnapshot.RecordCount != totalOrders || putSnapshot.InsertedCount != totalOrders {
 		b.Fatalf("put profile = %+v, want %d inserted order records", putSnapshot, totalOrders)
 	}
+	if putSnapshot.ChildRowCount != totalLineitems || putSnapshot.LogicalRowCount != totalLogicalRows {
+		b.Fatalf("put profile = %+v, want %d children and %d logical rows",
+			putSnapshot, totalLineitems, totalLogicalRows)
+	}
 	if flushSnapshot.FlushCount == 0 || flushSnapshot.BSIValueEntryCount == 0 || flushSnapshot.PartitionStringEntryCount == 0 {
 		b.Fatalf("flush profile = %+v, want native write activity", flushSnapshot)
 	}
@@ -177,9 +181,11 @@ func TestBuildTPCHNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		RunCount:          4,
 		Elapsed:           10 * time.Millisecond,
 		PutRow: core.RouterPutRowProfileSummary{
-			RecordCount:   8,
-			InsertedCount: 8,
-			TotalElapsed:  5 * time.Millisecond,
+			RecordCount:     8,
+			ChildRowCount:   24,
+			LogicalRowCount: 32,
+			InsertedCount:   8,
+			TotalElapsed:    5 * time.Millisecond,
 		},
 		Flush: core.RouterFlushProfileSummary{
 			FlushCount:                2,
@@ -196,6 +202,9 @@ func TestBuildTPCHNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if report.PutRow.RecordCount != 8 || report.Flush.FlushCount != 2 {
 		t.Fatalf("report profiles = %+v/%+v, want captured summaries", report.PutRow, report.Flush)
+	}
+	if report.PutRow.ChildRowCount != 24 || report.PutRow.LogicalRowCount != 32 {
+		t.Fatalf("report put row counts = %+v, want profile child/logical row counts", report.PutRow)
 	}
 
 	path := filepath.Join(t.TempDir(), "profiles", "ingest.json")

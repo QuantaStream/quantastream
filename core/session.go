@@ -101,6 +101,8 @@ type PutRowOptions struct {
 type PutRowResult struct {
 	TableName             string
 	ColumnID              uint64
+	ChildRowCount         int
+	LogicalRowCount       int
 	Inserted              bool
 	ExistingRow           bool
 	Duplicate             bool
@@ -142,6 +144,7 @@ type putRowStageTimings struct {
 	childExpansionElapsed time.Duration
 	relationElapsed       time.Duration
 	attributeElapsed      time.Duration
+	childRowCount         int
 }
 
 // TableBuffer - State info for table.
@@ -424,9 +427,9 @@ func (s *Session) normalizePutRowSource(req *putRowRequest) error {
 }
 
 func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath string, providedColID uint64,
-	isChild, ignoreSourcePath, useNerdCapitalization bool) error {
+	isChild, ignoreSourcePath, useNerdCapitalization bool) (PutRowResult, error) {
 
-	_, err := s.putRow(putRowRequest{
+	return s.putRow(putRowRequest{
 		tableName:             name,
 		row:                   row,
 		pqTablePath:           pqTablePath,
@@ -435,7 +438,6 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerdCapitalization,
 	})
-	return err
 }
 
 func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
@@ -479,17 +481,27 @@ func (req putRowRequest) addStageTiming(apply func(*putRowStageTimings, time.Dur
 	apply(req.timings, elapsed)
 }
 
+func (req putRowRequest) addChildRows(count int) {
+	if req.timings == nil || count <= 0 {
+		return
+	}
+	req.timings.childRowCount += count
+}
+
 func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity, totalElapsed time.Duration) PutRowResult {
 	result := PutRowResult{
-		TableName:    req.tableName,
-		ColumnID:     tbuf.CurrentColumnID,
-		Inserted:     !identity.updateExisting,
-		ExistingRow:  identity.updateExisting,
-		TotalElapsed: totalElapsed,
+		TableName:       req.tableName,
+		ColumnID:        tbuf.CurrentColumnID,
+		Inserted:        !identity.updateExisting,
+		ExistingRow:     identity.updateExisting,
+		LogicalRowCount: 1,
+		TotalElapsed:    totalElapsed,
 	}
 	if req.timings == nil {
 		return result
 	}
+	result.ChildRowCount = req.timings.childRowCount
+	result.LogicalRowCount += req.timings.childRowCount
 	result.SourceElapsed = req.timings.sourceElapsed
 	result.IdentityElapsed = req.timings.identityElapsed
 	result.AlternateKeysElapsed = req.timings.alternateKeysElapsed
@@ -566,10 +578,16 @@ func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *At
 			return err
 		}
 		expansion.childBuffer.rowCache = childPayload
-		if err := s.recursivePutRow(expansion.childTable, childPayload, expansion.sourcePath,
-			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization); err != nil {
+		childResult, err := s.recursivePutRow(expansion.childTable, childPayload, expansion.sourcePath,
+			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization)
+		if err != nil {
 			return err
 		}
+		childLogicalRows := childResult.LogicalRowCount
+		if childLogicalRows <= 0 {
+			childLogicalRows = 1
+		}
+		req.addChildRows(childLogicalRows)
 	}
 	return nil
 }

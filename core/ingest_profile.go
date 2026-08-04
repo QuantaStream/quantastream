@@ -17,6 +17,8 @@ type RouterPutRowProfile struct {
 // RouterPutRowProfileSummary is a point-in-time load-path profile summary.
 type RouterPutRowProfileSummary struct {
 	RecordCount           int                                   `json:"record_count"`
+	ChildRowCount         int                                   `json:"child_row_count"`
+	LogicalRowCount       int                                   `json:"logical_row_count"`
 	InsertedCount         int                                   `json:"inserted_count"`
 	ExistingCount         int                                   `json:"existing_count"`
 	DuplicateCount        int                                   `json:"duplicate_count"`
@@ -34,8 +36,10 @@ type RouterPutRowProfileSummary struct {
 
 // RouterPutRowProfileCounter is a grouped count/timing accumulator.
 type RouterPutRowProfileCounter struct {
-	RecordCount  int           `json:"record_count"`
-	TotalElapsed time.Duration `json:"total_elapsed_nanos"`
+	RecordCount     int           `json:"record_count"`
+	ChildRowCount   int           `json:"child_row_count"`
+	LogicalRowCount int           `json:"logical_row_count"`
+	TotalElapsed    time.Duration `json:"total_elapsed_nanos"`
 }
 
 // Callback returns the function shape expected by SessionRouterConfig.
@@ -52,6 +56,13 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	defer p.mu.Unlock()
 	p.ensureMaps()
 	p.summary.RecordCount++
+	childRows := result.ChildRowCount
+	logicalRows := result.LogicalRowCount
+	if logicalRows <= 0 {
+		logicalRows = 1 + childRows
+	}
+	p.summary.ChildRowCount += childRows
+	p.summary.LogicalRowCount += logicalRows
 	if result.Inserted {
 		p.summary.InsertedCount++
 	}
@@ -73,10 +84,10 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	p.summary.AttributeElapsed += result.AttributeElapsed
 	tableName := firstNonEmpty(result.TableName, record.TableName)
 	if tableName != "" {
-		p.summary.ByTable[tableName] = addRouterPutRowProfileCounter(p.summary.ByTable[tableName], result.TotalElapsed)
+		p.summary.ByTable[tableName] = addRouterPutRowProfileCounter(p.summary.ByTable[tableName], result)
 	}
 	if shardID != "" {
-		p.summary.ByShard[shardID] = addRouterPutRowProfileCounter(p.summary.ByShard[shardID], result.TotalElapsed)
+		p.summary.ByShard[shardID] = addRouterPutRowProfileCounter(p.summary.ByShard[shardID], result)
 	}
 }
 
@@ -117,9 +128,15 @@ func copyRouterPutRowProfileCounters(src map[string]RouterPutRowProfileCounter) 
 	return dst
 }
 
-func addRouterPutRowProfileCounter(counter RouterPutRowProfileCounter, elapsed time.Duration) RouterPutRowProfileCounter {
+func addRouterPutRowProfileCounter(counter RouterPutRowProfileCounter, result PutRowResult) RouterPutRowProfileCounter {
+	logicalRows := result.LogicalRowCount
+	if logicalRows <= 0 {
+		logicalRows = 1 + result.ChildRowCount
+	}
 	counter.RecordCount++
-	counter.TotalElapsed += elapsed
+	counter.ChildRowCount += result.ChildRowCount
+	counter.LogicalRowCount += logicalRows
+	counter.TotalElapsed += result.TotalElapsed
 	return counter
 }
 

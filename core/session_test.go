@@ -114,6 +114,7 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 			childExpansionElapsed: 4 * time.Millisecond,
 			relationElapsed:       5 * time.Millisecond,
 			attributeElapsed:      6 * time.Millisecond,
+			childRowCount:         7,
 		},
 	}
 	tbuf := &TableBuffer{CurrentColumnID: 42}
@@ -124,6 +125,8 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 	assert.Equal(t, PutRowResult{
 		TableName:             "customers",
 		ColumnID:              42,
+		ChildRowCount:         7,
+		LogicalRowCount:       8,
 		ExistingRow:           true,
 		SourceElapsed:         time.Millisecond,
 		IdentityElapsed:       2 * time.Millisecond,

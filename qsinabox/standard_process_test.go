@@ -359,6 +359,12 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testi
 	if result.PutProfile.RecordCount != 2 || result.PutProfile.InsertedCount != 2 {
 		t.Fatalf("put profile = %+v, want two inserted records", result.PutProfile)
 	}
+	if result.PutProfile.ChildRowCount != 6 || result.PutProfile.LogicalRowCount != 8 {
+		t.Fatalf("put profile = %+v, want six children and eight logical rows", result.PutProfile)
+	}
+	if result.PutProfile.ByTable["orders"].ChildRowCount != 6 || result.PutProfile.ByTable["orders"].LogicalRowCount != 8 {
+		t.Fatalf("put table profile = %+v, want six children and eight logical rows", result.PutProfile.ByTable["orders"])
+	}
 	if result.FlushProfile.FlushCount != 1 || result.FlushProfile.PartitionStringEntryCount == 0 ||
 		result.FlushProfile.BSIValueEntryCount == 0 {
 		t.Fatalf("flush profile = %+v, want one write flush with PK sidecar and BSI activity", result.FlushProfile)
@@ -385,8 +391,16 @@ func TestStandardProcessNativeGRPCRouterDistributesTPCHNestedOrderLineitemsAcros
 	if result.PutProfile.RecordCount != 18 || result.PutProfile.InsertedCount != 18 {
 		t.Fatalf("put profile = %+v, want eighteen inserted records", result.PutProfile)
 	}
+	if result.PutProfile.ChildRowCount != 36 || result.PutProfile.LogicalRowCount != 54 {
+		t.Fatalf("put profile = %+v, want thirty-six children and fifty-four logical rows", result.PutProfile)
+	}
 	if len(result.PutProfile.ByShard) < 2 {
 		t.Fatalf("put profile by shard = %+v, want records routed across multiple shards", result.PutProfile.ByShard)
+	}
+	for shardID, counter := range result.PutProfile.ByShard {
+		if counter.LogicalRowCount != counter.RecordCount*(1+2) {
+			t.Fatalf("put profile shard %s = %+v, want logical rows per routed parent", shardID, counter)
+		}
 	}
 	if len(result.FlushProfile.ByShard) < 2 {
 		t.Fatalf("flush profile by shard = %+v, want writes flushed from multiple shards", result.FlushProfile.ByShard)
@@ -403,6 +417,9 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHBatchEnvelopes(t *testing.T) 
 
 	if result.PutProfile.RecordCount != 2 || result.PutProfile.InsertedCount != 2 {
 		t.Fatalf("put profile = %+v, want two inserted records", result.PutProfile)
+	}
+	if result.PutProfile.ChildRowCount != 4 || result.PutProfile.LogicalRowCount != 6 {
+		t.Fatalf("put profile = %+v, want four children and six logical rows", result.PutProfile)
 	}
 	for _, route := range result.Routes {
 		if route.ShardKey.Mode != core.IngestShardKeyPrimaryKey {

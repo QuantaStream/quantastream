@@ -14,6 +14,8 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 
 	callback("shard0", IngestRecord{TableName: "orders"}, PutRowResult{
 		TableName:             "orders",
+		ChildRowCount:         3,
+		LogicalRowCount:       4,
 		Inserted:              true,
 		SourceElapsed:         time.Millisecond,
 		IdentityElapsed:       2 * time.Millisecond,
@@ -32,6 +34,8 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	snapshot := profile.Snapshot()
 
 	require.Equal(t, 2, snapshot.RecordCount)
+	require.Equal(t, 3, snapshot.ChildRowCount)
+	require.Equal(t, 5, snapshot.LogicalRowCount)
 	require.Equal(t, 1, snapshot.InsertedCount)
 	require.Equal(t, 1, snapshot.ExistingCount)
 	require.Equal(t, 28*time.Millisecond, snapshot.TotalElapsed)
@@ -42,8 +46,10 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	require.Equal(t, 5*time.Millisecond, snapshot.RelationElapsed)
 	require.Equal(t, 6*time.Millisecond, snapshot.AttributeElapsed)
 	require.Equal(t, RouterPutRowProfileCounter{
-		RecordCount:  2,
-		TotalElapsed: 28 * time.Millisecond,
+		RecordCount:     2,
+		ChildRowCount:   3,
+		LogicalRowCount: 5,
+		TotalElapsed:    28 * time.Millisecond,
 	}, snapshot.ByTable["orders"])
 	require.Equal(t, 1, snapshot.ByShard["shard0"].RecordCount)
 	require.Equal(t, 1, snapshot.ByShard["shard1"].RecordCount)
