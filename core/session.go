@@ -72,23 +72,32 @@ type PutRowOptions struct {
 // PutRowResult describes the row identity observed by the load path. Duplicate
 // and conflict semantics are reserved for the streaming dedup boundary.
 type PutRowResult struct {
-	TableName   string
-	ColumnID    uint64
-	Inserted    bool
-	ExistingRow bool
-	Duplicate   bool
-	Conflict    bool
+	TableName             string
+	ColumnID              uint64
+	Inserted              bool
+	ExistingRow           bool
+	Duplicate             bool
+	Conflict              bool
+	SourceElapsed         time.Duration
+	IdentityElapsed       time.Duration
+	AlternateKeysElapsed  time.Duration
+	ChildExpansionElapsed time.Duration
+	RelationElapsed       time.Duration
+	AttributeElapsed      time.Duration
+	TotalElapsed          time.Duration
 }
 
 type putRowRequest struct {
 	tableName             string
 	row                   interface{}
 	pqTablePath           string
+	startedAt             time.Time
 	providedColID         uint64
 	isChild               bool
 	ignoreSourcePath      bool
 	useNerdCapitalization bool
 	options               PutRowOptions
+	timings               *putRowStageTimings
 }
 
 type putRowIdentity struct {
@@ -97,6 +106,15 @@ type putRowIdentity struct {
 	primaryKeyValues []interface{}
 	lookupValue      string
 	updateExisting   bool
+}
+
+type putRowStageTimings struct {
+	sourceElapsed         time.Duration
+	identityElapsed       time.Duration
+	alternateKeysElapsed  time.Duration
+	childExpansionElapsed time.Duration
+	relationElapsed       time.Duration
+	attributeElapsed      time.Duration
 }
 
 // TableBuffer - State info for table.
@@ -333,19 +351,25 @@ func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ign
 func (s *Session) PutRowWithOptions(name string, row interface{}, providedColID uint64, ignoreSourcePath, useNerd bool,
 	options PutRowOptions) (PutRowResult, error) {
 
+	totalStart := time.Now()
+	var timings putRowStageTimings
 	s.ResetRowCache()
 	req := putRowRequest{
 		tableName:             name,
 		row:                   row,
 		pqTablePath:           "/",
+		startedAt:             totalStart,
 		providedColID:         providedColID,
 		ignoreSourcePath:      ignoreSourcePath,
 		useNerdCapitalization: useNerd,
 		options:               options,
+		timings:               &timings,
 	}
+	sourceStart := time.Now()
 	if err := s.normalizePutRowSource(&req); err != nil {
 		return PutRowResult{}, err
 	}
+	timings.sourceElapsed = time.Since(sourceStart)
 	return s.putRow(req)
 }
 
@@ -388,29 +412,63 @@ func (s *Session) recursivePutRow(name string, row interface{}, pqTablePath stri
 
 func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
 
+	totalStart := req.startedAt
+	if totalStart.IsZero() {
+		totalStart = time.Now()
+	}
 	tbuf, ok := s.TableBuffers[req.tableName]
 	if !ok {
 		return PutRowResult{}, fmt.Errorf("table %s invalid or not opened. (recursivePutRow) %s", req.tableName,
 			req.pqTablePath)
 	}
 
+	identityStart := time.Now()
 	identity, err := s.establishRowIdentity(req, tbuf)
+	req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.identityElapsed += elapsed },
+		time.Since(identityStart))
 	if err != nil {
 		return PutRowResult{}, err
 	}
+	alternateStart := time.Now()
 	if err := s.mapAlternateKeys(req, tbuf); err != nil {
+		req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.alternateKeysElapsed += elapsed },
+			time.Since(alternateStart))
 		return PutRowResult{}, err
 	}
+	req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.alternateKeysElapsed += elapsed },
+		time.Since(alternateStart))
 	if err := s.mapRowAttributes(req, tbuf, identity); err != nil {
 		return PutRowResult{}, err
 	}
 
-	return PutRowResult{
-		TableName:   req.tableName,
-		ColumnID:    tbuf.CurrentColumnID,
-		Inserted:    !identity.updateExisting,
-		ExistingRow: identity.updateExisting,
-	}, nil
+	return req.putRowResult(tbuf, identity, time.Since(totalStart)), nil
+}
+
+func (req putRowRequest) addStageTiming(apply func(*putRowStageTimings, time.Duration), elapsed time.Duration) {
+	if req.timings == nil {
+		return
+	}
+	apply(req.timings, elapsed)
+}
+
+func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity, totalElapsed time.Duration) PutRowResult {
+	result := PutRowResult{
+		TableName:    req.tableName,
+		ColumnID:     tbuf.CurrentColumnID,
+		Inserted:     !identity.updateExisting,
+		ExistingRow:  identity.updateExisting,
+		TotalElapsed: totalElapsed,
+	}
+	if req.timings == nil {
+		return result
+	}
+	result.SourceElapsed = req.timings.sourceElapsed
+	result.IdentityElapsed = req.timings.identityElapsed
+	result.AlternateKeysElapsed = req.timings.alternateKeysElapsed
+	result.ChildExpansionElapsed = req.timings.childExpansionElapsed
+	result.RelationElapsed = req.timings.relationElapsed
+	result.AttributeElapsed = req.timings.attributeElapsed
+	return result
 }
 
 func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
@@ -438,15 +496,27 @@ func (s *Session) mapRowAttributes(req putRowRequest, tbuf *TableBuffer, identit
 			continue // Already handled at this point
 		}
 		if recurse && v.MappingStrategy == "ChildRelation" && v.ChildTable != "" {
-			return s.expandChildRows(req, tbuf, &v)
+			stageStart := time.Now()
+			err := s.expandChildRows(req, tbuf, &v)
+			req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.childExpansionElapsed += elapsed },
+				time.Since(stageStart))
+			return err
 		}
 		if v.MappingStrategy == "ParentRelation" && v.ForeignKey != "" {
-			if err := s.mapParentRelation(req, tbuf, &v); err != nil {
+			stageStart := time.Now()
+			err := s.mapParentRelation(req, tbuf, &v)
+			req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.relationElapsed += elapsed },
+				time.Since(stageStart))
+			if err != nil {
 				return err
 			}
 			continue
 		}
-		if err := s.mapAttributeValue(req, &v, identity.updateExisting); err != nil {
+		stageStart := time.Now()
+		err := s.mapAttributeValue(req, &v, identity.updateExisting)
+		req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.attributeElapsed += elapsed },
+			time.Since(stageStart))
+		if err != nil {
 			return err
 		}
 	}
@@ -898,52 +968,18 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		}
 	}
 
-	if tbuf.ShouldLookupPrimaryKey() {
-		// Can't use batch operation here unfortunately, but at least we have local batch cache
-		localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
-		if lColID, ok := s.BatchBuffer.LookupLocalCIDForString(localKey, pkLookupVal.String()); !ok {
-			colID, found, errx := s.lookupColumnID(tbuf, pkLookupVal.String(), "")
-			if errx != nil {
-				return putRowIdentity{}, fmt.Errorf("Dedup lookup error - %v", errx)
-			}
-			if found {
-				tbuf.CurrentColumnID = colID
-				return putRowIdentity{
-					columnID:         tbuf.CurrentColumnID,
-					timestamp:        tbuf.CurrentTimestamp,
-					primaryKeyValues: tbuf.CurrentPKValue,
-					lookupValue:      pkLookupVal.String(),
-					updateExisting:   true,
-				}, nil
-			} else {
-				if providedColID == 0 {
-					// Generate new ColumnID.   Lookup the sequencer from the local cache by TQ
-					errx = tbuf.NextColumnID(s.BitIndex)
-					if errx != nil {
-						return putRowIdentity{}, errx
-					}
-				} else {
-					tbuf.CurrentColumnID = providedColID
-				}
-				// Add the PK via local cache batch operation
-				s.BatchBuffer.SetPartitionedString(localKey, pkLookupVal.String(), tbuf.CurrentColumnID)
-			}
-		} else {
-			tbuf.CurrentColumnID = lColID
-			u.Warnf("PK %s found in cache.  PK mapping error for %s?", pkLookupVal.String(), tbuf.Table.Name)
-		}
-	} else {
-		if !directColumnID {
-			if providedColID == 0 {
-				// Generate new ColumnID.   Lookup the sequencer from the local cache by TQ
-				errx := tbuf.NextColumnID(s.BitIndex)
-				if errx != nil {
-					return putRowIdentity{}, errx
-				}
-			} else {
-				tbuf.CurrentColumnID = providedColID
-			}
-		}
+	updateExisting, err := s.resolvePrimaryKeyColumnID(tbuf, pkLookupVal.String(), providedColID, directColumnID)
+	if err != nil {
+		return putRowIdentity{}, err
+	}
+	if updateExisting {
+		return putRowIdentity{
+			columnID:         tbuf.CurrentColumnID,
+			timestamp:        tbuf.CurrentTimestamp,
+			primaryKeyValues: tbuf.CurrentPKValue,
+			lookupValue:      pkLookupVal.String(),
+			updateExisting:   true,
+		}, nil
 	}
 
 	// Map the value(s) and update table
@@ -962,6 +998,50 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		primaryKeyValues: tbuf.CurrentPKValue,
 		lookupValue:      pkLookupVal.String(),
 	}, nil
+}
+
+func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue string, providedColID uint64,
+	directColumnID bool) (bool, error) {
+
+	if tbuf.ShouldLookupPrimaryKey() {
+		// Can't use batch operation here unfortunately, but at least we have local batch cache.
+		localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
+		if lColID, ok := s.BatchBuffer.LookupLocalCIDForString(localKey, lookupValue); ok {
+			tbuf.CurrentColumnID = lColID
+			u.Warnf("PK %s found in cache.  PK mapping error for %s?", lookupValue, tbuf.Table.Name)
+			return false, nil
+		}
+		colID, found, err := s.lookupColumnID(tbuf, lookupValue, "")
+		if err != nil {
+			return false, fmt.Errorf("Dedup lookup error - %v", err)
+		}
+		if found {
+			tbuf.CurrentColumnID = colID
+			return true, nil
+		}
+		if providedColID == 0 {
+			if err := tbuf.NextColumnID(s.BitIndex); err != nil {
+				return false, err
+			}
+		} else {
+			tbuf.CurrentColumnID = providedColID
+		}
+		// Add the PK via local cache batch operation.
+		s.BatchBuffer.SetPartitionedString(localKey, lookupValue, tbuf.CurrentColumnID)
+		return false, nil
+	}
+
+	if directColumnID {
+		return false, nil
+	}
+	if providedColID == 0 {
+		if err := tbuf.NextColumnID(s.BitIndex); err != nil {
+			return false, err
+		}
+	} else {
+		tbuf.CurrentColumnID = providedColID
+	}
+	return false, nil
 }
 
 // Handle Secondary Keys.  Create the index in backing store

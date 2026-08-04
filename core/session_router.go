@@ -13,9 +13,15 @@ import (
 // IngestRecord is a transport-neutral row mutation routed through a single
 // session owner.
 type IngestRecord struct {
-	TableName string
-	Data      map[string]interface{}
-	ShardKey  string
+	TableName    string
+	Data         map[string]interface{}
+	ShardKey     string
+	EventID      string
+	Source       string
+	EventTime    time.Time
+	SourceOffset string
+	PayloadHash  uint64
+	DedupTTL     time.Duration
 }
 
 // SessionRouterConfig configures deterministic fanout across session workers.
@@ -147,13 +153,26 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 			r.cfg.OnSessionOpen()
 		}
 	}
-	if err := conn.(*Session).PutRow(record.TableName, record.Data, 0, false, false); err != nil {
+	if _, err := conn.(*Session).PutRowWithOptions(record.TableName, record.Data, 0, false, false, record.PutRowOptions()); err != nil {
 		return fmt.Errorf("ERROR in PutRow, shard %s - %v", shardID, err)
 	}
 	if r.cfg.OnProcessed != nil {
 		r.cfg.OnProcessed()
 	}
 	return nil
+}
+
+// PutRowOptions returns optional streaming metadata for the state-changing
+// load boundary. Empty fields preserve the current PutRow behavior.
+func (r IngestRecord) PutRowOptions() PutRowOptions {
+	return PutRowOptions{
+		EventID:      r.EventID,
+		Source:       r.Source,
+		EventTime:    r.EventTime,
+		SourceOffset: r.SourceOffset,
+		PayloadHash:  r.PayloadHash,
+		DedupTTL:     r.DedupTTL,
+	}
 }
 
 func (r *SessionRouter) flushIdleSessions(shardTableKeys *sync.Map) error {
