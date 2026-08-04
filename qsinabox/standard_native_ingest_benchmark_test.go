@@ -98,6 +98,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 
 	b.ResetTimer()
 	benchmarkStartedAt := time.Now()
+	enqueueStartedAt := time.Now()
 	for _, envelopes := range envelopeBatches {
 		for _, envelope := range envelopes {
 			route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
@@ -114,9 +115,12 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 			}
 		}
 	}
+	enqueueElapsed := time.Since(enqueueStartedAt)
+	drainStartedAt := time.Now()
 	if err := router.Close(); err != nil {
 		b.Fatalf("router Close() error = %v", err)
 	}
+	drainElapsed := time.Since(drainStartedAt)
 	benchmarkElapsed := time.Since(benchmarkStartedAt)
 	b.StopTimer()
 
@@ -136,7 +140,8 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		b.Fatalf("flush profile = %+v, want native write activity", flushSnapshot)
 	}
 
-	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, totalOrders, totalLineitems, totalLogicalRows, putSnapshot, flushSnapshot, b.N)
+	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, enqueueElapsed, drainElapsed,
+		totalOrders, totalLineitems, totalLogicalRows, putSnapshot, flushSnapshot, b.N)
 	reportTPCHIngestBenchmarkMetrics(b, metrics)
 	report := qsfixture.BuildNativeIngestBenchmarkReport(qsfixture.NativeIngestBenchmarkReportRequest{
 		Profile:           profileName,
@@ -147,6 +152,8 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		RunCount:          b.N,
 		PrimaryKeyMode:    string(primaryKeyMode),
 		Elapsed:           benchmarkElapsed,
+		EnqueueElapsed:    enqueueElapsed,
+		DrainElapsed:      drainElapsed,
 		PutRow:            putSnapshot,
 		Flush:             flushSnapshot,
 		Metrics:           metrics,
@@ -199,8 +206,13 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["lineitems_per_second"], "lineitems/s")
 	b.ReportMetric(metrics["logical_rows_per_second"], "logical_rows/s")
 	b.ReportMetric(metrics["logical_rows_per_order"], "logical_rows/order")
+	b.ReportMetric(metrics["enqueue_microseconds_per_order"], "enqueue_us/order")
+	b.ReportMetric(metrics["drain_microseconds_per_order"], "drain_us/order")
+	b.ReportMetric(metrics["drain_wall_percent"], "drain_wall_percent")
 	b.ReportMetric(metrics["put_microseconds_per_order"], "put_us/order")
+	b.ReportMetric(metrics["flush_microseconds_per_order"], "flush_us/order")
 	b.ReportMetric(metrics["flush_microseconds_per_flush"], "flush_us/flush")
+	b.ReportMetric(metrics["flush_summed_to_drain_percent"], "flush_summed_to_drain_percent")
 	b.ReportMetric(metrics["flushes_per_operation"], "flushes/op")
 	b.ReportMetric(metrics["bsi_entries_per_logical_row"], "bsi_entries/logical_row")
 	b.ReportMetric(metrics["kv_entries_per_logical_row"], "kv_entries/logical_row")

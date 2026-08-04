@@ -26,6 +26,20 @@ func (r *recordingPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyRe
 	return r.result, r.err
 }
 
+type recordingPrimaryKeyResolverRequests struct {
+	requests []PrimaryKeyResolveRequest
+	result   PrimaryKeyResolveResult
+	err      error
+}
+
+func (r *recordingPrimaryKeyResolverRequests) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
+	r.requests = append(r.requests, req)
+	if r.result.ColumnID != 0 && req.TableBuffer != nil {
+		req.TableBuffer.CurrentColumnID = r.result.ColumnID
+	}
+	return r.result, r.err
+}
+
 // FIXME: make this work or delete. It never finishes. (nobody home at port 4000)
 func xTestCreateSession(t *testing.T) {
 
@@ -90,6 +104,100 @@ func TestNormalizePutRowSourceRejectsMissingTableBuffer(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot locate buffer for table customers")
+}
+
+func TestResolveParentRelationColumnIDUsesParentCurrentColumnIDForChildRows(t *testing.T) {
+	parentTable := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "o_orderkey"}}
+	childTable := &Table{BasicTable: &shared.BasicTable{Name: "lineitem", PrimaryKey: "l_linenumber"}}
+	parentBuffer := &TableBuffer{Table: parentTable, CurrentColumnID: 4242}
+	childBuffer := &TableBuffer{Table: childTable}
+	childForeignKey := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "l_orderkey",
+			SourceName:      "l_orderkey",
+			Type:            "Integer",
+			MappingStrategy: "ParentRelation",
+			ForeignKey:      "orders.o_orderkey",
+		},
+		Parent: childTable,
+	}
+	session := &Session{}
+
+	columnID, ok, err := session.resolveParentRelationColumnID(putRowRequest{
+		isChild:        true,
+		primaryKeyMode: PrimaryKeyModeAssumeNew,
+	}, childBuffer, parentBuffer, childForeignKey, "o_orderkey")
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, uint64(4242), columnID)
+}
+
+func TestExpandChildRowsPropagatesAssumeNewPrimaryKeyMode(t *testing.T) {
+	parentTable := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "o_orderkey"}}
+	childTable := &Table{BasicTable: &shared.BasicTable{Name: "lineitem", PrimaryKey: "lineitem_id"}}
+	childRelation := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "lineitems",
+			SourceName:      "lineitems",
+			MappingStrategy: "ChildRelation",
+			ChildTable:      "lineitem",
+		},
+		Parent: parentTable,
+	}
+	childPKMapper, err := NewStringLexBSIMapper(map[string]string{"length": "8"})
+	require.NoError(t, err)
+	childPK := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "lineitem_id",
+			SourceName:      "lineitem_id",
+			Type:            "String",
+			MappingStrategy: "StringLexBSI",
+		},
+		Parent:         childTable,
+		mapperInstance: childPKMapper,
+	}
+	parentRow := map[string]interface{}{
+		"o_orderkey": "order-1",
+		"lineitems": []interface{}{
+			map[string]interface{}{"lineitem_id": "line-1"},
+			map[string]interface{}{"lineitem_id": "line-2"},
+		},
+	}
+	childBuffer := &TableBuffer{
+		Table:        childTable,
+		PKAttributes: []*Attribute{childPK},
+		PKMap:        map[string]*Attribute{"lineitem_id": childPK},
+		rowCache:     map[string]interface{}{},
+	}
+	session := &Session{TableBuffers: map[string]*TableBuffer{
+		"orders":   {Table: parentTable, CurrentColumnID: 9001, rowCache: parentRow},
+		"lineitem": childBuffer,
+	}}
+	resolver := &recordingPrimaryKeyResolverRequests{
+		result: PrimaryKeyResolveResult{
+			ColumnID:    17,
+			ExistingRow: true,
+			Profile:     PrimaryKeyResolveProfile{ResolveCount: 1},
+		},
+	}
+	session.SetPrimaryKeyResolver(resolver)
+	timings := &putRowStageTimings{}
+
+	err = session.expandChildRows(putRowRequest{
+		row:            parentRow,
+		primaryKeyMode: PrimaryKeyModeAssumeNew,
+		timings:        timings,
+	}, session.TableBuffers["orders"], childRelation)
+
+	require.NoError(t, err)
+	require.Len(t, resolver.requests, 2)
+	assert.Equal(t, PrimaryKeyModeAssumeNew, resolver.requests[0].PrimaryKeyMode)
+	assert.Equal(t, PrimaryKeyModeAssumeNew, resolver.requests[1].PrimaryKeyMode)
+	assert.Equal(t, "line-1", resolver.requests[0].LookupValue)
+	assert.Equal(t, "line-2", resolver.requests[1].LookupValue)
+	assert.Equal(t, 2, timings.childRowCount)
+	assert.Equal(t, 2, timings.primaryKeyProfile.ResolveCount)
 }
 
 func TestPutRowWithOptionsRejectsUnsupportedRowType(t *testing.T) {

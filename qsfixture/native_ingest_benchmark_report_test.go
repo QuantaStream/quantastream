@@ -19,6 +19,8 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		RunCount:          4,
 		PrimaryKeyMode:    "assume_new",
 		Elapsed:           10 * time.Millisecond,
+		EnqueueElapsed:    4 * time.Millisecond,
+		DrainElapsed:      6 * time.Millisecond,
 		PutRow: core.RouterPutRowProfileSummary{
 			RecordCount:     8,
 			ChildRowCount:   24,
@@ -41,6 +43,9 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if report.Config.PrimaryKeyMode != "assume_new" {
 		t.Fatalf("report primary key mode = %q, want assume_new", report.Config.PrimaryKeyMode)
+	}
+	if report.Timings.EnqueueNanos != int64(4*time.Millisecond) || report.Timings.DrainNanos != int64(6*time.Millisecond) {
+		t.Fatalf("report timings = %+v, want enqueue/drain timings", report.Timings)
 	}
 	if report.PutRow.RecordCount != 8 || report.Flush.FlushCount != 2 {
 		t.Fatalf("report profiles = %+v/%+v, want captured summaries", report.PutRow, report.Flush)
@@ -65,6 +70,8 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	metrics := NativeIngestBenchmarkMetrics(
 		2*time.Second,
+		750*time.Millisecond,
+		1250*time.Millisecond,
 		10,
 		40,
 		50,
@@ -103,6 +110,21 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["put_microseconds_per_order"], 150.0; got != want {
 		t.Fatalf("put us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["enqueue_microseconds_per_order"], 75000.0; got != want {
+		t.Fatalf("enqueue us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["drain_microseconds_per_order"], 125000.0; got != want {
+		t.Fatalf("drain us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["drain_wall_percent"], 62.5; got != want {
+		t.Fatalf("drain wall percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["flush_microseconds_per_order"], 250.0; got != want {
+		t.Fatalf("flush us/order = %v, want %v", got, want)
+	}
+	if got, want := metrics["flush_summed_to_drain_percent"], 0.2; got != want {
+		t.Fatalf("flush summed/drain percent = %v, want %v", got, want)
 	}
 	if got, want := metrics["flushes_per_operation"], 2.5; got != want {
 		t.Fatalf("flushes/op = %v, want %v", got, want)

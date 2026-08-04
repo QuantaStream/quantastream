@@ -25,6 +25,8 @@ type NativeIngestBenchmarkReportRequest struct {
 	RunCount          int
 	PrimaryKeyMode    string
 	Elapsed           time.Duration
+	EnqueueElapsed    time.Duration
+	DrainElapsed      time.Duration
 	PutRow            core.RouterPutRowProfileSummary
 	Flush             core.RouterFlushProfileSummary
 	Metrics           map[string]float64
@@ -65,6 +67,10 @@ type NativeIngestBenchmarkCounts struct {
 type NativeIngestBenchmarkTimings struct {
 	Elapsed      string `json:"elapsed"`
 	ElapsedNanos int64  `json:"elapsed_nanos"`
+	Enqueue      string `json:"enqueue_elapsed,omitempty"`
+	EnqueueNanos int64  `json:"enqueue_elapsed_nanos,omitempty"`
+	Drain        string `json:"drain_elapsed,omitempty"`
+	DrainNanos   int64  `json:"drain_elapsed_nanos,omitempty"`
 }
 
 // BuildNativeIngestBenchmarkReport builds the portable report shape for a run.
@@ -91,6 +97,10 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 		Timings: NativeIngestBenchmarkTimings{
 			Elapsed:      request.Elapsed.String(),
 			ElapsedNanos: request.Elapsed.Nanoseconds(),
+			Enqueue:      nativeIngestBenchmarkOptionalDurationString(request.EnqueueElapsed),
+			EnqueueNanos: request.EnqueueElapsed.Nanoseconds(),
+			Drain:        nativeIngestBenchmarkOptionalDurationString(request.DrainElapsed),
+			DrainNanos:   request.DrainElapsed.Nanoseconds(),
 		},
 		Metrics: copyNativeIngestBenchmarkMetrics(request.Metrics),
 		PutRow:  request.PutRow,
@@ -130,6 +140,8 @@ func ReadNativeIngestBenchmarkReport(path string) (NativeIngestBenchmarkReport, 
 // NativeIngestBenchmarkMetrics derives normalized throughput and cost metrics.
 func NativeIngestBenchmarkMetrics(
 	elapsed time.Duration,
+	enqueueElapsed time.Duration,
+	drainElapsed time.Duration,
 	totalOrders int,
 	totalLineitems int,
 	totalLogicalRows int,
@@ -142,15 +154,23 @@ func NativeIngestBenchmarkMetrics(
 		return map[string]float64{}
 	}
 	metrics := map[string]float64{
-		"orders_per_second":            float64(totalOrders) / elapsedSeconds,
-		"lineitems_per_second":         float64(totalLineitems) / elapsedSeconds,
-		"logical_rows_per_second":      float64(totalLogicalRows) / elapsedSeconds,
-		"logical_rows_per_order":       float64(totalLogicalRows) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
-		"put_microseconds_per_order":   float64(putSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
-		"flush_microseconds_per_flush": float64(flushSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, flushSnapshot.FlushCount)),
-		"flushes_per_operation":        float64(flushSnapshot.FlushCount) / float64(maxNativeIngestBenchmarkInt(1, runCount)),
-		"bsi_entries_per_logical_row":  float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
-		"kv_entries_per_logical_row":   float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+		"orders_per_second":       float64(totalOrders) / elapsedSeconds,
+		"lineitems_per_second":    float64(totalLineitems) / elapsedSeconds,
+		"logical_rows_per_second": float64(totalLogicalRows) / elapsedSeconds,
+		"logical_rows_per_order":  float64(totalLogicalRows) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"enqueue_microseconds_per_order": float64(enqueueElapsed.Microseconds()) /
+			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"drain_microseconds_per_order": float64(drainElapsed.Microseconds()) /
+			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"drain_wall_percent":         percentForDurations(drainElapsed, elapsed),
+		"put_microseconds_per_order": float64(putSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"flush_microseconds_per_order": float64(flushSnapshot.TotalElapsed.Microseconds()) /
+			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
+		"flush_microseconds_per_flush":  float64(flushSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, flushSnapshot.FlushCount)),
+		"flush_summed_to_drain_percent": percentForDurations(flushSnapshot.TotalElapsed, drainElapsed),
+		"flushes_per_operation":         float64(flushSnapshot.FlushCount) / float64(maxNativeIngestBenchmarkInt(1, runCount)),
+		"bsi_entries_per_logical_row":   float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+		"kv_entries_per_logical_row":    float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
 	}
 	pk := putSnapshot.PrimaryKey
 	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
@@ -204,7 +224,12 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "orders_per_second", unit: "orders/s", higherIsBetter: true},
 	{name: "lineitems_per_second", unit: "lineitems/s", higherIsBetter: true},
 	{name: "put_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "enqueue_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "drain_microseconds_per_order", unit: "us/order", higherIsBetter: false},
+	{name: "drain_wall_percent", unit: "percent", higherIsBetter: false},
+	{name: "flush_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "flush_microseconds_per_flush", unit: "us/flush", higherIsBetter: false},
+	{name: "flush_summed_to_drain_percent", unit: "percent", higherIsBetter: false},
 	{name: "flushes_per_operation", unit: "flushes/op", higherIsBetter: false},
 	{name: "bsi_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "kv_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
@@ -383,6 +408,20 @@ func percentForCounts(numerator int, denominator int) float64 {
 		return 0
 	}
 	return 100 * float64(numerator) / float64(denominator)
+}
+
+func percentForDurations(numerator time.Duration, denominator time.Duration) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return 100 * float64(numerator) / float64(denominator)
+}
+
+func nativeIngestBenchmarkOptionalDurationString(duration time.Duration) string {
+	if duration == 0 {
+		return ""
+	}
+	return duration.String()
 }
 
 func copyNativeIngestBenchmarkMetrics(src map[string]float64) map[string]float64 {

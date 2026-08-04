@@ -254,13 +254,17 @@ The PK-mode comparison wrapper writes both JSON reports and `comparison.md`
 under one ignored local output directory. The benchmark verifies final SQL
 counts after timing stops. Normal `go test` does not run it.
 
-Native ingest reports include PutRow stage timings, flush timings, and a
-primary-key resolver profile. The resolver profile breaks identity work into
-lookup-required rows, local batch-cache lookups and hits, KV lookups and hits,
-rownum allocation, provided/direct column-id paths, and staged primary-key
-cache writes. Fresh-load runs also report explicit assume-new and skipped KV
-lookup counters. Use those counters before changing the primary-key storage
-design.
+Native ingest reports include enqueue wall time, drain wall time, PutRow stage
+timings, flush timings, and a primary-key resolver profile. Enqueue time is the
+foreground cost of routing and queueing envelopes. Drain time is the wall-clock
+cost of closing the router and waiting for async writers to finish. Flush time
+is a summed internal profile across flush operations, so it is useful for
+attribution but is not the same thing as drain wall time. The resolver profile
+breaks identity work into lookup-required rows, local batch-cache lookups and
+hits, KV lookups and hits, rownum allocation, provided/direct column-id paths,
+and staged primary-key cache writes. Fresh-load runs also report explicit
+assume-new and skipped KV lookup counters. Use those counters before changing
+the primary-key storage design.
 
 Compare two native ingest benchmark reports with:
 
