@@ -3,13 +3,19 @@ package qsinabox
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestMountStandardProcessBuildsReadyNativeFrontDoor(t *testing.T) {
@@ -31,6 +37,74 @@ func TestMountStandardProcessBuildsReadyNativeFrontDoor(t *testing.T) {
 	}
 	if !process.FrontDoor.Ready() {
 		t.Fatalf("front door summary = %#v, want ready", process.FrontDoor.Summary())
+	}
+}
+
+func TestStandardProcessNativeGRPCServesNodeAPIs(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	clientConn, err := grpc.DialContext(dialCtx, process.NativeNode.Address, grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		t.Fatalf("dial native gRPC %s: %v", process.NativeNode.Address, err)
+	}
+	defer clientConn.Close()
+	if _, err := pb.NewBitmapIndexClient(clientConn).Commit(context.Background(), &emptypb.Empty{}); err != nil {
+		t.Fatalf("BitmapIndex.Commit() over native gRPC error = %v", err)
+	}
+
+	remoteConn, err := shared.NewSingleNodeConnection(dialCtx, "standard-native-test", process.NativeNode.Address)
+	if err != nil {
+		t.Fatalf("NewSingleNodeConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+	kv := shared.NewKVStore(remoteConn)
+	if err := kv.BatchPut("sample/native_loader", map[interface{}]interface{}{"row-1": "loaded"}, false); err != nil {
+		t.Fatalf("KVStore.BatchPut() over native gRPC error = %v", err)
+	}
+	got, err := kv.Lookup("sample/native_loader", "row-1", reflect.String, false)
+	if err != nil {
+		t.Fatalf("KVStore.Lookup() over native gRPC error = %v", err)
+	}
+	if got != "loaded" {
+		t.Fatalf("KVStore.Lookup() = %#v, want loaded", got)
+	}
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
 	}
 }
 
@@ -66,6 +140,16 @@ func TestStandardProcessExecutesSQLThroughLocalFrontDoor(t *testing.T) {
 	if result.Runtime.Count != 1 {
 		t.Fatalf("ExecuteSQL() runtime count = %d, want one aggregate row", result.Runtime.Count)
 	}
+}
+
+func reserveStandardTestPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 func TestStandardProcessExecutesGroupedBooleanFilterThroughLocalFrontDoor(t *testing.T) {

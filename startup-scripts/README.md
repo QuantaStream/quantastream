@@ -46,3 +46,25 @@ Or, use a debugger or `go run .` directly.
 Optional: delete the files in `../test/localClusterData` when you want to clear
 local node data. If you also delete `.local/consul/data`, recreate schemas before
 starting a cluster against existing data files.
+
+## How to start standard mode locally
+
+`start-standard.sh` starts the standalone QIAB product path: one
+`quantastream` process with the local node backend and MySQL front door.
+
+```sh
+QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
+QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+  ./start-standard.sh
+```
+
+The MySQL front door is the compatibility/control lane. For high-throughput
+loaders, standard mode can also expose the native bitmap/KV gRPC node surface
+on a separate port:
+
+```sh
+QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
+QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+QUANTASTREAM_NATIVE_GRPC_PORT=4100 \
+  ./start-standard.sh
+```

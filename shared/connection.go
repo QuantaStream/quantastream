@@ -85,6 +85,44 @@ func NewDefaultConnection(owner string) *Conn {
 	return m
 }
 
+// NewSingleNodeConnection creates a direct client connection to one native node
+// endpoint without Consul membership discovery. It is intended for
+// inabox-standard loader processes that need the existing bitmap/KV gRPC API
+// surface while the standard server owns the only node.
+func NewSingleNodeConnection(ctx context.Context, owner, address string) (*Conn, error) {
+	if strings.TrimSpace(owner) == "" {
+		owner = "single-node"
+	}
+	conn := NewDefaultConnection(owner)
+	conn.ServiceName = "quantastream"
+	conn.ServicePort = 0
+	conn.Quorum = 1
+	conn.Replicas = 1
+	conn.IsLocalCluster = true
+	conn.HashTable = rendezvous.New([]string{"single-node"})
+	conn.nodeMap = map[string]int{"single-node": 0}
+	conn.ids = []string{"single-node"}
+	conn.clusterSizeTarget = 1
+	conn.activeCount = 1
+	conn.nodeStatusMap.Store("single-node", &pb.StatusMessage{NodeState: "Active"})
+	conn.Stop = make(chan struct{})
+
+	opts := []grpc.DialOption{
+		grpc.WithInsecure(),
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(GRPCRecvBufsize),
+			grpc.MaxCallSendMsgSize(GRPCSendBufsize),
+		),
+	}
+	clientConn, err := grpc.DialContext(ctx, address, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("dial native node %s: %w", address, err)
+	}
+	conn.clientConn = []*grpc.ClientConn{clientConn}
+	return conn, nil
+}
+
 // OpType - Operation type
 type OpType int
 

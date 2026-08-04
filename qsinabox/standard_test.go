@@ -15,11 +15,24 @@ func TestStandardConfigAppliesStableDefaults(t *testing.T) {
 	if config.MySQLPort != 4000 {
 		t.Fatalf("MySQLPort = %d, want 4000", config.MySQLPort)
 	}
+	if config.NativeGRPCEnabled() {
+		t.Fatalf("NativeGRPCEnabled() = true, want disabled by default")
+	}
 	if config.ConfigDir == "" || config.DataDir == "" || config.Database != "quanta" {
 		t.Fatalf("config defaults = %+v", config)
 	}
 	if config.Address() != "127.0.0.1:4000" {
 		t.Fatalf("Address() = %q", config.Address())
+	}
+}
+
+func TestStandardConfigNativeGRPCAddressDefaultsToMySQLBind(t *testing.T) {
+	config := StandardConfig{BindAddress: "0.0.0.0", NativeGRPCPort: 4100}.WithDefaults()
+	if !config.NativeGRPCEnabled() {
+		t.Fatalf("NativeGRPCEnabled() = false, want enabled")
+	}
+	if config.NativeGRPCAddress() != "0.0.0.0:4100" {
+		t.Fatalf("NativeGRPCAddress() = %q, want 0.0.0.0:4100", config.NativeGRPCAddress())
 	}
 }
 
@@ -40,6 +53,9 @@ func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
 	}
 	if !strings.Contains(lines, "streaming_risk=") {
 		t.Fatalf("summary lines missing streaming risks: %s", lines)
+	}
+	if !strings.Contains(lines, "native_grpc=disabled") {
+		t.Fatalf("summary lines missing native gRPC state: %s", lines)
 	}
 }
 

@@ -33,6 +33,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	mode := flags.String("mode", qsinabox.StandardMode, "deployment mode to start")
 	bindAddress := flags.String("bind", "127.0.0.1", "MySQL bind address")
 	mysqlPort := flags.Int("mysql-port", 4000, "MySQL listen port")
+	nativeGRPCBind := flags.String("native-grpc-bind", "", "native node gRPC bind address; defaults to MySQL bind address")
+	nativeGRPCPort := flags.Int("native-grpc-port", 0, "native node gRPC listen port for high-throughput loaders; disabled when zero")
 	configDir := flags.String("config-dir", "configuration", "schema/catalog configuration directory")
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	database := flags.String("database", "quanta", "default database/schema name")
@@ -51,6 +53,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	config := qsinabox.StandardConfig{
 		BindAddress:         *bindAddress,
 		MySQLPort:           *mysqlPort,
+		NativeGRPCBind:      *nativeGRPCBind,
+		NativeGRPCPort:      *nativeGRPCPort,
 		ConfigDir:           *configDir,
 		DataDir:             *dataDir,
 		Database:            *database,
@@ -98,6 +102,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 2
 	}
 	fmt.Fprintf(stdout, "listening=%s\n", config.WithDefaults().Address())
+	if process.NativeNode != nil {
+		fmt.Fprintf(stdout, "native_grpc_listening=%s\n", process.NativeNode.Address)
+	}
 	if err := process.ListenAndServe(ctx); err != nil {
 		fmt.Fprintf(stderr, "serve inabox-standard: %v\n", err)
 		return 1

@@ -32,6 +32,17 @@ func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
 	}
 }
 
+func TestRunStatusPrintsNativeGRPCWhenConfigured(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-native-grpc-bind", "0.0.0.0", "-native-grpc-port", "4100"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "native_grpc=0.0.0.0:4100") {
+		t.Fatalf("stdout missing native gRPC address:\n%s", stdout.String())
+	}
+}
+
 func TestRunRejectsUnsupportedMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"-mode", "distributed"}, &stdout, &stderr)

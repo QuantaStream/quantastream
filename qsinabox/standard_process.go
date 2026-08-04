@@ -19,6 +19,7 @@ type StandardProcess struct {
 	RuntimeMount StandardDirectRuntimeMount
 	TableCache   *core.TableCacheStruct
 	FrontDoor    qsruntime.NativeProxyFrontDoor
+	NativeNode   *StandardNativeNodeServer
 
 	closeOnce sync.Once
 }
@@ -38,6 +39,12 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 		backend.Close()
 		return StandardProcess{}, diagnostics, err
 	}
+	nativeNode, err := MountStandardNativeNodeServer(config, backend)
+	if err != nil {
+		runtimeMount.Close()
+		backend.Close()
+		return StandardProcess{}, diagnostics, err
+	}
 	frontDoor := qsruntime.NewNativeProxyFrontDoor(nativeRuntime, config.NativeProxyFrontDoorConfig())
 	return StandardProcess{
 		Config:       config,
@@ -45,12 +52,16 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 		RuntimeMount: runtimeMount,
 		TableCache:   tableCache,
 		FrontDoor:    frontDoor,
+		NativeNode:   nativeNode,
 	}, nil, nil
 }
 
 // Close shuts down runtime and local node resources owned by the process.
 func (p *StandardProcess) Close() {
 	p.closeOnce.Do(func() {
+		if p.NativeNode != nil {
+			p.NativeNode.Close()
+		}
 		p.RuntimeMount.Close()
 		p.Backend.Close()
 	})
@@ -60,6 +71,9 @@ func (p *StandardProcess) Close() {
 func (p StandardProcess) ListenAndServe(ctx context.Context) error {
 	if !p.FrontDoor.Ready() {
 		return fmt.Errorf("inabox-standard front door is not ready")
+	}
+	if p.NativeNode != nil {
+		p.NativeNode.Start(ctx)
 	}
 	return p.FrontDoor.ListenAndServe(ctx, qsruntime.NativeProxyListenConfig{
 		Address:          p.Config.WithDefaults().Address(),

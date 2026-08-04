@@ -18,6 +18,8 @@ const StandardMode = "inabox-standard"
 type StandardConfig struct {
 	BindAddress         string
 	MySQLPort           int
+	NativeGRPCBind      string
+	NativeGRPCPort      int
 	ConfigDir           string
 	DataDir             string
 	Database            string
@@ -31,6 +33,9 @@ func (c StandardConfig) WithDefaults() StandardConfig {
 	}
 	if c.MySQLPort == 0 {
 		c.MySQLPort = 4000
+	}
+	if c.NativeGRPCBind == "" {
+		c.NativeGRPCBind = c.BindAddress
 	}
 	if c.ConfigDir == "" {
 		c.ConfigDir = "configuration"
@@ -48,6 +53,18 @@ func (c StandardConfig) WithDefaults() StandardConfig {
 func (c StandardConfig) Address() string {
 	c = c.WithDefaults()
 	return fmt.Sprintf("%s:%d", c.BindAddress, c.MySQLPort)
+}
+
+// NativeGRPCEnabled reports whether the standard process should publish the
+// native node gRPC service surface.
+func (c StandardConfig) NativeGRPCEnabled() bool {
+	return c.NativeGRPCPort > 0
+}
+
+// NativeGRPCAddress returns the native node gRPC bind address.
+func (c StandardConfig) NativeGRPCAddress() string {
+	c = c.WithDefaults()
+	return fmt.Sprintf("%s:%d", c.NativeGRPCBind, c.NativeGRPCPort)
 }
 
 // NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
@@ -114,10 +131,14 @@ func (p StandardPlan) SummaryLines() []string {
 	lines := []string{
 		fmt.Sprintf("mode=%s", p.Mode),
 		fmt.Sprintf("mysql=%s", config.Address()),
+		"native_grpc=disabled",
 		fmt.Sprintf("config_dir=%s", config.ConfigDir),
 		fmt.Sprintf("data_dir=%s", config.DataDir),
 		fmt.Sprintf("database=%s", config.Database),
 		fmt.Sprintf("local_node_ready=%t", p.LocalNode.Ready),
+	}
+	if config.NativeGRPCEnabled() {
+		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())
 	}
 	for _, blocker := range p.Blockers {
 		lines = append(lines, "blocker="+blocker)

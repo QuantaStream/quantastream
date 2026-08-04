@@ -10,6 +10,8 @@ CONFIG_DIR="${QUANTASTREAM_CONFIG_DIR:-configuration}"
 DATA_DIR="${QUANTASTREAM_DATA_DIR:-data}"
 BIND_ADDRESS="${QUANTASTREAM_BIND:-127.0.0.1}"
 MYSQL_PORT="${QUANTASTREAM_MYSQL_PORT:-4000}"
+NATIVE_GRPC_BIND="${QUANTASTREAM_NATIVE_GRPC_BIND:-}"
+NATIVE_GRPC_PORT="${QUANTASTREAM_NATIVE_GRPC_PORT:-0}"
 DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 
@@ -22,6 +24,11 @@ Environment:
   QUANTASTREAM_DATA_DIR     Local inabox-standard data directory. Defaults to data.
   QUANTASTREAM_BIND         MySQL bind address. Defaults to 127.0.0.1.
   QUANTASTREAM_MYSQL_PORT   MySQL listen port. Defaults to 4000.
+  QUANTASTREAM_NATIVE_GRPC_BIND
+                           Native node gRPC bind address. Defaults to QUANTASTREAM_BIND.
+  QUANTASTREAM_NATIVE_GRPC_PORT
+                           Native node gRPC listen port for high-throughput loaders.
+                           Defaults to 0, which disables the listener.
   QUANTASTREAM_DATABASE     Default database/schema. Defaults to quanta.
   QUANTASTREAM_RUNTIME_PROBES
                            Set to true to log runtime execution probes.
@@ -53,6 +60,11 @@ echo "Starting inabox-standard process"
 echo "config_dir=${CONFIG_DIR}"
 echo "data_dir=${DATA_DIR}"
 echo "mysql=${BIND_ADDRESS}:${MYSQL_PORT}"
+if [[ "${NATIVE_GRPC_PORT}" != "0" ]]; then
+  echo "native_grpc=${NATIVE_GRPC_BIND:-$BIND_ADDRESS}:${NATIVE_GRPC_PORT}"
+else
+  echo "native_grpc=disabled"
+fi
 echo "database=${DATABASE}"
 echo "runtime_probes=${RUNTIME_PROBES}"
 
@@ -91,6 +103,8 @@ go build -o "${server_bin}" ./cmd/quantastream
   -data-dir "$DATA_DIR" \
   -bind "$BIND_ADDRESS" \
   -mysql-port "$MYSQL_PORT" \
+  -native-grpc-bind "$NATIVE_GRPC_BIND" \
+  -native-grpc-port "$NATIVE_GRPC_PORT" \
   -database "$DATABASE" \
   -runtime-probes="${RUNTIME_PROBES}" &
 server_pid="$!"
