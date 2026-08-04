@@ -201,6 +201,10 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_skipped_kv_lookup_percent"] = percentForCounts(pk.SkippedKVLookupCount, pk.LookupRequiredCount)
 	metrics["primary_key_kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
 	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
+	metrics["primary_key_bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
+	metrics["primary_key_skipped_bsi_lookup_percent"] = percentForCounts(pk.SkippedBSILookupCount, pk.LookupRequiredCount)
+	metrics["primary_key_bsi_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSILookupElapsed, pk.BSILookupCount)
+	metrics["primary_key_bsi_stage_write_microseconds_per_write"] = durationMicrosPerCount(pk.BSIStageWriteElapsed, pk.BSIStageWriteCount)
 	metrics["primary_key_allocation_microseconds_per_allocation"] = durationMicrosPerCount(pk.RownumAllocationElapsed, pk.RownumAllocationCount)
 	metrics["primary_key_batch_cache_write_microseconds_per_write"] = durationMicrosPerCount(pk.BatchCacheWriteElapsed, pk.BatchCacheWriteCount)
 	return metrics
@@ -282,6 +286,10 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "primary_key_skipped_kv_lookup_percent", unit: "percent", higherIsBetter: true},
 	{name: "primary_key_kv_hit_percent", unit: "percent", higherIsBetter: false},
 	{name: "primary_key_kv_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
+	{name: "primary_key_bsi_hit_percent", unit: "percent", higherIsBetter: true},
+	{name: "primary_key_skipped_bsi_lookup_percent", unit: "percent", higherIsBetter: true},
+	{name: "primary_key_bsi_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
+	{name: "primary_key_bsi_stage_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
 	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},
 	{name: "primary_key_batch_cache_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
 }

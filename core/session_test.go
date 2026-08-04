@@ -491,7 +491,11 @@ func TestResolvePrimaryKeyColumnIDUsesProvidedIDWhenLookupDisabled(t *testing.T)
 		},
 		Parent: table,
 	}
-	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
+	tbuf := &TableBuffer{
+		Table:          table,
+		PKAttributes:   []*Attribute{pk},
+		CurrentPKValue: []interface{}{"1001"},
+	}
 
 	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, "")
 
@@ -545,7 +549,11 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 		},
 		Parent: table,
 	}
-	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
+	tbuf := &TableBuffer{
+		Table:          table,
+		PKAttributes:   []*Attribute{pk},
+		CurrentPKValue: []interface{}{"1001"},
+	}
 
 	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, PrimaryKeyModeAssumeNew)
 
@@ -557,6 +565,7 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 	assert.Same(t, session, resolver.request.Session)
 	assert.Same(t, tbuf, resolver.request.TableBuffer)
 	assert.Equal(t, "1001", resolver.request.LookupValue)
+	assert.Equal(t, []interface{}{"1001"}, resolver.request.PrimaryKeyValues)
 	assert.Equal(t, uint64(99), resolver.request.ProvidedColumnID)
 	assert.False(t, resolver.request.DirectColumnID)
 	assert.Equal(t, PrimaryKeyModeAssumeNew, resolver.request.PrimaryKeyMode)

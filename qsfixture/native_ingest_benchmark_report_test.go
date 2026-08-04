@@ -102,10 +102,16 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 				SkippedKVLookupCount:    10,
 				KVLookupCount:           20,
 				KVHitCount:              5,
+				BSILookupCount:          10,
+				BSIHitCount:             4,
+				SkippedBSILookupCount:   5,
+				BSIStageWriteCount:      5,
 				RownumAllocationCount:   15,
 				BatchCacheWriteCount:    15,
 				TotalElapsed:            5000 * time.Microsecond,
 				KVLookupElapsed:         2000 * time.Microsecond,
+				BSILookupElapsed:        500 * time.Microsecond,
+				BSIStageWriteElapsed:    250 * time.Microsecond,
 				RownumAllocationElapsed: 750 * time.Microsecond,
 				BatchCacheWriteElapsed:  300 * time.Microsecond,
 			},
@@ -217,6 +223,18 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["primary_key_kv_lookup_microseconds_per_lookup"], 100.0; got != want {
 		t.Fatalf("primary key kv lookup us/lookup = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_bsi_hit_percent"], 40.0; got != want {
+		t.Fatalf("primary key bsi hit percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_skipped_bsi_lookup_percent"], 25.0; got != want {
+		t.Fatalf("primary key skipped bsi lookup percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_bsi_lookup_microseconds_per_lookup"], 50.0; got != want {
+		t.Fatalf("primary key bsi lookup us/lookup = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_bsi_stage_write_microseconds_per_write"], 50.0; got != want {
+		t.Fatalf("primary key bsi stage write us/write = %v, want %v", got, want)
 	}
 }
 

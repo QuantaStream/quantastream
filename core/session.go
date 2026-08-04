@@ -70,6 +70,7 @@ type PrimaryKeyResolveRequest struct {
 	Session          *Session
 	TableBuffer      *TableBuffer
 	LookupValue      string
+	PrimaryKeyValues []interface{}
 	ProvidedColumnID uint64
 	DirectColumnID   bool
 	PrimaryKeyMode   PrimaryKeyMode
@@ -1251,6 +1252,7 @@ func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue strin
 		Session:          s,
 		TableBuffer:      tbuf,
 		LookupValue:      lookupValue,
+		PrimaryKeyValues: append([]interface{}(nil), tbuf.CurrentPKValue...),
 		ProvidedColumnID: providedColID,
 		DirectColumnID:   directColumnID,
 		PrimaryKeyMode:   primaryKeyMode.normalize(),
