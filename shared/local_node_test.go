@@ -266,10 +266,18 @@ func (s *recordingLocalBitmapIndexService) BatchMutate(_ context.Context, items 
 type recordingLocalKVStoreService struct {
 	lookupCalls      int
 	batchLookupCalls int
+	batchPutCalls    int
+	batchPutItems    []*pb.IndexKVPair
 	itemsCalls       int
 }
 
 func (s *recordingLocalKVStoreService) Put(context.Context, *pb.IndexKVPair) (*empty.Empty, error) {
+	return &empty.Empty{}, nil
+}
+
+func (s *recordingLocalKVStoreService) BatchPut(_ context.Context, items []*pb.IndexKVPair) (*empty.Empty, error) {
+	s.batchPutCalls++
+	s.batchPutItems = append([]*pb.IndexKVPair(nil), items...)
 	return &empty.Empty{}, nil
 }
 

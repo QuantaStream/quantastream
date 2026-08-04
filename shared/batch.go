@@ -38,8 +38,28 @@ type BatchBuffer struct {
 	batchClearValueCount   int
 	batchPartitionStrCount int
 	batchMutex             sync.RWMutex
+	lastFlushProfile       BatchBufferFlushProfile
 	ModifiedAt             time.Time
 	FlushedAt              time.Time
+}
+
+// BatchBufferFlushProfile captures one completed Flush attempt.
+type BatchBufferFlushProfile struct {
+	StartedAt                 time.Time
+	FinishedAt                time.Time
+	TotalElapsed              time.Duration
+	PartitionStringElapsed    time.Duration
+	BitmapSetElapsed          time.Duration
+	BitmapClearElapsed        time.Duration
+	BSIValueElapsed           time.Duration
+	BSIClearValueElapsed      time.Duration
+	PartitionStringBatchCount int
+	PartitionStringEntryCount int
+	BitmapSetEntryCount       int
+	BitmapClearEntryCount     int
+	BSIValueEntryCount        int
+	BSIClearValueEntryCount   int
+	Error                     string
 }
 
 // NewBatchBuffer - Initializer for client side API wrappers.
@@ -48,6 +68,16 @@ func NewBatchBuffer(bi *BitmapIndex, kv *KVStore, batchSize int) *BatchBuffer {
 	c := &BatchBuffer{BitmapIndex: bi, KVStore: kv, batchSize: batchSize,
 		ModifiedAt: time.Now(), FlushedAt: time.Now()}
 	return c
+}
+
+// LastFlushProfile returns a copy of the last Flush profile.
+func (c *BatchBuffer) LastFlushProfile() BatchBufferFlushProfile {
+	if c == nil {
+		return BatchBufferFlushProfile{}
+	}
+	c.batchMutex.RLock()
+	defer c.batchMutex.RUnlock()
+	return c.lastFlushProfile
 }
 
 type Bitmap struct {
@@ -62,48 +92,78 @@ func NewBitmap(bitmap *roaring64.Bitmap, isUpdate bool) *Bitmap {
 }
 
 // Flush outstanding batch before.
-func (c *BatchBuffer) Flush() error {
+func (c *BatchBuffer) Flush() (err error) {
 
 	//c.batchMutex.Lock()
 	//defer c.batchMutex.Unlock()
 
-	c.FlushedAt = time.Now()
+	profile := BatchBufferFlushProfile{
+		StartedAt:                 time.Now(),
+		PartitionStringBatchCount: len(c.batchPartitionStr),
+		PartitionStringEntryCount: c.batchPartitionStrCount,
+		BitmapSetEntryCount:       c.batchSetCount,
+		BitmapClearEntryCount:     c.batchClearCount,
+		BSIValueEntryCount:        c.batchValueCount,
+		BSIClearValueEntryCount:   c.batchClearValueCount,
+	}
+	defer func() {
+		profile.FinishedAt = time.Now()
+		profile.TotalElapsed = profile.FinishedAt.Sub(profile.StartedAt)
+		if err != nil {
+			profile.Error = err.Error()
+		}
+		c.batchMutex.Lock()
+		c.lastFlushProfile = profile
+		c.batchMutex.Unlock()
+	}()
+
+	c.FlushedAt = profile.StartedAt
 
 	if c.batchPartitionStr != nil {
+		phaseStart := time.Now()
 		for indexPath, valueMap := range c.batchPartitionStr {
 			if err := c.KVStore.BatchPut(indexPath, valueMap, true); err != nil {
 				return err
 			}
 		}
+		profile.PartitionStringElapsed = time.Since(phaseStart)
 		c.batchPartitionStr = nil
 		c.batchPartitionStrCount = 0
 	}
 
 	if c.batchSets != nil {
+		phaseStart := time.Now()
 		if err := c.BatchMutate(c.batchSets, false); err != nil {
 			return err
 		}
+		profile.BitmapSetElapsed = time.Since(phaseStart)
 		c.batchSets = nil
 		c.batchSetCount = 0
 	}
 	if c.batchClears != nil {
+		phaseStart := time.Now()
 		if err := c.BatchMutate(c.batchClears, true); err != nil {
 			return err
 		}
+		profile.BitmapClearElapsed = time.Since(phaseStart)
 		c.batchClears = nil
 		c.batchClearCount = 0
 	}
 	if c.batchValues != nil {
+		phaseStart := time.Now()
 		if err := c.BatchSetValue(c.batchValues); err != nil {
 			return err
 		}
+		profile.BSIValueElapsed = time.Since(phaseStart)
 		c.batchValues = nil
 		c.batchValueCount = 0
 	}
 	if c.batchClearValues != nil {
+		phaseStart := time.Now()
 		if err := c.BatchClearValue(c.batchClearValues); err != nil {
 			return err
 		}
+		profile.BSIClearValueElapsed = time.Since(phaseStart)
 		c.batchClearValues = nil
 		c.batchClearValueCount = 0
 	}

@@ -56,6 +56,7 @@ type Session struct {
 
 	tableCache         *TableCacheStruct
 	primaryKeyResolver PrimaryKeyResolver
+	lastFlushProfile   shared.BatchBufferFlushProfile
 }
 
 // PrimaryKeyResolver owns primary-key lookup and rownum assignment. The
@@ -1283,9 +1284,11 @@ func (s *Session) flush() error {
 		mergeTime := time.Since(start)
 		s.BatchBuffer = shared.NewBatchBuffer(s.BitIndex, s.KVStore, batchBufferSize)
 		if err := fb.Flush(); err != nil {
+			s.lastFlushProfile = fb.LastFlushProfile()
 			u.Error(err)
 			return err
 		}
+		s.lastFlushProfile = fb.LastFlushProfile()
 		duration := time.Since(start)
 		if duration > time.Duration(30*time.Second) {
 			u.Debugf("FLUSH DURATION %v, MERGE TIME = %v", duration, mergeTime)
@@ -1306,6 +1309,17 @@ func (s *Session) Flush() error {
 	s.stateLock.Lock()
 	defer s.stateLock.Unlock()
 	return s.flush()
+}
+
+// LastFlushProfile returns the most recent BatchBuffer flush profile observed
+// by this session.
+func (s *Session) LastFlushProfile() shared.BatchBufferFlushProfile {
+	if s == nil {
+		return shared.BatchBufferFlushProfile{}
+	}
+	s.stateLock.Lock()
+	defer s.stateLock.Unlock()
+	return s.lastFlushProfile
 }
 
 // CloseSession - Close the session, flushing if necessary..

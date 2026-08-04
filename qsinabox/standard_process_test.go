@@ -136,9 +136,13 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dialCancel()
-	remoteConn, err := shared.NewSingleNodeConnection(dialCtx, "standard-native-loader-test", process.NativeNode.Address)
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-loader-test",
+		Address: process.NativeNode.Address,
+	})
 	if err != nil {
-		t.Fatalf("NewSingleNodeConnection() error = %v", err)
+		t.Fatalf("NewLoaderConnection() error = %v", err)
 	}
 	defer remoteConn.Disconnect()
 
@@ -176,6 +180,10 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	}
 	if err := loaderSession.Flush(); err != nil {
 		t.Fatalf("loader Flush() over native gRPC error = %v", err)
+	}
+	flushProfile := loaderSession.LastFlushProfile()
+	if flushProfile.PartitionStringEntryCount == 0 || flushProfile.BSIValueEntryCount == 0 || flushProfile.TotalElapsed <= 0 {
+		t.Fatalf("loader flush profile = %+v, want KV sidecar and BSI write activity", flushProfile)
 	}
 
 	result, err := process.FrontDoor.Server.ExecuteSQL(
