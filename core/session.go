@@ -54,8 +54,34 @@ type Session struct {
 	stateLock      sync.Mutex
 	flushing       bool
 
-	tableCache *TableCacheStruct
+	tableCache         *TableCacheStruct
+	primaryKeyResolver PrimaryKeyResolver
 }
+
+// PrimaryKeyResolver owns primary-key lookup and rownum assignment. The
+// default implementation preserves the existing KV-backed behavior.
+type PrimaryKeyResolver interface {
+	ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error)
+}
+
+// PrimaryKeyResolveRequest carries the current primary-key resolution context.
+type PrimaryKeyResolveRequest struct {
+	Session          *Session
+	TableBuffer      *TableBuffer
+	LookupValue      string
+	ProvidedColumnID uint64
+	DirectColumnID   bool
+}
+
+// PrimaryKeyResolveResult describes the row identity selected by a resolver.
+type PrimaryKeyResolveResult struct {
+	ColumnID    uint64
+	ExistingRow bool
+}
+
+// KVPrimaryKeyResolver preserves the current KV-backed primary-key lookup and
+// rownum assignment behavior.
+type KVPrimaryKeyResolver struct{}
 
 // PutRowOptions carries optional ingestion metadata for future streaming
 // idempotency and observability. The current load path preserves existing
@@ -258,6 +284,7 @@ func OpenSession(tableCache *TableCacheStruct, path, name string, nested bool, c
 	s.BatchBuffer = shared.NewBatchBuffer(s.BitIndex, s.KVStore, batchBufferSize)
 	s.CreatedAt = time.Now().UTC()
 	s.tableCache = tableCache
+	s.primaryKeyResolver = KVPrimaryKeyResolver{}
 
 	return s, nil
 }
@@ -1003,45 +1030,88 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 func (s *Session) resolvePrimaryKeyColumnID(tbuf *TableBuffer, lookupValue string, providedColID uint64,
 	directColumnID bool) (bool, error) {
 
+	resolver := s.primaryKeyColumnIDResolver()
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          s,
+		TableBuffer:      tbuf,
+		LookupValue:      lookupValue,
+		ProvidedColumnID: providedColID,
+		DirectColumnID:   directColumnID,
+	})
+	if err != nil {
+		return false, err
+	}
+	if result.ColumnID != 0 {
+		tbuf.CurrentColumnID = result.ColumnID
+	}
+	return result.ExistingRow, nil
+}
+
+func (s *Session) primaryKeyColumnIDResolver() PrimaryKeyResolver {
+	if s.primaryKeyResolver != nil {
+		return s.primaryKeyResolver
+	}
+	return KVPrimaryKeyResolver{}
+}
+
+// SetPrimaryKeyResolver replaces the resolver used for primary-key lookup and
+// rownum assignment. Passing nil restores the default KV-backed resolver.
+func (s *Session) SetPrimaryKeyResolver(resolver PrimaryKeyResolver) {
+	if resolver == nil {
+		s.primaryKeyResolver = KVPrimaryKeyResolver{}
+		return
+	}
+	s.primaryKeyResolver = resolver
+}
+
+func (KVPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
+	session := req.Session
+	tbuf := req.TableBuffer
+	if session == nil {
+		return PrimaryKeyResolveResult{}, fmt.Errorf("primary key resolver session is nil")
+	}
+	if tbuf == nil {
+		return PrimaryKeyResolveResult{}, fmt.Errorf("primary key resolver table buffer is nil")
+	}
 	if tbuf.ShouldLookupPrimaryKey() {
 		// Can't use batch operation here unfortunately, but at least we have local batch cache.
 		localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
-		if lColID, ok := s.BatchBuffer.LookupLocalCIDForString(localKey, lookupValue); ok {
+		if lColID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, req.LookupValue); ok {
 			tbuf.CurrentColumnID = lColID
-			u.Warnf("PK %s found in cache.  PK mapping error for %s?", lookupValue, tbuf.Table.Name)
-			return false, nil
+			u.Warnf("PK %s found in cache.  PK mapping error for %s?", req.LookupValue, tbuf.Table.Name)
+			return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
 		}
-		colID, found, err := s.lookupColumnID(tbuf, lookupValue, "")
+		colID, found, err := session.lookupColumnID(tbuf, req.LookupValue, "")
 		if err != nil {
-			return false, fmt.Errorf("Dedup lookup error - %v", err)
+			return PrimaryKeyResolveResult{}, fmt.Errorf("Dedup lookup error - %v", err)
 		}
 		if found {
 			tbuf.CurrentColumnID = colID
-			return true, nil
+			return PrimaryKeyResolveResult{ColumnID: colID, ExistingRow: true}, nil
 		}
-		if providedColID == 0 {
-			if err := tbuf.NextColumnID(s.BitIndex); err != nil {
-				return false, err
+		if req.ProvidedColumnID == 0 {
+			if err := tbuf.NextColumnID(session.BitIndex); err != nil {
+				return PrimaryKeyResolveResult{}, err
 			}
 		} else {
-			tbuf.CurrentColumnID = providedColID
+			tbuf.CurrentColumnID = req.ProvidedColumnID
 		}
 		// Add the PK via local cache batch operation.
-		s.BatchBuffer.SetPartitionedString(localKey, lookupValue, tbuf.CurrentColumnID)
-		return false, nil
+		session.BatchBuffer.SetPartitionedString(localKey, req.LookupValue, tbuf.CurrentColumnID)
+		return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
 	}
 
-	if directColumnID {
-		return false, nil
+	if req.DirectColumnID {
+		return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
 	}
-	if providedColID == 0 {
-		if err := tbuf.NextColumnID(s.BitIndex); err != nil {
-			return false, err
+	if req.ProvidedColumnID == 0 {
+		if err := tbuf.NextColumnID(session.BitIndex); err != nil {
+			return PrimaryKeyResolveResult{}, err
 		}
 	} else {
-		tbuf.CurrentColumnID = providedColID
+		tbuf.CurrentColumnID = req.ProvidedColumnID
 	}
-	return false, nil
+	return PrimaryKeyResolveResult{ColumnID: tbuf.CurrentColumnID}, nil
 }
 
 // Handle Secondary Keys.  Create the index in backing store

@@ -9,6 +9,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type recordingPrimaryKeyResolver struct {
+	called  bool
+	request PrimaryKeyResolveRequest
+	result  PrimaryKeyResolveResult
+	err     error
+}
+
+func (r *recordingPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
+	r.called = true
+	r.request = req
+	if r.result.ColumnID != 0 && req.TableBuffer != nil {
+		req.TableBuffer.CurrentColumnID = r.result.ColumnID
+	}
+	return r.result, r.err
+}
+
 // FIXME: make this work or delete. It never finishes. (nobody home at port 4000)
 func xTestCreateSession(t *testing.T) {
 
@@ -187,6 +203,35 @@ func TestResolvePrimaryKeyColumnIDPreservesDirectColumnID(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, updateExisting)
 	assert.Equal(t, uint64(7), tbuf.CurrentColumnID)
+}
+
+func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
+	resolver := &recordingPrimaryKeyResolver{
+		result: PrimaryKeyResolveResult{ColumnID: 55, ExistingRow: true},
+	}
+	session := &Session{}
+	session.SetPrimaryKeyResolver(resolver)
+	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	pk := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName: "order_id",
+			ColumnID:  true,
+		},
+		Parent: table,
+	}
+	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
+
+	updateExisting, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false)
+
+	require.NoError(t, err)
+	assert.True(t, resolver.called)
+	assert.True(t, updateExisting)
+	assert.Equal(t, uint64(55), tbuf.CurrentColumnID)
+	assert.Same(t, session, resolver.request.Session)
+	assert.Same(t, tbuf, resolver.request.TableBuffer)
+	assert.Equal(t, "1001", resolver.request.LookupValue)
+	assert.Equal(t, uint64(99), resolver.request.ProvidedColumnID)
+	assert.False(t, resolver.request.DirectColumnID)
 }
 
 func TestReadColumnEvaluatesBlindDefaultExpression(t *testing.T) {
