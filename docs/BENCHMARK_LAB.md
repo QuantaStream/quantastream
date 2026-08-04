@@ -215,6 +215,28 @@ Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and
 performance.
 
+## Native Ingest Micro-Benchmarks
+
+The standard-native loader path has a focused Go benchmark that mounts an
+`inabox-standard` process, connects to its native gRPC node surface, routes
+deterministic nested TPC-H order/lineitem envelopes through `SessionRouter`, and
+reports loader throughput plus PutRow/flush profile totals:
+
+```bash
+cd /home/gmolinari/projects/quantastream
+QUANTASTREAM_TPCH_INGEST_BENCH_ORDERS=100 \
+QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS=4 \
+QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS=1 \
+  go test ./qsinabox \
+    -run '^$' \
+    -bench BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest \
+    -benchtime=3x \
+    -count=1
+```
+
+The benchmark verifies final SQL counts after timing stops. Normal `go test`
+does not run it.
+
 ## Query Profile Capture
 
 Use query profile capture when a case passes but the wall time needs

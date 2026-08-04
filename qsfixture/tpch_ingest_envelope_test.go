@@ -57,6 +57,30 @@ func TestNewTPCHOrderLineitemEnvelopeFixtureBuildsDeterministicEnvelopes(t *test
 	}
 }
 
+func TestNewTPCHOrderLineitemEnvelopeFixtureHonorsBaseOrderKey(t *testing.T) {
+	fixture, err := NewTPCHOrderLineitemEnvelopeFixture(TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        2,
+		LineitemsPerOrder: 1,
+		BaseOrderKey:      9001,
+	})
+	if err != nil {
+		t.Fatalf("fixture error = %v", err)
+	}
+	if fixture.Envelopes[0].EventID != "tpch.orders.9001" {
+		t.Fatalf("first event ID = %s, want tpch.orders.9001", fixture.Envelopes[0].EventID)
+	}
+	firstData := fixture.Envelopes[0].Payload["data"].(map[string]interface{})
+	secondData := fixture.Envelopes[1].Payload["data"].(map[string]interface{})
+	if firstData["o_orderkey"] != int64(9001) || secondData["o_orderkey"] != int64(9002) {
+		t.Fatalf("order keys = %#v/%#v, want 9001/9002", firstData["o_orderkey"], secondData["o_orderkey"])
+	}
+	lineitems := firstData["lineitems"].([]interface{})
+	firstLine := lineitems[0].(map[string]interface{})
+	if firstLine["l_orderkey"] != int64(9001) {
+		t.Fatalf("lineitem order key = %#v, want 9001", firstLine["l_orderkey"])
+	}
+}
+
 func TestTPCHOrderLineitemEnvelopeFixtureRoutesThroughInMemoryHarness(t *testing.T) {
 	fixture, err := NewTPCHOrderLineitemEnvelopeFixture(TPCHOrderLineitemEnvelopeOptions{
 		OrderCount:        3,

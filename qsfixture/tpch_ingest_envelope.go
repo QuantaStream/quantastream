@@ -18,6 +18,7 @@ const (
 type TPCHOrderLineitemEnvelopeOptions struct {
 	OrderCount        int
 	LineitemsPerOrder int
+	BaseOrderKey      int64
 	StartedAt         time.Time
 }
 
@@ -37,6 +38,9 @@ func NewTPCHOrderLineitemEnvelopeFixture(options TPCHOrderLineitemEnvelopeOption
 	if options.LineitemsPerOrder <= 0 {
 		options.LineitemsPerOrder = 1
 	}
+	if options.BaseOrderKey <= 0 {
+		options.BaseOrderKey = 1001
+	}
 	if options.StartedAt.IsZero() {
 		options.StartedAt = time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC)
 	}
@@ -45,7 +49,7 @@ func NewTPCHOrderLineitemEnvelopeFixture(options TPCHOrderLineitemEnvelopeOption
 		Envelopes: make([]core.IngestEnvelope, 0, options.OrderCount),
 	}
 	for i := 0; i < options.OrderCount; i++ {
-		orderKey := int64(1001 + i)
+		orderKey := options.BaseOrderKey + int64(i)
 		eventTime := options.StartedAt.Add(time.Duration(i) * time.Second)
 		envelope, err := core.NewStreamIngestEnvelope(core.StreamIngestEnvelopeRequest{
 			EventID:      fmt.Sprintf("tpch.orders.%d", orderKey),

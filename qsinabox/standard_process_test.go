@@ -495,11 +495,11 @@ func TestStandardProcessExecutesSQLThroughLocalFrontDoor(t *testing.T) {
 	}
 }
 
-func reserveStandardTestPort(t *testing.T) int {
-	t.Helper()
+func reserveStandardTestPort(tb testing.TB) int {
+	tb.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("reserve port: %v", err)
+		tb.Fatalf("reserve port: %v", err)
 	}
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
@@ -716,24 +716,24 @@ func requireStandardProcessSQLSuccess(t *testing.T, process StandardProcess, sql
 	}
 }
 
-func requireStandardProcessScalarString(t *testing.T, process StandardProcess, sql string, want string) {
-	t.Helper()
+func requireStandardProcessScalarString(tb testing.TB, process StandardProcess, sql string, want string) {
+	tb.Helper()
 	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
 	if err != nil {
-		t.Fatalf("%s error = %v", sql, err)
+		tb.Fatalf("%s error = %v", sql, err)
 	}
 	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
-		t.Fatalf("%s diagnostics = %#v runtime=%#v, want none", sql, result.Diagnostics, result.Runtime.Diagnostics)
+		tb.Fatalf("%s diagnostics = %#v runtime=%#v, want none", sql, result.Diagnostics, result.Runtime.Diagnostics)
 	}
 	chunk, chunkDiagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
 	if chunkDiagnostics.BlocksNative() {
-		t.Fatalf("%s chunk diagnostics = %#v", sql, chunkDiagnostics)
+		tb.Fatalf("%s chunk diagnostics = %#v", sql, chunkDiagnostics)
 	}
 	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 {
-		t.Fatalf("%s rows = %#v, want one scalar value", sql, chunk.Rows)
+		tb.Fatalf("%s rows = %#v, want one scalar value", sql, chunk.Rows)
 	}
 	if got := fmt.Sprint(chunk.Rows[0][0].Value); got != want {
-		t.Fatalf("%s scalar = %s, want %s", sql, got, want)
+		tb.Fatalf("%s scalar = %s, want %s", sql, got, want)
 	}
 }
 
@@ -821,10 +821,10 @@ attributes:
 	}
 }
 
-func writeStandardTPCHNestedSchemas(t *testing.T, configDir string) {
-	t.Helper()
+func writeStandardTPCHNestedSchemas(tb testing.TB, configDir string) {
+	tb.Helper()
 	now := time.Now().UTC()
-	writeStandardTPCHNestedSchema(t, configDir, "orders", `tableName: orders
+	writeStandardTPCHNestedSchema(tb, configDir, "orders", `tableName: orders
 primaryKey: o_orderkey
 selector: type="orders"
 attributes:
@@ -843,7 +843,7 @@ attributes:
   childTable: lineitem
   mappingStrategy: ChildRelation
 `)
-	writeStandardTPCHNestedSchema(t, configDir, "lineitem", `tableName: lineitem
+	writeStandardTPCHNestedSchema(tb, configDir, "lineitem", `tableName: lineitem
 primaryKey: l_orderkey+l_linenumber
 selector: type="lineitem"
 attributes:
@@ -862,20 +862,20 @@ attributes:
   type: Integer
 `)
 	if err := shared.ActivateCatalogTable(configDir, "quanta", "orders", now); err != nil {
-		t.Fatalf("activate orders catalog object: %v", err)
+		tb.Fatalf("activate orders catalog object: %v", err)
 	}
 	if err := shared.ActivateCatalogTable(configDir, "quanta", "lineitem", now); err != nil {
-		t.Fatalf("activate lineitem catalog object: %v", err)
+		tb.Fatalf("activate lineitem catalog object: %v", err)
 	}
 }
 
-func writeStandardTPCHNestedSchema(t *testing.T, configDir, table, schema string) {
-	t.Helper()
+func writeStandardTPCHNestedSchema(tb testing.TB, configDir, table, schema string) {
+	tb.Helper()
 	tableDir := filepath.Join(configDir, table)
 	if err := os.MkdirAll(tableDir, 0755); err != nil {
-		t.Fatalf("mkdir schema dir: %v", err)
+		tb.Fatalf("mkdir schema dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
-		t.Fatalf("write %s schema: %v", table, err)
+		tb.Fatalf("write %s schema: %v", table, err)
 	}
 }
