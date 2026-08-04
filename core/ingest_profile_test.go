@@ -189,3 +189,55 @@ func TestRouterFlushProfileSnapshotIsStableCopy(t *testing.T) {
 
 	require.Equal(t, 1, profile.Snapshot().ByTable["orders"].FlushCount)
 }
+
+func TestRouterDrainProfileAggregatesWorkerTimings(t *testing.T) {
+	var profile RouterDrainProfile
+	callback := profile.Callback()
+
+	callback(RouterDrainWorkerProfile{
+		ShardID:      "shard0",
+		SessionCount: 2,
+		Elapsed:      11 * time.Millisecond,
+	})
+	callback(RouterDrainWorkerProfile{
+		ShardID:      "shard1",
+		SessionCount: 1,
+		Elapsed:      7 * time.Millisecond,
+		Error:        "close failed",
+	})
+
+	snapshot := profile.Snapshot()
+
+	require.Equal(t, 2, snapshot.WorkerCount)
+	require.Equal(t, 3, snapshot.SessionCount)
+	require.Equal(t, 1, snapshot.ErrorCount)
+	require.Equal(t, 18*time.Millisecond, snapshot.TotalElapsed)
+	require.Equal(t, 11*time.Millisecond, snapshot.MaxElapsed)
+	require.Equal(t, RouterDrainProfileCounter{
+		WorkerCount:  1,
+		SessionCount: 2,
+		TotalElapsed: 11 * time.Millisecond,
+		MaxElapsed:   11 * time.Millisecond,
+	}, snapshot.ByShard["shard0"])
+	require.Equal(t, RouterDrainProfileCounter{
+		WorkerCount:  1,
+		SessionCount: 1,
+		TotalElapsed: 7 * time.Millisecond,
+		MaxElapsed:   7 * time.Millisecond,
+		ErrorCount:   1,
+	}, snapshot.ByShard["shard1"])
+}
+
+func TestRouterDrainProfileSnapshotIsStableCopy(t *testing.T) {
+	var profile RouterDrainProfile
+	profile.Observe(RouterDrainWorkerProfile{
+		ShardID:      "shard0",
+		SessionCount: 1,
+		Elapsed:      time.Millisecond,
+	})
+
+	snapshot := profile.Snapshot()
+	snapshot.ByShard["shard0"] = RouterDrainProfileCounter{}
+
+	require.Equal(t, 1, profile.Snapshot().ByShard["shard0"].WorkerCount)
+}

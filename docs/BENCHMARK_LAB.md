@@ -257,7 +257,9 @@ counts after timing stops. Normal `go test` does not run it.
 Native ingest reports include enqueue wall time, drain wall time, PutRow stage
 timings, flush timings, and a primary-key resolver profile. Enqueue time is the
 foreground cost of routing and queueing envelopes. Drain time is the wall-clock
-cost of closing the router and waiting for async writers to finish. Flush time
+cost of closing the router and waiting for async writers to finish. Reports
+also include worker/shard drain attribution so a slow close can be separated
+into balanced parallel drain versus one shard doing most of the work. Flush time
 is a summed internal profile across flush operations, so it is useful for
 attribution but is not the same thing as drain wall time. The resolver profile
 breaks identity work into lookup-required rows, local batch-cache lookups and

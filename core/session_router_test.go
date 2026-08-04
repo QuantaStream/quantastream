@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,41 @@ func TestSessionRouterPublishesFlushProfile(t *testing.T) {
 		BSIValueEntryCount: 3,
 	})
 	require.True(t, called)
+}
+
+func TestSessionRouterPublishesDrainProfileOnClose(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		profiles []RouterDrainWorkerProfile
+	)
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{},
+		ShardCount:    2,
+		ChannelSize:   1,
+		FlushInterval: time.Hour,
+		OnDrainProfile: func(profile RouterDrainWorkerProfile) {
+			mu.Lock()
+			defer mu.Unlock()
+			profiles = append(profiles, profile)
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, router.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, profiles, 2)
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		seen[profile.ShardID] = true
+		require.Zero(t, profile.SessionCount)
+		require.Empty(t, profile.Error)
+		require.GreaterOrEqual(t, profile.Elapsed, time.Duration(0))
+	}
+	require.True(t, seen["shard0"])
+	require.True(t, seen["shard1"])
 }
 
 func TestSessionRouterDoesNotPublishStaleFlushProfile(t *testing.T) {

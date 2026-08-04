@@ -63,6 +63,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	defer remoteConn.Disconnect()
 
 	putRowProfile := &core.RouterPutRowProfile{}
+	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
 	router, err := core.NewSessionRouter(core.SessionRouterConfig{
 		TableCache:     core.NewTableCacheStruct(),
@@ -73,6 +74,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		FlushInterval:  10 * time.Millisecond,
 		PrimaryKeyMode: primaryKeyMode,
 		OnPutRowResult: putRowProfile.Callback(),
+		OnDrainProfile: drainProfile.Callback(),
 		OnFlushProfile: flushProfile.Callback(),
 	})
 	if err != nil {
@@ -128,6 +130,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	totalLineitems := totalOrders * lineitemsPerOrder
 	totalLogicalRows := totalOrders + totalLineitems
 	putSnapshot := putRowProfile.Snapshot()
+	drainSnapshot := drainProfile.Snapshot()
 	flushSnapshot := flushProfile.Snapshot()
 	if putSnapshot.RecordCount != totalOrders || putSnapshot.InsertedCount != totalOrders {
 		b.Fatalf("put profile = %+v, want %d inserted order records", putSnapshot, totalOrders)
@@ -139,9 +142,12 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if flushSnapshot.FlushCount == 0 || flushSnapshot.BSIValueEntryCount == 0 || flushSnapshot.PartitionStringEntryCount == 0 {
 		b.Fatalf("flush profile = %+v, want native write activity", flushSnapshot)
 	}
+	if drainSnapshot.WorkerCount != shardCount {
+		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, shardCount)
+	}
 
 	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, enqueueElapsed, drainElapsed,
-		totalOrders, totalLineitems, totalLogicalRows, putSnapshot, flushSnapshot, b.N)
+		totalOrders, totalLineitems, totalLogicalRows, putSnapshot, drainSnapshot, flushSnapshot, b.N)
 	reportTPCHIngestBenchmarkMetrics(b, metrics)
 	report := qsfixture.BuildNativeIngestBenchmarkReport(qsfixture.NativeIngestBenchmarkReportRequest{
 		Profile:           profileName,
@@ -155,6 +161,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		EnqueueElapsed:    enqueueElapsed,
 		DrainElapsed:      drainElapsed,
 		PutRow:            putSnapshot,
+		Drain:             drainSnapshot,
 		Flush:             flushSnapshot,
 		Metrics:           metrics,
 	})
@@ -209,6 +216,9 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["enqueue_microseconds_per_order"], "enqueue_us/order")
 	b.ReportMetric(metrics["drain_microseconds_per_order"], "drain_us/order")
 	b.ReportMetric(metrics["drain_wall_percent"], "drain_wall_percent")
+	b.ReportMetric(metrics["drain_worker_max_microseconds"], "drain_worker_max_us")
+	b.ReportMetric(metrics["drain_worker_sum_to_wall_percent"], "drain_worker_sum_to_wall_percent")
+	b.ReportMetric(metrics["drain_sessions_per_worker"], "drain_sessions/worker")
 	b.ReportMetric(metrics["put_microseconds_per_order"], "put_us/order")
 	b.ReportMetric(metrics["flush_microseconds_per_order"], "flush_us/order")
 	b.ReportMetric(metrics["flush_microseconds_per_flush"], "flush_us/flush")

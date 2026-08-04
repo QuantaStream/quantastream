@@ -28,6 +28,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	EnqueueElapsed    time.Duration
 	DrainElapsed      time.Duration
 	PutRow            core.RouterPutRowProfileSummary
+	Drain             core.RouterDrainProfileSummary
 	Flush             core.RouterFlushProfileSummary
 	Metrics           map[string]float64
 }
@@ -44,6 +45,7 @@ type NativeIngestBenchmarkReport struct {
 	Timings     NativeIngestBenchmarkTimings    `json:"timings"`
 	Metrics     map[string]float64              `json:"metrics"`
 	PutRow      core.RouterPutRowProfileSummary `json:"put_row"`
+	Drain       core.RouterDrainProfileSummary  `json:"drain"`
 	Flush       core.RouterFlushProfileSummary  `json:"flush"`
 }
 
@@ -104,6 +106,7 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 		},
 		Metrics: copyNativeIngestBenchmarkMetrics(request.Metrics),
 		PutRow:  request.PutRow,
+		Drain:   request.Drain,
 		Flush:   request.Flush,
 	}
 }
@@ -146,6 +149,7 @@ func NativeIngestBenchmarkMetrics(
 	totalLineitems int,
 	totalLogicalRows int,
 	putSnapshot core.RouterPutRowProfileSummary,
+	drainSnapshot core.RouterDrainProfileSummary,
 	flushSnapshot core.RouterFlushProfileSummary,
 	runCount int,
 ) map[string]float64 {
@@ -162,7 +166,12 @@ func NativeIngestBenchmarkMetrics(
 			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
 		"drain_microseconds_per_order": float64(drainElapsed.Microseconds()) /
 			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
-		"drain_wall_percent":         percentForDurations(drainElapsed, elapsed),
+		"drain_wall_percent":               percentForDurations(drainElapsed, elapsed),
+		"drain_worker_max_microseconds":    float64(drainSnapshot.MaxElapsed.Microseconds()),
+		"drain_worker_sum_microseconds":    float64(drainSnapshot.TotalElapsed.Microseconds()),
+		"drain_worker_sum_to_wall_percent": percentForDurations(drainSnapshot.TotalElapsed, drainElapsed),
+		"drain_sessions_per_worker": float64(drainSnapshot.SessionCount) /
+			float64(maxNativeIngestBenchmarkInt(1, drainSnapshot.WorkerCount)),
 		"put_microseconds_per_order": float64(putSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
 		"flush_microseconds_per_order": float64(flushSnapshot.TotalElapsed.Microseconds()) /
 			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
@@ -227,6 +236,10 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "enqueue_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "drain_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "drain_wall_percent", unit: "percent", higherIsBetter: false},
+	{name: "drain_worker_max_microseconds", unit: "us", higherIsBetter: false},
+	{name: "drain_worker_sum_microseconds", unit: "us", higherIsBetter: false},
+	{name: "drain_worker_sum_to_wall_percent", unit: "percent", higherIsBetter: false},
+	{name: "drain_sessions_per_worker", unit: "sessions/worker", higherIsBetter: false},
 	{name: "flush_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "flush_microseconds_per_flush", unit: "us/flush", higherIsBetter: false},
 	{name: "flush_summed_to_drain_percent", unit: "percent", higherIsBetter: false},

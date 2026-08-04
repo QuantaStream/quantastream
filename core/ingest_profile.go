@@ -264,3 +264,109 @@ func addRouterFlushProfileCounter(counter RouterFlushProfileCounter, profile sha
 	}
 	return counter
 }
+
+// RouterDrainWorkerProfile records one SessionRouter worker's shutdown drain.
+type RouterDrainWorkerProfile struct {
+	ShardID      string        `json:"shard_id"`
+	SessionCount int           `json:"session_count"`
+	Elapsed      time.Duration `json:"elapsed_nanos"`
+	Error        string        `json:"error,omitempty"`
+}
+
+// RouterDrainProfile aggregates worker shutdown drain observations.
+type RouterDrainProfile struct {
+	mu      sync.Mutex
+	summary RouterDrainProfileSummary
+}
+
+// RouterDrainProfileSummary is a point-in-time aggregate of router drain work.
+type RouterDrainProfileSummary struct {
+	WorkerCount  int                                  `json:"worker_count"`
+	SessionCount int                                  `json:"session_count"`
+	ErrorCount   int                                  `json:"error_count"`
+	TotalElapsed time.Duration                        `json:"total_elapsed_nanos"`
+	MaxElapsed   time.Duration                        `json:"max_elapsed_nanos"`
+	ByShard      map[string]RouterDrainProfileCounter `json:"by_shard,omitempty"`
+}
+
+// RouterDrainProfileCounter is a grouped worker drain accumulator.
+type RouterDrainProfileCounter struct {
+	WorkerCount  int           `json:"worker_count"`
+	SessionCount int           `json:"session_count"`
+	TotalElapsed time.Duration `json:"total_elapsed_nanos"`
+	MaxElapsed   time.Duration `json:"max_elapsed_nanos"`
+	ErrorCount   int           `json:"error_count"`
+}
+
+// Callback returns the function shape expected by SessionRouterConfig.
+func (p *RouterDrainProfile) Callback() func(profile RouterDrainWorkerProfile) {
+	return p.Observe
+}
+
+// Observe records one worker's shutdown drain profile.
+func (p *RouterDrainProfile) Observe(profile RouterDrainWorkerProfile) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ensureMaps()
+	p.summary.WorkerCount++
+	p.summary.SessionCount += profile.SessionCount
+	p.summary.TotalElapsed += profile.Elapsed
+	if profile.Elapsed > p.summary.MaxElapsed {
+		p.summary.MaxElapsed = profile.Elapsed
+	}
+	if profile.Error != "" {
+		p.summary.ErrorCount++
+	}
+	if profile.ShardID != "" {
+		p.summary.ByShard[profile.ShardID] = addRouterDrainProfileCounter(p.summary.ByShard[profile.ShardID], profile)
+	}
+}
+
+// Snapshot returns a stable copy of the current drain profile summary.
+func (p *RouterDrainProfile) Snapshot() RouterDrainProfileSummary {
+	if p == nil {
+		return RouterDrainProfileSummary{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.summary.copy()
+}
+
+func (p *RouterDrainProfile) ensureMaps() {
+	if p.summary.ByShard == nil {
+		p.summary.ByShard = map[string]RouterDrainProfileCounter{}
+	}
+}
+
+func (s RouterDrainProfileSummary) copy() RouterDrainProfileSummary {
+	cp := s
+	cp.ByShard = copyRouterDrainProfileCounters(s.ByShard)
+	return cp
+}
+
+func copyRouterDrainProfileCounters(src map[string]RouterDrainProfileCounter) map[string]RouterDrainProfileCounter {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]RouterDrainProfileCounter, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func addRouterDrainProfileCounter(counter RouterDrainProfileCounter, profile RouterDrainWorkerProfile) RouterDrainProfileCounter {
+	counter.WorkerCount++
+	counter.SessionCount += profile.SessionCount
+	counter.TotalElapsed += profile.Elapsed
+	if profile.Elapsed > counter.MaxElapsed {
+		counter.MaxElapsed = profile.Elapsed
+	}
+	if profile.Error != "" {
+		counter.ErrorCount++
+	}
+	return counter
+}

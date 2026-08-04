@@ -38,6 +38,7 @@ type SessionRouterConfig struct {
 	OnSessionClose func()
 	OnPutRowResult func(shardID string, record IngestRecord, result PutRowResult)
 	OnFlushProfile func(shardID string, tableName string, profile shared.BatchBufferFlushProfile)
+	OnDrainProfile func(profile RouterDrainWorkerProfile)
 	OnProcessed    func()
 	OnError        func(error)
 }
@@ -122,7 +123,18 @@ func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 			select {
 			case record, open := <-ch:
 				if !open {
-					return r.closeWorkerSessions(&shardTableKeys)
+					drainStartedAt := time.Now()
+					sessionCount, err := r.closeWorkerSessions(&shardTableKeys)
+					profile := RouterDrainWorkerProfile{
+						ShardID:      shardID,
+						SessionCount: sessionCount,
+						Elapsed:      time.Since(drainStartedAt),
+					}
+					if err != nil {
+						profile.Error = err.Error()
+					}
+					r.publishDrainProfile(profile)
+					return err
 				}
 				if err := r.putRecord(shardID, record, &shardTableKeys); err != nil {
 					if r.cfg.OnError != nil {
@@ -193,6 +205,13 @@ func (r *SessionRouter) publishFlushProfile(shardID string, tableName string, pr
 	r.cfg.OnFlushProfile(shardID, tableName, profile)
 }
 
+func (r *SessionRouter) publishDrainProfile(profile RouterDrainWorkerProfile) {
+	if r.cfg.OnDrainProfile == nil {
+		return
+	}
+	r.cfg.OnDrainProfile(profile)
+}
+
 // PutRowOptions returns optional streaming metadata for the state-changing
 // load boundary. Empty fields preserve the current PutRow behavior.
 func (r IngestRecord) PutRowOptions() PutRowOptions {
@@ -257,9 +276,11 @@ func (r *SessionRouter) flushIdleSessions(shardID string, shardTableKeys *sync.M
 	return firstErr
 }
 
-func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) error {
+func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) (int, error) {
 	var firstErr error
+	sessionCount := 0
 	shardTableKeys.Range(func(k, v interface{}) bool {
+		sessionCount++
 		session := v.(*Session)
 		before := session.LastFlushProfile()
 		if err := session.CloseSession(); err != nil {
@@ -279,7 +300,7 @@ func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) error {
 		}
 		return true
 	})
-	return firstErr
+	return sessionCount, firstErr
 }
 
 func (r *SessionRouter) publishNewFlushProfile(shardID string, tableName string, before, after shared.BatchBufferFlushProfile) {
