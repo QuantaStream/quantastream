@@ -348,6 +348,119 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, "6")
 	}
 }
 
+func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testing.T) {
+	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        2,
+		LineitemsPerOrder: 3,
+		StartedAt:         time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("TPCH fixture error = %v", err)
+	}
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTPCHNestedSchemas(t, configDir)
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-tpch-router-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		t.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	putRowProfile := &core.RouterPutRowProfile{}
+	flushProfile := &core.RouterFlushProfile{}
+	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+		TableCache:     core.NewTableCacheStruct(),
+		BasePath:       process.Backend.ConfigBaseDir(config),
+		Conn:           remoteConn,
+		ShardCount:     1,
+		ChannelSize:    len(fixture.Envelopes),
+		FlushInterval:  10 * time.Millisecond,
+		OnPutRowResult: putRowProfile.Callback(),
+		OnFlushProfile: flushProfile.Callback(),
+	})
+	if err != nil {
+		t.Fatalf("NewSessionRouter() error = %v", err)
+	}
+
+	for _, envelope := range fixture.Envelopes {
+		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+			Tables: fixture.Tables,
+		})
+		if routeDiagnostics.BlocksNative() {
+			t.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+		}
+		if err != nil {
+			t.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+		}
+		if !route.Enqueued || route.Record.TableName != "orders" {
+			t.Fatalf("route result = %+v, want enqueued orders record", route)
+		}
+	}
+	if err := router.Close(); err != nil {
+		t.Fatalf("router Close() error = %v", err)
+	}
+	putSnapshot := putRowProfile.Snapshot()
+	if putSnapshot.RecordCount != 2 || putSnapshot.InsertedCount != 2 {
+		t.Fatalf("put profile = %+v, want two inserted records", putSnapshot)
+	}
+	flushSnapshot := flushProfile.Snapshot()
+	if flushSnapshot.FlushCount != 1 || flushSnapshot.PartitionStringEntryCount == 0 || flushSnapshot.BSIValueEntryCount == 0 {
+		t.Fatalf("flush profile = %+v, want one write flush with PK sidecar and BSI activity", flushSnapshot)
+	}
+	if flushSnapshot.ByTable["orders"].FlushCount != 1 || flushSnapshot.ByShard["shard0"].FlushCount != 1 {
+		t.Fatalf("flush profile groups = %+v/%+v, want orders/shard0 flush", flushSnapshot.ByTable, flushSnapshot.ByShard)
+	}
+
+	requireStandardProcessScalarString(t, process, "select count(*) from orders", "2")
+	requireStandardProcessScalarString(t, process, "select count(*) from lineitem", "6")
+	requireStandardProcessScalarString(t, process, `
+select count(*) as joined_lineitems
+from orders as o
+inner join lineitem as l on l.l_orderkey = o.o_orderkey`, "6")
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
+	}
+}
+
 func TestStandardProcessExecutesSQLThroughLocalFrontDoor(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

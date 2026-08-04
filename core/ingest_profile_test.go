@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,4 +60,66 @@ func TestRouterPutRowProfileSnapshotIsStableCopy(t *testing.T) {
 	snapshot.ByTable["orders"] = RouterPutRowProfileCounter{}
 
 	require.Equal(t, 1, profile.Snapshot().ByTable["orders"].RecordCount)
+}
+
+func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {
+	var profile RouterFlushProfile
+	callback := profile.Callback()
+
+	callback("shard0", "orders", shared.BatchBufferFlushProfile{
+		TotalElapsed:              11 * time.Millisecond,
+		PartitionStringElapsed:    time.Millisecond,
+		BitmapSetElapsed:          2 * time.Millisecond,
+		BSIValueElapsed:           3 * time.Millisecond,
+		PartitionStringBatchCount: 1,
+		PartitionStringEntryCount: 2,
+		BitmapSetEntryCount:       3,
+		BSIValueEntryCount:        4,
+	})
+	callback("shard1", "orders", shared.BatchBufferFlushProfile{
+		TotalElapsed:            7 * time.Millisecond,
+		BitmapClearElapsed:      4 * time.Millisecond,
+		BSIClearValueElapsed:    5 * time.Millisecond,
+		BitmapClearEntryCount:   6,
+		BSIClearValueEntryCount: 7,
+		Error:                   "flush failed",
+	})
+
+	snapshot := profile.Snapshot()
+
+	require.Equal(t, 2, snapshot.FlushCount)
+	require.Equal(t, 1, snapshot.ErrorCount)
+	require.Equal(t, 18*time.Millisecond, snapshot.TotalElapsed)
+	require.Equal(t, time.Millisecond, snapshot.PartitionStringElapsed)
+	require.Equal(t, 2*time.Millisecond, snapshot.BitmapSetElapsed)
+	require.Equal(t, 4*time.Millisecond, snapshot.BitmapClearElapsed)
+	require.Equal(t, 3*time.Millisecond, snapshot.BSIValueElapsed)
+	require.Equal(t, 5*time.Millisecond, snapshot.BSIClearValueElapsed)
+	require.Equal(t, 1, snapshot.PartitionStringBatchCount)
+	require.Equal(t, 2, snapshot.PartitionStringEntryCount)
+	require.Equal(t, 3, snapshot.BitmapSetEntryCount)
+	require.Equal(t, 6, snapshot.BitmapClearEntryCount)
+	require.Equal(t, 4, snapshot.BSIValueEntryCount)
+	require.Equal(t, 7, snapshot.BSIClearValueEntryCount)
+	require.Equal(t, RouterFlushProfileCounter{
+		FlushCount:   2,
+		TotalElapsed: 18 * time.Millisecond,
+		EntryCount:   22,
+		ErrorCount:   1,
+	}, snapshot.ByTable["orders"])
+	require.Equal(t, 1, snapshot.ByShard["shard0"].FlushCount)
+	require.Equal(t, 1, snapshot.ByShard["shard1"].FlushCount)
+}
+
+func TestRouterFlushProfileSnapshotIsStableCopy(t *testing.T) {
+	var profile RouterFlushProfile
+	profile.Observe("shard0", "orders", shared.BatchBufferFlushProfile{
+		TotalElapsed:       time.Millisecond,
+		BSIValueEntryCount: 1,
+	})
+
+	snapshot := profile.Snapshot()
+	snapshot.ByTable["orders"] = RouterFlushProfileCounter{}
+
+	require.Equal(t, 1, profile.Snapshot().ByTable["orders"].FlushCount)
 }

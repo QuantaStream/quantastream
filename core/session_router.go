@@ -35,6 +35,7 @@ type SessionRouterConfig struct {
 	OnSessionOpen  func()
 	OnSessionClose func()
 	OnPutRowResult func(shardID string, record IngestRecord, result PutRowResult)
+	OnFlushProfile func(shardID string, tableName string, profile shared.BatchBufferFlushProfile)
 	OnProcessed    func()
 	OnError        func(error)
 }
@@ -127,7 +128,7 @@ func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 					return err
 				}
 			default:
-				if err := r.flushIdleSessions(&shardTableKeys); err != nil {
+				if err := r.flushIdleSessions(shardID, &shardTableKeys); err != nil {
 					if r.cfg.OnError != nil {
 						r.cfg.OnError(err)
 					}
@@ -176,6 +177,13 @@ func (r *SessionRouter) publishPutRowResult(shardID string, record IngestRecord,
 	}
 }
 
+func (r *SessionRouter) publishFlushProfile(shardID string, tableName string, profile shared.BatchBufferFlushProfile) {
+	if r.cfg.OnFlushProfile == nil || !batchBufferFlushProfileHasActivity(profile) {
+		return
+	}
+	r.cfg.OnFlushProfile(shardID, tableName, profile)
+}
+
 // PutRowOptions returns optional streaming metadata for the state-changing
 // load boundary. Empty fields preserve the current PutRow behavior.
 func (r IngestRecord) PutRowOptions() PutRowOptions {
@@ -204,28 +212,35 @@ func (r IngestRecord) PutRowOptionsWithPayloadHash() (PutRowOptions, error) {
 	}, nil
 }
 
-func (r *SessionRouter) flushIdleSessions(shardTableKeys *sync.Map) error {
+func (r *SessionRouter) flushIdleSessions(shardID string, shardTableKeys *sync.Map) error {
 	var firstErr error
 	shardTableKeys.Range(func(k, v interface{}) bool {
 		session := v.(*Session)
 		if session.IsFlushing() {
 			return true
 		}
+		tableName := tableNameFromShardTableKey(fmt.Sprint(k))
 		if time.Since(session.BatchBuffer.FlushedAt) > 2*r.cfg.FlushInterval {
+			before := session.LastFlushProfile()
 			if err := session.CloseSession(); err != nil {
+				r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
 				firstErr = err
 				return false
 			}
+			r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
 			shardTableKeys.Delete(k)
 			r.sessionCache.Delete(k)
 			if r.cfg.OnSessionClose != nil {
 				r.cfg.OnSessionClose()
 			}
 		} else if time.Since(session.BatchBuffer.ModifiedAt) > r.cfg.FlushInterval {
+			before := session.LastFlushProfile()
 			if err := session.Flush(); err != nil {
+				r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
 				firstErr = err
 				return false
 			}
+			r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
 		}
 		return true
 	})
@@ -235,10 +250,18 @@ func (r *SessionRouter) flushIdleSessions(shardTableKeys *sync.Map) error {
 func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) error {
 	var firstErr error
 	shardTableKeys.Range(func(k, v interface{}) bool {
-		if err := v.(*Session).CloseSession(); err != nil {
+		session := v.(*Session)
+		before := session.LastFlushProfile()
+		if err := session.CloseSession(); err != nil {
+			key := fmt.Sprint(k)
+			r.publishNewFlushProfile(tableShardFromShardTableKey(key), tableNameFromShardTableKey(key), before,
+				session.LastFlushProfile())
 			firstErr = err
 			return false
 		}
+		key := fmt.Sprint(k)
+		r.publishNewFlushProfile(tableShardFromShardTableKey(key), tableNameFromShardTableKey(key), before,
+			session.LastFlushProfile())
 		shardTableKeys.Delete(k)
 		r.sessionCache.Delete(k)
 		if r.cfg.OnSessionClose != nil {
@@ -247,4 +270,43 @@ func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) error {
 		return true
 	})
 	return firstErr
+}
+
+func (r *SessionRouter) publishNewFlushProfile(shardID string, tableName string, before, after shared.BatchBufferFlushProfile) {
+	if !batchBufferFlushProfileHasActivity(after) {
+		return
+	}
+	if !before.FinishedAt.IsZero() && !after.FinishedAt.After(before.FinishedAt) {
+		return
+	}
+	r.publishFlushProfile(shardID, tableName, after)
+}
+
+func batchBufferFlushProfileHasActivity(profile shared.BatchBufferFlushProfile) bool {
+	return profile.PartitionStringEntryCount > 0 ||
+		profile.BitmapSetEntryCount > 0 ||
+		profile.BitmapClearEntryCount > 0 ||
+		profile.BSIValueEntryCount > 0 ||
+		profile.BSIClearValueEntryCount > 0 ||
+		profile.TotalElapsed > 0 ||
+		profile.Error != ""
+}
+
+func tableShardFromShardTableKey(key string) string {
+	shardID, _ := splitShardTableKey(key)
+	return shardID
+}
+
+func tableNameFromShardTableKey(key string) string {
+	_, tableName := splitShardTableKey(key)
+	return tableName
+}
+
+func splitShardTableKey(key string) (string, string) {
+	for i := 0; i < len(key); i++ {
+		if key[i] == '+' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return key, ""
 }
