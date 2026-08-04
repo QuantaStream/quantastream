@@ -114,6 +114,10 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 			TotalElapsed:              2500 * time.Microsecond,
 			BSIValueEntryCount:        100,
 			PartitionStringEntryCount: 25,
+			ByShard: map[string]core.RouterFlushProfileCounter{
+				"shard0": {TotalElapsed: 1000 * time.Microsecond},
+				"shard1": {TotalElapsed: 1500 * time.Microsecond},
+			},
 		},
 		2,
 	)
@@ -144,6 +148,9 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["drain_worker_sum_to_wall_percent"], 0.12; got != want {
 		t.Fatalf("drain worker sum/wall percent = %v, want %v", got, want)
 	}
+	if got, want := metrics["drain_worker_max_to_avg_percent"], 120.0; got != want {
+		t.Fatalf("drain worker max/avg percent = %v, want %v", got, want)
+	}
 	if got, want := metrics["drain_sessions_per_worker"], 1.5; got != want {
 		t.Fatalf("drain sessions/worker = %v, want %v", got, want)
 	}
@@ -152,6 +159,9 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["flush_summed_to_drain_percent"], 0.2; got != want {
 		t.Fatalf("flush summed/drain percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["flush_shard_max_to_avg_percent"], 120.0; got != want {
+		t.Fatalf("flush shard max/avg percent = %v, want %v", got, want)
 	}
 	if got, want := metrics["flushes_per_operation"], 2.5; got != want {
 		t.Fatalf("flushes/op = %v, want %v", got, want)
@@ -186,9 +196,11 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 			"drain_microseconds_per_order":               100,
 			"drain_worker_max_microseconds":              900,
 			"drain_worker_sum_to_wall_percent":           70,
+			"drain_worker_max_to_avg_percent":            140,
 			"put_microseconds_per_order":                 50,
 			"flush_microseconds_per_order":               20,
 			"flush_summed_to_drain_percent":              25,
+			"flush_shard_max_to_avg_percent":             160,
 			"primary_key_total_microseconds_per_resolve": 10,
 			"primary_key_skipped_kv_lookup_percent":      0,
 			"custom_metric":                              2,
@@ -203,9 +215,11 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 			"drain_microseconds_per_order":               60,
 			"drain_worker_max_microseconds":              600,
 			"drain_worker_sum_to_wall_percent":           45,
+			"drain_worker_max_to_avg_percent":            110,
 			"put_microseconds_per_order":                 40,
 			"flush_microseconds_per_order":               15,
 			"flush_summed_to_drain_percent":              18,
+			"flush_shard_max_to_avg_percent":             120,
 			"primary_key_total_microseconds_per_resolve": 8,
 			"primary_key_skipped_kv_lookup_percent":      100,
 			"custom_metric":                              3,
@@ -236,7 +250,9 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"| Enqueue us/order | 12 us/order | 8 us/order | -4 us/order | 0.67x | better |",
 		"| Drain us/order | 100 us/order | 60 us/order | -40 us/order | 0.60x | better |",
 		"| Slowest worker drain | 900 us | 600 us | -300 us | 0.67x | better |",
+		"| Drain worker max/avg | 140 percent | 110 percent | -30 percent | 0.79x | better |",
 		"| Flush us/order | 20 us/order | 15 us/order | -5 us/order | 0.75x | better |",
+		"| Flush shard max/avg | 160 percent | 120 percent | -40 percent | 0.75x | better |",
 		"| Skipped PK KV lookup | 0 percent | 100 percent | 100 percent | n/a | better |",
 		"## Detailed Metrics",
 		"| logical_rows_per_second | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",

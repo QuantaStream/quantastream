@@ -170,16 +170,18 @@ func NativeIngestBenchmarkMetrics(
 		"drain_worker_max_microseconds":    float64(drainSnapshot.MaxElapsed.Microseconds()),
 		"drain_worker_sum_microseconds":    float64(drainSnapshot.TotalElapsed.Microseconds()),
 		"drain_worker_sum_to_wall_percent": percentForDurations(drainSnapshot.TotalElapsed, drainElapsed),
+		"drain_worker_max_to_avg_percent":  maxToAverageDurationPercent(drainSnapshot.TotalElapsed, drainSnapshot.MaxElapsed, drainSnapshot.WorkerCount),
 		"drain_sessions_per_worker": float64(drainSnapshot.SessionCount) /
 			float64(maxNativeIngestBenchmarkInt(1, drainSnapshot.WorkerCount)),
 		"put_microseconds_per_order": float64(putSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
 		"flush_microseconds_per_order": float64(flushSnapshot.TotalElapsed.Microseconds()) /
 			float64(maxNativeIngestBenchmarkInt(1, totalOrders)),
-		"flush_microseconds_per_flush":  float64(flushSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, flushSnapshot.FlushCount)),
-		"flush_summed_to_drain_percent": percentForDurations(flushSnapshot.TotalElapsed, drainElapsed),
-		"flushes_per_operation":         float64(flushSnapshot.FlushCount) / float64(maxNativeIngestBenchmarkInt(1, runCount)),
-		"bsi_entries_per_logical_row":   float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
-		"kv_entries_per_logical_row":    float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+		"flush_microseconds_per_flush":   float64(flushSnapshot.TotalElapsed.Microseconds()) / float64(maxNativeIngestBenchmarkInt(1, flushSnapshot.FlushCount)),
+		"flush_summed_to_drain_percent":  percentForDurations(flushSnapshot.TotalElapsed, drainElapsed),
+		"flush_shard_max_to_avg_percent": routerFlushShardMaxToAveragePercent(flushSnapshot),
+		"flushes_per_operation":          float64(flushSnapshot.FlushCount) / float64(maxNativeIngestBenchmarkInt(1, runCount)),
+		"bsi_entries_per_logical_row":    float64(flushSnapshot.BSIValueEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
+		"kv_entries_per_logical_row":     float64(flushSnapshot.PartitionStringEntryCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows)),
 	}
 	pk := putSnapshot.PrimaryKey
 	metrics["primary_key_resolves_per_logical_row"] = float64(pk.ResolveCount) / float64(maxNativeIngestBenchmarkInt(1, totalLogicalRows))
@@ -244,10 +246,12 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "drain_worker_max_microseconds", unit: "us", higherIsBetter: false},
 	{name: "drain_worker_sum_microseconds", unit: "us", higherIsBetter: false},
 	{name: "drain_worker_sum_to_wall_percent", unit: "percent", higherIsBetter: false},
+	{name: "drain_worker_max_to_avg_percent", unit: "percent", higherIsBetter: false},
 	{name: "drain_sessions_per_worker", unit: "sessions/worker", higherIsBetter: false},
 	{name: "flush_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "flush_microseconds_per_flush", unit: "us/flush", higherIsBetter: false},
 	{name: "flush_summed_to_drain_percent", unit: "percent", higherIsBetter: false},
+	{name: "flush_shard_max_to_avg_percent", unit: "percent", higherIsBetter: false},
 	{name: "flushes_per_operation", unit: "flushes/op", higherIsBetter: false},
 	{name: "bsi_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
 	{name: "kv_entries_per_logical_row", unit: "entries/row", higherIsBetter: false},
@@ -269,9 +273,11 @@ var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "drain_microseconds_per_order", label: "Drain us/order"},
 	{name: "drain_worker_max_microseconds", label: "Slowest worker drain"},
 	{name: "drain_worker_sum_to_wall_percent", label: "Worker drain sum/wall"},
+	{name: "drain_worker_max_to_avg_percent", label: "Drain worker max/avg"},
 	{name: "put_microseconds_per_order", label: "PutRow us/order"},
 	{name: "flush_microseconds_per_order", label: "Flush us/order"},
 	{name: "flush_summed_to_drain_percent", label: "Flush sum/drain"},
+	{name: "flush_shard_max_to_avg_percent", label: "Flush shard max/avg"},
 	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
 	{name: "primary_key_skipped_kv_lookup_percent", label: "Skipped PK KV lookup"},
 }
@@ -496,6 +502,34 @@ func percentForDurations(numerator time.Duration, denominator time.Duration) flo
 		return 0
 	}
 	return 100 * float64(numerator) / float64(denominator)
+}
+
+func maxToAverageDurationPercent(total time.Duration, max time.Duration, count int) float64 {
+	if count <= 0 || total <= 0 {
+		return 0
+	}
+	average := float64(total) / float64(count)
+	if average <= 0 {
+		return 0
+	}
+	return 100 * float64(max) / average
+}
+
+func routerFlushShardMaxToAveragePercent(snapshot core.RouterFlushProfileSummary) float64 {
+	var total time.Duration
+	var max time.Duration
+	var count int
+	for _, counter := range snapshot.ByShard {
+		if counter.TotalElapsed <= 0 {
+			continue
+		}
+		total += counter.TotalElapsed
+		if counter.TotalElapsed > max {
+			max = counter.TotalElapsed
+		}
+		count++
+	}
+	return maxToAverageDurationPercent(total, max, count)
 }
 
 func nativeIngestBenchmarkOptionalDurationString(duration time.Duration) string {
