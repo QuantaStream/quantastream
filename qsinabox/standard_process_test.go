@@ -14,6 +14,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsfixture"
 	"github.com/QuantaStream/quantastream/shared"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -207,6 +208,133 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	if fmt.Sprint(chunk.Rows[0][0].Value) != "101" || fmt.Sprint(chunk.Rows[0][1].Value) != "Buenos Aires" {
 		t.Fatalf("verification row = %#v, want [101 Buenos Aires]", chunk.Rows[0])
 	}
+	if err := loaderSession.CloseSession(); err != nil {
+		t.Fatalf("loader CloseSession() over native gRPC error = %v", err)
+	}
+	loaderSessionClosed = true
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
+	}
+}
+
+func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testing.T) {
+	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        2,
+		LineitemsPerOrder: 3,
+		StartedAt:         time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("TPCH fixture error = %v", err)
+	}
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTPCHNestedSchemas(t, configDir)
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-tpch-loader-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		t.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	loaderSession, err := core.OpenSession(
+		core.NewTableCacheStruct(),
+		process.Backend.ConfigBaseDir(config),
+		"orders",
+		true,
+		remoteConn,
+	)
+	if err != nil {
+		t.Fatalf("OpenSession(orders) over native gRPC error = %v", err)
+	}
+	loaderSessionClosed := false
+	defer func() {
+		if !loaderSessionClosed {
+			_ = loaderSession.CloseSession()
+		}
+	}()
+
+	for _, envelope := range fixture.Envelopes {
+		route, routeDiagnostics, err := core.BuildSelectedIngestRecordFromEnvelope(envelope, core.IngestEnvelopeRouteOptions{
+			Tables: fixture.Tables,
+		})
+		if routeDiagnostics.BlocksNative() {
+			t.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+		}
+		if err != nil {
+			t.Fatalf("route envelope %s: %v", envelope.EventID, err)
+		}
+		if route.Record.TableName != "orders" {
+			t.Fatalf("route table = %s, want orders", route.Record.TableName)
+		}
+
+		putResult, err := loaderSession.PutRowWithOptions(route.Record.TableName, route.Record.Data, 0, false, false, core.PutRowOptions{
+			EventID:      route.Record.EventID,
+			Source:       route.Record.Source,
+			EventTime:    route.Record.EventTime,
+			SourceOffset: route.Record.SourceOffset,
+			PayloadHash:  route.Record.PayloadHash,
+			DedupTTL:     route.Record.DedupTTL,
+		})
+		if err != nil {
+			t.Fatalf("PutRowWithOptions(%s) over native gRPC error = %v", envelope.EventID, err)
+		}
+		if !putResult.Inserted || putResult.ColumnID == 0 {
+			t.Fatalf("PutRowWithOptions(%s) result = %+v, want inserted order with column ID", envelope.EventID, putResult)
+		}
+	}
+	if err := loaderSession.Flush(); err != nil {
+		t.Fatalf("loader Flush() over native gRPC error = %v", err)
+	}
+	flushProfile := loaderSession.LastFlushProfile()
+	if flushProfile.PartitionStringEntryCount == 0 || flushProfile.BSIValueEntryCount == 0 || flushProfile.TotalElapsed <= 0 {
+		t.Fatalf("loader flush profile = %+v, want PK sidecar and BSI write activity", flushProfile)
+	}
+
+	requireStandardProcessScalarString(t, process, "select count(*) from orders", "2")
+	requireStandardProcessScalarString(t, process, "select count(*) from lineitem", "6")
+	requireStandardProcessScalarString(t, process, `
+select count(*) as joined_lineitems
+from orders as o
+inner join lineitem as l on l.l_orderkey = o.o_orderkey`, "6")
+
 	if err := loaderSession.CloseSession(); err != nil {
 		t.Fatalf("loader CloseSession() over native gRPC error = %v", err)
 	}
@@ -479,6 +607,27 @@ func requireStandardProcessSQLSuccess(t *testing.T, process StandardProcess, sql
 	}
 }
 
+func requireStandardProcessScalarString(t *testing.T, process StandardProcess, sql string, want string) {
+	t.Helper()
+	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("%s error = %v", sql, err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("%s diagnostics = %#v runtime=%#v, want none", sql, result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("%s chunk diagnostics = %#v", sql, chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("%s rows = %#v, want one scalar value", sql, chunk.Rows)
+	}
+	if got := fmt.Sprint(chunk.Rows[0][0].Value); got != want {
+		t.Fatalf("%s scalar = %s, want %s", sql, got, want)
+	}
+}
+
 func requireStandardProcessSQLFailure(t *testing.T, process StandardProcess, sql string, wantMessage string, wantCode qsbridge.DiagnosticCode) {
 	t.Helper()
 	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
@@ -560,5 +709,64 @@ attributes:
 	}
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
+	}
+}
+
+func writeStandardTPCHNestedSchemas(t *testing.T, configDir string) {
+	t.Helper()
+	now := time.Now().UTC()
+	writeStandardTPCHNestedSchema(t, configDir, "orders", `tableName: orders
+primaryKey: o_orderkey
+selector: type="orders"
+attributes:
+- fieldName: o_orderkey
+  sourceName: /data/o_orderkey
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
+- fieldName: o_orderstatus
+  sourceName: /data/o_orderstatus
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "1"
+  type: String
+- sourceName: /data/lineitems
+  childTable: lineitem
+  mappingStrategy: ChildRelation
+`)
+	writeStandardTPCHNestedSchema(t, configDir, "lineitem", `tableName: lineitem
+primaryKey: l_orderkey+l_linenumber
+selector: type="lineitem"
+attributes:
+- fieldName: l_orderkey
+  sourceName: l_orderkey
+  mappingStrategy: ParentRelation
+  foreignKey: orders
+  type: Integer
+- fieldName: l_linenumber
+  sourceName: l_linenumber
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_quantity
+  sourceName: l_quantity
+  mappingStrategy: IntBSI
+  type: Integer
+`)
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "orders", now); err != nil {
+		t.Fatalf("activate orders catalog object: %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "lineitem", now); err != nil {
+		t.Fatalf("activate lineitem catalog object: %v", err)
+	}
+}
+
+func writeStandardTPCHNestedSchema(t *testing.T, configDir, table, schema string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write %s schema: %v", table, err)
 	}
 }
