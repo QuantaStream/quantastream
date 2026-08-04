@@ -19,6 +19,7 @@ type TPCHOrderLineitemEnvelopeOptions struct {
 	OrderCount        int
 	LineitemsPerOrder int
 	BaseOrderKey      int64
+	SourceMode        core.IngestSourceMode
 	StartedAt         time.Time
 }
 
@@ -41,6 +42,9 @@ func NewTPCHOrderLineitemEnvelopeFixture(options TPCHOrderLineitemEnvelopeOption
 	if options.BaseOrderKey <= 0 {
 		options.BaseOrderKey = 1001
 	}
+	if options.SourceMode == "" {
+		options.SourceMode = core.IngestSourceStream
+	}
 	if options.StartedAt.IsZero() {
 		options.StartedAt = time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC)
 	}
@@ -51,17 +55,8 @@ func NewTPCHOrderLineitemEnvelopeFixture(options TPCHOrderLineitemEnvelopeOption
 	for i := 0; i < options.OrderCount; i++ {
 		orderKey := options.BaseOrderKey + int64(i)
 		eventTime := options.StartedAt.Add(time.Duration(i) * time.Second)
-		envelope, err := core.NewStreamIngestEnvelope(core.StreamIngestEnvelopeRequest{
-			EventID:      fmt.Sprintf("tpch.orders.%d", orderKey),
-			Source:       tpchFixtureSource,
-			EventTime:    eventTime,
-			SourceOffset: fmt.Sprintf("orders:%d", i+1),
-			Payload:      tpchOrderPayload(orderKey, i, options.LineitemsPerOrder, eventTime),
-			Headers: map[string]interface{}{
-				"fixture":     tpchFixtureKind,
-				"order_index": i,
-			},
-		})
+		envelope, err := newTPCHOrderLineitemEnvelope(options.SourceMode, orderKey, i,
+			options.LineitemsPerOrder, eventTime)
 		if err != nil {
 			return TPCHOrderLineitemEnvelopeFixture{}, err
 		}
@@ -77,7 +72,7 @@ func TPCHOrderLineitemSelectorTables() []*core.Table {
 		{
 			BasicTable: &shared.BasicTable{
 				Name:       "orders",
-				PrimaryKey: "o_orderkey",
+				PrimaryKey: "/data/o_orderkey",
 				Selector:   `type = "orders"`,
 			},
 		},
@@ -88,6 +83,37 @@ func TPCHOrderLineitemSelectorTables() []*core.Table {
 				Selector:   `type = "lineitem"`,
 			},
 		},
+	}
+}
+
+func newTPCHOrderLineitemEnvelope(mode core.IngestSourceMode, orderKey int64, orderIndex, lineitemsPerOrder int,
+	eventTime time.Time) (core.IngestEnvelope, error) {
+
+	payload := tpchOrderPayload(orderKey, orderIndex, lineitemsPerOrder, eventTime)
+	headers := map[string]interface{}{
+		"fixture":     tpchFixtureKind,
+		"order_index": orderIndex,
+	}
+	switch mode {
+	case core.IngestSourceStream:
+		return core.NewStreamIngestEnvelope(core.StreamIngestEnvelopeRequest{
+			EventID:      fmt.Sprintf("tpch.orders.%d", orderKey),
+			Source:       tpchFixtureSource,
+			EventTime:    eventTime,
+			SourceOffset: fmt.Sprintf("orders:%d", orderIndex+1),
+			Payload:      payload,
+			Headers:      headers,
+		})
+	case core.IngestSourceBatch:
+		return core.NewBatchIngestEnvelope(core.BatchIngestEnvelopeRequest{
+			Source:       tpchFixtureSource,
+			EventTime:    eventTime,
+			SourceOffset: fmt.Sprintf("orders:%d", orderIndex+1),
+			Payload:      payload,
+			Headers:      headers,
+		})
+	default:
+		return core.IngestEnvelope{}, fmt.Errorf("unsupported TPCH fixture source mode %q", mode)
 	}
 }
 

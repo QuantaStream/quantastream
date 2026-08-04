@@ -315,3 +315,29 @@ func TestExpandChildRowsRequiresChildBufferForNestedArray(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "child table lineitem invalid or not opened")
 }
+
+func TestBuildPutRowChildPayloadDoesNotMutateParentRow(t *testing.T) {
+	parent := map[string]interface{}{
+		"o_orderkey": 1001,
+		"lineitems": []interface{}{
+			map[string]interface{}{"l_linenumber": 1},
+		},
+	}
+	child := map[string]interface{}{"l_linenumber": 1}
+
+	payload, err := buildPutRowChildPayload(parent, "lineitems", child)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1001, payload["o_orderkey"])
+	assert.Equal(t, child, payload["lineitems"])
+	assert.IsType(t, []interface{}{}, parent["lineitems"])
+	payload["o_orderkey"] = 2002
+	assert.Equal(t, 1001, parent["o_orderkey"])
+}
+
+func TestBuildPutRowChildPayloadRequiresMapParent(t *testing.T) {
+	_, err := buildPutRowChildPayload(struct{}{}, "lineitems", map[string]interface{}{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "child expansion requires map row")
+}

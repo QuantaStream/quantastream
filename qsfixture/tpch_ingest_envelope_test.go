@@ -32,6 +32,9 @@ func TestNewTPCHOrderLineitemEnvelopeFixtureBuildsDeterministicEnvelopes(t *test
 	if left.Envelopes[0].EventID != "tpch.orders.1001" || left.Envelopes[0].SourceOffset != "orders:1" {
 		t.Fatalf("first envelope metadata = %#v", left.Envelopes[0])
 	}
+	if left.Envelopes[0].Mode != core.IngestSourceStream {
+		t.Fatalf("first envelope mode = %s, want stream", left.Envelopes[0].Mode)
+	}
 	leftHash, err := core.HashIngestPayload(left.Envelopes[0].Payload)
 	if err != nil {
 		t.Fatalf("hash left: %v", err)
@@ -54,6 +57,38 @@ func TestNewTPCHOrderLineitemEnvelopeFixtureBuildsDeterministicEnvelopes(t *test
 	firstLine := lineitems[0].(map[string]interface{})
 	if firstLine["l_orderkey"] != int64(1001) || firstLine["l_linenumber"] != int64(1) {
 		t.Fatalf("first lineitem = %#v", firstLine)
+	}
+}
+
+func TestNewTPCHOrderLineitemEnvelopeFixtureSupportsBatchMode(t *testing.T) {
+	fixture, err := NewTPCHOrderLineitemEnvelopeFixture(TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        1,
+		LineitemsPerOrder: 1,
+		SourceMode:        core.IngestSourceBatch,
+	})
+	if err != nil {
+		t.Fatalf("fixture error = %v", err)
+	}
+	if fixture.Envelopes[0].Mode != core.IngestSourceBatch {
+		t.Fatalf("mode = %s, want batch", fixture.Envelopes[0].Mode)
+	}
+	if fixture.Envelopes[0].EventID != "" {
+		t.Fatalf("batch event ID = %s, want empty", fixture.Envelopes[0].EventID)
+	}
+	route, diagnostics, err := core.BuildSelectedIngestRecordFromEnvelope(fixture.Envelopes[0], core.IngestEnvelopeRouteOptions{
+		Tables: fixture.Tables,
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if err != nil {
+		t.Fatalf("BuildSelectedIngestRecordFromEnvelope() error = %v", err)
+	}
+	if route.ShardKey.Mode != core.IngestShardKeyPrimaryKey {
+		t.Fatalf("shard key mode = %s, want primary key", route.ShardKey.Mode)
+	}
+	if route.Record.TableName != "orders" {
+		t.Fatalf("record table = %s, want orders", route.Record.TableName)
 	}
 }
 

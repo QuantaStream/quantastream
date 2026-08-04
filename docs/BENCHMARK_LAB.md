@@ -227,6 +227,7 @@ cd /home/gmolinari/projects/quantastream
 QUANTASTREAM_TPCH_INGEST_BENCH_ORDERS=100 \
 QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS=4 \
 QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS=1 \
+QUANTASTREAM_TPCH_INGEST_BENCH_REPORT=/tmp/quantastream-tpch-ingest.json \
   go test ./qsinabox \
     -run '^$' \
     -bench BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest \
@@ -234,8 +235,9 @@ QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS=1 \
     -count=1
 ```
 
-The benchmark verifies final SQL counts after timing stops. Normal `go test`
-does not run it.
+Set `QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE` to label the JSON profile. The
+benchmark verifies final SQL counts after timing stops. Normal `go test` does
+not run it.
 
 ## Query Profile Capture
 

@@ -349,36 +349,132 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, "6")
 }
 
 func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testing.T) {
-	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
 		OrderCount:        2,
 		LineitemsPerOrder: 3,
+		ShardCount:        1,
+		SourceMode:        core.IngestSourceStream,
+	})
+
+	if result.PutProfile.RecordCount != 2 || result.PutProfile.InsertedCount != 2 {
+		t.Fatalf("put profile = %+v, want two inserted records", result.PutProfile)
+	}
+	if result.FlushProfile.FlushCount != 1 || result.FlushProfile.PartitionStringEntryCount == 0 ||
+		result.FlushProfile.BSIValueEntryCount == 0 {
+		t.Fatalf("flush profile = %+v, want one write flush with PK sidecar and BSI activity", result.FlushProfile)
+	}
+	if result.FlushProfile.ByTable["orders"].FlushCount != 1 || result.FlushProfile.ByShard["shard0"].FlushCount != 1 {
+		t.Fatalf("flush profile groups = %+v/%+v, want orders/shard0 flush",
+			result.FlushProfile.ByTable, result.FlushProfile.ByShard)
+	}
+	for _, route := range result.Routes {
+		if route.ShardKey.Mode != core.IngestShardKeyDedup {
+			t.Fatalf("route shard mode = %s, want dedup", route.ShardKey.Mode)
+		}
+	}
+}
+
+func TestStandardProcessNativeGRPCRouterDistributesTPCHNestedOrderLineitemsAcrossShards(t *testing.T) {
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        18,
+		LineitemsPerOrder: 2,
+		ShardCount:        3,
+		SourceMode:        core.IngestSourceStream,
+	})
+
+	if result.PutProfile.RecordCount != 18 || result.PutProfile.InsertedCount != 18 {
+		t.Fatalf("put profile = %+v, want eighteen inserted records", result.PutProfile)
+	}
+	if len(result.PutProfile.ByShard) < 2 {
+		t.Fatalf("put profile by shard = %+v, want records routed across multiple shards", result.PutProfile.ByShard)
+	}
+	if len(result.FlushProfile.ByShard) < 2 {
+		t.Fatalf("flush profile by shard = %+v, want writes flushed from multiple shards", result.FlushProfile.ByShard)
+	}
+}
+
+func TestStandardProcessNativeGRPCRouterIngestsTPCHBatchEnvelopes(t *testing.T) {
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        2,
+		LineitemsPerOrder: 2,
+		ShardCount:        1,
+		SourceMode:        core.IngestSourceBatch,
+	})
+
+	if result.PutProfile.RecordCount != 2 || result.PutProfile.InsertedCount != 2 {
+		t.Fatalf("put profile = %+v, want two inserted records", result.PutProfile)
+	}
+	for _, route := range result.Routes {
+		if route.ShardKey.Mode != core.IngestShardKeyPrimaryKey {
+			t.Fatalf("batch route shard mode = %s, want primary-key", route.ShardKey.Mode)
+		}
+		if route.Record.EventID != "" {
+			t.Fatalf("batch route event ID = %s, want empty", route.Record.EventID)
+		}
+	}
+}
+
+type standardTPCHRouterIngestScenario struct {
+	OrderCount        int
+	LineitemsPerOrder int
+	ShardCount        int
+	SourceMode        core.IngestSourceMode
+	BaseOrderKey      int64
+}
+
+type standardTPCHRouterIngestResult struct {
+	Routes       []core.IngestRouteResult
+	PutProfile   core.RouterPutRowProfileSummary
+	FlushProfile core.RouterFlushProfileSummary
+}
+
+func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
+	scenario standardTPCHRouterIngestScenario) standardTPCHRouterIngestResult {
+
+	tb.Helper()
+	if scenario.OrderCount <= 0 {
+		scenario.OrderCount = 1
+	}
+	if scenario.LineitemsPerOrder <= 0 {
+		scenario.LineitemsPerOrder = 1
+	}
+	if scenario.ShardCount <= 0 {
+		scenario.ShardCount = 1
+	}
+	if scenario.SourceMode == "" {
+		scenario.SourceMode = core.IngestSourceStream
+	}
+	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        scenario.OrderCount,
+		LineitemsPerOrder: scenario.LineitemsPerOrder,
+		BaseOrderKey:      scenario.BaseOrderKey,
+		SourceMode:        scenario.SourceMode,
 		StartedAt:         time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
-		t.Fatalf("TPCH fixture error = %v", err)
+		tb.Fatalf("TPCH fixture error = %v", err)
 	}
-
-	root := t.TempDir()
+	root := tb.TempDir()
 	configDir := filepath.Join(root, "schemas")
-	writeStandardTPCHNestedSchemas(t, configDir)
+	writeStandardTPCHNestedSchemas(tb, configDir)
 	config := StandardConfig{
 		BindAddress:    "127.0.0.1",
-		MySQLPort:      reserveStandardTestPort(t),
-		NativeGRPCPort: reserveStandardTestPort(t),
+		MySQLPort:      reserveStandardTestPort(tb),
+		NativeGRPCPort: reserveStandardTestPort(tb),
 		ConfigDir:      configDir,
 		DataDir:        filepath.Join(root, "data"),
 	}
 
 	process, diagnostics, err := MountStandardProcess(context.Background(), config)
 	if err != nil {
-		t.Fatalf("MountStandardProcess() error = %v", err)
+		tb.Fatalf("MountStandardProcess() error = %v", err)
 	}
 	defer process.Close()
 	if diagnostics.BlocksNative() {
-		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+		tb.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
 	}
 	if process.NativeNode == nil {
-		t.Fatalf("NativeNode = nil, want native gRPC listener")
+		tb.Fatalf("NativeNode = nil, want native gRPC listener")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -393,7 +489,7 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testi
 		Address: process.NativeNode.Address,
 	})
 	if err != nil {
-		t.Fatalf("NewLoaderConnection() error = %v", err)
+		tb.Fatalf("NewLoaderConnection() error = %v", err)
 	}
 	defer remoteConn.Disconnect()
 
@@ -403,61 +499,58 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testi
 		TableCache:     core.NewTableCacheStruct(),
 		BasePath:       process.Backend.ConfigBaseDir(config),
 		Conn:           remoteConn,
-		ShardCount:     1,
+		ShardCount:     scenario.ShardCount,
 		ChannelSize:    len(fixture.Envelopes),
 		FlushInterval:  10 * time.Millisecond,
 		OnPutRowResult: putRowProfile.Callback(),
 		OnFlushProfile: flushProfile.Callback(),
 	})
 	if err != nil {
-		t.Fatalf("NewSessionRouter() error = %v", err)
+		tb.Fatalf("NewSessionRouter() error = %v", err)
 	}
 
+	routes := make([]core.IngestRouteResult, 0, len(fixture.Envelopes))
 	for _, envelope := range fixture.Envelopes {
 		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
 			Tables: fixture.Tables,
 		})
 		if routeDiagnostics.BlocksNative() {
-			t.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+			tb.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
 		}
 		if err != nil {
-			t.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+			tb.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
 		}
 		if !route.Enqueued || route.Record.TableName != "orders" {
-			t.Fatalf("route result = %+v, want enqueued orders record", route)
+			tb.Fatalf("route result = %+v, want enqueued orders record", route)
 		}
+		routes = append(routes, route)
 	}
 	if err := router.Close(); err != nil {
-		t.Fatalf("router Close() error = %v", err)
-	}
-	putSnapshot := putRowProfile.Snapshot()
-	if putSnapshot.RecordCount != 2 || putSnapshot.InsertedCount != 2 {
-		t.Fatalf("put profile = %+v, want two inserted records", putSnapshot)
-	}
-	flushSnapshot := flushProfile.Snapshot()
-	if flushSnapshot.FlushCount != 1 || flushSnapshot.PartitionStringEntryCount == 0 || flushSnapshot.BSIValueEntryCount == 0 {
-		t.Fatalf("flush profile = %+v, want one write flush with PK sidecar and BSI activity", flushSnapshot)
-	}
-	if flushSnapshot.ByTable["orders"].FlushCount != 1 || flushSnapshot.ByShard["shard0"].FlushCount != 1 {
-		t.Fatalf("flush profile groups = %+v/%+v, want orders/shard0 flush", flushSnapshot.ByTable, flushSnapshot.ByShard)
+		tb.Fatalf("router Close() error = %v", err)
 	}
 
-	requireStandardProcessScalarString(t, process, "select count(*) from orders", "2")
-	requireStandardProcessScalarString(t, process, "select count(*) from lineitem", "6")
-	requireStandardProcessScalarString(t, process, `
+	totalLineitems := scenario.OrderCount * scenario.LineitemsPerOrder
+	requireStandardProcessScalarString(tb, process, "select count(*) from orders", fmt.Sprint(scenario.OrderCount))
+	requireStandardProcessScalarString(tb, process, "select count(*) from lineitem", fmt.Sprint(totalLineitems))
+	requireStandardProcessScalarString(tb, process, `
 select count(*) as joined_lineitems
 from orders as o
-inner join lineitem as l on l.l_orderkey = o.o_orderkey`, "6")
+inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineitems))
 
 	cancel()
 	process.NativeNode.Close()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("native gRPC server exited with error %v", err)
+			tb.Fatalf("native gRPC server exited with error %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("native gRPC server did not stop")
+		tb.Fatalf("native gRPC server did not stop")
+	}
+	return standardTPCHRouterIngestResult{
+		Routes:       routes,
+		PutProfile:   putRowProfile.Snapshot(),
+		FlushProfile: flushProfile.Snapshot(),
 	}
 }
 

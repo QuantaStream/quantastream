@@ -16,26 +16,26 @@ type RouterPutRowProfile struct {
 
 // RouterPutRowProfileSummary is a point-in-time load-path profile summary.
 type RouterPutRowProfileSummary struct {
-	RecordCount           int
-	InsertedCount         int
-	ExistingCount         int
-	DuplicateCount        int
-	ConflictCount         int
-	TotalElapsed          time.Duration
-	SourceElapsed         time.Duration
-	IdentityElapsed       time.Duration
-	AlternateKeysElapsed  time.Duration
-	ChildExpansionElapsed time.Duration
-	RelationElapsed       time.Duration
-	AttributeElapsed      time.Duration
-	ByTable               map[string]RouterPutRowProfileCounter
-	ByShard               map[string]RouterPutRowProfileCounter
+	RecordCount           int                                   `json:"record_count"`
+	InsertedCount         int                                   `json:"inserted_count"`
+	ExistingCount         int                                   `json:"existing_count"`
+	DuplicateCount        int                                   `json:"duplicate_count"`
+	ConflictCount         int                                   `json:"conflict_count"`
+	TotalElapsed          time.Duration                         `json:"total_elapsed_nanos"`
+	SourceElapsed         time.Duration                         `json:"source_elapsed_nanos"`
+	IdentityElapsed       time.Duration                         `json:"identity_elapsed_nanos"`
+	AlternateKeysElapsed  time.Duration                         `json:"alternate_keys_elapsed_nanos"`
+	ChildExpansionElapsed time.Duration                         `json:"child_expansion_elapsed_nanos"`
+	RelationElapsed       time.Duration                         `json:"relation_elapsed_nanos"`
+	AttributeElapsed      time.Duration                         `json:"attribute_elapsed_nanos"`
+	ByTable               map[string]RouterPutRowProfileCounter `json:"by_table,omitempty"`
+	ByShard               map[string]RouterPutRowProfileCounter `json:"by_shard,omitempty"`
 }
 
 // RouterPutRowProfileCounter is a grouped count/timing accumulator.
 type RouterPutRowProfileCounter struct {
-	RecordCount  int
-	TotalElapsed time.Duration
+	RecordCount  int           `json:"record_count"`
+	TotalElapsed time.Duration `json:"total_elapsed_nanos"`
 }
 
 // Callback returns the function shape expected by SessionRouterConfig.
@@ -133,30 +133,30 @@ type RouterFlushProfile struct {
 // RouterFlushProfileSummary is a point-in-time aggregate of session flush
 // profiles.
 type RouterFlushProfileSummary struct {
-	FlushCount                int
-	ErrorCount                int
-	TotalElapsed              time.Duration
-	PartitionStringElapsed    time.Duration
-	BitmapSetElapsed          time.Duration
-	BitmapClearElapsed        time.Duration
-	BSIValueElapsed           time.Duration
-	BSIClearValueElapsed      time.Duration
-	PartitionStringBatchCount int
-	PartitionStringEntryCount int
-	BitmapSetEntryCount       int
-	BitmapClearEntryCount     int
-	BSIValueEntryCount        int
-	BSIClearValueEntryCount   int
-	ByTable                   map[string]RouterFlushProfileCounter
-	ByShard                   map[string]RouterFlushProfileCounter
+	FlushCount                int                                  `json:"flush_count"`
+	ErrorCount                int                                  `json:"error_count"`
+	TotalElapsed              time.Duration                        `json:"total_elapsed_nanos"`
+	PartitionStringElapsed    time.Duration                        `json:"partition_string_elapsed_nanos"`
+	BitmapSetElapsed          time.Duration                        `json:"bitmap_set_elapsed_nanos"`
+	BitmapClearElapsed        time.Duration                        `json:"bitmap_clear_elapsed_nanos"`
+	BSIValueElapsed           time.Duration                        `json:"bsi_value_elapsed_nanos"`
+	BSIClearValueElapsed      time.Duration                        `json:"bsi_clear_value_elapsed_nanos"`
+	PartitionStringBatchCount int                                  `json:"partition_string_batch_count"`
+	PartitionStringEntryCount int                                  `json:"partition_string_entry_count"`
+	BitmapSetEntryCount       int                                  `json:"bitmap_set_entry_count"`
+	BitmapClearEntryCount     int                                  `json:"bitmap_clear_entry_count"`
+	BSIValueEntryCount        int                                  `json:"bsi_value_entry_count"`
+	BSIClearValueEntryCount   int                                  `json:"bsi_clear_value_entry_count"`
+	ByTable                   map[string]RouterFlushProfileCounter `json:"by_table,omitempty"`
+	ByShard                   map[string]RouterFlushProfileCounter `json:"by_shard,omitempty"`
 }
 
 // RouterFlushProfileCounter is a grouped flush count/timing accumulator.
 type RouterFlushProfileCounter struct {
-	FlushCount   int
-	TotalElapsed time.Duration
-	EntryCount   int
-	ErrorCount   int
+	FlushCount   int           `json:"flush_count"`
+	TotalElapsed time.Duration `json:"total_elapsed_nanos"`
+	EntryCount   int           `json:"entry_count"`
+	ErrorCount   int           `json:"error_count"`
 }
 
 // Callback returns the function shape expected by SessionRouterConfig.

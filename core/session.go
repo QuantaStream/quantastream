@@ -553,30 +553,70 @@ func (s *Session) mapRowAttributes(req putRowRequest, tbuf *TableBuffer, identit
 
 func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
 
-	val, err := shared.GetPath(attr.SourceName, tbuf.rowCache, false, false)
+	expansion, ok, err := s.preparePutRowChildExpansion(tbuf, attr)
 	if err != nil {
-		u.Errorf("recursion into child  = %s, %v, %#v", attr.SourceName, err, tbuf.rowCache)
-		return nil
+		return err
 	}
-	childRows, ok := val.([]interface{})
 	if !ok {
 		return nil
 	}
-	childBuf, ok := s.TableBuffers[attr.ChildTable]
-	if !ok {
-		return fmt.Errorf("child table %s invalid or not opened. (recursivePutRow) %s",
-			attr.ChildTable, attr.SourceName)
-	}
-	for _, childRow := range childRows {
-		// need to populate the rowcache for the child table
-		childBuf.rowCache = req.row.(map[string]interface{})
-		childBuf.rowCache[attr.SourceName] = childRow
-		if err := s.recursivePutRow(attr.ChildTable, childBuf.rowCache, attr.SourceName,
+	for _, childRow := range expansion.childRows {
+		childPayload, err := buildPutRowChildPayload(req.row, expansion.sourcePath, childRow)
+		if err != nil {
+			return err
+		}
+		expansion.childBuffer.rowCache = childPayload
+		if err := s.recursivePutRow(expansion.childTable, childPayload, expansion.sourcePath,
 			req.providedColID, true, req.ignoreSourcePath, req.useNerdCapitalization); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type putRowChildExpansion struct {
+	childTable  string
+	sourcePath  string
+	childRows   []interface{}
+	childBuffer *TableBuffer
+}
+
+func (s *Session) preparePutRowChildExpansion(tbuf *TableBuffer, attr *Attribute) (putRowChildExpansion, bool, error) {
+
+	val, err := shared.GetPath(attr.SourceName, tbuf.rowCache, false, false)
+	if err != nil {
+		u.Errorf("recursion into child  = %s, %v, %#v", attr.SourceName, err, tbuf.rowCache)
+		return putRowChildExpansion{}, false, nil
+	}
+	childRows, ok := val.([]interface{})
+	if !ok {
+		return putRowChildExpansion{}, false, nil
+	}
+	childBuf, ok := s.TableBuffers[attr.ChildTable]
+	if !ok {
+		return putRowChildExpansion{}, false, fmt.Errorf("child table %s invalid or not opened. (recursivePutRow) %s",
+			attr.ChildTable, attr.SourceName)
+	}
+	return putRowChildExpansion{
+		childTable:  attr.ChildTable,
+		sourcePath:  attr.SourceName,
+		childRows:   childRows,
+		childBuffer: childBuf,
+	}, true, nil
+}
+
+func buildPutRowChildPayload(parentRow interface{}, sourcePath string, childRow interface{}) (map[string]interface{}, error) {
+
+	parent, ok := parentRow.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("child expansion requires map row, got %T", parentRow)
+	}
+	childPayload := make(map[string]interface{}, len(parent)+1)
+	for key, value := range parent {
+		childPayload[key] = value
+	}
+	childPayload[sourcePath] = childRow
+	return childPayload, nil
 }
 
 func (s *Session) mapParentRelation(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
