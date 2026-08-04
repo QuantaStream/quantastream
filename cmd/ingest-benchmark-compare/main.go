@@ -36,7 +36,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "write comparison: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "wrote %s\n", *outPath)
 		return
 	}
 	fmt.Print(qsfixture.RenderNativeIngestBenchmarkComparisonMarkdown(comparison))

@@ -223,30 +223,29 @@ deterministic nested TPC-H order/lineitem envelopes through `SessionRouter`, and
 reports loader throughput plus PutRow/flush profile totals:
 
 ```bash
-cd /home/gmolinari/projects/quantastream
-QUANTASTREAM_TPCH_INGEST_BENCH_ORDERS=100 \
-QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS=4 \
-QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS=1 \
-QUANTASTREAM_TPCH_INGEST_BENCH_REPORT=/tmp/quantastream-tpch-ingest.json \
-  go test ./qsinabox \
-    -run '^$' \
-    -bench BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest \
-    -benchtime=3x \
-    -count=1
+cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
+ORDERS=100 \
+LINEITEMS=4 \
+SHARDS=1 \
+RUNS=3 \
+PROFILE=standard-native-tpch-ingest \
+  ./run-native-ingest-benchmark.sh
 ```
 
-Set `QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE` to label the JSON profile. The
-benchmark verifies final SQL counts after timing stops. Normal `go test` does
-not run it.
+The script writes the JSON report and console log under
+`tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Set
+`BENCHMARK_REPORT` or `BENCHMARK_OUTPUT_DIR` to choose a specific destination.
+The benchmark verifies final SQL counts after timing stops. Normal `go test`
+does not run it.
 
 Compare two native ingest benchmark reports with:
 
 ```bash
-cd /home/gmolinari/projects/quantastream
-go run ./cmd/ingest-benchmark-compare \
-  -baseline /tmp/quantastream-tpch-ingest-before.json \
-  -target /tmp/quantastream-tpch-ingest-after.json \
-  -out /tmp/quantastream-tpch-ingest-comparison.md
+cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
+./run-native-ingest-compare.sh \
+  local/ingest-benchmarks/before/standard-native-tpch-ingest.json \
+  local/ingest-benchmarks/after/standard-native-tpch-ingest.json \
+  local/ingest-benchmarks/comparison.md
 ```
 
 The comparison treats throughput metrics as higher-is-better and per-operation

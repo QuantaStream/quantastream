@@ -197,6 +197,38 @@ BENCHMARK_RUNS=3 \
   ./run-mysql-benchmark-compare.sh
 ```
 
+## Native Ingest Micro-Benchmark
+
+The native ingest benchmark mounts a temporary `inabox-standard` process,
+connects through the standard native gRPC loader lane, routes deterministic
+nested order/lineitem envelopes, and emits a JSON report with throughput plus
+PutRow/flush profile totals:
+
+```bash
+cd tpc-h-benchmark
+ORDERS=100 \
+LINEITEMS=4 \
+SHARDS=1 \
+RUNS=3 \
+PROFILE=standard-native-tpch-ingest \
+  ./run-native-ingest-benchmark.sh
+```
+
+Reports and logs are written under
+`tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Override
+`BENCHMARK_OUTPUT_DIR`, `BENCHMARK_REPORT`, or `LOG_FILE` when comparing named
+before/after runs.
+
+Compare two native ingest JSON reports with:
+
+```bash
+cd tpc-h-benchmark
+./run-native-ingest-compare.sh \
+  local/ingest-benchmarks/before/standard-native-tpch-ingest.json \
+  local/ingest-benchmarks/after/standard-native-tpch-ingest.json \
+  local/ingest-benchmarks/comparison.md
+```
+
 ## Validate Loaded Data
 
 TPC-H SQL roadmap suites live under `tpc-h-benchmark/sqltests` so the benchmark
