@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -38,6 +39,34 @@ func (r *recordingPrimaryKeyResolverRequests) ResolvePrimaryKeyColumnID(req Prim
 		req.TableBuffer.CurrentColumnID = r.result.ColumnID
 	}
 	return r.result, r.err
+}
+
+type recordingMapper struct {
+	values   []interface{}
+	sessions []*Session
+	err      error
+}
+
+func (m *recordingMapper) Transform(_ *Attribute, val interface{}, _ *Session) (interface{}, error) {
+	return val, nil
+}
+
+func (m *recordingMapper) MapValue(_ *Attribute, val interface{}, session *Session, _ bool) (*big.Int, error) {
+	m.values = append(m.values, val)
+	m.sessions = append(m.sessions, session)
+	return big.NewInt(1), m.err
+}
+
+func (m *recordingMapper) MapValueReverse(_ *Attribute, _ uint64, _ *Session) (interface{}, error) {
+	return nil, nil
+}
+
+func (m *recordingMapper) Render(_ *Attribute, value interface{}) string {
+	return value.(string)
+}
+
+func (m *recordingMapper) GetMultiDelimiter() string {
+	return ";"
 }
 
 // FIXME: make this work or delete. It never finishes. (nobody home at port 4000)
@@ -276,18 +305,53 @@ func TestRunPutRowPipelineRunsStagesInOrderAndRecordsTimings(t *testing.T) {
 			},
 		},
 		putRowPipelineStage{
-			name: putRowStageRowMappings,
+			name: putRowStageChildExpansion,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.childExpansionElapsed += elapsed
+			},
 			run: func() error {
-				order = append(order, putRowStageRowMappings)
+				time.Sleep(time.Nanosecond)
+				order = append(order, putRowStageChildExpansion)
+				return nil
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageParentRelations,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.relationElapsed += elapsed
+			},
+			run: func() error {
+				time.Sleep(time.Nanosecond)
+				order = append(order, putRowStageParentRelations)
+				return nil
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageAttributes,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.attributeElapsed += elapsed
+			},
+			run: func() error {
+				time.Sleep(time.Nanosecond)
+				order = append(order, putRowStageAttributes)
 				return nil
 			},
 		},
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, []putRowStageName{putRowStageIdentity, putRowStageAlternateKeys, putRowStageRowMappings}, order)
+	assert.Equal(t, []putRowStageName{
+		putRowStageIdentity,
+		putRowStageAlternateKeys,
+		putRowStageChildExpansion,
+		putRowStageParentRelations,
+		putRowStageAttributes,
+	}, order)
 	assert.Greater(t, req.timings.identityElapsed, time.Duration(0))
 	assert.Greater(t, req.timings.alternateKeysElapsed, time.Duration(0))
+	assert.Greater(t, req.timings.childExpansionElapsed, time.Duration(0))
+	assert.Greater(t, req.timings.relationElapsed, time.Duration(0))
+	assert.Greater(t, req.timings.attributeElapsed, time.Duration(0))
 }
 
 func TestRunPutRowPipelineStopsOnErrorAndRecordsFailedStageTiming(t *testing.T) {
@@ -358,6 +422,60 @@ func TestMapAlternateKeysSkipsTablesWithoutSecondaryKeys(t *testing.T) {
 	err := session.mapAlternateKeys(putRowRequest{}, tbuf)
 
 	require.NoError(t, err)
+}
+
+func TestMapAttributeValuesSkipsIdentityAndRelationshipFields(t *testing.T) {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	pk := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "order_id",
+			SourceName:      "order_id",
+			MappingStrategy: "StringLexBSI",
+		},
+		Parent: table,
+	}
+	parentRelation := Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "cust_id",
+			SourceName:      "cust_id",
+			MappingStrategy: "ParentRelation",
+			ForeignKey:      "customer.c_custkey",
+		},
+		Parent: table,
+	}
+	childRelation := Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "lineitems",
+			SourceName:      "lineitems",
+			MappingStrategy: "ChildRelation",
+			ChildTable:      "lineitem",
+		},
+		Parent: table,
+	}
+	scalarMapper := &recordingMapper{}
+	scalar := Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "status",
+			SourceName:      "status",
+			MappingStrategy: "StringLexBSI",
+		},
+		Parent:         table,
+		mapperInstance: scalarMapper,
+	}
+	table.Attributes = []Attribute{*pk, parentRelation, childRelation, scalar}
+	tbuf := &TableBuffer{
+		Table:    table,
+		PKMap:    map[string]*Attribute{"order_id": pk},
+		rowCache: map[string]interface{}{"status": "ready"},
+	}
+	session := &Session{TableBuffers: map[string]*TableBuffer{"orders": tbuf}}
+
+	err := session.mapAttributeValues(putRowRequest{row: tbuf.rowCache}, tbuf, putRowIdentity{})
+
+	require.NoError(t, err)
+	assert.Equal(t, []interface{}{"ready"}, scalarMapper.values)
+	require.Len(t, scalarMapper.sessions, 1)
+	assert.Same(t, session, scalarMapper.sessions[0])
 }
 
 func TestResolvePrimaryKeyColumnIDUsesProvidedIDWhenLookupDisabled(t *testing.T) {

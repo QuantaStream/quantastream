@@ -183,9 +183,11 @@ type putRowStageTimings struct {
 type putRowStageName string
 
 const (
-	putRowStageIdentity      putRowStageName = "identity"
-	putRowStageAlternateKeys putRowStageName = "alternate_keys"
-	putRowStageRowMappings   putRowStageName = "row_mappings"
+	putRowStageIdentity        putRowStageName = "identity"
+	putRowStageAlternateKeys   putRowStageName = "alternate_keys"
+	putRowStageChildExpansion  putRowStageName = "expand_children"
+	putRowStageParentRelations putRowStageName = "map_parent_relations"
+	putRowStageAttributes      putRowStageName = "map_attributes"
 )
 
 type putRowPipelineStage struct {
@@ -522,9 +524,30 @@ func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
 			},
 		},
 		putRowPipelineStage{
-			name: putRowStageRowMappings,
+			name: putRowStageChildExpansion,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.childExpansionElapsed += elapsed
+			},
 			run: func() error {
-				return s.mapRowAttributes(req, tbuf, identity)
+				return s.expandChildRelations(req, tbuf)
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageParentRelations,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.relationElapsed += elapsed
+			},
+			run: func() error {
+				return s.mapParentRelations(req, tbuf)
+			},
+		},
+		putRowPipelineStage{
+			name: putRowStageAttributes,
+			record: func(t *putRowStageTimings, elapsed time.Duration) {
+				t.attributeElapsed += elapsed
+			},
+			run: func() error {
+				return s.mapAttributeValues(req, tbuf, identity)
 			},
 		},
 	); err != nil {
@@ -631,39 +654,49 @@ func (s *Session) mapAlternateKeys(req putRowRequest, tbuf *TableBuffer) error {
 		req.useNerdCapitalization)
 }
 
-func (s *Session) mapRowAttributes(req putRowRequest, tbuf *TableBuffer, identity putRowIdentity) error {
+func (s *Session) expandChildRelations(req putRowRequest, tbuf *TableBuffer) error {
 
 	recurse := len(s.TableBuffers) > 1
 	for _, v := range tbuf.Table.Attributes {
-		if _, found := tbuf.PKMap[v.FieldName]; found {
-			continue // Already handled at this point
-		}
 		if recurse && v.MappingStrategy == "ChildRelation" && v.ChildTable != "" {
-			stageStart := time.Now()
-			err := s.expandChildRows(req, tbuf, &v)
-			req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.childExpansionElapsed += elapsed },
-				time.Since(stageStart))
-			return err
-		}
-		if v.MappingStrategy == "ParentRelation" && v.ForeignKey != "" {
-			stageStart := time.Now()
-			err := s.mapParentRelation(req, tbuf, &v)
-			req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.relationElapsed += elapsed },
-				time.Since(stageStart))
-			if err != nil {
+			if err := s.expandChildRows(req, tbuf, &v); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (s *Session) mapParentRelations(req putRowRequest, tbuf *TableBuffer) error {
+
+	for _, v := range tbuf.Table.Attributes {
+		if v.MappingStrategy == "ParentRelation" && v.ForeignKey != "" {
+			if err := s.mapParentRelation(req, tbuf, &v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Session) mapAttributeValues(req putRowRequest, tbuf *TableBuffer, identity putRowIdentity) error {
+
+	for _, v := range tbuf.Table.Attributes {
+		if shouldSkipPutRowAttributeMapping(tbuf, &v) {
 			continue
 		}
-		stageStart := time.Now()
-		err := s.mapAttributeValue(req, &v, identity.updateExisting)
-		req.addStageTiming(func(t *putRowStageTimings, elapsed time.Duration) { t.attributeElapsed += elapsed },
-			time.Since(stageStart))
-		if err != nil {
+		if err := s.mapAttributeValue(req, &v, identity.updateExisting); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func shouldSkipPutRowAttributeMapping(tbuf *TableBuffer, attr *Attribute) bool {
+	if _, found := tbuf.PKMap[attr.FieldName]; found {
+		return true
+	}
+	return attr.MappingStrategy == "ChildRelation" || attr.MappingStrategy == "ParentRelation"
 }
 
 func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *Attribute) error {
