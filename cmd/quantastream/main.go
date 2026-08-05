@@ -72,7 +72,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 			defer backend.Close()
 			services = backend.Services
 		}
-		plan := qsinabox.NewStandardPlan(config, services)
+		plan := qsinabox.NewObservedStandardPlan(config, services)
 		for _, line := range plan.SummaryLines() {
 			fmt.Fprintln(stdout, line)
 		}
@@ -93,7 +93,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	defer process.Close()
 
 	fmt.Fprintf(stdout, "mount_elapsed=%s\n", mountElapsed)
-	plan := qsinabox.NewStandardPlan(config, process.Backend.Services)
+	plan := qsinabox.NewObservedStandardPlan(config, process.Backend.Services)
 	for _, line := range plan.SummaryLines() {
 		fmt.Fprintln(stdout, line)
 	}

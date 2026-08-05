@@ -3,6 +3,7 @@ package qsinabox
 import (
 	"fmt"
 
+	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/qsruntime"
@@ -101,6 +102,7 @@ type StandardPlan struct {
 	Config        StandardConfig
 	LocalNode     shared.LocalNodeReadiness
 	StreamingRisk []shared.LocalNodeStreamingRisk
+	PKAuthority   core.BSIPrimaryKeyAuthorityManifestObservation
 	Ready         bool
 	Blockers      []string
 	Warnings      []string
@@ -125,6 +127,14 @@ func NewStandardPlan(config StandardConfig, services shared.LocalNodeServices) S
 	return plan
 }
 
+// NewObservedStandardPlan summarizes standard-mode readiness with startup
+// metadata observations that require reading the local data directory.
+func NewObservedStandardPlan(config StandardConfig, services shared.LocalNodeServices) StandardPlan {
+	plan := NewStandardPlan(config, services)
+	plan.PKAuthority = ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	return plan
+}
+
 // SummaryLines returns stable human-readable startup status lines for the CLI.
 func (p StandardPlan) SummaryLines() []string {
 	config := p.Config.WithDefaults()
@@ -139,6 +149,18 @@ func (p StandardPlan) SummaryLines() []string {
 	}
 	if config.NativeGRPCEnabled() {
 		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())
+	}
+	if p.PKAuthority.Status != "" {
+		lines = append(lines,
+			fmt.Sprintf("bsi_pk_authority_manifest=%s", p.PKAuthority.Status),
+			fmt.Sprintf("bsi_pk_authority_manifest_entries=%d", p.PKAuthority.Entries),
+		)
+		if p.PKAuthority.ManifestEntry != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_entry="+p.PKAuthority.ManifestEntry)
+		}
+		if p.PKAuthority.Detail != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_detail="+p.PKAuthority.Detail)
+		}
 	}
 	for _, blocker := range p.Blockers {
 		lines = append(lines, "blocker="+blocker)

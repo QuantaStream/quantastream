@@ -24,6 +24,7 @@ func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
 		"mode=inabox-standard",
 		"mysql=127.0.0.1:4000",
 		"local_node_ready=false",
+		"bsi_pk_authority_manifest=missing",
 		"streaming_risk=",
 	} {
 		if !strings.Contains(output, want) {
