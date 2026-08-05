@@ -128,46 +128,50 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 			RelationElapsed:       50 * time.Microsecond,
 			AttributeElapsed:      300 * time.Microsecond,
 			PrimaryKey: core.PrimaryKeyResolveProfile{
-				ResolveCount:              50,
-				LookupRequiredCount:       20,
-				AssumeNewCount:            10,
-				LocalCacheLookupCount:     30,
-				LocalCacheHitCount:        10,
-				SkippedKVLookupCount:      10,
-				KVLookupCount:             20,
-				KVHitCount:                5,
-				BSILookupCount:            10,
-				BSIHitCount:               4,
-				SkippedBSILookupCount:     5,
-				BSIStageWriteCount:        5,
-				RownumAllocationCount:     15,
-				BatchCacheWriteCount:      15,
-				TotalElapsed:              5000 * time.Microsecond,
-				KVLookupElapsed:           2000 * time.Microsecond,
-				BSIIdentityEncodeElapsed:  150 * time.Microsecond,
-				BSIAuthorityEncodeElapsed: 75 * time.Microsecond,
-				BSILookupElapsed:          500 * time.Microsecond,
-				BSIProjectionElapsed:      300 * time.Microsecond,
-				BSICompareElapsed:         100 * time.Microsecond,
-				BSIMatchExtractionElapsed: 50 * time.Microsecond,
-				BSIStageWriteElapsed:      250 * time.Microsecond,
-				RownumAllocationElapsed:   750 * time.Microsecond,
-				BatchCacheWriteElapsed:    300 * time.Microsecond,
+				ResolveCount:                  50,
+				LookupRequiredCount:           20,
+				AssumeNewCount:                10,
+				LocalCacheLookupCount:         30,
+				LocalCacheHitCount:            10,
+				SkippedKVLookupCount:          10,
+				KVLookupCount:                 20,
+				KVHitCount:                    5,
+				BSILookupCount:                10,
+				BSIHitCount:                   4,
+				SkippedBSILookupCount:         5,
+				BSIProjectionCacheLookupCount: 10,
+				BSIProjectionCacheHitCount:    8,
+				BSIStageWriteCount:            5,
+				RownumAllocationCount:         15,
+				BatchCacheWriteCount:          15,
+				TotalElapsed:                  5000 * time.Microsecond,
+				KVLookupElapsed:               2000 * time.Microsecond,
+				BSIIdentityEncodeElapsed:      150 * time.Microsecond,
+				BSIAuthorityEncodeElapsed:     75 * time.Microsecond,
+				BSILookupElapsed:              500 * time.Microsecond,
+				BSIProjectionElapsed:          300 * time.Microsecond,
+				BSICompareElapsed:             100 * time.Microsecond,
+				BSIMatchExtractionElapsed:     50 * time.Microsecond,
+				BSIStageWriteElapsed:          250 * time.Microsecond,
+				RownumAllocationElapsed:       750 * time.Microsecond,
+				BatchCacheWriteElapsed:        300 * time.Microsecond,
 			},
 			PrimaryKeyByTable: map[string]core.PrimaryKeyResolveProfile{
 				"orders": {
-					ResolveCount:              10,
-					LookupRequiredCount:       4,
-					DirectColumnIDCount:       6,
-					BSILookupCount:            4,
-					BSIHitCount:               2,
-					BSIIdentityEncodeElapsed:  40 * time.Microsecond,
-					BSIAuthorityEncodeElapsed: 20 * time.Microsecond,
-					BSILookupElapsed:          80 * time.Microsecond,
-					BSIProjectionElapsed:      48 * time.Microsecond,
-					BSICompareElapsed:         20 * time.Microsecond,
-					BSIMatchExtractionElapsed: 12 * time.Microsecond,
-					BSIStageWriteCount:        4,
+					ResolveCount:                  10,
+					LookupRequiredCount:           4,
+					DirectColumnIDCount:           6,
+					BSILookupCount:                4,
+					BSIHitCount:                   2,
+					BSIProjectionCacheLookupCount: 4,
+					BSIProjectionCacheHitCount:    3,
+					BSIIdentityEncodeElapsed:      40 * time.Microsecond,
+					BSIAuthorityEncodeElapsed:     20 * time.Microsecond,
+					BSILookupElapsed:              80 * time.Microsecond,
+					BSIProjectionElapsed:          48 * time.Microsecond,
+					BSICompareElapsed:             20 * time.Microsecond,
+					BSIMatchExtractionElapsed:     12 * time.Microsecond,
+					BSIStageWriteCount:            4,
 				},
 				"lineitem": {
 					ResolveCount:        40,
@@ -292,6 +296,9 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["primary_key_skipped_bsi_lookup_percent"], 25.0; got != want {
 		t.Fatalf("primary key skipped bsi lookup percent = %v, want %v", got, want)
 	}
+	if got, want := metrics["primary_key_bsi_projection_cache_hit_percent"], 80.0; got != want {
+		t.Fatalf("primary key bsi projection cache hit percent = %v, want %v", got, want)
+	}
 	if got, want := metrics["primary_key_bsi_identity_encode_microseconds_per_encode"], 6.0; got != want {
 		t.Fatalf("primary key bsi identity encode us/encode = %v, want %v", got, want)
 	}
@@ -324,6 +331,9 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["primary_key_table_orders_bsi_lookup_percent"], 100.0; got != want {
 		t.Fatalf("orders BSI lookup percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_bsi_projection_cache_hit_percent"], 75.0; got != want {
+		t.Fatalf("orders BSI projection cache hit percent = %v, want %v", got, want)
 	}
 	if got, want := metrics["primary_key_table_orders_bsi_identity_encode_microseconds_per_encode"], 5.0; got != want {
 		t.Fatalf("orders BSI identity encode us/encode = %v, want %v", got, want)

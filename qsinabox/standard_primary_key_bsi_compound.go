@@ -28,8 +28,14 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 	var profile core.BSIPrimaryKeyLookupProfile
 	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
 	projectionStart := time.Now()
-	bsi, err := b.Reader.projectPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
+	bsi, cacheLookup, cacheHit, err := b.Reader.projectCachedPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
 	profile.ProjectionElapsed = time.Since(projectionStart)
+	if cacheLookup {
+		profile.ProjectionCacheLookupCount++
+	}
+	if cacheHit {
+		profile.ProjectionCacheHitCount++
+	}
 	if err != nil {
 		return core.BSIPrimaryKeyLookupResult{}, err
 	}
@@ -59,13 +65,19 @@ func (b StandardCompoundBSIPrimaryKeyBackend) StagePrimaryKey(req core.BSIPrimar
 	if b.Session == nil || b.Session.BatchBuffer == nil {
 		return fmt.Errorf("compound BSI primary-key stage requires session batch buffer")
 	}
-	return b.Session.BatchBuffer.SetValue(
+	if err := b.Session.BatchBuffer.SetValue(
 		req.TableName,
 		shared.CompoundPrimaryKeyAuthorityFieldName,
 		req.ColumnID,
 		req.AuthorityValue,
 		req.ShardTimestamp,
-	)
+	); err != nil {
+		return err
+	}
+	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	b.Reader.stageCachedPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime,
+		req.ColumnID, req.AuthorityValue)
+	return nil
 }
 
 func (b StandardCompoundBSIPrimaryKeyBackend) lookupWindowNanos(shardTimestamp time.Time) (int64, int64) {

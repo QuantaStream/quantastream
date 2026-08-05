@@ -226,6 +226,7 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	metrics["primary_key_bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
 	metrics["primary_key_skipped_bsi_lookup_percent"] = percentForCounts(pk.SkippedBSILookupCount, pk.LookupRequiredCount)
+	metrics["primary_key_bsi_projection_cache_hit_percent"] = percentForCounts(pk.BSIProjectionCacheHitCount, pk.BSIProjectionCacheLookupCount)
 	metrics["primary_key_bsi_identity_encode_microseconds_per_encode"] = durationMicrosPerCount(
 		pk.BSIIdentityEncodeElapsed,
 		pk.LookupRequiredCount+pk.BSIStageWriteCount,
@@ -265,6 +266,7 @@ func addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics map[string]float64, 
 		metrics[prefix+"direct_column_id_percent"] = percentForCounts(pk.DirectColumnIDCount, pk.ResolveCount)
 		metrics[prefix+"bsi_lookup_percent"] = percentForCounts(pk.BSILookupCount, pk.LookupRequiredCount)
 		metrics[prefix+"bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
+		metrics[prefix+"bsi_projection_cache_hit_percent"] = percentForCounts(pk.BSIProjectionCacheHitCount, pk.BSIProjectionCacheLookupCount)
 		metrics[prefix+"kv_lookup_percent"] = percentForCounts(pk.KVLookupCount, pk.LookupRequiredCount)
 		metrics[prefix+"kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
 		metrics[prefix+"bsi_identity_encode_microseconds_per_encode"] = durationMicrosPerCount(

@@ -25,7 +25,7 @@ func NewStandardBSIPrimaryKeyResolver(reader core.SingleColumnBSIPrimaryKeyReade
 // router or session-provider owners that have opted into BSI PK authority.
 func NewStandardBSIPrimaryKeyResolverFactory(reader core.SingleColumnBSIPrimaryKeyReader) core.SessionPrimaryKeyResolverFactory {
 	return func(*core.Session) core.PrimaryKeyResolver {
-		return NewStandardBSIPrimaryKeyResolver(reader)
+		return NewStandardBSIPrimaryKeyResolver(standardPrimaryKeyReaderWithProjectionCache(reader))
 	}
 }
 
@@ -39,8 +39,9 @@ func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheS
 			return core.KVPrimaryKeyResolver{}
 		}
 		return NewStandardBSIPrimaryKeyResolver(StandardSingleColumnBSIPrimaryKeyReader{
-			TableCache: tableCache,
-			BitIndex:   session.BitIndex,
+			TableCache:      tableCache,
+			BitIndex:        session.BitIndex,
+			ProjectionCache: NewStandardBSIProjectionCache(),
 		})
 	}
 }
@@ -91,6 +92,27 @@ func standardCompoundBSIPrimaryKeyReader(reader core.SingleColumnBSIPrimaryKeyRe
 		}
 	}
 	return StandardSingleColumnBSIPrimaryKeyReader{}, false
+}
+
+func standardPrimaryKeyReaderWithProjectionCache(reader core.SingleColumnBSIPrimaryKeyReader) core.SingleColumnBSIPrimaryKeyReader {
+	switch typed := reader.(type) {
+	case StandardSingleColumnBSIPrimaryKeyReader:
+		if typed.ProjectionCache == nil {
+			typed.ProjectionCache = NewStandardBSIProjectionCache()
+		}
+		return typed
+	case *StandardSingleColumnBSIPrimaryKeyReader:
+		if typed == nil {
+			return reader
+		}
+		copy := *typed
+		if copy.ProjectionCache == nil {
+			copy.ProjectionCache = NewStandardBSIProjectionCache()
+		}
+		return copy
+	default:
+		return reader
+	}
 }
 
 func standardCompoundBSIPrimaryKeyEncodable(req core.PrimaryKeyResolveRequest) bool {

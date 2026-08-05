@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/server"
@@ -12,10 +13,11 @@ import (
 // StandardSingleColumnBSIPrimaryKeyReader resolves primary-key rownums from the
 // existing catalog-designated PK BSI in the in-process standard backend.
 type StandardSingleColumnBSIPrimaryKeyReader struct {
-	Pool       *core.SessionPool
-	TableCache *core.TableCacheStruct
-	Direct     *server.BitmapIndex
-	BitIndex   *shared.BitmapIndex
+	Pool            *core.SessionPool
+	TableCache      *core.TableCacheStruct
+	Direct          *server.BitmapIndex
+	BitIndex        *shared.BitmapIndex
+	ProjectionCache *StandardBSIProjectionCache
 }
 
 var _ core.SingleColumnBSIPrimaryKeyReader = StandardSingleColumnBSIPrimaryKeyReader{}
@@ -92,6 +94,32 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) projectPrimaryKeyBSI(tableName,
 		return nil, err
 	}
 	return bsis[fieldName], nil
+}
+
+func (r StandardSingleColumnBSIPrimaryKeyReader) projectCachedPrimaryKeyBSI(tableName, fieldName string,
+	fromTime, toTime int64) (*roaring64.BSI, bool, bool, error) {
+
+	if r.ProjectionCache == nil {
+		bsi, err := r.projectPrimaryKeyBSI(tableName, fieldName, fromTime, toTime)
+		return bsi, false, false, err
+	}
+	if bsi, ok := r.ProjectionCache.Lookup(tableName, fieldName, fromTime, toTime); ok {
+		return bsi, true, true, nil
+	}
+	bsi, err := r.projectPrimaryKeyBSI(tableName, fieldName, fromTime, toTime)
+	if err != nil {
+		return nil, true, false, err
+	}
+	return r.ProjectionCache.Store(tableName, fieldName, fromTime, toTime, bsi), true, false, nil
+}
+
+func (r StandardSingleColumnBSIPrimaryKeyReader) stageCachedPrimaryKeyBSI(tableName, fieldName string,
+	fromTime, toTime int64, columnID uint64, value *big.Int) {
+
+	if r.ProjectionCache == nil {
+		return
+	}
+	r.ProjectionCache.StageBigValue(tableName, fieldName, fromTime, toTime, columnID, value)
 }
 
 func standardSingleColumnBSIPrimaryKeyWindowNanos(cache *core.TableCacheStruct, req core.SingleColumnBSIPrimaryKeyReadRequest) (int64, int64) {

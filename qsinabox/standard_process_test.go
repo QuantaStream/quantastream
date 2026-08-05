@@ -530,6 +530,8 @@ func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorit
 		BSIHitCount:         orderCount * lineitemsPerOrder,
 		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
 	})
+	requirePrimaryKeyTableProjectionCacheProfile(t, result.PutProfile, "lineitem",
+		expectedLineitemResolves, (orderCount*lineitemsPerOrder-1)*replayCount)
 }
 
 func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing.T) {
@@ -570,6 +572,8 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 		BSILookupCount:      orderCount * lineitemsPerOrder,
 		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
 	})
+	requirePrimaryKeyTableProjectionCacheProfile(t, firstProfile, "lineitem",
+		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
 	requireStandardProcessScalarString(t, first, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 	first.Close()
 
@@ -588,6 +592,8 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 		BSILookupCount:      orderCount * lineitemsPerOrder,
 		BSIHitCount:         orderCount * lineitemsPerOrder,
 	})
+	requirePrimaryKeyTableProjectionCacheProfile(t, secondProfile, "lineitem",
+		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
 	requireStandardProcessScalarString(t, second, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 }
 
@@ -680,6 +686,26 @@ func requirePrimaryKeyTableProfile(
 	}
 	if profile.KVHitCount != expected.KVHitCount {
 		t.Fatalf("%s primary key profile = %+v, want %d KV hits", tableName, profile, expected.KVHitCount)
+	}
+}
+
+func requirePrimaryKeyTableProjectionCacheProfile(
+	t *testing.T,
+	putProfile core.RouterPutRowProfileSummary,
+	tableName string,
+	wantLookups int,
+	wantHits int,
+) {
+	t.Helper()
+	profile, ok := putProfile.PrimaryKeyByTable[tableName]
+	if !ok {
+		t.Fatalf("primary key table profile for %s missing in %+v", tableName, putProfile.PrimaryKeyByTable)
+	}
+	if profile.BSIProjectionCacheLookupCount != wantLookups {
+		t.Fatalf("%s primary key profile = %+v, want %d projection cache lookups", tableName, profile, wantLookups)
+	}
+	if profile.BSIProjectionCacheHitCount != wantHits {
+		t.Fatalf("%s primary key profile = %+v, want %d projection cache hits", tableName, profile, wantHits)
 	}
 }
 

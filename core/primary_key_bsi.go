@@ -45,9 +45,11 @@ type BSIPrimaryKeyLookupResult struct {
 // BSIPrimaryKeyLookupProfile is backend-provided timing detail for the BSI
 // lookup work hidden behind BSIPrimaryKeyBackend.
 type BSIPrimaryKeyLookupProfile struct {
-	ProjectionElapsed      time.Duration
-	CompareElapsed         time.Duration
-	MatchExtractionElapsed time.Duration
+	ProjectionCacheLookupCount int
+	ProjectionCacheHitCount    int
+	ProjectionElapsed          time.Duration
+	CompareElapsed             time.Duration
+	MatchExtractionElapsed     time.Duration
 }
 
 // BSIPrimaryKeyStageRequest stages a typed primary-key mapping for a rownum.
@@ -145,6 +147,8 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		profile.BSILookupCount++
 		lookup, err := r.Backend.LookupPrimaryKey(lookupReq)
 		profile.BSILookupElapsed += time.Since(lookupStart)
+		profile.BSIProjectionCacheLookupCount += lookup.Profile.ProjectionCacheLookupCount
+		profile.BSIProjectionCacheHitCount += lookup.Profile.ProjectionCacheHitCount
 		profile.BSIProjectionElapsed += lookup.Profile.ProjectionElapsed
 		profile.BSICompareElapsed += lookup.Profile.CompareElapsed
 		profile.BSIMatchExtractionElapsed += lookup.Profile.MatchExtractionElapsed
