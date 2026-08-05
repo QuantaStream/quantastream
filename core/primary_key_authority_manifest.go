@@ -2,8 +2,12 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -73,6 +77,63 @@ type BSIPrimaryKeyAuthorityManifestObservation struct {
 	Detail        string
 	ManifestEntry string
 	Entries       int
+}
+
+// BSIPrimaryKeyAuthorityManifestPath returns the conventional persisted
+// manifest path under a storage data directory.
+func BSIPrimaryKeyAuthorityManifestPath(dataDir string) string {
+	return filepath.Join(dataDir, BSIPrimaryKeyAuthorityManifestFileName)
+}
+
+// SaveBSIPrimaryKeyAuthorityManifest writes a manifest atomically using the
+// current YAML metadata format.
+func SaveBSIPrimaryKeyAuthorityManifest(dataDir string, manifest BSIPrimaryKeyAuthorityManifest) error {
+	if strings.TrimSpace(dataDir) == "" {
+		return fmt.Errorf("primary-key authority manifest requires data directory")
+	}
+	if manifest.Version == 0 {
+		manifest.Version = BSIPrimaryKeyAuthorityManifestVersion
+	}
+	if manifest.GeneratedAt.IsZero() {
+		manifest.GeneratedAt = time.Now().UTC()
+	}
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create primary-key authority manifest directory: %w", err)
+	}
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("marshal primary-key authority manifest: %w", err)
+	}
+	path := BSIPrimaryKeyAuthorityManifestPath(dataDir)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write primary-key authority manifest: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace primary-key authority manifest: %w", err)
+	}
+	return nil
+}
+
+// LoadBSIPrimaryKeyAuthorityManifest reads the current YAML metadata format. A
+// missing manifest is returned as a zero-value manifest so callers can decide
+// whether to rebuild, warn, or fail closed.
+func LoadBSIPrimaryKeyAuthorityManifest(dataDir string) (BSIPrimaryKeyAuthorityManifest, error) {
+	var manifest BSIPrimaryKeyAuthorityManifest
+	if strings.TrimSpace(dataDir) == "" {
+		return manifest, fmt.Errorf("primary-key authority manifest requires data directory")
+	}
+	data, err := os.ReadFile(BSIPrimaryKeyAuthorityManifestPath(dataDir))
+	if os.IsNotExist(err) {
+		return manifest, nil
+	}
+	if err != nil {
+		return manifest, fmt.Errorf("read primary-key authority manifest: %w", err)
+	}
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return manifest, fmt.Errorf("parse primary-key authority manifest: %w", err)
+	}
+	return manifest, nil
 }
 
 // NewBSIPrimaryKeyAuthorityManifestEntry builds the logical manifest contract
