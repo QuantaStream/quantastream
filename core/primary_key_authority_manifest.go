@@ -26,6 +26,10 @@ const (
 	// supplied. Callers may rebuild from authoritative table data.
 	BSIPrimaryKeyAuthorityManifestStatusMissing = "missing"
 
+	// BSIPrimaryKeyAuthorityManifestStatusStale means the manifest is
+	// well-formed but no longer matches the active catalog or identity shape.
+	BSIPrimaryKeyAuthorityManifestStatusStale = "stale"
+
 	// BSIPrimaryKeyAuthorityManifestStatusInvalid means the manifest must not be
 	// trusted for primary-key authority.
 	BSIPrimaryKeyAuthorityManifestStatusInvalid = "invalid"
@@ -224,12 +228,12 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 
 		table, ok := tables[entryKey]
 		if !ok {
-			observation.Status = BSIPrimaryKeyAuthorityManifestStatusInvalid
+			observation.Status = BSIPrimaryKeyAuthorityManifestStatusStale
 			observation.Detail = fmt.Sprintf("table not found: %s", entryKey)
 			return observation
 		}
-		if detail := observeBSIPrimaryKeyAuthorityManifestEntry(entry, table); detail != "" {
-			observation.Status = BSIPrimaryKeyAuthorityManifestStatusInvalid
+		if status, detail := observeBSIPrimaryKeyAuthorityManifestEntry(entry, table); detail != "" {
+			observation.Status = status
 			observation.Detail = detail
 			return observation
 		}
@@ -237,31 +241,31 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 	return observation
 }
 
-func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityManifestEntry, table *Table) string {
+func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityManifestEntry, table *Table) (string, string) {
 	expected, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, entry.LogicalShard)
 	if err != nil {
-		return err.Error()
+		return BSIPrimaryKeyAuthorityManifestStatusInvalid, err.Error()
 	}
 	if entry.EncodingVersion != PrimaryKeyIdentityEncodingVersion {
-		return fmt.Sprintf("table %s primary-key identity encoding version=%d expected=%d",
+		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key identity encoding version=%d expected=%d",
 			entry.TableName, entry.EncodingVersion, PrimaryKeyIdentityEncodingVersion)
 	}
 	if strings.TrimSpace(entry.PrimaryKey) != expected.PrimaryKey {
-		return fmt.Sprintf("table %s primary key=%q expected=%q", entry.TableName, entry.PrimaryKey, expected.PrimaryKey)
+		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary key=%q expected=%q", entry.TableName, entry.PrimaryKey, expected.PrimaryKey)
 	}
 	if len(entry.Fields) != len(expected.Fields) {
-		return fmt.Sprintf("table %s primary-key field count=%d expected=%d",
+		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key field count=%d expected=%d",
 			entry.TableName, len(entry.Fields), len(expected.Fields))
 	}
 	for i := range expected.Fields {
 		if detail := observeBSIPrimaryKeyAuthorityManifestField(entry.TableName, i, entry.Fields[i], expected.Fields[i]); detail != "" {
-			return detail
+			return BSIPrimaryKeyAuthorityManifestStatusStale, detail
 		}
 	}
 	if !entry.Clean {
-		return fmt.Sprintf("table %s primary-key authority artifact is not clean", entry.TableName)
+		return BSIPrimaryKeyAuthorityManifestStatusInvalid, fmt.Sprintf("table %s primary-key authority artifact is not clean", entry.TableName)
 	}
-	return ""
+	return "", ""
 }
 
 func observeBSIPrimaryKeyAuthorityManifestField(table string, index int, actual, expected BSIPrimaryKeyAuthorityManifestField) string {

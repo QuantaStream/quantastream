@@ -82,6 +82,39 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsInvalidVersion(t *t
 	}
 }
 
+func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsStaleCatalogShape(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardTestSchema(t, configDir, "sample")
+	table := standardBSIPrimaryKeyAuthorityCatalogTable(t, configDir, "sample")
+	entry, err := core.NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.PrimaryKey = "stale_id"
+	if err := core.SaveBSIPrimaryKeyAuthorityManifest(dataDir, core.BSIPrimaryKeyAuthorityManifest{
+		Entries: []core.BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}); err != nil {
+		t.Fatalf("SaveBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+
+	plan := NewObservedStandardPlan(StandardConfig{DataDir: dataDir}, shared.LocalNodeServices{})
+	output := strings.Join(plan.SummaryLines(), "\n")
+
+	if plan.PKAuthority.Status != core.BSIPrimaryKeyAuthorityManifestStatusStale {
+		t.Fatalf("status = %s detail=%s", plan.PKAuthority.Status, plan.PKAuthority.Detail)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest=stale") {
+		t.Fatalf("summary missing stale manifest status:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_detail=") {
+		t.Fatalf("summary missing stale manifest detail:\n%s", output)
+	}
+}
+
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsMalformedManifest(t *testing.T) {
 	dataDir := t.TempDir()
 	if err := os.WriteFile(core.BSIPrimaryKeyAuthorityManifestPath(dataDir), []byte("entries:\n  - : bad\n"), 0644); err != nil {
