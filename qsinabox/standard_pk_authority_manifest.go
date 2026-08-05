@@ -10,8 +10,8 @@ import (
 
 // ObserveStandardBSIPrimaryKeyAuthorityManifest reports whether the local
 // standard-mode PK authority manifest can be trusted for the mounted catalog.
-// It is diagnostic-only; callers must not use this observation as storage
-// authority until physical authority artifact loading is implemented.
+// A trusted manifest can enable existing catalog-designated PK BSIs as the
+// authority path; separate physical authority artifacts remain future work.
 func ObserveStandardBSIPrimaryKeyAuthorityManifest(config StandardConfig) core.BSIPrimaryKeyAuthorityManifestObservation {
 	config = config.WithDefaults()
 	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)

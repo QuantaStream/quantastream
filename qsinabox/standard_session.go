@@ -10,6 +10,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
+	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
 )
 
@@ -64,9 +65,10 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	}
 	pool := b.NewSessionPool(config, tableCache, poolSize)
 	sessions := StandardDirectSessionProvider{
-		Pool:      pool,
-		SchemaDir: b.ConfigBaseDir(config),
-		Conn:      b.NewLocalConnection(),
+		Pool:                      pool,
+		SchemaDir:                 b.ConfigBaseDir(config),
+		Conn:                      b.NewLocalConnection(),
+		PrimaryKeyResolverFactory: standardDirectPrimaryKeyResolverFactory(config, tableCache, b.Adapter.BitmapIndex, pool),
 	}
 	bsiReader := StandardProjectionBSIReader{
 		Pool:       pool,
@@ -148,9 +150,10 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 // StandardDirectSessionProvider borrows table-scoped direct sessions from an
 // inabox-standard local session pool.
 type StandardDirectSessionProvider struct {
-	Pool      *core.SessionPool
-	SchemaDir string
-	Conn      *shared.Conn
+	Pool                      *core.SessionPool
+	SchemaDir                 string
+	Conn                      *shared.Conn
+	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
 }
 
 // BorrowDirectSession returns a direct session handle for the request root table.
@@ -180,6 +183,9 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("borrow inabox-standard session for %s: %w", table, err)
 	}
+	if p.PrimaryKeyResolverFactory != nil {
+		session.SetPrimaryKeyResolver(p.PrimaryKeyResolverFactory(session))
+	}
 	return StandardDirectSessionHandle{
 		Pool:    p.Pool,
 		Table:   table,
@@ -187,6 +193,19 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		Query:   qsruntime.LegacyBitmapQueryAdapter{},
 		Result:  qsruntime.LegacyBitmapQueryResultAdapter{},
 	}, nil, nil
+}
+
+func standardDirectPrimaryKeyResolverFactory(config StandardConfig, tableCache *core.TableCacheStruct, direct *server.BitmapIndex, pool *core.SessionPool) core.SessionPrimaryKeyResolverFactory {
+	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		return nil
+	}
+	reader := StandardSingleColumnBSIPrimaryKeyReader{
+		Pool:       pool,
+		TableCache: tableCache,
+		Direct:     direct,
+	}
+	return NewStandardBSIPrimaryKeyResolverFactory(reader)
 }
 
 func (p StandardDirectSessionProvider) syntheticSchemaMutationSession() *core.Session {
