@@ -42,7 +42,7 @@ func TestObserveBSIPrimaryKeyAuthorityEligibilityClassifiesDirectColumnID(t *tes
 	}
 }
 
-func TestObserveBSIPrimaryKeyAuthorityEligibilityRejectsCompoundKeys(t *testing.T) {
+func TestObserveBSIPrimaryKeyAuthorityEligibilityClassifiesCompoundKeysAsPendingEncodedAuthority(t *testing.T) {
 	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey+l_linenumber", "", []shared.BasicAttribute{
 		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", false),
 		testPrimaryKeyAuthorityAttribute("l_linenumber", "Integer", "IntBSI", false),
@@ -51,10 +51,18 @@ func TestObserveBSIPrimaryKeyAuthorityEligibilityRejectsCompoundKeys(t *testing.
 	observation := ObserveBSIPrimaryKeyAuthorityEligibility(table)
 
 	if observation.Eligible {
-		t.Fatalf("eligible = true, want unsupported for compound key")
+		t.Fatalf("eligible = true, want pending implementation for compound key")
 	}
-	if observation.Reason != "primary key is compound" {
+	if observation.Mode != BSIPrimaryKeyAuthorityModeCompoundEncodedBSI {
+		t.Fatalf("mode = %s, want %s", observation.Mode, BSIPrimaryKeyAuthorityModeCompoundEncodedBSI)
+	}
+	if observation.Reason != "compound primary key requires encoded BSI authority artifact" {
 		t.Fatalf("reason = %q", observation.Reason)
+	}
+	if len(observation.FieldNames) != 2 ||
+		observation.FieldNames[0] != "l_orderkey" ||
+		observation.FieldNames[1] != "l_linenumber" {
+		t.Fatalf("field names = %#v, want primary-key field order", observation.FieldNames)
 	}
 }
 

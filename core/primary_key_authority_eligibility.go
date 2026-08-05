@@ -15,6 +15,11 @@ const (
 	// BSIPrimaryKeyAuthorityModeSingleColumnBSI means the existing
 	// catalog-designated primary-key BSI can answer value-to-rownum lookup.
 	BSIPrimaryKeyAuthorityModeSingleColumnBSI = "single_column_bsi"
+
+	// BSIPrimaryKeyAuthorityModeCompoundEncodedBSI means the table has a
+	// compound primary key that should eventually use a dedicated encoded
+	// identity BSI. It remains ineligible until that artifact is implemented.
+	BSIPrimaryKeyAuthorityModeCompoundEncodedBSI = "compound_encoded_bsi"
 )
 
 // BSIPrimaryKeyAuthorityEligibility describes whether a table can use native
@@ -26,6 +31,7 @@ type BSIPrimaryKeyAuthorityEligibility struct {
 	TableName          string
 	PrimaryKey         string
 	FieldName          string
+	FieldNames         []string
 	MappingStrategy    string
 	ColumnID           bool
 	RequiresShardScope bool
@@ -50,8 +56,10 @@ func ObserveBSIPrimaryKeyAuthorityEligibility(table *Table) BSIPrimaryKeyAuthori
 	}
 
 	fields := primaryKeyAuthorityDeclaredFields(observation.PrimaryKey)
+	observation.FieldNames = append([]string(nil), fields...)
 	if len(fields) != 1 {
-		observation.Reason = "primary key is compound"
+		observation.Mode = BSIPrimaryKeyAuthorityModeCompoundEncodedBSI
+		observation.Reason = "compound primary key requires encoded BSI authority artifact"
 		return observation
 	}
 	observation.FieldName = fields[0]
