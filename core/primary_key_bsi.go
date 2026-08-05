@@ -14,10 +14,15 @@ type BSIPrimaryKeyBackend interface {
 
 // BSIPrimaryKeyLookupRequest carries typed primary-key values to a BSI lookup.
 type BSIPrimaryKeyLookupRequest struct {
-	TableName      string
-	PrimaryKey     string
-	Attributes     []*Attribute
-	Values         []interface{}
+	TableName  string
+	PrimaryKey string
+	Attributes []*Attribute
+	Values     []interface{}
+	// Identity is the resolver-produced, typed, versioned authority key.
+	// Backends should prefer it over RenderedValue when present.
+	Identity []byte
+	// RenderedValue is retained for diagnostics and temporary KV-transition
+	// paths. It is not the BSI authority identity.
 	RenderedValue  string
 	ShardTimestamp time.Time
 	PrimaryKeyMode PrimaryKeyMode
@@ -31,10 +36,15 @@ type BSIPrimaryKeyLookupResult struct {
 
 // BSIPrimaryKeyStageRequest stages a typed primary-key mapping for a rownum.
 type BSIPrimaryKeyStageRequest struct {
-	TableName      string
-	PrimaryKey     string
-	Attributes     []*Attribute
-	Values         []interface{}
+	TableName  string
+	PrimaryKey string
+	Attributes []*Attribute
+	Values     []interface{}
+	// Identity is the resolver-produced, typed, versioned authority key.
+	// Backends should prefer it over RenderedValue when present.
+	Identity []byte
+	// RenderedValue is retained for diagnostics and temporary KV-transition
+	// paths. It is not the BSI authority identity.
 	RenderedValue  string
 	ShardTimestamp time.Time
 	ColumnID       uint64
@@ -91,7 +101,12 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	} else {
 		lookupStart := time.Now()
 		profile.BSILookupCount++
-		lookup, err := r.Backend.LookupPrimaryKey(newBSIPrimaryKeyLookupRequest(req, tbuf))
+		lookupReq, err := newBSIPrimaryKeyLookupRequest(req, tbuf)
+		if err != nil {
+			profile.BSILookupElapsed += time.Since(lookupStart)
+			return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
+		}
+		lookup, err := r.Backend.LookupPrimaryKey(lookupReq)
 		profile.BSILookupElapsed += time.Since(lookupStart)
 		if err != nil {
 			return finish(0, false), fmt.Errorf("BSI primary key lookup error - %w", err)
@@ -108,7 +123,11 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 	stageStart := time.Now()
 	profile.BSIStageWriteCount++
-	stageReq := newBSIPrimaryKeyStageRequest(req, tbuf)
+	stageReq, err := newBSIPrimaryKeyStageRequest(req, tbuf)
+	if err != nil {
+		profile.BSIStageWriteElapsed += time.Since(stageStart)
+		return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
+	}
 	if err := r.Backend.StagePrimaryKey(stageReq); err != nil {
 		profile.BSIStageWriteElapsed += time.Since(stageStart)
 		return finish(0, false), fmt.Errorf("BSI primary key stage error - %w", err)
@@ -166,8 +185,8 @@ func allocatePrimaryKeyColumnID(req PrimaryKeyResolveRequest, tbuf *TableBuffer,
 	return nil
 }
 
-func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) BSIPrimaryKeyLookupRequest {
-	return BSIPrimaryKeyLookupRequest{
+func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyLookupRequest, error) {
+	lookupReq := BSIPrimaryKeyLookupRequest{
 		TableName:      tbuf.Table.Name,
 		PrimaryKey:     tbuf.Table.PrimaryKey,
 		Attributes:     append([]*Attribute(nil), tbuf.PKAttributes...),
@@ -176,10 +195,16 @@ func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuff
 		ShardTimestamp: tbuf.CurrentTimestamp,
 		PrimaryKeyMode: req.PrimaryKeyMode.normalize(),
 	}
+	identity, err := EncodeBSIPrimaryKeyLookupIdentity(lookupReq)
+	if err != nil {
+		return BSIPrimaryKeyLookupRequest{}, err
+	}
+	lookupReq.Identity = append([]byte(nil), identity...)
+	return lookupReq, nil
 }
 
-func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) BSIPrimaryKeyStageRequest {
-	return BSIPrimaryKeyStageRequest{
+func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyStageRequest, error) {
+	stageReq := BSIPrimaryKeyStageRequest{
 		TableName:      tbuf.Table.Name,
 		PrimaryKey:     tbuf.Table.PrimaryKey,
 		Attributes:     append([]*Attribute(nil), tbuf.PKAttributes...),
@@ -188,4 +213,10 @@ func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffe
 		ShardTimestamp: tbuf.CurrentTimestamp,
 		ColumnID:       tbuf.CurrentColumnID,
 	}
+	identity, err := EncodeBSIPrimaryKeyStageIdentity(stageReq)
+	if err != nil {
+		return BSIPrimaryKeyStageRequest{}, err
+	}
+	stageReq.Identity = append([]byte(nil), identity...)
+	return stageReq, nil
 }

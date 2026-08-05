@@ -68,6 +68,8 @@ func NewTPCHOrderLineitemEnvelopeFixture(options TPCHOrderLineitemEnvelopeOption
 // TPCHOrderLineitemSelectorTables returns selector-only table metadata for the
 // tiny fixture. Full catalog metadata remains owned by schema.yaml files.
 func TPCHOrderLineitemSelectorTables() []*core.Table {
+	// Compound primary-key strings here are catalog field-list syntax only.
+	// BSI primary-key authority uses typed encoded identities at execution time.
 	return []*core.Table{
 		{
 			BasicTable: &shared.BasicTable{

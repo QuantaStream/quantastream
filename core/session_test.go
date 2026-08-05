@@ -243,6 +243,44 @@ func TestPutRowWithOptionsRejectsUnsupportedRowType(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot process row type")
 }
 
+func TestPutRowWithOptionsUsesTypedCompoundBSIPrimaryKeyIdentity(t *testing.T) {
+	backend := newMapBSIPrimaryKeyBackend()
+	session := newCompoundStringPrimaryKeyTestSession()
+	session.SetPrimaryKeyResolver(NewBSIPrimaryKeyResolver(backend))
+
+	first, err := session.PutRowWithOptions("compound", map[string]interface{}{
+		"left_value":  "x+0",
+		"right_value": "y",
+	}, 42, false, false, PutRowOptions{PrimaryKeyMode: PrimaryKeyModeAssumeNew})
+	require.NoError(t, err)
+	assert.True(t, first.Inserted)
+	assert.False(t, first.ExistingRow)
+	assert.Equal(t, uint64(42), first.ColumnID)
+	assert.Equal(t, 1, first.PrimaryKey.BSIStageWriteCount)
+
+	second, err := session.PutRowWithOptions("compound", map[string]interface{}{
+		"left_value":  "x",
+		"right_value": "0+y",
+	}, 99, false, false, PutRowOptions{PrimaryKeyMode: PrimaryKeyModeAssumeNew})
+	require.NoError(t, err)
+	assert.True(t, second.Inserted)
+	assert.False(t, second.ExistingRow)
+	assert.Equal(t, uint64(99), second.ColumnID)
+	assert.Equal(t, 1, second.PrimaryKey.BSIStageWriteCount)
+
+	replay, err := session.PutRowWithOptions("compound", map[string]interface{}{
+		"left_value":  "x+0",
+		"right_value": "y",
+	}, 0, false, false, PutRowOptions{})
+	require.NoError(t, err)
+	assert.False(t, replay.Inserted)
+	assert.True(t, replay.ExistingRow)
+	assert.Equal(t, uint64(42), replay.ColumnID)
+	assert.Equal(t, 1, replay.PrimaryKey.BSILookupCount)
+	assert.Equal(t, 1, replay.PrimaryKey.BSIHitCount)
+	assert.Zero(t, replay.PrimaryKey.BSIStageWriteCount)
+}
+
 func TestPutRowResultIncludesStageTimings(t *testing.T) {
 	req := putRowRequest{
 		tableName: "customers",
@@ -626,6 +664,38 @@ func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) 
 	columnID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, "1001")
 	require.True(t, ok)
 	assert.Equal(t, uint64(99), columnID)
+}
+
+func newCompoundStringPrimaryKeyTestSession() *Session {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "compound", PrimaryKey: "left_value+right_value"}}
+	left := newCompoundStringPrimaryKeyTestAttribute(table, "left_value")
+	right := newCompoundStringPrimaryKeyTestAttribute(table, "right_value")
+	table.Attributes = []Attribute{*left, *right}
+	tbuf := &TableBuffer{
+		Table:        table,
+		PKAttributes: []*Attribute{left, right},
+		PKMap: map[string]*Attribute{
+			"left_value":  left,
+			"right_value": right,
+		},
+		rowCache: map[string]interface{}{},
+	}
+	return &Session{
+		TableBuffers: map[string]*TableBuffer{"compound": tbuf},
+	}
+}
+
+func newCompoundStringPrimaryKeyTestAttribute(table *Table, fieldName string) *Attribute {
+	return &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       fieldName,
+			SourceName:      fieldName,
+			Type:            "String",
+			MappingStrategy: "StringLexBSI",
+		},
+		Parent:         table,
+		mapperInstance: &recordingMapper{},
+	}
 }
 
 func TestReadColumnEvaluatesBlindDefaultExpression(t *testing.T) {

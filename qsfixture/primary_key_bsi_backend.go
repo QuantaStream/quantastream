@@ -75,6 +75,9 @@ func (b *MemoryBSIPrimaryKeyBackend) Snapshot() map[string]uint64 {
 }
 
 func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) (string, error) {
+	if len(req.Identity) > 0 {
+		return string(req.Identity), nil
+	}
 	encoded, err := core.EncodeBSIPrimaryKeyLookupIdentity(req)
 	if err != nil {
 		return "", fmt.Errorf("memory BSI primary key lookup encode error - %w", err)
@@ -83,6 +86,9 @@ func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) (string, 
 }
 
 func memoryBSIPrimaryKeyStageKey(req core.BSIPrimaryKeyStageRequest) (string, error) {
+	if len(req.Identity) > 0 {
+		return string(req.Identity), nil
+	}
 	encoded, err := core.EncodeBSIPrimaryKeyStageIdentity(req)
 	if err != nil {
 		return "", fmt.Errorf("memory BSI primary key stage encode error - %w", err)

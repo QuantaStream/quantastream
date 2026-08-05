@@ -37,20 +37,28 @@ func newMapBSIPrimaryKeyBackend() *mapBSIPrimaryKeyBackend {
 }
 
 func (b *mapBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLookupRequest) (BSIPrimaryKeyLookupResult, error) {
-	encoded, err := EncodeBSIPrimaryKeyLookupIdentity(req)
-	if err != nil {
-		return BSIPrimaryKeyLookupResult{}, err
+	identity := req.Identity
+	if len(identity) == 0 {
+		encoded, err := EncodeBSIPrimaryKeyLookupIdentity(req)
+		if err != nil {
+			return BSIPrimaryKeyLookupResult{}, err
+		}
+		identity = encoded
 	}
-	columnID, found := b.rows[string(encoded)]
+	columnID, found := b.rows[string(identity)]
 	return BSIPrimaryKeyLookupResult{ColumnID: columnID, Found: found}, nil
 }
 
 func (b *mapBSIPrimaryKeyBackend) StagePrimaryKey(req BSIPrimaryKeyStageRequest) error {
-	encoded, err := EncodeBSIPrimaryKeyStageIdentity(req)
-	if err != nil {
-		return err
+	identity := req.Identity
+	if len(identity) == 0 {
+		encoded, err := EncodeBSIPrimaryKeyStageIdentity(req)
+		if err != nil {
+			return err
+		}
+		identity = encoded
 	}
-	key := string(encoded)
+	key := string(identity)
 	if existing, found := b.rows[key]; found && existing != req.ColumnID {
 		return fmt.Errorf("compound primary key conflict: existing column ID %d, staged column ID %d", existing, req.ColumnID)
 	}
@@ -88,6 +96,7 @@ func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {
 	require.Equal(t, "o_orderkey", lookupReq.PrimaryKey)
 	require.Equal(t, []*Attribute{pk}, lookupReq.Attributes)
 	require.Equal(t, []interface{}{int64(1001)}, lookupReq.Values)
+	require.NotEmpty(t, lookupReq.Identity)
 	require.Equal(t, "1001", lookupReq.RenderedValue)
 	require.Equal(t, tbuf.CurrentTimestamp, lookupReq.ShardTimestamp)
 	require.Equal(t, PrimaryKeyModeVerifyExisting, lookupReq.PrimaryKeyMode)
@@ -129,6 +138,7 @@ func TestBSIPrimaryKeyResolverCarriesCompoundTypedValues(t *testing.T) {
 	require.Equal(t, "l_orderkey,l_linenumber", lookupReq.PrimaryKey)
 	require.Equal(t, []*Attribute{orderKey, lineNumber}, lookupReq.Attributes)
 	require.Equal(t, []interface{}{int64(1001), int64(2)}, lookupReq.Values)
+	require.NotEmpty(t, lookupReq.Identity)
 	require.Equal(t, "1001+2", lookupReq.RenderedValue)
 }
 
@@ -259,6 +269,7 @@ func TestBSIPrimaryKeyResolverAllocatesAndStagesMiss(t *testing.T) {
 	require.Equal(t, "o_orderkey", stageReq.PrimaryKey)
 	require.Equal(t, []*Attribute{pk}, stageReq.Attributes)
 	require.Equal(t, []interface{}{int64(1002)}, stageReq.Values)
+	require.NotEmpty(t, stageReq.Identity)
 	require.Equal(t, "1002", stageReq.RenderedValue)
 	require.Equal(t, tbuf.CurrentTimestamp, stageReq.ShardTimestamp)
 	require.Equal(t, uint64(9001), stageReq.ColumnID)
