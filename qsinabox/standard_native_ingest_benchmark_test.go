@@ -78,23 +78,15 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
 	shadowProfile := &core.PrimaryKeyShadowProfile{}
-	primaryKeyBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
-	var resolverFactory core.SessionPrimaryKeyResolverFactory
-	if primaryKeyAuthorityMode == primaryKeyAuthorityBSIMode {
-		resolverFactory = func(_ *core.Session) core.PrimaryKeyResolver {
-			return core.NewBSIPrimaryKeyResolver(primaryKeyBackend)
-		}
-	} else if primaryKeyShadowMode == primaryKeyShadowBSIMode {
-		resolverFactory = func(_ *core.Session) core.PrimaryKeyResolver {
-			return core.NewShadowPrimaryKeyResolver(
-				core.KVPrimaryKeyResolver{},
-				core.NewBSIPrimaryKeyResolver(primaryKeyBackend),
-				shadowProfile.Callback(),
-			)
-		}
-	}
+	routerTableCache := core.NewTableCacheStruct()
+	resolverFactory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
+		primaryKeyAuthorityMode,
+		primaryKeyShadowMode,
+		routerTableCache,
+		shadowProfile,
+	)
 	router, err := core.NewSessionRouter(core.SessionRouterConfig{
-		TableCache:                core.NewTableCacheStruct(),
+		TableCache:                routerTableCache,
 		BasePath:                  process.Backend.ConfigBaseDir(config),
 		Conn:                      remoteConn,
 		ShardCount:                shardCount,
@@ -240,6 +232,59 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineit
 		}
 	case <-time.After(5 * time.Second):
 		b.Fatalf("native gRPC server did not stop")
+	}
+}
+
+func standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
+	authorityMode string,
+	shadowMode string,
+	tableCache *core.TableCacheStruct,
+	shadowProfile *core.PrimaryKeyShadowProfile,
+) core.SessionPrimaryKeyResolverFactory {
+	if authorityMode == primaryKeyAuthorityBSIMode {
+		return NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
+	}
+	if shadowMode == primaryKeyShadowBSIMode {
+		return func(session *core.Session) core.PrimaryKeyResolver {
+			return core.NewShadowPrimaryKeyResolver(
+				core.KVPrimaryKeyResolver{},
+				NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)(session),
+				shadowProfile.Callback(),
+			)
+		}
+	}
+	return nil
+}
+
+func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteAuthority(t *testing.T) {
+	factory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
+		primaryKeyAuthorityBSIMode,
+		"",
+		core.NewTableCacheStruct(),
+		nil,
+	)
+	if factory == nil {
+		t.Fatalf("resolver factory = nil, want concrete BSI authority factory")
+	}
+	resolver := factory(&core.Session{})
+	if _, ok := resolver.(StandardBSIPrimaryKeyResolver); !ok {
+		t.Fatalf("resolver = %T, want StandardBSIPrimaryKeyResolver", resolver)
+	}
+}
+
+func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteShadow(t *testing.T) {
+	factory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
+		"",
+		primaryKeyShadowBSIMode,
+		core.NewTableCacheStruct(),
+		&core.PrimaryKeyShadowProfile{},
+	)
+	if factory == nil {
+		t.Fatalf("resolver factory = nil, want concrete BSI shadow factory")
+	}
+	resolver := factory(&core.Session{})
+	if _, ok := resolver.(core.ShadowPrimaryKeyResolver); !ok {
+		t.Fatalf("resolver = %T, want core.ShadowPrimaryKeyResolver", resolver)
 	}
 }
 
