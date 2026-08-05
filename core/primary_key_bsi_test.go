@@ -102,6 +102,52 @@ func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {
 	require.Equal(t, PrimaryKeyModeVerifyExisting, lookupReq.PrimaryKeyMode)
 }
 
+func TestBSIPrimaryKeyResolverUsesMatchedColumnIDsFromBackend(t *testing.T) {
+	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+	backend := &recordingBSIPrimaryKeyBackend{
+		lookupResult: BSIPrimaryKeyLookupResult{MatchedColumnIDs: []uint64{4242}},
+	}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001",
+		PrimaryKeyValues: []interface{}{int64(1001)},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.ExistingRow)
+	require.Equal(t, uint64(4242), result.ColumnID)
+	require.Equal(t, uint64(4242), tbuf.CurrentColumnID)
+	require.Equal(t, 1, result.Profile.BSIHitCount)
+	require.Zero(t, result.Profile.BSIStageWriteCount)
+}
+
+func TestBSIPrimaryKeyResolverRejectsDuplicateBackendMatches(t *testing.T) {
+	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+	backend := &recordingBSIPrimaryKeyBackend{
+		lookupResult: BSIPrimaryKeyLookupResult{MatchedColumnIDs: []uint64{7, 8}},
+	}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001",
+		PrimaryKeyValues: []interface{}{int64(1001)},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "authority conflict")
+	require.Contains(t, err.Error(), "matched 2 rownums")
+	require.Zero(t, result.ColumnID)
+	require.False(t, result.ExistingRow)
+	require.Equal(t, 1, result.Profile.BSILookupCount)
+	require.Zero(t, result.Profile.BSIHitCount)
+	require.Zero(t, result.Profile.BSIStageWriteCount)
+}
+
 func TestBSIPrimaryKeyResolverCarriesCompoundTypedValues(t *testing.T) {
 	tbuf, orderKey := newBSIPrimaryKeyTestBuffer()
 	lineNumber := &Attribute{

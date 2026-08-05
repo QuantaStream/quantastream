@@ -37,6 +37,7 @@ func TestMemoryBSIPrimaryKeyBackendStagesAndLooksUpTypedValues(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Found)
 	require.Equal(t, uint64(42), result.ColumnID)
+	require.Equal(t, []uint64{42}, result.MatchedColumnIDs)
 }
 
 func TestMemoryBSIPrimaryKeyBackendIgnoresRenderedValueForIdentity(t *testing.T) {

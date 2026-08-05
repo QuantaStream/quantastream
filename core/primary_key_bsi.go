@@ -30,8 +30,9 @@ type BSIPrimaryKeyLookupRequest struct {
 
 // BSIPrimaryKeyLookupResult describes a BSI primary-key lookup result.
 type BSIPrimaryKeyLookupResult struct {
-	ColumnID uint64
-	Found    bool
+	ColumnID         uint64
+	Found            bool
+	MatchedColumnIDs []uint64
 }
 
 // BSIPrimaryKeyStageRequest stages a typed primary-key mapping for a rownum.
@@ -125,10 +126,15 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		if err != nil {
 			return finish(0, false), fmt.Errorf("BSI primary key lookup error - %w", err)
 		}
-		if lookup.Found {
+		matchedColumnIDs := lookup.matchedColumnIDs()
+		if len(matchedColumnIDs) > 1 {
+			return finish(0, false), fmt.Errorf("BSI primary key authority conflict for %s.%s value %s: matched %d rownums",
+				lookupReq.TableName, lookupReq.PrimaryKey, lookupReq.RenderedValue, len(matchedColumnIDs))
+		}
+		if len(matchedColumnIDs) == 1 {
 			profile.BSIHitCount++
-			tbuf.CurrentColumnID = lookup.ColumnID
-			return finish(lookup.ColumnID, true), nil
+			tbuf.CurrentColumnID = matchedColumnIDs[0]
+			return finish(matchedColumnIDs[0], true), nil
 		}
 	}
 
@@ -169,6 +175,16 @@ func validateBSIPrimaryKeyValues(req PrimaryKeyResolveRequest, tbuf *TableBuffer
 			}
 			return fmt.Errorf("BSI primary key resolver requires non-nil typed primary-key value for %s", fieldName)
 		}
+	}
+	return nil
+}
+
+func (r BSIPrimaryKeyLookupResult) matchedColumnIDs() []uint64 {
+	if len(r.MatchedColumnIDs) > 0 {
+		return append([]uint64(nil), r.MatchedColumnIDs...)
+	}
+	if r.Found {
+		return []uint64{r.ColumnID}
 	}
 	return nil
 }

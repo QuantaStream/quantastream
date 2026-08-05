@@ -32,7 +32,11 @@ func (b *MemoryBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrimaryKeyLook
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	columnID, found := b.rows[key]
-	return core.BSIPrimaryKeyLookupResult{ColumnID: columnID, Found: found}, nil
+	result := core.BSIPrimaryKeyLookupResult{ColumnID: columnID, Found: found}
+	if found {
+		result.MatchedColumnIDs = []uint64{columnID}
+	}
+	return result, nil
 }
 
 // StagePrimaryKey records a typed primary-key mapping for future lookups.
