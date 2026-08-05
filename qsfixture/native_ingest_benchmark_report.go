@@ -348,6 +348,9 @@ var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "put_stage_parent_relation_microseconds_per_order", label: "Parent relation us/order"},
 	{name: "put_stage_attribute_mapping_microseconds_per_order", label: "Attribute mapping us/order"},
 	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
+	{name: "primary_key_bsi_hit_percent", label: "PK BSI hit"},
+	{name: "primary_key_kv_hit_percent", label: "PK KV hit"},
+	{name: "primary_key_kv_lookup_microseconds_per_lookup", label: "PK KV lookup us"},
 	{name: "primary_key_skipped_kv_lookup_percent", label: "Skipped PK KV lookup"},
 }
 
