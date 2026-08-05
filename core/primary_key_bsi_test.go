@@ -181,6 +181,88 @@ func TestBSIPrimaryKeyResolverReplaysCompoundKeyFromBSIBackend(t *testing.T) {
 	require.Zero(t, replay.Profile.RownumAllocationCount)
 }
 
+func TestBSIPrimaryKeyResolverReusesSameBatchCompoundKeyBeforeBackendLookup(t *testing.T) {
+	backend := &recordingBSIPrimaryKeyBackend{}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
+	first, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+
+	insert, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      first,
+		LookupValue:      "1001+2",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		ProvidedColumnID: 7000,
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+	require.NoError(t, err)
+	require.False(t, insert.ExistingRow)
+	require.Equal(t, uint64(7000), insert.ColumnID)
+	require.Equal(t, 1, insert.Profile.LocalCacheLookupCount)
+	require.Zero(t, insert.Profile.LocalCacheHitCount)
+	require.Equal(t, 1, insert.Profile.AssumeNewCount)
+	require.Equal(t, 1, insert.Profile.SkippedBSILookupCount)
+	require.Equal(t, 1, insert.Profile.BSIStageWriteCount)
+	require.Equal(t, 1, insert.Profile.BatchCacheWriteCount)
+
+	second, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+	replay, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      second,
+		LookupValue:      "rendering-does-not-matter",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+
+	require.NoError(t, err)
+	require.True(t, replay.ExistingRow)
+	require.Equal(t, uint64(7000), replay.ColumnID)
+	require.Equal(t, uint64(7000), second.CurrentColumnID)
+	require.Equal(t, 1, replay.Profile.LocalCacheLookupCount)
+	require.Equal(t, 1, replay.Profile.LocalCacheHitCount)
+	require.Zero(t, replay.Profile.AssumeNewCount)
+	require.Zero(t, replay.Profile.BSILookupCount)
+	require.Zero(t, replay.Profile.BSIStageWriteCount)
+	require.Zero(t, replay.Profile.RownumAllocationCount)
+	require.Empty(t, backend.lookupRequests)
+	require.Len(t, backend.stageRequests, 1)
+}
+
+func TestBSIPrimaryKeyResolverRejectsSameBatchProvidedColumnIDConflict(t *testing.T) {
+	backend := &recordingBSIPrimaryKeyBackend{}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
+	first, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+
+	_, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      first,
+		LookupValue:      "1001+2",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		ProvidedColumnID: 7000,
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+	require.NoError(t, err)
+
+	second, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+	conflict, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      second,
+		LookupValue:      "same-key-different-rownum",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		ProvidedColumnID: 8000,
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "local batch conflict")
+	require.Zero(t, conflict.ColumnID)
+	require.Equal(t, 1, conflict.Profile.LocalCacheLookupCount)
+	require.Zero(t, conflict.Profile.BSILookupCount)
+	require.Zero(t, conflict.Profile.BSIStageWriteCount)
+	require.Len(t, backend.stageRequests, 1)
+}
+
 func TestBSIPrimaryKeyResolverRejectsCompoundAssumeNewConflict(t *testing.T) {
 	backend := newMapBSIPrimaryKeyBackend()
 	resolver := NewBSIPrimaryKeyResolver(backend)

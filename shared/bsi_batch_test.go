@@ -20,6 +20,31 @@ func TestSetValueMarksBatchNonEmpty(t *testing.T) {
 	}
 }
 
+func TestBatchBufferPrimaryKeyIdentityCacheIsLocalToBatch(t *testing.T) {
+	batch := NewBatchBuffer(nil, nil, 1000)
+	identity := []byte("typed-primary-key-identity")
+
+	batch.SetPrimaryKeyIdentity(identity, 42)
+	batch.SetPrimaryKeyIdentity(identity, 99)
+
+	columnID, ok := batch.LookupLocalCIDForPrimaryKeyIdentity(identity)
+	if !ok {
+		t.Fatal("expected local primary-key identity hit")
+	}
+	if columnID != 42 {
+		t.Fatalf("columnID = %d, want first staged rownum 42", columnID)
+	}
+	if !batch.IsEmpty() {
+		t.Fatal("primary-key identity cache should not make batch flushable")
+	}
+	if err := batch.Flush(); err != nil {
+		t.Fatalf("Flush returned error: %v", err)
+	}
+	if _, ok := batch.LookupLocalCIDForPrimaryKeyIdentity(identity); ok {
+		t.Fatal("primary-key identity cache should clear after successful flush")
+	}
+}
+
 func TestDefaultBSIReportsValueAfterSetBigValue(t *testing.T) {
 	bsi := roaring64.NewDefaultBSI()
 	bsi.SetBigValue(1, big.NewInt(42))

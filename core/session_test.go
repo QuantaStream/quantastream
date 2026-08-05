@@ -276,8 +276,10 @@ func TestPutRowWithOptionsUsesTypedCompoundBSIPrimaryKeyIdentity(t *testing.T) {
 	assert.False(t, replay.Inserted)
 	assert.True(t, replay.ExistingRow)
 	assert.Equal(t, uint64(42), replay.ColumnID)
-	assert.Equal(t, 1, replay.PrimaryKey.BSILookupCount)
-	assert.Equal(t, 1, replay.PrimaryKey.BSIHitCount)
+	assert.Equal(t, 1, replay.PrimaryKey.LocalCacheLookupCount)
+	assert.Equal(t, 1, replay.PrimaryKey.LocalCacheHitCount)
+	assert.Zero(t, replay.PrimaryKey.BSILookupCount)
+	assert.Zero(t, replay.PrimaryKey.BSIHitCount)
 	assert.Zero(t, replay.PrimaryKey.BSIStageWriteCount)
 }
 
@@ -682,6 +684,7 @@ func newCompoundStringPrimaryKeyTestSession() *Session {
 	}
 	return &Session{
 		TableBuffers: map[string]*TableBuffer{"compound": tbuf},
+		BatchBuffer:  shared.NewBatchBuffer(nil, nil, 1000),
 	}
 }
 

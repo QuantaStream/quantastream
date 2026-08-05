@@ -25,22 +25,23 @@ import (
 // batchMutex - Concurrency guard for batch state mutations.
 type BatchBuffer struct {
 	*BitmapIndex
-	KVStore                *KVStore
-	batchSize              int
-	batchSets              map[string]map[string]map[uint64]map[int64]*Bitmap
-	batchClears            map[string]map[string]map[uint64]map[int64]*Bitmap
-	batchValues            map[string]map[string]map[int64]*roaring64.BSI
-	batchClearValues       map[string]map[string]map[int64]*roaring64.Bitmap
-	batchPartitionStr      map[string]map[interface{}]interface{}
-	batchSetCount          int
-	batchClearCount        int
-	batchValueCount        int
-	batchClearValueCount   int
-	batchPartitionStrCount int
-	batchMutex             sync.RWMutex
-	lastFlushProfile       BatchBufferFlushProfile
-	ModifiedAt             time.Time
-	FlushedAt              time.Time
+	KVStore                 *KVStore
+	batchSize               int
+	batchSets               map[string]map[string]map[uint64]map[int64]*Bitmap
+	batchClears             map[string]map[string]map[uint64]map[int64]*Bitmap
+	batchValues             map[string]map[string]map[int64]*roaring64.BSI
+	batchClearValues        map[string]map[string]map[int64]*roaring64.Bitmap
+	batchPartitionStr       map[string]map[interface{}]interface{}
+	batchPrimaryKeyIdentity map[string]uint64
+	batchSetCount           int
+	batchClearCount         int
+	batchValueCount         int
+	batchClearValueCount    int
+	batchPartitionStrCount  int
+	batchMutex              sync.RWMutex
+	lastFlushProfile        BatchBufferFlushProfile
+	ModifiedAt              time.Time
+	FlushedAt               time.Time
 }
 
 // BatchBufferFlushProfile captures one completed Flush attempt.
@@ -167,6 +168,7 @@ func (c *BatchBuffer) Flush() (err error) {
 		c.batchClearValues = nil
 		c.batchClearValueCount = 0
 	}
+	c.batchPrimaryKeyIdentity = nil
 	return nil
 }
 
@@ -305,6 +307,14 @@ func (c *BatchBuffer) MergeInto(to *BatchBuffer) {
 		for k, v := range valueMap {
 			to.batchPartitionStr[indexPath][k] = v
 			to.batchPartitionStrCount++
+		}
+	}
+	if len(c.batchPrimaryKeyIdentity) > 0 {
+		if to.batchPrimaryKeyIdentity == nil {
+			to.batchPrimaryKeyIdentity = make(map[string]uint64, len(c.batchPrimaryKeyIdentity))
+		}
+		for identity, columnID := range c.batchPrimaryKeyIdentity {
+			to.batchPrimaryKeyIdentity[identity] = columnID
 		}
 	}
 
@@ -509,4 +519,37 @@ func (c *BatchBuffer) LookupLocalCIDForString(index, lookup string) (columnID ui
 		columnID = colIDVal.(uint64)
 	}
 	return
+}
+
+// SetPrimaryKeyIdentity records an unflushed BSI primary-key identity to rownum
+// mapping for same-batch duplicate detection.
+func (c *BatchBuffer) SetPrimaryKeyIdentity(identity []byte, columnID uint64) {
+	if c == nil || len(identity) == 0 || columnID == 0 {
+		return
+	}
+
+	c.batchMutex.Lock()
+	defer c.batchMutex.Unlock()
+
+	c.ModifiedAt = time.Now()
+	if c.batchPrimaryKeyIdentity == nil {
+		c.batchPrimaryKeyIdentity = make(map[string]uint64)
+	}
+	if _, exists := c.batchPrimaryKeyIdentity[string(identity)]; !exists {
+		c.batchPrimaryKeyIdentity[string(identity)] = columnID
+	}
+}
+
+// LookupLocalCIDForPrimaryKeyIdentity returns a rownum for an unflushed BSI
+// primary-key identity staged in this batch.
+func (c *BatchBuffer) LookupLocalCIDForPrimaryKeyIdentity(identity []byte) (columnID uint64, ok bool) {
+	if c == nil || len(identity) == 0 {
+		return 0, false
+	}
+
+	c.batchMutex.RLock()
+	defer c.batchMutex.RUnlock()
+
+	columnID, ok = c.batchPrimaryKeyIdentity[string(identity)]
+	return columnID, ok
 }

@@ -95,17 +95,31 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 
 	profile.LookupRequiredCount++
+	lookupReq, err := newBSIPrimaryKeyLookupRequest(req, tbuf)
+	if err != nil {
+		return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
+	}
+	if session.BatchBuffer != nil {
+		localLookupStart := time.Now()
+		profile.LocalCacheLookupCount++
+		if columnID, ok := session.BatchBuffer.LookupLocalCIDForPrimaryKeyIdentity(lookupReq.Identity); ok {
+			profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
+			if req.ProvidedColumnID != 0 && req.ProvidedColumnID != columnID {
+				return finish(0, false), fmt.Errorf("BSI primary key local batch conflict for %s: existing column ID %d, provided column ID %d",
+					req.LookupValue, columnID, req.ProvidedColumnID)
+			}
+			profile.LocalCacheHitCount++
+			tbuf.CurrentColumnID = columnID
+			return finish(columnID, true), nil
+		}
+		profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
+	}
 	if req.PrimaryKeyMode.assumeNew() {
 		profile.AssumeNewCount++
 		profile.SkippedBSILookupCount++
 	} else {
 		lookupStart := time.Now()
 		profile.BSILookupCount++
-		lookupReq, err := newBSIPrimaryKeyLookupRequest(req, tbuf)
-		if err != nil {
-			profile.BSILookupElapsed += time.Since(lookupStart)
-			return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
-		}
 		lookup, err := r.Backend.LookupPrimaryKey(lookupReq)
 		profile.BSILookupElapsed += time.Since(lookupStart)
 		if err != nil {
@@ -133,6 +147,12 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		return finish(0, false), fmt.Errorf("BSI primary key stage error - %w", err)
 	}
 	profile.BSIStageWriteElapsed += time.Since(stageStart)
+	if session.BatchBuffer != nil {
+		batchCacheWriteStart := time.Now()
+		profile.BatchCacheWriteCount++
+		session.BatchBuffer.SetPrimaryKeyIdentity(stageReq.Identity, tbuf.CurrentColumnID)
+		profile.BatchCacheWriteElapsed += time.Since(batchCacheWriteStart)
+	}
 	return finish(tbuf.CurrentColumnID, false), nil
 }
 
