@@ -431,18 +431,74 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHBatchEnvelopes(t *testing.T) 
 	}
 }
 
+func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *testing.T) {
+	orderCount := 2
+	lineitemsPerOrder := 3
+	replayCount := 2
+	shadowStats := &primaryKeyShadowBenchmarkStats{}
+	shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
+
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        orderCount,
+		LineitemsPerOrder: lineitemsPerOrder,
+		ShardCount:        1,
+		SourceMode:        core.IngestSourceStream,
+		ReplayCount:       replayCount,
+		ShadowStats:       shadowStats,
+		PrimaryKeyResolverFactory: func(_ *core.Session) core.PrimaryKeyResolver {
+			return core.NewShadowPrimaryKeyResolver(
+				core.KVPrimaryKeyResolver{},
+				core.NewBSIPrimaryKeyResolver(shadowBackend),
+				shadowStats.Observe,
+			)
+		},
+	})
+
+	expectedTopLevelRecords := orderCount * replayCount
+	expectedLogicalWrites := expectedTopLevelRecords * (1 + lineitemsPerOrder)
+	expectedLineitemReplayHits := orderCount * lineitemsPerOrder
+	if result.PutProfile.RecordCount != expectedTopLevelRecords {
+		t.Fatalf("put profile = %+v, want %d routed order records", result.PutProfile, expectedTopLevelRecords)
+	}
+	if result.PutProfile.LogicalRowCount != expectedLogicalWrites {
+		t.Fatalf("put profile = %+v, want %d logical writes across replays", result.PutProfile, expectedLogicalWrites)
+	}
+	if result.PutProfile.PrimaryKey.KVHitCount != expectedLineitemReplayHits {
+		t.Fatalf("primary key profile = %+v, want %d KV hits on replayed lineitems",
+			result.PutProfile.PrimaryKey, expectedLineitemReplayHits)
+	}
+	expectedComparisons := expectedLogicalWrites
+	if result.ShadowProfile.ComparisonCount != expectedComparisons ||
+		result.ShadowProfile.MatchCount != expectedComparisons ||
+		result.ShadowProfile.MismatchCount != 0 {
+		t.Fatalf("shadow profile = %+v, want %d clean comparisons", result.ShadowProfile, expectedComparisons)
+	}
+	if result.ShadowProfile.ExistingRowMatch != expectedLineitemReplayHits {
+		t.Fatalf("shadow profile = %+v, want %d matched existing lineitem rows on replay",
+			result.ShadowProfile, expectedLineitemReplayHits)
+	}
+	if len(shadowBackend.Snapshot()) != expectedLineitemReplayHits {
+		t.Fatalf("shadow backend entries = %d, want %d lineitem PK entries",
+			len(shadowBackend.Snapshot()), expectedLineitemReplayHits)
+	}
+}
+
 type standardTPCHRouterIngestScenario struct {
-	OrderCount        int
-	LineitemsPerOrder int
-	ShardCount        int
-	SourceMode        core.IngestSourceMode
-	BaseOrderKey      int64
+	OrderCount                int
+	LineitemsPerOrder         int
+	ShardCount                int
+	SourceMode                core.IngestSourceMode
+	BaseOrderKey              int64
+	ReplayCount               int
+	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
+	ShadowStats               *primaryKeyShadowBenchmarkStats
 }
 
 type standardTPCHRouterIngestResult struct {
-	Routes       []core.IngestRouteResult
-	PutProfile   core.RouterPutRowProfileSummary
-	FlushProfile core.RouterFlushProfileSummary
+	Routes        []core.IngestRouteResult
+	PutProfile    core.RouterPutRowProfileSummary
+	FlushProfile  core.RouterFlushProfileSummary
+	ShadowProfile primaryKeyShadowBenchmarkSnapshot
 }
 
 func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
@@ -460,6 +516,9 @@ func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
 	}
 	if scenario.SourceMode == "" {
 		scenario.SourceMode = core.IngestSourceStream
+	}
+	if scenario.ReplayCount <= 0 {
+		scenario.ReplayCount = 1
 	}
 	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
 		OrderCount:        scenario.OrderCount,
@@ -512,38 +571,41 @@ func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
 
 	putRowProfile := &core.RouterPutRowProfile{}
 	flushProfile := &core.RouterFlushProfile{}
-	router, err := core.NewSessionRouter(core.SessionRouterConfig{
-		TableCache:     core.NewTableCacheStruct(),
-		BasePath:       process.Backend.ConfigBaseDir(config),
-		Conn:           remoteConn,
-		ShardCount:     scenario.ShardCount,
-		ChannelSize:    len(fixture.Envelopes),
-		FlushInterval:  10 * time.Millisecond,
-		OnPutRowResult: putRowProfile.Callback(),
-		OnFlushProfile: flushProfile.Callback(),
-	})
-	if err != nil {
-		tb.Fatalf("NewSessionRouter() error = %v", err)
-	}
-
 	routes := make([]core.IngestRouteResult, 0, len(fixture.Envelopes))
-	for _, envelope := range fixture.Envelopes {
-		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
-			Tables: fixture.Tables,
+	for replay := 0; replay < scenario.ReplayCount; replay++ {
+		router, err := core.NewSessionRouter(core.SessionRouterConfig{
+			TableCache:                core.NewTableCacheStruct(),
+			BasePath:                  process.Backend.ConfigBaseDir(config),
+			Conn:                      remoteConn,
+			ShardCount:                scenario.ShardCount,
+			ChannelSize:               len(fixture.Envelopes),
+			FlushInterval:             10 * time.Millisecond,
+			PrimaryKeyResolverFactory: scenario.PrimaryKeyResolverFactory,
+			OnPutRowResult:            putRowProfile.Callback(),
+			OnFlushProfile:            flushProfile.Callback(),
 		})
-		if routeDiagnostics.BlocksNative() {
-			tb.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
-		}
 		if err != nil {
-			tb.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+			tb.Fatalf("NewSessionRouter() error = %v", err)
 		}
-		if !route.Enqueued || route.Record.TableName != "orders" {
-			tb.Fatalf("route result = %+v, want enqueued orders record", route)
+
+		for _, envelope := range fixture.Envelopes {
+			route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+				Tables: fixture.Tables,
+			})
+			if routeDiagnostics.BlocksNative() {
+				tb.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+			}
+			if err != nil {
+				tb.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+			}
+			if !route.Enqueued || route.Record.TableName != "orders" {
+				tb.Fatalf("route result = %+v, want enqueued orders record", route)
+			}
+			routes = append(routes, route)
 		}
-		routes = append(routes, route)
-	}
-	if err := router.Close(); err != nil {
-		tb.Fatalf("router Close() error = %v", err)
+		if err := router.Close(); err != nil {
+			tb.Fatalf("router Close() error = %v", err)
+		}
 	}
 
 	totalLineitems := scenario.OrderCount * scenario.LineitemsPerOrder
@@ -565,9 +627,10 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineit
 		tb.Fatalf("native gRPC server did not stop")
 	}
 	return standardTPCHRouterIngestResult{
-		Routes:       routes,
-		PutProfile:   putRowProfile.Snapshot(),
-		FlushProfile: flushProfile.Snapshot(),
+		Routes:        routes,
+		PutProfile:    putRowProfile.Snapshot(),
+		FlushProfile:  flushProfile.Snapshot(),
+		ShadowProfile: scenario.ShadowStats.Snapshot(),
 	}
 }
 

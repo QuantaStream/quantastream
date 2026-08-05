@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -284,67 +283,5 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 		b.ReportMetric(metrics["primary_key_shadow_match_count"], "pk_shadow_matches")
 		b.ReportMetric(metrics["primary_key_shadow_mismatch_count"], "pk_shadow_mismatches")
 		b.ReportMetric(metrics["primary_key_shadow_skip_count"], "pk_shadow_skips")
-	}
-}
-
-const primaryKeyShadowBSIMode = "bsi"
-
-type primaryKeyShadowBenchmarkSnapshot struct {
-	ComparisonCount     int
-	MatchCount          int
-	MismatchCount       int
-	SkipCount           int
-	AuthorityErrorCount int
-	ShadowErrorCount    int
-	FirstIssue          string
-}
-
-type primaryKeyShadowBenchmarkStats struct {
-	mu       sync.Mutex
-	snapshot primaryKeyShadowBenchmarkSnapshot
-}
-
-func (s *primaryKeyShadowBenchmarkStats) Observe(comparison core.PrimaryKeyShadowComparison) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.snapshot.ComparisonCount++
-	switch comparison.Reason {
-	case core.PrimaryKeyShadowMatchReason:
-		s.snapshot.MatchCount++
-	case core.PrimaryKeyShadowAuthorityErrorReason:
-		s.snapshot.AuthorityErrorCount++
-	case core.PrimaryKeyShadowShadowErrorReason:
-		s.snapshot.ShadowErrorCount++
-	case core.PrimaryKeyShadowNoAuthorityColumnIDReason:
-		s.snapshot.SkipCount++
-	default:
-		s.snapshot.MismatchCount++
-	}
-	if !comparison.Match && s.snapshot.FirstIssue == "" {
-		s.snapshot.FirstIssue = comparison.String()
-	}
-}
-
-func (s *primaryKeyShadowBenchmarkStats) Snapshot() primaryKeyShadowBenchmarkSnapshot {
-	if s == nil {
-		return primaryKeyShadowBenchmarkSnapshot{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.snapshot
-}
-
-func primaryKeyShadowModeEnv(name string) (string, error) {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	switch value {
-	case "", "none", "off", "false", "0":
-		return "", nil
-	case primaryKeyShadowBSIMode, "memory_bsi":
-		return primaryKeyShadowBSIMode, nil
-	default:
-		return "", fmt.Errorf("%s must be one of none, off, bsi, or memory_bsi: %q", name, value)
 	}
 }
