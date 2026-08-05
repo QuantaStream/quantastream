@@ -24,6 +24,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	ShardCount              int
 	RunCount                int
 	ReplayCount             int
+	ReplayScope             string
 	PrimaryKeyMode          string
 	PrimaryKeyAuthority     string
 	PrimaryKeyShadow        string
@@ -61,6 +62,7 @@ type NativeIngestBenchmarkConfig struct {
 	ShardCount          int    `json:"shard_count"`
 	RunCount            int    `json:"run_count"`
 	ReplayCount         int    `json:"replay_count,omitempty"`
+	ReplayScope         string `json:"replay_scope,omitempty"`
 	PrimaryKeyMode      string `json:"primary_key_mode,omitempty"`
 	PrimaryKeyAuthority string `json:"primary_key_authority,omitempty"`
 	PrimaryKeyShadow    string `json:"primary_key_shadow,omitempty"`
@@ -106,6 +108,7 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			ShardCount:          request.ShardCount,
 			RunCount:            request.RunCount,
 			ReplayCount:         request.ReplayCount,
+			ReplayScope:         request.ReplayScope,
 			PrimaryKeyMode:      request.PrimaryKeyMode,
 			PrimaryKeyAuthority: request.PrimaryKeyAuthority,
 			PrimaryKeyShadow:    request.PrimaryKeyShadow,

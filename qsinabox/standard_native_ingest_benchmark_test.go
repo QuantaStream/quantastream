@@ -15,11 +15,20 @@ import (
 	"github.com/QuantaStream/quantastream/shared"
 )
 
+const (
+	standardNativeIngestReplayScopeSingleRouter    = "single_router"
+	standardNativeIngestReplayScopeRouterPerReplay = "router_per_replay"
+)
+
 func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	orderCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_ORDERS", 100)
 	lineitemsPerOrder := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS", 4)
 	shardCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS", 1)
 	replayCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_REPLAYS", 1)
+	replayScope, err := standardNativeIngestBenchmarkReplayScopeEnv("QUANTASTREAM_TPCH_INGEST_BENCH_REPLAY_SCOPE")
+	if err != nil {
+		b.Fatal(err)
+	}
 	profileName := stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE", "standard-native-tpch-ingest")
 	reportPath := strings.TrimSpace(os.Getenv("QUANTASTREAM_TPCH_INGEST_BENCH_REPORT"))
 	primaryKeyMode := core.PrimaryKeyMode(stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE", "verify_existing")).Normalize()
@@ -85,21 +94,23 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		routerTableCache,
 		shadowProfile,
 	)
-	router, err := core.NewSessionRouter(core.SessionRouterConfig{
-		TableCache:                routerTableCache,
-		BasePath:                  process.Backend.ConfigBaseDir(config),
-		Conn:                      remoteConn,
-		ShardCount:                shardCount,
-		ChannelSize:               orderCount * replayCount,
-		FlushInterval:             10 * time.Millisecond,
-		PrimaryKeyMode:            primaryKeyMode,
-		PrimaryKeyResolverFactory: resolverFactory,
-		OnPutRowResult:            putRowProfile.Callback(),
-		OnDrainProfile:            drainProfile.Callback(),
-		OnFlushProfile:            flushProfile.Callback(),
-	})
-	if err != nil {
-		b.Fatalf("NewSessionRouter() error = %v", err)
+	newRouter := func(channelSize int) (*core.SessionRouter, error) {
+		if channelSize <= 0 {
+			channelSize = orderCount * replayCount
+		}
+		return core.NewSessionRouter(core.SessionRouterConfig{
+			TableCache:                routerTableCache,
+			BasePath:                  process.Backend.ConfigBaseDir(config),
+			Conn:                      remoteConn,
+			ShardCount:                shardCount,
+			ChannelSize:               channelSize,
+			FlushInterval:             10 * time.Millisecond,
+			PrimaryKeyMode:            primaryKeyMode,
+			PrimaryKeyResolverFactory: resolverFactory,
+			OnPutRowResult:            putRowProfile.Callback(),
+			OnDrainProfile:            drainProfile.Callback(),
+			OnFlushProfile:            flushProfile.Callback(),
+		})
 	}
 
 	tables := qsfixture.TPCHOrderLineitemSelectorTables()
@@ -121,31 +132,43 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 
 	b.ResetTimer()
 	benchmarkStartedAt := time.Now()
-	enqueueStartedAt := time.Now()
-	for _, envelopes := range envelopeBatches {
-		for replay := 0; replay < replayCount; replay++ {
-			for _, envelope := range envelopes {
-				route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
-					Tables: tables,
-				})
-				if routeDiagnostics.BlocksNative() {
-					b.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
-				}
+	var enqueueElapsed time.Duration
+	var drainElapsed time.Duration
+	if replayScope == standardNativeIngestReplayScopeRouterPerReplay {
+		for _, envelopes := range envelopeBatches {
+			for replay := 0; replay < replayCount; replay++ {
+				router, err := newRouter(len(envelopes))
 				if err != nil {
-					b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d error = %v", envelope.EventID, replay+1, err)
+					b.Fatalf("NewSessionRouter() replay %d error = %v", replay+1, err)
 				}
-				if !route.Enqueued {
-					b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d did not enqueue", envelope.EventID, replay+1)
+				enqueueStartedAt := time.Now()
+				routeStandardNativeIngestBenchmarkEnvelopes(b, router, tables, envelopes, replay)
+				enqueueElapsed += time.Since(enqueueStartedAt)
+				drainStartedAt := time.Now()
+				if err := router.Close(); err != nil {
+					b.Fatalf("router Close() replay %d error = %v", replay+1, err)
 				}
+				drainElapsed += time.Since(drainStartedAt)
 			}
 		}
+	} else {
+		router, err := newRouter(orderCount * replayCount)
+		if err != nil {
+			b.Fatalf("NewSessionRouter() error = %v", err)
+		}
+		enqueueStartedAt := time.Now()
+		for _, envelopes := range envelopeBatches {
+			for replay := 0; replay < replayCount; replay++ {
+				routeStandardNativeIngestBenchmarkEnvelopes(b, router, tables, envelopes, replay)
+			}
+		}
+		enqueueElapsed = time.Since(enqueueStartedAt)
+		drainStartedAt := time.Now()
+		if err := router.Close(); err != nil {
+			b.Fatalf("router Close() error = %v", err)
+		}
+		drainElapsed = time.Since(drainStartedAt)
 	}
-	enqueueElapsed := time.Since(enqueueStartedAt)
-	drainStartedAt := time.Now()
-	if err := router.Close(); err != nil {
-		b.Fatalf("router Close() error = %v", err)
-	}
-	drainElapsed := time.Since(drainStartedAt)
 	benchmarkElapsed := time.Since(benchmarkStartedAt)
 	b.StopTimer()
 
@@ -171,8 +194,12 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if flushSnapshot.FlushCount == 0 || flushSnapshot.BSIValueEntryCount == 0 || flushSnapshot.PartitionStringEntryCount == 0 {
 		b.Fatalf("flush profile = %+v, want native write activity", flushSnapshot)
 	}
-	if drainSnapshot.WorkerCount != shardCount {
-		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, shardCount)
+	expectedDrainWorkers := shardCount
+	if replayScope == standardNativeIngestReplayScopeRouterPerReplay {
+		expectedDrainWorkers = shardCount * b.N * replayCount
+	}
+	if drainSnapshot.WorkerCount != expectedDrainWorkers {
+		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, expectedDrainWorkers)
 	}
 	shadowSnapshot := shadowProfile.Snapshot()
 	if shadowSnapshot.MismatchCount > 0 || shadowSnapshot.ShadowErrorCount > 0 || shadowSnapshot.AuthorityErrorCount > 0 {
@@ -185,6 +212,11 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	metrics["unique_lineitems_per_second"] = float64(totalLineitems) / benchmarkElapsed.Seconds()
 	metrics["unique_logical_rows_per_second"] = float64(totalLogicalRows) / benchmarkElapsed.Seconds()
 	metrics["replay_count"] = float64(replayCount)
+	if replayScope == standardNativeIngestReplayScopeRouterPerReplay {
+		metrics["router_lifecycle_count"] = float64(b.N * replayCount)
+	} else {
+		metrics["router_lifecycle_count"] = 1
+	}
 	if primaryKeyShadowMode != "" {
 		metrics["primary_key_shadow_comparison_count"] = float64(shadowSnapshot.ComparisonCount)
 		metrics["primary_key_shadow_match_count"] = float64(shadowSnapshot.MatchCount)
@@ -201,6 +233,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		ShardCount:              shardCount,
 		RunCount:                b.N,
 		ReplayCount:             replayCount,
+		ReplayScope:             replayScope,
 		PrimaryKeyMode:          string(primaryKeyMode),
 		PrimaryKeyAuthority:     primaryKeyAuthorityMode,
 		PrimaryKeyShadow:        primaryKeyShadowMode,
@@ -232,6 +265,26 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineit
 		}
 	case <-time.After(5 * time.Second):
 		b.Fatalf("native gRPC server did not stop")
+	}
+}
+
+func routeStandardNativeIngestBenchmarkEnvelopes(b *testing.B, router *core.SessionRouter, tables []*core.Table,
+	envelopes []core.IngestEnvelope, replay int) {
+
+	b.Helper()
+	for _, envelope := range envelopes {
+		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+			Tables: tables,
+		})
+		if routeDiagnostics.BlocksNative() {
+			b.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+		}
+		if err != nil {
+			b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d error = %v", envelope.EventID, replay+1, err)
+		}
+		if !route.Enqueued {
+			b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d did not enqueue", envelope.EventID, replay+1)
+		}
 	}
 }
 
@@ -285,6 +338,44 @@ func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteShado
 	resolver := factory(&core.Session{})
 	if _, ok := resolver.(core.ShadowPrimaryKeyResolver); !ok {
 		t.Fatalf("resolver = %T, want core.ShadowPrimaryKeyResolver", resolver)
+	}
+}
+
+func TestStandardNativeIngestBenchmarkReplayScopeEnv(t *testing.T) {
+	t.Setenv("QUANTASTREAM_TEST_REPLAY_SCOPE", "")
+	scope, err := standardNativeIngestBenchmarkReplayScopeEnv("QUANTASTREAM_TEST_REPLAY_SCOPE")
+	if err != nil {
+		t.Fatalf("default replay scope error = %v", err)
+	}
+	if scope != standardNativeIngestReplayScopeSingleRouter {
+		t.Fatalf("default replay scope = %q, want %q", scope, standardNativeIngestReplayScopeSingleRouter)
+	}
+
+	t.Setenv("QUANTASTREAM_TEST_REPLAY_SCOPE", "router-per-replay")
+	scope, err = standardNativeIngestBenchmarkReplayScopeEnv("QUANTASTREAM_TEST_REPLAY_SCOPE")
+	if err != nil {
+		t.Fatalf("router-per-replay scope error = %v", err)
+	}
+	if scope != standardNativeIngestReplayScopeRouterPerReplay {
+		t.Fatalf("router-per-replay scope = %q, want %q", scope, standardNativeIngestReplayScopeRouterPerReplay)
+	}
+
+	t.Setenv("QUANTASTREAM_TEST_REPLAY_SCOPE", "bogus")
+	if _, err := standardNativeIngestBenchmarkReplayScopeEnv("QUANTASTREAM_TEST_REPLAY_SCOPE"); err == nil {
+		t.Fatalf("invalid replay scope error = nil, want error")
+	}
+}
+
+func standardNativeIngestBenchmarkReplayScopeEnv(name string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	value = strings.ReplaceAll(value, "-", "_")
+	switch value {
+	case "", "single", "single_router":
+		return standardNativeIngestReplayScopeSingleRouter, nil
+	case "router", "per_replay", "router_per_replay", "reopen_router":
+		return standardNativeIngestReplayScopeRouterPerReplay, nil
+	default:
+		return "", fmt.Errorf("%s must be single_router or router_per_replay, got %q", name, value)
 	}
 }
 
