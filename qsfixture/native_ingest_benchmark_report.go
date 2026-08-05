@@ -437,7 +437,7 @@ func CompareNativeIngestBenchmarkReports(
 		if seen[name] {
 			continue
 		}
-		metric, ok := compareNativeIngestBenchmarkMetric(nativeIngestBenchmarkMetricDefinition{name: name}, baseline.Metrics, target.Metrics)
+		metric, ok := compareNativeIngestBenchmarkMetric(nativeIngestBenchmarkExtraMetricDefinition(name), baseline.Metrics, target.Metrics)
 		if ok {
 			comparison.Metrics = append(comparison.Metrics, metric)
 		}
@@ -556,7 +556,102 @@ func nativeIngestBenchmarkSummaryMetricComparisons(
 			comparison: metric,
 		})
 	}
+	summaryMetrics = append(summaryMetrics, nativeIngestBenchmarkTablePrimaryKeySummaryMetricComparisons(metricsByName)...)
 	return summaryMetrics
+}
+
+type nativeIngestBenchmarkTablePrimaryKeySummarySuffix struct {
+	suffix string
+	label  string
+}
+
+var nativeIngestBenchmarkTablePrimaryKeySummarySuffixes = []nativeIngestBenchmarkTablePrimaryKeySummarySuffix{
+	{suffix: "direct_column_id_percent", label: "PK direct column-id"},
+	{suffix: "bsi_lookup_percent", label: "PK BSI lookup"},
+	{suffix: "kv_lookup_percent", label: "PK KV lookup"},
+}
+
+func nativeIngestBenchmarkTablePrimaryKeySummaryMetricComparisons(
+	metricsByName map[string]NativeIngestBenchmarkMetricComparison,
+) []nativeIngestBenchmarkSummaryMetricComparison {
+	tableTokens := nativeIngestBenchmarkTablePrimaryKeyMetricTokens(metricsByName)
+	summaryMetrics := make([]nativeIngestBenchmarkSummaryMetricComparison, 0, len(tableTokens)*len(nativeIngestBenchmarkTablePrimaryKeySummarySuffixes))
+	for _, tableToken := range tableTokens {
+		for _, suffix := range nativeIngestBenchmarkTablePrimaryKeySummarySuffixes {
+			name := "primary_key_table_" + tableToken + "_" + suffix.suffix
+			metric, ok := metricsByName[name]
+			if !ok {
+				continue
+			}
+			summaryMetrics = append(summaryMetrics, nativeIngestBenchmarkSummaryMetricComparison{
+				label:      nativeIngestBenchmarkMetricTokenLabel(tableToken) + " " + suffix.label,
+				comparison: metric,
+			})
+		}
+	}
+	return summaryMetrics
+}
+
+func nativeIngestBenchmarkTablePrimaryKeyMetricTokens(
+	metricsByName map[string]NativeIngestBenchmarkMetricComparison,
+) []string {
+	const prefix = "primary_key_table_"
+	tokenSet := map[string]bool{}
+	for name := range metricsByName {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		tableToken, ok := nativeIngestBenchmarkTablePrimaryKeyMetricToken(name[len(prefix):])
+		if ok {
+			tokenSet[tableToken] = true
+		}
+	}
+	tableTokens := make([]string, 0, len(tokenSet))
+	for tableToken := range tokenSet {
+		tableTokens = append(tableTokens, tableToken)
+	}
+	sort.Strings(tableTokens)
+	return tableTokens
+}
+
+func nativeIngestBenchmarkTablePrimaryKeyMetricToken(value string) (string, bool) {
+	for _, suffix := range []string{
+		"resolves",
+		"lookup_required_count",
+		"direct_column_id_count",
+		"bsi_lookup_count",
+		"bsi_stage_write_count",
+		"kv_lookup_count",
+		"local_cache_hit_percent",
+		"direct_column_id_percent",
+		"bsi_lookup_percent",
+		"bsi_hit_percent",
+		"kv_lookup_percent",
+		"kv_hit_percent",
+		"bsi_lookup_microseconds_per_lookup",
+		"kv_lookup_microseconds_per_lookup",
+	} {
+		tableToken, found := strings.CutSuffix(value, "_"+suffix)
+		if found && tableToken != "" {
+			return tableToken, true
+		}
+	}
+	return "", false
+}
+
+func nativeIngestBenchmarkMetricTokenLabel(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	parts := strings.Split(token, "_")
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[index] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
 }
 
 func writeNativeIngestBenchmarkMetricMarkdownRow(
@@ -622,6 +717,50 @@ func compareNativeIngestBenchmarkMetric(
 		HigherIsBetter: definition.higherIsBetter,
 		Outcome:        nativeIngestBenchmarkMetricOutcome(delta, definition.higherIsBetter),
 	}, true
+}
+
+func nativeIngestBenchmarkExtraMetricDefinition(name string) nativeIngestBenchmarkMetricDefinition {
+	definition := nativeIngestBenchmarkMetricDefinition{name: name}
+	if !strings.HasPrefix(name, "primary_key_table_") {
+		return definition
+	}
+	switch {
+	case strings.HasSuffix(name, "_resolves"):
+		definition.unit = "resolves"
+	case strings.HasSuffix(name, "_lookup_required_count"):
+		definition.unit = "lookups"
+	case strings.HasSuffix(name, "_direct_column_id_count"):
+		definition.unit = "resolves"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_bsi_lookup_count"):
+		definition.unit = "lookups"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_bsi_stage_write_count"):
+		definition.unit = "writes"
+	case strings.HasSuffix(name, "_kv_lookup_count"):
+		definition.unit = "lookups"
+	case strings.HasSuffix(name, "_local_cache_hit_percent"):
+		definition.unit = "percent"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_direct_column_id_percent"):
+		definition.unit = "percent"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_bsi_lookup_percent"):
+		definition.unit = "percent"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_bsi_hit_percent"):
+		definition.unit = "percent"
+		definition.higherIsBetter = true
+	case strings.HasSuffix(name, "_kv_lookup_percent"):
+		definition.unit = "percent"
+	case strings.HasSuffix(name, "_kv_hit_percent"):
+		definition.unit = "percent"
+	case strings.HasSuffix(name, "_bsi_lookup_microseconds_per_lookup"):
+		definition.unit = "us/lookup"
+	case strings.HasSuffix(name, "_kv_lookup_microseconds_per_lookup"):
+		definition.unit = "us/lookup"
+	}
+	return definition
 }
 
 func nativeIngestBenchmarkMetricOutcome(delta float64, higherIsBetter bool) string {
