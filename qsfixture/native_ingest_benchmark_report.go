@@ -24,6 +24,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	ShardCount              int
 	RunCount                int
 	PrimaryKeyMode          string
+	PrimaryKeyAuthority     string
 	PrimaryKeyShadow        string
 	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary
 	Elapsed                 time.Duration
@@ -54,12 +55,13 @@ type NativeIngestBenchmarkReport struct {
 
 // NativeIngestBenchmarkConfig records benchmark input parameters.
 type NativeIngestBenchmarkConfig struct {
-	OrderCount        int    `json:"order_count"`
-	LineitemsPerOrder int    `json:"lineitems_per_order"`
-	ShardCount        int    `json:"shard_count"`
-	RunCount          int    `json:"run_count"`
-	PrimaryKeyMode    string `json:"primary_key_mode,omitempty"`
-	PrimaryKeyShadow  string `json:"primary_key_shadow,omitempty"`
+	OrderCount          int    `json:"order_count"`
+	LineitemsPerOrder   int    `json:"lineitems_per_order"`
+	ShardCount          int    `json:"shard_count"`
+	RunCount            int    `json:"run_count"`
+	PrimaryKeyMode      string `json:"primary_key_mode,omitempty"`
+	PrimaryKeyAuthority string `json:"primary_key_authority,omitempty"`
+	PrimaryKeyShadow    string `json:"primary_key_shadow,omitempty"`
 }
 
 // NativeIngestBenchmarkCounts records logical row totals produced by a run.
@@ -89,12 +91,13 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 		Mode:        request.Mode,
 		GeneratedAt: time.Now().UTC(),
 		Config: NativeIngestBenchmarkConfig{
-			OrderCount:        request.OrderCount,
-			LineitemsPerOrder: request.LineitemsPerOrder,
-			ShardCount:        request.ShardCount,
-			RunCount:          request.RunCount,
-			PrimaryKeyMode:    request.PrimaryKeyMode,
-			PrimaryKeyShadow:  request.PrimaryKeyShadow,
+			OrderCount:          request.OrderCount,
+			LineitemsPerOrder:   request.LineitemsPerOrder,
+			ShardCount:          request.ShardCount,
+			RunCount:            request.RunCount,
+			PrimaryKeyMode:      request.PrimaryKeyMode,
+			PrimaryKeyAuthority: request.PrimaryKeyAuthority,
+			PrimaryKeyShadow:    request.PrimaryKeyShadow,
 		},
 		Counts: NativeIngestBenchmarkCounts{
 			TotalOrders:      totalOrders,

@@ -11,14 +11,15 @@ import (
 
 func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	report := BuildNativeIngestBenchmarkReport(NativeIngestBenchmarkReportRequest{
-		Profile:           "unit-profile",
-		Mode:              "inabox-standard",
-		OrderCount:        2,
-		LineitemsPerOrder: 3,
-		ShardCount:        1,
-		RunCount:          4,
-		PrimaryKeyMode:    "assume_new",
-		PrimaryKeyShadow:  "bsi",
+		Profile:             "unit-profile",
+		Mode:                "inabox-standard",
+		OrderCount:          2,
+		LineitemsPerOrder:   3,
+		ShardCount:          1,
+		RunCount:            4,
+		PrimaryKeyMode:      "assume_new",
+		PrimaryKeyAuthority: "bsi",
+		PrimaryKeyShadow:    "bsi",
 		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
 			ComparisonCount:  32,
 			MatchCount:       32,
@@ -58,6 +59,9 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if report.Config.PrimaryKeyMode != "assume_new" {
 		t.Fatalf("report primary key mode = %q, want assume_new", report.Config.PrimaryKeyMode)
+	}
+	if report.Config.PrimaryKeyAuthority != "bsi" {
+		t.Fatalf("report primary key authority = %q, want bsi", report.Config.PrimaryKeyAuthority)
 	}
 	if report.Config.PrimaryKeyShadow != "bsi" {
 		t.Fatalf("report primary key shadow = %q, want bsi", report.Config.PrimaryKeyShadow)

@@ -22,9 +22,16 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	profileName := stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE", "standard-native-tpch-ingest")
 	reportPath := strings.TrimSpace(os.Getenv("QUANTASTREAM_TPCH_INGEST_BENCH_REPORT"))
 	primaryKeyMode := core.PrimaryKeyMode(stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE", "verify_existing")).Normalize()
+	primaryKeyAuthorityMode, err := primaryKeyAuthorityModeEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_AUTHORITY")
+	if err != nil {
+		b.Fatal(err)
+	}
 	primaryKeyShadowMode, err := primaryKeyShadowModeEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW")
 	if err != nil {
 		b.Fatal(err)
+	}
+	if primaryKeyAuthorityMode != "" && primaryKeyShadowMode != "" {
+		b.Fatalf("QUANTASTREAM_TPCH_INGEST_BENCH_PK_AUTHORITY and QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW cannot both be set in this slice")
 	}
 
 	root := b.TempDir()
@@ -70,13 +77,17 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
 	shadowProfile := &core.PrimaryKeyShadowProfile{}
+	primaryKeyBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
 	var resolverFactory core.SessionPrimaryKeyResolverFactory
-	if primaryKeyShadowMode == primaryKeyShadowBSIMode {
-		shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
+	if primaryKeyAuthorityMode == primaryKeyAuthorityBSIMode {
+		resolverFactory = func(_ *core.Session) core.PrimaryKeyResolver {
+			return core.NewBSIPrimaryKeyResolver(primaryKeyBackend)
+		}
+	} else if primaryKeyShadowMode == primaryKeyShadowBSIMode {
 		resolverFactory = func(_ *core.Session) core.PrimaryKeyResolver {
 			return core.NewShadowPrimaryKeyResolver(
 				core.KVPrimaryKeyResolver{},
-				core.NewBSIPrimaryKeyResolver(shadowBackend),
+				core.NewBSIPrimaryKeyResolver(primaryKeyBackend),
 				shadowProfile.Callback(),
 			)
 		}
@@ -185,6 +196,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		ShardCount:              shardCount,
 		RunCount:                b.N,
 		PrimaryKeyMode:          string(primaryKeyMode),
+		PrimaryKeyAuthority:     primaryKeyAuthorityMode,
 		PrimaryKeyShadow:        primaryKeyShadowMode,
 		PrimaryKeyShadowProfile: shadowSnapshot,
 		Elapsed:                 benchmarkElapsed,

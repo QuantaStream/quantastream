@@ -483,6 +483,49 @@ func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *te
 	}
 }
 
+func TestStandardProcessNativeGRPCRouterReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
+	orderCount := 2
+	lineitemsPerOrder := 3
+	replayCount := 2
+	primaryKeyBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
+
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        orderCount,
+		LineitemsPerOrder: lineitemsPerOrder,
+		ShardCount:        1,
+		SourceMode:        core.IngestSourceStream,
+		ReplayCount:       replayCount,
+		PrimaryKeyResolverFactory: func(_ *core.Session) core.PrimaryKeyResolver {
+			return core.NewBSIPrimaryKeyResolver(primaryKeyBackend)
+		},
+	})
+
+	expectedTopLevelRecords := orderCount * replayCount
+	expectedLogicalWrites := expectedTopLevelRecords * (1 + lineitemsPerOrder)
+	expectedLineitemReplayHits := orderCount * lineitemsPerOrder
+	if result.PutProfile.RecordCount != expectedTopLevelRecords {
+		t.Fatalf("put profile = %+v, want %d routed order records", result.PutProfile, expectedTopLevelRecords)
+	}
+	if result.PutProfile.LogicalRowCount != expectedLogicalWrites {
+		t.Fatalf("put profile = %+v, want %d logical writes across replays", result.PutProfile, expectedLogicalWrites)
+	}
+	if result.PutProfile.PrimaryKey.BSIHitCount != expectedLineitemReplayHits {
+		t.Fatalf("primary key profile = %+v, want %d BSI hits on replayed lineitems",
+			result.PutProfile.PrimaryKey, expectedLineitemReplayHits)
+	}
+	if result.PutProfile.PrimaryKey.BSIStageWriteCount != expectedLineitemReplayHits {
+		t.Fatalf("primary key profile = %+v, want %d staged lineitem primary keys",
+			result.PutProfile.PrimaryKey, expectedLineitemReplayHits)
+	}
+	if result.PutProfile.PrimaryKey.KVLookupCount != 0 || result.PutProfile.PrimaryKey.KVHitCount != 0 {
+		t.Fatalf("primary key profile = %+v, want BSI authority without KV PK lookups", result.PutProfile.PrimaryKey)
+	}
+	if len(primaryKeyBackend.Snapshot()) != expectedLineitemReplayHits {
+		t.Fatalf("BSI primary key backend entries = %d, want %d lineitem PK entries",
+			len(primaryKeyBackend.Snapshot()), expectedLineitemReplayHits)
+	}
+}
+
 type standardTPCHRouterIngestScenario struct {
 	OrderCount                int
 	LineitemsPerOrder         int
