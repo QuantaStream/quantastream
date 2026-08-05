@@ -69,7 +69,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	putRowProfile := &core.RouterPutRowProfile{}
 	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
-	shadowStats := &primaryKeyShadowBenchmarkStats{}
+	shadowProfile := &core.PrimaryKeyShadowProfile{}
 	var resolverFactory core.SessionPrimaryKeyResolverFactory
 	if primaryKeyShadowMode == primaryKeyShadowBSIMode {
 		shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
@@ -77,7 +77,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 			return core.NewShadowPrimaryKeyResolver(
 				core.KVPrimaryKeyResolver{},
 				core.NewBSIPrimaryKeyResolver(shadowBackend),
-				shadowStats.Observe,
+				shadowProfile.Callback(),
 			)
 		}
 	}
@@ -162,7 +162,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if drainSnapshot.WorkerCount != shardCount {
 		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, shardCount)
 	}
-	shadowSnapshot := shadowStats.Snapshot()
+	shadowSnapshot := shadowProfile.Snapshot()
 	if shadowSnapshot.MismatchCount > 0 || shadowSnapshot.ShadowErrorCount > 0 || shadowSnapshot.AuthorityErrorCount > 0 {
 		b.Fatalf("primary key shadow = %+v, want no mismatches or errors", shadowSnapshot)
 	}
@@ -174,24 +174,26 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		metrics["primary_key_shadow_match_count"] = float64(shadowSnapshot.MatchCount)
 		metrics["primary_key_shadow_mismatch_count"] = float64(shadowSnapshot.MismatchCount)
 		metrics["primary_key_shadow_skip_count"] = float64(shadowSnapshot.SkipCount)
+		metrics["primary_key_shadow_existing_row_match_count"] = float64(shadowSnapshot.ExistingRowMatch)
 	}
 	reportTPCHIngestBenchmarkMetrics(b, metrics)
 	report := qsfixture.BuildNativeIngestBenchmarkReport(qsfixture.NativeIngestBenchmarkReportRequest{
-		Profile:           profileName,
-		Mode:              StandardMode,
-		OrderCount:        orderCount,
-		LineitemsPerOrder: lineitemsPerOrder,
-		ShardCount:        shardCount,
-		RunCount:          b.N,
-		PrimaryKeyMode:    string(primaryKeyMode),
-		PrimaryKeyShadow:  primaryKeyShadowMode,
-		Elapsed:           benchmarkElapsed,
-		EnqueueElapsed:    enqueueElapsed,
-		DrainElapsed:      drainElapsed,
-		PutRow:            putSnapshot,
-		Drain:             drainSnapshot,
-		Flush:             flushSnapshot,
-		Metrics:           metrics,
+		Profile:                 profileName,
+		Mode:                    StandardMode,
+		OrderCount:              orderCount,
+		LineitemsPerOrder:       lineitemsPerOrder,
+		ShardCount:              shardCount,
+		RunCount:                b.N,
+		PrimaryKeyMode:          string(primaryKeyMode),
+		PrimaryKeyShadow:        primaryKeyShadowMode,
+		PrimaryKeyShadowProfile: shadowSnapshot,
+		Elapsed:                 benchmarkElapsed,
+		EnqueueElapsed:          enqueueElapsed,
+		DrainElapsed:            drainElapsed,
+		PutRow:                  putSnapshot,
+		Drain:                   drainSnapshot,
+		Flush:                   flushSnapshot,
+		Metrics:                 metrics,
 	})
 	if err := qsfixture.WriteNativeIngestBenchmarkReport(reportPath, report); err != nil {
 		b.Fatalf("write benchmark report: %v", err)
@@ -283,5 +285,6 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 		b.ReportMetric(metrics["primary_key_shadow_match_count"], "pk_shadow_matches")
 		b.ReportMetric(metrics["primary_key_shadow_mismatch_count"], "pk_shadow_mismatches")
 		b.ReportMetric(metrics["primary_key_shadow_skip_count"], "pk_shadow_skips")
+		b.ReportMetric(metrics["primary_key_shadow_existing_row_match_count"], "pk_shadow_existing_matches")
 	}
 }

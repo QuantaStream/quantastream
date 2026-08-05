@@ -435,7 +435,7 @@ func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *te
 	orderCount := 2
 	lineitemsPerOrder := 3
 	replayCount := 2
-	shadowStats := &primaryKeyShadowBenchmarkStats{}
+	shadowProfile := &core.PrimaryKeyShadowProfile{}
 	shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
 
 	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
@@ -444,12 +444,12 @@ func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *te
 		ShardCount:        1,
 		SourceMode:        core.IngestSourceStream,
 		ReplayCount:       replayCount,
-		ShadowStats:       shadowStats,
+		ShadowProfile:     shadowProfile,
 		PrimaryKeyResolverFactory: func(_ *core.Session) core.PrimaryKeyResolver {
 			return core.NewShadowPrimaryKeyResolver(
 				core.KVPrimaryKeyResolver{},
 				core.NewBSIPrimaryKeyResolver(shadowBackend),
-				shadowStats.Observe,
+				shadowProfile.Callback(),
 			)
 		},
 	})
@@ -491,14 +491,14 @@ type standardTPCHRouterIngestScenario struct {
 	BaseOrderKey              int64
 	ReplayCount               int
 	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
-	ShadowStats               *primaryKeyShadowBenchmarkStats
+	ShadowProfile             *core.PrimaryKeyShadowProfile
 }
 
 type standardTPCHRouterIngestResult struct {
 	Routes        []core.IngestRouteResult
 	PutProfile    core.RouterPutRowProfileSummary
 	FlushProfile  core.RouterFlushProfileSummary
-	ShadowProfile primaryKeyShadowBenchmarkSnapshot
+	ShadowProfile core.PrimaryKeyShadowProfileSummary
 }
 
 func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
@@ -630,7 +630,7 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineit
 		Routes:        routes,
 		PutProfile:    putRowProfile.Snapshot(),
 		FlushProfile:  flushProfile.Snapshot(),
-		ShadowProfile: scenario.ShadowStats.Snapshot(),
+		ShadowProfile: scenario.ShadowProfile.Snapshot(),
 	}
 }
 

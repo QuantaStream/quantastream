@@ -19,9 +19,17 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		RunCount:          4,
 		PrimaryKeyMode:    "assume_new",
 		PrimaryKeyShadow:  "bsi",
-		Elapsed:           10 * time.Millisecond,
-		EnqueueElapsed:    4 * time.Millisecond,
-		DrainElapsed:      6 * time.Millisecond,
+		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
+			ComparisonCount:  32,
+			MatchCount:       32,
+			ExistingRowMatch: 24,
+			ByReason: map[string]int{
+				core.PrimaryKeyShadowMatchReason: 32,
+			},
+		},
+		Elapsed:        10 * time.Millisecond,
+		EnqueueElapsed: 4 * time.Millisecond,
+		DrainElapsed:   6 * time.Millisecond,
 		PutRow: core.RouterPutRowProfileSummary{
 			RecordCount:     8,
 			ChildRowCount:   24,
@@ -65,6 +73,11 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if report.PutRow.ChildRowCount != 24 || report.PutRow.LogicalRowCount != 32 {
 		t.Fatalf("report put row counts = %+v, want profile child/logical row counts", report.PutRow)
+	}
+	if report.PrimaryKeyShadowProfile.ComparisonCount != 32 ||
+		report.PrimaryKeyShadowProfile.MatchCount != 32 ||
+		report.PrimaryKeyShadowProfile.ExistingRowMatch != 24 {
+		t.Fatalf("report shadow profile = %+v, want captured shadow profile", report.PrimaryKeyShadowProfile)
 	}
 
 	path := filepath.Join(t.TempDir(), "profiles", "ingest.json")

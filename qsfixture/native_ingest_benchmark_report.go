@@ -17,37 +17,39 @@ const nativeIngestBenchmarkReportVersion = 1
 
 // NativeIngestBenchmarkReportRequest captures one native ingest benchmark run.
 type NativeIngestBenchmarkReportRequest struct {
-	Profile           string
-	Mode              string
-	OrderCount        int
-	LineitemsPerOrder int
-	ShardCount        int
-	RunCount          int
-	PrimaryKeyMode    string
-	PrimaryKeyShadow  string
-	Elapsed           time.Duration
-	EnqueueElapsed    time.Duration
-	DrainElapsed      time.Duration
-	PutRow            core.RouterPutRowProfileSummary
-	Drain             core.RouterDrainProfileSummary
-	Flush             core.RouterFlushProfileSummary
-	Metrics           map[string]float64
+	Profile                 string
+	Mode                    string
+	OrderCount              int
+	LineitemsPerOrder       int
+	ShardCount              int
+	RunCount                int
+	PrimaryKeyMode          string
+	PrimaryKeyShadow        string
+	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary
+	Elapsed                 time.Duration
+	EnqueueElapsed          time.Duration
+	DrainElapsed            time.Duration
+	PutRow                  core.RouterPutRowProfileSummary
+	Drain                   core.RouterDrainProfileSummary
+	Flush                   core.RouterFlushProfileSummary
+	Metrics                 map[string]float64
 }
 
 // NativeIngestBenchmarkReport is the portable JSON shape emitted by native
 // ingest benchmarks.
 type NativeIngestBenchmarkReport struct {
-	Version     int                             `json:"version"`
-	Profile     string                          `json:"profile"`
-	Mode        string                          `json:"mode"`
-	GeneratedAt time.Time                       `json:"generated_at"`
-	Config      NativeIngestBenchmarkConfig     `json:"config"`
-	Counts      NativeIngestBenchmarkCounts     `json:"counts"`
-	Timings     NativeIngestBenchmarkTimings    `json:"timings"`
-	Metrics     map[string]float64              `json:"metrics"`
-	PutRow      core.RouterPutRowProfileSummary `json:"put_row"`
-	Drain       core.RouterDrainProfileSummary  `json:"drain"`
-	Flush       core.RouterFlushProfileSummary  `json:"flush"`
+	Version                 int                                 `json:"version"`
+	Profile                 string                              `json:"profile"`
+	Mode                    string                              `json:"mode"`
+	GeneratedAt             time.Time                           `json:"generated_at"`
+	Config                  NativeIngestBenchmarkConfig         `json:"config"`
+	Counts                  NativeIngestBenchmarkCounts         `json:"counts"`
+	Timings                 NativeIngestBenchmarkTimings        `json:"timings"`
+	Metrics                 map[string]float64                  `json:"metrics"`
+	PutRow                  core.RouterPutRowProfileSummary     `json:"put_row"`
+	Drain                   core.RouterDrainProfileSummary      `json:"drain"`
+	Flush                   core.RouterFlushProfileSummary      `json:"flush"`
+	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary `json:"primary_key_shadow_profile"`
 }
 
 // NativeIngestBenchmarkConfig records benchmark input parameters.
@@ -107,10 +109,11 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			Drain:        nativeIngestBenchmarkOptionalDurationString(request.DrainElapsed),
 			DrainNanos:   request.DrainElapsed.Nanoseconds(),
 		},
-		Metrics: copyNativeIngestBenchmarkMetrics(request.Metrics),
-		PutRow:  request.PutRow,
-		Drain:   request.Drain,
-		Flush:   request.Flush,
+		Metrics:                 copyNativeIngestBenchmarkMetrics(request.Metrics),
+		PutRow:                  request.PutRow,
+		Drain:                   request.Drain,
+		Flush:                   request.Flush,
+		PrimaryKeyShadowProfile: request.PrimaryKeyShadowProfile,
 	}
 }
 
@@ -295,6 +298,11 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "primary_key_bsi_stage_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
 	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},
 	{name: "primary_key_batch_cache_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
+	{name: "primary_key_shadow_comparison_count", unit: "comparisons", higherIsBetter: false},
+	{name: "primary_key_shadow_match_count", unit: "matches", higherIsBetter: true},
+	{name: "primary_key_shadow_mismatch_count", unit: "mismatches", higherIsBetter: false},
+	{name: "primary_key_shadow_skip_count", unit: "skips", higherIsBetter: false},
+	{name: "primary_key_shadow_existing_row_match_count", unit: "matches", higherIsBetter: true},
 }
 
 var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
