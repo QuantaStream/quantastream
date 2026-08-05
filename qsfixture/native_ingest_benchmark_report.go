@@ -23,6 +23,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	LineitemsPerOrder       int
 	ShardCount              int
 	RunCount                int
+	ReplayCount             int
 	PrimaryKeyMode          string
 	PrimaryKeyAuthority     string
 	PrimaryKeyShadow        string
@@ -59,6 +60,7 @@ type NativeIngestBenchmarkConfig struct {
 	LineitemsPerOrder   int    `json:"lineitems_per_order"`
 	ShardCount          int    `json:"shard_count"`
 	RunCount            int    `json:"run_count"`
+	ReplayCount         int    `json:"replay_count,omitempty"`
 	PrimaryKeyMode      string `json:"primary_key_mode,omitempty"`
 	PrimaryKeyAuthority string `json:"primary_key_authority,omitempty"`
 	PrimaryKeyShadow    string `json:"primary_key_shadow,omitempty"`
@@ -66,9 +68,12 @@ type NativeIngestBenchmarkConfig struct {
 
 // NativeIngestBenchmarkCounts records logical row totals produced by a run.
 type NativeIngestBenchmarkCounts struct {
-	TotalOrders      int `json:"total_orders"`
-	TotalLineitems   int `json:"total_lineitems"`
-	TotalLogicalRows int `json:"total_logical_rows"`
+	TotalOrders         int `json:"total_orders"`
+	TotalLineitems      int `json:"total_lineitems"`
+	TotalLogicalRows    int `json:"total_logical_rows"`
+	TotalOrderWrites    int `json:"total_order_writes,omitempty"`
+	TotalLineitemWrites int `json:"total_lineitem_writes,omitempty"`
+	TotalLogicalWrites  int `json:"total_logical_writes,omitempty"`
 }
 
 // NativeIngestBenchmarkTimings records wall-clock benchmark timings.
@@ -83,8 +88,13 @@ type NativeIngestBenchmarkTimings struct {
 
 // BuildNativeIngestBenchmarkReport builds the portable report shape for a run.
 func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest) NativeIngestBenchmarkReport {
+	replayCount := maxNativeIngestBenchmarkInt(1, request.ReplayCount)
 	totalOrders := request.OrderCount * request.RunCount
 	totalLineitems := totalOrders * request.LineitemsPerOrder
+	totalLogicalRows := totalOrders + totalLineitems
+	totalOrderWrites := totalOrders * replayCount
+	totalLineitemWrites := totalLineitems * replayCount
+	totalLogicalWrites := totalLogicalRows * replayCount
 	return NativeIngestBenchmarkReport{
 		Version:     nativeIngestBenchmarkReportVersion,
 		Profile:     request.Profile,
@@ -95,14 +105,18 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			LineitemsPerOrder:   request.LineitemsPerOrder,
 			ShardCount:          request.ShardCount,
 			RunCount:            request.RunCount,
+			ReplayCount:         request.ReplayCount,
 			PrimaryKeyMode:      request.PrimaryKeyMode,
 			PrimaryKeyAuthority: request.PrimaryKeyAuthority,
 			PrimaryKeyShadow:    request.PrimaryKeyShadow,
 		},
 		Counts: NativeIngestBenchmarkCounts{
-			TotalOrders:      totalOrders,
-			TotalLineitems:   totalLineitems,
-			TotalLogicalRows: totalOrders + totalLineitems,
+			TotalOrders:         totalOrders,
+			TotalLineitems:      totalLineitems,
+			TotalLogicalRows:    totalLogicalRows,
+			TotalOrderWrites:    totalOrderWrites,
+			TotalLineitemWrites: totalLineitemWrites,
+			TotalLogicalWrites:  totalLogicalWrites,
 		},
 		Timings: NativeIngestBenchmarkTimings{
 			Elapsed:      request.Elapsed.String(),
@@ -261,8 +275,12 @@ type nativeIngestBenchmarkSummaryMetric struct {
 
 var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefinition{
 	{name: "logical_rows_per_second", unit: "rows/s", higherIsBetter: true},
+	{name: "unique_logical_rows_per_second", unit: "rows/s", higherIsBetter: true},
 	{name: "orders_per_second", unit: "orders/s", higherIsBetter: true},
+	{name: "unique_orders_per_second", unit: "orders/s", higherIsBetter: true},
 	{name: "lineitems_per_second", unit: "lineitems/s", higherIsBetter: true},
+	{name: "unique_lineitems_per_second", unit: "lineitems/s", higherIsBetter: true},
+	{name: "replay_count", unit: "replays", higherIsBetter: false},
 	{name: "put_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "enqueue_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "drain_microseconds_per_order", unit: "us/order", higherIsBetter: false},
@@ -311,6 +329,7 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 
 var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "logical_rows_per_second", label: "Logical rows/sec"},
+	{name: "unique_logical_rows_per_second", label: "Unique logical rows/sec"},
 	{name: "enqueue_microseconds_per_order", label: "Enqueue us/order"},
 	{name: "drain_microseconds_per_order", label: "Drain us/order"},
 	{name: "drain_worker_max_microseconds", label: "Slowest worker drain"},

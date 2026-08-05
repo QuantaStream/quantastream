@@ -17,6 +17,7 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		LineitemsPerOrder:   3,
 		ShardCount:          1,
 		RunCount:            4,
+		ReplayCount:         2,
 		PrimaryKeyMode:      "assume_new",
 		PrimaryKeyAuthority: "bsi",
 		PrimaryKeyShadow:    "bsi",
@@ -56,6 +57,14 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	})
 	if report.Profile != "unit-profile" || report.Config.OrderCount != 2 || report.Counts.TotalLogicalRows != 32 {
 		t.Fatalf("report = %+v, want captured config/counts", report)
+	}
+	if report.Config.ReplayCount != 2 {
+		t.Fatalf("report replay count = %d, want 2", report.Config.ReplayCount)
+	}
+	if report.Counts.TotalOrderWrites != 16 ||
+		report.Counts.TotalLineitemWrites != 48 ||
+		report.Counts.TotalLogicalWrites != 64 {
+		t.Fatalf("report write counts = %+v, want replay-expanded write counts", report.Counts)
 	}
 	if report.Config.PrimaryKeyMode != "assume_new" {
 		t.Fatalf("report primary key mode = %q, want assume_new", report.Config.PrimaryKeyMode)

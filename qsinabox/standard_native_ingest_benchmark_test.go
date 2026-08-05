@@ -19,6 +19,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	orderCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_ORDERS", 100)
 	lineitemsPerOrder := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS", 4)
 	shardCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS", 1)
+	replayCount := positiveIntEnv("QUANTASTREAM_TPCH_INGEST_BENCH_REPLAYS", 1)
 	profileName := stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE", "standard-native-tpch-ingest")
 	reportPath := strings.TrimSpace(os.Getenv("QUANTASTREAM_TPCH_INGEST_BENCH_REPORT"))
 	primaryKeyMode := core.PrimaryKeyMode(stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE", "verify_existing")).Normalize()
@@ -97,7 +98,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		BasePath:                  process.Backend.ConfigBaseDir(config),
 		Conn:                      remoteConn,
 		ShardCount:                shardCount,
-		ChannelSize:               orderCount,
+		ChannelSize:               orderCount * replayCount,
 		FlushInterval:             10 * time.Millisecond,
 		PrimaryKeyMode:            primaryKeyMode,
 		PrimaryKeyResolverFactory: resolverFactory,
@@ -130,18 +131,20 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	benchmarkStartedAt := time.Now()
 	enqueueStartedAt := time.Now()
 	for _, envelopes := range envelopeBatches {
-		for _, envelope := range envelopes {
-			route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
-				Tables: tables,
-			})
-			if routeDiagnostics.BlocksNative() {
-				b.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
-			}
-			if err != nil {
-				b.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
-			}
-			if !route.Enqueued {
-				b.Fatalf("RouteSelectedIngestEnvelope(%s) did not enqueue", envelope.EventID)
+		for replay := 0; replay < replayCount; replay++ {
+			for _, envelope := range envelopes {
+				route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+					Tables: tables,
+				})
+				if routeDiagnostics.BlocksNative() {
+					b.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+				}
+				if err != nil {
+					b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d error = %v", envelope.EventID, replay+1, err)
+				}
+				if !route.Enqueued {
+					b.Fatalf("RouteSelectedIngestEnvelope(%s) replay %d did not enqueue", envelope.EventID, replay+1)
+				}
 			}
 		}
 	}
@@ -157,15 +160,21 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	totalOrders := b.N * orderCount
 	totalLineitems := totalOrders * lineitemsPerOrder
 	totalLogicalRows := totalOrders + totalLineitems
+	totalOrderWrites := totalOrders * replayCount
+	totalLineitemWrites := totalLineitems * replayCount
+	totalLogicalWrites := totalLogicalRows * replayCount
 	putSnapshot := putRowProfile.Snapshot()
 	drainSnapshot := drainProfile.Snapshot()
 	flushSnapshot := flushProfile.Snapshot()
-	if putSnapshot.RecordCount != totalOrders || putSnapshot.InsertedCount != totalOrders {
+	if putSnapshot.RecordCount != totalOrderWrites {
+		b.Fatalf("put profile = %+v, want %d routed order writes", putSnapshot, totalOrderWrites)
+	}
+	if replayCount == 1 && putSnapshot.InsertedCount != totalOrders {
 		b.Fatalf("put profile = %+v, want %d inserted order records", putSnapshot, totalOrders)
 	}
-	if putSnapshot.ChildRowCount != totalLineitems || putSnapshot.LogicalRowCount != totalLogicalRows {
-		b.Fatalf("put profile = %+v, want %d children and %d logical rows",
-			putSnapshot, totalLineitems, totalLogicalRows)
+	if putSnapshot.ChildRowCount != totalLineitemWrites || putSnapshot.LogicalRowCount != totalLogicalWrites {
+		b.Fatalf("put profile = %+v, want %d child writes and %d logical writes",
+			putSnapshot, totalLineitemWrites, totalLogicalWrites)
 	}
 	if flushSnapshot.FlushCount == 0 || flushSnapshot.BSIValueEntryCount == 0 || flushSnapshot.PartitionStringEntryCount == 0 {
 		b.Fatalf("flush profile = %+v, want native write activity", flushSnapshot)
@@ -179,7 +188,11 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	}
 
 	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, enqueueElapsed, drainElapsed,
-		totalOrders, totalLineitems, totalLogicalRows, putSnapshot, drainSnapshot, flushSnapshot, b.N)
+		totalOrderWrites, totalLineitemWrites, totalLogicalWrites, putSnapshot, drainSnapshot, flushSnapshot, b.N*replayCount)
+	metrics["unique_orders_per_second"] = float64(totalOrders) / benchmarkElapsed.Seconds()
+	metrics["unique_lineitems_per_second"] = float64(totalLineitems) / benchmarkElapsed.Seconds()
+	metrics["unique_logical_rows_per_second"] = float64(totalLogicalRows) / benchmarkElapsed.Seconds()
+	metrics["replay_count"] = float64(replayCount)
 	if primaryKeyShadowMode != "" {
 		metrics["primary_key_shadow_comparison_count"] = float64(shadowSnapshot.ComparisonCount)
 		metrics["primary_key_shadow_match_count"] = float64(shadowSnapshot.MatchCount)
@@ -195,6 +208,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		LineitemsPerOrder:       lineitemsPerOrder,
 		ShardCount:              shardCount,
 		RunCount:                b.N,
+		ReplayCount:             replayCount,
 		PrimaryKeyMode:          string(primaryKeyMode),
 		PrimaryKeyAuthority:     primaryKeyAuthorityMode,
 		PrimaryKeyShadow:        primaryKeyShadowMode,
