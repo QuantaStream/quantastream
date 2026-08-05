@@ -228,6 +228,7 @@ ORDERS=100 \
 LINEITEMS=4 \
 SHARDS=1 \
 RUNS=3 \
+REPLAYS=1 \
 PROFILE=standard-native-tpch-ingest \
   ./run-native-ingest-benchmark.sh
 ```
@@ -268,6 +269,50 @@ and staged primary-key cache writes. Fresh-load runs also report explicit
 assume-new and skipped KV lookup counters. Use those counters before changing
 the primary-key storage design.
 
+Set `REPLAYS` to repeat the same deterministic envelopes inside each measured
+operation. This is useful for primary-key resolver experiments because the
+second and later passes exercise existing-key behavior without changing the
+logical input shape.
+
+`PRIMARY_KEY_AUTHORITY=bsi` is an experimental benchmark-only lane. It routes
+primary-key resolution through the in-memory BSI primary-key fixture behind the
+resolver interface so we can compare semantics and directional cost against the
+KV-backed resolver. It is not a production storage design yet, and it should
+not be combined with `PRIMARY_KEY_SHADOW=bsi`; shadow mode already compares the
+BSI view against the authoritative KV path.
+
+Compare KV authority against BSI authority with replayed inputs:
+
+```bash
+cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
+
+BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
+PROFILE=kv-authority-replay-4shards \
+ORDERS=100 \
+LINEITEMS=4 \
+SHARDS=4 \
+RUNS=1 \
+REPLAYS=2 \
+BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/kv.json \
+  ./run-native-ingest-benchmark.sh
+
+BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
+PROFILE=bsi-authority-replay-4shards \
+ORDERS=100 \
+LINEITEMS=4 \
+SHARDS=4 \
+RUNS=1 \
+REPLAYS=2 \
+PRIMARY_KEY_AUTHORITY=bsi \
+BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/bsi.json \
+  ./run-native-ingest-benchmark.sh
+
+./run-native-ingest-compare.sh \
+  local/ingest-benchmarks/pk-authority-replay/kv.json \
+  local/ingest-benchmarks/pk-authority-replay/bsi.json \
+  local/ingest-benchmarks/pk-authority-replay/comparison.md
+```
+
 Compare two native ingest benchmark reports with:
 
 ```bash
@@ -279,11 +324,13 @@ cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
 ```
 
 The comparison treats throughput metrics as higher-is-better and per-operation
-cost metrics as lower-is-better. The rendered markdown starts with a curated
-load-path summary for enqueue, drain, flush, and primary-key signals, then keeps
-the complete metric table below it for detailed analysis. The JSON reports and
-rendered markdown are local benchmark artifacts and should stay out of source
-control unless a reference run is intentionally being archived.
+cost metrics as lower-is-better. The rendered markdown starts with benchmark
+configuration, then a curated load-path summary for enqueue, drain, flush, and
+primary-key signals, then keeps the complete metric table below it for detailed
+analysis. The summary includes BSI hit, KV hit, and KV lookup cost rows when
+the reports contain primary-key resolver data. The JSON reports and rendered
+markdown are local benchmark artifacts and should stay out of source control
+unless a reference run is intentionally being archived.
 
 ## Query Profile Capture
 

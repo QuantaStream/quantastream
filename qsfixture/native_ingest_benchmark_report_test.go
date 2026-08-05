@@ -276,6 +276,14 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 	baseline := NativeIngestBenchmarkReport{
 		Profile: "baseline",
 		Mode:    "inabox-standard",
+		Config: NativeIngestBenchmarkConfig{
+			OrderCount:        100,
+			LineitemsPerOrder: 4,
+			ShardCount:        1,
+			RunCount:          1,
+			ReplayCount:       1,
+			PrimaryKeyMode:    "verify_existing",
+		},
 		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
 			ComparisonCount:      10,
 			MatchCount:           9,
@@ -319,6 +327,16 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 	target := NativeIngestBenchmarkReport{
 		Profile: "target",
 		Mode:    "inabox-standard",
+		Config: NativeIngestBenchmarkConfig{
+			OrderCount:          100,
+			LineitemsPerOrder:   4,
+			ShardCount:          4,
+			RunCount:            3,
+			ReplayCount:         2,
+			PrimaryKeyMode:      "verify_existing",
+			PrimaryKeyAuthority: "bsi",
+			PrimaryKeyShadow:    "none",
+		},
 		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
 			ComparisonCount:      10,
 			MatchCount:           10,
@@ -375,6 +393,12 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"# Native Ingest Benchmark Comparison",
 		"Baseline: baseline (inabox-standard)",
 		"Target: target (inabox-standard)",
+		"## Benchmark Config",
+		"| Setting | Baseline | Target |",
+		"| Shards | 1 | 4 |",
+		"| Runs | 1 | 3 |",
+		"| Replays | 1 | 2 |",
+		"| Primary-key authority | kv | bsi |",
 		"## Load Path Summary",
 		"| Signal | Baseline | Target | Delta | Ratio | Direction |",
 		"| Logical rows/sec | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",

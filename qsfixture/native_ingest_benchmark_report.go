@@ -403,6 +403,7 @@ func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchm
 	builder.WriteString("# Native Ingest Benchmark Comparison\n\n")
 	builder.WriteString(fmt.Sprintf("Baseline: %s (%s)\n\n", fallbackReportLabel(comparison.Baseline.Profile), fallbackReportLabel(comparison.Baseline.Mode)))
 	builder.WriteString(fmt.Sprintf("Target: %s (%s)\n\n", fallbackReportLabel(comparison.Target.Profile), fallbackReportLabel(comparison.Target.Mode)))
+	renderNativeIngestBenchmarkConfigMarkdown(&builder, comparison)
 	renderNativeIngestBenchmarkSummaryMarkdown(&builder, comparison)
 	renderNativeIngestPrimaryKeyShadowMarkdown(&builder, comparison)
 	builder.WriteString("## Detailed Metrics\n\n")
@@ -412,6 +413,28 @@ func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchm
 		writeNativeIngestBenchmarkMetricMarkdownRow(&builder, metric.Name, metric)
 	}
 	return builder.String()
+}
+
+func renderNativeIngestBenchmarkConfigMarkdown(builder *strings.Builder, comparison NativeIngestBenchmarkComparison) {
+	builder.WriteString("## Benchmark Config\n\n")
+	builder.WriteString("| Setting | Baseline | Target |\n")
+	builder.WriteString("| --- | ---: | ---: |\n")
+	writeNativeIngestBenchmarkConfigRow(builder, "Orders", configIntString(comparison.Baseline.Config.OrderCount), configIntString(comparison.Target.Config.OrderCount))
+	writeNativeIngestBenchmarkConfigRow(builder, "Lineitems/order", configIntString(comparison.Baseline.Config.LineitemsPerOrder), configIntString(comparison.Target.Config.LineitemsPerOrder))
+	writeNativeIngestBenchmarkConfigRow(builder, "Shards", configIntString(comparison.Baseline.Config.ShardCount), configIntString(comparison.Target.Config.ShardCount))
+	writeNativeIngestBenchmarkConfigRow(builder, "Runs", configIntString(comparison.Baseline.Config.RunCount), configIntString(comparison.Target.Config.RunCount))
+	writeNativeIngestBenchmarkConfigRow(builder, "Replays", replayConfigString(comparison.Baseline.Config.ReplayCount), replayConfigString(comparison.Target.Config.ReplayCount))
+	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key mode", defaultConfigString(comparison.Baseline.Config.PrimaryKeyMode, "verify_existing"), defaultConfigString(comparison.Target.Config.PrimaryKeyMode, "verify_existing"))
+	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key authority", defaultConfigString(comparison.Baseline.Config.PrimaryKeyAuthority, "kv"), defaultConfigString(comparison.Target.Config.PrimaryKeyAuthority, "kv"))
+	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key shadow", defaultConfigString(comparison.Baseline.Config.PrimaryKeyShadow, "none"), defaultConfigString(comparison.Target.Config.PrimaryKeyShadow, "none"))
+	builder.WriteString("\n")
+}
+
+func writeNativeIngestBenchmarkConfigRow(builder *strings.Builder, label string, baseline string, target string) {
+	builder.WriteString(fmt.Sprintf("| %s | %s | %s |\n",
+		label,
+		formatNativeIngestMarkdownCell(baseline),
+		formatNativeIngestMarkdownCell(target)))
 }
 
 func renderNativeIngestBenchmarkSummaryMarkdown(builder *strings.Builder, comparison NativeIngestBenchmarkComparison) {
@@ -572,6 +595,28 @@ func fallbackReportLabel(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "(unknown)"
+	}
+	return value
+}
+
+func configIntString(value int) string {
+	if value <= 0 {
+		return ""
+	}
+	return fmt.Sprint(value)
+}
+
+func replayConfigString(value int) string {
+	if value <= 0 {
+		return "1"
+	}
+	return fmt.Sprint(value)
+}
+
+func defaultConfigString(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
 	}
 	return value
 }
