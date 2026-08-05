@@ -59,8 +59,7 @@ type Session struct {
 	lastFlushProfile   shared.BatchBufferFlushProfile
 }
 
-// PrimaryKeyResolver owns primary-key lookup and rownum assignment. The
-// default implementation preserves the existing KV-backed behavior.
+// PrimaryKeyResolver owns primary-key lookup and rownum assignment.
 type PrimaryKeyResolver interface {
 	ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error)
 }
@@ -83,8 +82,8 @@ type PrimaryKeyResolveResult struct {
 	Profile     PrimaryKeyResolveProfile
 }
 
-// KVPrimaryKeyResolver preserves the current KV-backed primary-key lookup and
-// rownum assignment behavior.
+// KVPrimaryKeyResolver preserves the older KV-backed primary-key lookup and
+// rownum assignment behavior while BSI-backed authority is promoted.
 type KVPrimaryKeyResolver struct{}
 
 // PrimaryKeyMode selects how PutRow resolves lookup-backed primary keys.
@@ -1274,7 +1273,7 @@ func (s *Session) primaryKeyColumnIDResolver() PrimaryKeyResolver {
 }
 
 // SetPrimaryKeyResolver replaces the resolver used for primary-key lookup and
-// rownum assignment. Passing nil restores the default KV-backed resolver.
+// rownum assignment. Passing nil restores the temporary KV-backed fallback.
 func (s *Session) SetPrimaryKeyResolver(resolver PrimaryKeyResolver) {
 	if resolver == nil {
 		s.primaryKeyResolver = KVPrimaryKeyResolver{}

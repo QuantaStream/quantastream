@@ -40,13 +40,14 @@ type BSIPrimaryKeyStageRequest struct {
 	ColumnID       uint64
 }
 
-// BSIPrimaryKeyResolver resolves primary keys through a typed BSI backend. It
-// is intentionally opt-in while KVPrimaryKeyResolver remains the runtime default.
+// BSIPrimaryKeyResolver resolves primary keys through a typed BSI backend. It is
+// the native primary-key authority path; callers still inject the backend
+// explicitly while durable storage and recovery semantics mature.
 type BSIPrimaryKeyResolver struct {
 	Backend BSIPrimaryKeyBackend
 }
 
-// NewBSIPrimaryKeyResolver returns an opt-in BSI-backed primary-key resolver.
+// NewBSIPrimaryKeyResolver returns a BSI-backed primary-key resolver.
 func NewBSIPrimaryKeyResolver(backend BSIPrimaryKeyBackend) BSIPrimaryKeyResolver {
 	return BSIPrimaryKeyResolver{Backend: backend}
 }
@@ -78,6 +79,9 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 	if !tbuf.ShouldLookupPrimaryKey() {
 		return r.resolveDirectColumnID(req, tbuf, &profile, finish)
+	}
+	if err := validateBSIPrimaryKeyValues(req, tbuf); err != nil {
+		return finish(0, false), err
 	}
 
 	profile.LookupRequiredCount++
@@ -111,6 +115,23 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 	profile.BSIStageWriteElapsed += time.Since(stageStart)
 	return finish(tbuf.CurrentColumnID, false), nil
+}
+
+func validateBSIPrimaryKeyValues(req PrimaryKeyResolveRequest, tbuf *TableBuffer) error {
+	if len(req.PrimaryKeyValues) != len(tbuf.PKAttributes) {
+		return fmt.Errorf("BSI primary key resolver requires %d typed primary-key values, got %d",
+			len(tbuf.PKAttributes), len(req.PrimaryKeyValues))
+	}
+	for i, value := range req.PrimaryKeyValues {
+		if value == nil {
+			fieldName := fmt.Sprintf("value%d", i)
+			if i < len(tbuf.PKAttributes) && tbuf.PKAttributes[i] != nil {
+				fieldName = tbuf.PKAttributes[i].FieldName
+			}
+			return fmt.Errorf("BSI primary key resolver requires non-nil typed primary-key value for %s", fieldName)
+		}
+	}
+	return nil
 }
 
 func (r BSIPrimaryKeyResolver) resolveDirectColumnID(

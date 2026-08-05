@@ -62,6 +62,63 @@ func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {
 	require.Equal(t, PrimaryKeyModeVerifyExisting, lookupReq.PrimaryKeyMode)
 }
 
+func TestBSIPrimaryKeyResolverCarriesCompoundTypedValues(t *testing.T) {
+	tbuf, orderKey := newBSIPrimaryKeyTestBuffer()
+	lineNumber := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:  "l_linenumber",
+			SourceName: "l_linenumber",
+			Type:       "Integer",
+		},
+		Parent: tbuf.Table,
+	}
+	tbuf.Table.PrimaryKey = "l_orderkey,l_linenumber"
+	tbuf.PKAttributes = []*Attribute{orderKey, lineNumber}
+	tbuf.PKMap = map[string]*Attribute{
+		"o_orderkey":   orderKey,
+		"l_linenumber": lineNumber,
+	}
+	backend := &recordingBSIPrimaryKeyBackend{
+		lookupResult: BSIPrimaryKeyLookupResult{ColumnID: 5150, Found: true},
+	}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001+2",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.ExistingRow)
+	require.Equal(t, uint64(5150), result.ColumnID)
+	require.Len(t, backend.lookupRequests, 1)
+	lookupReq := backend.lookupRequests[0]
+	require.Equal(t, "l_orderkey,l_linenumber", lookupReq.PrimaryKey)
+	require.Equal(t, []*Attribute{orderKey, lineNumber}, lookupReq.Attributes)
+	require.Equal(t, []interface{}{int64(1001), int64(2)}, lookupReq.Values)
+	require.Equal(t, "1001+2", lookupReq.RenderedValue)
+}
+
+func TestBSIPrimaryKeyResolverRequiresTypedValues(t *testing.T) {
+	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+	backend := &recordingBSIPrimaryKeyBackend{}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:     &Session{},
+		TableBuffer: tbuf,
+		LookupValue: "1001",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires 1 typed primary-key values")
+	require.Zero(t, result.ColumnID)
+	require.Empty(t, backend.lookupRequests)
+	require.Empty(t, backend.stageRequests)
+}
+
 func TestBSIPrimaryKeyResolverAllocatesAndStagesMiss(t *testing.T) {
 	tbuf, pk := newBSIPrimaryKeyTestBuffer()
 	tbuf.sequencerCache = map[int64]*shared.Sequencer{
