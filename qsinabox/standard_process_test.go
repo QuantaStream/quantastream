@@ -500,6 +500,38 @@ func TestStandardProcessNativeGRPCRouterReplayUsesBSIPrimaryKeyAuthority(t *test
 		},
 	})
 
+	requireBSIPrimaryKeyAuthorityReplayProfile(t, result, primaryKeyBackend, orderCount, lineitemsPerOrder, replayCount)
+}
+
+func TestStandardProcessNativeGRPCRouterParallelReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
+	orderCount := 8
+	lineitemsPerOrder := 3
+	replayCount := 2
+	primaryKeyBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
+
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        orderCount,
+		LineitemsPerOrder: lineitemsPerOrder,
+		ShardCount:        4,
+		SourceMode:        core.IngestSourceStream,
+		ReplayCount:       replayCount,
+		PrimaryKeyResolverFactory: func(_ *core.Session) core.PrimaryKeyResolver {
+			return core.NewBSIPrimaryKeyResolver(primaryKeyBackend)
+		},
+	})
+
+	requireBSIPrimaryKeyAuthorityReplayProfile(t, result, primaryKeyBackend, orderCount, lineitemsPerOrder, replayCount)
+}
+
+func requireBSIPrimaryKeyAuthorityReplayProfile(
+	t *testing.T,
+	result standardTPCHRouterIngestResult,
+	primaryKeyBackend *qsfixture.MemoryBSIPrimaryKeyBackend,
+	orderCount int,
+	lineitemsPerOrder int,
+	replayCount int,
+) {
+	t.Helper()
 	expectedTopLevelRecords := orderCount * replayCount
 	expectedLogicalWrites := expectedTopLevelRecords * (1 + lineitemsPerOrder)
 	expectedLineitemReplayHits := orderCount * lineitemsPerOrder
