@@ -25,7 +25,12 @@ type PrimaryKeyResolveProfile struct {
 	TotalElapsed                 time.Duration `json:"total_elapsed_nanos"`
 	LocalCacheLookupElapsed      time.Duration `json:"local_cache_lookup_elapsed_nanos"`
 	KVLookupElapsed              time.Duration `json:"kv_lookup_elapsed_nanos"`
+	BSIIdentityEncodeElapsed     time.Duration `json:"bsi_identity_encode_elapsed_nanos"`
+	BSIAuthorityEncodeElapsed    time.Duration `json:"bsi_authority_encode_elapsed_nanos"`
 	BSILookupElapsed             time.Duration `json:"bsi_lookup_elapsed_nanos"`
+	BSIProjectionElapsed         time.Duration `json:"bsi_projection_elapsed_nanos"`
+	BSICompareElapsed            time.Duration `json:"bsi_compare_elapsed_nanos"`
+	BSIMatchExtractionElapsed    time.Duration `json:"bsi_match_extraction_elapsed_nanos"`
 	BSIStageWriteElapsed         time.Duration `json:"bsi_stage_write_elapsed_nanos"`
 	RownumAllocationElapsed      time.Duration `json:"rownum_allocation_elapsed_nanos"`
 	BatchCacheWriteElapsed       time.Duration `json:"batch_cache_write_elapsed_nanos"`
@@ -52,7 +57,12 @@ func (p PrimaryKeyResolveProfile) add(other PrimaryKeyResolveProfile) PrimaryKey
 	p.TotalElapsed += other.TotalElapsed
 	p.LocalCacheLookupElapsed += other.LocalCacheLookupElapsed
 	p.KVLookupElapsed += other.KVLookupElapsed
+	p.BSIIdentityEncodeElapsed += other.BSIIdentityEncodeElapsed
+	p.BSIAuthorityEncodeElapsed += other.BSIAuthorityEncodeElapsed
 	p.BSILookupElapsed += other.BSILookupElapsed
+	p.BSIProjectionElapsed += other.BSIProjectionElapsed
+	p.BSICompareElapsed += other.BSICompareElapsed
+	p.BSIMatchExtractionElapsed += other.BSIMatchExtractionElapsed
 	p.BSIStageWriteElapsed += other.BSIStageWriteElapsed
 	p.RownumAllocationElapsed += other.RownumAllocationElapsed
 	p.BatchCacheWriteElapsed += other.BatchCacheWriteElapsed

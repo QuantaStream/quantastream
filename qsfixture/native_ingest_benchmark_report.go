@@ -226,7 +226,18 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	metrics["primary_key_bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
 	metrics["primary_key_skipped_bsi_lookup_percent"] = percentForCounts(pk.SkippedBSILookupCount, pk.LookupRequiredCount)
+	metrics["primary_key_bsi_identity_encode_microseconds_per_encode"] = durationMicrosPerCount(
+		pk.BSIIdentityEncodeElapsed,
+		pk.LookupRequiredCount+pk.BSIStageWriteCount,
+	)
+	metrics["primary_key_bsi_authority_encode_microseconds_per_encode"] = durationMicrosPerCount(
+		pk.BSIAuthorityEncodeElapsed,
+		pk.LookupRequiredCount+pk.BSIStageWriteCount,
+	)
 	metrics["primary_key_bsi_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSILookupElapsed, pk.BSILookupCount)
+	metrics["primary_key_bsi_projection_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIProjectionElapsed, pk.BSILookupCount)
+	metrics["primary_key_bsi_compare_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSICompareElapsed, pk.BSILookupCount)
+	metrics["primary_key_bsi_match_extraction_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIMatchExtractionElapsed, pk.BSILookupCount)
 	metrics["primary_key_bsi_stage_write_microseconds_per_write"] = durationMicrosPerCount(pk.BSIStageWriteElapsed, pk.BSIStageWriteCount)
 	metrics["primary_key_allocation_microseconds_per_allocation"] = durationMicrosPerCount(pk.RownumAllocationElapsed, pk.RownumAllocationCount)
 	metrics["primary_key_batch_cache_write_microseconds_per_write"] = durationMicrosPerCount(pk.BatchCacheWriteElapsed, pk.BatchCacheWriteCount)
@@ -256,7 +267,18 @@ func addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics map[string]float64, 
 		metrics[prefix+"bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
 		metrics[prefix+"kv_lookup_percent"] = percentForCounts(pk.KVLookupCount, pk.LookupRequiredCount)
 		metrics[prefix+"kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
+		metrics[prefix+"bsi_identity_encode_microseconds_per_encode"] = durationMicrosPerCount(
+			pk.BSIIdentityEncodeElapsed,
+			pk.LookupRequiredCount+pk.BSIStageWriteCount,
+		)
+		metrics[prefix+"bsi_authority_encode_microseconds_per_encode"] = durationMicrosPerCount(
+			pk.BSIAuthorityEncodeElapsed,
+			pk.LookupRequiredCount+pk.BSIStageWriteCount,
+		)
 		metrics[prefix+"bsi_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSILookupElapsed, pk.BSILookupCount)
+		metrics[prefix+"bsi_projection_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIProjectionElapsed, pk.BSILookupCount)
+		metrics[prefix+"bsi_compare_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSICompareElapsed, pk.BSILookupCount)
+		metrics[prefix+"bsi_match_extraction_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIMatchExtractionElapsed, pk.BSILookupCount)
 		metrics[prefix+"kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	}
 }

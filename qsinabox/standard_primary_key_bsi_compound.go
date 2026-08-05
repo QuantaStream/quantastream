@@ -25,17 +25,26 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 	if req.AuthorityValue == nil {
 		return core.BSIPrimaryKeyLookupResult{}, fmt.Errorf("compound BSI primary-key lookup requires authority value")
 	}
+	var profile core.BSIPrimaryKeyLookupProfile
 	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	projectionStart := time.Now()
 	bsi, err := b.Reader.projectPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
+	profile.ProjectionElapsed = time.Since(projectionStart)
 	if err != nil {
 		return core.BSIPrimaryKeyLookupResult{}, err
 	}
 	if bsi == nil {
-		return core.BSIPrimaryKeyLookupResult{}, nil
+		return core.BSIPrimaryKeyLookupResult{Profile: profile}, nil
 	}
+	compareStart := time.Now()
 	matches := bsi.CompareBigValue(0, roaring64.EQ, req.AuthorityValue, nil, nil)
+	profile.CompareElapsed = time.Since(compareStart)
+	extractionStart := time.Now()
+	matchedColumnIDs := standardSingleColumnBSIPrimaryKeyColumnIDs(matches)
+	profile.MatchExtractionElapsed = time.Since(extractionStart)
 	return core.BSIPrimaryKeyLookupResult{
-		MatchedColumnIDs: standardSingleColumnBSIPrimaryKeyColumnIDs(matches),
+		MatchedColumnIDs: matchedColumnIDs,
+		Profile:          profile,
 	}, nil
 }
 

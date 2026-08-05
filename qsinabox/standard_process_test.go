@@ -532,6 +532,65 @@ func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorit
 	})
 }
 
+func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing.T) {
+	orderCount := 1
+	lineitemsPerOrder := 2
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTPCHNestedSchemas(t, configDir)
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
+		OrderCount:        orderCount,
+		LineitemsPerOrder: lineitemsPerOrder,
+		BaseOrderKey:      71001,
+		SourceMode:        core.IngestSourceStream,
+		StartedAt:         time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("TPCH fixture error = %v", err)
+	}
+
+	first, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("first MountStandardProcess() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	firstProfile := routeStandardProcessNativeTPCHEnvelopes(t, first, config, fixture, core.NewTableCacheStruct())
+	requirePrimaryKeyTableProfile(t, firstProfile, "lineitem", core.PrimaryKeyResolveProfile{
+		ResolveCount:        orderCount * lineitemsPerOrder,
+		LookupRequiredCount: orderCount * lineitemsPerOrder,
+		BSILookupCount:      orderCount * lineitemsPerOrder,
+		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
+	})
+	requireStandardProcessScalarString(t, first, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
+	first.Close()
+
+	second, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("second MountStandardProcess() error = %v", err)
+	}
+	defer second.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	secondProfile := routeStandardProcessNativeTPCHEnvelopes(t, second, config, fixture, core.NewTableCacheStruct())
+	requirePrimaryKeyTableProfile(t, secondProfile, "lineitem", core.PrimaryKeyResolveProfile{
+		ResolveCount:        orderCount * lineitemsPerOrder,
+		LookupRequiredCount: orderCount * lineitemsPerOrder,
+		BSILookupCount:      orderCount * lineitemsPerOrder,
+		BSIHitCount:         orderCount * lineitemsPerOrder,
+	})
+	requireStandardProcessScalarString(t, second, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
+}
+
 func TestStandardProcessNativeGRPCRouterParallelReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
 	orderCount := 8
 	lineitemsPerOrder := 3
@@ -640,6 +699,73 @@ type standardTPCHRouterIngestResult struct {
 	PutProfile    core.RouterPutRowProfileSummary
 	FlushProfile  core.RouterFlushProfileSummary
 	ShadowProfile core.PrimaryKeyShadowProfileSummary
+}
+
+func routeStandardProcessNativeTPCHEnvelopes(tb testing.TB, process StandardProcess, config StandardConfig,
+	fixture qsfixture.TPCHOrderLineitemEnvelopeFixture, tableCache *core.TableCacheStruct) core.RouterPutRowProfileSummary {
+
+	tb.Helper()
+	if process.NativeNode == nil {
+		tb.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-tpch-restart-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		tb.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	putRowProfile := &core.RouterPutRowProfile{}
+	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+		TableCache:                tableCache,
+		BasePath:                  process.Backend.ConfigBaseDir(config),
+		Conn:                      remoteConn,
+		ShardCount:                1,
+		ChannelSize:               len(fixture.Envelopes),
+		FlushInterval:             10 * time.Millisecond,
+		PrimaryKeyMode:            core.PrimaryKeyModeVerifyExisting,
+		PrimaryKeyResolverFactory: NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache),
+		OnPutRowResult:            putRowProfile.Callback(),
+	})
+	if err != nil {
+		tb.Fatalf("NewSessionRouter() error = %v", err)
+	}
+	for _, envelope := range fixture.Envelopes {
+		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+			Tables: fixture.Tables,
+		})
+		if routeDiagnostics.BlocksNative() {
+			tb.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+		}
+		if err != nil {
+			tb.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+		}
+		if !route.Enqueued || route.Record.TableName != "orders" {
+			tb.Fatalf("route result = %+v, want enqueued orders record", route)
+		}
+	}
+	if err := router.Close(); err != nil {
+		tb.Fatalf("router Close() error = %v", err)
+	}
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			tb.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		tb.Fatalf("native gRPC server did not stop")
+	}
+	return putRowProfile.Snapshot()
 }
 
 func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,

@@ -39,6 +39,15 @@ type BSIPrimaryKeyLookupResult struct {
 	ColumnID         uint64
 	Found            bool
 	MatchedColumnIDs []uint64
+	Profile          BSIPrimaryKeyLookupProfile
+}
+
+// BSIPrimaryKeyLookupProfile is backend-provided timing detail for the BSI
+// lookup work hidden behind BSIPrimaryKeyBackend.
+type BSIPrimaryKeyLookupProfile struct {
+	ProjectionElapsed      time.Duration
+	CompareElapsed         time.Duration
+	MatchExtractionElapsed time.Duration
 }
 
 // BSIPrimaryKeyStageRequest stages a typed primary-key mapping for a rownum.
@@ -107,7 +116,9 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 
 	profile.LookupRequiredCount++
-	lookupReq, err := newBSIPrimaryKeyLookupRequest(req, tbuf)
+	lookupReq, identityEncodeElapsed, authorityEncodeElapsed, err := newBSIPrimaryKeyLookupRequest(req, tbuf)
+	profile.BSIIdentityEncodeElapsed += identityEncodeElapsed
+	profile.BSIAuthorityEncodeElapsed += authorityEncodeElapsed
 	if err != nil {
 		return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
 	}
@@ -134,6 +145,9 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		profile.BSILookupCount++
 		lookup, err := r.Backend.LookupPrimaryKey(lookupReq)
 		profile.BSILookupElapsed += time.Since(lookupStart)
+		profile.BSIProjectionElapsed += lookup.Profile.ProjectionElapsed
+		profile.BSICompareElapsed += lookup.Profile.CompareElapsed
+		profile.BSIMatchExtractionElapsed += lookup.Profile.MatchExtractionElapsed
 		if err != nil {
 			return finish(0, false), fmt.Errorf("BSI primary key lookup error - %w", err)
 		}
@@ -154,7 +168,9 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 	stageStart := time.Now()
 	profile.BSIStageWriteCount++
-	stageReq, err := newBSIPrimaryKeyStageRequest(req, tbuf)
+	stageReq, identityEncodeElapsed, authorityEncodeElapsed, err := newBSIPrimaryKeyStageRequest(req, tbuf)
+	profile.BSIIdentityEncodeElapsed += identityEncodeElapsed
+	profile.BSIAuthorityEncodeElapsed += authorityEncodeElapsed
 	if err != nil {
 		profile.BSIStageWriteElapsed += time.Since(stageStart)
 		return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
@@ -232,7 +248,7 @@ func allocatePrimaryKeyColumnID(req PrimaryKeyResolveRequest, tbuf *TableBuffer,
 	return nil
 }
 
-func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyLookupRequest, error) {
+func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyLookupRequest, time.Duration, time.Duration, error) {
 	lookupReq := BSIPrimaryKeyLookupRequest{
 		TableName:      tbuf.Table.Name,
 		PrimaryKey:     tbuf.Table.PrimaryKey,
@@ -242,21 +258,25 @@ func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuff
 		ShardTimestamp: tbuf.CurrentTimestamp,
 		PrimaryKeyMode: req.PrimaryKeyMode.normalize(),
 	}
+	identityEncodeStart := time.Now()
 	identity, err := EncodeBSIPrimaryKeyLookupIdentity(lookupReq)
+	identityEncodeElapsed := time.Since(identityEncodeStart)
 	if err != nil {
-		return BSIPrimaryKeyLookupRequest{}, err
+		return BSIPrimaryKeyLookupRequest{}, identityEncodeElapsed, 0, err
 	}
 	lookupReq.Identity = append([]byte(nil), identity...)
+	authorityEncodeStart := time.Now()
 	lookupReq.AuthorityValue = optionalCompoundPrimaryKeyAuthorityValue(
 		lookupReq.TableName,
 		lookupReq.PrimaryKey,
 		lookupReq.Attributes,
 		lookupReq.Values,
 	)
-	return lookupReq, nil
+	authorityEncodeElapsed := time.Since(authorityEncodeStart)
+	return lookupReq, identityEncodeElapsed, authorityEncodeElapsed, nil
 }
 
-func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyStageRequest, error) {
+func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyStageRequest, time.Duration, time.Duration, error) {
 	stageReq := BSIPrimaryKeyStageRequest{
 		TableName:      tbuf.Table.Name,
 		PrimaryKey:     tbuf.Table.PrimaryKey,
@@ -266,16 +286,20 @@ func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffe
 		ShardTimestamp: tbuf.CurrentTimestamp,
 		ColumnID:       tbuf.CurrentColumnID,
 	}
+	identityEncodeStart := time.Now()
 	identity, err := EncodeBSIPrimaryKeyStageIdentity(stageReq)
+	identityEncodeElapsed := time.Since(identityEncodeStart)
 	if err != nil {
-		return BSIPrimaryKeyStageRequest{}, err
+		return BSIPrimaryKeyStageRequest{}, identityEncodeElapsed, 0, err
 	}
 	stageReq.Identity = append([]byte(nil), identity...)
+	authorityEncodeStart := time.Now()
 	stageReq.AuthorityValue = optionalCompoundPrimaryKeyAuthorityValue(
 		stageReq.TableName,
 		stageReq.PrimaryKey,
 		stageReq.Attributes,
 		stageReq.Values,
 	)
-	return stageReq, nil
+	authorityEncodeElapsed := time.Since(authorityEncodeStart)
+	return stageReq, identityEncodeElapsed, authorityEncodeElapsed, nil
 }
