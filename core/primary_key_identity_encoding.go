@@ -7,7 +7,13 @@ import (
 	"time"
 )
 
-const primaryKeyIdentityEncodingVersion byte = 1
+const (
+	// PrimaryKeyIdentityEncodingVersion is the durable encoding version used
+	// for BSI-backed primary-key authority identities.
+	PrimaryKeyIdentityEncodingVersion = 1
+
+	primaryKeyIdentityEncodingVersion byte = byte(PrimaryKeyIdentityEncodingVersion)
+)
 
 const (
 	primaryKeyIdentityValueBool byte = iota + 1
