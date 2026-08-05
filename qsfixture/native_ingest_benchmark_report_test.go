@@ -149,6 +149,23 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 				RownumAllocationElapsed: 750 * time.Microsecond,
 				BatchCacheWriteElapsed:  300 * time.Microsecond,
 			},
+			PrimaryKeyByTable: map[string]core.PrimaryKeyResolveProfile{
+				"orders": {
+					ResolveCount:        10,
+					LookupRequiredCount: 4,
+					DirectColumnIDCount: 6,
+					BSILookupCount:      4,
+					BSIHitCount:         2,
+					BSILookupElapsed:    80 * time.Microsecond,
+				},
+				"lineitem": {
+					ResolveCount:        40,
+					LookupRequiredCount: 40,
+					KVLookupCount:       40,
+					KVHitCount:          20,
+					KVLookupElapsed:     800 * time.Microsecond,
+				},
+			},
 		},
 		core.RouterDrainProfileSummary{
 			WorkerCount:  2,
@@ -269,6 +286,30 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["primary_key_bsi_stage_write_microseconds_per_write"], 50.0; got != want {
 		t.Fatalf("primary key bsi stage write us/write = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_direct_column_id_count"], 6.0; got != want {
+		t.Fatalf("orders direct column id count = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_direct_column_id_percent"], 60.0; got != want {
+		t.Fatalf("orders direct column id percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_bsi_lookup_count"], 4.0; got != want {
+		t.Fatalf("orders BSI lookup count = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_bsi_lookup_percent"], 100.0; got != want {
+		t.Fatalf("orders BSI lookup percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_orders_bsi_lookup_microseconds_per_lookup"], 20.0; got != want {
+		t.Fatalf("orders BSI lookup us/lookup = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_lineitem_kv_lookup_count"], 40.0; got != want {
+		t.Fatalf("lineitem KV lookup count = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_lineitem_kv_lookup_percent"], 100.0; got != want {
+		t.Fatalf("lineitem KV lookup percent = %v, want %v", got, want)
+	}
+	if got, want := metrics["primary_key_table_lineitem_kv_lookup_microseconds_per_lookup"], 20.0; got != want {
+		t.Fatalf("lineitem KV lookup us/lookup = %v, want %v", got, want)
 	}
 }
 

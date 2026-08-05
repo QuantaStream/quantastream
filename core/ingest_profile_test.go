@@ -42,6 +42,17 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 			RownumAllocationElapsed:      time.Millisecond,
 			BatchCacheWriteElapsed:       time.Millisecond,
 		},
+		PrimaryKeyByTable: map[string]PrimaryKeyResolveProfile{
+			"orders": {
+				ResolveCount:        1,
+				DirectColumnIDCount: 1,
+			},
+			"lineitem": {
+				ResolveCount:        3,
+				LookupRequiredCount: 3,
+				KVLookupCount:       3,
+			},
+		},
 	})
 	callback("shard1", IngestRecord{TableName: "orders"}, PutRowResult{
 		TableName:    "orders",
@@ -55,6 +66,14 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 			KVHitCount:            1,
 			TotalElapsed:          2 * time.Millisecond,
 			KVLookupElapsed:       time.Millisecond,
+		},
+		PrimaryKeyByTable: map[string]PrimaryKeyResolveProfile{
+			"orders": {
+				ResolveCount:        1,
+				LookupRequiredCount: 1,
+				KVLookupCount:       1,
+				KVHitCount:          1,
+			},
 		},
 	})
 
@@ -113,6 +132,18 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 			BatchCacheWriteElapsed:       time.Millisecond,
 		},
 	}, snapshot.ByTable["orders"])
+	require.Equal(t, PrimaryKeyResolveProfile{
+		ResolveCount:        2,
+		LookupRequiredCount: 1,
+		DirectColumnIDCount: 1,
+		KVLookupCount:       1,
+		KVHitCount:          1,
+	}, snapshot.PrimaryKeyByTable["orders"])
+	require.Equal(t, PrimaryKeyResolveProfile{
+		ResolveCount:        3,
+		LookupRequiredCount: 3,
+		KVLookupCount:       3,
+	}, snapshot.PrimaryKeyByTable["lineitem"])
 	require.Equal(t, 1, snapshot.ByShard["shard0"].RecordCount)
 	require.Equal(t, 1, snapshot.ByShard["shard1"].RecordCount)
 }
@@ -122,12 +153,17 @@ func TestRouterPutRowProfileSnapshotIsStableCopy(t *testing.T) {
 	profile.Observe("shard0", IngestRecord{TableName: "orders"}, PutRowResult{
 		TableName:    "orders",
 		TotalElapsed: time.Millisecond,
+		PrimaryKey: PrimaryKeyResolveProfile{
+			ResolveCount: 1,
+		},
 	})
 
 	snapshot := profile.Snapshot()
 	snapshot.ByTable["orders"] = RouterPutRowProfileCounter{}
+	snapshot.PrimaryKeyByTable["orders"] = PrimaryKeyResolveProfile{}
 
 	require.Equal(t, 1, profile.Snapshot().ByTable["orders"].RecordCount)
+	require.Equal(t, 1, profile.Snapshot().PrimaryKeyByTable["orders"].ResolveCount)
 }
 
 func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {

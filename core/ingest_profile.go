@@ -32,6 +32,7 @@ type RouterPutRowProfileSummary struct {
 	RelationElapsed       time.Duration                         `json:"relation_elapsed_nanos"`
 	AttributeElapsed      time.Duration                         `json:"attribute_elapsed_nanos"`
 	PrimaryKey            PrimaryKeyResolveProfile              `json:"primary_key"`
+	PrimaryKeyByTable     map[string]PrimaryKeyResolveProfile   `json:"primary_key_by_table,omitempty"`
 	ByTable               map[string]RouterPutRowProfileCounter `json:"by_table,omitempty"`
 	ByShard               map[string]RouterPutRowProfileCounter `json:"by_shard,omitempty"`
 }
@@ -87,6 +88,14 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	p.summary.RelationElapsed += result.RelationElapsed
 	p.summary.AttributeElapsed += result.AttributeElapsed
 	p.summary.PrimaryKey = p.summary.PrimaryKey.add(result.PrimaryKey)
+	if len(result.PrimaryKeyByTable) > 0 {
+		p.summary.PrimaryKeyByTable = addPrimaryKeyResolveProfilesByTable(p.summary.PrimaryKeyByTable, result.PrimaryKeyByTable)
+	} else {
+		tableName := firstNonEmpty(result.TableName, record.TableName)
+		if tableName != "" {
+			p.summary.PrimaryKeyByTable = addPrimaryKeyResolveProfileForTable(p.summary.PrimaryKeyByTable, tableName, result.PrimaryKey)
+		}
+	}
 	tableName := firstNonEmpty(result.TableName, record.TableName)
 	if tableName != "" {
 		p.summary.ByTable[tableName] = addRouterPutRowProfileCounter(p.summary.ByTable[tableName], result)
@@ -117,9 +126,39 @@ func (p *RouterPutRowProfile) ensureMaps() {
 
 func (s RouterPutRowProfileSummary) copy() RouterPutRowProfileSummary {
 	cp := s
+	cp.PrimaryKeyByTable = copyPrimaryKeyResolveProfiles(s.PrimaryKeyByTable)
 	cp.ByTable = copyRouterPutRowProfileCounters(s.ByTable)
 	cp.ByShard = copyRouterPutRowProfileCounters(s.ByShard)
 	return cp
+}
+
+func copyPrimaryKeyResolveProfiles(src map[string]PrimaryKeyResolveProfile) map[string]PrimaryKeyResolveProfile {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]PrimaryKeyResolveProfile, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func addPrimaryKeyResolveProfilesByTable(dst map[string]PrimaryKeyResolveProfile, src map[string]PrimaryKeyResolveProfile) map[string]PrimaryKeyResolveProfile {
+	for tableName, profile := range src {
+		dst = addPrimaryKeyResolveProfileForTable(dst, tableName, profile)
+	}
+	return dst
+}
+
+func addPrimaryKeyResolveProfileForTable(dst map[string]PrimaryKeyResolveProfile, tableName string, profile PrimaryKeyResolveProfile) map[string]PrimaryKeyResolveProfile {
+	if tableName == "" {
+		return dst
+	}
+	if dst == nil {
+		dst = map[string]PrimaryKeyResolveProfile{}
+	}
+	dst[tableName] = dst[tableName].add(profile)
+	return dst
 }
 
 func copyRouterPutRowProfileCounters(src map[string]RouterPutRowProfileCounter) map[string]RouterPutRowProfileCounter {

@@ -230,7 +230,56 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_bsi_stage_write_microseconds_per_write"] = durationMicrosPerCount(pk.BSIStageWriteElapsed, pk.BSIStageWriteCount)
 	metrics["primary_key_allocation_microseconds_per_allocation"] = durationMicrosPerCount(pk.RownumAllocationElapsed, pk.RownumAllocationCount)
 	metrics["primary_key_batch_cache_write_microseconds_per_write"] = durationMicrosPerCount(pk.BatchCacheWriteElapsed, pk.BatchCacheWriteCount)
+	addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics, putSnapshot.PrimaryKeyByTable)
 	return metrics
+}
+
+func addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics map[string]float64, byTable map[string]core.PrimaryKeyResolveProfile) {
+	if metrics == nil {
+		return
+	}
+	for tableName, pk := range byTable {
+		token := nativeIngestBenchmarkMetricToken(tableName)
+		if token == "" {
+			continue
+		}
+		prefix := "primary_key_table_" + token + "_"
+		metrics[prefix+"resolves"] = float64(pk.ResolveCount)
+		metrics[prefix+"lookup_required_count"] = float64(pk.LookupRequiredCount)
+		metrics[prefix+"direct_column_id_count"] = float64(pk.DirectColumnIDCount)
+		metrics[prefix+"bsi_lookup_count"] = float64(pk.BSILookupCount)
+		metrics[prefix+"bsi_stage_write_count"] = float64(pk.BSIStageWriteCount)
+		metrics[prefix+"kv_lookup_count"] = float64(pk.KVLookupCount)
+		metrics[prefix+"local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
+		metrics[prefix+"direct_column_id_percent"] = percentForCounts(pk.DirectColumnIDCount, pk.ResolveCount)
+		metrics[prefix+"bsi_lookup_percent"] = percentForCounts(pk.BSILookupCount, pk.LookupRequiredCount)
+		metrics[prefix+"bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
+		metrics[prefix+"kv_lookup_percent"] = percentForCounts(pk.KVLookupCount, pk.LookupRequiredCount)
+		metrics[prefix+"kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
+		metrics[prefix+"bsi_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSILookupElapsed, pk.BSILookupCount)
+		metrics[prefix+"kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
+	}
+}
+
+func nativeIngestBenchmarkMetricToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.Trim(builder.String(), "_")
 }
 
 // NativeIngestBenchmarkComparison summarizes two native ingest reports.

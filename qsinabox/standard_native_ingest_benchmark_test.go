@@ -351,6 +351,8 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["primary_key_bsi_stage_write_microseconds_per_write"], "pk_bsi_stage_write_us/write")
 	b.ReportMetric(metrics["primary_key_allocation_microseconds_per_allocation"], "pk_alloc_us/allocation")
 	b.ReportMetric(metrics["primary_key_batch_cache_write_microseconds_per_write"], "pk_batch_write_us/write")
+	reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b, metrics, "orders")
+	reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b, metrics, "lineitem")
 	if _, ok := metrics["primary_key_shadow_comparison_count"]; ok {
 		b.ReportMetric(metrics["primary_key_shadow_comparison_count"], "pk_shadow_comparisons")
 		b.ReportMetric(metrics["primary_key_shadow_match_count"], "pk_shadow_matches")
@@ -358,4 +360,25 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 		b.ReportMetric(metrics["primary_key_shadow_skip_count"], "pk_shadow_skips")
 		b.ReportMetric(metrics["primary_key_shadow_existing_row_match_count"], "pk_shadow_existing_matches")
 	}
+}
+
+func reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b *testing.B, metrics map[string]float64, tableName string) {
+	b.Helper()
+	prefix := "primary_key_table_" + strings.ToLower(tableName) + "_"
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"direct_column_id_count", "pk_"+tableName+"_direct_count")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_count", "pk_"+tableName+"_bsi_lookups")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_count", "pk_"+tableName+"_kv_lookups")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_percent", "pk_"+tableName+"_bsi_lookup_percent")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_percent", "pk_"+tableName+"_kv_lookup_percent")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_microseconds_per_lookup", "pk_"+tableName+"_bsi_us/lookup")
+	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_microseconds_per_lookup", "pk_"+tableName+"_kv_us/lookup")
+}
+
+func reportBenchmarkMetricIfPresent(b *testing.B, metrics map[string]float64, name string, unit string) {
+	b.Helper()
+	value, ok := metrics[name]
+	if !ok {
+		return
+	}
+	b.ReportMetric(value, unit)
 }

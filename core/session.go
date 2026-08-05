@@ -145,6 +145,7 @@ type PutRowResult struct {
 	AttributeElapsed      time.Duration
 	TotalElapsed          time.Duration
 	PrimaryKey            PrimaryKeyResolveProfile
+	PrimaryKeyByTable     map[string]PrimaryKeyResolveProfile `json:"primary_key_by_table,omitempty"`
 }
 
 type putRowRequest struct {
@@ -180,6 +181,7 @@ type putRowStageTimings struct {
 	attributeElapsed      time.Duration
 	childRowCount         int
 	primaryKeyProfile     PrimaryKeyResolveProfile
+	primaryKeyByTable     map[string]PrimaryKeyResolveProfile
 }
 
 type putRowStageName string
@@ -620,6 +622,25 @@ func (req putRowRequest) addPrimaryKeyProfile(profile PrimaryKeyResolveProfile) 
 	req.timings.primaryKeyProfile = req.timings.primaryKeyProfile.add(profile)
 }
 
+func (req putRowRequest) addPrimaryKeyProfileForTable(tableName string, profile PrimaryKeyResolveProfile) {
+	if req.timings == nil || tableName == "" {
+		return
+	}
+	if req.timings.primaryKeyByTable == nil {
+		req.timings.primaryKeyByTable = map[string]PrimaryKeyResolveProfile{}
+	}
+	req.timings.primaryKeyByTable[tableName] = req.timings.primaryKeyByTable[tableName].add(profile)
+}
+
+func (req putRowRequest) addPrimaryKeyProfilesByTable(profiles map[string]PrimaryKeyResolveProfile) {
+	if req.timings == nil {
+		return
+	}
+	for tableName, profile := range profiles {
+		req.addPrimaryKeyProfileForTable(tableName, profile)
+	}
+}
+
 func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity, totalElapsed time.Duration) PutRowResult {
 	result := PutRowResult{
 		TableName:       req.tableName,
@@ -642,6 +663,7 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 	result.RelationElapsed = req.timings.relationElapsed
 	result.AttributeElapsed = req.timings.attributeElapsed
 	result.PrimaryKey = req.timings.primaryKeyProfile
+	result.PrimaryKeyByTable = copyPrimaryKeyResolveProfileMap(req.timings.primaryKeyByTable)
 	return result
 }
 
@@ -650,6 +672,7 @@ func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (pu
 	identity, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
 		req.ignoreSourcePath, req.useNerdCapitalization, req.primaryKeyMode)
 	req.addPrimaryKeyProfile(identity.primaryKeyProfile)
+	req.addPrimaryKeyProfileForTable(tbuf.Table.Name, identity.primaryKeyProfile)
 	return identity, err
 }
 
@@ -740,9 +763,21 @@ func (s *Session) expandChildRows(req putRowRequest, tbuf *TableBuffer, attr *At
 			childLogicalRows = 1
 		}
 		req.addPrimaryKeyProfile(childResult.PrimaryKey)
+		req.addPrimaryKeyProfilesByTable(childResult.PrimaryKeyByTable)
 		req.addChildRows(childLogicalRows)
 	}
 	return nil
+}
+
+func copyPrimaryKeyResolveProfileMap(src map[string]PrimaryKeyResolveProfile) map[string]PrimaryKeyResolveProfile {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]PrimaryKeyResolveProfile, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 type putRowChildExpansion struct {
