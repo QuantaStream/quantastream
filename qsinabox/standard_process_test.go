@@ -503,6 +503,34 @@ func TestStandardProcessNativeGRPCRouterReplayUsesBSIPrimaryKeyAuthority(t *test
 	requireBSIPrimaryKeyAuthorityReplayProfile(t, result, primaryKeyBackend, orderCount, lineitemsPerOrder, replayCount)
 }
 
+func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorityByTable(t *testing.T) {
+	orderCount := 2
+	lineitemsPerOrder := 3
+	replayCount := 2
+
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:                orderCount,
+		LineitemsPerOrder:         lineitemsPerOrder,
+		ShardCount:                1,
+		SourceMode:                core.IngestSourceStream,
+		ReplayCount:               replayCount,
+		PrimaryKeyResolverFactory: NewStandardSessionBSIPrimaryKeyResolverFactory(core.NewTableCacheStruct()),
+	})
+
+	expectedOrderResolves := orderCount * replayCount
+	expectedLineitemResolves := orderCount * lineitemsPerOrder * replayCount
+	requirePrimaryKeyTableProfile(t, result.PutProfile, "orders", core.PrimaryKeyResolveProfile{
+		ResolveCount:        expectedOrderResolves,
+		DirectColumnIDCount: expectedOrderResolves,
+	})
+	requirePrimaryKeyTableProfile(t, result.PutProfile, "lineitem", core.PrimaryKeyResolveProfile{
+		ResolveCount:        expectedLineitemResolves,
+		LookupRequiredCount: expectedLineitemResolves,
+		KVLookupCount:       expectedLineitemResolves,
+		KVHitCount:          orderCount * lineitemsPerOrder,
+	})
+}
+
 func TestStandardProcessNativeGRPCRouterParallelReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
 	orderCount := 8
 	lineitemsPerOrder := 3
@@ -555,6 +583,37 @@ func requireBSIPrimaryKeyAuthorityReplayProfile(
 	if len(primaryKeyBackend.Snapshot()) != expectedLineitemReplayHits {
 		t.Fatalf("BSI primary key backend entries = %d, want %d lineitem PK entries",
 			len(primaryKeyBackend.Snapshot()), expectedLineitemReplayHits)
+	}
+}
+
+func requirePrimaryKeyTableProfile(
+	t *testing.T,
+	putProfile core.RouterPutRowProfileSummary,
+	tableName string,
+	expected core.PrimaryKeyResolveProfile,
+) {
+	t.Helper()
+	profile, ok := putProfile.PrimaryKeyByTable[tableName]
+	if !ok {
+		t.Fatalf("primary key table profile for %s missing in %+v", tableName, putProfile.PrimaryKeyByTable)
+	}
+	if profile.ResolveCount != expected.ResolveCount {
+		t.Fatalf("%s primary key profile = %+v, want %d resolves", tableName, profile, expected.ResolveCount)
+	}
+	if profile.LookupRequiredCount != expected.LookupRequiredCount {
+		t.Fatalf("%s primary key profile = %+v, want %d lookup-required rows", tableName, profile, expected.LookupRequiredCount)
+	}
+	if profile.DirectColumnIDCount != expected.DirectColumnIDCount {
+		t.Fatalf("%s primary key profile = %+v, want %d direct column IDs", tableName, profile, expected.DirectColumnIDCount)
+	}
+	if profile.BSILookupCount != expected.BSILookupCount {
+		t.Fatalf("%s primary key profile = %+v, want %d BSI lookups", tableName, profile, expected.BSILookupCount)
+	}
+	if profile.KVLookupCount != expected.KVLookupCount {
+		t.Fatalf("%s primary key profile = %+v, want %d KV lookups", tableName, profile, expected.KVLookupCount)
+	}
+	if profile.KVHitCount != expected.KVHitCount {
+		t.Fatalf("%s primary key profile = %+v, want %d KV hits", tableName, profile, expected.KVHitCount)
 	}
 }
 
