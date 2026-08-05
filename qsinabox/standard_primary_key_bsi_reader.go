@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/server"
+	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -14,6 +15,7 @@ type StandardSingleColumnBSIPrimaryKeyReader struct {
 	Pool       *core.SessionPool
 	TableCache *core.TableCacheStruct
 	Direct     *server.BitmapIndex
+	BitIndex   *shared.BitmapIndex
 }
 
 var _ core.SingleColumnBSIPrimaryKeyReader = StandardSingleColumnBSIPrimaryKeyReader{}
@@ -66,6 +68,13 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) primaryKeyAttribute(req core.Si
 func (r StandardSingleColumnBSIPrimaryKeyReader) projectPrimaryKeyBSI(tableName, fieldName string, fromTime, toTime int64) (*roaring64.BSI, error) {
 	if r.Direct != nil {
 		return r.Direct.ProjectBSI(tableName, fieldName, fromTime, toTime, nil, false)
+	}
+	if r.BitIndex != nil {
+		bsis, _, err := r.BitIndex.Projection(tableName, []string{fieldName}, fromTime, toTime, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		return bsis[fieldName], nil
 	}
 	if r.Pool == nil {
 		return nil, fmt.Errorf("single-column BSI primary-key reader has no bitmap backend")

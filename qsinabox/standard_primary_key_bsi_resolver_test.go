@@ -4,8 +4,10 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/shared"
 )
 
 func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testing.T) {
@@ -75,6 +77,100 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	if replay.PrimaryKey.BSILookupCount != 1 || replay.PrimaryKey.BSIHitCount != 1 ||
 		replay.PrimaryKey.BSIStageWriteCount != 0 || replay.PrimaryKey.KVLookupCount != 0 {
 		t.Fatalf("replay primary-key profile = %+v, want BSI hit without KV lookup or stage", replay.PrimaryKey)
+	}
+}
+
+func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+	remoteConn, err := shared.NewLoaderConnection(context.Background(), shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-bsi-pk-loader-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		t.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	tableCache := core.NewTableCacheStruct()
+	factory := NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
+	firstSession, err := core.OpenSession(tableCache, process.Backend.ConfigBaseDir(config), "sample", false, remoteConn)
+	if err != nil {
+		t.Fatalf("OpenSession(first) error = %v", err)
+	}
+	firstSession.SetPrimaryKeyResolver(factory(firstSession))
+	first, err := firstSession.PutRowWithOptions("sample", map[string]interface{}{
+		"id":   202,
+		"city": "Buenos Aires",
+	}, 0, false, false, core.PutRowOptions{})
+	if err != nil {
+		t.Fatalf("first PutRowWithOptions() error = %v", err)
+	}
+	if !first.Inserted || first.PrimaryKey.KVLookupCount != 0 || first.PrimaryKey.BSIStageWriteCount != 1 {
+		t.Fatalf("first PutRowWithOptions() = %+v, want BSI-staged insert without KV lookup", first)
+	}
+	if err := firstSession.Flush(); err != nil {
+		t.Fatalf("first Flush() error = %v", err)
+	}
+	if err := firstSession.CloseSession(); err != nil {
+		t.Fatalf("first CloseSession() error = %v", err)
+	}
+
+	replaySession, err := core.OpenSession(tableCache, process.Backend.ConfigBaseDir(config), "sample", false, remoteConn)
+	if err != nil {
+		t.Fatalf("OpenSession(replay) error = %v", err)
+	}
+	defer replaySession.CloseSession()
+	replaySession.SetPrimaryKeyResolver(factory(replaySession))
+	replay, err := replaySession.PutRowWithOptions("sample", map[string]interface{}{
+		"id":   202,
+		"city": "Cordoba",
+	}, 0, false, false, core.PutRowOptions{})
+	if err != nil {
+		t.Fatalf("replay PutRowWithOptions() error = %v", err)
+	}
+	if replay.Inserted || !replay.ExistingRow || replay.ColumnID != first.ColumnID {
+		t.Fatalf("replay PutRowWithOptions() = %+v, want existing row %d", replay, first.ColumnID)
+	}
+	if replay.PrimaryKey.BSILookupCount != 1 || replay.PrimaryKey.BSIHitCount != 1 ||
+		replay.PrimaryKey.BSIStageWriteCount != 0 || replay.PrimaryKey.KVLookupCount != 0 {
+		t.Fatalf("replay primary-key profile = %+v, want native BSI hit without KV lookup or stage", replay.PrimaryKey)
+	}
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
 	}
 }
 

@@ -30,6 +30,22 @@ func NewStandardBSIPrimaryKeyResolverFactory(reader core.SingleColumnBSIPrimaryK
 	}
 }
 
+// NewStandardSessionBSIPrimaryKeyResolverFactory builds a resolver factory for
+// loader-owned sessions. The concrete reader uses each opened session's bitmap
+// connection, so this works for native gRPC loader sessions without sharing
+// in-process server pointers.
+func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheStruct) core.SessionPrimaryKeyResolverFactory {
+	return func(session *core.Session) core.PrimaryKeyResolver {
+		if session == nil {
+			return core.KVPrimaryKeyResolver{}
+		}
+		return NewStandardBSIPrimaryKeyResolver(StandardSingleColumnBSIPrimaryKeyReader{
+			TableCache: tableCache,
+			BitIndex:   session.BitIndex,
+		})
+	}
+}
+
 // ResolvePrimaryKeyColumnID delegates eligible single-column BSI tables to the
 // native resolver and falls back for compound, direct-rownum, or non-BSI keys.
 func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.PrimaryKeyResolveRequest) (core.PrimaryKeyResolveResult, error) {
