@@ -1,0 +1,75 @@
+package qsinabox
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
+)
+
+// StandardCompoundBSIPrimaryKeyBackend stores compact compound primary-key
+// authority values in the hidden catalog system BSI for inabox-standard.
+type StandardCompoundBSIPrimaryKeyBackend struct {
+	Table   *core.Table
+	Reader  StandardSingleColumnBSIPrimaryKeyReader
+	Session *core.Session
+}
+
+var _ core.BSIPrimaryKeyBackend = StandardCompoundBSIPrimaryKeyBackend{}
+
+// LookupPrimaryKey resolves the compact compound authority value to matching
+// rownums.
+func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrimaryKeyLookupRequest) (core.BSIPrimaryKeyLookupResult, error) {
+	if req.AuthorityValue == nil {
+		return core.BSIPrimaryKeyLookupResult{}, fmt.Errorf("compound BSI primary-key lookup requires authority value")
+	}
+	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	bsi, err := b.Reader.projectPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
+	if err != nil {
+		return core.BSIPrimaryKeyLookupResult{}, err
+	}
+	if bsi == nil {
+		return core.BSIPrimaryKeyLookupResult{}, nil
+	}
+	matches := bsi.CompareBigValue(0, roaring64.EQ, req.AuthorityValue, nil, nil)
+	return core.BSIPrimaryKeyLookupResult{
+		MatchedColumnIDs: standardSingleColumnBSIPrimaryKeyColumnIDs(matches),
+	}, nil
+}
+
+// StagePrimaryKey stages the compact compound authority value in the hidden BSI.
+func (b StandardCompoundBSIPrimaryKeyBackend) StagePrimaryKey(req core.BSIPrimaryKeyStageRequest) error {
+	if req.AuthorityValue == nil {
+		return fmt.Errorf("compound BSI primary-key stage requires authority value")
+	}
+	if req.ColumnID == 0 {
+		return fmt.Errorf("compound BSI primary-key stage requires column ID")
+	}
+	if b.Session == nil || b.Session.BatchBuffer == nil {
+		return fmt.Errorf("compound BSI primary-key stage requires session batch buffer")
+	}
+	return b.Session.BatchBuffer.SetValue(
+		req.TableName,
+		shared.CompoundPrimaryKeyAuthorityFieldName,
+		req.ColumnID,
+		req.AuthorityValue,
+		req.ShardTimestamp,
+	)
+}
+
+func (b StandardCompoundBSIPrimaryKeyBackend) lookupWindowNanos(shardTimestamp time.Time) (int64, int64) {
+	if b.Table != nil && b.Table.TimeQuantumType != "" && !shardTimestamp.IsZero() {
+		nanos := shardTimestamp.UTC().UnixNano()
+		return nanos, nanos
+	}
+	return standardProjectionWindowNanos(b.Reader.TableCache, b.tableName(), 0, 0)
+}
+
+func (b StandardCompoundBSIPrimaryKeyBackend) tableName() string {
+	if b.Table != nil {
+		return b.Table.Name
+	}
+	return ""
+}

@@ -726,6 +726,9 @@ func (s *Session) mapAttributeValues(req putRowRequest, tbuf *TableBuffer, ident
 }
 
 func shouldSkipPutRowAttributeMapping(tbuf *TableBuffer, attr *Attribute) bool {
+	if attr.System {
+		return true
+	}
 	if _, found := tbuf.PKMap[attr.FieldName]; found {
 		return true
 	}

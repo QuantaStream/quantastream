@@ -4,9 +4,8 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 )
 
-// StandardBSIPrimaryKeyResolver promotes eligible single-column PKs to the
-// native BSI authority path while preserving KV behavior for unsupported
-// catalog shapes.
+// StandardBSIPrimaryKeyResolver promotes eligible PKs to the native BSI
+// authority path while preserving KV behavior for unsupported catalog shapes.
 type StandardBSIPrimaryKeyResolver struct {
 	Reader   core.SingleColumnBSIPrimaryKeyReader
 	Fallback core.PrimaryKeyResolver
@@ -46,18 +45,33 @@ func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheS
 	}
 }
 
-// ResolvePrimaryKeyColumnID delegates eligible single-column BSI tables to the
-// native resolver and falls back for compound, direct-rownum, or non-BSI keys.
+// ResolvePrimaryKeyColumnID delegates eligible BSI authority shapes to the
+// native resolver and falls back for direct-rownum, unsupported, or not-yet
+// encodable keys.
 func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.PrimaryKeyResolveRequest) (core.PrimaryKeyResolveResult, error) {
 	if r.Reader == nil || req.TableBuffer == nil || req.TableBuffer.Table == nil {
 		return r.fallback().ResolvePrimaryKeyColumnID(req)
 	}
 	eligibility := core.ObserveBSIPrimaryKeyAuthorityEligibility(req.TableBuffer.Table)
+	if eligibility.Eligible && eligibility.Mode == core.BSIPrimaryKeyAuthorityModeSingleColumnBSI {
+		backend := core.NewSingleColumnBSIPrimaryKeyBackend(req.TableBuffer.Table, r.Reader)
+		return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
+	}
+	if eligibility.Mode == core.BSIPrimaryKeyAuthorityModeCompoundEncodedBSI {
+		reader, ok := standardCompoundBSIPrimaryKeyReader(r.Reader)
+		if ok && req.Session != nil && req.Session.BatchBuffer != nil && standardCompoundBSIPrimaryKeyEncodable(req) {
+			backend := StandardCompoundBSIPrimaryKeyBackend{
+				Table:   req.TableBuffer.Table,
+				Reader:  reader,
+				Session: req.Session,
+			}
+			return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
+		}
+	}
 	if !eligibility.Eligible || eligibility.Mode != core.BSIPrimaryKeyAuthorityModeSingleColumnBSI {
 		return r.fallback().ResolvePrimaryKeyColumnID(req)
 	}
-	backend := core.NewSingleColumnBSIPrimaryKeyBackend(req.TableBuffer.Table, r.Reader)
-	return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
+	return r.fallback().ResolvePrimaryKeyColumnID(req)
 }
 
 func (r StandardBSIPrimaryKeyResolver) fallback() core.PrimaryKeyResolver {
@@ -65,4 +79,29 @@ func (r StandardBSIPrimaryKeyResolver) fallback() core.PrimaryKeyResolver {
 		return r.Fallback
 	}
 	return core.KVPrimaryKeyResolver{}
+}
+
+func standardCompoundBSIPrimaryKeyReader(reader core.SingleColumnBSIPrimaryKeyReader) (StandardSingleColumnBSIPrimaryKeyReader, bool) {
+	switch typed := reader.(type) {
+	case StandardSingleColumnBSIPrimaryKeyReader:
+		return typed, true
+	case *StandardSingleColumnBSIPrimaryKeyReader:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return StandardSingleColumnBSIPrimaryKeyReader{}, false
+}
+
+func standardCompoundBSIPrimaryKeyEncodable(req core.PrimaryKeyResolveRequest) bool {
+	if req.TableBuffer == nil || req.TableBuffer.Table == nil {
+		return false
+	}
+	_, err := core.EncodeCompoundPrimaryKeyAuthorityValue(core.PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  req.TableBuffer.Table.Name,
+		PrimaryKey: req.TableBuffer.Table.PrimaryKey,
+		Attributes: append([]*core.Attribute(nil), req.TableBuffer.PKAttributes...),
+		Values:     append([]interface{}(nil), req.PrimaryKeyValues...),
+	})
+	return err == nil
 }

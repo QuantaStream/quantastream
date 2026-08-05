@@ -526,8 +526,9 @@ func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorit
 	requirePrimaryKeyTableProfile(t, result.PutProfile, "lineitem", core.PrimaryKeyResolveProfile{
 		ResolveCount:        expectedLineitemResolves,
 		LookupRequiredCount: expectedLineitemResolves,
-		KVLookupCount:       expectedLineitemResolves,
-		KVHitCount:          orderCount * lineitemsPerOrder,
+		BSILookupCount:      expectedLineitemResolves,
+		BSIHitCount:         orderCount * lineitemsPerOrder,
+		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
 	})
 }
 
@@ -608,6 +609,12 @@ func requirePrimaryKeyTableProfile(
 	}
 	if profile.BSILookupCount != expected.BSILookupCount {
 		t.Fatalf("%s primary key profile = %+v, want %d BSI lookups", tableName, profile, expected.BSILookupCount)
+	}
+	if profile.BSIHitCount != expected.BSIHitCount {
+		t.Fatalf("%s primary key profile = %+v, want %d BSI hits", tableName, profile, expected.BSIHitCount)
+	}
+	if profile.BSIStageWriteCount != expected.BSIStageWriteCount {
+		t.Fatalf("%s primary key profile = %+v, want %d BSI stage writes", tableName, profile, expected.BSIStageWriteCount)
 	}
 	if profile.KVLookupCount != expected.KVLookupCount {
 		t.Fatalf("%s primary key profile = %+v, want %d KV lookups", tableName, profile, expected.KVLookupCount)

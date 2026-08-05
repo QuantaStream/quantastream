@@ -43,6 +43,21 @@ func TestLoadTableWithPK(t *testing.T) {
 	assert.Equal(t, len(pki), 2)
 }
 
+func TestLoadSchemaAddsCompoundPrimaryKeyAuthorityAttribute(t *testing.T) {
+
+	schema, err := LoadSchema("./testdata/config", "cityzip", nil)
+	assert.Nil(t, err)
+	if assert.NotNil(t, schema) {
+		attr, err := schema.GetAttribute(CompoundPrimaryKeyAuthorityFieldName)
+		assert.Nil(t, err)
+		if assert.NotNil(t, attr) {
+			assert.Equal(t, "IntBSI", attr.MappingStrategy)
+			assert.True(t, attr.IsBSI())
+			assert.True(t, attr.System)
+		}
+	}
+}
+
 func TestSchemaCompare(t *testing.T) {
 
 	current, err := LoadSchema("./testdata/config", "cities", nil)

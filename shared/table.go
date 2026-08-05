@@ -57,6 +57,7 @@ type BasicAttribute struct {
 	MaxValue        int               `yaml:"maxValue,omitempty"`
 	CallTransform   bool              `yaml:"callTransform,omitempty"`
 	HighCard        bool              `yaml:"highCard,omitempty"`
+	System          bool              `yaml:"system,omitempty"`
 	Required        bool              `yaml:"required,omitempty"`
 	Searchable      bool              `yaml:"searchable,omitempty"`
 	DefaultValue    string            `yaml:"defaultValue,omitempty"`
@@ -232,6 +233,7 @@ func LoadSchema(path string, name string, consulClient *api.Client) (*BasicTable
 	}
 
 	table.ConsulClient = consulClient
+	EnsureCompoundPrimaryKeyAuthorityAttribute(&table)
 	table.attributeNameMap = make(map[string]*BasicAttribute)
 
 	i := 1
