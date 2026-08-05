@@ -18,6 +18,7 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		ShardCount:        1,
 		RunCount:          4,
 		PrimaryKeyMode:    "assume_new",
+		PrimaryKeyShadow:  "bsi",
 		Elapsed:           10 * time.Millisecond,
 		EnqueueElapsed:    4 * time.Millisecond,
 		DrainElapsed:      6 * time.Millisecond,
@@ -49,6 +50,9 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if report.Config.PrimaryKeyMode != "assume_new" {
 		t.Fatalf("report primary key mode = %q, want assume_new", report.Config.PrimaryKeyMode)
+	}
+	if report.Config.PrimaryKeyShadow != "bsi" {
+		t.Fatalf("report primary key shadow = %q, want bsi", report.Config.PrimaryKeyShadow)
 	}
 	if report.Timings.EnqueueNanos != int64(4*time.Millisecond) || report.Timings.DrainNanos != int64(6*time.Millisecond) {
 		t.Fatalf("report timings = %+v, want enqueue/drain timings", report.Timings)

@@ -214,6 +214,11 @@ PROFILE=standard-native-tpch-ingest \
   ./run-native-ingest-benchmark.sh
 ```
 
+Set `PRIMARY_KEY_SHADOW=bsi` to keep KV primary-key resolution authoritative
+while shadow-validating the in-memory BSI resolver path during the run. Shadow
+mismatches fail the benchmark and the JSON report records shadow comparison
+counts.
+
 Reports and logs are written under
 `tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Override
 `BENCHMARK_OUTPUT_DIR`, `BENCHMARK_REPORT`, or `LOG_FILE` when comparing named

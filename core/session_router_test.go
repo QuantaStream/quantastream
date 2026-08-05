@@ -148,3 +148,20 @@ func TestSessionRouterPreservesExplicitAssumeNewPrimaryKeyMode(t *testing.T) {
 
 	require.Equal(t, PrimaryKeyModeAssumeNew, router.cfg.PrimaryKeyMode)
 }
+
+func TestSessionRouterConfiguresSessionPrimaryKeyResolver(t *testing.T) {
+	customResolver := &recordingPrimaryKeyResolver{}
+	session := &Session{}
+	router := &SessionRouter{
+		cfg: SessionRouterConfig{
+			PrimaryKeyResolverFactory: func(opened *Session) PrimaryKeyResolver {
+				require.Same(t, session, opened)
+				return customResolver
+			},
+		},
+	}
+
+	router.configureSessionResolver(session)
+
+	require.Same(t, customResolver, session.primaryKeyResolver)
+}

@@ -27,21 +27,26 @@ type IngestRecord struct {
 
 // SessionRouterConfig configures deterministic fanout across session workers.
 type SessionRouterConfig struct {
-	TableCache     *TableCacheStruct
-	BasePath       string
-	Conn           *shared.Conn
-	ShardCount     int
-	ChannelSize    int
-	FlushInterval  time.Duration
-	PrimaryKeyMode PrimaryKeyMode
-	OnSessionOpen  func()
-	OnSessionClose func()
-	OnPutRowResult func(shardID string, record IngestRecord, result PutRowResult)
-	OnFlushProfile func(shardID string, tableName string, profile shared.BatchBufferFlushProfile)
-	OnDrainProfile func(profile RouterDrainWorkerProfile)
-	OnProcessed    func()
-	OnError        func(error)
+	TableCache                *TableCacheStruct
+	BasePath                  string
+	Conn                      *shared.Conn
+	ShardCount                int
+	ChannelSize               int
+	FlushInterval             time.Duration
+	PrimaryKeyMode            PrimaryKeyMode
+	PrimaryKeyResolverFactory SessionPrimaryKeyResolverFactory
+	OnSessionOpen             func()
+	OnSessionClose            func()
+	OnPutRowResult            func(shardID string, record IngestRecord, result PutRowResult)
+	OnFlushProfile            func(shardID string, tableName string, profile shared.BatchBufferFlushProfile)
+	OnDrainProfile            func(profile RouterDrainWorkerProfile)
+	OnProcessed               func()
+	OnError                   func(error)
 }
+
+// SessionPrimaryKeyResolverFactory creates an optional resolver for
+// router-owned sessions.
+type SessionPrimaryKeyResolverFactory func(*Session) PrimaryKeyResolver
 
 // SessionRouter owns non-threadsafe Session objects behind worker channels.
 type SessionRouter struct {
@@ -163,6 +168,7 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 		if err != nil {
 			return err
 		}
+		r.configureSessionResolver(session)
 		conn = session
 		r.sessionCache.Store(shardTableKey, session)
 		shardTableKeys.Store(shardTableKey, session)
@@ -190,6 +196,13 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 		r.cfg.OnProcessed()
 	}
 	return nil
+}
+
+func (r *SessionRouter) configureSessionResolver(session *Session) {
+	if r.cfg.PrimaryKeyResolverFactory == nil || session == nil {
+		return
+	}
+	session.SetPrimaryKeyResolver(r.cfg.PrimaryKeyResolverFactory(session))
 }
 
 func (r *SessionRouter) publishPutRowResult(shardID string, record IngestRecord, result PutRowResult) {

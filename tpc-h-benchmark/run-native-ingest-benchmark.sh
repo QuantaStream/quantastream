@@ -11,6 +11,7 @@ SHARDS="${SHARDS:-1}"
 RUNS="${RUNS:-3}"
 PROFILE="${PROFILE:-standard-native-tpch-ingest}"
 PRIMARY_KEY_MODE="${PRIMARY_KEY_MODE:-verify_existing}"
+PRIMARY_KEY_SHADOW="${PRIMARY_KEY_SHADOW:-none}"
 BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${SCRIPT_DIR}/local/ingest-benchmarks/${RUN_ID}}"
 
 absolute_path() {
@@ -60,6 +61,7 @@ echo "lineitems_per_order=${LINEITEMS}"
 echo "shards=${SHARDS}"
 echo "runs=${RUNS}"
 echo "primary_key_mode=${PRIMARY_KEY_MODE}"
+echo "primary_key_shadow=${PRIMARY_KEY_SHADOW}"
 echo "report=${BENCHMARK_REPORT}"
 echo "log=${LOG_FILE}"
 if [[ -n "${GOWORK:-}" ]]; then
@@ -77,6 +79,7 @@ QUANTASTREAM_TPCH_INGEST_BENCH_LINEITEMS="${LINEITEMS}" \
 QUANTASTREAM_TPCH_INGEST_BENCH_SHARDS="${SHARDS}" \
 QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE="${PROFILE}" \
 QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE="${PRIMARY_KEY_MODE}" \
+QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW="${PRIMARY_KEY_SHADOW}" \
 QUANTASTREAM_TPCH_INGEST_BENCH_REPORT="${BENCHMARK_REPORT}" \
   go test ./qsinabox \
     -run '^$' \

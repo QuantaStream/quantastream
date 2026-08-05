@@ -24,6 +24,7 @@ type NativeIngestBenchmarkReportRequest struct {
 	ShardCount        int
 	RunCount          int
 	PrimaryKeyMode    string
+	PrimaryKeyShadow  string
 	Elapsed           time.Duration
 	EnqueueElapsed    time.Duration
 	DrainElapsed      time.Duration
@@ -56,6 +57,7 @@ type NativeIngestBenchmarkConfig struct {
 	ShardCount        int    `json:"shard_count"`
 	RunCount          int    `json:"run_count"`
 	PrimaryKeyMode    string `json:"primary_key_mode,omitempty"`
+	PrimaryKeyShadow  string `json:"primary_key_shadow,omitempty"`
 }
 
 // NativeIngestBenchmarkCounts records logical row totals produced by a run.
@@ -90,6 +92,7 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			ShardCount:        request.ShardCount,
 			RunCount:          request.RunCount,
 			PrimaryKeyMode:    request.PrimaryKeyMode,
+			PrimaryKeyShadow:  request.PrimaryKeyShadow,
 		},
 		Counts: NativeIngestBenchmarkCounts{
 			TotalOrders:      totalOrders,

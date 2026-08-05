@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,10 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	profileName := stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PROFILE", "standard-native-tpch-ingest")
 	reportPath := strings.TrimSpace(os.Getenv("QUANTASTREAM_TPCH_INGEST_BENCH_REPORT"))
 	primaryKeyMode := core.PrimaryKeyMode(stringEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_MODE", "verify_existing")).Normalize()
+	primaryKeyShadowMode, err := primaryKeyShadowModeEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW")
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	root := b.TempDir()
 	configDir := filepath.Join(root, "schemas")
@@ -65,17 +70,30 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	putRowProfile := &core.RouterPutRowProfile{}
 	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
+	shadowStats := &primaryKeyShadowBenchmarkStats{}
+	var resolverFactory core.SessionPrimaryKeyResolverFactory
+	if primaryKeyShadowMode == primaryKeyShadowBSIMode {
+		shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
+		resolverFactory = func(_ *core.Session) core.PrimaryKeyResolver {
+			return core.NewShadowPrimaryKeyResolver(
+				core.KVPrimaryKeyResolver{},
+				core.NewBSIPrimaryKeyResolver(shadowBackend),
+				shadowStats.Observe,
+			)
+		}
+	}
 	router, err := core.NewSessionRouter(core.SessionRouterConfig{
-		TableCache:     core.NewTableCacheStruct(),
-		BasePath:       process.Backend.ConfigBaseDir(config),
-		Conn:           remoteConn,
-		ShardCount:     shardCount,
-		ChannelSize:    orderCount,
-		FlushInterval:  10 * time.Millisecond,
-		PrimaryKeyMode: primaryKeyMode,
-		OnPutRowResult: putRowProfile.Callback(),
-		OnDrainProfile: drainProfile.Callback(),
-		OnFlushProfile: flushProfile.Callback(),
+		TableCache:                core.NewTableCacheStruct(),
+		BasePath:                  process.Backend.ConfigBaseDir(config),
+		Conn:                      remoteConn,
+		ShardCount:                shardCount,
+		ChannelSize:               orderCount,
+		FlushInterval:             10 * time.Millisecond,
+		PrimaryKeyMode:            primaryKeyMode,
+		PrimaryKeyResolverFactory: resolverFactory,
+		OnPutRowResult:            putRowProfile.Callback(),
+		OnDrainProfile:            drainProfile.Callback(),
+		OnFlushProfile:            flushProfile.Callback(),
 	})
 	if err != nil {
 		b.Fatalf("NewSessionRouter() error = %v", err)
@@ -145,9 +163,19 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if drainSnapshot.WorkerCount != shardCount {
 		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, shardCount)
 	}
+	shadowSnapshot := shadowStats.Snapshot()
+	if shadowSnapshot.MismatchCount > 0 || shadowSnapshot.ShadowErrorCount > 0 || shadowSnapshot.AuthorityErrorCount > 0 {
+		b.Fatalf("primary key shadow = %+v, want no mismatches or errors", shadowSnapshot)
+	}
 
 	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, enqueueElapsed, drainElapsed,
 		totalOrders, totalLineitems, totalLogicalRows, putSnapshot, drainSnapshot, flushSnapshot, b.N)
+	if primaryKeyShadowMode != "" {
+		metrics["primary_key_shadow_comparison_count"] = float64(shadowSnapshot.ComparisonCount)
+		metrics["primary_key_shadow_match_count"] = float64(shadowSnapshot.MatchCount)
+		metrics["primary_key_shadow_mismatch_count"] = float64(shadowSnapshot.MismatchCount)
+		metrics["primary_key_shadow_skip_count"] = float64(shadowSnapshot.SkipCount)
+	}
 	reportTPCHIngestBenchmarkMetrics(b, metrics)
 	report := qsfixture.BuildNativeIngestBenchmarkReport(qsfixture.NativeIngestBenchmarkReportRequest{
 		Profile:           profileName,
@@ -157,6 +185,7 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 		ShardCount:        shardCount,
 		RunCount:          b.N,
 		PrimaryKeyMode:    string(primaryKeyMode),
+		PrimaryKeyShadow:  primaryKeyShadowMode,
 		Elapsed:           benchmarkElapsed,
 		EnqueueElapsed:    enqueueElapsed,
 		DrainElapsed:      drainElapsed,
@@ -250,4 +279,72 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["primary_key_bsi_stage_write_microseconds_per_write"], "pk_bsi_stage_write_us/write")
 	b.ReportMetric(metrics["primary_key_allocation_microseconds_per_allocation"], "pk_alloc_us/allocation")
 	b.ReportMetric(metrics["primary_key_batch_cache_write_microseconds_per_write"], "pk_batch_write_us/write")
+	if _, ok := metrics["primary_key_shadow_comparison_count"]; ok {
+		b.ReportMetric(metrics["primary_key_shadow_comparison_count"], "pk_shadow_comparisons")
+		b.ReportMetric(metrics["primary_key_shadow_match_count"], "pk_shadow_matches")
+		b.ReportMetric(metrics["primary_key_shadow_mismatch_count"], "pk_shadow_mismatches")
+		b.ReportMetric(metrics["primary_key_shadow_skip_count"], "pk_shadow_skips")
+	}
+}
+
+const primaryKeyShadowBSIMode = "bsi"
+
+type primaryKeyShadowBenchmarkSnapshot struct {
+	ComparisonCount     int
+	MatchCount          int
+	MismatchCount       int
+	SkipCount           int
+	AuthorityErrorCount int
+	ShadowErrorCount    int
+	FirstIssue          string
+}
+
+type primaryKeyShadowBenchmarkStats struct {
+	mu       sync.Mutex
+	snapshot primaryKeyShadowBenchmarkSnapshot
+}
+
+func (s *primaryKeyShadowBenchmarkStats) Observe(comparison core.PrimaryKeyShadowComparison) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot.ComparisonCount++
+	switch comparison.Reason {
+	case core.PrimaryKeyShadowMatchReason:
+		s.snapshot.MatchCount++
+	case core.PrimaryKeyShadowAuthorityErrorReason:
+		s.snapshot.AuthorityErrorCount++
+	case core.PrimaryKeyShadowShadowErrorReason:
+		s.snapshot.ShadowErrorCount++
+	case core.PrimaryKeyShadowNoAuthorityColumnIDReason:
+		s.snapshot.SkipCount++
+	default:
+		s.snapshot.MismatchCount++
+	}
+	if !comparison.Match && s.snapshot.FirstIssue == "" {
+		s.snapshot.FirstIssue = comparison.String()
+	}
+}
+
+func (s *primaryKeyShadowBenchmarkStats) Snapshot() primaryKeyShadowBenchmarkSnapshot {
+	if s == nil {
+		return primaryKeyShadowBenchmarkSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshot
+}
+
+func primaryKeyShadowModeEnv(name string) (string, error) {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch value {
+	case "", "none", "off", "false", "0":
+		return "", nil
+	case primaryKeyShadowBSIMode, "memory_bsi":
+		return primaryKeyShadowBSIMode, nil
+	default:
+		return "", fmt.Errorf("%s must be one of none, off, bsi, or memory_bsi: %q", name, value)
+	}
 }
