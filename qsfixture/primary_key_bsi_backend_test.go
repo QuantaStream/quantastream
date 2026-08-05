@@ -39,6 +39,61 @@ func TestMemoryBSIPrimaryKeyBackendStagesAndLooksUpTypedValues(t *testing.T) {
 	require.Equal(t, uint64(42), result.ColumnID)
 }
 
+func TestMemoryBSIPrimaryKeyBackendIgnoresRenderedValueForIdentity(t *testing.T) {
+	backend := NewMemoryBSIPrimaryKeyBackend()
+	attr := memoryBSIPrimaryKeyTestAttribute()
+
+	err := backend.StagePrimaryKey(core.BSIPrimaryKeyStageRequest{
+		TableName:     "orders",
+		PrimaryKey:    "o_orderkey",
+		Attributes:    []*core.Attribute{attr},
+		Values:        []interface{}{int64(1001)},
+		RenderedValue: "1001",
+		ColumnID:      42,
+	})
+	require.NoError(t, err)
+
+	result, err := backend.LookupPrimaryKey(core.BSIPrimaryKeyLookupRequest{
+		TableName:     "orders",
+		PrimaryKey:    "o_orderkey",
+		Attributes:    []*core.Attribute{attr},
+		Values:        []interface{}{int64(1001)},
+		RenderedValue: "not-the-authority",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Found)
+	require.Equal(t, uint64(42), result.ColumnID)
+}
+
+func TestMemoryBSIPrimaryKeyBackendStagesAndLooksUpCompoundValues(t *testing.T) {
+	backend := NewMemoryBSIPrimaryKeyBackend()
+	orderKey := memoryBSIPrimaryKeyTestAttributeNamed("l_orderkey")
+	lineNumber := memoryBSIPrimaryKeyTestAttributeNamed("l_linenumber")
+
+	err := backend.StagePrimaryKey(core.BSIPrimaryKeyStageRequest{
+		TableName:     "lineitem",
+		PrimaryKey:    "l_orderkey,l_linenumber",
+		Attributes:    []*core.Attribute{orderKey, lineNumber},
+		Values:        []interface{}{int64(1001), int64(2)},
+		RenderedValue: "1001+2",
+		ColumnID:      77,
+	})
+	require.NoError(t, err)
+
+	result, err := backend.LookupPrimaryKey(core.BSIPrimaryKeyLookupRequest{
+		TableName:     "lineitem",
+		PrimaryKey:    "l_orderkey,l_linenumber",
+		Attributes:    []*core.Attribute{orderKey, lineNumber},
+		Values:        []interface{}{int64(1001), int64(2)},
+		RenderedValue: "presentation-can-change",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Found)
+	require.Equal(t, uint64(77), result.ColumnID)
+}
+
 func TestMemoryBSIPrimaryKeyBackendKeepsTypedIdentityDistinct(t *testing.T) {
 	backend := NewMemoryBSIPrimaryKeyBackend()
 	attr := memoryBSIPrimaryKeyTestAttribute()
@@ -59,6 +114,34 @@ func TestMemoryBSIPrimaryKeyBackendKeepsTypedIdentityDistinct(t *testing.T) {
 		Attributes:    []*core.Attribute{attr},
 		Values:        []interface{}{"42"},
 		RenderedValue: "42",
+	})
+
+	require.NoError(t, err)
+	require.False(t, result.Found)
+	require.Zero(t, result.ColumnID)
+}
+
+func TestMemoryBSIPrimaryKeyBackendKeepsCompoundDelimiterValuesDistinct(t *testing.T) {
+	backend := NewMemoryBSIPrimaryKeyBackend()
+	left := memoryBSIPrimaryKeyTestStringAttribute("left_value")
+	right := memoryBSIPrimaryKeyTestStringAttribute("right_value")
+
+	err := backend.StagePrimaryKey(core.BSIPrimaryKeyStageRequest{
+		TableName:     "compound",
+		PrimaryKey:    "left_value,right_value",
+		Attributes:    []*core.Attribute{left, right},
+		Values:        []interface{}{"x+0", "y"},
+		RenderedValue: "x+0+y",
+		ColumnID:      42,
+	})
+	require.NoError(t, err)
+
+	result, err := backend.LookupPrimaryKey(core.BSIPrimaryKeyLookupRequest{
+		TableName:     "compound",
+		PrimaryKey:    "left_value,right_value",
+		Attributes:    []*core.Attribute{left, right},
+		Values:        []interface{}{"x", "0+y"},
+		RenderedValue: "x+0+y",
 	})
 
 	require.NoError(t, err)
@@ -92,6 +175,7 @@ func TestMemoryBSIPrimaryKeyBackendSnapshotIsStableCopy(t *testing.T) {
 	err := backend.StagePrimaryKey(core.BSIPrimaryKeyStageRequest{
 		TableName:     "orders",
 		PrimaryKey:    "o_orderkey",
+		Attributes:    []*core.Attribute{memoryBSIPrimaryKeyTestAttribute()},
 		Values:        []interface{}{int64(1001)},
 		RenderedValue: "1001",
 		ColumnID:      42,
@@ -111,12 +195,27 @@ func TestMemoryBSIPrimaryKeyBackendSnapshotIsStableCopy(t *testing.T) {
 }
 
 func memoryBSIPrimaryKeyTestAttribute() *core.Attribute {
+	return memoryBSIPrimaryKeyTestAttributeNamed("o_orderkey")
+}
+
+func memoryBSIPrimaryKeyTestAttributeNamed(fieldName string) *core.Attribute {
 	return &core.Attribute{
 		BasicAttribute: &shared.BasicAttribute{
-			FieldName:       "o_orderkey",
-			SourceName:      "o_orderkey",
+			FieldName:       fieldName,
+			SourceName:      fieldName,
 			Type:            "Integer",
 			MappingStrategy: "IntBSI",
+		},
+	}
+}
+
+func memoryBSIPrimaryKeyTestStringAttribute(fieldName string) *core.Attribute {
+	return &core.Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       fieldName,
+			SourceName:      fieldName,
+			Type:            "String",
+			MappingStrategy: "StringLexBSI",
 		},
 	}
 }

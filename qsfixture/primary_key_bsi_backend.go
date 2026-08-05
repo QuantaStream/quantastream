@@ -1,12 +1,8 @@
 package qsfixture
 
 import (
-	"encoding/base64"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 )
@@ -29,9 +25,13 @@ func (b *MemoryBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrimaryKeyLook
 	if b == nil {
 		return core.BSIPrimaryKeyLookupResult{}, fmt.Errorf("memory BSI primary key backend is nil")
 	}
+	key, err := memoryBSIPrimaryKeyLookupKey(req)
+	if err != nil {
+		return core.BSIPrimaryKeyLookupResult{}, err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	columnID, found := b.rows[memoryBSIPrimaryKeyLookupKey(req)]
+	columnID, found := b.rows[key]
 	return core.BSIPrimaryKeyLookupResult{ColumnID: columnID, Found: found}, nil
 }
 
@@ -43,7 +43,10 @@ func (b *MemoryBSIPrimaryKeyBackend) StagePrimaryKey(req core.BSIPrimaryKeyStage
 	if req.ColumnID == 0 {
 		return fmt.Errorf("memory BSI primary key stage requires a non-zero column ID")
 	}
-	key := memoryBSIPrimaryKeyStageKey(req)
+	key, err := memoryBSIPrimaryKeyStageKey(req)
+	if err != nil {
+		return err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.rows == nil {
@@ -71,62 +74,18 @@ func (b *MemoryBSIPrimaryKeyBackend) Snapshot() map[string]uint64 {
 	return copy
 }
 
-func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) string {
-	return memoryBSIPrimaryKeyKey(req.TableName, req.PrimaryKey, req.Attributes, req.Values, req.RenderedValue,
-		req.ShardTimestamp)
+func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) (string, error) {
+	encoded, err := core.EncodeBSIPrimaryKeyLookupIdentity(req)
+	if err != nil {
+		return "", fmt.Errorf("memory BSI primary key lookup encode error - %w", err)
+	}
+	return string(encoded), nil
 }
 
-func memoryBSIPrimaryKeyStageKey(req core.BSIPrimaryKeyStageRequest) string {
-	return memoryBSIPrimaryKeyKey(req.TableName, req.PrimaryKey, req.Attributes, req.Values, req.RenderedValue,
-		req.ShardTimestamp)
-}
-
-func memoryBSIPrimaryKeyKey(
-	tableName string,
-	primaryKey string,
-	attributes []*core.Attribute,
-	values []interface{},
-	renderedValue string,
-	shardTimestamp time.Time,
-) string {
-	var builder strings.Builder
-	builder.WriteString(tableName)
-	builder.WriteByte(0)
-	builder.WriteString(primaryKey)
-	builder.WriteByte(0)
-	builder.WriteString(strconv.FormatInt(shardTimestamp.UnixNano(), 10))
-	if len(values) == 0 {
-		builder.WriteByte(0)
-		builder.WriteString("rendered:string:")
-		builder.WriteString(renderedValue)
-		return builder.String()
+func memoryBSIPrimaryKeyStageKey(req core.BSIPrimaryKeyStageRequest) (string, error) {
+	encoded, err := core.EncodeBSIPrimaryKeyStageIdentity(req)
+	if err != nil {
+		return "", fmt.Errorf("memory BSI primary key stage encode error - %w", err)
 	}
-	for i, value := range values {
-		builder.WriteByte(0)
-		builder.WriteString(memoryBSIPrimaryKeyAttributeToken(attributes, i))
-		builder.WriteByte('=')
-		builder.WriteString(memoryBSIPrimaryKeyValueToken(value))
-	}
-	return builder.String()
-}
-
-func memoryBSIPrimaryKeyAttributeToken(attributes []*core.Attribute, index int) string {
-	if index >= len(attributes) || attributes[index] == nil {
-		return fmt.Sprintf("value%d", index)
-	}
-	attr := attributes[index]
-	return attr.FieldName + ":" + attr.Type + ":" + attr.MappingStrategy
-}
-
-func memoryBSIPrimaryKeyValueToken(value interface{}) string {
-	switch typed := value.(type) {
-	case nil:
-		return "nil:"
-	case time.Time:
-		return "time.Time:" + strconv.FormatInt(typed.UnixNano(), 10)
-	case []byte:
-		return "[]byte:" + base64.StdEncoding.EncodeToString(typed)
-	default:
-		return fmt.Sprintf("%T:%v", value, value)
-	}
+	return string(encoded), nil
 }

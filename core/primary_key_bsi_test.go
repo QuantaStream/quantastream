@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,36 @@ func (b *recordingBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLookup
 func (b *recordingBSIPrimaryKeyBackend) StagePrimaryKey(req BSIPrimaryKeyStageRequest) error {
 	b.stageRequests = append(b.stageRequests, req)
 	return b.stageErr
+}
+
+type mapBSIPrimaryKeyBackend struct {
+	rows map[string]uint64
+}
+
+func newMapBSIPrimaryKeyBackend() *mapBSIPrimaryKeyBackend {
+	return &mapBSIPrimaryKeyBackend{rows: map[string]uint64{}}
+}
+
+func (b *mapBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLookupRequest) (BSIPrimaryKeyLookupResult, error) {
+	encoded, err := EncodeBSIPrimaryKeyLookupIdentity(req)
+	if err != nil {
+		return BSIPrimaryKeyLookupResult{}, err
+	}
+	columnID, found := b.rows[string(encoded)]
+	return BSIPrimaryKeyLookupResult{ColumnID: columnID, Found: found}, nil
+}
+
+func (b *mapBSIPrimaryKeyBackend) StagePrimaryKey(req BSIPrimaryKeyStageRequest) error {
+	encoded, err := EncodeBSIPrimaryKeyStageIdentity(req)
+	if err != nil {
+		return err
+	}
+	key := string(encoded)
+	if existing, found := b.rows[key]; found && existing != req.ColumnID {
+		return fmt.Errorf("compound primary key conflict: existing column ID %d, staged column ID %d", existing, req.ColumnID)
+	}
+	b.rows[key] = req.ColumnID
+	return nil
 }
 
 func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {
@@ -99,6 +130,86 @@ func TestBSIPrimaryKeyResolverCarriesCompoundTypedValues(t *testing.T) {
 	require.Equal(t, []*Attribute{orderKey, lineNumber}, lookupReq.Attributes)
 	require.Equal(t, []interface{}{int64(1001), int64(2)}, lookupReq.Values)
 	require.Equal(t, "1001+2", lookupReq.RenderedValue)
+}
+
+func TestBSIPrimaryKeyResolverReplaysCompoundKeyFromBSIBackend(t *testing.T) {
+	backend := newMapBSIPrimaryKeyBackend()
+	resolver := NewBSIPrimaryKeyResolver(backend)
+	first, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+	first.sequencerCache = map[int64]*shared.Sequencer{
+		first.CurrentTimestamp.UnixNano(): shared.NewSequencer(7000, 2),
+	}
+
+	insert, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      first,
+		LookupValue:      "1001+2",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+	})
+	require.NoError(t, err)
+	require.False(t, insert.ExistingRow)
+	require.Equal(t, uint64(7000), insert.ColumnID)
+	require.Equal(t, 1, insert.Profile.BSILookupCount)
+	require.Equal(t, 1, insert.Profile.RownumAllocationCount)
+	require.Equal(t, 1, insert.Profile.BSIStageWriteCount)
+
+	replayBuffer, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+	replay, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      replayBuffer,
+		LookupValue:      "rendered-value-is-not-authority",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+	})
+
+	require.NoError(t, err)
+	require.True(t, replay.ExistingRow)
+	require.Equal(t, uint64(7000), replay.ColumnID)
+	require.Equal(t, uint64(7000), replayBuffer.CurrentColumnID)
+	require.Equal(t, 1, replay.Profile.BSILookupCount)
+	require.Equal(t, 1, replay.Profile.BSIHitCount)
+	require.Zero(t, replay.Profile.BSIStageWriteCount)
+	require.Zero(t, replay.Profile.RownumAllocationCount)
+}
+
+func TestBSIPrimaryKeyResolverRejectsCompoundAssumeNewConflict(t *testing.T) {
+	backend := newMapBSIPrimaryKeyBackend()
+	resolver := NewBSIPrimaryKeyResolver(backend)
+	first, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+
+	insert, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      first,
+		LookupValue:      "1001+2",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		ProvidedColumnID: 7000,
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+	require.NoError(t, err)
+	require.False(t, insert.ExistingRow)
+	require.Equal(t, uint64(7000), insert.ColumnID)
+	require.Equal(t, 1, insert.Profile.AssumeNewCount)
+	require.Equal(t, 1, insert.Profile.SkippedBSILookupCount)
+	require.Equal(t, 1, insert.Profile.BSIStageWriteCount)
+
+	conflictBuffer, _, _ := newCompoundBSIPrimaryKeyTestBuffer()
+	conflict, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      conflictBuffer,
+		LookupValue:      "same-human-rendering",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(2)},
+		ProvidedColumnID: 8000,
+		PrimaryKeyMode:   PrimaryKeyModeAssumeNew,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "BSI primary key stage error")
+	require.Contains(t, err.Error(), "compound primary key conflict")
+	require.Zero(t, conflict.ColumnID)
+	require.False(t, conflict.ExistingRow)
+	require.Equal(t, 1, conflict.Profile.AssumeNewCount)
+	require.Equal(t, 1, conflict.Profile.SkippedBSILookupCount)
+	require.Equal(t, 1, conflict.Profile.ProvidedColumnIDCount)
+	require.Equal(t, 1, conflict.Profile.BSIStageWriteCount)
 }
 
 func TestBSIPrimaryKeyResolverRequiresTypedValues(t *testing.T) {
@@ -217,4 +328,37 @@ func newBSIPrimaryKeyTestBuffer() (*TableBuffer, *Attribute) {
 		sequencerCache:   map[int64]*shared.Sequencer{},
 	}
 	return tbuf, pk
+}
+
+func newCompoundBSIPrimaryKeyTestBuffer() (*TableBuffer, *Attribute, *Attribute) {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "lineitem", PrimaryKey: "l_orderkey,l_linenumber"}}
+	orderKey := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "l_orderkey",
+			SourceName:      "l_orderkey",
+			Type:            "Integer",
+			MappingStrategy: "IntBSI",
+		},
+		Parent: table,
+	}
+	lineNumber := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "l_linenumber",
+			SourceName:      "l_linenumber",
+			Type:            "Integer",
+			MappingStrategy: "IntBSI",
+		},
+		Parent: table,
+	}
+	tbuf := &TableBuffer{
+		Table:            table,
+		CurrentTimestamp: time.Unix(0, 0).UTC(),
+		PKAttributes:     []*Attribute{orderKey, lineNumber},
+		PKMap: map[string]*Attribute{
+			"l_orderkey":   orderKey,
+			"l_linenumber": lineNumber,
+		},
+		sequencerCache: map[int64]*shared.Sequencer{},
+	}
+	return tbuf, orderKey, lineNumber
 }
