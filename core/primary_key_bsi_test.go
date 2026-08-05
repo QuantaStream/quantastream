@@ -96,6 +96,7 @@ func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {
 	require.Equal(t, "o_orderkey", lookupReq.PrimaryKey)
 	require.Equal(t, []*Attribute{pk}, lookupReq.Attributes)
 	require.Equal(t, []interface{}{int64(1001)}, lookupReq.Values)
+	require.Nil(t, lookupReq.AuthorityValue)
 	require.NotEmpty(t, lookupReq.Identity)
 	require.Equal(t, "1001", lookupReq.RenderedValue)
 	require.Equal(t, tbuf.CurrentTimestamp, lookupReq.ShardTimestamp)
@@ -184,6 +185,14 @@ func TestBSIPrimaryKeyResolverCarriesCompoundTypedValues(t *testing.T) {
 	require.Equal(t, "l_orderkey,l_linenumber", lookupReq.PrimaryKey)
 	require.Equal(t, []*Attribute{orderKey, lineNumber}, lookupReq.Attributes)
 	require.Equal(t, []interface{}{int64(1001), int64(2)}, lookupReq.Values)
+	expectedAuthorityValue, err := EncodeCompoundPrimaryKeyAuthorityValue(PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "lineitem",
+		PrimaryKey: "l_orderkey,l_linenumber",
+		Attributes: []*Attribute{orderKey, lineNumber},
+		Values:     []interface{}{int64(1001), int64(2)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, expectedAuthorityValue, lookupReq.AuthorityValue)
 	require.NotEmpty(t, lookupReq.Identity)
 	require.Equal(t, "1001+2", lookupReq.RenderedValue)
 }
@@ -272,6 +281,14 @@ func TestBSIPrimaryKeyResolverReusesSameBatchCompoundKeyBeforeBackendLookup(t *t
 	require.Zero(t, replay.Profile.RownumAllocationCount)
 	require.Empty(t, backend.lookupRequests)
 	require.Len(t, backend.stageRequests, 1)
+	expectedAuthorityValue, err := EncodeCompoundPrimaryKeyAuthorityValue(PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "lineitem",
+		PrimaryKey: "l_orderkey,l_linenumber",
+		Attributes: first.PKAttributes,
+		Values:     []interface{}{int64(1001), int64(2)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, expectedAuthorityValue, backend.stageRequests[0].AuthorityValue)
 }
 
 func TestBSIPrimaryKeyResolverRejectsSameBatchProvidedColumnIDConflict(t *testing.T) {
@@ -397,6 +414,7 @@ func TestBSIPrimaryKeyResolverAllocatesAndStagesMiss(t *testing.T) {
 	require.Equal(t, "o_orderkey", stageReq.PrimaryKey)
 	require.Equal(t, []*Attribute{pk}, stageReq.Attributes)
 	require.Equal(t, []interface{}{int64(1002)}, stageReq.Values)
+	require.Nil(t, stageReq.AuthorityValue)
 	require.NotEmpty(t, stageReq.Identity)
 	require.Equal(t, "1002", stageReq.RenderedValue)
 	require.Equal(t, tbuf.CurrentTimestamp, stageReq.ShardTimestamp)

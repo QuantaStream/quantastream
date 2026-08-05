@@ -95,6 +95,45 @@ func TestMemoryBSIPrimaryKeyBackendStagesAndLooksUpCompoundValues(t *testing.T) 
 	require.Equal(t, uint64(77), result.ColumnID)
 }
 
+func TestMemoryBSIPrimaryKeyBackendPrefersAuthorityValue(t *testing.T) {
+	backend := NewMemoryBSIPrimaryKeyBackend()
+	orderKey := memoryBSIPrimaryKeyTestAttributeNamed("l_orderkey")
+	lineNumber := memoryBSIPrimaryKeyTestAttributeNamed("l_linenumber")
+	authorityValue, err := core.EncodeCompoundPrimaryKeyAuthorityValue(core.PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "lineitem",
+		PrimaryKey: "l_orderkey+l_linenumber",
+		Attributes: []*core.Attribute{orderKey, lineNumber},
+		Values:     []interface{}{int64(1001), int64(2)},
+	})
+	require.NoError(t, err)
+
+	err = backend.StagePrimaryKey(core.BSIPrimaryKeyStageRequest{
+		TableName:      "lineitem",
+		PrimaryKey:     "l_orderkey+l_linenumber",
+		Attributes:     []*core.Attribute{orderKey, lineNumber},
+		Values:         []interface{}{int64(1001), int64(2)},
+		AuthorityValue: authorityValue,
+		Identity:       []byte("stage-identity-should-not-win"),
+		RenderedValue:  "1001+2",
+		ColumnID:       77,
+	})
+	require.NoError(t, err)
+
+	result, err := backend.LookupPrimaryKey(core.BSIPrimaryKeyLookupRequest{
+		TableName:      "lineitem",
+		PrimaryKey:     "l_orderkey+l_linenumber",
+		Attributes:     []*core.Attribute{orderKey, lineNumber},
+		Values:         []interface{}{int64(1001), int64(2)},
+		AuthorityValue: authorityValue,
+		Identity:       []byte("lookup-identity-should-not-win"),
+		RenderedValue:  "presentation-can-change",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Found)
+	require.Equal(t, uint64(77), result.ColumnID)
+}
+
 func TestMemoryBSIPrimaryKeyBackendKeepsTypedIdentityDistinct(t *testing.T) {
 	backend := NewMemoryBSIPrimaryKeyBackend()
 	attr := memoryBSIPrimaryKeyTestAttribute()

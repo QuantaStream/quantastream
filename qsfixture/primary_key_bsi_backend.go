@@ -79,6 +79,9 @@ func (b *MemoryBSIPrimaryKeyBackend) Snapshot() map[string]uint64 {
 }
 
 func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) (string, error) {
+	if req.AuthorityValue != nil {
+		return memoryBSIPrimaryKeyAuthorityValueKey(req.TableName, req.PrimaryKey, req.AuthorityValue.Text(10)), nil
+	}
 	if len(req.Identity) > 0 {
 		return string(req.Identity), nil
 	}
@@ -90,6 +93,9 @@ func memoryBSIPrimaryKeyLookupKey(req core.BSIPrimaryKeyLookupRequest) (string, 
 }
 
 func memoryBSIPrimaryKeyStageKey(req core.BSIPrimaryKeyStageRequest) (string, error) {
+	if req.AuthorityValue != nil {
+		return memoryBSIPrimaryKeyAuthorityValueKey(req.TableName, req.PrimaryKey, req.AuthorityValue.Text(10)), nil
+	}
 	if len(req.Identity) > 0 {
 		return string(req.Identity), nil
 	}
@@ -98,4 +104,8 @@ func memoryBSIPrimaryKeyStageKey(req core.BSIPrimaryKeyStageRequest) (string, er
 		return "", fmt.Errorf("memory BSI primary key stage encode error - %w", err)
 	}
 	return string(encoded), nil
+}
+
+func memoryBSIPrimaryKeyAuthorityValueKey(tableName, primaryKey, authorityValue string) string {
+	return "authority-value\x00" + tableName + "\x00" + primaryKey + "\x00" + authorityValue
 }

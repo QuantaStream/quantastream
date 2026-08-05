@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math/big"
 	"time"
 )
 
@@ -18,8 +19,13 @@ type BSIPrimaryKeyLookupRequest struct {
 	PrimaryKey string
 	Attributes []*Attribute
 	Values     []interface{}
+	// AuthorityValue is an optional exact BSI-comparable value for physical
+	// authority artifacts. It is currently produced for supported compound
+	// numeric/timestamp keys and is distinct from the versioned Identity bytes.
+	AuthorityValue *big.Int
 	// Identity is the resolver-produced, typed, versioned authority key.
-	// Backends should prefer it over RenderedValue when present.
+	// Backends should use it for diagnostics, batch-local identity checks, and
+	// fallback authority paths when AuthorityValue is not present.
 	Identity []byte
 	// RenderedValue is retained for diagnostics and temporary KV-transition
 	// paths. It is not the BSI authority identity.
@@ -41,8 +47,13 @@ type BSIPrimaryKeyStageRequest struct {
 	PrimaryKey string
 	Attributes []*Attribute
 	Values     []interface{}
+	// AuthorityValue is an optional exact BSI-comparable value for physical
+	// authority artifacts. It is currently produced for supported compound
+	// numeric/timestamp keys and is distinct from the versioned Identity bytes.
+	AuthorityValue *big.Int
 	// Identity is the resolver-produced, typed, versioned authority key.
-	// Backends should prefer it over RenderedValue when present.
+	// Backends should use it for diagnostics, batch-local identity checks, and
+	// fallback authority paths when AuthorityValue is not present.
 	Identity []byte
 	// RenderedValue is retained for diagnostics and temporary KV-transition
 	// paths. It is not the BSI authority identity.
@@ -236,6 +247,12 @@ func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuff
 		return BSIPrimaryKeyLookupRequest{}, err
 	}
 	lookupReq.Identity = append([]byte(nil), identity...)
+	lookupReq.AuthorityValue = optionalCompoundPrimaryKeyAuthorityValue(
+		lookupReq.TableName,
+		lookupReq.PrimaryKey,
+		lookupReq.Attributes,
+		lookupReq.Values,
+	)
 	return lookupReq, nil
 }
 
@@ -254,5 +271,11 @@ func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffe
 		return BSIPrimaryKeyStageRequest{}, err
 	}
 	stageReq.Identity = append([]byte(nil), identity...)
+	stageReq.AuthorityValue = optionalCompoundPrimaryKeyAuthorityValue(
+		stageReq.TableName,
+		stageReq.PrimaryKey,
+		stageReq.Attributes,
+		stageReq.Values,
+	)
 	return stageReq, nil
 }
