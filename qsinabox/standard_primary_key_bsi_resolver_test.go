@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +10,26 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/shared"
 )
+
+type recordingStandardPrimaryKeyResolver struct {
+	requests []core.PrimaryKeyResolveRequest
+	result   core.PrimaryKeyResolveResult
+	err      error
+}
+
+func (r *recordingStandardPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.PrimaryKeyResolveRequest) (core.PrimaryKeyResolveResult, error) {
+	r.requests = append(r.requests, req)
+	return r.result, r.err
+}
+
+type panicStandardSingleColumnBSIPrimaryKeyReader struct {
+	t *testing.T
+}
+
+func (r panicStandardSingleColumnBSIPrimaryKeyReader) LookupSingleColumnBSIPrimaryKey(core.SingleColumnBSIPrimaryKeyReadRequest) (core.SingleColumnBSIPrimaryKeyReadResult, error) {
+	r.t.Fatalf("LookupSingleColumnBSIPrimaryKey should not be called for unsupported primary-key shapes")
+	return core.SingleColumnBSIPrimaryKeyReadResult{}, fmt.Errorf("unexpected single-column BSI lookup")
+}
 
 func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testing.T) {
 	root := t.TempDir()
@@ -77,6 +98,44 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	if replay.PrimaryKey.BSILookupCount != 1 || replay.PrimaryKey.BSIHitCount != 1 ||
 		replay.PrimaryKey.BSIStageWriteCount != 0 || replay.PrimaryKey.KVLookupCount != 0 {
 		t.Fatalf("replay primary-key profile = %+v, want BSI hit without KV lookup or stage", replay.PrimaryKey)
+	}
+}
+
+func TestStandardBSIPrimaryKeyResolverDelegatesCompoundKeysToFallback(t *testing.T) {
+	table := standardPrimaryKeyResolverTestTable("lineitem", "l_orderkey+l_linenumber", []shared.BasicAttribute{
+		standardPrimaryKeyResolverTestAttribute("l_orderkey", "Integer", "IntBSI", false),
+		standardPrimaryKeyResolverTestAttribute("l_linenumber", "Integer", "IntBSI", false),
+	})
+	tbuf, err := core.NewTableBuffer(table)
+	if err != nil {
+		t.Fatalf("NewTableBuffer() error = %v", err)
+	}
+	fallback := &recordingStandardPrimaryKeyResolver{
+		result: core.PrimaryKeyResolveResult{ColumnID: 77, ExistingRow: true},
+	}
+	resolver := StandardBSIPrimaryKeyResolver{
+		Reader:   panicStandardSingleColumnBSIPrimaryKeyReader{t: t},
+		Fallback: fallback,
+	}
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(core.PrimaryKeyResolveRequest{
+		Session:          &core.Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001;1",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(1)},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolvePrimaryKeyColumnID() error = %v", err)
+	}
+	if result.ColumnID != 77 || !result.ExistingRow {
+		t.Fatalf("ResolvePrimaryKeyColumnID() = %+v, want fallback result", result)
+	}
+	if len(fallback.requests) != 1 {
+		t.Fatalf("fallback requests = %d, want 1", len(fallback.requests))
+	}
+	if fallback.requests[0].TableBuffer != tbuf || fallback.requests[0].LookupValue != "1001;1" {
+		t.Fatalf("fallback request = %+v, want original request", fallback.requests[0])
 	}
 }
 
@@ -214,5 +273,32 @@ func TestStandardDirectPrimaryKeyResolverFactoryRequiresTrustedManifest(t *testi
 	}
 	if provider.PrimaryKeyResolverFactory == nil {
 		t.Fatalf("PrimaryKeyResolverFactory = nil, want trusted manifest to enable standard BSI PK resolver")
+	}
+}
+
+func standardPrimaryKeyResolverTestTable(name, primaryKey string, attrs []shared.BasicAttribute) *core.Table {
+	table := &core.Table{
+		BasicTable: &shared.BasicTable{
+			Name:       name,
+			PrimaryKey: primaryKey,
+			Attributes: attrs,
+		},
+		Attributes:       make([]core.Attribute, len(attrs)),
+		AttributeNameMap: make(map[string]*core.Attribute, len(attrs)),
+	}
+	for i := range attrs {
+		attr := core.Attribute{BasicAttribute: &table.BasicTable.Attributes[i], Parent: table}
+		table.Attributes[i] = attr
+		table.AttributeNameMap[attr.FieldName] = &table.Attributes[i]
+	}
+	return table
+}
+
+func standardPrimaryKeyResolverTestAttribute(name, attrType, mapping string, columnID bool) shared.BasicAttribute {
+	return shared.BasicAttribute{
+		FieldName:       name,
+		Type:            attrType,
+		MappingStrategy: mapping,
+		ColumnID:        columnID,
 	}
 }
