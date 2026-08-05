@@ -225,11 +225,12 @@ type NativeIngestBenchmarkComparison struct {
 
 // NativeIngestBenchmarkComparisonReport identifies one side of a comparison.
 type NativeIngestBenchmarkComparisonReport struct {
-	Profile string                       `json:"profile"`
-	Mode    string                       `json:"mode"`
-	Config  NativeIngestBenchmarkConfig  `json:"config"`
-	Counts  NativeIngestBenchmarkCounts  `json:"counts"`
-	Timings NativeIngestBenchmarkTimings `json:"timings"`
+	Profile                 string                              `json:"profile"`
+	Mode                    string                              `json:"mode"`
+	Config                  NativeIngestBenchmarkConfig         `json:"config"`
+	Counts                  NativeIngestBenchmarkCounts         `json:"counts"`
+	Timings                 NativeIngestBenchmarkTimings        `json:"timings"`
+	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary `json:"primary_key_shadow_profile"`
 }
 
 // NativeIngestBenchmarkMetricComparison records one metric delta.
@@ -378,6 +379,7 @@ func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchm
 	builder.WriteString(fmt.Sprintf("Baseline: %s (%s)\n\n", fallbackReportLabel(comparison.Baseline.Profile), fallbackReportLabel(comparison.Baseline.Mode)))
 	builder.WriteString(fmt.Sprintf("Target: %s (%s)\n\n", fallbackReportLabel(comparison.Target.Profile), fallbackReportLabel(comparison.Target.Mode)))
 	renderNativeIngestBenchmarkSummaryMarkdown(&builder, comparison)
+	renderNativeIngestPrimaryKeyShadowMarkdown(&builder, comparison)
 	builder.WriteString("## Detailed Metrics\n\n")
 	builder.WriteString("| Metric | Baseline | Target | Delta | Ratio | Direction |\n")
 	builder.WriteString("| --- | ---: | ---: | ---: | ---: | --- |\n")
@@ -399,6 +401,39 @@ func renderNativeIngestBenchmarkSummaryMarkdown(builder *strings.Builder, compar
 		writeNativeIngestBenchmarkMetricMarkdownRow(builder, metric.label, metric.comparison)
 	}
 	builder.WriteString("\n")
+}
+
+func renderNativeIngestPrimaryKeyShadowMarkdown(builder *strings.Builder, comparison NativeIngestBenchmarkComparison) {
+	baseline := comparison.Baseline.PrimaryKeyShadowProfile
+	target := comparison.Target.PrimaryKeyShadowProfile
+	if baseline.ComparisonCount == 0 && target.ComparisonCount == 0 {
+		return
+	}
+	builder.WriteString("## Primary Key Shadow Profile\n\n")
+	builder.WriteString("| Signal | Baseline | Target |\n")
+	builder.WriteString("| --- | ---: | ---: |\n")
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Comparisons", baseline.ComparisonCount, target.ComparisonCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Matches", baseline.MatchCount, target.MatchCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Mismatches", baseline.MismatchCount, target.MismatchCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Skips", baseline.SkipCount, target.SkipCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Authority errors", baseline.AuthorityErrorCount, target.AuthorityErrorCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Shadow errors", baseline.ShadowErrorCount, target.ShadowErrorCount)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Authority existing rows", baseline.AuthorityExistingRow, target.AuthorityExistingRow)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Shadow existing rows", baseline.ShadowExistingRow, target.ShadowExistingRow)
+	writeNativeIngestBenchmarkShadowProfileRow(builder, "Existing-row matches", baseline.ExistingRowMatch, target.ExistingRowMatch)
+	builder.WriteString(fmt.Sprintf("| Reason counts | %s | %s |\n",
+		formatNativeIngestShadowReasonCounts(baseline.ByReason),
+		formatNativeIngestShadowReasonCounts(target.ByReason)))
+	if baseline.FirstIssue != "" || target.FirstIssue != "" {
+		builder.WriteString(fmt.Sprintf("| First issue | %s | %s |\n",
+			formatNativeIngestMarkdownCell(baseline.FirstIssue),
+			formatNativeIngestMarkdownCell(target.FirstIssue)))
+	}
+	builder.WriteString("\n")
+}
+
+func writeNativeIngestBenchmarkShadowProfileRow(builder *strings.Builder, label string, baseline int, target int) {
+	builder.WriteString(fmt.Sprintf("| %s | %d | %d |\n", label, baseline, target))
 }
 
 type nativeIngestBenchmarkSummaryMetricComparison struct {
@@ -456,11 +491,12 @@ func WriteNativeIngestBenchmarkComparisonMarkdown(path string, comparison Native
 
 func nativeIngestBenchmarkComparisonReport(report NativeIngestBenchmarkReport) NativeIngestBenchmarkComparisonReport {
 	return NativeIngestBenchmarkComparisonReport{
-		Profile: report.Profile,
-		Mode:    report.Mode,
-		Config:  report.Config,
-		Counts:  report.Counts,
-		Timings: report.Timings,
+		Profile:                 report.Profile,
+		Mode:                    report.Mode,
+		Config:                  report.Config,
+		Counts:                  report.Counts,
+		Timings:                 report.Timings,
+		PrimaryKeyShadowProfile: report.PrimaryKeyShadowProfile,
 	}
 }
 
@@ -512,6 +548,29 @@ func fallbackReportLabel(value string) string {
 	if value == "" {
 		return "(unknown)"
 	}
+	return value
+}
+
+func formatNativeIngestShadowReasonCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	reasons := make([]string, 0, len(counts))
+	for reason := range counts {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		parts = append(parts, fmt.Sprintf("%s=%d", reason, counts[reason]))
+	}
+	return formatNativeIngestMarkdownCell(strings.Join(parts, ", "))
+}
+
+func formatNativeIngestMarkdownCell(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "|", "\\|")
 	return value
 }
 

@@ -91,6 +91,10 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	if decoded.Profile != report.Profile || decoded.Counts.TotalLineitems != report.Counts.TotalLineitems {
 		t.Fatalf("decoded report = %+v, want %+v", decoded, report)
 	}
+	if decoded.PrimaryKeyShadowProfile.ComparisonCount != 32 ||
+		decoded.PrimaryKeyShadowProfile.ByReason[core.PrimaryKeyShadowMatchReason] != 32 {
+		t.Fatalf("decoded shadow profile = %+v, want round-tripped profile", decoded.PrimaryKeyShadowProfile)
+	}
 }
 
 func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
@@ -259,6 +263,19 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 	baseline := NativeIngestBenchmarkReport{
 		Profile: "baseline",
 		Mode:    "inabox-standard",
+		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
+			ComparisonCount:      10,
+			MatchCount:           9,
+			MismatchCount:        1,
+			AuthorityExistingRow: 2,
+			ShadowExistingRow:    2,
+			ExistingRowMatch:     2,
+			ByReason: map[string]int{
+				core.PrimaryKeyShadowColumnIDReason: 1,
+				core.PrimaryKeyShadowMatchReason:    9,
+			},
+			FirstIssue: "primary-key shadow mismatch table=orders primary_key=o_orderkey value=101 reason=column_id_mismatch",
+		},
 		Metrics: map[string]float64{
 			"logical_rows_per_second":                                1000,
 			"enqueue_microseconds_per_order":                         12,
@@ -286,6 +303,16 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 	target := NativeIngestBenchmarkReport{
 		Profile: "target",
 		Mode:    "inabox-standard",
+		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
+			ComparisonCount:      10,
+			MatchCount:           10,
+			AuthorityExistingRow: 2,
+			ShadowExistingRow:    2,
+			ExistingRowMatch:     2,
+			ByReason: map[string]int{
+				core.PrimaryKeyShadowMatchReason: 10,
+			},
+		},
 		Metrics: map[string]float64{
 			"logical_rows_per_second":                                1500,
 			"enqueue_microseconds_per_order":                         8,
@@ -347,6 +374,14 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"| Parent relation us/order | 30 us/order | 25 us/order | -5 us/order | 0.83x | better |",
 		"| Attribute mapping us/order | 40 us/order | 35 us/order | -5 us/order | 0.88x | better |",
 		"| Skipped PK KV lookup | 0 percent | 100 percent | 100 percent | n/a | better |",
+		"## Primary Key Shadow Profile",
+		"| Signal | Baseline | Target |",
+		"| Comparisons | 10 | 10 |",
+		"| Matches | 9 | 10 |",
+		"| Mismatches | 1 | 0 |",
+		"| Existing-row matches | 2 | 2 |",
+		"| Reason counts | column_id_mismatch=1, match=9 | match=10 |",
+		"| First issue | primary-key shadow mismatch table=orders primary_key=o_orderkey value=101 reason=column_id_mismatch |  |",
 		"## Detailed Metrics",
 		"| logical_rows_per_second | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",
 		"| put_microseconds_per_order | 50 us/order | 40 us/order | -10 us/order | 0.80x | better |",
