@@ -64,7 +64,16 @@ func (r ShadowPrimaryKeyResolver) ResolvePrimaryKeyColumnID(
 ) (PrimaryKeyResolveResult, error) {
 	authority := r.Authority
 	if authority == nil {
-		authority = KVPrimaryKeyResolver{}
+		err := fmt.Errorf("primary key shadow resolver requires explicit authority resolver")
+		comparison := PrimaryKeyShadowComparison{
+			TableName:      primaryKeyShadowTableName(req),
+			PrimaryKey:     primaryKeyShadowPrimaryKey(req),
+			LookupValue:    req.LookupValue,
+			AuthorityError: err.Error(),
+			Reason:         PrimaryKeyShadowAuthorityErrorReason,
+		}
+		r.observePrimaryKeyShadow(comparison)
+		return PrimaryKeyResolveResult{}, err
 	}
 
 	authorityResult, authorityErr := authority.ResolvePrimaryKeyColumnID(req)

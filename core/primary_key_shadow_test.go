@@ -150,3 +150,27 @@ func TestShadowPrimaryKeyResolverSkipsShadowWithoutAuthorityColumnID(t *testing.
 	require.False(t, shadow.called)
 	require.Equal(t, PrimaryKeyShadowNoAuthorityColumnIDReason, comparison.Reason)
 }
+
+func TestShadowPrimaryKeyResolverRejectsMissingAuthority(t *testing.T) {
+	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+	shadow := &recordingPrimaryKeyResolver{
+		result: PrimaryKeyResolveResult{ColumnID: 12, ExistingRow: false},
+	}
+	var comparison PrimaryKeyShadowComparison
+	resolver := NewShadowPrimaryKeyResolver(nil, shadow, func(observed PrimaryKeyShadowComparison) {
+		comparison = observed
+	})
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001",
+		PrimaryKeyValues: []interface{}{int64(1001)},
+	})
+
+	require.ErrorContains(t, err, "requires explicit authority resolver")
+	require.Zero(t, result.ColumnID)
+	require.False(t, shadow.called)
+	require.Equal(t, PrimaryKeyShadowAuthorityErrorReason, comparison.Reason)
+	require.Contains(t, comparison.AuthorityError, "requires explicit authority resolver")
+}
