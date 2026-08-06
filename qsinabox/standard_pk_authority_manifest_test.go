@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/shared"
@@ -99,6 +100,55 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestUsesActiveCatalog(t *testing
 	}
 	if manifest.Entries[0].EncodingVersion != core.PrimaryKeyIdentityEncodingVersion {
 		t.Fatalf("encoding version = %d, want %d", manifest.Entries[0].EncodingVersion, core.PrimaryKeyIdentityEncodingVersion)
+	}
+	if manifest.Entries[0].AuthorityMode != core.BSIPrimaryKeyAuthorityModeSingleColumnBSI {
+		t.Fatalf("authority mode = %q, want %q", manifest.Entries[0].AuthorityMode, core.BSIPrimaryKeyAuthorityModeSingleColumnBSI)
+	}
+	if manifest.Entries[0].AuthorityField != "id" {
+		t.Fatalf("authority field = %q, want id", manifest.Entries[0].AuthorityField)
+	}
+	if len(manifest.Entries[0].Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v, want one expected BSI authority artifact", manifest.Entries[0].Artifacts)
+	}
+	artifact := manifest.Entries[0].Artifacts[0]
+	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
+		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
+	}
+	if artifact.Path != "bitmap/sample/id" {
+		t.Fatalf("artifact path = %q, want bitmap/sample/id", artifact.Path)
+	}
+}
+
+func TestBuildStandardBSIPrimaryKeyAuthorityManifestDescribesCompoundAuthorityArtifact(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardCompoundPrimaryKeyTestSchema(t, configDir, "lineitem")
+
+	manifest, err := BuildStandardBSIPrimaryKeyAuthorityManifest(StandardConfig{DataDir: dataDir}, "unit-test")
+	if err != nil {
+		t.Fatalf("BuildStandardBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+
+	if len(manifest.Entries) != 1 {
+		t.Fatalf("entries = %+v, want one lineitem entry", manifest.Entries)
+	}
+	entry := manifest.Entries[0]
+	if entry.AuthorityMode != core.BSIPrimaryKeyAuthorityModeCompoundEncodedBSI {
+		t.Fatalf("authority mode = %q, want %q", entry.AuthorityMode, core.BSIPrimaryKeyAuthorityModeCompoundEncodedBSI)
+	}
+	if entry.AuthorityField != shared.CompoundPrimaryKeyAuthorityFieldName {
+		t.Fatalf("authority field = %q, want %q", entry.AuthorityField, shared.CompoundPrimaryKeyAuthorityFieldName)
+	}
+	if len(entry.Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v, want one expected compound authority artifact", entry.Artifacts)
+	}
+	artifact := entry.Artifacts[0]
+	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
+		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
+	}
+	if artifact.Path != "bitmap/lineitem/"+shared.CompoundPrimaryKeyAuthorityFieldName {
+		t.Fatalf("artifact path = %q, want compound authority BSI path", artifact.Path)
 	}
 }
 
@@ -209,4 +259,34 @@ func standardBSIPrimaryKeyAuthorityCatalogTable(t *testing.T, configDir, tableNa
 		t.Fatalf("LoadSchema(%s) returned error: %v", tableName, err)
 	}
 	return standardBSIPrimaryKeyAuthorityTable(basic)
+}
+
+func writeStandardCompoundPrimaryKeyTestSchema(t *testing.T, configDir, table string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir compound schema dir: %v", err)
+	}
+	schema := `tableName: ` + table + `
+primaryKey: l_orderkey+l_linenumber
+attributes:
+- fieldName: l_orderkey
+  sourceName: /l_orderkey
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_linenumber
+  sourceName: /l_linenumber
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_quantity
+  sourceName: /l_quantity
+  mappingStrategy: IntBSI
+  type: Integer
+`
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write compound schema: %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", table, time.Now().UTC()); err != nil {
+		t.Fatalf("activate compound catalog object: %v", err)
+	}
 }

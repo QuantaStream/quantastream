@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -62,9 +63,35 @@ func BuildStandardBSIPrimaryKeyAuthorityManifest(config StandardConfig, source s
 		if err != nil {
 			return core.BSIPrimaryKeyAuthorityManifest{}, fmt.Errorf("build BSI primary-key authority manifest entry for %s: %w", table.Name, err)
 		}
+		standardPopulateBSIPrimaryKeyAuthorityArtifacts(&entry)
 		manifest.Entries = append(manifest.Entries, entry)
 	}
 	return manifest, nil
+}
+
+func standardPopulateBSIPrimaryKeyAuthorityArtifacts(entry *core.BSIPrimaryKeyAuthorityManifestEntry) {
+	if entry == nil || strings.TrimSpace(entry.AuthorityField) == "" {
+		return
+	}
+	switch entry.AuthorityMode {
+	case core.BSIPrimaryKeyAuthorityModeSingleColumnBSI, core.BSIPrimaryKeyAuthorityModeCompoundEncodedBSI:
+	default:
+		return
+	}
+	entry.Artifacts = []core.BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind: core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
+			Path: standardBSIPrimaryKeyAuthorityArtifactPath(entry.TableName, entry.AuthorityField, entry.LogicalShard),
+		},
+	}
+}
+
+func standardBSIPrimaryKeyAuthorityArtifactPath(tableName, authorityField, logicalShard string) string {
+	parts := []string{"bitmap", strings.TrimSpace(tableName), strings.TrimSpace(authorityField)}
+	if shard := strings.TrimSpace(logicalShard); shard != "" {
+		parts = append(parts, shard)
+	}
+	return path.Join(parts...)
 }
 
 // SaveStandardBSIPrimaryKeyAuthorityManifest writes a logical authority
