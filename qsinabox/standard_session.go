@@ -197,8 +197,9 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 
 func standardDirectPrimaryKeyResolverFactory(config StandardConfig, tableCache *core.TableCacheStruct, direct *server.BitmapIndex, pool *core.SessionPool) core.SessionPrimaryKeyResolverFactory {
 	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
-	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
-		return nil
+	switch observation.Status {
+	case core.BSIPrimaryKeyAuthorityManifestStatusInvalid, core.BSIPrimaryKeyAuthorityManifestStatusStale:
+		return standardBlockedPrimaryKeyResolverFactory(observation)
 	}
 	reader := StandardSingleColumnBSIPrimaryKeyReader{
 		Pool:       pool,

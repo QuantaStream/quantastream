@@ -59,6 +59,18 @@ func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
 	}
 }
 
+func TestObservedStandardPlanWarnsWhenBSIPrimaryKeyManifestMissing(t *testing.T) {
+	plan := NewObservedStandardPlan(StandardConfig{DataDir: t.TempDir()}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+
+	if !strings.Contains(lines, "bsi_pk_authority_manifest=missing") {
+		t.Fatalf("summary lines missing BSI PK manifest status: %s", lines)
+	}
+	if !strings.Contains(lines, "warning=BSI primary-key authority manifest is missing") {
+		t.Fatalf("summary lines missing BSI PK manifest warning: %s", lines)
+	}
+}
+
 func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
 	config := StandardConfig{BindAddress: "0.0.0.0", MySQLPort: 4400}.NativeProxyFrontDoorConfig().WithDefaults()
 	if config.BindAddress != "0.0.0.0" || config.Port != 4400 {

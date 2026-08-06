@@ -1311,7 +1311,8 @@ func (s *Session) primaryKeyColumnIDResolver() PrimaryKeyResolver {
 }
 
 // SetPrimaryKeyResolver replaces the resolver used for primary-key lookup and
-// rownum assignment. Passing nil restores the temporary KV-backed fallback.
+// rownum assignment. Passing nil restores the temporary KV-backed fallback;
+// new write paths should inject an explicit resolver instead.
 func (s *Session) SetPrimaryKeyResolver(resolver PrimaryKeyResolver) {
 	if resolver == nil {
 		s.primaryKeyResolver = KVPrimaryKeyResolver{}

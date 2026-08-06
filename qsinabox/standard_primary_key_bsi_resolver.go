@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
 )
@@ -46,6 +47,29 @@ func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheS
 			ProjectionCache: NewStandardBSIProjectionCache(),
 		})
 	}
+}
+
+type standardBlockedPrimaryKeyResolver struct {
+	observation core.BSIPrimaryKeyAuthorityManifestObservation
+}
+
+func standardBlockedPrimaryKeyResolverFactory(observation core.BSIPrimaryKeyAuthorityManifestObservation) core.SessionPrimaryKeyResolverFactory {
+	return func(*core.Session) core.PrimaryKeyResolver {
+		return standardBlockedPrimaryKeyResolver{observation: observation}
+	}
+}
+
+func (r standardBlockedPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.PrimaryKeyResolveRequest) (core.PrimaryKeyResolveResult, error) {
+	var profile core.PrimaryKeyResolveProfile
+	profile.ResolveCount = 1
+	reason := strings.TrimSpace(r.observation.Status)
+	if reason == "" {
+		reason = "manifest_untrusted"
+	}
+	profile.RecordBSIFallback(reason)
+	return core.PrimaryKeyResolveResult{Profile: profile}, fmt.Errorf(
+		"standard BSI primary-key authority is not trusted for mutations on table %q primary key %q: manifest status=%s detail=%s",
+		standardPrimaryKeyFallbackTableName(req), standardPrimaryKeyFallbackPrimaryKey(req), r.observation.Status, r.observation.Detail)
 }
 
 // ResolvePrimaryKeyColumnID delegates eligible BSI authority shapes to the

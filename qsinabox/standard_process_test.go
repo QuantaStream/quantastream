@@ -1149,8 +1149,8 @@ func TestStandardProcessCatalogLifecycleEnforcesRelationships(t *testing.T) {
 
 	requireStandardProcessSQLSuccess(t, process, "create table customers")
 	requireStandardProcessSQLSuccess(t, process, "create table orders")
-	requireStandardProcessSQLSuccess(t, process, "insert into customers (id, city) values ('C1', 'Seattle')")
-	requireStandardProcessSQLSuccess(t, process, "insert into orders (order_id, cust_id) values ('O1', 'C1')")
+	requireStandardProcessSQLSuccess(t, process, "insert into customers (id, city) values (1, 'Seattle')")
+	requireStandardProcessSQLSuccess(t, process, "insert into orders (order_id, cust_id) values (10, 1)")
 	requireStandardProcessSQLSuccess(t, process, "commit")
 
 	requireStandardProcessSQLFailure(t, process, "drop table customers", "cannot drop table with dependencies: orders", "")
@@ -1260,11 +1260,14 @@ primaryKey: id
 attributes:
 - fieldName: id
   sourceName: /id
-  mappingStrategy: StringHashBSI
-  type: String
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
 - fieldName: city
   sourceName: /city
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
 `
 	if foreignKey != "" {
@@ -1273,12 +1276,13 @@ primaryKey: order_id
 attributes:
 - fieldName: order_id
   sourceName: /order_id
-  mappingStrategy: StringHashBSI
-  type: String
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
 - fieldName: cust_id
   sourceName: /cust_id
   mappingStrategy: ParentRelation
-  type: String
+  type: Integer
   foreignKey: ` + foreignKey + `
 `
 	}

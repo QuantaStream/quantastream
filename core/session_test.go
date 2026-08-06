@@ -637,6 +637,16 @@ func TestResolvePrimaryKeyColumnIDDefaultsResolverRequestToVerifyExisting(t *tes
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, resolver.request.PrimaryKeyMode)
 }
 
+func TestSetPrimaryKeyResolverNilRestoresTemporaryKVFallback(t *testing.T) {
+	session := &Session{}
+	customResolver := &recordingPrimaryKeyResolver{}
+	session.SetPrimaryKeyResolver(customResolver)
+	session.SetPrimaryKeyResolver(nil)
+
+	_, ok := session.primaryKeyColumnIDResolver().(KVPrimaryKeyResolver)
+	require.True(t, ok, "nil resolver should restore the temporary KV fallback until BSI authority becomes the core default")
+}
+
 func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) {
 	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
 	pk := &Attribute{

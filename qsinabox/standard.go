@@ -132,7 +132,25 @@ func NewStandardPlan(config StandardConfig, services shared.LocalNodeServices) S
 func NewObservedStandardPlan(config StandardConfig, services shared.LocalNodeServices) StandardPlan {
 	plan := NewStandardPlan(config, services)
 	plan.PKAuthority = ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	if warning := standardBSIPrimaryKeyAuthorityManifestWarning(plan.PKAuthority); warning != "" {
+		plan.Warnings = append(plan.Warnings, warning)
+	}
 	return plan
+}
+
+func standardBSIPrimaryKeyAuthorityManifestWarning(observation core.BSIPrimaryKeyAuthorityManifestObservation) string {
+	switch observation.Status {
+	case core.BSIPrimaryKeyAuthorityManifestStatusMissing:
+		return "BSI primary-key authority manifest is missing; writes use native BSI authority without persisted startup validation"
+	case core.BSIPrimaryKeyAuthorityManifestStatusStale, core.BSIPrimaryKeyAuthorityManifestStatusInvalid:
+		detail := observation.Detail
+		if detail == "" {
+			detail = "no detail"
+		}
+		return fmt.Sprintf("BSI primary-key authority manifest is %s; mutations fail closed until the manifest is repaired: %s", observation.Status, detail)
+	default:
+		return ""
+	}
 }
 
 // SummaryLines returns stable human-readable startup status lines for the CLI.

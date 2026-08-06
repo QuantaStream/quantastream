@@ -307,7 +307,7 @@ func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testi
 	}
 }
 
-func TestStandardDirectPrimaryKeyResolverFactoryRequiresTrustedManifest(t *testing.T) {
+func TestStandardDirectPrimaryKeyResolverFactoryUsesBSIWhenManifestMissing(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
@@ -315,10 +315,73 @@ func TestStandardDirectPrimaryKeyResolverFactoryRequiresTrustedManifest(t *testi
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
-	if factory := standardDirectPrimaryKeyResolverFactory(config, nil, nil, nil); factory != nil {
-		t.Fatalf("standardDirectPrimaryKeyResolverFactory without manifest = %#v, want nil", factory)
+	factory := standardDirectPrimaryKeyResolverFactory(config, nil, nil, nil)
+	if factory == nil {
+		t.Fatalf("standardDirectPrimaryKeyResolverFactory without manifest = nil, want BSI resolver factory")
+	}
+	resolver := factory(&core.Session{})
+	if _, ok := resolver.(StandardBSIPrimaryKeyResolver); !ok {
+		t.Fatalf("resolver = %T, want StandardBSIPrimaryKeyResolver", resolver)
+	}
+}
+
+func TestStandardDirectPrimaryKeyResolverFactoryBlocksStaleManifest(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   dataDir,
+	}
+	table := standardBSIPrimaryKeyAuthorityCatalogTable(t, configDir, "sample")
+	entry, err := core.NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry() error = %v", err)
+	}
+	entry.PrimaryKey = "stale_id"
+	if err := core.SaveBSIPrimaryKeyAuthorityManifest(config.DataDir, core.BSIPrimaryKeyAuthorityManifest{
+		Source: "unit-test",
+		Entries: []core.BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}); err != nil {
+		t.Fatalf("SaveBSIPrimaryKeyAuthorityManifest() error = %v", err)
 	}
 
+	factory := standardDirectPrimaryKeyResolverFactory(config, nil, nil, nil)
+	if factory == nil {
+		t.Fatalf("standardDirectPrimaryKeyResolverFactory with stale manifest = nil, want blocked resolver factory")
+	}
+	resolver := factory(&core.Session{})
+	tbuf, err := core.NewTableBuffer(table)
+	if err != nil {
+		t.Fatalf("NewTableBuffer() error = %v", err)
+	}
+	result, err := resolver.ResolvePrimaryKeyColumnID(core.PrimaryKeyResolveRequest{
+		TableBuffer: tbuf,
+		LookupValue: "1001",
+	})
+	if err == nil {
+		t.Fatalf("ResolvePrimaryKeyColumnID() error = nil, want stale manifest blocker")
+	}
+	if !strings.Contains(err.Error(), "not trusted for mutations") ||
+		!strings.Contains(err.Error(), "manifest status=stale") {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Profile.BSIFallbackReasons[core.BSIPrimaryKeyAuthorityManifestStatusStale] != 1 {
+		t.Fatalf("profile = %+v, want stale fallback reason", result.Profile)
+	}
+}
+
+func TestStandardDirectPrimaryKeyResolverFactoryUsesTrustedManifest(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
 	table := standardBSIPrimaryKeyAuthorityCatalogTable(t, configDir, "sample")
 	entry, err := core.NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
 	if err != nil {

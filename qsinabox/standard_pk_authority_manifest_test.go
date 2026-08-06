@@ -178,6 +178,9 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsStaleCatalogShape(t
 	if !strings.Contains(output, "bsi_pk_authority_manifest_detail=") {
 		t.Fatalf("summary missing stale manifest detail:\n%s", output)
 	}
+	if !strings.Contains(output, "warning=BSI primary-key authority manifest is stale; mutations fail closed") {
+		t.Fatalf("summary missing stale manifest warning:\n%s", output)
+	}
 }
 
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsMalformedManifest(t *testing.T) {
