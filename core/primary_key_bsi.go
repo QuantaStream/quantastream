@@ -165,6 +165,9 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 			tbuf.CurrentColumnID = matchedColumnIDs[0]
 			return finish(matchedColumnIDs[0], true), nil
 		}
+		if req.LookupOnly {
+			return finish(0, false), nil
+		}
 	}
 
 	if err := allocatePrimaryKeyColumnID(req, tbuf, &profile); err != nil {

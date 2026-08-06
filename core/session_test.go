@@ -165,6 +165,108 @@ func TestResolveParentRelationColumnIDUsesParentCurrentColumnIDForChildRows(t *t
 	assert.Equal(t, uint64(4242), columnID)
 }
 
+func TestResolveParentRelationColumnIDUsesPrimaryKeyResolverLookupOnly(t *testing.T) {
+	parentTable := &Table{BasicTable: &shared.BasicTable{Name: "customers", PrimaryKey: "cust_id"}}
+	parentPK := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "cust_id",
+			SourceName:      "cust_id",
+			Type:            "String",
+			MappingStrategy: "StringLexBSI",
+		},
+		Parent: parentTable,
+	}
+	childTable := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	childForeignKey := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "cust_id",
+			SourceName:      "cust_id",
+			Type:            "String",
+			MappingStrategy: "ParentRelation",
+			ForeignKey:      "customers",
+		},
+		Parent: childTable,
+	}
+	parentBuffer := &TableBuffer{
+		Table:           parentTable,
+		PKAttributes:    []*Attribute{parentPK},
+		CurrentColumnID: 999,
+		CurrentPKValue:  []interface{}{"previous"},
+	}
+	childBuffer := &TableBuffer{
+		Table:    childTable,
+		rowCache: map[string]interface{}{"cust_id": "1"},
+	}
+	resolver := &recordingPrimaryKeyResolver{
+		result: PrimaryKeyResolveResult{
+			ColumnID:    42,
+			ExistingRow: true,
+			Profile:     PrimaryKeyResolveProfile{ResolveCount: 1, BSILookupCount: 1, BSIHitCount: 1},
+		},
+	}
+	session := &Session{
+		TableBuffers: map[string]*TableBuffer{
+			"customers": parentBuffer,
+			"orders":    childBuffer,
+		},
+	}
+	session.SetPrimaryKeyResolver(resolver)
+
+	columnID, ok, err := session.resolveParentRelationColumnID(putRowRequest{
+		row:         childBuffer.rowCache,
+		pqTablePath: "/",
+	}, childBuffer, parentBuffer, childForeignKey, "")
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, uint64(42), columnID)
+	assert.True(t, resolver.called)
+	assert.Same(t, session, resolver.request.Session)
+	assert.Same(t, parentBuffer, resolver.request.TableBuffer)
+	assert.Equal(t, "1", resolver.request.LookupValue)
+	assert.Equal(t, []interface{}{"1"}, resolver.request.PrimaryKeyValues)
+	assert.True(t, resolver.request.LookupOnly)
+	assert.Equal(t, PrimaryKeyModeVerifyExisting, resolver.request.PrimaryKeyMode)
+	assert.Equal(t, uint64(999), parentBuffer.CurrentColumnID)
+	assert.Equal(t, []interface{}{"previous"}, parentBuffer.CurrentPKValue)
+}
+
+func TestResolveParentRelationColumnIDRejectsMissingParentFromResolver(t *testing.T) {
+	parentTable := &Table{BasicTable: &shared.BasicTable{Name: "customers", PrimaryKey: "cust_id"}}
+	parentPK := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{FieldName: "cust_id", SourceName: "cust_id", Type: "String"},
+		Parent:         parentTable,
+	}
+	childTable := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	childForeignKey := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:       "cust_id",
+			SourceName:      "cust_id",
+			Type:            "String",
+			MappingStrategy: "ParentRelation",
+			ForeignKey:      "customers",
+		},
+		Parent: childTable,
+	}
+	parentBuffer := &TableBuffer{Table: parentTable, PKAttributes: []*Attribute{parentPK}}
+	childBuffer := &TableBuffer{Table: childTable, rowCache: map[string]interface{}{"cust_id": "missing"}}
+	session := &Session{
+		TableBuffers: map[string]*TableBuffer{"customers": parentBuffer, "orders": childBuffer},
+	}
+	session.SetPrimaryKeyResolver(&recordingPrimaryKeyResolver{result: PrimaryKeyResolveResult{
+		Profile: PrimaryKeyResolveProfile{ResolveCount: 1, BSILookupCount: 1},
+	}})
+
+	_, ok, err := session.resolveParentRelationColumnID(putRowRequest{
+		row:         childBuffer.rowCache,
+		pqTablePath: "/",
+	}, childBuffer, parentBuffer, childForeignKey, "")
+
+	require.Error(t, err)
+	assert.False(t, ok)
+	assert.Contains(t, err.Error(), "cannot find value 'missing' in parent table 'customers'")
+}
+
 func TestExpandChildRowsPropagatesAssumeNewPrimaryKeyMode(t *testing.T) {
 	parentTable := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "o_orderkey"}}
 	childTable := &Table{BasicTable: &shared.BasicTable{Name: "lineitem", PrimaryKey: "lineitem_id"}}

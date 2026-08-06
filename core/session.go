@@ -70,6 +70,7 @@ type PrimaryKeyResolveRequest struct {
 	PrimaryKeyValues []interface{}
 	ProvidedColumnID uint64
 	DirectColumnID   bool
+	LookupOnly       bool
 	PrimaryKeyMode   PrimaryKeyMode
 }
 
@@ -852,15 +853,17 @@ func (s *Session) resolveParentRelationColumnID(req putRowRequest, tbuf, relBuf 
 		}
 	}
 
-	lookupKey, err := s.resolveFKLookupKey(attr, tbuf, req.row, true, false)
+	lookupKey, lookupValues, err := s.resolveParentRelationLookup(attr, tbuf, req.row, req.pqTablePath,
+		req.ignoreSourcePath, req.useNerdCapitalization)
 	if err != nil {
-		return 0, false, fmt.Errorf("resolveFKLookupKey %v", err)
+		return 0, false, fmt.Errorf("resolve parent relation lookup %v", err)
 	}
-	// Not a nested import structure, must lookup the columnID of the relation.
-	// TODO: Very expensive, implement lookup cache.
-	colID, found, err := s.lookupColumnID(relBuf, lookupKey, fkFieldSpec)
+	if lookupKey == "" {
+		return 0, false, nil
+	}
+	colID, found, err := s.lookupParentPrimaryKeyColumnID(relBuf, lookupKey, lookupValues, fkFieldSpec)
 	if err != nil {
-		return 0, false, fmt.Errorf("lookupColumnID %s,  %v", lookupKey, err)
+		return 0, false, fmt.Errorf("lookup parent primary key %s, %v", lookupKey, err)
 	}
 	if !found {
 		return 0, false, fmt.Errorf("cannot find value '%s' in parent table '%v' for column %s.%s",
@@ -886,6 +889,70 @@ func (s *Session) mapAttributeValue(req putRowRequest, attr *Attribute, update b
 		}
 	}
 	return nil
+}
+
+func (s *Session) resolveParentRelationLookup(attr *Attribute, tbuf *TableBuffer, row interface{}, pqTablePath string,
+	ignoreSourcePath, useNerdCapitalization bool) (string, []interface{}, error) {
+
+	vals, _, err := s.readColumn(row, pqTablePath, attr, false, ignoreSourcePath, useNerdCapitalization)
+	if err != nil {
+		return "", nil, err
+	}
+	var lookupKey strings.Builder
+	for _, val := range vals {
+		if val == nil {
+			continue
+		}
+		if lookupKey.Len() > 0 {
+			lookupKey.WriteByte('+')
+		}
+		lookupKey.WriteString(fmt.Sprintf("%v", val))
+	}
+	if lookupKey.Len() == 0 {
+		return "", nil, nil
+	}
+	return lookupKey.String(), vals, nil
+}
+
+func (s *Session) lookupParentPrimaryKeyColumnID(relBuf *TableBuffer, lookupKey string, lookupValues []interface{},
+	fkFieldSpec string) (uint64, bool, error) {
+
+	if relBuf == nil || relBuf.Table == nil {
+		return 0, false, fmt.Errorf("parent table buffer is not available")
+	}
+	if fkFieldSpec != "" && fkFieldSpec != relBuf.Table.PrimaryKey {
+		return 0, false, fmt.Errorf("alternate foreign key %q is not supported by BSI primary-key authority", fkFieldSpec)
+	}
+	if len(lookupValues) != len(relBuf.PKAttributes) {
+		return 0, false, fmt.Errorf("parent primary key %s expects %d values, got %d",
+			relBuf.Table.PrimaryKey, len(relBuf.PKAttributes), len(lookupValues))
+	}
+
+	previousValues := relBuf.CurrentPKValue
+	previousColumnID := relBuf.CurrentColumnID
+	previousTimestamp := relBuf.CurrentTimestamp
+	relBuf.CurrentPKValue = append([]interface{}(nil), lookupValues...)
+	defer func() {
+		relBuf.CurrentPKValue = previousValues
+		relBuf.CurrentColumnID = previousColumnID
+		relBuf.CurrentTimestamp = previousTimestamp
+	}()
+
+	result, err := s.primaryKeyColumnIDResolver().ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          s,
+		TableBuffer:      relBuf,
+		LookupValue:      lookupKey,
+		PrimaryKeyValues: append([]interface{}(nil), lookupValues...),
+		LookupOnly:       true,
+		PrimaryKeyMode:   PrimaryKeyModeVerifyExisting,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	if !result.ExistingRow || result.ColumnID == 0 {
+		return 0, false, nil
+	}
+	return result.ColumnID, true, nil
 }
 
 // // This function ensures that each parquet column is read once and only once for each row
@@ -1136,8 +1203,8 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 }
 
 // Complete handling of primary key.
-//  1. Uniqueness check against value in KVStore
-//  2. ColumnID establishment for all fields in this row.  Generate if provided value = 0
+//  1. Resolve row identity through the configured primary-key authority.
+//  2. Establish ColumnID for all fields in this row.
 //  3. Value mapping.
 func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTablePath string,
 	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool,
