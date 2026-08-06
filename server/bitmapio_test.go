@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/golang/protobuf/ptypes/empty"
 )
 
 func TestIsBSIBitmapPathUsesPathShape(t *testing.T) {
@@ -141,6 +143,102 @@ func TestForcePersistWritesCleanBSI(t *testing.T) {
 	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected forced BSI persist to write %s: %v", path, err)
+	}
+}
+
+func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
+	cleanTime := time.Unix(100, 0)
+	dirtyTime := cleanTime.Add(time.Hour)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"customers": {
+				"isActive": {
+					0: {
+						cleanTime.UnixNano(): {
+							Bits:        roaring64.BitmapOf(1, 2),
+							ModTime:     cleanTime,
+							PersistTime: cleanTime,
+						},
+					},
+					1: {
+						dirtyTime.UnixNano(): {
+							Bits:        roaring64.BitmapOf(3, 4),
+							ModTime:     dirtyTime,
+							PersistTime: cleanTime,
+						},
+					},
+				},
+			},
+		},
+		fragQueue: make(chan *BitmapFragment, 16),
+		workers:   []*WorkerThread{NewWorkerThread(0)},
+	}
+	go index.batchProcessLoop(index.workers[0])
+
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
+		t.Fatalf("expected clean standard bitmap not to be rewritten by commit, stat err=%v", err)
+	}
+	dirtyPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "1" + sep + "1970-01-01T01"
+	if _, err := os.Stat(dirtyPath); err != nil {
+		t.Fatalf("expected dirty standard bitmap to be persisted by commit: %v", err)
+	}
+}
+
+func TestCommitSkipsCleanBSI(t *testing.T) {
+	cleanTime := time.Unix(100, 0)
+	dirtyTime := cleanTime.Add(time.Hour)
+	cleanValues := roaring64.NewDefaultBSI()
+	cleanValues.SetValue(1, 10)
+	dirtyValues := roaring64.NewDefaultBSI()
+	dirtyValues.SetValue(2, 20)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"orders": {
+				"clean_orderkey": {
+					cleanTime.UnixNano(): {
+						BSI:         cleanValues,
+						ModTime:     cleanTime,
+						PersistTime: cleanTime,
+					},
+				},
+				"dirty_orderkey": {
+					dirtyTime.UnixNano(): {
+						BSI:         dirtyValues,
+						ModTime:     dirtyTime,
+						PersistTime: cleanTime,
+					},
+				},
+			},
+		},
+		fragQueue: make(chan *BitmapFragment, 16),
+		workers:   []*WorkerThread{NewWorkerThread(0)},
+	}
+	go index.batchProcessLoop(index.workers[0])
+
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
+		t.Fatalf("expected clean BSI not to be rewritten by commit, stat err=%v", err)
+	}
+	dirtyPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "dirty_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	if _, err := os.Stat(dirtyPath); err != nil {
+		t.Fatalf("expected dirty BSI to be persisted by commit: %v", err)
 	}
 }
 

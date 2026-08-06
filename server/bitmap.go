@@ -1387,7 +1387,9 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 	if err != nil {
 		return &empty.Empty{}, err
 	}
-	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(true)
+	// Commit is a savepoint for dirty work, not a request to rewrite every
+	// mounted shard. Startup-loaded shards are marked clean with PersistTime.
+	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(false)
 	if err != nil {
 		return &empty.Empty{}, err
 	}
