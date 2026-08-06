@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -10,13 +9,11 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsexpr"
 	"github.com/QuantaStream/quantastream/shared"
 	u "github.com/araddon/gou"
-	"github.com/xitongsys/parquet-go/reader"
 )
 
 var (
@@ -28,12 +25,10 @@ const (
 )
 
 const (
-	reservationSize        = 1000
-	ifDelim                = "/"
-	primaryKey             = "P"
-	julianDayOfEpoch int64 = 2440588
-	microsPerDay     int64 = 3600 * 24 * 1000 * 1000
-	batchBufferSize        = 90000000 // This is a stopgap to prevent overrunning memory
+	reservationSize = 1000
+	ifDelim         = "/"
+	primaryKey      = "P"
+	batchBufferSize = 90000000 // This is a stopgap to prevent overrunning memory
 )
 
 // Session - State for session (non-threadsafe)
@@ -205,7 +200,7 @@ type TableBuffer struct {
 	CurrentPKValue   []interface{}
 	PKMap            map[string]*Attribute
 	PKAttributes     []*Attribute
-	rowCache         map[string]interface{} // row value cache ensures parquet data is only read once
+	rowCache         map[string]interface{} // current row value cache
 }
 
 func formatShardTime(t time.Time) string {
@@ -413,7 +408,7 @@ func (s *Session) CurrentColumnID(name string) (uint64, error) {
 	return tbuf.CurrentColumnID, nil
 }
 
-// PutRow - Entry point.  Load a row of data from source (Parquet/Kinesis/Kafka)
+// PutRow - Entry point. Load one normalized row of data.
 func (s *Session) PutRow(name string, row interface{}, providedColID uint64, ignoreSourcePath, useNerd bool) error {
 
 	_, err := s.PutRowWithOptions(name, row, providedColID, ignoreSourcePath, useNerd, PutRowOptions{})
@@ -456,9 +451,7 @@ func (s *Session) normalizePutRowSource(req *putRowRequest) error {
 	if req.pqTablePath == "" {
 		req.pqTablePath = "/"
 	}
-	if r, ok := req.row.(*reader.ParquetReader); ok {
-		req.pqTablePath = fmt.Sprintf("%s.%s", r.SchemaHandler.GetRootExName(), req.tableName)
-	} else if r, ok := req.row.(map[string]interface{}); ok {
+	if r, ok := req.row.(map[string]interface{}); ok {
 		if tbuf, ok2 := s.TableBuffers[req.tableName]; ok2 {
 			tbuf.rowCache = r
 		} else {
@@ -877,7 +870,7 @@ func (s *Session) mapAttributeValue(req putRowRequest, attr *Attribute, update b
 	vals, pqps, err := s.readColumn(req.row, req.pqTablePath, attr, req.isChild, req.ignoreSourcePath,
 		req.useNerdCapitalization)
 	if err != nil {
-		return fmt.Errorf("Parquet reader error - %v", err)
+		return fmt.Errorf("read column error - %v", err)
 	}
 	for _, cval := range vals {
 		if cval == nil {
@@ -955,59 +948,19 @@ func (s *Session) lookupParentPrimaryKeyColumnID(relBuf *TableBuffer, lookupKey 
 	return result.ColumnID, true, nil
 }
 
-// // This function ensures that each parquet column is read once and only once for each row
+// readColumn reads one mapped source field, including compound source references.
 func (s *Session) readColumn(row interface{}, pqTablePath string, v *Attribute,
 	isChild, ignoreSourcePath, useNerdCapitalization bool) ([]interface{}, []string, error) {
 
-	// If we are ignoring source path and it is not defined then this must be a defaulted value
-	//if !ignoreSourcePath && v.SourceName == "" {
 	if v.DefaultValue != "" {
-		//if v.DefaultValue != "" {
-		retVals := make([]interface{}, 0)
-		retVals = append(retVals, s.getDefaultValueForColumn(v, row, ignoreSourcePath, useNerdCapitalization))
-		pqColPaths := []string{""}
-		return retVals, pqColPaths, nil
-		//}
-		//return nil, nil, fmt.Errorf("readColumn: attribute sourceName is empty for %s", v.FieldName)
-		return nil, []string{""}, nil
+		return []interface{}{s.getDefaultValueForColumn(v, row, ignoreSourcePath, useNerdCapitalization)}, []string{""}, nil
 	}
 	// Compound foreign keys are comprised of multiple source references separated by +
 	sources := strings.Split(v.SourceName, "+")
 	pqColPaths := make([]string, len(sources))
 	retVals := make([]interface{}, len(sources))
 	for i, source := range sources {
-		root := "/"
-		isParquet := false
 		pqColPath := source
-		if r, ok := row.(*reader.ParquetReader); ok {
-			root = r.SchemaHandler.GetRootExName()
-			isParquet = true
-		}
-		if isParquet {
-			pqColPath = fmt.Sprintf("%s.list.element.%s", pqTablePath, source)
-			if !isChild {
-				pqColPath = fmt.Sprintf("%s.%s", pqTablePath, source)
-				if useNerdCapitalization {
-					pqColPath = fmt.Sprintf("%s.%s", pqTablePath, strings.Title(source))
-				}
-			}
-			if !ignoreSourcePath {
-				if strings.HasPrefix(source, "/") {
-					pqColPath = fmt.Sprintf("%s.%s", root, source[1:])
-					if useNerdCapitalization {
-						pqColPath = fmt.Sprintf("%s.%s", strings.Title(root), strings.Title(source[1:]))
-					}
-				} else if strings.HasPrefix(source, "^") {
-					pqColPath = fmt.Sprintf("%s.%s.list.element.%s", root, v.Parent.Name, source[1:])
-				}
-			} else {
-				if useNerdCapitalization {
-					pqColPath = fmt.Sprintf("%s.%s", strings.Title(root), strings.Title(v.FieldName))
-				} else {
-					pqColPath = fmt.Sprintf("%s.%s", root, v.FieldName)
-				}
-			}
-		}
 		pqColPaths[i] = pqColPath
 		// Check cache first
 		tbuf, ok := s.TableBuffers[v.Parent.Name]
@@ -1015,14 +968,17 @@ func (s *Session) readColumn(row interface{}, pqTablePath string, v *Attribute,
 			return nil, nil, fmt.Errorf("readColumn: table not open for %s", v.Parent.Name)
 		}
 		val, found := tbuf.rowCache[pqColPath]
-		if !found && !isParquet && isChild {
+		if !found && isChild {
 			val, found = tbuf.rowCache[pqTablePath]
 			if found {
-				val, found = val.(map[string]interface{})[v.SourceName]
+				childRow, ok := val.(map[string]interface{})
+				if !ok {
+					return nil, nil, fmt.Errorf("child row for %s has type %T", pqTablePath, val)
+				}
+				val, found = childRow[v.SourceName]
 			}
 		}
-		if !found && !isParquet {
-			//val, found = tbuf.rowCache[source[1:]]
+		if !found {
 			src := v.FieldName
 			if len(source) > 1 {
 				src = source[1:]
@@ -1039,69 +995,17 @@ func (s *Session) readColumn(row interface{}, pqTablePath string, v *Attribute,
 				}
 			}
 		}
-		if !isParquet {
-			if (found && v.Required && val == nil) || (!found && v.Required) {
-				return nil, nil, fmt.Errorf("field %s - %s is required", v.FieldName, source)
-			}
-			if aryVal, ok := val.([]interface{}); ok { // JSON array is StringEnum multi value
-				s := make([]string, len(aryVal))
-				for x, y := range aryVal {
-					s[x] = fmt.Sprint(y)
-					retVals[i] = s
-				}
-			} else {
-				retVals[i] = val
-			}
-			continue
-		} else {
-			if found {
-				retVals[i] = val
-				continue
-			}
+		if (found && v.Required && val == nil) || (!found && v.Required) {
+			return nil, nil, fmt.Errorf("field %s - %s is required", v.FieldName, source)
 		}
-		if r, ok := row.(*reader.ParquetReader); ok {
-			vals, _, _, err := r.ReadColumnByPath(pqColPath, 1)
-			if err != nil {
-				return nil, nil, fmt.Errorf("Parquet reader error for %s [%v]", pqColPath, err)
+		if aryVal, ok := val.([]interface{}); ok { // JSON array is StringEnum multi value
+			s := make([]string, len(aryVal))
+			for x, y := range aryVal {
+				s[x] = fmt.Sprint(y)
+				retVals[i] = s
 			}
-			s.BytesRead += int(unsafe.Sizeof(vals))
-			if v.DefaultValue != "" {
-				if len(vals) == 0 {
-					vals = append(vals, []string{""})
-				}
-				if str, ok := vals[0].(string); ok {
-					if str == "" {
-						vals[0] = fmt.Sprintf("%v", s.getDefaultValueForColumn(v, row, ignoreSourcePath,
-							useNerdCapitalization))
-					}
-				}
-			}
-			if len(vals) == 0 || (len(vals) == 1 && vals[0] == nil) {
-				if !v.Required {
-					return nil, nil, nil
-				}
-				return nil, nil, fmt.Errorf("field %s - %s is required", v.FieldName, pqColPath)
-			}
-			if v.Required && (v.Type == "String" || v.Type == "Date" || v.Type == "DateTime") {
-				if str, ok := vals[0].(string); ok {
-					if str == "" {
-						return nil, nil, fmt.Errorf("for field [%s], source [%s] is required", v.FieldName, pqColPath)
-					}
-				}
-			}
-			if v.Type == "DateTime" {
-				str, ok := vals[0].(string)
-				if ok && len(str) == 12 { // Handle INT96
-					ts := INT96ToTime(str)
-					vals[0] = ts.Format(time.RFC3339)
-				}
-			}
-			retVals[i] = vals[0]
-			tbuf.rowCache[pqColPath] = vals[0]
 		} else {
-			return nil, nil,
-				fmt.Errorf("for field [%s], source [%s] for non-parquet should have found cached data",
-					v.FieldName, pqColPath)
+			retVals[i] = val
 		}
 	}
 	return retVals, pqColPaths, nil
@@ -1112,54 +1016,11 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 
 	// add ignoreSourcePath parameter
 
-	var (
-		//val value.Value
-		val interface{}
-		ok  bool
-		r   interface{}
-	)
+	var val interface{}
 	rm := make(map[string]interface{})
 
 	// convert source paths to fieldname paths in incoming row
-	if r, ok = row.(*reader.ParquetReader); ok {
-		if r != nil {
-			for _, v := range a.Parent.Attributes {
-				if v.SourceName == "" {
-					continue
-				}
-				var err error
-				var val interface{}
-				if val, err = shared.GetPath(v.SourceName, row, ignoreSourcePath, useNerd); err != nil {
-					val = v.SourceName
-				}
-				rm[v.FieldName] = val
-			}
-		}
-
-		evaluator := qsexpr.CatalogExpressionEvaluator{}
-		cell, diag := evaluator.EvaluateDefault(qsbridge.ColumnDefaultExpression(a.DefaultValue), rm)
-		val = cell.Value
-		ok = diag.BlocksNative()
-
-		/*
-			var ctx *datasource.ContextSimple
-			if r != nil {
-				ctx = datasource.NewContextSimpleNative(rm)
-			}
-			exprNode, _ := expr.ParseExpression(a.DefaultValue)
-			val, ok = vm.Eval(ctx, exprNode)
-			if !ok {
-				if exprNode != nil {
-					switch exprNode.NodeType() {
-					case "Func", "Identity":
-						return nil
-					}
-				}
-				val = value.NewValue(a.DefaultValue)
-			}
-		*/
-		// return fmt.Sprintf("%v", val.Value())
-	} else if r, ok = row.(map[string]interface{}); ok {
+	if r, ok := row.(map[string]interface{}); ok {
 		if r != nil {
 			for _, v := range a.Parent.Attributes {
 				source := v.SourceName
@@ -1179,24 +1040,7 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 		evaluator := qsexpr.CatalogExpressionEvaluator{}
 		cell, diag := evaluator.EvaluateDefault(qsbridge.ColumnDefaultExpression(a.DefaultValue), rm)
 		val = cell.Value
-		ok = diag.BlocksNative()
-		/*
-			var ctx *datasource.ContextSimple
-			if r != nil {
-				ctx = datasource.NewContextSimpleNative(rm)
-			}
-			exprNode, _ := expr.ParseExpression(a.DefaultValue)
-			val, ok = vm.Eval(ctx, exprNode)
-			if !ok {
-				if exprNode != nil {
-					switch exprNode.NodeType() {
-					case "Func", "Identity":
-						return nil
-					}
-				}
-				val = value.NewValue(a.DefaultValue)
-			}
-		*/
+		_ = diag
 	}
 	//return fmt.Sprintf("%v", val.Value())
 	return fmt.Sprintf("%v", val)
@@ -1439,12 +1283,7 @@ func (s *Session) resolveFKLookupKey(v *Attribute, tbuf *TableBuffer, row interf
 	ignoreSourcePath, useNerdCapitalization bool) (string, error) {
 
 	var retVal strings.Builder
-	root := "/"
-	pqTablePath := fmt.Sprintf("%s%s", root, tbuf.Table.Name)
-	if r, ok := row.(*reader.ParquetReader); ok {
-		root = r.SchemaHandler.GetRootExName()
-		pqTablePath = fmt.Sprintf("%s.%s", root, tbuf.Table.Name)
-	}
+	pqTablePath := fmt.Sprintf("/%s", tbuf.Table.Name)
 	vals, _, err := s.readColumn(row, pqTablePath, v, false, ignoreSourcePath, useNerdCapitalization)
 	if err != nil {
 		return "", err
@@ -1604,18 +1443,4 @@ func (s *Session) MapValue(tableName, fieldName string, value interface{}, updat
 		return attr.MapValue(value, s, update)
 	}
 	return attr.MapValue(value, nil, update) // Non load use case pass nil connection context
-}
-
-func fromJulianDay(days int32, nanos int64) time.Time {
-	nanos = ((int64(days)-julianDayOfEpoch)*microsPerDay + nanos/1000) * 1000
-	sec, nsec := nanos/time.Second.Nanoseconds(), nanos%time.Second.Nanoseconds()
-	t := time.Unix(sec, nsec)
-	return t.UTC()
-}
-
-// INT96ToTime - Handle parquet INT96 values.
-func INT96ToTime(int96 string) time.Time {
-	nanos := binary.LittleEndian.Uint64([]byte(int96[:8]))
-	days := binary.LittleEndian.Uint32([]byte(int96[8:]))
-	return fromJulianDay(int32(days), int64(nanos))
 }

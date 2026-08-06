@@ -5,7 +5,6 @@ package shared
 import (
 	"fmt"
 	//"reflect"
-	"github.com/xitongsys/parquet-go/reader"
 	"strconv"
 	"strings"
 )
@@ -50,8 +49,6 @@ func get(key string, s interface{}) (v interface{}, err error) {
 				err = fmt.Errorf("Index out of bounds. [Index:%d] [Array:%v]", i, array)
 			}
 		}
-	case (*reader.ParquetReader):
-		v = fmt.Sprintf("%s.%s", s.(*reader.ParquetReader).SchemaHandler.GetRootExName(), key)
 	}
 	/*
 		case Signature:
