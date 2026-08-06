@@ -107,6 +107,8 @@ type BSIPrimaryKeyAuthorityManifestObservation struct {
 	Entries             int
 	ArtifactDescriptors int
 	EntryKeyCount       uint64
+	CleanEntries        int
+	DirtyEntries        int
 }
 
 // BSIPrimaryKeyAuthorityManifestPath returns the conventional persisted
@@ -212,12 +214,14 @@ func NewBSIPrimaryKeyAuthorityManifestEntry(table *Table, logicalShard string) (
 
 // ObserveAgainstCatalog validates the manifest against the current table cache.
 func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]*Table) BSIPrimaryKeyAuthorityManifestObservation {
-	artifactDescriptors, entryKeyCount := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
+	artifactDescriptors, entryKeyCount, cleanEntries, dirtyEntries := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
 	observation := BSIPrimaryKeyAuthorityManifestObservation{
 		Status:              BSIPrimaryKeyAuthorityManifestStatusOK,
 		Entries:             len(m.Entries),
 		ArtifactDescriptors: artifactDescriptors,
 		EntryKeyCount:       entryKeyCount,
+		CleanEntries:        cleanEntries,
+		DirtyEntries:        dirtyEntries,
 	}
 	if m.Version == 0 && len(m.Entries) == 0 {
 		observation.Status = BSIPrimaryKeyAuthorityManifestStatusMissing
@@ -271,14 +275,21 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 	return observation
 }
 
-func summarizeBSIPrimaryKeyAuthorityManifestEntries(entries []BSIPrimaryKeyAuthorityManifestEntry) (int, uint64) {
+func summarizeBSIPrimaryKeyAuthorityManifestEntries(entries []BSIPrimaryKeyAuthorityManifestEntry) (int, uint64, int, int) {
 	artifactDescriptors := 0
 	var entryKeyCount uint64
+	cleanEntries := 0
+	dirtyEntries := 0
 	for _, entry := range entries {
 		artifactDescriptors += len(entry.Artifacts)
 		entryKeyCount += entry.KeyCount
+		if entry.Clean {
+			cleanEntries++
+		} else {
+			dirtyEntries++
+		}
 	}
-	return artifactDescriptors, entryKeyCount
+	return artifactDescriptors, entryKeyCount, cleanEntries, dirtyEntries
 }
 
 func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityManifestEntry, table *Table) (string, string) {

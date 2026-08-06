@@ -165,6 +165,12 @@ func (p StandardPlan) SummaryLines() []string {
 		if p.PKAuthority.EntryKeyCount != 0 {
 			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_entry_key_count=%d", p.PKAuthority.EntryKeyCount))
 		}
+		if p.PKAuthority.CleanEntries != 0 {
+			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_clean_entries=%d", p.PKAuthority.CleanEntries))
+		}
+		if p.PKAuthority.DirtyEntries != 0 {
+			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_dirty_entries=%d", p.PKAuthority.DirtyEntries))
+		}
 		if p.PKAuthority.ManifestEntry != "" {
 			lines = append(lines, "bsi_pk_authority_manifest_entry="+p.PKAuthority.ManifestEntry)
 		}

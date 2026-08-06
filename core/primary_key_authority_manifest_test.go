@@ -36,6 +36,9 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsOK(t *testing.T) {
 	if observation.EntryKeyCount != 0 {
 		t.Fatalf("entry key count = %d, want 0", observation.EntryKeyCount)
 	}
+	if observation.CleanEntries != 1 || observation.DirtyEntries != 0 {
+		t.Fatalf("entry clean/dirty summary = clean:%d dirty:%d, want 1/0", observation.CleanEntries, observation.DirtyEntries)
+	}
 	if entry.EncodingVersion != PrimaryKeyIdentityEncodingVersion {
 		t.Fatalf("entry encoding version = %d, want %d", entry.EncodingVersion, PrimaryKeyIdentityEncodingVersion)
 	}
@@ -129,8 +132,10 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if observation := loaded.ObserveAgainstCatalog(map[string]*Table{"lineitem": table}); observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
 		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
-	} else if observation.ArtifactDescriptors != 1 || observation.EntryKeyCount != entry.KeyCount {
-		t.Fatalf("observation artifact/key summary = artifacts:%d key_count:%d", observation.ArtifactDescriptors, observation.EntryKeyCount)
+	} else if observation.ArtifactDescriptors != 1 || observation.EntryKeyCount != entry.KeyCount ||
+		observation.CleanEntries != 1 || observation.DirtyEntries != 0 {
+		t.Fatalf("observation summary = artifacts:%d key_count:%d clean:%d dirty:%d",
+			observation.ArtifactDescriptors, observation.EntryKeyCount, observation.CleanEntries, observation.DirtyEntries)
 	}
 }
 
@@ -333,6 +338,9 @@ func TestBSIPrimaryKeyAuthorityManifestObservationRejectsDirtyArtifact(t *testin
 
 	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusInvalid {
 		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
+	}
+	if observation.CleanEntries != 0 || observation.DirtyEntries != 1 {
+		t.Fatalf("entry clean/dirty summary = clean:%d dirty:%d, want 0/1", observation.CleanEntries, observation.DirtyEntries)
 	}
 	if !strings.Contains(observation.Detail, "not clean") {
 		t.Fatalf("observation detail = %q", observation.Detail)

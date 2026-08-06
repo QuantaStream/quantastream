@@ -65,6 +65,9 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	if !strings.Contains(output, "bsi_pk_authority_manifest_entry_key_count=7") {
 		t.Fatalf("summary missing manifest key count:\n%s", output)
 	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_clean_entries=1") {
+		t.Fatalf("summary missing manifest clean entry count:\n%s", output)
+	}
 }
 
 func TestBuildStandardBSIPrimaryKeyAuthorityManifestUsesActiveCatalog(t *testing.T) {
