@@ -67,6 +67,20 @@ func BuildStandardBSIPrimaryKeyAuthorityManifest(config StandardConfig, source s
 	return manifest, nil
 }
 
+// SaveStandardBSIPrimaryKeyAuthorityManifest writes a logical authority
+// manifest to the standard-mode data directory.
+func SaveStandardBSIPrimaryKeyAuthorityManifest(config StandardConfig, manifest core.BSIPrimaryKeyAuthorityManifest) error {
+	config = config.WithDefaults()
+	return core.SaveBSIPrimaryKeyAuthorityManifest(config.DataDir, manifest)
+}
+
+// StandardBSIPrimaryKeyAuthorityManifestPath returns the standard-mode manifest
+// path for diagnostics and command output.
+func StandardBSIPrimaryKeyAuthorityManifestPath(config StandardConfig) string {
+	config = config.WithDefaults()
+	return core.BSIPrimaryKeyAuthorityManifestPath(config.DataDir)
+}
+
 func loadStandardBSIPrimaryKeyAuthorityCatalog(config StandardConfig) (map[string]*core.Table, error) {
 	tables, err := loadStandardBSIPrimaryKeyAuthorityCatalogTables(config)
 	if err != nil {

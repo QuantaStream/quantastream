@@ -43,6 +43,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
 	printBSIPKAuthorityManifest := flags.Bool("print-bsi-pk-authority-manifest", false, "print the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
+	writeBSIPKAuthorityManifest := flags.Bool("write-bsi-pk-authority-manifest", false, "write the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -63,11 +64,25 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		RuntimeProbeLogging: *runtimeProbes,
 	}
 
-	if *printBSIPKAuthorityManifest {
+	if *printBSIPKAuthorityManifest && *writeBSIPKAuthorityManifest {
+		fmt.Fprintln(stderr, "-print-bsi-pk-authority-manifest and -write-bsi-pk-authority-manifest cannot both be set")
+		return 2
+	}
+
+	if *printBSIPKAuthorityManifest || *writeBSIPKAuthorityManifest {
 		manifest, err := qsinabox.BuildStandardBSIPrimaryKeyAuthorityManifest(config, "quantastream-cli")
 		if err != nil {
 			fmt.Fprintf(stderr, "build BSI primary-key authority manifest: %v\n", err)
 			return 2
+		}
+		if *writeBSIPKAuthorityManifest {
+			if err := qsinabox.SaveStandardBSIPrimaryKeyAuthorityManifest(config, manifest); err != nil {
+				fmt.Fprintf(stderr, "write BSI primary-key authority manifest: %v\n", err)
+				return 2
+			}
+			fmt.Fprintf(stdout, "bsi_pk_authority_manifest_written=%s\n", qsinabox.StandardBSIPrimaryKeyAuthorityManifestPath(config))
+			fmt.Fprintf(stdout, "bsi_pk_authority_manifest_entries=%d\n", len(manifest.Entries))
+			return 0
 		}
 		data, err := yaml.Marshal(manifest)
 		if err != nil {

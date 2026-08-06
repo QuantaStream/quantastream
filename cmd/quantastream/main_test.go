@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/QuantaStream/quantastream/core"
 )
 
 func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
@@ -84,6 +86,55 @@ func TestRunPrintsBSIPrimaryKeyAuthorityManifest(t *testing.T) {
 	}
 	if strings.Contains(output, "listening=") {
 		t.Fatalf("manifest print should not start listener:\n%s", output)
+	}
+}
+
+func TestRunWritesBSIPrimaryKeyAuthorityManifest(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeCommandTestSchema(t, filepath.Join(dataDir, "config"), "sample")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-data-dir", dataDir,
+		"-write-bsi-pk-authority-manifest",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "bsi_pk_authority_manifest_written=") {
+		t.Fatalf("stdout missing manifest write path:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_entries=1") {
+		t.Fatalf("stdout missing manifest entry count:\n%s", output)
+	}
+	data, err := os.ReadFile(core.BSIPrimaryKeyAuthorityManifestPath(dataDir))
+	if err != nil {
+		t.Fatalf("read written manifest: %v", err)
+	}
+	for _, want := range []string{
+		"source: quantastream-cli",
+		"table: sample",
+		"primary_key: id",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("written manifest missing %q:\n%s", want, string(data))
+		}
+	}
+}
+
+func TestRunRejectsConflictingBSIPrimaryKeyAuthorityManifestActions(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-print-bsi-pk-authority-manifest",
+		"-write-bsi-pk-authority-manifest",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if !strings.Contains(stderr.String(), "cannot both be set") {
+		t.Fatalf("stderr = %q, want conflict message", stderr.String())
 	}
 }
 
