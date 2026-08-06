@@ -46,6 +46,22 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
 	}
 	entry.ArtifactPath = "bitmap/lineitem/primary_key_authority/1994-01-01T00"
+	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind:        "bsi",
+			Path:        "bitmap/lineitem/__qs_pk_authority/1994-01-01T00",
+			Fingerprint: "sha256:test-artifact",
+			FileCount:   12,
+			KeyCount:    44,
+			MinColumnID: 100,
+			MaxColumnID: 143,
+		},
+	}
+	entry.Fingerprint = "sha256:test-entry"
+	entry.CatalogFingerprint = "catalog:test"
+	entry.KeyCount = 44
+	entry.MinColumnID = 100
+	entry.MaxColumnID = 143
 
 	if err := SaveBSIPrimaryKeyAuthorityManifest(dir, BSIPrimaryKeyAuthorityManifest{
 		Source: "test",
@@ -62,6 +78,9 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "encoding_version") {
 		t.Fatalf("saved manifest did not include encoding_version:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), "artifacts:") || !strings.Contains(string(data), "catalog_fingerprint") {
+		t.Fatalf("saved manifest did not include artifact metadata:\n%s", string(data))
 	}
 	if _, err := os.Stat(BSIPrimaryKeyAuthorityManifestPath(dir) + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("temporary manifest file still exists or stat failed: %v", err)
@@ -82,6 +101,16 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if len(loaded.Entries) != 1 || loaded.Entries[0].ArtifactPath != entry.ArtifactPath {
 		t.Fatalf("loaded entries = %+v", loaded.Entries)
+	}
+	loadedEntry := loaded.Entries[0]
+	if loadedEntry.KeyCount != entry.KeyCount || loadedEntry.MinColumnID != entry.MinColumnID || loadedEntry.MaxColumnID != entry.MaxColumnID {
+		t.Fatalf("loaded entry bounds/count = key_count:%d min:%d max:%d", loadedEntry.KeyCount, loadedEntry.MinColumnID, loadedEntry.MaxColumnID)
+	}
+	if loadedEntry.CatalogFingerprint != entry.CatalogFingerprint || loadedEntry.Fingerprint != entry.Fingerprint {
+		t.Fatalf("loaded entry fingerprints = catalog:%q artifact:%q", loadedEntry.CatalogFingerprint, loadedEntry.Fingerprint)
+	}
+	if len(loadedEntry.Artifacts) != 1 || loadedEntry.Artifacts[0] != entry.Artifacts[0] {
+		t.Fatalf("loaded artifacts = %+v", loadedEntry.Artifacts)
 	}
 	if observation := loaded.ObserveAgainstCatalog(map[string]*Table{"lineitem": table}); observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
 		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
@@ -261,6 +290,65 @@ func TestBSIPrimaryKeyAuthorityManifestObservationRejectsDirtyArtifact(t *testin
 		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
 	}
 	if !strings.Contains(observation.Detail, "not clean") {
+		t.Fatalf("observation detail = %q", observation.Detail)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationRejectsInvalidEntryBounds(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", true),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.MinColumnID = 200
+	entry.MaxColumnID = 100
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"lineitem": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusInvalid {
+		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
+	}
+	if !strings.Contains(observation.Detail, "column bounds") {
+		t.Fatalf("observation detail = %q", observation.Detail)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationRejectsInvalidArtifactMetadata(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", true),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind: "bsi",
+		},
+	}
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"lineitem": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusInvalid {
+		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
+	}
+	if !strings.Contains(observation.Detail, "missing path") {
 		t.Fatalf("observation detail = %q", observation.Detail)
 	}
 }

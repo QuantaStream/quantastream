@@ -51,17 +51,36 @@ type BSIPrimaryKeyAuthorityManifest struct {
 // BSIPrimaryKeyAuthorityManifestEntry describes one table's primary-key
 // authority shape as written by a future persisted BSI authority artifact.
 type BSIPrimaryKeyAuthorityManifestEntry struct {
-	SchemaName      string                                `yaml:"schema_name,omitempty" json:"schema_name,omitempty"`
-	TableName       string                                `yaml:"table" json:"table"`
-	PrimaryKey      string                                `yaml:"primary_key" json:"primary_key"`
-	EncodingVersion int                                   `yaml:"encoding_version" json:"encoding_version"`
-	Fields          []BSIPrimaryKeyAuthorityManifestField `yaml:"fields" json:"fields"`
-	LogicalShard    string                                `yaml:"logical_shard,omitempty" json:"logical_shard,omitempty"`
-	ArtifactPath    string                                `yaml:"artifact_path,omitempty" json:"artifact_path,omitempty"`
-	Fingerprint     string                                `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
-	Clean           bool                                  `yaml:"clean" json:"clean"`
-	CreatedAt       time.Time                             `yaml:"created_at,omitempty" json:"created_at,omitempty"`
-	ModifiedAt      time.Time                             `yaml:"modified_at,omitempty" json:"modified_at,omitempty"`
+	SchemaName         string                                   `yaml:"schema_name,omitempty" json:"schema_name,omitempty"`
+	TableName          string                                   `yaml:"table" json:"table"`
+	PrimaryKey         string                                   `yaml:"primary_key" json:"primary_key"`
+	EncodingVersion    int                                      `yaml:"encoding_version" json:"encoding_version"`
+	Fields             []BSIPrimaryKeyAuthorityManifestField    `yaml:"fields" json:"fields"`
+	LogicalShard       string                                   `yaml:"logical_shard,omitempty" json:"logical_shard,omitempty"`
+	ArtifactPath       string                                   `yaml:"artifact_path,omitempty" json:"artifact_path,omitempty"`
+	Artifacts          []BSIPrimaryKeyAuthorityManifestArtifact `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
+	Fingerprint        string                                   `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	CatalogFingerprint string                                   `yaml:"catalog_fingerprint,omitempty" json:"catalog_fingerprint,omitempty"`
+	KeyCount           uint64                                   `yaml:"key_count,omitempty" json:"key_count,omitempty"`
+	MinColumnID        uint64                                   `yaml:"min_column_id,omitempty" json:"min_column_id,omitempty"`
+	MaxColumnID        uint64                                   `yaml:"max_column_id,omitempty" json:"max_column_id,omitempty"`
+	Clean              bool                                     `yaml:"clean" json:"clean"`
+	CreatedAt          time.Time                                `yaml:"created_at,omitempty" json:"created_at,omitempty"`
+	ModifiedAt         time.Time                                `yaml:"modified_at,omitempty" json:"modified_at,omitempty"`
+}
+
+// BSIPrimaryKeyAuthorityManifestArtifact describes a physical authority
+// artifact that belongs to a logical manifest entry. The legacy ArtifactPath
+// field remains for compatibility with the first manifest shape; new writers
+// can use Artifacts when an authority entry spans more than one file.
+type BSIPrimaryKeyAuthorityManifestArtifact struct {
+	Kind        string `yaml:"kind,omitempty" json:"kind,omitempty"`
+	Path        string `yaml:"path" json:"path"`
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	FileCount   uint64 `yaml:"file_count,omitempty" json:"file_count,omitempty"`
+	KeyCount    uint64 `yaml:"key_count,omitempty" json:"key_count,omitempty"`
+	MinColumnID uint64 `yaml:"min_column_id,omitempty" json:"min_column_id,omitempty"`
+	MaxColumnID uint64 `yaml:"max_column_id,omitempty" json:"max_column_id,omitempty"`
 }
 
 // BSIPrimaryKeyAuthorityManifestField captures the effective primary-key field
@@ -262,6 +281,9 @@ func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityMani
 			return BSIPrimaryKeyAuthorityManifestStatusStale, detail
 		}
 	}
+	if detail := observeBSIPrimaryKeyAuthorityManifestArtifactMetadata(entry); detail != "" {
+		return BSIPrimaryKeyAuthorityManifestStatusInvalid, detail
+	}
 	if !entry.Clean {
 		return BSIPrimaryKeyAuthorityManifestStatusInvalid, fmt.Sprintf("table %s primary-key authority artifact is not clean", entry.TableName)
 	}
@@ -280,6 +302,22 @@ func observeBSIPrimaryKeyAuthorityManifestField(table string, index int, actual,
 	}
 	if actual.ColumnID != expected.ColumnID {
 		return fmt.Sprintf("table %s primary-key field[%d] column_id=%t expected=%t", table, index, actual.ColumnID, expected.ColumnID)
+	}
+	return ""
+}
+
+func observeBSIPrimaryKeyAuthorityManifestArtifactMetadata(entry BSIPrimaryKeyAuthorityManifestEntry) string {
+	if entry.MinColumnID != 0 && entry.MaxColumnID != 0 && entry.MinColumnID > entry.MaxColumnID {
+		return fmt.Sprintf("table %s primary-key authority column bounds min=%d max=%d", entry.TableName, entry.MinColumnID, entry.MaxColumnID)
+	}
+	for i, artifact := range entry.Artifacts {
+		if strings.TrimSpace(artifact.Path) == "" {
+			return fmt.Sprintf("table %s primary-key authority artifact[%d] is missing path", entry.TableName, i)
+		}
+		if artifact.MinColumnID != 0 && artifact.MaxColumnID != 0 && artifact.MinColumnID > artifact.MaxColumnID {
+			return fmt.Sprintf("table %s primary-key authority artifact[%d] column bounds min=%d max=%d",
+				entry.TableName, i, artifact.MinColumnID, artifact.MaxColumnID)
+		}
 	}
 	return ""
 }
