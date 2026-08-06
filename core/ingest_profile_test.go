@@ -148,6 +148,22 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	require.Equal(t, 1, snapshot.ByShard["shard1"].RecordCount)
 }
 
+func TestPrimaryKeyResolveProfileAggregatesBSIFallbackReasons(t *testing.T) {
+	var first PrimaryKeyResolveProfile
+	first.RecordBSIFallback("primary_key_field_not_bsi_backed")
+	first.RecordBSIFallback("primary_key_field_not_bsi_backed")
+	var second PrimaryKeyResolveProfile
+	second.RecordBSIFallback("compound_not_encodable")
+
+	combined := first.add(second)
+
+	require.Equal(t, 3, combined.BSIFallbackCount)
+	require.Equal(t, map[string]int{
+		"primary_key_field_not_bsi_backed": 2,
+		"compound_not_encodable":           1,
+	}, combined.BSIFallbackReasons)
+}
+
 func TestRouterPutRowProfileSnapshotIsStableCopy(t *testing.T) {
 	var profile RouterPutRowProfile
 	profile.Observe("shard0", IngestRecord{TableName: "orders"}, PutRowResult{

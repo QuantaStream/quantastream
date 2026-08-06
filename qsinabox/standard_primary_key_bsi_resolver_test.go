@@ -137,6 +137,12 @@ func TestStandardBSIPrimaryKeyResolverDelegatesCompoundKeysToFallback(t *testing
 	if fallback.requests[0].TableBuffer != tbuf || fallback.requests[0].LookupValue != "1001;1" {
 		t.Fatalf("fallback request = %+v, want original request", fallback.requests[0])
 	}
+	if result.Profile.BSIFallbackCount != 1 {
+		t.Fatalf("BSIFallbackCount = %d, want 1", result.Profile.BSIFallbackCount)
+	}
+	if result.Profile.BSIFallbackReasons["compound_reader_missing"] != 1 {
+		t.Fatalf("BSIFallbackReasons = %+v, want compound_reader_missing", result.Profile.BSIFallbackReasons)
+	}
 }
 
 func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testing.T) {
