@@ -110,30 +110,31 @@ func (m *SessionPool) ReturnWithProfile(tableName string, conn *Session) (shared
 	if conn == nil {
 		return shared.BatchBufferFlushProfile{}, nil
 	}
+	batchEmpty := conn.BatchBuffer == nil || conn.BatchBuffer.IsEmpty()
 
 	m.sessPoolLock.Lock()
 	if m.closed {
 		m.sessPoolLock.Unlock()
-		conn.CloseSession()
+		err := conn.CloseSession()
 		m.returnSemaphore()
-		return conn.LastFlushProfile(), nil
+		return sessionReturnFlushProfile(conn, batchEmpty), err
 	}
 	stale := m.sessionGenerationStaleLocked(tableName, conn.poolGeneration)
 	m.sessPoolLock.Unlock()
 
 	if stale {
-		conn.CloseSession()
+		err := conn.CloseSession()
 		m.returnSemaphore()
-		return conn.LastFlushProfile(), nil
+		return sessionReturnFlushProfile(conn, batchEmpty), err
 	}
 
 	if err := conn.Flush(); err != nil {
-		profile := conn.LastFlushProfile()
+		profile := sessionReturnFlushProfile(conn, batchEmpty)
 		conn.CloseSession()
 		m.returnSemaphore()
 		return profile, err
 	}
-	profile := conn.LastFlushProfile()
+	profile := sessionReturnFlushProfile(conn, batchEmpty)
 
 	m.sessPoolLock.Lock()
 	defer m.sessPoolLock.Unlock()
@@ -158,6 +159,13 @@ func (m *SessionPool) ReturnWithProfile(tableName string, conn *Session) (shared
 	default: //Don't block
 	}
 	return profile, nil
+}
+
+func sessionReturnFlushProfile(conn *Session, batchEmpty bool) shared.BatchBufferFlushProfile {
+	if conn == nil || batchEmpty {
+		return shared.BatchBufferFlushProfile{}
+	}
+	return conn.LastFlushProfile()
 }
 
 // InvalidateTable closes pooled sessions and cached metadata for a table after a schema change.

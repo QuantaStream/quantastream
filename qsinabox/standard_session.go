@@ -65,10 +65,11 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	}
 	pool := b.NewSessionPool(config, tableCache, poolSize)
 	sessions := StandardDirectSessionProvider{
-		Pool:                      pool,
-		SchemaDir:                 b.ConfigBaseDir(config),
-		Conn:                      b.NewLocalConnection(),
-		PrimaryKeyResolverFactory: standardDirectPrimaryKeyResolverFactory(config, tableCache, b.Adapter.BitmapIndex, pool),
+		Pool:                                 pool,
+		SchemaDir:                            b.ConfigBaseDir(config),
+		Conn:                                 b.NewLocalConnection(),
+		PrimaryKeyResolverFactory:            standardDirectPrimaryKeyResolverFactory(config, tableCache, b.Adapter.BitmapIndex, pool),
+		PrimaryKeyAuthorityManifestPublisher: StandardBSIPrimaryKeyAuthorityManifestFilePublisher{Config: config, Source: "standard-session-flush"},
 	}
 	bsiReader := StandardProjectionBSIReader{
 		Pool:       pool,
@@ -150,10 +151,11 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 // StandardDirectSessionProvider borrows table-scoped direct sessions from an
 // inabox-standard local session pool.
 type StandardDirectSessionProvider struct {
-	Pool                      *core.SessionPool
-	SchemaDir                 string
-	Conn                      *shared.Conn
-	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
+	Pool                                 *core.SessionPool
+	SchemaDir                            string
+	Conn                                 *shared.Conn
+	PrimaryKeyResolverFactory            core.SessionPrimaryKeyResolverFactory
+	PrimaryKeyAuthorityManifestPublisher StandardBSIPrimaryKeyAuthorityManifestPublisher
 }
 
 // BorrowDirectSession returns a direct session handle for the request root table.
@@ -187,11 +189,12 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		session.SetPrimaryKeyResolver(p.PrimaryKeyResolverFactory(session))
 	}
 	return StandardDirectSessionHandle{
-		Pool:    p.Pool,
-		Table:   table,
-		Session: session,
-		Query:   qsruntime.LegacyBitmapQueryAdapter{},
-		Result:  qsruntime.LegacyBitmapQueryResultAdapter{},
+		Pool:                                 p.Pool,
+		Table:                                table,
+		Session:                              session,
+		Query:                                qsruntime.LegacyBitmapQueryAdapter{},
+		Result:                               qsruntime.LegacyBitmapQueryResultAdapter{},
+		PrimaryKeyAuthorityManifestPublisher: p.PrimaryKeyAuthorityManifestPublisher,
 	}, nil, nil
 }
 
@@ -222,11 +225,12 @@ func (p StandardDirectSessionProvider) syntheticSchemaMutationSession() *core.Se
 // StandardDirectSessionHandle executes direct bitmap calls through a local
 // core.Session without gRPC.
 type StandardDirectSessionHandle struct {
-	Pool    *core.SessionPool
-	Table   string
-	Session *core.Session
-	Query   qsruntime.LegacyBitmapQueryAdapter
-	Result  qsruntime.LegacyBitmapQueryResultAdapter
+	Pool                                 *core.SessionPool
+	Table                                string
+	Session                              *core.Session
+	Query                                qsruntime.LegacyBitmapQueryAdapter
+	Result                               qsruntime.LegacyBitmapQueryResultAdapter
+	PrimaryKeyAuthorityManifestPublisher StandardBSIPrimaryKeyAuthorityManifestPublisher
 	// Synthetic handles schema mutations for tables that are not active yet.
 	Synthetic bool
 }
@@ -254,10 +258,19 @@ func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.Diagn
 	if h.Pool == nil || h.Session == nil || h.Table == "" {
 		return nil
 	}
-	if _, err := h.Pool.ReturnWithProfile(h.Table, h.Session); err != nil {
+	profile, err := h.Pool.ReturnWithProfile(h.Table, h.Session)
+	if err != nil {
 		return qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute,
 				fmt.Sprintf("release inabox-standard session for %s: %v", h.Table, err)),
+		}
+	}
+	if h.PrimaryKeyAuthorityManifestPublisher != nil {
+		if _, err := h.PrimaryKeyAuthorityManifestPublisher.PublishAfterFlush(profile); err != nil {
+			return qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute,
+					fmt.Sprintf("publish BSI primary-key authority manifest after %s flush: %v", h.Table, err)),
+			}
 		}
 	}
 	return nil

@@ -2,6 +2,7 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/shared"
 )
@@ -42,5 +43,26 @@ func TestSessionPoolInvalidateTableClosesBorrowedSessionOnReturn(t *testing.T) {
 	_, inUse, pooled, _ := pool.Metrics()
 	if inUse != 0 || pooled != 0 {
 		t.Fatalf("metrics after stale return = inUse %d pooled %d, want 0/0", inUse, pooled)
+	}
+}
+
+func TestSessionPoolReturnWithProfileDoesNotReuseStaleFlushProfile(t *testing.T) {
+	pool := NewSessionPool(NewTableCacheStruct(), nil, "", 1)
+	pool.sessPoolLock.Lock()
+	entry := pool.getPoolByTableName("orders")
+	session := &Session{
+		BatchBuffer:      shared.NewBatchBuffer(nil, nil, 10),
+		poolGeneration:   entry.generation,
+		lastFlushProfile: shared.BatchBufferFlushProfile{StartedAt: time.Now(), BSIValueEntryCount: 7},
+	}
+	pool.sessPoolLock.Unlock()
+	<-pool.semaphores
+
+	profile, err := pool.ReturnWithProfile("orders", session)
+	if err != nil {
+		t.Fatalf("ReturnWithProfile returned error: %v", err)
+	}
+	if !profile.StartedAt.IsZero() {
+		t.Fatalf("profile.StartedAt = %v, want zero profile for empty fresh release", profile.StartedAt)
 	}
 }

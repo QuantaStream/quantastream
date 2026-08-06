@@ -171,6 +171,77 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestFallsBackToDiscovery(t *test
 	}
 }
 
+func TestStandardBSIPrimaryKeyAuthorityManifestPublisherSkipsEmptyFlush(t *testing.T) {
+	dataDir := t.TempDir()
+	publisher := StandardBSIPrimaryKeyAuthorityManifestFilePublisher{
+		Config: StandardConfig{DataDir: dataDir},
+		Source: "unit-test",
+	}
+
+	published, err := publisher.PublishAfterFlush(shared.BatchBufferFlushProfile{})
+	if err != nil {
+		t.Fatalf("PublishAfterFlush returned error: %v", err)
+	}
+	if published {
+		t.Fatalf("published = true, want empty flush to skip manifest write")
+	}
+	if _, err := os.Stat(core.BSIPrimaryKeyAuthorityManifestPath(dataDir)); !os.IsNotExist(err) {
+		t.Fatalf("manifest stat error = %v, want missing manifest", err)
+	}
+}
+
+func TestStandardBSIPrimaryKeyAuthorityManifestPublisherRejectsFailedFlush(t *testing.T) {
+	publisher := StandardBSIPrimaryKeyAuthorityManifestFilePublisher{
+		Config: StandardConfig{DataDir: t.TempDir()},
+		Source: "unit-test",
+	}
+
+	published, err := publisher.PublishAfterFlush(shared.BatchBufferFlushProfile{
+		StartedAt:          time.Now(),
+		BSIValueEntryCount: 1,
+		Error:              "boom",
+	})
+	if err == nil {
+		t.Fatalf("PublishAfterFlush returned nil error, want failed flush rejection")
+	}
+	if published {
+		t.Fatalf("published = true, want failed flush to skip manifest write")
+	}
+}
+
+func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardTestSchema(t, configDir, "sample")
+	publisher := StandardBSIPrimaryKeyAuthorityManifestFilePublisher{
+		Config: StandardConfig{DataDir: dataDir},
+		Source: "unit-test-flush",
+	}
+
+	published, err := publisher.PublishAfterFlush(shared.BatchBufferFlushProfile{
+		StartedAt:          time.Now(),
+		FinishedAt:         time.Now(),
+		BSIValueEntryCount: 3,
+	})
+	if err != nil {
+		t.Fatalf("PublishAfterFlush returned error: %v", err)
+	}
+	if !published {
+		t.Fatalf("published = false, want mutated flush to write manifest")
+	}
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(dataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+	if manifest.Source != "unit-test-flush" {
+		t.Fatalf("manifest source = %q, want unit-test-flush", manifest.Source)
+	}
+	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
+		t.Fatalf("manifest entries = %+v, want one entry with one descriptor", manifest.Entries)
+	}
+}
+
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsInvalidVersion(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
