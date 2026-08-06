@@ -457,58 +457,6 @@ func TestStandardProcessNativeGRPCRouterDefaultsToBSIPrimaryKeyAuthority(t *test
 	})
 }
 
-func TestStandardProcessNativeGRPCRouterReplayValidatesTransitionPrimaryKeyShadow(t *testing.T) {
-	orderCount := 2
-	lineitemsPerOrder := 3
-	replayCount := 2
-	shadowProfile := &core.PrimaryKeyShadowProfile{}
-	shadowBackend := qsfixture.NewMemoryBSIPrimaryKeyBackend()
-
-	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
-		OrderCount:        orderCount,
-		LineitemsPerOrder: lineitemsPerOrder,
-		ShardCount:        1,
-		SourceMode:        core.IngestSourceStream,
-		ReplayCount:       replayCount,
-		ShadowProfile:     shadowProfile,
-		PrimaryKeyResolverFactory: func(_ *core.Session) core.PrimaryKeyResolver {
-			return core.NewShadowPrimaryKeyResolver(
-				core.KVPrimaryKeyResolver{},
-				core.NewBSIPrimaryKeyResolver(shadowBackend),
-				shadowProfile.Callback(),
-			)
-		},
-	})
-
-	expectedTopLevelRecords := orderCount * replayCount
-	expectedLogicalWrites := expectedTopLevelRecords * (1 + lineitemsPerOrder)
-	expectedLineitemReplayHits := orderCount * lineitemsPerOrder
-	if result.PutProfile.RecordCount != expectedTopLevelRecords {
-		t.Fatalf("put profile = %+v, want %d routed order records", result.PutProfile, expectedTopLevelRecords)
-	}
-	if result.PutProfile.LogicalRowCount != expectedLogicalWrites {
-		t.Fatalf("put profile = %+v, want %d logical writes across replays", result.PutProfile, expectedLogicalWrites)
-	}
-	if result.PutProfile.PrimaryKey.KVHitCount != expectedLineitemReplayHits {
-		t.Fatalf("primary key profile = %+v, want %d KV hits on replayed lineitems",
-			result.PutProfile.PrimaryKey, expectedLineitemReplayHits)
-	}
-	expectedComparisons := expectedLogicalWrites
-	if result.ShadowProfile.ComparisonCount != expectedComparisons ||
-		result.ShadowProfile.MatchCount != expectedComparisons ||
-		result.ShadowProfile.MismatchCount != 0 {
-		t.Fatalf("shadow profile = %+v, want %d clean comparisons", result.ShadowProfile, expectedComparisons)
-	}
-	if result.ShadowProfile.ExistingRowMatch != expectedLineitemReplayHits {
-		t.Fatalf("shadow profile = %+v, want %d matched existing lineitem rows on replay",
-			result.ShadowProfile, expectedLineitemReplayHits)
-	}
-	if len(shadowBackend.Snapshot()) != expectedLineitemReplayHits {
-		t.Fatalf("shadow backend entries = %d, want %d lineitem PK entries",
-			len(shadowBackend.Snapshot()), expectedLineitemReplayHits)
-	}
-}
-
 func TestStandardProcessNativeGRPCRouterReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
 	orderCount := 2
 	lineitemsPerOrder := 3
@@ -672,9 +620,6 @@ func requireBSIPrimaryKeyAuthorityReplayProfile(
 		t.Fatalf("primary key profile = %+v, want %d staged lineitem primary keys",
 			result.PutProfile.PrimaryKey, expectedLineitemReplayHits)
 	}
-	if result.PutProfile.PrimaryKey.KVLookupCount != 0 || result.PutProfile.PrimaryKey.KVHitCount != 0 {
-		t.Fatalf("primary key profile = %+v, want BSI authority without KV PK lookups", result.PutProfile.PrimaryKey)
-	}
 	if len(primaryKeyBackend.Snapshot()) != expectedLineitemReplayHits {
 		t.Fatalf("BSI primary key backend entries = %d, want %d lineitem PK entries",
 			len(primaryKeyBackend.Snapshot()), expectedLineitemReplayHits)
@@ -709,12 +654,6 @@ func requirePrimaryKeyTableProfile(
 	}
 	if profile.BSIStageWriteCount != expected.BSIStageWriteCount {
 		t.Fatalf("%s primary key profile = %+v, want %d BSI stage writes", tableName, profile, expected.BSIStageWriteCount)
-	}
-	if profile.KVLookupCount != expected.KVLookupCount {
-		t.Fatalf("%s primary key profile = %+v, want %d KV lookups", tableName, profile, expected.KVLookupCount)
-	}
-	if profile.KVHitCount != expected.KVHitCount {
-		t.Fatalf("%s primary key profile = %+v, want %d KV hits", tableName, profile, expected.KVHitCount)
 	}
 }
 
@@ -767,14 +706,12 @@ type standardTPCHRouterIngestScenario struct {
 	BaseOrderKey              int64
 	ReplayCount               int
 	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
-	ShadowProfile             *core.PrimaryKeyShadowProfile
 }
 
 type standardTPCHRouterIngestResult struct {
-	Routes        []core.IngestRouteResult
-	PutProfile    core.RouterPutRowProfileSummary
-	FlushProfile  core.RouterFlushProfileSummary
-	ShadowProfile core.PrimaryKeyShadowProfileSummary
+	Routes       []core.IngestRouteResult
+	PutProfile   core.RouterPutRowProfileSummary
+	FlushProfile core.RouterFlushProfileSummary
 }
 
 func routeStandardProcessNativeTPCHEnvelopes(tb testing.TB, process StandardProcess, config StandardConfig,
@@ -974,10 +911,9 @@ inner join lineitem as l on l.l_orderkey = o.o_orderkey`, fmt.Sprint(totalLineit
 		tb.Fatalf("native gRPC server did not stop")
 	}
 	return standardTPCHRouterIngestResult{
-		Routes:        routes,
-		PutProfile:    putRowProfile.Snapshot(),
-		FlushProfile:  flushProfile.Snapshot(),
-		ShadowProfile: scenario.ShadowProfile.Snapshot(),
+		Routes:       routes,
+		PutProfile:   putRowProfile.Snapshot(),
+		FlushProfile: flushProfile.Snapshot(),
 	}
 }
 

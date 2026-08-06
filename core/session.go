@@ -1313,7 +1313,7 @@ func (MissingPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolve
 	}
 	profile.TotalElapsed = time.Since(startedAt)
 	return PrimaryKeyResolveResult{Profile: profile}, fmt.Errorf(
-		"primary key resolver is not configured for table %q primary key %q; inject a BSI primary-key authority resolver or an explicit KVPrimaryKeyResolver for transition-only validation",
+		"primary key resolver is not configured for table %q primary key %q; inject a BSI primary-key authority resolver",
 		tableName, primaryKey)
 }
 

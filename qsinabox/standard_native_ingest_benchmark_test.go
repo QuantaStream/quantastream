@@ -44,13 +44,6 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	primaryKeyShadowMode, err := primaryKeyShadowModeEnv("QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW")
-	if err != nil {
-		b.Fatal(err)
-	}
-	if primaryKeyAuthorityMode != "" && primaryKeyShadowMode != "" {
-		b.Fatalf("QUANTASTREAM_TPCH_INGEST_BENCH_PK_AUTHORITY and QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW cannot both be set in this slice")
-	}
 
 	root := b.TempDir()
 	configDir := filepath.Join(root, "schemas")
@@ -74,13 +67,10 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	putRowProfile := &core.RouterPutRowProfile{}
 	drainProfile := &core.RouterDrainProfile{}
 	flushProfile := &core.RouterFlushProfile{}
-	shadowProfile := &core.PrimaryKeyShadowProfile{}
 	routerTableCache := core.NewTableCacheStruct()
 	resolverFactory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
 		primaryKeyAuthorityMode,
-		primaryKeyShadowMode,
 		routerTableCache,
-		shadowProfile,
 	)
 	newRouter := func(runtime standardNativeIngestBenchmarkRuntime, channelSize int) (*core.SessionRouter, error) {
 		if channelSize <= 0 {
@@ -212,10 +202,6 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	if drainSnapshot.WorkerCount != expectedDrainWorkers {
 		b.Fatalf("drain profile = %+v, want %d worker observations", drainSnapshot, expectedDrainWorkers)
 	}
-	shadowSnapshot := shadowProfile.Snapshot()
-	if shadowSnapshot.MismatchCount > 0 || shadowSnapshot.ShadowErrorCount > 0 || shadowSnapshot.AuthorityErrorCount > 0 {
-		b.Fatalf("primary key shadow = %+v, want no mismatches or errors", shadowSnapshot)
-	}
 
 	metrics := qsfixture.NativeIngestBenchmarkMetrics(benchmarkElapsed, enqueueElapsed, drainElapsed,
 		totalOrderWrites, totalLineitemWrites, totalLogicalWrites, putSnapshot, drainSnapshot, flushSnapshot, b.N*replayCount)
@@ -233,34 +219,25 @@ func BenchmarkStandardProcessNativeGRPCRouterTPCHNestedIngest(b *testing.B) {
 	} else {
 		metrics["process_lifecycle_count"] = 1
 	}
-	if primaryKeyShadowMode != "" {
-		metrics["primary_key_shadow_comparison_count"] = float64(shadowSnapshot.ComparisonCount)
-		metrics["primary_key_shadow_match_count"] = float64(shadowSnapshot.MatchCount)
-		metrics["primary_key_shadow_mismatch_count"] = float64(shadowSnapshot.MismatchCount)
-		metrics["primary_key_shadow_skip_count"] = float64(shadowSnapshot.SkipCount)
-		metrics["primary_key_shadow_existing_row_match_count"] = float64(shadowSnapshot.ExistingRowMatch)
-	}
 	reportTPCHIngestBenchmarkMetrics(b, metrics)
 	report := qsfixture.BuildNativeIngestBenchmarkReport(qsfixture.NativeIngestBenchmarkReportRequest{
-		Profile:                 profileName,
-		Mode:                    StandardMode,
-		OrderCount:              orderCount,
-		LineitemsPerOrder:       lineitemsPerOrder,
-		ShardCount:              shardCount,
-		RunCount:                b.N,
-		ReplayCount:             replayCount,
-		ReplayScope:             replayScope,
-		PrimaryKeyMode:          string(primaryKeyMode),
-		PrimaryKeyAuthority:     primaryKeyAuthorityMode,
-		PrimaryKeyShadow:        primaryKeyShadowMode,
-		PrimaryKeyShadowProfile: shadowSnapshot,
-		Elapsed:                 benchmarkElapsed,
-		EnqueueElapsed:          enqueueElapsed,
-		DrainElapsed:            drainElapsed,
-		PutRow:                  putSnapshot,
-		Drain:                   drainSnapshot,
-		Flush:                   flushSnapshot,
-		Metrics:                 metrics,
+		Profile:             profileName,
+		Mode:                StandardMode,
+		OrderCount:          orderCount,
+		LineitemsPerOrder:   lineitemsPerOrder,
+		ShardCount:          shardCount,
+		RunCount:            b.N,
+		ReplayCount:         replayCount,
+		ReplayScope:         replayScope,
+		PrimaryKeyMode:      string(primaryKeyMode),
+		PrimaryKeyAuthority: primaryKeyAuthorityMode,
+		Elapsed:             benchmarkElapsed,
+		EnqueueElapsed:      enqueueElapsed,
+		DrainElapsed:        drainElapsed,
+		PutRow:              putSnapshot,
+		Drain:               drainSnapshot,
+		Flush:               flushSnapshot,
+		Metrics:             metrics,
 	})
 	if err := qsfixture.WriteNativeIngestBenchmarkReport(reportPath, report); err != nil {
 		b.Fatalf("write benchmark report: %v", err)
@@ -359,21 +336,10 @@ func routeStandardNativeIngestBenchmarkEnvelopes(b *testing.B, router *core.Sess
 
 func standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
 	authorityMode string,
-	shadowMode string,
 	tableCache *core.TableCacheStruct,
-	shadowProfile *core.PrimaryKeyShadowProfile,
 ) core.SessionPrimaryKeyResolverFactory {
 	if authorityMode == primaryKeyAuthorityBSIMode {
 		return NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
-	}
-	if shadowMode == primaryKeyShadowBSIMode {
-		return func(session *core.Session) core.PrimaryKeyResolver {
-			return core.NewShadowPrimaryKeyResolver(
-				core.KVPrimaryKeyResolver{},
-				NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)(session),
-				shadowProfile.Callback(),
-			)
-		}
 	}
 	return nil
 }
@@ -381,9 +347,7 @@ func standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
 func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteAuthority(t *testing.T) {
 	factory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
 		primaryKeyAuthorityBSIMode,
-		"",
 		core.NewTableCacheStruct(),
-		nil,
 	)
 	if factory == nil {
 		t.Fatalf("resolver factory = nil, want concrete BSI authority factory")
@@ -391,22 +355,6 @@ func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteAutho
 	resolver := factory(&core.Session{})
 	if _, ok := resolver.(StandardBSIPrimaryKeyResolver); !ok {
 		t.Fatalf("resolver = %T, want StandardBSIPrimaryKeyResolver", resolver)
-	}
-}
-
-func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesTransitionShadow(t *testing.T) {
-	factory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
-		"",
-		primaryKeyShadowBSIMode,
-		core.NewTableCacheStruct(),
-		&core.PrimaryKeyShadowProfile{},
-	)
-	if factory == nil {
-		t.Fatalf("resolver factory = nil, want concrete BSI shadow factory")
-	}
-	resolver := factory(&core.Session{})
-	if _, ok := resolver.(core.ShadowPrimaryKeyResolver); !ok {
-		t.Fatalf("resolver = %T, want core.ShadowPrimaryKeyResolver", resolver)
 	}
 }
 
@@ -512,9 +460,6 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["primary_key_total_microseconds_per_resolve"], "pk_total_us/resolve")
 	b.ReportMetric(metrics["primary_key_local_cache_hit_percent"], "pk_local_cache_hit_percent")
 	b.ReportMetric(metrics["primary_key_assume_new_percent"], "pk_assume_new_percent")
-	b.ReportMetric(metrics["primary_key_skipped_kv_lookup_percent"], "pk_skipped_kv_lookup_percent")
-	b.ReportMetric(metrics["primary_key_kv_hit_percent"], "pk_kv_hit_percent")
-	b.ReportMetric(metrics["primary_key_kv_lookup_microseconds_per_lookup"], "pk_kv_lookup_us/lookup")
 	b.ReportMetric(metrics["primary_key_bsi_hit_percent"], "pk_bsi_hit_percent")
 	b.ReportMetric(metrics["primary_key_skipped_bsi_lookup_percent"], "pk_skipped_bsi_lookup_percent")
 	b.ReportMetric(metrics["primary_key_bsi_projection_cache_hit_percent"], "pk_bsi_projection_cache_hit_percent")
@@ -529,13 +474,6 @@ func reportTPCHIngestBenchmarkMetrics(b *testing.B, metrics map[string]float64) 
 	b.ReportMetric(metrics["primary_key_batch_cache_write_microseconds_per_write"], "pk_batch_write_us/write")
 	reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b, metrics, "orders")
 	reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b, metrics, "lineitem")
-	if _, ok := metrics["primary_key_shadow_comparison_count"]; ok {
-		b.ReportMetric(metrics["primary_key_shadow_comparison_count"], "pk_shadow_comparisons")
-		b.ReportMetric(metrics["primary_key_shadow_match_count"], "pk_shadow_matches")
-		b.ReportMetric(metrics["primary_key_shadow_mismatch_count"], "pk_shadow_mismatches")
-		b.ReportMetric(metrics["primary_key_shadow_skip_count"], "pk_shadow_skips")
-		b.ReportMetric(metrics["primary_key_shadow_existing_row_match_count"], "pk_shadow_existing_matches")
-	}
 }
 
 func reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b *testing.B, metrics map[string]float64, tableName string) {
@@ -543,17 +481,14 @@ func reportTPCHIngestBenchmarkTablePrimaryKeyMetrics(b *testing.B, metrics map[s
 	prefix := "primary_key_table_" + strings.ToLower(tableName) + "_"
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"direct_column_id_count", "pk_"+tableName+"_direct_count")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_count", "pk_"+tableName+"_bsi_lookups")
-	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_count", "pk_"+tableName+"_kv_lookups")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_percent", "pk_"+tableName+"_bsi_lookup_percent")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_projection_cache_hit_percent", "pk_"+tableName+"_bsi_projection_cache_hit_percent")
-	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_percent", "pk_"+tableName+"_kv_lookup_percent")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_identity_encode_microseconds_per_encode", "pk_"+tableName+"_bsi_identity_encode_us/encode")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_authority_encode_microseconds_per_encode", "pk_"+tableName+"_bsi_authority_encode_us/encode")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_lookup_microseconds_per_lookup", "pk_"+tableName+"_bsi_us/lookup")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_projection_microseconds_per_lookup", "pk_"+tableName+"_bsi_projection_us/lookup")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_compare_microseconds_per_lookup", "pk_"+tableName+"_bsi_compare_us/lookup")
 	reportBenchmarkMetricIfPresent(b, metrics, prefix+"bsi_match_extraction_microseconds_per_lookup", "pk_"+tableName+"_bsi_match_extract_us/lookup")
-	reportBenchmarkMetricIfPresent(b, metrics, prefix+"kv_lookup_microseconds_per_lookup", "pk_"+tableName+"_kv_us/lookup")
 }
 
 func reportBenchmarkMetricIfPresent(b *testing.B, metrics map[string]float64, name string, unit string) {

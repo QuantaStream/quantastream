@@ -20,18 +20,9 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 		ReplayCount:         2,
 		PrimaryKeyMode:      "assume_new",
 		PrimaryKeyAuthority: "bsi",
-		PrimaryKeyShadow:    "bsi",
-		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
-			ComparisonCount:  32,
-			MatchCount:       32,
-			ExistingRowMatch: 24,
-			ByReason: map[string]int{
-				core.PrimaryKeyShadowMatchReason: 32,
-			},
-		},
-		Elapsed:        10 * time.Millisecond,
-		EnqueueElapsed: 4 * time.Millisecond,
-		DrainElapsed:   6 * time.Millisecond,
+		Elapsed:             10 * time.Millisecond,
+		EnqueueElapsed:      4 * time.Millisecond,
+		DrainElapsed:        6 * time.Millisecond,
 		PutRow: core.RouterPutRowProfileSummary{
 			RecordCount:     8,
 			ChildRowCount:   24,
@@ -72,9 +63,6 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	if report.Config.PrimaryKeyAuthority != "bsi" {
 		t.Fatalf("report primary key authority = %q, want bsi", report.Config.PrimaryKeyAuthority)
 	}
-	if report.Config.PrimaryKeyShadow != "bsi" {
-		t.Fatalf("report primary key shadow = %q, want bsi", report.Config.PrimaryKeyShadow)
-	}
 	if report.Timings.EnqueueNanos != int64(4*time.Millisecond) || report.Timings.DrainNanos != int64(6*time.Millisecond) {
 		t.Fatalf("report timings = %+v, want enqueue/drain timings", report.Timings)
 	}
@@ -87,12 +75,6 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	if report.PutRow.ChildRowCount != 24 || report.PutRow.LogicalRowCount != 32 {
 		t.Fatalf("report put row counts = %+v, want profile child/logical row counts", report.PutRow)
 	}
-	if report.PrimaryKeyShadowProfile.ComparisonCount != 32 ||
-		report.PrimaryKeyShadowProfile.MatchCount != 32 ||
-		report.PrimaryKeyShadowProfile.ExistingRowMatch != 24 {
-		t.Fatalf("report shadow profile = %+v, want captured shadow profile", report.PrimaryKeyShadowProfile)
-	}
-
 	path := filepath.Join(t.TempDir(), "profiles", "ingest.json")
 	if err := WriteNativeIngestBenchmarkReport(path, report); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -103,10 +85,6 @@ func TestBuildNativeIngestBenchmarkReportCapturesProfiles(t *testing.T) {
 	}
 	if decoded.Profile != report.Profile || decoded.Counts.TotalLineitems != report.Counts.TotalLineitems {
 		t.Fatalf("decoded report = %+v, want %+v", decoded, report)
-	}
-	if decoded.PrimaryKeyShadowProfile.ComparisonCount != 32 ||
-		decoded.PrimaryKeyShadowProfile.ByReason[core.PrimaryKeyShadowMatchReason] != 32 {
-		t.Fatalf("decoded shadow profile = %+v, want round-tripped profile", decoded.PrimaryKeyShadowProfile)
 	}
 }
 
@@ -132,9 +110,6 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 				AssumeNewCount:                10,
 				LocalCacheLookupCount:         30,
 				LocalCacheHitCount:            10,
-				SkippedKVLookupCount:          10,
-				KVLookupCount:                 20,
-				KVHitCount:                    5,
 				BSILookupCount:                10,
 				BSIHitCount:                   4,
 				SkippedBSILookupCount:         5,
@@ -144,7 +119,6 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 				RownumAllocationCount:         15,
 				BatchCacheWriteCount:          15,
 				TotalElapsed:                  5000 * time.Microsecond,
-				KVLookupElapsed:               2000 * time.Microsecond,
 				BSIIdentityEncodeElapsed:      150 * time.Microsecond,
 				BSIAuthorityEncodeElapsed:     75 * time.Microsecond,
 				BSILookupElapsed:              500 * time.Microsecond,
@@ -175,9 +149,9 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 				"lineitem": {
 					ResolveCount:        40,
 					LookupRequiredCount: 40,
-					KVLookupCount:       40,
-					KVHitCount:          20,
-					KVLookupElapsed:     800 * time.Microsecond,
+					BSILookupCount:      40,
+					BSIHitCount:         20,
+					BSILookupElapsed:    800 * time.Microsecond,
 				},
 			},
 		},
@@ -280,12 +254,6 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["primary_key_assume_new_percent"], 50.0; got != want {
 		t.Fatalf("primary key assume-new percent = %v, want %v", got, want)
 	}
-	if got, want := metrics["primary_key_skipped_kv_lookup_percent"], 50.0; got != want {
-		t.Fatalf("primary key skipped kv lookup percent = %v, want %v", got, want)
-	}
-	if got, want := metrics["primary_key_kv_lookup_microseconds_per_lookup"], 100.0; got != want {
-		t.Fatalf("primary key kv lookup us/lookup = %v, want %v", got, want)
-	}
 	if got, want := metrics["primary_key_bsi_hit_percent"], 40.0; got != want {
 		t.Fatalf("primary key bsi hit percent = %v, want %v", got, want)
 	}
@@ -349,14 +317,14 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	if got, want := metrics["primary_key_table_orders_bsi_match_extraction_microseconds_per_lookup"], 3.0; got != want {
 		t.Fatalf("orders BSI match extraction us/lookup = %v, want %v", got, want)
 	}
-	if got, want := metrics["primary_key_table_lineitem_kv_lookup_count"], 40.0; got != want {
-		t.Fatalf("lineitem KV lookup count = %v, want %v", got, want)
+	if got, want := metrics["primary_key_table_lineitem_bsi_lookup_count"], 40.0; got != want {
+		t.Fatalf("lineitem BSI lookup count = %v, want %v", got, want)
 	}
-	if got, want := metrics["primary_key_table_lineitem_kv_lookup_percent"], 100.0; got != want {
-		t.Fatalf("lineitem KV lookup percent = %v, want %v", got, want)
+	if got, want := metrics["primary_key_table_lineitem_bsi_lookup_percent"], 100.0; got != want {
+		t.Fatalf("lineitem BSI lookup percent = %v, want %v", got, want)
 	}
-	if got, want := metrics["primary_key_table_lineitem_kv_lookup_microseconds_per_lookup"], 20.0; got != want {
-		t.Fatalf("lineitem KV lookup us/lookup = %v, want %v", got, want)
+	if got, want := metrics["primary_key_table_lineitem_bsi_lookup_microseconds_per_lookup"], 20.0; got != want {
+		t.Fatalf("lineitem BSI lookup us/lookup = %v, want %v", got, want)
 	}
 }
 
@@ -372,50 +340,31 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 			ReplayCount:       1,
 			PrimaryKeyMode:    "verify_existing",
 		},
-		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
-			ComparisonCount:      10,
-			MatchCount:           9,
-			MismatchCount:        1,
-			AuthorityExistingRow: 2,
-			ShadowExistingRow:    2,
-			ExistingRowMatch:     2,
-			ByReason: map[string]int{
-				core.PrimaryKeyShadowColumnIDReason: 1,
-				core.PrimaryKeyShadowMatchReason:    9,
-			},
-			FirstIssue: "primary-key shadow mismatch table=orders primary_key=o_orderkey value=101 reason=column_id_mismatch",
-		},
 		Metrics: map[string]float64{
-			"logical_rows_per_second":                                      1000,
-			"enqueue_microseconds_per_order":                               12,
-			"drain_microseconds_per_order":                                 100,
-			"drain_worker_max_microseconds":                                900,
-			"drain_worker_sum_to_wall_percent":                             70,
-			"drain_worker_max_to_avg_percent":                              140,
-			"put_microseconds_per_order":                                   50,
-			"flush_microseconds_per_order":                                 20,
-			"flush_summed_to_drain_percent":                                25,
-			"flush_shard_max_to_avg_percent":                               160,
-			"put_stage_normalize_microseconds_per_order":                   5,
-			"put_stage_identity_microseconds_per_order":                    20,
-			"put_stage_primary_key_microseconds_per_order":                 50,
-			"put_stage_child_expansion_microseconds_per_order":             200,
-			"put_stage_child_traversal_microseconds_per_order":             10,
-			"put_stage_child_recursive_write_microseconds_per_order":       190,
-			"put_stage_parent_relation_microseconds_per_order":             30,
-			"put_stage_attribute_mapping_microseconds_per_order":           40,
-			"primary_key_total_microseconds_per_resolve":                   10,
-			"primary_key_bsi_hit_percent":                                  0,
-			"primary_key_kv_hit_percent":                                   20,
-			"primary_key_kv_lookup_microseconds_per_lookup":                80,
-			"primary_key_skipped_kv_lookup_percent":                        0,
-			"primary_key_table_orders_direct_column_id_percent":            100,
-			"primary_key_table_orders_bsi_lookup_percent":                  0,
-			"primary_key_table_orders_kv_lookup_percent":                   0,
-			"primary_key_table_lineitem_direct_column_id_percent":          0,
-			"primary_key_table_lineitem_bsi_lookup_percent":                0,
-			"primary_key_table_lineitem_kv_lookup_percent":                 100,
-			"primary_key_table_lineitem_kv_lookup_microseconds_per_lookup": 80,
+			"logical_rows_per_second":                                1000,
+			"enqueue_microseconds_per_order":                         12,
+			"drain_microseconds_per_order":                           100,
+			"drain_worker_max_microseconds":                          900,
+			"drain_worker_sum_to_wall_percent":                       70,
+			"drain_worker_max_to_avg_percent":                        140,
+			"put_microseconds_per_order":                             50,
+			"flush_microseconds_per_order":                           20,
+			"flush_summed_to_drain_percent":                          25,
+			"flush_shard_max_to_avg_percent":                         160,
+			"put_stage_normalize_microseconds_per_order":             5,
+			"put_stage_identity_microseconds_per_order":              20,
+			"put_stage_primary_key_microseconds_per_order":           50,
+			"put_stage_child_expansion_microseconds_per_order":       200,
+			"put_stage_child_traversal_microseconds_per_order":       10,
+			"put_stage_child_recursive_write_microseconds_per_order": 190,
+			"put_stage_parent_relation_microseconds_per_order":       30,
+			"put_stage_attribute_mapping_microseconds_per_order":     40,
+			"primary_key_total_microseconds_per_resolve":             10,
+			"primary_key_bsi_hit_percent":                            0,
+			"primary_key_table_orders_direct_column_id_percent":      100,
+			"primary_key_table_orders_bsi_lookup_percent":            0,
+			"primary_key_table_lineitem_direct_column_id_percent":    0,
+			"primary_key_table_lineitem_bsi_lookup_percent":          0,
 			"custom_metric": 2,
 		},
 	}
@@ -430,17 +379,6 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 			ReplayCount:         2,
 			PrimaryKeyMode:      "verify_existing",
 			PrimaryKeyAuthority: "bsi",
-			PrimaryKeyShadow:    "none",
-		},
-		PrimaryKeyShadowProfile: core.PrimaryKeyShadowProfileSummary{
-			ComparisonCount:      10,
-			MatchCount:           10,
-			AuthorityExistingRow: 2,
-			ShadowExistingRow:    2,
-			ExistingRowMatch:     2,
-			ByReason: map[string]int{
-				core.PrimaryKeyShadowMatchReason: 10,
-			},
 		},
 		Metrics: map[string]float64{
 			"logical_rows_per_second":                                       1500,
@@ -463,17 +401,11 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 			"put_stage_attribute_mapping_microseconds_per_order":            35,
 			"primary_key_total_microseconds_per_resolve":                    8,
 			"primary_key_bsi_hit_percent":                                   50,
-			"primary_key_kv_hit_percent":                                    0,
-			"primary_key_kv_lookup_microseconds_per_lookup":                 0,
-			"primary_key_skipped_kv_lookup_percent":                         100,
 			"primary_key_table_orders_direct_column_id_percent":             100,
 			"primary_key_table_orders_bsi_lookup_percent":                   0,
-			"primary_key_table_orders_kv_lookup_percent":                    0,
 			"primary_key_table_lineitem_direct_column_id_percent":           0,
 			"primary_key_table_lineitem_bsi_lookup_percent":                 100,
 			"primary_key_table_lineitem_bsi_lookup_microseconds_per_lookup": 12,
-			"primary_key_table_lineitem_kv_lookup_percent":                  0,
-			"primary_key_table_lineitem_kv_lookup_microseconds_per_lookup":  0,
 			"custom_metric": 3,
 		},
 	}
@@ -520,25 +452,12 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"| Parent relation us/order | 30 us/order | 25 us/order | -5 us/order | 0.83x | better |",
 		"| Attribute mapping us/order | 40 us/order | 35 us/order | -5 us/order | 0.88x | better |",
 		"| PK BSI hit | 0 percent | 50 percent | 50 percent | n/a | better |",
-		"| PK KV hit | 20 percent | 0 percent | -20 percent | n/a | better |",
-		"| PK KV lookup us | 80 us/lookup | 0 us/lookup | -80 us/lookup | n/a | better |",
-		"| Skipped PK KV lookup | 0 percent | 100 percent | 100 percent | n/a | better |",
 		"| Lineitem PK BSI lookup | 0 percent | 100 percent | 100 percent | n/a | better |",
-		"| Lineitem PK KV lookup | 100 percent | 0 percent | -100 percent | n/a | better |",
 		"| Orders PK direct column-id | 100 percent | 100 percent | 0 percent | 1.00x | flat |",
-		"## Primary Key Shadow Profile",
-		"| Signal | Baseline | Target |",
-		"| Comparisons | 10 | 10 |",
-		"| Matches | 9 | 10 |",
-		"| Mismatches | 1 | 0 |",
-		"| Existing-row matches | 2 | 2 |",
-		"| Reason counts | column_id_mismatch=1, match=9 | match=10 |",
-		"| First issue | primary-key shadow mismatch table=orders primary_key=o_orderkey value=101 reason=column_id_mismatch |  |",
 		"## Detailed Metrics",
 		"| logical_rows_per_second | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",
 		"| put_microseconds_per_order | 50 us/order | 40 us/order | -10 us/order | 0.80x | better |",
 		"| primary_key_total_microseconds_per_resolve | 10 us/resolve | 8 us/resolve | -2 us/resolve | 0.80x | better |",
-		"| primary_key_table_lineitem_kv_lookup_microseconds_per_lookup | 80 us/lookup | 0 us/lookup | -80 us/lookup | n/a | better |",
 	} {
 		if !strings.Contains(markdown, fragment) {
 			t.Fatalf("markdown missing %q:\n%s", fragment, markdown)

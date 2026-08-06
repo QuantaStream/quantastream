@@ -11,9 +11,6 @@ type PrimaryKeyResolveProfile struct {
 	LocalCacheLookupCount         int            `json:"local_cache_lookup_count"`
 	LocalCacheHitCount            int            `json:"local_cache_hit_count"`
 	SkippedLocalCacheLookupCount  int            `json:"skipped_local_cache_lookup_count"`
-	KVLookupCount                 int            `json:"kv_lookup_count"`
-	KVHitCount                    int            `json:"kv_hit_count"`
-	SkippedKVLookupCount          int            `json:"skipped_kv_lookup_count"`
 	BSILookupCount                int            `json:"bsi_lookup_count"`
 	BSIHitCount                   int            `json:"bsi_hit_count"`
 	SkippedBSILookupCount         int            `json:"skipped_bsi_lookup_count"`
@@ -28,7 +25,6 @@ type PrimaryKeyResolveProfile struct {
 	BatchCacheWriteCount          int            `json:"batch_cache_write_count"`
 	TotalElapsed                  time.Duration  `json:"total_elapsed_nanos"`
 	LocalCacheLookupElapsed       time.Duration  `json:"local_cache_lookup_elapsed_nanos"`
-	KVLookupElapsed               time.Duration  `json:"kv_lookup_elapsed_nanos"`
 	BSIIdentityEncodeElapsed      time.Duration  `json:"bsi_identity_encode_elapsed_nanos"`
 	BSIAuthorityEncodeElapsed     time.Duration  `json:"bsi_authority_encode_elapsed_nanos"`
 	BSILookupElapsed              time.Duration  `json:"bsi_lookup_elapsed_nanos"`
@@ -47,9 +43,6 @@ func (p PrimaryKeyResolveProfile) add(other PrimaryKeyResolveProfile) PrimaryKey
 	p.LocalCacheLookupCount += other.LocalCacheLookupCount
 	p.LocalCacheHitCount += other.LocalCacheHitCount
 	p.SkippedLocalCacheLookupCount += other.SkippedLocalCacheLookupCount
-	p.KVLookupCount += other.KVLookupCount
-	p.KVHitCount += other.KVHitCount
-	p.SkippedKVLookupCount += other.SkippedKVLookupCount
 	p.BSILookupCount += other.BSILookupCount
 	p.BSIHitCount += other.BSIHitCount
 	p.SkippedBSILookupCount += other.SkippedBSILookupCount
@@ -64,7 +57,6 @@ func (p PrimaryKeyResolveProfile) add(other PrimaryKeyResolveProfile) PrimaryKey
 	p.BatchCacheWriteCount += other.BatchCacheWriteCount
 	p.TotalElapsed += other.TotalElapsed
 	p.LocalCacheLookupElapsed += other.LocalCacheLookupElapsed
-	p.KVLookupElapsed += other.KVLookupElapsed
 	p.BSIIdentityEncodeElapsed += other.BSIIdentityEncodeElapsed
 	p.BSIAuthorityEncodeElapsed += other.BSIAuthorityEncodeElapsed
 	p.BSILookupElapsed += other.BSILookupElapsed

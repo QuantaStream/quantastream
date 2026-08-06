@@ -70,8 +70,8 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	if !first.Inserted || first.ExistingRow || first.ColumnID == 0 {
 		t.Fatalf("first PutRowWithOptions() = %+v, want inserted row", first)
 	}
-	if first.PrimaryKey.BSILookupCount != 1 || first.PrimaryKey.BSIStageWriteCount != 1 || first.PrimaryKey.KVLookupCount != 0 {
-		t.Fatalf("first primary-key profile = %+v, want BSI miss/stage without KV lookup", first.PrimaryKey)
+	if first.PrimaryKey.BSILookupCount != 1 || first.PrimaryKey.BSIStageWriteCount != 1 {
+		t.Fatalf("first primary-key profile = %+v, want BSI miss/stage", first.PrimaryKey)
 	}
 	if err := firstSession.Flush(); err != nil {
 		t.Fatalf("first Flush() error = %v", err)
@@ -97,8 +97,8 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 		t.Fatalf("replay PutRowWithOptions() = %+v, want existing row %d", replay, first.ColumnID)
 	}
 	if replay.PrimaryKey.BSILookupCount != 1 || replay.PrimaryKey.BSIHitCount != 1 ||
-		replay.PrimaryKey.BSIStageWriteCount != 0 || replay.PrimaryKey.KVLookupCount != 0 {
-		t.Fatalf("replay primary-key profile = %+v, want BSI hit without KV lookup or stage", replay.PrimaryKey)
+		replay.PrimaryKey.BSIStageWriteCount != 0 {
+		t.Fatalf("replay primary-key profile = %+v, want BSI hit without stage", replay.PrimaryKey)
 	}
 }
 
@@ -302,8 +302,8 @@ func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testi
 	if err != nil {
 		t.Fatalf("first PutRowWithOptions() error = %v", err)
 	}
-	if !first.Inserted || first.PrimaryKey.KVLookupCount != 0 || first.PrimaryKey.BSIStageWriteCount != 1 {
-		t.Fatalf("first PutRowWithOptions() = %+v, want BSI-staged insert without KV lookup", first)
+	if !first.Inserted || first.PrimaryKey.BSIStageWriteCount != 1 {
+		t.Fatalf("first PutRowWithOptions() = %+v, want BSI-staged insert", first)
 	}
 	if err := firstSession.Flush(); err != nil {
 		t.Fatalf("first Flush() error = %v", err)
@@ -329,8 +329,8 @@ func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testi
 		t.Fatalf("replay PutRowWithOptions() = %+v, want existing row %d", replay, first.ColumnID)
 	}
 	if replay.PrimaryKey.BSILookupCount != 1 || replay.PrimaryKey.BSIHitCount != 1 ||
-		replay.PrimaryKey.BSIStageWriteCount != 0 || replay.PrimaryKey.KVLookupCount != 0 {
-		t.Fatalf("replay primary-key profile = %+v, want native BSI hit without KV lookup or stage", replay.PrimaryKey)
+		replay.PrimaryKey.BSIStageWriteCount != 0 {
+		t.Fatalf("replay primary-key profile = %+v, want native BSI hit without stage", replay.PrimaryKey)
 	}
 
 	cancel()

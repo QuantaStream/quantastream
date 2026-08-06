@@ -17,42 +17,39 @@ const nativeIngestBenchmarkReportVersion = 1
 
 // NativeIngestBenchmarkReportRequest captures one native ingest benchmark run.
 type NativeIngestBenchmarkReportRequest struct {
-	Profile                 string
-	Mode                    string
-	OrderCount              int
-	LineitemsPerOrder       int
-	ShardCount              int
-	RunCount                int
-	ReplayCount             int
-	ReplayScope             string
-	PrimaryKeyMode          string
-	PrimaryKeyAuthority     string
-	PrimaryKeyShadow        string
-	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary
-	Elapsed                 time.Duration
-	EnqueueElapsed          time.Duration
-	DrainElapsed            time.Duration
-	PutRow                  core.RouterPutRowProfileSummary
-	Drain                   core.RouterDrainProfileSummary
-	Flush                   core.RouterFlushProfileSummary
-	Metrics                 map[string]float64
+	Profile             string
+	Mode                string
+	OrderCount          int
+	LineitemsPerOrder   int
+	ShardCount          int
+	RunCount            int
+	ReplayCount         int
+	ReplayScope         string
+	PrimaryKeyMode      string
+	PrimaryKeyAuthority string
+	Elapsed             time.Duration
+	EnqueueElapsed      time.Duration
+	DrainElapsed        time.Duration
+	PutRow              core.RouterPutRowProfileSummary
+	Drain               core.RouterDrainProfileSummary
+	Flush               core.RouterFlushProfileSummary
+	Metrics             map[string]float64
 }
 
 // NativeIngestBenchmarkReport is the portable JSON shape emitted by native
 // ingest benchmarks.
 type NativeIngestBenchmarkReport struct {
-	Version                 int                                 `json:"version"`
-	Profile                 string                              `json:"profile"`
-	Mode                    string                              `json:"mode"`
-	GeneratedAt             time.Time                           `json:"generated_at"`
-	Config                  NativeIngestBenchmarkConfig         `json:"config"`
-	Counts                  NativeIngestBenchmarkCounts         `json:"counts"`
-	Timings                 NativeIngestBenchmarkTimings        `json:"timings"`
-	Metrics                 map[string]float64                  `json:"metrics"`
-	PutRow                  core.RouterPutRowProfileSummary     `json:"put_row"`
-	Drain                   core.RouterDrainProfileSummary      `json:"drain"`
-	Flush                   core.RouterFlushProfileSummary      `json:"flush"`
-	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary `json:"primary_key_shadow_profile"`
+	Version     int                             `json:"version"`
+	Profile     string                          `json:"profile"`
+	Mode        string                          `json:"mode"`
+	GeneratedAt time.Time                       `json:"generated_at"`
+	Config      NativeIngestBenchmarkConfig     `json:"config"`
+	Counts      NativeIngestBenchmarkCounts     `json:"counts"`
+	Timings     NativeIngestBenchmarkTimings    `json:"timings"`
+	Metrics     map[string]float64              `json:"metrics"`
+	PutRow      core.RouterPutRowProfileSummary `json:"put_row"`
+	Drain       core.RouterDrainProfileSummary  `json:"drain"`
+	Flush       core.RouterFlushProfileSummary  `json:"flush"`
 }
 
 // NativeIngestBenchmarkConfig records benchmark input parameters.
@@ -65,7 +62,6 @@ type NativeIngestBenchmarkConfig struct {
 	ReplayScope         string `json:"replay_scope,omitempty"`
 	PrimaryKeyMode      string `json:"primary_key_mode,omitempty"`
 	PrimaryKeyAuthority string `json:"primary_key_authority,omitempty"`
-	PrimaryKeyShadow    string `json:"primary_key_shadow,omitempty"`
 }
 
 // NativeIngestBenchmarkCounts records logical row totals produced by a run.
@@ -111,7 +107,6 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			ReplayScope:         request.ReplayScope,
 			PrimaryKeyMode:      request.PrimaryKeyMode,
 			PrimaryKeyAuthority: request.PrimaryKeyAuthority,
-			PrimaryKeyShadow:    request.PrimaryKeyShadow,
 		},
 		Counts: NativeIngestBenchmarkCounts{
 			TotalOrders:         totalOrders,
@@ -129,11 +124,10 @@ func BuildNativeIngestBenchmarkReport(request NativeIngestBenchmarkReportRequest
 			Drain:        nativeIngestBenchmarkOptionalDurationString(request.DrainElapsed),
 			DrainNanos:   request.DrainElapsed.Nanoseconds(),
 		},
-		Metrics:                 copyNativeIngestBenchmarkMetrics(request.Metrics),
-		PutRow:                  request.PutRow,
-		Drain:                   request.Drain,
-		Flush:                   request.Flush,
-		PrimaryKeyShadowProfile: request.PrimaryKeyShadowProfile,
+		Metrics: copyNativeIngestBenchmarkMetrics(request.Metrics),
+		PutRow:  request.PutRow,
+		Drain:   request.Drain,
+		Flush:   request.Flush,
 	}
 }
 
@@ -223,9 +217,6 @@ func NativeIngestBenchmarkMetrics(
 	metrics["primary_key_total_microseconds_per_resolve"] = durationMicrosPerCount(pk.TotalElapsed, pk.ResolveCount)
 	metrics["primary_key_local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
 	metrics["primary_key_assume_new_percent"] = percentForCounts(pk.AssumeNewCount, pk.LookupRequiredCount)
-	metrics["primary_key_skipped_kv_lookup_percent"] = percentForCounts(pk.SkippedKVLookupCount, pk.LookupRequiredCount)
-	metrics["primary_key_kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
-	metrics["primary_key_kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	metrics["primary_key_bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
 	metrics["primary_key_skipped_bsi_lookup_percent"] = percentForCounts(pk.SkippedBSILookupCount, pk.LookupRequiredCount)
 	metrics["primary_key_bsi_projection_cache_hit_percent"] = percentForCounts(pk.BSIProjectionCacheHitCount, pk.BSIProjectionCacheLookupCount)
@@ -263,14 +254,11 @@ func addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics map[string]float64, 
 		metrics[prefix+"direct_column_id_count"] = float64(pk.DirectColumnIDCount)
 		metrics[prefix+"bsi_lookup_count"] = float64(pk.BSILookupCount)
 		metrics[prefix+"bsi_stage_write_count"] = float64(pk.BSIStageWriteCount)
-		metrics[prefix+"kv_lookup_count"] = float64(pk.KVLookupCount)
 		metrics[prefix+"local_cache_hit_percent"] = percentForCounts(pk.LocalCacheHitCount, pk.LocalCacheLookupCount)
 		metrics[prefix+"direct_column_id_percent"] = percentForCounts(pk.DirectColumnIDCount, pk.ResolveCount)
 		metrics[prefix+"bsi_lookup_percent"] = percentForCounts(pk.BSILookupCount, pk.LookupRequiredCount)
 		metrics[prefix+"bsi_hit_percent"] = percentForCounts(pk.BSIHitCount, pk.BSILookupCount)
 		metrics[prefix+"bsi_projection_cache_hit_percent"] = percentForCounts(pk.BSIProjectionCacheHitCount, pk.BSIProjectionCacheLookupCount)
-		metrics[prefix+"kv_lookup_percent"] = percentForCounts(pk.KVLookupCount, pk.LookupRequiredCount)
-		metrics[prefix+"kv_hit_percent"] = percentForCounts(pk.KVHitCount, pk.KVLookupCount)
 		metrics[prefix+"bsi_identity_encode_microseconds_per_encode"] = durationMicrosPerCount(
 			pk.BSIIdentityEncodeElapsed,
 			pk.LookupRequiredCount+pk.BSIStageWriteCount,
@@ -283,7 +271,6 @@ func addNativeIngestBenchmarkTablePrimaryKeyMetrics(metrics map[string]float64, 
 		metrics[prefix+"bsi_projection_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIProjectionElapsed, pk.BSILookupCount)
 		metrics[prefix+"bsi_compare_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSICompareElapsed, pk.BSILookupCount)
 		metrics[prefix+"bsi_match_extraction_microseconds_per_lookup"] = durationMicrosPerCount(pk.BSIMatchExtractionElapsed, pk.BSILookupCount)
-		metrics[prefix+"kv_lookup_microseconds_per_lookup"] = durationMicrosPerCount(pk.KVLookupElapsed, pk.KVLookupCount)
 	}
 }
 
@@ -317,12 +304,11 @@ type NativeIngestBenchmarkComparison struct {
 
 // NativeIngestBenchmarkComparisonReport identifies one side of a comparison.
 type NativeIngestBenchmarkComparisonReport struct {
-	Profile                 string                              `json:"profile"`
-	Mode                    string                              `json:"mode"`
-	Config                  NativeIngestBenchmarkConfig         `json:"config"`
-	Counts                  NativeIngestBenchmarkCounts         `json:"counts"`
-	Timings                 NativeIngestBenchmarkTimings        `json:"timings"`
-	PrimaryKeyShadowProfile core.PrimaryKeyShadowProfileSummary `json:"primary_key_shadow_profile"`
+	Profile string                       `json:"profile"`
+	Mode    string                       `json:"mode"`
+	Config  NativeIngestBenchmarkConfig  `json:"config"`
+	Counts  NativeIngestBenchmarkCounts  `json:"counts"`
+	Timings NativeIngestBenchmarkTimings `json:"timings"`
 }
 
 // NativeIngestBenchmarkMetricComparison records one metric delta.
@@ -385,20 +371,12 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "primary_key_total_microseconds_per_resolve", unit: "us/resolve", higherIsBetter: false},
 	{name: "primary_key_local_cache_hit_percent", unit: "percent", higherIsBetter: true},
 	{name: "primary_key_assume_new_percent", unit: "percent", higherIsBetter: true},
-	{name: "primary_key_skipped_kv_lookup_percent", unit: "percent", higherIsBetter: true},
-	{name: "primary_key_kv_hit_percent", unit: "percent", higherIsBetter: false},
-	{name: "primary_key_kv_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
 	{name: "primary_key_bsi_hit_percent", unit: "percent", higherIsBetter: true},
 	{name: "primary_key_skipped_bsi_lookup_percent", unit: "percent", higherIsBetter: true},
 	{name: "primary_key_bsi_lookup_microseconds_per_lookup", unit: "us/lookup", higherIsBetter: false},
 	{name: "primary_key_bsi_stage_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
 	{name: "primary_key_allocation_microseconds_per_allocation", unit: "us/allocation", higherIsBetter: false},
 	{name: "primary_key_batch_cache_write_microseconds_per_write", unit: "us/write", higherIsBetter: false},
-	{name: "primary_key_shadow_comparison_count", unit: "comparisons", higherIsBetter: false},
-	{name: "primary_key_shadow_match_count", unit: "matches", higherIsBetter: true},
-	{name: "primary_key_shadow_mismatch_count", unit: "mismatches", higherIsBetter: false},
-	{name: "primary_key_shadow_skip_count", unit: "skips", higherIsBetter: false},
-	{name: "primary_key_shadow_existing_row_match_count", unit: "matches", higherIsBetter: true},
 }
 
 var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
@@ -423,9 +401,6 @@ var nativeIngestBenchmarkSummaryMetrics = []nativeIngestBenchmarkSummaryMetric{
 	{name: "put_stage_attribute_mapping_microseconds_per_order", label: "Attribute mapping us/order"},
 	{name: "primary_key_total_microseconds_per_resolve", label: "PK resolve us"},
 	{name: "primary_key_bsi_hit_percent", label: "PK BSI hit"},
-	{name: "primary_key_kv_hit_percent", label: "PK KV hit"},
-	{name: "primary_key_kv_lookup_microseconds_per_lookup", label: "PK KV lookup us"},
-	{name: "primary_key_skipped_kv_lookup_percent", label: "Skipped PK KV lookup"},
 }
 
 // CompareNativeIngestBenchmarkReports compares metrics from two reports.
@@ -479,7 +454,6 @@ func RenderNativeIngestBenchmarkComparisonMarkdown(comparison NativeIngestBenchm
 	builder.WriteString(fmt.Sprintf("Target: %s (%s)\n\n", fallbackReportLabel(comparison.Target.Profile), fallbackReportLabel(comparison.Target.Mode)))
 	renderNativeIngestBenchmarkConfigMarkdown(&builder, comparison)
 	renderNativeIngestBenchmarkSummaryMarkdown(&builder, comparison)
-	renderNativeIngestPrimaryKeyShadowMarkdown(&builder, comparison)
 	builder.WriteString("## Detailed Metrics\n\n")
 	builder.WriteString("| Metric | Baseline | Target | Delta | Ratio | Direction |\n")
 	builder.WriteString("| --- | ---: | ---: | ---: | ---: | --- |\n")
@@ -500,7 +474,6 @@ func renderNativeIngestBenchmarkConfigMarkdown(builder *strings.Builder, compari
 	writeNativeIngestBenchmarkConfigRow(builder, "Replays", replayConfigString(comparison.Baseline.Config.ReplayCount), replayConfigString(comparison.Target.Config.ReplayCount))
 	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key mode", defaultConfigString(comparison.Baseline.Config.PrimaryKeyMode, "verify_existing"), defaultConfigString(comparison.Target.Config.PrimaryKeyMode, "verify_existing"))
 	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key authority", defaultConfigString(comparison.Baseline.Config.PrimaryKeyAuthority, "bsi"), defaultConfigString(comparison.Target.Config.PrimaryKeyAuthority, "bsi"))
-	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key shadow", defaultConfigString(comparison.Baseline.Config.PrimaryKeyShadow, "none"), defaultConfigString(comparison.Target.Config.PrimaryKeyShadow, "none"))
 	builder.WriteString("\n")
 }
 
@@ -523,39 +496,6 @@ func renderNativeIngestBenchmarkSummaryMarkdown(builder *strings.Builder, compar
 		writeNativeIngestBenchmarkMetricMarkdownRow(builder, metric.label, metric.comparison)
 	}
 	builder.WriteString("\n")
-}
-
-func renderNativeIngestPrimaryKeyShadowMarkdown(builder *strings.Builder, comparison NativeIngestBenchmarkComparison) {
-	baseline := comparison.Baseline.PrimaryKeyShadowProfile
-	target := comparison.Target.PrimaryKeyShadowProfile
-	if baseline.ComparisonCount == 0 && target.ComparisonCount == 0 {
-		return
-	}
-	builder.WriteString("## Primary Key Shadow Profile\n\n")
-	builder.WriteString("| Signal | Baseline | Target |\n")
-	builder.WriteString("| --- | ---: | ---: |\n")
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Comparisons", baseline.ComparisonCount, target.ComparisonCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Matches", baseline.MatchCount, target.MatchCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Mismatches", baseline.MismatchCount, target.MismatchCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Skips", baseline.SkipCount, target.SkipCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Authority errors", baseline.AuthorityErrorCount, target.AuthorityErrorCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Shadow errors", baseline.ShadowErrorCount, target.ShadowErrorCount)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Authority existing rows", baseline.AuthorityExistingRow, target.AuthorityExistingRow)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Shadow existing rows", baseline.ShadowExistingRow, target.ShadowExistingRow)
-	writeNativeIngestBenchmarkShadowProfileRow(builder, "Existing-row matches", baseline.ExistingRowMatch, target.ExistingRowMatch)
-	builder.WriteString(fmt.Sprintf("| Reason counts | %s | %s |\n",
-		formatNativeIngestShadowReasonCounts(baseline.ByReason),
-		formatNativeIngestShadowReasonCounts(target.ByReason)))
-	if baseline.FirstIssue != "" || target.FirstIssue != "" {
-		builder.WriteString(fmt.Sprintf("| First issue | %s | %s |\n",
-			formatNativeIngestMarkdownCell(baseline.FirstIssue),
-			formatNativeIngestMarkdownCell(target.FirstIssue)))
-	}
-	builder.WriteString("\n")
-}
-
-func writeNativeIngestBenchmarkShadowProfileRow(builder *strings.Builder, label string, baseline int, target int) {
-	builder.WriteString(fmt.Sprintf("| %s | %d | %d |\n", label, baseline, target))
 }
 
 type nativeIngestBenchmarkSummaryMetricComparison struct {
@@ -593,7 +533,6 @@ type nativeIngestBenchmarkTablePrimaryKeySummarySuffix struct {
 var nativeIngestBenchmarkTablePrimaryKeySummarySuffixes = []nativeIngestBenchmarkTablePrimaryKeySummarySuffix{
 	{suffix: "direct_column_id_percent", label: "PK direct column-id"},
 	{suffix: "bsi_lookup_percent", label: "PK BSI lookup"},
-	{suffix: "kv_lookup_percent", label: "PK KV lookup"},
 }
 
 func nativeIngestBenchmarkTablePrimaryKeySummaryMetricComparisons(
@@ -646,15 +585,11 @@ func nativeIngestBenchmarkTablePrimaryKeyMetricToken(value string) (string, bool
 		"direct_column_id_count",
 		"bsi_lookup_count",
 		"bsi_stage_write_count",
-		"kv_lookup_count",
 		"local_cache_hit_percent",
 		"direct_column_id_percent",
 		"bsi_lookup_percent",
 		"bsi_hit_percent",
-		"kv_lookup_percent",
-		"kv_hit_percent",
 		"bsi_lookup_microseconds_per_lookup",
-		"kv_lookup_microseconds_per_lookup",
 	} {
 		tableToken, found := strings.CutSuffix(value, "_"+suffix)
 		if found && tableToken != "" {
@@ -708,12 +643,11 @@ func WriteNativeIngestBenchmarkComparisonMarkdown(path string, comparison Native
 
 func nativeIngestBenchmarkComparisonReport(report NativeIngestBenchmarkReport) NativeIngestBenchmarkComparisonReport {
 	return NativeIngestBenchmarkComparisonReport{
-		Profile:                 report.Profile,
-		Mode:                    report.Mode,
-		Config:                  report.Config,
-		Counts:                  report.Counts,
-		Timings:                 report.Timings,
-		PrimaryKeyShadowProfile: report.PrimaryKeyShadowProfile,
+		Profile: report.Profile,
+		Mode:    report.Mode,
+		Config:  report.Config,
+		Counts:  report.Counts,
+		Timings: report.Timings,
 	}
 }
 
@@ -762,8 +696,6 @@ func nativeIngestBenchmarkExtraMetricDefinition(name string) nativeIngestBenchma
 		definition.higherIsBetter = true
 	case strings.HasSuffix(name, "_bsi_stage_write_count"):
 		definition.unit = "writes"
-	case strings.HasSuffix(name, "_kv_lookup_count"):
-		definition.unit = "lookups"
 	case strings.HasSuffix(name, "_local_cache_hit_percent"):
 		definition.unit = "percent"
 		definition.higherIsBetter = true
@@ -776,13 +708,7 @@ func nativeIngestBenchmarkExtraMetricDefinition(name string) nativeIngestBenchma
 	case strings.HasSuffix(name, "_bsi_hit_percent"):
 		definition.unit = "percent"
 		definition.higherIsBetter = true
-	case strings.HasSuffix(name, "_kv_lookup_percent"):
-		definition.unit = "percent"
-	case strings.HasSuffix(name, "_kv_hit_percent"):
-		definition.unit = "percent"
 	case strings.HasSuffix(name, "_bsi_lookup_microseconds_per_lookup"):
-		definition.unit = "us/lookup"
-	case strings.HasSuffix(name, "_kv_lookup_microseconds_per_lookup"):
 		definition.unit = "us/lookup"
 	}
 	return definition
@@ -832,22 +758,6 @@ func defaultConfigString(value string, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func formatNativeIngestShadowReasonCounts(counts map[string]int) string {
-	if len(counts) == 0 {
-		return ""
-	}
-	reasons := make([]string, 0, len(counts))
-	for reason := range counts {
-		reasons = append(reasons, reason)
-	}
-	sort.Strings(reasons)
-	parts := make([]string, 0, len(reasons))
-	for _, reason := range reasons {
-		parts = append(parts, fmt.Sprintf("%s=%d", reason, counts[reason]))
-	}
-	return formatNativeIngestMarkdownCell(strings.Join(parts, ", "))
 }
 
 func formatNativeIngestMarkdownCell(value string) string {

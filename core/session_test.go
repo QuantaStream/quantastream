@@ -550,9 +550,9 @@ func TestResolvePrimaryKeyColumnIDDelegatesToConfiguredResolver(t *testing.T) {
 			ColumnID:    55,
 			ExistingRow: true,
 			Profile: PrimaryKeyResolveProfile{
-				ResolveCount:  1,
-				KVLookupCount: 1,
-				KVHitCount:    1,
+				ResolveCount:   1,
+				BSILookupCount: 1,
+				BSIHitCount:    1,
 			},
 		},
 	}
@@ -624,29 +624,8 @@ func TestSetPrimaryKeyResolverNilClearsAuthorityAndFailsClosed(t *testing.T) {
 	require.True(t, ok, "nil resolver should leave primary-key authority unconfigured")
 }
 
-func TestSessionDoesNotInstallAmbientKVPrimaryKeyAuthority(t *testing.T) {
-	source, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatalf("ReadFile(session.go) error = %v", err)
-	}
-	for _, forbidden := range []string{
-		"s.primaryKeyResolver = KVPrimaryKeyResolver{}",
-		"return KVPrimaryKeyResolver{}",
-	} {
-		if strings.Contains(string(source), forbidden) {
-			t.Fatalf("session.go contains ambient KV primary-key authority pattern %q", forbidden)
-		}
-	}
-}
-
-func TestKVPrimaryKeyResolverReferencesStayTransitionOnly(t *testing.T) {
-	allowedFiles := map[string]bool{
-		"core/primary_key_kv_transition.go":                 true,
-		"core/session.go":                                   true,
-		"core/session_test.go":                              true,
-		"qsinabox/standard_native_ingest_benchmark_test.go": true,
-		"qsinabox/standard_process_test.go":                 true,
-	}
+func TestDeletedPrimaryKeyResolverSymbolDoesNotReturn(t *testing.T) {
+	forbidden := strings.Join([]string{"KV", "Primary", "Key", "Resolver"}, "")
 	var unexpected []string
 	err := filepath.WalkDir("..", func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -662,25 +641,26 @@ func TestKVPrimaryKeyResolverReferencesStayTransitionOnly(t *testing.T) {
 		if filepath.Ext(path) != ".go" {
 			return nil
 		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(string(source), "KVPrimaryKeyResolver") {
-			return nil
-		}
 		rel, err := filepath.Rel("..", path)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if !allowedFiles[rel] {
-			unexpected = append(unexpected, rel)
+		if rel == "core/session_test.go" {
+			return nil
 		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(source), forbidden) {
+			return nil
+		}
+		unexpected = append(unexpected, rel)
 		return nil
 	})
 	require.NoError(t, err)
-	require.Empty(t, unexpected, "KVPrimaryKeyResolver references must stay transition-only")
+	require.Empty(t, unexpected, "deleted primary-key resolver symbol must not return")
 }
 
 func TestMissingPrimaryKeyResolverFailsClosed(t *testing.T) {
@@ -693,38 +673,6 @@ func TestMissingPrimaryKeyResolverFailsClosed(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "primary key resolver is not configured")
 	require.Contains(t, err.Error(), "orders")
-}
-
-func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) {
-	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
-	pk := &Attribute{
-		BasicAttribute: &shared.BasicAttribute{
-			FieldName: "order_id",
-		},
-		Parent: table,
-	}
-	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
-	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
-	session.SetPrimaryKeyResolver(KVPrimaryKeyResolver{})
-
-	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, PrimaryKeyModeAssumeNew)
-
-	require.NoError(t, err)
-	assert.False(t, updateExisting)
-	assert.Equal(t, uint64(99), tbuf.CurrentColumnID)
-	assert.Equal(t, 1, profile.ResolveCount)
-	assert.Equal(t, 1, profile.LookupRequiredCount)
-	assert.Equal(t, 1, profile.AssumeNewCount)
-	assert.Equal(t, 1, profile.SkippedLocalCacheLookupCount)
-	assert.Equal(t, 1, profile.SkippedKVLookupCount)
-	assert.Zero(t, profile.LocalCacheLookupCount)
-	assert.Zero(t, profile.KVLookupCount)
-	assert.Equal(t, 1, profile.ProvidedColumnIDCount)
-	assert.Equal(t, 1, profile.BatchCacheWriteCount)
-	localKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, tbuf.Table.PrimaryKey+".PK")
-	columnID, ok := session.BatchBuffer.LookupLocalCIDForString(localKey, "1001")
-	require.True(t, ok)
-	assert.Equal(t, uint64(99), columnID)
 }
 
 func newCompoundStringPrimaryKeyTestSession() *Session {

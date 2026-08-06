@@ -265,10 +265,8 @@ into balanced parallel drain versus one shard doing most of the work. Flush time
 is a summed internal profile across flush operations, so it is useful for
 attribution but is not the same thing as drain wall time. The resolver profile
 breaks identity work into lookup-required rows, local batch-cache lookups and
-hits, KV lookups and hits, rownum allocation, provided/direct column-id paths,
-and staged primary-key cache writes. Fresh-load runs also report explicit
-assume-new and skipped KV lookup counters. Use those counters before changing
-the primary-key storage design.
+hits, BSI lookups and hits, rownum allocation, provided/direct column-id paths,
+and staged primary-key cache writes.
 
 Set `REPLAYS` to repeat the same deterministic envelopes inside each measured
 operation. This is useful for primary-key resolver experiments because the
@@ -277,13 +275,10 @@ logical input shape.
 
 `PRIMARY_KEY_AUTHORITY` defaults to the go-forward native BSI primary-key
 authority lane. Explicit `bsi` and `default` values select the same product
-path. The old KV authority path is transition-only and is rejected as a default
-benchmark authority; use `PRIMARY_KEY_SHADOW=bsi` only when deliberately
-running a one-off comparison with KV as the authority side and BSI as the
-shadow side.
+path. Set `PRIMARY_KEY_AUTHORITY=none` only for focused diagnostics that
+deliberately exercise missing-authority fail-closed behavior.
 
-Compare BSI authority behavior with and without the transition shadow using
-replayed inputs:
+Capture a replayed BSI authority benchmark for before/after comparison:
 
 ```bash
 cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
@@ -297,22 +292,6 @@ RUNS=1 \
 REPLAYS=2 \
 BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/bsi.json \
   ./run-native-ingest-benchmark.sh
-
-BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
-PROFILE=transition-shadow-replay-4shards \
-ORDERS=100 \
-LINEITEMS=4 \
-SHARDS=4 \
-RUNS=1 \
-REPLAYS=2 \
-PRIMARY_KEY_SHADOW=bsi \
-BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/transition-shadow.json \
-  ./run-native-ingest-benchmark.sh
-
-./run-native-ingest-compare.sh \
-  local/ingest-benchmarks/pk-authority-replay/bsi.json \
-  local/ingest-benchmarks/pk-authority-replay/transition-shadow.json \
-  local/ingest-benchmarks/pk-authority-replay/comparison.md
 ```
 
 Compare two native ingest benchmark reports with:
@@ -329,10 +308,10 @@ The comparison treats throughput metrics as higher-is-better and per-operation
 cost metrics as lower-is-better. The rendered markdown starts with benchmark
 configuration, then a curated load-path summary for enqueue, drain, flush, and
 primary-key signals, then keeps the complete metric table below it for detailed
-analysis. The summary includes BSI hit, KV hit, and KV lookup cost rows when
-the reports contain primary-key resolver data. The JSON reports and rendered
-markdown are local benchmark artifacts and should stay out of source control
-unless a reference run is intentionally being archived.
+analysis. The summary includes BSI hit and lookup cost rows when the reports
+contain primary-key resolver data. The JSON reports and rendered markdown are
+local benchmark artifacts and should stay out of source control unless a
+reference run is intentionally being archived.
 
 ## Query Profile Capture
 
