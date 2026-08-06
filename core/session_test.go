@@ -44,6 +44,22 @@ func (r *recordingPrimaryKeyResolverRequests) ResolvePrimaryKeyColumnID(req Prim
 	return r.result, r.err
 }
 
+func TestIndexPathUsesShardRoutingKeyForYMD(t *testing.T) {
+	tbuf := &TableBuffer{
+		Table: &Table{BasicTable: &shared.BasicTable{
+			Name:            "lineitem",
+			TimeQuantumType: "YMD",
+		}},
+		CurrentTimestamp: time.Date(1994, 10, 16, 0, 0, 0, 0, time.UTC),
+	}
+
+	got := indexPath(tbuf, "l_comment", "lex_remainders")
+	want := "lineitem/l_comment/1994-10-16T00,lineitem/l_comment/lex_remainders/1994-10-16T00"
+	if got != want {
+		t.Fatalf("indexPath() = %q, want %q", got, want)
+	}
+}
+
 type recordingMapper struct {
 	values   []interface{}
 	sessions []*Session

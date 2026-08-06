@@ -111,6 +111,19 @@ func (b *bitmapShardManifestBuilder) addStandardFile(path string, info os.FileIn
 	})
 }
 
+func (b *bitmapShardManifestBuilder) addStandardBundleFile(path string, info os.FileInfo, table, field string, shardTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindStandard, -1, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         bitmapShardFileRoleBundle,
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+	}}
+	entry.FileCount = 1
+	entry.ModTime = info.ModTime().UTC()
+	entry.BaseRelativePath = ""
+}
+
 func (b *bitmapShardManifestBuilder) addBSIFile(path string, info os.FileInfo, table, field string, shardTime time.Time, bitSliceIndex int) {
 	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
 	entry.BaseRelativePath = b.relativePath(filepath.Dir(path))
@@ -152,6 +165,22 @@ func (b *bitmapShardManifestBuilder) addStandardCacheEntry(path string, table, f
 		entry.Files[0].SizeBytes = info.Size()
 		entry.Files[0].ModTime = info.ModTime().UTC()
 	}
+}
+
+func (b *bitmapShardManifestBuilder) addStandardBundleCacheEntry(path string, table, field string, shardTime time.Time, modTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindStandard, -1, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         bitmapShardFileRoleBundle,
+		ModTime:      modTime.UTC(),
+	}}
+	if info, err := os.Stat(path); err == nil {
+		entry.Files[0].SizeBytes = info.Size()
+		entry.Files[0].ModTime = info.ModTime().UTC()
+	}
+	entry.FileCount = 1
+	entry.ModTime = modTime.UTC()
+	entry.BaseRelativePath = ""
 }
 
 func (b *bitmapShardManifestBuilder) addBSICacheEntry(basePath string, table, field string, shardTime time.Time, _ int, modTime time.Time) {
@@ -298,28 +327,57 @@ func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
 	bsiEntries := 0
 
 	m.bitmapCacheLock.RLock()
+	type standardManifestGroup struct {
+		indexName string
+		fieldName string
+		shardNano int64
+		tqType    string
+		modTime   time.Time
+	}
+	standardGroups := make(map[string]standardManifestGroup)
 	for indexName, index := range m.bitmapCache {
 		for fieldName, field := range index {
 			for rowID, ts := range field {
+				_ = rowID
 				for shardNano, bitmap := range ts {
 					if bitmap == nil {
 						continue
 					}
 					bitmap.Lock.RLock()
-					shardTime := time.Unix(0, shardNano)
 					modTime := bitmap.PersistTime
 					if modTime.IsZero() {
 						modTime = bitmap.ModTime
 					}
 					tqType := bitmap.TQType
 					bitmap.Lock.RUnlock()
-					partition := &Partition{Index: indexName, Field: fieldName, RowIDOrBits: int64(rowID), Time: shardTime, TQType: tqType}
-					path := filepath.Join(m.generateBitmapFilePath(partition, false), formatShardTime(shardTime))
-					builder.addStandardCacheEntry(path, indexName, fieldName, int64(rowID), shardTime, modTime)
-					standardEntries++
+					groupShardNano := shardNano
+					if tqType == "" {
+						groupShardNano = 0
+					}
+					key := fmt.Sprintf("%s/%s/%d", indexName, fieldName, groupShardNano)
+					group := standardGroups[key]
+					if group.indexName == "" {
+						group = standardManifestGroup{
+							indexName: indexName,
+							fieldName: fieldName,
+							shardNano: groupShardNano,
+							tqType:    tqType,
+							modTime:   modTime,
+						}
+					}
+					if modTime.After(group.modTime) {
+						group.modTime = modTime
+					}
+					standardGroups[key] = group
 				}
 			}
 		}
+	}
+	for _, group := range standardGroups {
+		shardTime := time.Unix(0, group.shardNano)
+		_, path := m.standardBitmapBundleFilePath(group.indexName, group.fieldName, shardTime, group.tqType)
+		builder.addStandardBundleCacheEntry(path, group.indexName, group.fieldName, shardTime, group.modTime)
+		standardEntries++
 	}
 	m.bitmapCacheLock.RUnlock()
 

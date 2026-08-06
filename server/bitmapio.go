@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +21,17 @@ import (
 )
 
 const (
-	bsiBundleFileName = "bundle"
-	bsiBundleMagic    = "QSBIS001"
+	bsiBundleFileName         = "bundle"
+	bsiBundleMagic            = "QSBIS001"
+	standardBundleLeafDir     = "standard"
+	standardBundleFileName    = "bundle"
+	standardBitmapBundleMagic = "QSSTB001"
 )
+
+type standardBitmapBundleEntry struct {
+	RowID uint64
+	Data  []byte
+}
 
 // Partition - Description of partition
 type Partition struct {
@@ -88,6 +97,209 @@ func (m *BitmapIndex) saveCompleteBitmap(bm *StandardBitmap, indexName, fieldNam
 		return nil
 	}
 	return err
+}
+
+func (m *BitmapIndex) saveCompleteStandardBundle(bitmaps map[uint64]*StandardBitmap, indexName, fieldName string,
+	ts time.Time, tqType string) (int, error) {
+
+	if len(bitmaps) == 0 {
+		return 0, fmt.Errorf("cannot persist empty standard bitmap bundle")
+	}
+	rowIDs := make([]uint64, 0, len(bitmaps))
+	for rowID := range bitmaps {
+		rowIDs = append(rowIDs, rowID)
+	}
+	sort.Slice(rowIDs, func(i, j int) bool { return rowIDs[i] < rowIDs[j] })
+
+	entries := make([]standardBitmapBundleEntry, 0, len(rowIDs))
+	capturedModTimes := make(map[uint64]time.Time, len(rowIDs))
+	for _, rowID := range rowIDs {
+		bitmap := bitmaps[rowID]
+		if bitmap == nil || bitmap.Bits == nil {
+			continue
+		}
+		bitmap.Lock.RLock()
+		data, err := bitmap.Bits.MarshalBinary()
+		modTime := bitmap.ModTime
+		bitmap.Lock.RUnlock()
+		if err != nil {
+			return 0, err
+		}
+		entries = append(entries, standardBitmapBundleEntry{RowID: rowID, Data: data})
+		capturedModTimes[rowID] = modTime
+	}
+	if len(entries) == 0 {
+		return 0, fmt.Errorf("cannot persist standard bitmap bundle with no bitmap entries")
+	}
+
+	bundle, err := encodeStandardBitmapBundle(entries)
+	if err != nil {
+		return 0, err
+	}
+	_, bundlePath := m.standardBitmapBundleFilePath(indexName, fieldName, ts, tqType)
+	tmpPath := bundlePath + ".tmp"
+	if err := os.WriteFile(tmpPath, bundle, 0666); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmpPath, bundlePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return 0, err
+	}
+	if err := m.removeLegacyStandardBitmapShardFiles(indexName, fieldName, ts, tqType); err != nil {
+		return 0, err
+	}
+
+	persistedAt := time.Now()
+	for _, entry := range entries {
+		bitmap := bitmaps[entry.RowID]
+		if bitmap == nil {
+			continue
+		}
+		bitmap.Lock.Lock()
+		if !bitmap.ModTime.After(capturedModTimes[entry.RowID]) {
+			bitmap.PersistTime = persistedAt
+		}
+		bitmap.Lock.Unlock()
+	}
+	return len(entries), nil
+}
+
+func (m *BitmapIndex) standardBitmapBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
+	dir := filepath.Join(m.dataDir, "bitmap", indexName, fieldName, standardBundleLeafDir)
+	shard := "default"
+	switch tqType {
+	case "YMD":
+		shard = formatShardTime(ts)
+	case "YMDH":
+		utcTime := ts.UTC()
+		dir = filepath.Join(dir, fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()))
+		shard = formatShardTime(ts)
+	}
+	dir = filepath.Join(dir, shard)
+	_ = os.MkdirAll(dir, 0755)
+	return dir, filepath.Join(dir, standardBundleFileName)
+}
+
+func encodeStandardBitmapBundle(entries []standardBitmapBundleEntry) ([]byte, error) {
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("cannot encode empty standard bitmap bundle")
+	}
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(standardBitmapBundleMagic); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(entries))); err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if err := binary.Write(&buf, binary.BigEndian, entry.RowID); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&buf, binary.BigEndian, uint64(len(entry.Data))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(entry.Data); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeStandardBitmapBundle(data []byte) ([]standardBitmapBundleEntry, error) {
+	reader := bytes.NewReader(data)
+	magic := make([]byte, len(standardBitmapBundleMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil {
+		return nil, fmt.Errorf("read standard bitmap bundle magic: %w", err)
+	}
+	if string(magic) != standardBitmapBundleMagic {
+		return nil, fmt.Errorf("invalid standard bitmap bundle magic %q", string(magic))
+	}
+	var count uint32
+	if err := binary.Read(reader, binary.BigEndian, &count); err != nil {
+		return nil, fmt.Errorf("read standard bitmap bundle entry count: %w", err)
+	}
+	if count == 0 || count > 1<<24 {
+		return nil, fmt.Errorf("invalid standard bitmap bundle entry count %d", count)
+	}
+	entries := make([]standardBitmapBundleEntry, 0, count)
+	seen := make(map[uint64]struct{}, count)
+	for i := uint32(0); i < count; i++ {
+		var rowID uint64
+		if err := binary.Read(reader, binary.BigEndian, &rowID); err != nil {
+			return nil, fmt.Errorf("read standard bitmap bundle row ID %d: %w", i, err)
+		}
+		if _, ok := seen[rowID]; ok {
+			return nil, fmt.Errorf("duplicate standard bitmap bundle row ID %d", rowID)
+		}
+		seen[rowID] = struct{}{}
+		var dataLen uint64
+		if err := binary.Read(reader, binary.BigEndian, &dataLen); err != nil {
+			return nil, fmt.Errorf("read standard bitmap bundle length %d: %w", i, err)
+		}
+		if dataLen > uint64(reader.Len()) {
+			return nil, fmt.Errorf("standard bitmap bundle row %d length %d exceeds remaining %d", rowID, dataLen, reader.Len())
+		}
+		entryData := make([]byte, dataLen)
+		if _, err := io.ReadFull(reader, entryData); err != nil {
+			return nil, fmt.Errorf("read standard bitmap bundle row %d: %w", rowID, err)
+		}
+		entries = append(entries, standardBitmapBundleEntry{RowID: rowID, Data: entryData})
+	}
+	if reader.Len() != 0 {
+		return nil, fmt.Errorf("standard bitmap bundle has %d trailing bytes", reader.Len())
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].RowID < entries[j].RowID })
+	return entries, nil
+}
+
+func (m *BitmapIndex) removeLegacyStandardBitmapShardFiles(indexName, fieldName string, ts time.Time, tqType string) error {
+	fieldDir := filepath.Join(m.dataDir, "bitmap", indexName, fieldName)
+	entries, err := os.ReadDir(fieldDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "bsi" || entry.Name() == standardBundleLeafDir {
+			continue
+		}
+		if _, err := strconv.ParseUint(entry.Name(), 10, 64); err != nil {
+			continue
+		}
+		for _, path := range legacyStandardBitmapShardPaths(fieldDir, entry.Name(), ts, tqType) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			removeEmptyParents(path, fieldDir)
+		}
+	}
+	return nil
+}
+
+func legacyStandardBitmapShardPaths(fieldDir, rowID string, ts time.Time, tqType string) []string {
+	shard := formatShardTime(ts)
+	if tqType == "YMDH" {
+		utcTime := ts.UTC()
+		return []string{filepath.Join(fieldDir, rowID, fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()), shard)}
+	}
+	paths := []string{filepath.Join(fieldDir, rowID, shard)}
+	if tqType == "" {
+		paths = append(paths, filepath.Join(fieldDir, rowID, "default"))
+	}
+	return paths
+}
+
+func removeEmptyParents(path, stopDir string) {
+	dir := filepath.Dir(path)
+	stopDir = filepath.Clean(stopDir)
+	for dir != "." && dir != string(filepath.Separator) && filepath.Clean(dir) != stopDir {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // Persist a BSI field to disk
@@ -545,6 +757,39 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				}
 			} else {
 				standardFileCount++
+				if isStandardBitmapBundlePath(s) {
+					if s[len(s)-2] == "default" {
+						bf.Time = time.Unix(0, 0)
+					} else {
+						ts, err := time.Parse(timeFmt, s[len(s)-2])
+						if err != nil {
+							err := fmt.Errorf("readBitmapFiles: %s[%s] Could not parse standard bundle Time[%s] - %v",
+								bf.IndexName, bf.FieldName, s[len(s)-2], err)
+							u.Error(err)
+							return err
+						}
+						bf.Time = ts
+					}
+					entries, err := decodeStandardBitmapBundle(data)
+					if err != nil {
+						return fmt.Errorf("readBitmapFiles: decode standard bitmap bundle %s: %w", path, err)
+					}
+					manifestBuilder.addStandardBundleFile(path, info, bf.IndexName, bf.FieldName, bf.Time)
+					for _, entry := range entries {
+						if err := fragMap.add(&BitmapFragment{
+							IndexName:   bf.IndexName,
+							FieldName:   bf.FieldName,
+							RowIDOrBits: int64(entry.RowID),
+							Time:        bf.Time,
+							BitData:     [][]byte{entry.Data},
+							ModTime:     info.ModTime(),
+							IsInit:      true,
+						}); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
 				bf.RowIDOrBits, err = strconv.ParseInt(s[2], 10, 64)
 				if err != nil {
 					err := fmt.Errorf("readBitmapFiles: Could not parse RowID - %v", err)
@@ -637,6 +882,15 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 		}
 		switch entry.Kind {
 		case bitmapShardKindStandard:
+			if isStandardBundleManifestEntry(entry) {
+				loadedFiles, err := m.loadManifestStandardBundleEntry(entry, fragMap)
+				if err != nil {
+					return err
+				}
+				fileCount += loadedFiles
+				standardFileCount += loadedFiles
+				continue
+			}
 			if len(entry.Files) != 1 {
 				return fmt.Errorf("manifest standard shard %s.%s row=%d shard=%s has %d files",
 					entry.Table, entry.Field, entry.RowIDOrBits, entry.Shard, len(entry.Files))
@@ -709,6 +963,38 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 	fmt.Printf("BitmapIndex startup load_source=manifest opt_in=true files=%d standard_files=%d bsi_files=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d manifest_load_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
 		fileCount, standardFileCount, bsiFileCount, observation.Status, observation.Detail, observation.ManifestEntries, observation.ManifestFiles, observation.MissingFileCount, observation.Elapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, time.Since(loadStart), enqueueElapsed, flushElapsed, time.Since(startedAt))
 	return nil
+}
+
+func isStandardBundleManifestEntry(entry BitmapShardManifestEntry) bool {
+	return entry.Kind == bitmapShardKindStandard &&
+		len(entry.Files) == 1 &&
+		(entry.Files[0].Role == bitmapShardFileRoleBundle || filepath.Base(entry.Files[0].RelativePath) == standardBundleFileName)
+}
+
+func (m *BitmapIndex) loadManifestStandardBundleEntry(entry BitmapShardManifestEntry, fragMap bitmapStartupFragmentMap) (int, error) {
+	file := entry.Files[0]
+	data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
+	if err != nil {
+		return 0, fmt.Errorf("read manifest standard bitmap bundle %s: %w", file.RelativePath, err)
+	}
+	entries, err := decodeStandardBitmapBundle(data)
+	if err != nil {
+		return 0, fmt.Errorf("decode manifest standard bitmap bundle %s: %w", file.RelativePath, err)
+	}
+	for _, bundled := range entries {
+		if err := fragMap.add(&BitmapFragment{
+			IndexName:   entry.Table,
+			FieldName:   entry.Field,
+			RowIDOrBits: int64(bundled.RowID),
+			Time:        entry.ShardTime,
+			BitData:     [][]byte{bundled.Data},
+			ModTime:     file.ModTime,
+			IsInit:      true,
+		}); err != nil {
+			return 1, err
+		}
+	}
+	return 1, nil
 }
 
 func (m *BitmapIndex) loadManifestBSIEntry(entry BitmapShardManifestEntry, frag *BitmapFragment) (int, error) {
@@ -833,6 +1119,10 @@ func enqueueBitmapStartupFragments(fragMap bitmapStartupFragmentMap, fragQueue c
 
 func isBSIBitmapPath(parts []string) bool {
 	return len(parts) > 2 && parts[2] == "bsi"
+}
+
+func isStandardBitmapBundlePath(parts []string) bool {
+	return len(parts) > 4 && parts[2] == standardBundleLeafDir && parts[len(parts)-1] == standardBundleFileName
 }
 
 // Purge a partition from cache

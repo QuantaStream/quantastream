@@ -1195,27 +1195,60 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 	bitmapCount := 0
 	var writeCount uint64
 	start := time.Now()
+	type standardPersistGroup struct {
+		indexName string
+		fieldName string
+		shardNano int64
+		tqType    string
+		bitmaps   map[uint64]*StandardBitmap
+		dirty     bool
+	}
+	groups := make(map[string]*standardPersistGroup)
 	for indexName, index := range m.bitmapCache {
 		for fieldName, field := range index {
 			for rowID, ts := range field {
 				for t, bitmap := range ts {
 					bitmapCount++
-					bitmap.Lock.Lock()
-					if forceSync || bitmap.ModTime.After(bitmap.PersistTime) {
-						if err := m.saveCompleteBitmap(bitmap, indexName, fieldName, int64(rowID),
-							time.Unix(0, t)); err != nil {
-							bitmap.Lock.Unlock()
-							return bitmapCount, writeCount, fmt.Errorf("saveCompleteBitmap failed index=%s field=%s row=%d time=%s: %w",
-								indexName, fieldName, rowID, time.Unix(0, t).UTC().Format(timeFmt), err)
-						}
-						writeCount++
-						manifestDirty = true
-						bitmap.PersistTime = time.Now()
+					if bitmap == nil {
+						continue
 					}
-					bitmap.Lock.Unlock()
+					bitmap.Lock.RLock()
+					tqType := bitmap.TQType
+					dirty := forceSync || bitmap.ModTime.After(bitmap.PersistTime)
+					bitmap.Lock.RUnlock()
+					groupShardNano := t
+					if tqType == "" {
+						groupShardNano = 0
+					}
+					key := fmt.Sprintf("%s/%s/%d", indexName, fieldName, groupShardNano)
+					group := groups[key]
+					if group == nil {
+						group = &standardPersistGroup{
+							indexName: indexName,
+							fieldName: fieldName,
+							shardNano: groupShardNano,
+							tqType:    tqType,
+							bitmaps:   make(map[uint64]*StandardBitmap),
+						}
+						groups[key] = group
+					}
+					group.bitmaps[rowID] = bitmap
+					group.dirty = group.dirty || dirty
 				}
 			}
 		}
+	}
+	for _, group := range groups {
+		if !group.dirty {
+			continue
+		}
+		shardTime := time.Unix(0, group.shardNano)
+		if _, err := m.saveCompleteStandardBundle(group.bitmaps, group.indexName, group.fieldName, shardTime, group.tqType); err != nil {
+			return bitmapCount, writeCount, fmt.Errorf("saveCompleteStandardBundle failed index=%s field=%s time=%s: %w",
+				group.indexName, group.fieldName, shardTime.UTC().Format(timeFmt), err)
+		}
+		writeCount++
+		manifestDirty = true
 	}
 
 	elapsed := time.Since(start)

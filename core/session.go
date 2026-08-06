@@ -1248,11 +1248,11 @@ func (s *Session) lookupColumnID(tbuf *TableBuffer, lookupVal, fkFieldSpec strin
 
 func indexPath(tbuf *TableBuffer, field, path string) string {
 
-	lookupPath := fmt.Sprintf("%s/%s/%s,%s", tbuf.Table.Name, field, path,
-		formatShardTime(tbuf.CurrentTimestamp))
+	ts := tbuf.CurrentTimestamp
+	key := fmt.Sprintf("%s/%s/%s", tbuf.Table.Name, field, formatShardTime(ts))
+	lookupPath := fmt.Sprintf("%s,%s/%s/%s/%s", key, tbuf.Table.Name, field, path,
+		formatShardTime(ts))
 	if tbuf.Table.TimeQuantumType == "YMDH" {
-		ts := tbuf.CurrentTimestamp
-		key := fmt.Sprintf("%s/%s/%s", tbuf.Table.Name, field, formatShardTime(ts))
 		utcTime := ts.UTC()
 		fpath := fmt.Sprintf("/%s/%s/%s/%s/%s", tbuf.Table.Name, field, path,
 			fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()), formatShardTime(ts))

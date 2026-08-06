@@ -109,7 +109,7 @@ func TestForcePersistWritesCleanStandardBitmap(t *testing.T) {
 
 	index.checkPersistBitmapCache(true)
 
-	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected forced standard bitmap persist to write %s: %v", path, err)
 	}
@@ -174,6 +174,40 @@ func TestBSIBundleRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStandardBitmapBundleRoundTrip(t *testing.T) {
+	left := roaring64.BitmapOf(1, 2, 3)
+	right := roaring64.BitmapOf(7, 8)
+	leftData, err := left.MarshalBinary()
+	if err != nil {
+		t.Fatalf("left MarshalBinary returned error: %v", err)
+	}
+	rightData, err := right.MarshalBinary()
+	if err != nil {
+		t.Fatalf("right MarshalBinary returned error: %v", err)
+	}
+	bundle, err := encodeStandardBitmapBundle([]standardBitmapBundleEntry{
+		{RowID: 10, Data: leftData},
+		{RowID: 20, Data: rightData},
+	})
+	if err != nil {
+		t.Fatalf("encodeStandardBitmapBundle returned error: %v", err)
+	}
+	decoded, err := decodeStandardBitmapBundle(bundle)
+	if err != nil {
+		t.Fatalf("decodeStandardBitmapBundle returned error: %v", err)
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("decoded entry count = %d, want 2", len(decoded))
+	}
+	loaded := roaring64.NewBitmap()
+	if err := loaded.UnmarshalBinary(decoded[1].Data); err != nil {
+		t.Fatalf("loaded UnmarshalBinary returned error: %v", err)
+	}
+	if decoded[1].RowID != 20 || loaded.GetCardinality() != 2 {
+		t.Fatalf("decoded second entry row=%d cardinality=%d, want row=20 cardinality=2", decoded[1].RowID, loaded.GetCardinality())
+	}
+}
+
 func TestSaveCompleteBSIRemovesLegacySliceFiles(t *testing.T) {
 	now := time.Unix(100, 0)
 	values := roaring64.NewDefaultBSI()
@@ -209,6 +243,44 @@ func TestSaveCompleteBSIRemovesLegacySliceFiles(t *testing.T) {
 	}
 }
 
+func TestSaveCompleteStandardBundleRemovesLegacyRowFiles(t *testing.T) {
+	now := time.Unix(100, 0)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+	}
+	legacyDir := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0"
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	legacyPath := legacyDir + sep + "1970-01-01T00"
+	if err := os.WriteFile(legacyPath, []byte("old"), 0644); err != nil {
+		t.Fatalf("write old standard bitmap returned error: %v", err)
+	}
+
+	written, err := index.saveCompleteStandardBundle(map[uint64]*StandardBitmap{
+		0: {
+			Bits:    roaring64.BitmapOf(1, 2),
+			ModTime: now,
+		},
+	}, "customers", "isActive", now, "")
+	if err != nil {
+		t.Fatalf("saveCompleteStandardBundle returned error: %v", err)
+	}
+	if written != 1 {
+		t.Fatalf("written entries = %d, want 1", written)
+	}
+	bundlePath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
+	if _, err := os.Stat(bundlePath); err != nil {
+		t.Fatalf("expected standard bundle to be persisted: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old standard bitmap file to be removed, stat err=%v", err)
+	}
+}
+
 func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
 	cleanTime := time.Unix(100, 0)
 	dirtyTime := cleanTime.Add(time.Hour)
@@ -227,6 +299,8 @@ func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
 							PersistTime: cleanTime,
 						},
 					},
+				},
+				"dirty_isActive": {
 					1: {
 						dirtyTime.UnixNano(): {
 							Bits:        roaring64.BitmapOf(3, 4),
@@ -246,13 +320,71 @@ func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
 		t.Fatalf("Commit returned error: %v", err)
 	}
 
-	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
 		t.Fatalf("expected clean standard bitmap not to be rewritten by commit, stat err=%v", err)
 	}
-	dirtyPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "1" + sep + "1970-01-01T01"
+	dirtyPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "dirty_isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {
 		t.Fatalf("expected dirty standard bitmap to be persisted by commit: %v", err)
+	}
+}
+
+func TestDirtyStandardBitmapPersistsCompleteShardBundle(t *testing.T) {
+	now := time.Unix(100, 0)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"customers": {
+				"isActive": {
+					0: {
+						now.UnixNano(): {
+							Bits:        roaring64.BitmapOf(1, 2),
+							ModTime:     now,
+							PersistTime: now,
+						},
+					},
+					1: {
+						now.UnixNano(): {
+							Bits:        roaring64.BitmapOf(3, 4, 5),
+							ModTime:     now.Add(time.Second),
+							PersistTime: now,
+						},
+					},
+				},
+			},
+		},
+	}
+	index.ServicePort = 1
+
+	_, writes, err := index.checkPersistBitmapCache(false)
+	if err != nil {
+		t.Fatalf("checkPersistBitmapCache returned error: %v", err)
+	}
+	if writes != 1 {
+		t.Fatalf("writes = %d, want 1 bundle write", writes)
+	}
+	bundlePath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
+	data, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatalf("read standard bundle returned error: %v", err)
+	}
+	entries, err := decodeStandardBitmapBundle(data)
+	if err != nil {
+		t.Fatalf("decodeStandardBitmapBundle returned error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("bundle entry count = %d, want 2", len(entries))
+	}
+	loaded := roaring64.NewBitmap()
+	if err := loaded.UnmarshalBinary(entries[0].Data); err != nil {
+		t.Fatalf("row 0 UnmarshalBinary returned error: %v", err)
+	}
+	if entries[0].RowID != 0 || loaded.GetCardinality() != 2 {
+		t.Fatalf("first bundle entry row=%d cardinality=%d, want row=0 cardinality=2", entries[0].RowID, loaded.GetCardinality())
 	}
 }
 
@@ -330,7 +462,7 @@ func TestShutdownPersistSkipsCleanStandardBitmap(t *testing.T) {
 
 	index.checkPersistBitmapCache(false)
 
-	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected clean standard bitmap not to be persisted, stat err=%v", err)
 	}
@@ -394,7 +526,7 @@ func TestShutdownPersistWritesDirtyStandardBitmap(t *testing.T) {
 
 	index.checkPersistBitmapCache(false)
 
-	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	path := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected dirty standard bitmap to be persisted, stat err=%v", err)
 	}
@@ -480,7 +612,7 @@ func TestCommitPersistForcesCleanCachesToSavepoint(t *testing.T) {
 			bitmapCount, bitmapWrites, bsiCount, bsiWrites)
 	}
 
-	bitmapPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + "0" + sep + "1970-01-01T00"
+	bitmapPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(bitmapPath); err != nil {
 		t.Fatalf("expected clean standard bitmap to be persisted by forced commit, stat err=%v", err)
 	}

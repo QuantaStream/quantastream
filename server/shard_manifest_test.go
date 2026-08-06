@@ -409,6 +409,55 @@ func TestReadBitmapFilesFromManifestLoadsStandardBitmap(t *testing.T) {
 	}
 }
 
+func TestReadBitmapFilesFromManifestLoadsBundledStandardBitmap(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	left := roaring64.BitmapOf(1, 2, 3)
+	right := roaring64.BitmapOf(7, 8)
+	leftData, err := left.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal left bitmap: %v", err)
+	}
+	rightData, err := right.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal right bitmap: %v", err)
+	}
+	bundle, err := encodeStandardBitmapBundle([]standardBitmapBundleEntry{
+		{RowID: 10, Data: leftData},
+		{RowID: 20, Data: rightData},
+	})
+	if err != nil {
+		t.Fatalf("encodeStandardBitmapBundle returned error: %v", err)
+	}
+	target := writeManifestTestFileBytes(t, index.dataDir, filepath.ToSlash(filepath.Join("bitmap", "customer", "c_mktsegment", standardBundleLeafDir, "1994-01-02T00", standardBundleFileName)), bundle)
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	builder.addStandardBundleFile(target, statManifestTestFile(t, target), "customer", "c_mktsegment", shardTime)
+	manifest := builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+	observation := BitmapShardManifestObservation{
+		Status:          "ok",
+		ManifestEntries: manifest.Stats.TotalEntries,
+		ManifestFiles:   manifest.Stats.TotalFiles,
+	}
+
+	if err := index.readBitmapFilesFromManifest(manifest, observation, index.fragQueue, time.Now()); err != nil {
+		t.Fatalf("readBitmapFilesFromManifest returned error: %v", err)
+	}
+	loadedLeft := index.bitmapCache["customer"]["c_mktsegment"][10][shardTime.UnixNano()]
+	if loadedLeft == nil {
+		t.Fatal("expected bundled standard bitmap row 10 to load from manifest")
+	}
+	if got := loadedLeft.Bits.GetCardinality(); got != 3 {
+		t.Fatalf("loaded row 10 cardinality = %d, want 3", got)
+	}
+	loadedRight := index.bitmapCache["customer"]["c_mktsegment"][20][shardTime.UnixNano()]
+	if loadedRight == nil {
+		t.Fatal("expected bundled standard bitmap row 20 to load from manifest")
+	}
+	if got := loadedRight.Bits.GetCardinality(); got != 2 {
+		t.Fatalf("loaded row 20 cardinality = %d, want 2", got)
+	}
+}
+
 func TestReadBitmapFilesFromManifestLoadsBSI(t *testing.T) {
 	index := newManifestLoadTestIndex(t)
 	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
