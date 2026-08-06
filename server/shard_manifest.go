@@ -17,6 +17,7 @@ const (
 	bitmapShardManifestVersion  = 1
 	bitmapShardKindStandard     = "standard"
 	bitmapShardKindBSI          = "bsi"
+	bitmapShardFileRoleBundle   = "bundle"
 )
 
 // BitmapShardManifest records logical bitmap artifacts discovered on disk.
@@ -125,6 +126,21 @@ func (b *bitmapShardManifestBuilder) addBSIFile(path string, info os.FileInfo, t
 	}
 }
 
+func (b *bitmapShardManifestBuilder) addBSIBundleFile(path string, info os.FileInfo, table, field string, shardTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         bitmapShardFileRoleBundle,
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+	}}
+	entry.FileCount = 1
+	entry.MaxBitSlice = 0
+	entry.HasExistence = true
+	entry.ModTime = info.ModTime().UTC()
+	entry.BaseRelativePath = ""
+}
+
 func (b *bitmapShardManifestBuilder) addStandardCacheEntry(path string, table, field string, rowID int64, shardTime time.Time, modTime time.Time) {
 	entry := b.entry(table, field, bitmapShardKindStandard, rowID, shardTime)
 	entry.Files = []BitmapShardManifestFile{{
@@ -138,16 +154,22 @@ func (b *bitmapShardManifestBuilder) addStandardCacheEntry(path string, table, f
 	}
 }
 
-func (b *bitmapShardManifestBuilder) addBSICacheEntry(basePath string, table, field string, shardTime time.Time, maxBitSlice int, modTime time.Time) {
-	if maxBitSlice < 0 {
-		maxBitSlice = 0
-	}
+func (b *bitmapShardManifestBuilder) addBSICacheEntry(basePath string, table, field string, shardTime time.Time, _ int, modTime time.Time) {
 	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
-	entry.BaseRelativePath = b.relativePath(basePath)
-	entry.FileCount = maxBitSlice + 1
-	entry.MaxBitSlice = maxBitSlice
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(filepath.Join(basePath, bsiBundleFileName)),
+		Role:         bitmapShardFileRoleBundle,
+		ModTime:      modTime.UTC(),
+	}}
+	if info, err := os.Stat(filepath.Join(basePath, bsiBundleFileName)); err == nil {
+		entry.Files[0].SizeBytes = info.Size()
+		entry.Files[0].ModTime = info.ModTime().UTC()
+	}
+	entry.FileCount = 1
+	entry.MaxBitSlice = 0
 	entry.HasExistence = true
 	entry.ModTime = modTime.UTC()
+	entry.BaseRelativePath = ""
 }
 
 func (b *bitmapShardManifestBuilder) manifest(generatedAt time.Time, source string) BitmapShardManifest {

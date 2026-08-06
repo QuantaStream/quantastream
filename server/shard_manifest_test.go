@@ -447,6 +447,42 @@ func TestReadBitmapFilesFromManifestLoadsBSI(t *testing.T) {
 	}
 }
 
+func TestReadBitmapFilesFromManifestLoadsBundledBSI(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(1, 10)
+	bsi.SetValue(2, 20)
+	data, err := bsi.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal BSI: %v", err)
+	}
+	bundle, err := encodeBSIBundle(data)
+	if err != nil {
+		t.Fatalf("encodeBSIBundle returned error: %v", err)
+	}
+	target := writeManifestTestFileBytes(t, index.dataDir, filepath.ToSlash(filepath.Join("bitmap", "lineitem", "l_quantity", "bsi", "1994-01-02T00", bsiBundleFileName)), bundle)
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	builder.addBSIBundleFile(target, statManifestTestFile(t, target), "lineitem", "l_quantity", shardTime)
+	manifest := builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+	observation := BitmapShardManifestObservation{
+		Status:          "ok",
+		ManifestEntries: manifest.Stats.TotalEntries,
+		ManifestFiles:   manifest.Stats.TotalFiles,
+	}
+
+	if err := index.readBitmapFilesFromManifest(manifest, observation, index.fragQueue, time.Now()); err != nil {
+		t.Fatalf("readBitmapFilesFromManifest returned error: %v", err)
+	}
+	loaded := index.bsiCache["lineitem"]["l_quantity"][shardTime.UnixNano()]
+	if loaded == nil {
+		t.Fatal("expected bundled BSI to load from manifest")
+	}
+	if got := loaded.GetExistenceBitmap().GetCardinality(); got != 2 {
+		t.Fatalf("loaded bundled BSI existence cardinality = %d, want 2", got)
+	}
+}
+
 func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManifest) {
 	t.Helper()
 	index := newManifestPersistenceTestIndex(t)

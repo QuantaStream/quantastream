@@ -5,7 +5,10 @@ package server
 //
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -14,6 +17,11 @@ import (
 	"time"
 
 	u "github.com/araddon/gou"
+)
+
+const (
+	bsiBundleFileName = "bundle"
+	bsiBundleMagic    = "QSBIS001"
 )
 
 // Partition - Description of partition
@@ -83,33 +91,105 @@ func (m *BitmapIndex) saveCompleteBitmap(bm *StandardBitmap, indexName, fieldNam
 }
 
 // Persist a BSI field to disk
-func (m *BitmapIndex) saveCompleteBSI(bsi *BSIBitmap, indexName, fieldName string, bits int,
+func (m *BitmapIndex) saveCompleteBSI(bsi *BSIBitmap, indexName, fieldName string, _ int,
 	ts time.Time) error {
 
-	if fds, err := m.openCompleteFile(indexName, fieldName, int64(bits*-1), ts,
-		bsi.TQType); err == nil {
-		data, err := bsi.MarshalBinary()
-		if err != nil {
-			return err
-		}
-
-		for i := 1; i < len(data); i++ {
-			if _, err := fds[i].Write(data[i]); err != nil {
-				return err
-			}
-			if err := fds[i].Close(); err != nil {
-				return err
-			}
-		}
-		// Write out EBM
-		if _, err := fds[0].Write(data[0]); err != nil {
-			return err
-		}
-		if err := fds[0].Close(); err != nil {
-			return err
-		}
-	} else {
+	data, err := bsi.MarshalBinary()
+	if err != nil {
 		return err
+	}
+	bundle, err := encodeBSIBundle(data)
+	if err != nil {
+		return err
+	}
+	dir, bundlePath := m.bsiBundleFilePath(indexName, fieldName, ts, bsi.TQType)
+	tmpPath := bundlePath + ".tmp"
+	if err := os.WriteFile(tmpPath, bundle, 0666); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, bundlePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return removeLegacyBSISliceFiles(dir)
+}
+
+func (m *BitmapIndex) bsiBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
+	partition := &Partition{Index: indexName, Field: fieldName, Time: ts, TQType: tqType, RowIDOrBits: -1}
+	dir := m.generateBitmapFilePath(partition, false)
+	return dir, filepath.Join(dir, bsiBundleFileName)
+}
+
+func encodeBSIBundle(chunks [][]byte) ([]byte, error) {
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("cannot encode empty BSI bundle")
+	}
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(bsiBundleMagic); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(chunks))); err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunks {
+		if err := binary.Write(&buf, binary.BigEndian, uint64(len(chunk))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(chunk); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeBSIBundle(data []byte) ([][]byte, error) {
+	reader := bytes.NewReader(data)
+	magic := make([]byte, len(bsiBundleMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil {
+		return nil, fmt.Errorf("read BSI bundle magic: %w", err)
+	}
+	if string(magic) != bsiBundleMagic {
+		return nil, fmt.Errorf("invalid BSI bundle magic %q", string(magic))
+	}
+	var count uint32
+	if err := binary.Read(reader, binary.BigEndian, &count); err != nil {
+		return nil, fmt.Errorf("read BSI bundle chunk count: %w", err)
+	}
+	if count == 0 || count > 1<<20 {
+		return nil, fmt.Errorf("invalid BSI bundle chunk count %d", count)
+	}
+	chunks := make([][]byte, count)
+	for i := uint32(0); i < count; i++ {
+		var chunkLen uint64
+		if err := binary.Read(reader, binary.BigEndian, &chunkLen); err != nil {
+			return nil, fmt.Errorf("read BSI bundle chunk length %d: %w", i, err)
+		}
+		if chunkLen > uint64(reader.Len()) {
+			return nil, fmt.Errorf("BSI bundle chunk %d length %d exceeds remaining %d", i, chunkLen, reader.Len())
+		}
+		chunks[i] = make([]byte, chunkLen)
+		if _, err := io.ReadFull(reader, chunks[i]); err != nil {
+			return nil, fmt.Errorf("read BSI bundle chunk %d: %w", i, err)
+		}
+	}
+	if reader.Len() != 0 {
+		return nil, fmt.Errorf("BSI bundle has %d trailing bytes", reader.Len())
+	}
+	return chunks, nil
+}
+
+func removeLegacyBSISliceFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == bsiBundleFileName {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -399,6 +479,26 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				} else if s[len(s)-2] == "default" {
 					bf.Time = time.Unix(0, 0)
 				}
+				if s[len(s)-1] == bsiBundleFileName {
+					chunks, err := decodeBSIBundle(data)
+					if err != nil {
+						return fmt.Errorf("readBitmapFiles: decode BSI bundle %s: %w", path, err)
+					}
+					manifestBuilder.addBSIBundleFile(path, info, bf.IndexName, bf.FieldName, bf.Time)
+					if err := fragMap.add(&BitmapFragment{
+						IndexName:   bf.IndexName,
+						FieldName:   bf.FieldName,
+						RowIDOrBits: -1,
+						Time:        bf.Time,
+						BitData:     chunks,
+						ModTime:     info.ModTime(),
+						IsBSI:       true,
+						IsInit:      true,
+					}); err != nil {
+						return err
+					}
+					return nil
+				}
 				bitSliceIndex := -1
 				if s[len(s)-1] == "EBM" {
 					bitSliceIndex = 0
@@ -612,6 +712,23 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 }
 
 func (m *BitmapIndex) loadManifestBSIEntry(entry BitmapShardManifestEntry, frag *BitmapFragment) (int, error) {
+	if len(entry.Files) == 1 && (entry.Files[0].Role == bitmapShardFileRoleBundle || filepath.Base(entry.Files[0].RelativePath) == bsiBundleFileName) {
+		file := entry.Files[0]
+		data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
+		if err != nil {
+			return 0, fmt.Errorf("read manifest BSI bundle %s: %w", file.RelativePath, err)
+		}
+		chunks, err := decodeBSIBundle(data)
+		if err != nil {
+			return 0, fmt.Errorf("decode manifest BSI bundle %s: %w", file.RelativePath, err)
+		}
+		frag.BitData = chunks
+		if file.ModTime.After(frag.ModTime) {
+			frag.ModTime = file.ModTime
+		}
+		return 1, nil
+	}
+
 	if entry.BaseRelativePath != "" {
 		basePath := filepath.Join(m.dataDir, filepath.FromSlash(entry.BaseRelativePath))
 		loadedFiles := 0

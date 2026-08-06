@@ -140,9 +140,72 @@ func TestForcePersistWritesCleanBSI(t *testing.T) {
 
 	index.checkPersistBSICache(true)
 
-	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected forced BSI persist to write %s: %v", path, err)
+	}
+}
+
+func TestBSIBundleRoundTrip(t *testing.T) {
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	values.SetValue(2, 20)
+	chunks, err := values.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary returned error: %v", err)
+	}
+	bundle, err := encodeBSIBundle(chunks)
+	if err != nil {
+		t.Fatalf("encodeBSIBundle returned error: %v", err)
+	}
+	decoded, err := decodeBSIBundle(bundle)
+	if err != nil {
+		t.Fatalf("decodeBSIBundle returned error: %v", err)
+	}
+	loaded := roaring64.NewDefaultBSI()
+	if err := loaded.UnmarshalBinary(decoded); err != nil {
+		t.Fatalf("UnmarshalBinary returned error: %v", err)
+	}
+	if got, exists := loaded.GetValue(1); !exists || got != 10 {
+		t.Fatalf("loaded value for column 1 = %v exists=%v, want 10 true", got, exists)
+	}
+	if got, exists := loaded.GetValue(2); !exists || got != 20 {
+		t.Fatalf("loaded value for column 2 = %v exists=%v, want 20 true", got, exists)
+	}
+}
+
+func TestSaveCompleteBSIRemovesLegacySliceFiles(t *testing.T) {
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+	}
+	dir := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(dir+sep+"EBM", []byte("old"), 0644); err != nil {
+		t.Fatalf("write old EBM returned error: %v", err)
+	}
+	if err := os.WriteFile(dir+sep+"1", []byte("old"), 0644); err != nil {
+		t.Fatalf("write old slice returned error: %v", err)
+	}
+
+	if err := index.saveCompleteBSI(&BSIBitmap{BSI: values}, "orders", "o_orderkey", int(values.BitCount()), now); err != nil {
+		t.Fatalf("saveCompleteBSI returned error: %v", err)
+	}
+	if _, err := os.Stat(dir + sep + bsiBundleFileName); err != nil {
+		t.Fatalf("expected BSI bundle to be persisted: %v", err)
+	}
+	if _, err := os.Stat(dir + sep + "EBM"); !os.IsNotExist(err) {
+		t.Fatalf("expected old EBM slice to be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(dir + sep + "1"); !os.IsNotExist(err) {
+		t.Fatalf("expected old bit slice to be removed, stat err=%v", err)
 	}
 }
 
@@ -232,11 +295,11 @@ func TestCommitSkipsCleanBSI(t *testing.T) {
 		t.Fatalf("Commit returned error: %v", err)
 	}
 
-	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
 		t.Fatalf("expected clean BSI not to be rewritten by commit, stat err=%v", err)
 	}
-	dirtyPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "dirty_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	dirtyPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "dirty_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {
 		t.Fatalf("expected dirty BSI to be persisted by commit: %v", err)
 	}
@@ -299,7 +362,7 @@ func TestShutdownPersistSkipsCleanBSI(t *testing.T) {
 
 	index.checkPersistBSICache(false)
 
-	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected clean BSI not to be persisted, stat err=%v", err)
 	}
@@ -364,7 +427,7 @@ func TestShutdownPersistWritesDirtyBSI(t *testing.T) {
 
 	index.checkPersistBSICache(false)
 
-	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected dirty BSI to be persisted, stat err=%v", err)
 	}
@@ -422,7 +485,7 @@ func TestCommitPersistForcesCleanCachesToSavepoint(t *testing.T) {
 		t.Fatalf("expected clean standard bitmap to be persisted by forced commit, stat err=%v", err)
 	}
 
-	bsiPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	bsiPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(bsiPath); err != nil {
 		t.Fatalf("expected clean BSI to be persisted by forced commit, stat err=%v", err)
 	}
@@ -462,7 +525,7 @@ func TestLocalClusterZeroPortPersistsDirtyBSI(t *testing.T) {
 		t.Fatalf("expected local zero-port BSI persistence, got count=%d writes=%d", bsiCount, bsiWrites)
 	}
 
-	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + "EBM"
+	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected local zero-port BSI persist to write %s: %v", path, err)
 	}
