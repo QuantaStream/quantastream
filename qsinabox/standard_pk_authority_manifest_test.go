@@ -67,6 +67,57 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	}
 }
 
+func TestBuildStandardBSIPrimaryKeyAuthorityManifestUsesActiveCatalog(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardTestSchema(t, configDir, "sample")
+	writeStandardDraftTestSchema(t, configDir, "draft")
+
+	manifest, err := BuildStandardBSIPrimaryKeyAuthorityManifest(StandardConfig{DataDir: dataDir}, "unit-test")
+	if err != nil {
+		t.Fatalf("BuildStandardBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+
+	if manifest.Version != core.BSIPrimaryKeyAuthorityManifestVersion {
+		t.Fatalf("version = %d, want %d", manifest.Version, core.BSIPrimaryKeyAuthorityManifestVersion)
+	}
+	if manifest.GeneratedAt.IsZero() {
+		t.Fatalf("GeneratedAt is zero")
+	}
+	if manifest.Source != "unit-test" {
+		t.Fatalf("source = %q, want unit-test", manifest.Source)
+	}
+	if len(manifest.Entries) != 1 {
+		t.Fatalf("entries = %+v, want only active sample table", manifest.Entries)
+	}
+	if manifest.Entries[0].TableName != "sample" || manifest.Entries[0].PrimaryKey != "id" {
+		t.Fatalf("entry = %+v", manifest.Entries[0])
+	}
+	if manifest.Entries[0].EncodingVersion != core.PrimaryKeyIdentityEncodingVersion {
+		t.Fatalf("encoding version = %d, want %d", manifest.Entries[0].EncodingVersion, core.PrimaryKeyIdentityEncodingVersion)
+	}
+}
+
+func TestBuildStandardBSIPrimaryKeyAuthorityManifestFallsBackToDiscovery(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardDraftTestSchema(t, configDir, "sample")
+
+	manifest, err := BuildStandardBSIPrimaryKeyAuthorityManifest(StandardConfig{DataDir: dataDir}, "")
+	if err != nil {
+		t.Fatalf("BuildStandardBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+
+	if len(manifest.Entries) != 1 {
+		t.Fatalf("entries = %+v, want discovered sample table", manifest.Entries)
+	}
+	if manifest.Entries[0].TableName != "sample" {
+		t.Fatalf("entry table = %q, want sample", manifest.Entries[0].TableName)
+	}
+}
+
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsInvalidVersion(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
