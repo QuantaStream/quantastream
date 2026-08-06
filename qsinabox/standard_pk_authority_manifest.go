@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ func ObserveStandardBSIPrimaryKeyAuthorityManifest(config StandardConfig) core.B
 			Entries: len(manifest.Entries),
 		}
 	}
-	return manifest.ObserveAgainstCatalog(tables)
+	return observeStandardBSIPrimaryKeyAuthorityArtifacts(config, manifest, manifest.ObserveAgainstCatalog(tables))
 }
 
 // BuildStandardBSIPrimaryKeyAuthorityManifest creates a logical manifest from
@@ -92,6 +93,124 @@ func standardBSIPrimaryKeyAuthorityArtifactPath(tableName, authorityField, logic
 		parts = append(parts, shard)
 	}
 	return path.Join(parts...)
+}
+
+func observeStandardBSIPrimaryKeyAuthorityArtifacts(config StandardConfig, manifest core.BSIPrimaryKeyAuthorityManifest, observation core.BSIPrimaryKeyAuthorityManifestObservation) core.BSIPrimaryKeyAuthorityManifestObservation {
+	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK || observation.ArtifactDescriptors == 0 {
+		return observation
+	}
+	present := 0
+	missing := 0
+	var fileCount uint64
+	var firstMissing string
+	var firstError string
+	for _, entry := range manifest.Entries {
+		for _, artifact := range entry.Artifacts {
+			count, exists, err := standardBSIPrimaryKeyAuthorityArtifactFileCount(config, artifact.Path)
+			if err != nil {
+				missing++
+				if firstError == "" {
+					firstError = fmt.Sprintf("%s: %v", artifact.Path, err)
+				}
+				continue
+			}
+			if !exists {
+				missing++
+				if firstMissing == "" {
+					firstMissing = artifact.Path
+				}
+				continue
+			}
+			present++
+			fileCount += count
+		}
+	}
+	observation.ArtifactPresent = present
+	observation.ArtifactMissing = missing
+	observation.ArtifactFileCount = fileCount
+	switch {
+	case present > 0 && missing == 0:
+		observation.ArtifactPresence = core.BSIPrimaryKeyAuthorityArtifactPresencePresent
+	case present > 0 && missing > 0:
+		observation.ArtifactPresence = core.BSIPrimaryKeyAuthorityArtifactPresencePartial
+	case missing > 0:
+		observation.ArtifactPresence = core.BSIPrimaryKeyAuthorityArtifactPresenceMissing
+	default:
+		observation.ArtifactPresence = core.BSIPrimaryKeyAuthorityArtifactPresenceNone
+	}
+	if firstError != "" {
+		observation.ArtifactDetail = "artifact path check failed: " + firstError
+	} else if firstMissing != "" {
+		observation.ArtifactDetail = "artifact path missing: " + firstMissing
+	}
+	return observation
+}
+
+func standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config StandardConfig, manifest *core.BSIPrimaryKeyAuthorityManifest) error {
+	if manifest == nil {
+		return nil
+	}
+	for entryIndex := range manifest.Entries {
+		for artifactIndex := range manifest.Entries[entryIndex].Artifacts {
+			count, exists, err := standardBSIPrimaryKeyAuthorityArtifactFileCount(config, manifest.Entries[entryIndex].Artifacts[artifactIndex].Path)
+			if err != nil {
+				return err
+			}
+			if exists {
+				manifest.Entries[entryIndex].Artifacts[artifactIndex].FileCount = count
+			}
+		}
+	}
+	return nil
+}
+
+func standardBSIPrimaryKeyAuthorityArtifactFileCount(config StandardConfig, artifactPath string) (uint64, bool, error) {
+	resolved, err := standardBSIPrimaryKeyAuthorityArtifactPhysicalPath(config, artifactPath)
+	if err != nil {
+		return 0, false, err
+	}
+	info, err := os.Stat(resolved)
+	if os.IsNotExist(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !info.IsDir() {
+		return 1, true, nil
+	}
+	var count uint64
+	err = filepath.WalkDir(resolved, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			count++
+		}
+		return nil
+	})
+	return count, true, err
+}
+
+func standardBSIPrimaryKeyAuthorityArtifactPhysicalPath(config StandardConfig, artifactPath string) (string, error) {
+	config = config.WithDefaults()
+	raw := strings.TrimSpace(artifactPath)
+	if raw == "" {
+		return "", fmt.Errorf("artifact path is empty")
+	}
+	if filepath.IsAbs(raw) {
+		return "", fmt.Errorf("artifact path must be relative: %s", raw)
+	}
+	base := filepath.Clean(config.DataDir)
+	resolved := filepath.Join(base, filepath.Clean(filepath.FromSlash(raw)))
+	rel, err := filepath.Rel(base, resolved)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("artifact path escapes data directory: %s", raw)
+	}
+	return resolved, nil
 }
 
 // SaveStandardBSIPrimaryKeyAuthorityManifest writes a logical authority

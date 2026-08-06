@@ -165,8 +165,23 @@ func (p StandardPlan) SummaryLines() []string {
 		if p.PKAuthority.ArtifactTrust != "" {
 			lines = append(lines, "bsi_pk_authority_manifest_artifact_trust="+p.PKAuthority.ArtifactTrust)
 		}
+		if p.PKAuthority.ArtifactPresence != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_artifact_presence="+p.PKAuthority.ArtifactPresence)
+		}
 		if p.PKAuthority.ArtifactDescriptors != 0 {
 			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_artifacts=%d", p.PKAuthority.ArtifactDescriptors))
+		}
+		if p.PKAuthority.ArtifactPresent != 0 {
+			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_artifacts_present=%d", p.PKAuthority.ArtifactPresent))
+		}
+		if p.PKAuthority.ArtifactMissing != 0 {
+			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_artifacts_missing=%d", p.PKAuthority.ArtifactMissing))
+		}
+		if p.PKAuthority.ArtifactFileCount != 0 {
+			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_artifact_file_count=%d", p.PKAuthority.ArtifactFileCount))
+		}
+		if p.PKAuthority.ArtifactDetail != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_artifact_detail="+p.PKAuthority.ArtifactDetail)
 		}
 		if p.PKAuthority.EntryKeyCount != 0 {
 			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_entry_key_count=%d", p.PKAuthority.EntryKeyCount))

@@ -66,8 +66,17 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_trust=metadata_only") {
 		t.Fatalf("summary missing manifest artifact trust:\n%s", output)
 	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_presence=missing") {
+		t.Fatalf("summary missing manifest artifact presence:\n%s", output)
+	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts=1") {
 		t.Fatalf("summary missing manifest artifact count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts_missing=1") {
+		t.Fatalf("summary missing manifest artifact missing count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_detail=artifact path missing: bitmap/sample/__qs_pk_authority") {
+		t.Fatalf("summary missing artifact detail:\n%s", output)
 	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_entry_key_count=7") {
 		t.Fatalf("summary missing manifest key count:\n%s", output)
@@ -220,6 +229,13 @@ func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(
 	dataDir := filepath.Join(root, "data")
 	configDir := filepath.Join(dataDir, "config")
 	writeStandardTestSchema(t, configDir, "sample")
+	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id")
+	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+		t.Fatalf("mkdir artifact dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "chunk.bsi"), []byte("unit-test"), 0644); err != nil {
+		t.Fatalf("write artifact file: %v", err)
+	}
 	publisher := StandardBSIPrimaryKeyAuthorityManifestFilePublisher{
 		Config: StandardConfig{DataDir: dataDir},
 		Source: "unit-test-flush",
@@ -245,6 +261,23 @@ func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(
 	}
 	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
 		t.Fatalf("manifest entries = %+v, want one entry with one descriptor", manifest.Entries)
+	}
+	if manifest.Entries[0].Artifacts[0].FileCount != 1 {
+		t.Fatalf("artifact file count = %d, want 1", manifest.Entries[0].Artifacts[0].FileCount)
+	}
+	plan := NewObservedStandardPlan(StandardConfig{DataDir: dataDir}, shared.LocalNodeServices{})
+	output := strings.Join(plan.SummaryLines(), "\n")
+	if plan.PKAuthority.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("readiness status = %s detail=%s", plan.PKAuthority.Status, plan.PKAuthority.Detail)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_presence=present") {
+		t.Fatalf("readiness missing artifact presence:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts_present=1") {
+		t.Fatalf("readiness missing artifact present count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_file_count=1") {
+		t.Fatalf("readiness missing artifact file count:\n%s", output)
 	}
 }
 

@@ -55,6 +55,26 @@ const (
 	// BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly means artifact descriptors
 	// are metadata only and are not yet trusted as durable authority.
 	BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly = "metadata_only"
+
+	// BSIPrimaryKeyAuthorityArtifactPresenceNone means the manifest describes
+	// no physical authority artifacts.
+	BSIPrimaryKeyAuthorityArtifactPresenceNone = "none"
+
+	// BSIPrimaryKeyAuthorityArtifactPresenceUnchecked means physical artifact
+	// presence has not been checked.
+	BSIPrimaryKeyAuthorityArtifactPresenceUnchecked = "unchecked"
+
+	// BSIPrimaryKeyAuthorityArtifactPresencePresent means every described
+	// artifact path exists.
+	BSIPrimaryKeyAuthorityArtifactPresencePresent = "present"
+
+	// BSIPrimaryKeyAuthorityArtifactPresencePartial means some described
+	// artifact paths exist and some are missing.
+	BSIPrimaryKeyAuthorityArtifactPresencePartial = "partial"
+
+	// BSIPrimaryKeyAuthorityArtifactPresenceMissing means every described
+	// artifact path is missing.
+	BSIPrimaryKeyAuthorityArtifactPresenceMissing = "missing"
 )
 
 // BSIPrimaryKeyAuthorityManifest records the logical identity contract for
@@ -125,8 +145,13 @@ type BSIPrimaryKeyAuthorityManifestObservation struct {
 	ManifestEntry       string
 	ValidationLevel     string
 	ArtifactTrust       string
+	ArtifactPresence    string
+	ArtifactDetail      string
 	Entries             int
 	ArtifactDescriptors int
+	ArtifactPresent     int
+	ArtifactMissing     int
+	ArtifactFileCount   uint64
 	EntryKeyCount       uint64
 	CleanEntries        int
 	DirtyEntries        int
@@ -242,16 +267,21 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 		Status:              BSIPrimaryKeyAuthorityManifestStatusOK,
 		ValidationLevel:     BSIPrimaryKeyAuthorityManifestValidationManifestOnly,
 		ArtifactTrust:       BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly,
+		ArtifactPresence:    BSIPrimaryKeyAuthorityArtifactPresenceNone,
 		Entries:             len(m.Entries),
 		ArtifactDescriptors: artifactDescriptors,
 		EntryKeyCount:       entryKeyCount,
 		CleanEntries:        cleanEntries,
 		DirtyEntries:        dirtyEntries,
 	}
+	if artifactDescriptors > 0 {
+		observation.ArtifactPresence = BSIPrimaryKeyAuthorityArtifactPresenceUnchecked
+	}
 	if m.Version == 0 && len(m.Entries) == 0 {
 		observation.Status = BSIPrimaryKeyAuthorityManifestStatusMissing
 		observation.ValidationLevel = BSIPrimaryKeyAuthorityManifestValidationNone
 		observation.ArtifactTrust = BSIPrimaryKeyAuthorityArtifactTrustNone
+		observation.ArtifactPresence = BSIPrimaryKeyAuthorityArtifactPresenceNone
 		observation.Detail = "manifest is empty"
 		return observation
 	}

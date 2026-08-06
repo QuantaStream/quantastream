@@ -36,6 +36,9 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsOK(t *testing.T) {
 	if observation.ArtifactTrust != BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly {
 		t.Fatalf("artifact trust = %s, want %s", observation.ArtifactTrust, BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly)
 	}
+	if observation.ArtifactPresence != BSIPrimaryKeyAuthorityArtifactPresenceNone {
+		t.Fatalf("artifact presence = %s, want %s", observation.ArtifactPresence, BSIPrimaryKeyAuthorityArtifactPresenceNone)
+	}
 	if observation.ArtifactDescriptors != 0 {
 		t.Fatalf("artifact descriptors = %d, want 0", observation.ArtifactDescriptors)
 	}

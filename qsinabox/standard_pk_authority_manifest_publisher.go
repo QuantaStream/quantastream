@@ -38,6 +38,9 @@ func (p StandardBSIPrimaryKeyAuthorityManifestFilePublisher) PublishAfterFlush(p
 	if err != nil {
 		return false, err
 	}
+	if err := standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(p.Config, &manifest); err != nil {
+		return false, err
+	}
 	if err := SaveStandardBSIPrimaryKeyAuthorityManifest(p.Config, manifest); err != nil {
 		return false, err
 	}
