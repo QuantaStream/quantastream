@@ -446,7 +446,16 @@ func (m *Main) initStandardDirect() error {
 	if m.Workers <= 0 {
 		m.Workers = 3
 	}
-	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+	router, err := core.NewSessionRouter(m.standardDirectRouterConfig())
+	if err != nil {
+		return err
+	}
+	m.router = router
+	return nil
+}
+
+func (m *Main) standardDirectRouterConfig() core.SessionRouterConfig {
+	return core.SessionRouterConfig{
 		TableCache:                m.tableCache,
 		BasePath:                  m.BasePath,
 		Conn:                      m.conn,
@@ -458,12 +467,7 @@ func (m *Main) initStandardDirect() error {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)
 		},
-	})
-	if err != nil {
-		return err
 	}
-	m.router = router
-	return nil
 }
 
 func (m *Main) waitDirectClusterReady(timeout time.Duration) error {
