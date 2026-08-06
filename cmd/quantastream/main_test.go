@@ -55,6 +55,38 @@ func TestRunRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
+func TestRunPrintsBSIPrimaryKeyAuthorityManifest(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeCommandTestSchema(t, filepath.Join(dataDir, "config"), "sample")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-data-dir", dataDir,
+		"-print-bsi-pk-authority-manifest",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"version: 1",
+		"source: quantastream-cli",
+		"table: sample",
+		"primary_key: id",
+		"encoding_version:",
+		"fields:",
+		"clean: true",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "listening=") {
+		t.Fatalf("manifest print should not start listener:\n%s", output)
+	}
+}
+
 func TestRunStartsInaboxStandardListenerUntilContextCanceled(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

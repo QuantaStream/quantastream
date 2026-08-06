@@ -14,6 +14,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/shared"
+	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -41,6 +42,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
+	printBSIPKAuthorityManifest := flags.Bool("print-bsi-pk-authority-manifest", false, "print the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -59,6 +61,21 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		DataDir:             *dataDir,
 		Database:            *database,
 		RuntimeProbeLogging: *runtimeProbes,
+	}
+
+	if *printBSIPKAuthorityManifest {
+		manifest, err := qsinabox.BuildStandardBSIPrimaryKeyAuthorityManifest(config, "quantastream-cli")
+		if err != nil {
+			fmt.Fprintf(stderr, "build BSI primary-key authority manifest: %v\n", err)
+			return 2
+		}
+		data, err := yaml.Marshal(manifest)
+		if err != nil {
+			fmt.Fprintf(stderr, "marshal BSI primary-key authority manifest: %v\n", err)
+			return 2
+		}
+		fmt.Fprint(stdout, string(data))
+		return 0
 	}
 
 	if *statusOnly {
