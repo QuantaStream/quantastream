@@ -168,9 +168,46 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	if observation := loaded.ObserveAgainstCatalog(map[string]*Table{"lineitem": table}); observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
 		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
 	} else if observation.ArtifactDescriptors != 1 || observation.EntryKeyCount != entry.KeyCount ||
+		observation.ArtifactKeyCount != entry.Artifacts[0].KeyCount || observation.KeyCountMismatches != 0 ||
 		observation.CleanEntries != 1 || observation.DirtyEntries != 0 {
-		t.Fatalf("observation summary = artifacts:%d key_count:%d clean:%d dirty:%d",
-			observation.ArtifactDescriptors, observation.EntryKeyCount, observation.CleanEntries, observation.DirtyEntries)
+		t.Fatalf("observation summary = artifacts:%d key_count:%d artifact_key_count:%d mismatches:%d clean:%d dirty:%d",
+			observation.ArtifactDescriptors, observation.EntryKeyCount, observation.ArtifactKeyCount,
+			observation.KeyCountMismatches, observation.CleanEntries, observation.DirtyEntries)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationReportsKeyCountMismatch(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("orders", "o_orderkey", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("o_orderkey", "Integer", "IntBSI", false),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.KeyCount = 10
+	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind:     BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
+			Path:     "bitmap/orders/o_orderkey/bsi",
+			KeyCount: 9,
+		},
+	}
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"orders": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
+	}
+	if observation.EntryKeyCount != 10 || observation.ArtifactKeyCount != 9 || observation.KeyCountMismatches != 1 {
+		t.Fatalf("observation key summary = entry:%d artifact:%d mismatches:%d, want 10/9/1",
+			observation.EntryKeyCount, observation.ArtifactKeyCount, observation.KeyCountMismatches)
 	}
 }
 

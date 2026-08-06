@@ -35,7 +35,7 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	entry.Artifacts = []core.BSIPrimaryKeyAuthorityManifestArtifact{
 		{
 			Kind:     core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
-			Path:     "bitmap/sample/__qs_pk_authority",
+			Path:     "bitmap/sample/id/bsi",
 			KeyCount: 7,
 		},
 	}
@@ -75,11 +75,14 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts_missing=1") {
 		t.Fatalf("summary missing manifest artifact missing count:\n%s", output)
 	}
-	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_detail=artifact path missing: bitmap/sample/__qs_pk_authority") {
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_detail=artifact path missing: bitmap/sample/id/bsi") {
 		t.Fatalf("summary missing artifact detail:\n%s", output)
 	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_entry_key_count=7") {
 		t.Fatalf("summary missing manifest key count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_key_count=7") {
+		t.Fatalf("summary missing manifest artifact key count:\n%s", output)
 	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_clean_entries=1") {
 		t.Fatalf("summary missing manifest clean entry count:\n%s", output)
@@ -129,8 +132,8 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestUsesActiveCatalog(t *testing
 	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
 		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
 	}
-	if artifact.Path != "bitmap/sample/id" {
-		t.Fatalf("artifact path = %q, want bitmap/sample/id", artifact.Path)
+	if artifact.Path != "bitmap/sample/id/bsi" {
+		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
 	}
 }
 
@@ -162,7 +165,7 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestDescribesCompoundAuthorityAr
 	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
 		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
 	}
-	if artifact.Path != "bitmap/lineitem/"+shared.CompoundPrimaryKeyAuthorityFieldName {
+	if artifact.Path != "bitmap/lineitem/"+shared.CompoundPrimaryKeyAuthorityFieldName+"/bsi" {
 		t.Fatalf("artifact path = %q, want compound authority BSI path", artifact.Path)
 	}
 }
@@ -229,7 +232,7 @@ func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(
 	dataDir := filepath.Join(root, "data")
 	configDir := filepath.Join(dataDir, "config")
 	writeStandardTestSchema(t, configDir, "sample")
-	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id")
+	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id", "bsi", "default")
 	if err := os.MkdirAll(artifactDir, 0755); err != nil {
 		t.Fatalf("mkdir artifact dir: %v", err)
 	}

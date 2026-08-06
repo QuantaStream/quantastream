@@ -1291,7 +1291,7 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 }
 
 func (m *BitmapIndex) persistenceDisabled() bool {
-	return m.ServicePort == 0 && (m.Conn == nil || !m.IsLocalCluster)
+	return m.ServicePort == 0 && m.Conn == nil && !m.IsLocalCluster
 }
 
 // BulkClear - Batch "delete".

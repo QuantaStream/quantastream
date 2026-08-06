@@ -153,6 +153,8 @@ type BSIPrimaryKeyAuthorityManifestObservation struct {
 	ArtifactMissing     int
 	ArtifactFileCount   uint64
 	EntryKeyCount       uint64
+	ArtifactKeyCount    uint64
+	KeyCountMismatches  int
 	CleanEntries        int
 	DirtyEntries        int
 }
@@ -262,7 +264,7 @@ func NewBSIPrimaryKeyAuthorityManifestEntry(table *Table, logicalShard string) (
 
 // ObserveAgainstCatalog validates the manifest against the current table cache.
 func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]*Table) BSIPrimaryKeyAuthorityManifestObservation {
-	artifactDescriptors, entryKeyCount, cleanEntries, dirtyEntries := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
+	artifactDescriptors, entryKeyCount, artifactKeyCount, keyCountMismatches, cleanEntries, dirtyEntries := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
 	observation := BSIPrimaryKeyAuthorityManifestObservation{
 		Status:              BSIPrimaryKeyAuthorityManifestStatusOK,
 		ValidationLevel:     BSIPrimaryKeyAuthorityManifestValidationManifestOnly,
@@ -271,6 +273,8 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 		Entries:             len(m.Entries),
 		ArtifactDescriptors: artifactDescriptors,
 		EntryKeyCount:       entryKeyCount,
+		ArtifactKeyCount:    artifactKeyCount,
+		KeyCountMismatches:  keyCountMismatches,
 		CleanEntries:        cleanEntries,
 		DirtyEntries:        dirtyEntries,
 	}
@@ -332,21 +336,35 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 	return observation
 }
 
-func summarizeBSIPrimaryKeyAuthorityManifestEntries(entries []BSIPrimaryKeyAuthorityManifestEntry) (int, uint64, int, int) {
+func summarizeBSIPrimaryKeyAuthorityManifestEntries(entries []BSIPrimaryKeyAuthorityManifestEntry) (int, uint64, uint64, int, int, int) {
 	artifactDescriptors := 0
 	var entryKeyCount uint64
+	var artifactKeyCount uint64
+	keyCountMismatches := 0
 	cleanEntries := 0
 	dirtyEntries := 0
 	for _, entry := range entries {
 		artifactDescriptors += len(entry.Artifacts)
 		entryKeyCount += entry.KeyCount
+		var entryArtifactKeyCount uint64
+		entryHasArtifactKeyCount := false
+		for _, artifact := range entry.Artifacts {
+			if artifact.KeyCount != 0 {
+				entryHasArtifactKeyCount = true
+				entryArtifactKeyCount += artifact.KeyCount
+			}
+		}
+		artifactKeyCount += entryArtifactKeyCount
+		if entry.KeyCount != 0 && entryHasArtifactKeyCount && entry.KeyCount != entryArtifactKeyCount {
+			keyCountMismatches++
+		}
 		if entry.Clean {
 			cleanEntries++
 		} else {
 			dirtyEntries++
 		}
 	}
-	return artifactDescriptors, entryKeyCount, cleanEntries, dirtyEntries
+	return artifactDescriptors, entryKeyCount, artifactKeyCount, keyCountMismatches, cleanEntries, dirtyEntries
 }
 
 func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityManifestEntry, table *Table) (string, string) {

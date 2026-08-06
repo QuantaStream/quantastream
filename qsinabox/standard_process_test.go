@@ -1022,6 +1022,64 @@ func TestStandardProcessExecutesGroupedBooleanFilterThroughLocalFrontDoor(t *tes
 		t.Fatalf("grouped boolean SELECT rows = %#v, want count 2", chunk.Rows)
 	}
 }
+
+func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommittedInsert(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	requireStandardProcessSQLSuccess(t, process, "insert into sample (id, city) values (101, 'Buenos Aires')")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+	process.Close()
+
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest() error = %v", err)
+	}
+	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
+		t.Fatalf("manifest entries = %+v, want one BSI authority artifact", manifest.Entries)
+	}
+	artifact := manifest.Entries[0].Artifacts[0]
+	if artifact.Path != "bitmap/sample/id/bsi" {
+		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
+	}
+
+	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
+	}
+	if observation.ArtifactPresence != core.BSIPrimaryKeyAuthorityArtifactPresencePresent {
+		t.Fatalf("artifact presence = %s detail=%s, want present", observation.ArtifactPresence, observation.ArtifactDetail)
+	}
+	if observation.ArtifactFileCount == 0 {
+		t.Fatalf("artifact file count = 0, want persisted BSI files")
+	}
+
+	loader := StandardBSIPrimaryKeyAuthorityArtifactLoader{Config: config}
+	result, err := loader.LoadBSIPrimaryKeyAuthorityArtifact(core.BSIPrimaryKeyAuthorityArtifactLoadRequest{
+		Entry:    manifest.Entries[0],
+		Artifact: artifact,
+	})
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityArtifact() error = %v", err)
+	}
+	if result.FileCount != observation.ArtifactFileCount {
+		t.Fatalf("loader file count = %d, want observed file count %d", result.FileCount, observation.ArtifactFileCount)
+	}
+}
+
 func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

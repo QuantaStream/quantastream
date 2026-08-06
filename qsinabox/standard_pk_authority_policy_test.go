@@ -53,3 +53,20 @@ func TestStandardBSIPrimaryKeyAuthorityPolicyTrustsOKManifest(t *testing.T) {
 		t.Fatalf("Warning = %q, want no warning for OK manifest", policy.Warning)
 	}
 }
+
+func TestStandardBSIPrimaryKeyAuthorityPolicyCanRequirePhysicalArtifacts(t *testing.T) {
+	policy := standardBSIPrimaryKeyAuthorityPolicyForObservationWithOptions(core.BSIPrimaryKeyAuthorityManifestObservation{
+		Status:           core.BSIPrimaryKeyAuthorityManifestStatusOK,
+		ArtifactPresence: core.BSIPrimaryKeyAuthorityArtifactPresenceMissing,
+		ArtifactDetail:   "artifact path missing: bitmap/sample/id/bsi",
+	}, standardBSIPrimaryKeyAuthorityPolicyOptions{
+		RequirePhysicalArtifacts: true,
+	})
+
+	if !policy.BlockMutations {
+		t.Fatalf("BlockMutations = false, want strict artifact policy to fail closed")
+	}
+	if !strings.Contains(policy.Warning, "physical artifacts") || !strings.Contains(policy.Warning, "bitmap/sample/id/bsi") {
+		t.Fatalf("Warning = %q, want physical artifact warning with detail", policy.Warning)
+	}
+}

@@ -12,11 +12,19 @@ type standardBSIPrimaryKeyAuthorityPolicy struct {
 	BlockMutations bool
 }
 
+type standardBSIPrimaryKeyAuthorityPolicyOptions struct {
+	RequirePhysicalArtifacts bool
+}
+
 func observeStandardBSIPrimaryKeyAuthorityPolicy(config StandardConfig) standardBSIPrimaryKeyAuthorityPolicy {
 	return standardBSIPrimaryKeyAuthorityPolicyForObservation(ObserveStandardBSIPrimaryKeyAuthorityManifest(config))
 }
 
 func standardBSIPrimaryKeyAuthorityPolicyForObservation(observation core.BSIPrimaryKeyAuthorityManifestObservation) standardBSIPrimaryKeyAuthorityPolicy {
+	return standardBSIPrimaryKeyAuthorityPolicyForObservationWithOptions(observation, standardBSIPrimaryKeyAuthorityPolicyOptions{})
+}
+
+func standardBSIPrimaryKeyAuthorityPolicyForObservationWithOptions(observation core.BSIPrimaryKeyAuthorityManifestObservation, options standardBSIPrimaryKeyAuthorityPolicyOptions) standardBSIPrimaryKeyAuthorityPolicy {
 	policy := standardBSIPrimaryKeyAuthorityPolicy{
 		Observation: observation,
 	}
@@ -30,6 +38,18 @@ func standardBSIPrimaryKeyAuthorityPolicyForObservation(observation core.BSIPrim
 			detail = "no detail"
 		}
 		policy.Warning = fmt.Sprintf("BSI primary-key authority manifest is %s; mutations fail closed until the manifest is repaired: %s", observation.Status, detail)
+	}
+	if !policy.BlockMutations && options.RequirePhysicalArtifacts && observation.Status == core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		switch observation.ArtifactPresence {
+		case core.BSIPrimaryKeyAuthorityArtifactPresencePresent, core.BSIPrimaryKeyAuthorityArtifactPresenceNone:
+		default:
+			policy.BlockMutations = true
+			detail := observation.ArtifactDetail
+			if detail == "" {
+				detail = fmt.Sprintf("artifact presence=%s", observation.ArtifactPresence)
+			}
+			policy.Warning = fmt.Sprintf("BSI primary-key authority physical artifacts are not fully present; mutations fail closed until authority artifacts are repaired: %s", detail)
+		}
 	}
 	return policy
 }
