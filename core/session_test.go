@@ -3,6 +3,8 @@ package core
 import (
 	"errors"
 	"math/big"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -619,6 +621,21 @@ func TestSetPrimaryKeyResolverNilClearsAuthorityAndFailsClosed(t *testing.T) {
 
 	_, ok := session.primaryKeyColumnIDResolver().(MissingPrimaryKeyResolver)
 	require.True(t, ok, "nil resolver should leave primary-key authority unconfigured")
+}
+
+func TestSessionDoesNotInstallAmbientKVPrimaryKeyAuthority(t *testing.T) {
+	source, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatalf("ReadFile(session.go) error = %v", err)
+	}
+	for _, forbidden := range []string{
+		"s.primaryKeyResolver = KVPrimaryKeyResolver{}",
+		"return KVPrimaryKeyResolver{}",
+	} {
+		if strings.Contains(string(source), forbidden) {
+			t.Fatalf("session.go contains ambient KV primary-key authority pattern %q", forbidden)
+		}
+	}
 }
 
 func TestMissingPrimaryKeyResolverFailsClosed(t *testing.T) {

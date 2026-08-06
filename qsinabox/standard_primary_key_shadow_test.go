@@ -12,18 +12,20 @@ const (
 	primaryKeyShadowBSIMode    = "bsi"
 )
 
-// primaryKeyAuthorityModeEnv treats the empty mode as the temporary KV-backed
-// reference baseline used by ingest benchmarks. It is not the standard-mode
-// product authority path; production standard sessions inject BSI authority.
+// primaryKeyAuthorityModeEnv treats the empty mode as the standard BSI
+// authority path. KV authority is available only through explicit shadow
+// comparison wiring.
 func primaryKeyAuthorityModeEnv(name string) (string, error) {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
 	switch value {
-	case "", "none", "off", "false", "0", "kv", "default":
-		return "", nil
-	case primaryKeyAuthorityBSIMode, "memory_bsi", "native_bsi", "typed_bsi":
+	case "", "default", primaryKeyAuthorityBSIMode, "memory_bsi", "native_bsi", "typed_bsi":
 		return primaryKeyAuthorityBSIMode, nil
+	case "none", "off", "false", "0":
+		return "", nil
+	case "kv":
+		return "", fmt.Errorf("%s no longer accepts kv authority; use QUANTASTREAM_TPCH_INGEST_BENCH_PK_SHADOW=bsi for transition comparison", name)
 	default:
-		return "", fmt.Errorf("%s must be one of none, off, kv, default, bsi, memory_bsi, native_bsi, or typed_bsi: %q", name, value)
+		return "", fmt.Errorf("%s must be one of default, bsi, memory_bsi, native_bsi, typed_bsi, none, off, false, or 0: %q", name, value)
 	}
 }
 
@@ -59,17 +61,28 @@ func TestPrimaryKeyBenchmarkModeEnvAcceptsNativeBSIAliases(t *testing.T) {
 	}
 }
 
-func TestPrimaryKeyBenchmarkAuthorityModeKeepsKVAsReferenceBaseline(t *testing.T) {
-	for _, value := range []string{"", "none", "kv", "default"} {
+func TestPrimaryKeyBenchmarkAuthorityModeDefaultsToBSI(t *testing.T) {
+	for _, value := range []string{"", "default"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("QS_TEST_PK_AUTHORITY", value)
 			authority, err := primaryKeyAuthorityModeEnv("QS_TEST_PK_AUTHORITY")
 			if err != nil {
 				t.Fatalf("primaryKeyAuthorityModeEnv(%q) error = %v", value, err)
 			}
-			if authority != "" {
-				t.Fatalf("authority mode = %q, want empty reference-baseline mode for %q", authority, value)
+			if authority != primaryKeyAuthorityBSIMode {
+				t.Fatalf("authority mode = %q, want BSI authority mode for %q", authority, value)
 			}
 		})
+	}
+}
+
+func TestPrimaryKeyBenchmarkAuthorityModeRejectsKVDefault(t *testing.T) {
+	t.Setenv("QS_TEST_PK_AUTHORITY", "kv")
+	_, err := primaryKeyAuthorityModeEnv("QS_TEST_PK_AUTHORITY")
+	if err == nil {
+		t.Fatalf("primaryKeyAuthorityModeEnv(kv) error = nil, want explicit shadow guidance")
+	}
+	if !strings.Contains(err.Error(), "PK_SHADOW=bsi") {
+		t.Fatalf("primaryKeyAuthorityModeEnv(kv) error = %v, want shadow guidance", err)
 	}
 }

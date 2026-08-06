@@ -435,6 +435,28 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHBatchEnvelopes(t *testing.T) 
 	}
 }
 
+func TestStandardProcessNativeGRPCRouterDefaultsToBSIPrimaryKeyAuthority(t *testing.T) {
+	result := runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(t, standardTPCHRouterIngestScenario{
+		OrderCount:        2,
+		LineitemsPerOrder: 3,
+		ShardCount:        1,
+		SourceMode:        core.IngestSourceStream,
+		ReplayCount:       2,
+	})
+
+	requirePrimaryKeyTableProfile(t, result.PutProfile, "orders", core.PrimaryKeyResolveProfile{
+		ResolveCount:        4,
+		DirectColumnIDCount: 4,
+	})
+	requirePrimaryKeyTableProfile(t, result.PutProfile, "lineitem", core.PrimaryKeyResolveProfile{
+		ResolveCount:        12,
+		LookupRequiredCount: 12,
+		BSILookupCount:      12,
+		BSIHitCount:         6,
+		BSIStageWriteCount:  6,
+	})
+}
+
 func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *testing.T) {
 	orderCount := 2
 	lineitemsPerOrder := 3
