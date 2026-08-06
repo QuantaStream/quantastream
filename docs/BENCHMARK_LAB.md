@@ -274,14 +274,17 @@ operation. This is useful for primary-key resolver experiments because the
 second and later passes exercise existing-key behavior without changing the
 logical input shape.
 
-`PRIMARY_KEY_AUTHORITY=bsi` is an experimental benchmark-only lane. It routes
-primary-key resolution through the in-memory BSI primary-key fixture behind the
-resolver interface so we can compare semantics and directional cost against the
-KV-backed resolver. It is not a production storage design yet, and it should
-not be combined with `PRIMARY_KEY_SHADOW=bsi`; shadow mode already compares the
-BSI view against the authoritative KV path.
+`PRIMARY_KEY_AUTHORITY=bsi` selects the go-forward native BSI primary-key
+authority lane for the benchmark. Leaving `PRIMARY_KEY_AUTHORITY` unset, or
+setting it to `none`, `kv`, or `default`, intentionally uses the temporary
+KV-backed reference baseline so directional cost can still be compared. Treat
+that KV baseline as diagnostic only, not as the product authority design.
+Do not combine `PRIMARY_KEY_AUTHORITY=bsi` with `PRIMARY_KEY_SHADOW=bsi`;
+shadow mode already compares the BSI view against the temporary KV reference
+path.
 
-Compare KV authority against BSI authority with replayed inputs:
+Compare the temporary KV reference baseline against BSI authority with replayed
+inputs:
 
 ```bash
 cd /home/gmolinari/projects/quantastream/tpc-h-benchmark

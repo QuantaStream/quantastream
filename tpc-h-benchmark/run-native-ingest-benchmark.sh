@@ -67,6 +67,9 @@ echo "replays=${REPLAYS}"
 echo "primary_key_mode=${PRIMARY_KEY_MODE}"
 echo "primary_key_authority=${PRIMARY_KEY_AUTHORITY}"
 echo "primary_key_shadow=${PRIMARY_KEY_SHADOW}"
+if [[ "${PRIMARY_KEY_AUTHORITY}" == "none" || "${PRIMARY_KEY_AUTHORITY}" == "kv" || "${PRIMARY_KEY_AUTHORITY}" == "default" ]]; then
+  echo "primary_key_authority_note=kv_reference_baseline_not_product_path"
+fi
 echo "report=${BENCHMARK_REPORT}"
 echo "log=${LOG_FILE}"
 if [[ -n "${GOWORK:-}" ]]; then

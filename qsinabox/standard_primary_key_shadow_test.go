@@ -12,6 +12,9 @@ const (
 	primaryKeyShadowBSIMode    = "bsi"
 )
 
+// primaryKeyAuthorityModeEnv treats the empty mode as the temporary KV-backed
+// reference baseline used by ingest benchmarks. It is not the standard-mode
+// product authority path; production standard sessions inject BSI authority.
 func primaryKeyAuthorityModeEnv(name string) (string, error) {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
 	switch value {
@@ -53,5 +56,20 @@ func TestPrimaryKeyBenchmarkModeEnvAcceptsNativeBSIAliases(t *testing.T) {
 	}
 	if shadow != primaryKeyShadowBSIMode {
 		t.Fatalf("shadow mode = %q, want %q", shadow, primaryKeyShadowBSIMode)
+	}
+}
+
+func TestPrimaryKeyBenchmarkAuthorityModeKeepsKVAsReferenceBaseline(t *testing.T) {
+	for _, value := range []string{"", "none", "kv", "default"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("QS_TEST_PK_AUTHORITY", value)
+			authority, err := primaryKeyAuthorityModeEnv("QS_TEST_PK_AUTHORITY")
+			if err != nil {
+				t.Fatalf("primaryKeyAuthorityModeEnv(%q) error = %v", value, err)
+			}
+			if authority != "" {
+				t.Fatalf("authority mode = %q, want empty reference-baseline mode for %q", authority, value)
+			}
+		})
 	}
 }
