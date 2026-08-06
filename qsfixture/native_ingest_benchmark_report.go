@@ -499,7 +499,7 @@ func renderNativeIngestBenchmarkConfigMarkdown(builder *strings.Builder, compari
 	writeNativeIngestBenchmarkConfigRow(builder, "Runs", configIntString(comparison.Baseline.Config.RunCount), configIntString(comparison.Target.Config.RunCount))
 	writeNativeIngestBenchmarkConfigRow(builder, "Replays", replayConfigString(comparison.Baseline.Config.ReplayCount), replayConfigString(comparison.Target.Config.ReplayCount))
 	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key mode", defaultConfigString(comparison.Baseline.Config.PrimaryKeyMode, "verify_existing"), defaultConfigString(comparison.Target.Config.PrimaryKeyMode, "verify_existing"))
-	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key authority", defaultConfigString(comparison.Baseline.Config.PrimaryKeyAuthority, "kv"), defaultConfigString(comparison.Target.Config.PrimaryKeyAuthority, "kv"))
+	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key authority", defaultConfigString(comparison.Baseline.Config.PrimaryKeyAuthority, "bsi"), defaultConfigString(comparison.Target.Config.PrimaryKeyAuthority, "bsi"))
 	writeNativeIngestBenchmarkConfigRow(builder, "Primary-key shadow", defaultConfigString(comparison.Baseline.Config.PrimaryKeyShadow, "none"), defaultConfigString(comparison.Target.Config.PrimaryKeyShadow, "none"))
 	builder.WriteString("\n")
 }

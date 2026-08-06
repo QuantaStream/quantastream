@@ -12,7 +12,7 @@ RUNS="${RUNS:-3}"
 REPLAYS="${REPLAYS:-1}"
 PROFILE="${PROFILE:-standard-native-tpch-ingest}"
 PRIMARY_KEY_MODE="${PRIMARY_KEY_MODE:-verify_existing}"
-PRIMARY_KEY_AUTHORITY="${PRIMARY_KEY_AUTHORITY:-none}"
+PRIMARY_KEY_AUTHORITY="${PRIMARY_KEY_AUTHORITY:-default}"
 PRIMARY_KEY_SHADOW="${PRIMARY_KEY_SHADOW:-none}"
 BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${SCRIPT_DIR}/local/ingest-benchmarks/${RUN_ID}}"
 
@@ -67,8 +67,15 @@ echo "replays=${REPLAYS}"
 echo "primary_key_mode=${PRIMARY_KEY_MODE}"
 echo "primary_key_authority=${PRIMARY_KEY_AUTHORITY}"
 echo "primary_key_shadow=${PRIMARY_KEY_SHADOW}"
-if [[ "${PRIMARY_KEY_AUTHORITY}" == "none" || "${PRIMARY_KEY_AUTHORITY}" == "kv" || "${PRIMARY_KEY_AUTHORITY}" == "default" ]]; then
-  echo "primary_key_authority_note=kv_reference_baseline_not_product_path"
+if [[ "${PRIMARY_KEY_AUTHORITY}" == "default" || "${PRIMARY_KEY_AUTHORITY}" == "bsi" || "${PRIMARY_KEY_AUTHORITY}" == "native_bsi" || "${PRIMARY_KEY_AUTHORITY}" == "typed_bsi" ]]; then
+  echo "primary_key_authority_note=bsi_default_product_path"
+elif [[ "${PRIMARY_KEY_AUTHORITY}" == "kv" ]]; then
+  echo "primary_key_authority_note=kv_authority_rejected_transition_only"
+elif [[ "${PRIMARY_KEY_AUTHORITY}" == "none" || "${PRIMARY_KEY_AUTHORITY}" == "off" ]]; then
+  echo "primary_key_authority_note=no_explicit_authority_diagnostic_only"
+fi
+if [[ "${PRIMARY_KEY_SHADOW}" == "bsi" ]]; then
+  echo "primary_key_shadow_note=transition_comparison_only"
 fi
 echo "report=${BENCHMARK_REPORT}"
 echo "log=${LOG_FILE}"

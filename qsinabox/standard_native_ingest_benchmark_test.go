@@ -394,7 +394,7 @@ func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteAutho
 	}
 }
 
-func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesConcreteShadow(t *testing.T) {
+func TestStandardNativeIngestBenchmarkPrimaryKeyResolverFactoryUsesTransitionShadow(t *testing.T) {
 	factory := standardNativeIngestBenchmarkPrimaryKeyResolverFactory(
 		"",
 		primaryKeyShadowBSIMode,

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -636,6 +637,50 @@ func TestSessionDoesNotInstallAmbientKVPrimaryKeyAuthority(t *testing.T) {
 			t.Fatalf("session.go contains ambient KV primary-key authority pattern %q", forbidden)
 		}
 	}
+}
+
+func TestKVPrimaryKeyResolverReferencesStayTransitionOnly(t *testing.T) {
+	allowedFiles := map[string]bool{
+		"core/primary_key_kv_transition.go":                 true,
+		"core/session.go":                                   true,
+		"core/session_test.go":                              true,
+		"qsinabox/standard_native_ingest_benchmark_test.go": true,
+		"qsinabox/standard_process_test.go":                 true,
+	}
+	var unexpected []string
+	err := filepath.WalkDir("..", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "bin", "local", "node_modules", "tmp":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(source), "KVPrimaryKeyResolver") {
+			return nil
+		}
+		rel, err := filepath.Rel("..", path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if !allowedFiles[rel] {
+			unexpected = append(unexpected, rel)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Empty(t, unexpected, "KVPrimaryKeyResolver references must stay transition-only")
 }
 
 func TestMissingPrimaryKeyResolverFailsClosed(t *testing.T) {

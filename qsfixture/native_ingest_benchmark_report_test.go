@@ -501,7 +501,7 @@ func TestCompareNativeIngestBenchmarkReportsRendersMarkdown(t *testing.T) {
 		"| Shards | 1 | 4 |",
 		"| Runs | 1 | 3 |",
 		"| Replays | 1 | 2 |",
-		"| Primary-key authority | kv | bsi |",
+		"| Primary-key authority | bsi | bsi |",
 		"## Load Path Summary",
 		"| Signal | Baseline | Target | Delta | Ratio | Direction |",
 		"| Logical rows/sec | 1000 rows/s | 1500 rows/s | 500 rows/s | 1.50x | better |",

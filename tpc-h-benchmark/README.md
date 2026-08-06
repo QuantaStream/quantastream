@@ -214,13 +214,12 @@ PROFILE=standard-native-tpch-ingest \
   ./run-native-ingest-benchmark.sh
 ```
 
-Set `PRIMARY_KEY_AUTHORITY=bsi` to benchmark the go-forward native BSI
-primary-key authority lane. Leaving it unset uses the temporary KV-backed
-reference baseline for comparison only; that baseline is not the product
-authority design. Set `PRIMARY_KEY_SHADOW=bsi` to keep the KV reference
-baseline authoritative while shadow-validating the BSI resolver path during the
-run. Shadow mismatches fail the benchmark and the JSON report records shadow
-comparison counts.
+`PRIMARY_KEY_AUTHORITY` defaults to the go-forward native BSI primary-key
+authority lane. Explicit `bsi` and `default` values select the same product
+path. Set `PRIMARY_KEY_SHADOW=bsi` only for transition comparison runs that
+deliberately keep the KV resolver on the authority side while validating BSI as
+a shadow. Shadow mismatches fail the benchmark and the JSON report records
+shadow comparison counts.
 
 Reports and logs are written under
 `tpc-h-benchmark/local/ingest-benchmarks/<timestamp>/` by default. Override

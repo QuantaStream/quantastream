@@ -457,7 +457,7 @@ func TestStandardProcessNativeGRPCRouterDefaultsToBSIPrimaryKeyAuthority(t *test
 	})
 }
 
-func TestStandardProcessNativeGRPCRouterReplayValidatesBSIPrimaryKeyShadow(t *testing.T) {
+func TestStandardProcessNativeGRPCRouterReplayValidatesTransitionPrimaryKeyShadow(t *testing.T) {
 	orderCount := 2
 	lineitemsPerOrder := 3
 	replayCount := 2

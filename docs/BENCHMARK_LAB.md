@@ -235,7 +235,8 @@ PROFILE=standard-native-tpch-ingest \
 
 Set `PRIMARY_KEY_MODE=assume_new` only for validated fresh-load runs where the
 input is known not to contain existing primary keys. The default
-`verify_existing` mode preserves idempotent KV-backed primary-key checks.
+`verify_existing` mode preserves idempotent primary-key checks through the
+configured authority. The product/default authority is BSI-backed.
 
 Compare the guarded fresh-load path against the conservative default with:
 
@@ -274,30 +275,18 @@ operation. This is useful for primary-key resolver experiments because the
 second and later passes exercise existing-key behavior without changing the
 logical input shape.
 
-`PRIMARY_KEY_AUTHORITY=bsi` selects the go-forward native BSI primary-key
-authority lane for the benchmark. Leaving `PRIMARY_KEY_AUTHORITY` unset, or
-setting it to `none`, `kv`, or `default`, intentionally uses the temporary
-KV-backed reference baseline so directional cost can still be compared. Treat
-that KV baseline as diagnostic only, not as the product authority design.
-Do not combine `PRIMARY_KEY_AUTHORITY=bsi` with `PRIMARY_KEY_SHADOW=bsi`;
-shadow mode already compares the BSI view against the temporary KV reference
-path.
+`PRIMARY_KEY_AUTHORITY` defaults to the go-forward native BSI primary-key
+authority lane. Explicit `bsi` and `default` values select the same product
+path. The old KV authority path is transition-only and is rejected as a default
+benchmark authority; use `PRIMARY_KEY_SHADOW=bsi` only when deliberately
+running a one-off comparison with KV as the authority side and BSI as the
+shadow side.
 
-Compare the temporary KV reference baseline against BSI authority with replayed
-inputs:
+Compare BSI authority behavior with and without the transition shadow using
+replayed inputs:
 
 ```bash
 cd /home/gmolinari/projects/quantastream/tpc-h-benchmark
-
-BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
-PROFILE=kv-authority-replay-4shards \
-ORDERS=100 \
-LINEITEMS=4 \
-SHARDS=4 \
-RUNS=1 \
-REPLAYS=2 \
-BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/kv.json \
-  ./run-native-ingest-benchmark.sh
 
 BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
 PROFILE=bsi-authority-replay-4shards \
@@ -306,13 +295,23 @@ LINEITEMS=4 \
 SHARDS=4 \
 RUNS=1 \
 REPLAYS=2 \
-PRIMARY_KEY_AUTHORITY=bsi \
 BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/bsi.json \
   ./run-native-ingest-benchmark.sh
 
+BENCHMARK_OUTPUT_DIR=local/ingest-benchmarks/pk-authority-replay \
+PROFILE=transition-shadow-replay-4shards \
+ORDERS=100 \
+LINEITEMS=4 \
+SHARDS=4 \
+RUNS=1 \
+REPLAYS=2 \
+PRIMARY_KEY_SHADOW=bsi \
+BENCHMARK_REPORT=local/ingest-benchmarks/pk-authority-replay/transition-shadow.json \
+  ./run-native-ingest-benchmark.sh
+
 ./run-native-ingest-compare.sh \
-  local/ingest-benchmarks/pk-authority-replay/kv.json \
   local/ingest-benchmarks/pk-authority-replay/bsi.json \
+  local/ingest-benchmarks/pk-authority-replay/transition-shadow.json \
   local/ingest-benchmarks/pk-authority-replay/comparison.md
 ```
 
