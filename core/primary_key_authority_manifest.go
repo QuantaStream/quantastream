@@ -38,6 +38,23 @@ const (
 	// BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI identifies the physical
 	// BSI authority artifact used to map primary-key identity values to rownums.
 	BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI = "primary_key_bsi"
+
+	// BSIPrimaryKeyAuthorityManifestValidationNone means no manifest validation
+	// was possible, usually because no manifest exists.
+	BSIPrimaryKeyAuthorityManifestValidationNone = "none"
+
+	// BSIPrimaryKeyAuthorityManifestValidationManifestOnly means startup has
+	// validated manifest metadata against the catalog but has not validated
+	// physical authority artifacts.
+	BSIPrimaryKeyAuthorityManifestValidationManifestOnly = "manifest_only"
+
+	// BSIPrimaryKeyAuthorityArtifactTrustNone means no artifact trust decision
+	// exists.
+	BSIPrimaryKeyAuthorityArtifactTrustNone = "none"
+
+	// BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly means artifact descriptors
+	// are metadata only and are not yet trusted as durable authority.
+	BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly = "metadata_only"
 )
 
 // BSIPrimaryKeyAuthorityManifest records the logical identity contract for
@@ -106,6 +123,8 @@ type BSIPrimaryKeyAuthorityManifestObservation struct {
 	Status              string
 	Detail              string
 	ManifestEntry       string
+	ValidationLevel     string
+	ArtifactTrust       string
 	Entries             int
 	ArtifactDescriptors int
 	EntryKeyCount       uint64
@@ -221,6 +240,8 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 	artifactDescriptors, entryKeyCount, cleanEntries, dirtyEntries := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
 	observation := BSIPrimaryKeyAuthorityManifestObservation{
 		Status:              BSIPrimaryKeyAuthorityManifestStatusOK,
+		ValidationLevel:     BSIPrimaryKeyAuthorityManifestValidationManifestOnly,
+		ArtifactTrust:       BSIPrimaryKeyAuthorityArtifactTrustMetadataOnly,
 		Entries:             len(m.Entries),
 		ArtifactDescriptors: artifactDescriptors,
 		EntryKeyCount:       entryKeyCount,
@@ -229,6 +250,8 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 	}
 	if m.Version == 0 && len(m.Entries) == 0 {
 		observation.Status = BSIPrimaryKeyAuthorityManifestStatusMissing
+		observation.ValidationLevel = BSIPrimaryKeyAuthorityManifestValidationNone
+		observation.ArtifactTrust = BSIPrimaryKeyAuthorityArtifactTrustNone
 		observation.Detail = "manifest is empty"
 		return observation
 	}

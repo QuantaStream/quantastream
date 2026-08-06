@@ -60,6 +60,12 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	if !strings.Contains(output, "bsi_pk_authority_manifest_entries=1") {
 		t.Fatalf("summary missing manifest entry count:\n%s", output)
 	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_validation=manifest_only") {
+		t.Fatalf("summary missing manifest validation level:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifact_trust=metadata_only") {
+		t.Fatalf("summary missing manifest artifact trust:\n%s", output)
+	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts=1") {
 		t.Fatalf("summary missing manifest artifact count:\n%s", output)
 	}

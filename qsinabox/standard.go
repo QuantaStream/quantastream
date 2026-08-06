@@ -159,6 +159,12 @@ func (p StandardPlan) SummaryLines() []string {
 			fmt.Sprintf("bsi_pk_authority_manifest=%s", p.PKAuthority.Status),
 			fmt.Sprintf("bsi_pk_authority_manifest_entries=%d", p.PKAuthority.Entries),
 		)
+		if p.PKAuthority.ValidationLevel != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_validation="+p.PKAuthority.ValidationLevel)
+		}
+		if p.PKAuthority.ArtifactTrust != "" {
+			lines = append(lines, "bsi_pk_authority_manifest_artifact_trust="+p.PKAuthority.ArtifactTrust)
+		}
 		if p.PKAuthority.ArtifactDescriptors != 0 {
 			lines = append(lines, fmt.Sprintf("bsi_pk_authority_manifest_artifacts=%d", p.PKAuthority.ArtifactDescriptors))
 		}
