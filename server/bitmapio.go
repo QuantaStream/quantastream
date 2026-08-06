@@ -137,12 +137,7 @@ func (m *BitmapIndex) saveCompleteStandardBundle(bitmaps map[uint64]*StandardBit
 		return 0, err
 	}
 	_, bundlePath := m.standardBitmapBundleFilePath(indexName, fieldName, ts, tqType)
-	tmpPath := bundlePath + ".tmp"
-	if err := os.WriteFile(tmpPath, bundle, 0666); err != nil {
-		return 0, err
-	}
-	if err := os.Rename(tmpPath, bundlePath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
 		return 0, err
 	}
 	if err := m.removeLegacyStandardBitmapShardFiles(indexName, fieldName, ts, tqType); err != nil {
@@ -315,12 +310,7 @@ func (m *BitmapIndex) saveCompleteBSI(bsi *BSIBitmap, indexName, fieldName strin
 		return err
 	}
 	dir, bundlePath := m.bsiBundleFilePath(indexName, fieldName, ts, bsi.TQType)
-	tmpPath := bundlePath + ".tmp"
-	if err := os.WriteFile(tmpPath, bundle, 0666); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, bundlePath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
 		return err
 	}
 	return removeLegacyBSISliceFiles(dir)
@@ -390,13 +380,47 @@ func decodeBSIBundle(data []byte) ([][]byte, error) {
 	return chunks, nil
 }
 
+func writeAtomicBundleFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
 func removeLegacyBSISliceFiles(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == bsiBundleFileName {
+		if entry.IsDir() || entry.Name() == bsiBundleFileName || strings.HasSuffix(entry.Name(), ".tmp") {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
@@ -639,6 +663,9 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 				return err
 			}
 			if info.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(info.Name(), ".tmp") {
 				return nil
 			}
 			fileCount++
