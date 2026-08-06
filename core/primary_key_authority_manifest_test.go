@@ -39,6 +39,9 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsOK(t *testing.T) {
 	if entry.EncodingVersion != PrimaryKeyIdentityEncodingVersion {
 		t.Fatalf("entry encoding version = %d, want %d", entry.EncodingVersion, PrimaryKeyIdentityEncodingVersion)
 	}
+	if entry.AuthorityMode != BSIPrimaryKeyAuthorityModeCompoundEncodedBSI {
+		t.Fatalf("entry authority mode = %q, want %q", entry.AuthorityMode, BSIPrimaryKeyAuthorityModeCompoundEncodedBSI)
+	}
 }
 
 func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
@@ -85,6 +88,9 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	if !strings.Contains(string(data), "encoding_version") {
 		t.Fatalf("saved manifest did not include encoding_version:\n%s", string(data))
 	}
+	if !strings.Contains(string(data), "authority_mode") {
+		t.Fatalf("saved manifest did not include authority_mode:\n%s", string(data))
+	}
 	if !strings.Contains(string(data), "artifacts:") || !strings.Contains(string(data), "catalog_fingerprint") {
 		t.Fatalf("saved manifest did not include artifact metadata:\n%s", string(data))
 	}
@@ -109,6 +115,9 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("loaded entries = %+v", loaded.Entries)
 	}
 	loadedEntry := loaded.Entries[0]
+	if loadedEntry.AuthorityMode != entry.AuthorityMode {
+		t.Fatalf("loaded authority mode = %q, want %q", loadedEntry.AuthorityMode, entry.AuthorityMode)
+	}
 	if loadedEntry.KeyCount != entry.KeyCount || loadedEntry.MinColumnID != entry.MinColumnID || loadedEntry.MaxColumnID != entry.MaxColumnID {
 		t.Fatalf("loaded entry bounds/count = key_count:%d min:%d max:%d", loadedEntry.KeyCount, loadedEntry.MinColumnID, loadedEntry.MaxColumnID)
 	}
@@ -272,6 +281,34 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsStaleEncodingVersionMis
 	}
 	if len(entry.Fields) != 2 || entry.Fields[0].Name != "l_shipdate" {
 		t.Fatalf("time quantum field was not included first: %+v", entry.Fields)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationReportsStaleAuthorityModeMismatch(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey+l_linenumber", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", true),
+		testPrimaryKeyAuthorityAttribute("l_linenumber", "Integer", "IntBSI", false),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.AuthorityMode = BSIPrimaryKeyAuthorityModeSingleColumnBSI
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"lineitem": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusStale {
+		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusStale)
+	}
+	if !strings.Contains(observation.Detail, "authority mode") {
+		t.Fatalf("observation detail = %q", observation.Detail)
 	}
 }
 

@@ -54,6 +54,7 @@ type BSIPrimaryKeyAuthorityManifestEntry struct {
 	SchemaName         string                                   `yaml:"schema_name,omitempty" json:"schema_name,omitempty"`
 	TableName          string                                   `yaml:"table" json:"table"`
 	PrimaryKey         string                                   `yaml:"primary_key" json:"primary_key"`
+	AuthorityMode      string                                   `yaml:"authority_mode,omitempty" json:"authority_mode,omitempty"`
 	EncodingVersion    int                                      `yaml:"encoding_version" json:"encoding_version"`
 	Fields             []BSIPrimaryKeyAuthorityManifestField    `yaml:"fields" json:"fields"`
 	LogicalShard       string                                   `yaml:"logical_shard,omitempty" json:"logical_shard,omitempty"`
@@ -197,6 +198,7 @@ func NewBSIPrimaryKeyAuthorityManifestEntry(table *Table, logicalShard string) (
 	return BSIPrimaryKeyAuthorityManifestEntry{
 		TableName:       table.Name,
 		PrimaryKey:      strings.TrimSpace(table.PrimaryKey),
+		AuthorityMode:   ObserveBSIPrimaryKeyAuthorityEligibility(table).Mode,
 		EncodingVersion: PrimaryKeyIdentityEncodingVersion,
 		Fields:          fields,
 		LogicalShard:    logicalShard,
@@ -286,6 +288,10 @@ func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityMani
 	}
 	if strings.TrimSpace(entry.PrimaryKey) != expected.PrimaryKey {
 		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary key=%q expected=%q", entry.TableName, entry.PrimaryKey, expected.PrimaryKey)
+	}
+	if strings.TrimSpace(entry.AuthorityMode) != "" && entry.AuthorityMode != expected.AuthorityMode {
+		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key authority mode=%q expected=%q",
+			entry.TableName, entry.AuthorityMode, expected.AuthorityMode)
 	}
 	if len(entry.Fields) != len(expected.Fields) {
 		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key field count=%d expected=%d",
