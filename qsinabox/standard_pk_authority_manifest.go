@@ -165,9 +165,9 @@ func standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config StandardCon
 	return nil
 }
 
-// RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts recomputes physical
-// artifact metadata for an existing standard-mode authority manifest after the
-// local bitmap storage layer has persisted dirty BSI shards.
+// RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts ensures the
+// standard-mode authority manifest exists, then recomputes physical artifact
+// metadata after the local bitmap storage layer has persisted dirty BSI shards.
 func RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(config StandardConfig, source string) (bool, error) {
 	config = config.WithDefaults()
 	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
@@ -175,7 +175,13 @@ func RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(config StandardConfi
 		return false, err
 	}
 	if manifest.Version == 0 && len(manifest.Entries) == 0 {
-		return false, nil
+		manifest, err = BuildStandardBSIPrimaryKeyAuthorityManifest(config, source)
+		if err != nil {
+			return false, err
+		}
+		if len(manifest.Entries) == 0 {
+			return false, nil
+		}
 	}
 	if err := standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config, &manifest); err != nil {
 		return false, err

@@ -284,6 +284,48 @@ func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(
 	}
 }
 
+func TestRefreshStandardBSIPrimaryKeyAuthorityManifestArtifactsBootstrapsMissingManifest(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardTestSchema(t, configDir, "sample")
+	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id", "bsi", "default")
+	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+		t.Fatalf("mkdir artifact dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "chunk.bsi"), []byte("unit-test"), 0644); err != nil {
+		t.Fatalf("write artifact file: %v", err)
+	}
+
+	published, err := RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(StandardConfig{DataDir: dataDir}, "standard-sql-commit")
+	if err != nil {
+		t.Fatalf("RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts returned error: %v", err)
+	}
+	if !published {
+		t.Fatalf("published = false, want missing manifest bootstrap")
+	}
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(dataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+	if manifest.Source != "standard-sql-commit" {
+		t.Fatalf("manifest source = %q, want standard-sql-commit", manifest.Source)
+	}
+	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
+		t.Fatalf("manifest entries = %+v, want one entry with one descriptor", manifest.Entries)
+	}
+	if manifest.Entries[0].Artifacts[0].FileCount != 1 {
+		t.Fatalf("artifact file count = %d, want 1", manifest.Entries[0].Artifacts[0].FileCount)
+	}
+	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(StandardConfig{DataDir: dataDir})
+	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
+	}
+	if observation.ArtifactPresence != core.BSIPrimaryKeyAuthorityArtifactPresencePresent {
+		t.Fatalf("artifact presence = %s, want %s", observation.ArtifactPresence, core.BSIPrimaryKeyAuthorityArtifactPresencePresent)
+	}
+}
+
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsInvalidVersion(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")

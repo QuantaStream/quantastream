@@ -575,7 +575,10 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 	requirePrimaryKeyTableProjectionCacheProfile(t, firstProfile, "lineitem",
 		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
 	requireStandardProcessScalarString(t, first, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
+	requireStandardProcessSQLSuccess(t, first, "commit")
+	requireStandardProcessBSIPrimaryKeyAuthorityManifestArtifact(t, config, "standard-sql-commit")
 	first.Close()
+	requireStandardProcessBSIPrimaryKeyAuthorityManifestArtifact(t, config, "standard-backend-close")
 
 	second, diagnostics, err := MountStandardProcess(context.Background(), config)
 	if err != nil {
@@ -706,6 +709,27 @@ func requirePrimaryKeyTableProjectionCacheProfile(
 	}
 	if profile.BSIProjectionCacheHitCount != wantHits {
 		t.Fatalf("%s primary key profile = %+v, want %d projection cache hits", tableName, profile, wantHits)
+	}
+}
+
+func requireStandardProcessBSIPrimaryKeyAuthorityManifestArtifact(t *testing.T, config StandardConfig, source string) {
+	t.Helper()
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest() error = %v", err)
+	}
+	if manifest.Source != source {
+		t.Fatalf("manifest source = %q, want %q", manifest.Source, source)
+	}
+	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("manifest observation status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+	if observation.ArtifactPresence != core.BSIPrimaryKeyAuthorityArtifactPresencePresent {
+		t.Fatalf("manifest artifact presence = %s detail=%s, want present", observation.ArtifactPresence, observation.ArtifactDetail)
+	}
+	if observation.ArtifactFileCount == 0 {
+		t.Fatalf("manifest artifact file count = 0, want persisted BSI authority files")
 	}
 }
 
