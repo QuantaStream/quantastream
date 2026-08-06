@@ -45,7 +45,12 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 		backend.Close()
 		return StandardProcess{}, diagnostics, err
 	}
-	frontDoor := qsruntime.NewNativeProxyFrontDoor(nativeRuntime, config.NativeProxyFrontDoorConfig())
+	frontDoorConfig := config.NativeProxyFrontDoorConfig()
+	frontDoorConfig.Server.SessionActionHandler = StandardSessionActionHandler{
+		Config:  config,
+		Backend: backend,
+	}
+	frontDoor := qsruntime.NewNativeProxyFrontDoor(nativeRuntime, frontDoorConfig)
 	return StandardProcess{
 		Config:       config,
 		Backend:      backend,

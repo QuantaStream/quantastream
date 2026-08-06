@@ -125,6 +125,31 @@ func TestNativeProxyServerWrapsExecutionContext(t *testing.T) {
 	}
 }
 
+func TestNativeProxyServerHandlesSessionActions(t *testing.T) {
+	var gotActions []qsbridge.SessionAction
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		t.Fatalf("commit should not execute direct runtime")
+		return ExecutionResult{}, nil
+	})}
+	server := NewNativeProxyServer(runtime, NativeProxyServerConfig{
+		SessionActionHandler: NativeProxySessionActionHandlerFunc(func(ctx context.Context, actions []qsbridge.SessionAction) qsbridge.DiagnosticSet {
+			gotActions = append(gotActions, actions...)
+			return nil
+		}),
+	})
+
+	result, err := server.ExecuteSQL(context.Background(), "commit", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if len(gotActions) != 1 || gotActions[0].Kind != qsbridge.SessionActionCommitTransaction {
+		t.Fatalf("session actions = %#v, want commit transaction", gotActions)
+	}
+}
+
 func TestNativeProxyFrontDoorDefaultsToMySQLQIABWithoutClaimingWireReadiness(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{}, NativeProxyFrontDoorConfig{})
 	summary := frontDoor.Summary()

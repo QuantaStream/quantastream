@@ -1039,14 +1039,17 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	if diagnostics.BlocksNative() {
 		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
 	}
+	defer process.Close()
 
 	requireStandardProcessSQLSuccess(t, process, "insert into sample (id, city) values (101, 'Buenos Aires')")
 	requireStandardProcessSQLSuccess(t, process, "commit")
-	process.Close()
 
 	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
 	if err != nil {
 		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest() error = %v", err)
+	}
+	if manifest.Source != "standard-sql-commit" {
+		t.Fatalf("manifest source = %q, want standard-sql-commit", manifest.Source)
 	}
 	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
 		t.Fatalf("manifest entries = %+v, want one BSI authority artifact", manifest.Entries)
@@ -1056,7 +1059,7 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
 	}
 	if artifact.FileCount == 0 {
-		t.Fatalf("manifest artifact file count = 0, want close-time refresh to record persisted BSI files")
+		t.Fatalf("manifest artifact file count = 0, want SQL COMMIT refresh to record persisted BSI files")
 	}
 
 	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
@@ -1081,6 +1084,8 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	if result.FileCount != observation.ArtifactFileCount {
 		t.Fatalf("loader file count = %d, want observed file count %d", result.FileCount, observation.ArtifactFileCount)
 	}
+
+	process.Close()
 
 	reopened, reopenDiagnostics, err := MountStandardProcess(context.Background(), config)
 	if err != nil {

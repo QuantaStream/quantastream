@@ -127,9 +127,10 @@ func (f NativeProxyFrontDoor) Summary() NativeProxyFrontDoorSummary {
 
 // NativeProxyServerConfig captures server-side ownership metadata before wire protocol binding.
 type NativeProxyServerConfig struct {
-	Route          ExecutionRoute
-	ProbeLogger    RuntimeProbeLogger
-	ContextWrapper func(context.Context) context.Context
+	Route                ExecutionRoute
+	ProbeLogger          RuntimeProbeLogger
+	ContextWrapper       func(context.Context) context.Context
+	SessionActionHandler NativeProxySessionActionHandler
 }
 
 // WithDefaults returns a server config that prefers the local direct QIAB route.
@@ -142,20 +143,22 @@ func (c NativeProxyServerConfig) WithDefaults() NativeProxyServerConfig {
 
 // NativeProxyServer is the composition point that future wire-protocol adapters will own.
 type NativeProxyServer struct {
-	Runtime        NativeProxyRuntime
-	Route          ExecutionRoute
-	ProbeLogger    RuntimeProbeLogger
-	ContextWrapper func(context.Context) context.Context
+	Runtime              NativeProxyRuntime
+	Route                ExecutionRoute
+	ProbeLogger          RuntimeProbeLogger
+	ContextWrapper       func(context.Context) context.Context
+	SessionActionHandler NativeProxySessionActionHandler
 }
 
 // NewNativeProxyServer builds the server-side owner for an already composed native runtime.
 func NewNativeProxyServer(runtime NativeProxyRuntime, config NativeProxyServerConfig) NativeProxyServer {
 	config = config.WithDefaults()
 	return NativeProxyServer{
-		Runtime:        runtime,
-		Route:          config.Route,
-		ProbeLogger:    config.ProbeLogger,
-		ContextWrapper: config.ContextWrapper,
+		Runtime:              runtime,
+		Route:                config.Route,
+		ProbeLogger:          config.ProbeLogger,
+		ContextWrapper:       config.ContextWrapper,
+		SessionActionHandler: config.SessionActionHandler,
 	}
 }
 
@@ -173,6 +176,9 @@ func (s NativeProxyServer) ExecuteSQL(ctx context.Context, sql string, options q
 		ctx = s.ContextWrapper(ctx)
 	}
 	result, err := s.Runtime.ExecuteSQL(ctx, sql, options, values...)
+	if err == nil && !result.Diagnostics.BlocksNative() && !result.Runtime.Diagnostics.BlocksNative() {
+		result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, s.handleSessionActions(ctx, result)...)
+	}
 	s.logRuntimeProbes(result.Runtime.Probes)
 	return result, err
 }
@@ -189,6 +195,41 @@ func nativeProxyServerNotReadyDiagnostics() qsbridge.DiagnosticSet {
 	return qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native proxy server runtime is not ready"),
 	}
+}
+
+// NativeProxySessionActionHandler applies protocol/session actions at the
+// native proxy boundary after SQL runtime planning has produced them.
+type NativeProxySessionActionHandler interface {
+	HandleNativeProxySessionActions(context.Context, []qsbridge.SessionAction) qsbridge.DiagnosticSet
+}
+
+// NativeProxySessionActionHandlerFunc adapts a function into a session action handler.
+type NativeProxySessionActionHandlerFunc func(context.Context, []qsbridge.SessionAction) qsbridge.DiagnosticSet
+
+// HandleNativeProxySessionActions calls f with the supplied actions.
+func (f NativeProxySessionActionHandlerFunc) HandleNativeProxySessionActions(ctx context.Context, actions []qsbridge.SessionAction) qsbridge.DiagnosticSet {
+	return f(ctx, actions)
+}
+
+func (s NativeProxyServer) handleSessionActions(ctx context.Context, result SQLExecutionResult) qsbridge.DiagnosticSet {
+	if s.SessionActionHandler == nil {
+		return nil
+	}
+	actions := nativeProxySessionActions(result)
+	if len(actions) == 0 {
+		return nil
+	}
+	return s.SessionActionHandler.HandleNativeProxySessionActions(ctx, actions)
+}
+
+func nativeProxySessionActions(result SQLExecutionResult) []qsbridge.SessionAction {
+	if len(result.Runtime.Statement.SessionActions) > 0 {
+		return append([]qsbridge.SessionAction(nil), result.Runtime.Statement.SessionActions...)
+	}
+	if len(result.Request.Statement.SessionActions) > 0 {
+		return append([]qsbridge.SessionAction(nil), result.Request.Statement.SessionActions...)
+	}
+	return nil
 }
 
 // RuntimeProbeLogger receives execution probes emitted behind a protocol server.
