@@ -28,6 +28,28 @@ func TestEncodeCompoundPrimaryKeyAuthorityValuePacksNumericFields(t *testing.T) 
 	require.Equal(t, new(big.Int).SetBytes(encoded[:]), value)
 }
 
+func TestEncodeCompoundPrimaryKeyAuthorityValueCoercesIntegerStrings(t *testing.T) {
+	partKey := primaryKeyAuthorityValueTestAttribute("ps_partkey", "Integer", "ParentRelation")
+	suppKey := primaryKeyAuthorityValueTestAttribute("ps_suppkey", "Integer", "ParentRelation")
+
+	typed, err := EncodeCompoundPrimaryKeyAuthorityValue(PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "partsupp",
+		PrimaryKey: "ps_partkey+ps_suppkey",
+		Attributes: []*Attribute{partKey, suppKey},
+		Values:     []interface{}{int64(1001), int64(2)},
+	})
+	require.NoError(t, err)
+	fromStrings, err := EncodeCompoundPrimaryKeyAuthorityValue(PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "partsupp",
+		PrimaryKey: "ps_partkey+ps_suppkey",
+		Attributes: []*Attribute{partKey, suppKey},
+		Values:     []interface{}{"1001", "2"},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, typed, fromStrings)
+}
+
 func TestEncodeCompoundPrimaryKeyAuthorityValueAvoidsDecimalConcatenationCollision(t *testing.T) {
 	left := primaryKeyAuthorityValueTestAttribute("left_id", "Integer", "IntBSI")
 	right := primaryKeyAuthorityValueTestAttribute("right_id", "Integer", "IntBSI")
@@ -105,6 +127,22 @@ func TestEncodeCompoundPrimaryKeyAuthorityValueRejectsUnsupportedValues(t *testi
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "left_value")
 	require.Contains(t, err.Error(), "unsupported value type string")
+}
+
+func TestEncodeCompoundPrimaryKeyAuthorityValueRejectsInvalidIntegerStrings(t *testing.T) {
+	left := primaryKeyAuthorityValueTestAttribute("left_id", "Integer", "IntBSI")
+	right := primaryKeyAuthorityValueTestAttribute("right_id", "Integer", "IntBSI")
+
+	_, err := EncodeCompoundPrimaryKeyAuthorityValue(PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "sample",
+		PrimaryKey: "left_id+right_id",
+		Attributes: []*Attribute{left, right},
+		Values:     []interface{}{"not-an-int", "2"},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "left_id")
+	require.Contains(t, err.Error(), "parse integer string")
 }
 
 func primaryKeyAuthorityValueTestAttribute(fieldName string, fieldType string, mapping string) *Attribute {

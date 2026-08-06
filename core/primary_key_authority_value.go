@@ -5,7 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/QuantaStream/quantastream/shared"
 )
 
 const primaryKeyAuthorityValueDefaultIntegerBytes = 8
@@ -71,6 +75,11 @@ func appendCompoundPrimaryKeyAuthorityValueComponent(buf *bytes.Buffer, attr *At
 	if value == nil {
 		return compoundPrimaryKeyAuthorityValueComponentError(attr, "nil values are not supported")
 	}
+	var err error
+	value, err = normalizeCompoundPrimaryKeyAuthorityValueComponent(attr, value)
+	if err != nil {
+		return err
+	}
 	var scratch [primaryKeyAuthorityValueDefaultIntegerBytes]byte
 	switch typed := value.(type) {
 	case int:
@@ -108,6 +117,37 @@ func appendCompoundPrimaryKeyAuthorityValueComponent(buf *bytes.Buffer, attr *At
 	}
 	buf.Write(scratch[:])
 	return nil
+}
+
+func normalizeCompoundPrimaryKeyAuthorityValueComponent(attr *Attribute, value interface{}) (interface{}, error) {
+	str, ok := value.(string)
+	if !ok {
+		return value, nil
+	}
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return nil, compoundPrimaryKeyAuthorityValueComponentError(attr, "empty strings are not supported")
+	}
+	if attr == nil || attr.BasicAttribute == nil {
+		return nil, compoundPrimaryKeyAuthorityValueComponentError(attr, "string values require catalog type metadata")
+	}
+
+	switch shared.TypeFromString(attr.Type) {
+	case shared.Integer:
+		parsed, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, compoundPrimaryKeyAuthorityValueComponentError(attr, fmt.Sprintf("parse integer string %q: %v", str, err))
+		}
+		return parsed, nil
+	case shared.Date, shared.DateTime:
+		parsed, err := parseTimestampMapperString(str)
+		if err != nil {
+			return nil, compoundPrimaryKeyAuthorityValueComponentError(attr, fmt.Sprintf("parse timestamp string %q: %v", str, err))
+		}
+		return parsed, nil
+	default:
+		return nil, compoundPrimaryKeyAuthorityValueComponentError(attr, "unsupported value type string")
+	}
 }
 
 func compoundPrimaryKeyAuthorityValueComponentError(attr *Attribute, detail string) error {
