@@ -156,12 +156,37 @@ func standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config StandardCon
 			if err != nil {
 				return err
 			}
-			if exists {
-				manifest.Entries[entryIndex].Artifacts[artifactIndex].FileCount = count
+			if !exists {
+				count = 0
 			}
+			manifest.Entries[entryIndex].Artifacts[artifactIndex].FileCount = count
 		}
 	}
 	return nil
+}
+
+// RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts recomputes physical
+// artifact metadata for an existing standard-mode authority manifest after the
+// local bitmap storage layer has persisted dirty BSI shards.
+func RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(config StandardConfig, source string) (bool, error) {
+	config = config.WithDefaults()
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
+	if err != nil {
+		return false, err
+	}
+	if manifest.Version == 0 && len(manifest.Entries) == 0 {
+		return false, nil
+	}
+	if err := standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config, &manifest); err != nil {
+		return false, err
+	}
+	if trimmed := strings.TrimSpace(source); trimmed != "" {
+		manifest.Source = trimmed
+	}
+	if err := SaveStandardBSIPrimaryKeyAuthorityManifest(config, manifest); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func standardBSIPrimaryKeyAuthorityArtifactFileCount(config StandardConfig, artifactPath string) (uint64, bool, error) {

@@ -1055,6 +1055,9 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	if artifact.Path != "bitmap/sample/id/bsi" {
 		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
 	}
+	if artifact.FileCount == 0 {
+		t.Fatalf("manifest artifact file count = 0, want close-time refresh to record persisted BSI files")
+	}
 
 	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
 	if observation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
@@ -1078,6 +1081,23 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	if result.FileCount != observation.ArtifactFileCount {
 		t.Fatalf("loader file count = %d, want observed file count %d", result.FileCount, observation.ArtifactFileCount)
 	}
+
+	reopened, reopenDiagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("reopen MountStandardProcess() error = %v", err)
+	}
+	defer reopened.Close()
+	if reopenDiagnostics.BlocksNative() {
+		t.Fatalf("reopen diagnostics = %#v, want none", reopenDiagnostics)
+	}
+	reopenedObservation := ObserveStandardBSIPrimaryKeyAuthorityManifest(config)
+	if reopenedObservation.Status != core.BSIPrimaryKeyAuthorityManifestStatusOK {
+		t.Fatalf("reopened observation status = %s detail=%s", reopenedObservation.Status, reopenedObservation.Detail)
+	}
+	if reopenedObservation.ArtifactPresence != core.BSIPrimaryKeyAuthorityArtifactPresencePresent {
+		t.Fatalf("reopened artifact presence = %s detail=%s, want present", reopenedObservation.ArtifactPresence, reopenedObservation.ArtifactDetail)
+	}
+	requireStandardProcessScalarString(t, reopened, "select count(*) from sample where id = 101", "1")
 }
 
 func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {

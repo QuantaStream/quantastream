@@ -15,6 +15,7 @@ const standardLocalNodeID = "quantastream-inabox-standard"
 
 // StandardLocalBackend is the in-process node side of inabox-standard.
 type StandardLocalBackend struct {
+	Config   StandardConfig
 	Node     *server.Node
 	Adapter  server.LocalNodeAdapter
 	Services shared.LocalNodeServices
@@ -59,6 +60,7 @@ func MountStandardLocalBackend(config StandardConfig, observer shared.LocalNodeO
 		Observer:    observer,
 	}
 	return StandardLocalBackend{
+		Config:   config,
 		Node:     node,
 		Adapter:  adapter,
 		Services: adapter.Services(),
@@ -72,6 +74,9 @@ func (b *StandardLocalBackend) Close() {
 			return
 		}
 		b.Node.ShutdownServices()
+		if _, err := RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(b.Config, "standard-backend-close"); err != nil {
+			fmt.Printf("inabox-standard BSI primary-key authority manifest artifact refresh failed: %v\n", err)
+		}
 		if b.Node.Stop != nil {
 			close(b.Node.Stop)
 		}
