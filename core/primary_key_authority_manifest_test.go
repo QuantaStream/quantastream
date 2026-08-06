@@ -57,7 +57,7 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	entry.ArtifactPath = "bitmap/lineitem/primary_key_authority/1994-01-01T00"
 	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
 		{
-			Kind:        "bsi",
+			Kind:        BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
 			Path:        "bitmap/lineitem/__qs_pk_authority/1994-01-01T00",
 			Fingerprint: "sha256:test-artifact",
 			FileCount:   12,
@@ -377,7 +377,7 @@ func TestBSIPrimaryKeyAuthorityManifestObservationRejectsInvalidArtifactMetadata
 	}
 	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
 		{
-			Kind: "bsi",
+			Kind: BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
 		},
 	}
 
@@ -394,6 +394,38 @@ func TestBSIPrimaryKeyAuthorityManifestObservationRejectsInvalidArtifactMetadata
 		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
 	}
 	if !strings.Contains(observation.Detail, "missing path") {
+		t.Fatalf("observation detail = %q", observation.Detail)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationRejectsUnsupportedArtifactKind(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", true),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.Artifacts = []BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind: "kv",
+			Path: "bitmap/lineitem/__qs_pk_authority",
+		},
+	}
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"lineitem": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusInvalid {
+		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusInvalid)
+	}
+	if !strings.Contains(observation.Detail, "unsupported kind") {
 		t.Fatalf("observation detail = %q", observation.Detail)
 	}
 }

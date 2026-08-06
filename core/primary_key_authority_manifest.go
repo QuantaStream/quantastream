@@ -33,6 +33,10 @@ const (
 	// BSIPrimaryKeyAuthorityManifestStatusInvalid means the manifest must not be
 	// trusted for primary-key authority.
 	BSIPrimaryKeyAuthorityManifestStatusInvalid = "invalid"
+
+	// BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI identifies the physical
+	// BSI authority artifact used to map primary-key identity values to rownums.
+	BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI = "primary_key_bsi"
 )
 
 // BSIPrimaryKeyAuthorityManifest records the logical identity contract for
@@ -335,10 +339,23 @@ func observeBSIPrimaryKeyAuthorityManifestArtifactMetadata(entry BSIPrimaryKeyAu
 		if strings.TrimSpace(artifact.Path) == "" {
 			return fmt.Sprintf("table %s primary-key authority artifact[%d] is missing path", entry.TableName, i)
 		}
+		if !isSupportedBSIPrimaryKeyAuthorityArtifactKind(artifact.Kind) {
+			return fmt.Sprintf("table %s primary-key authority artifact[%d] has unsupported kind %q",
+				entry.TableName, i, artifact.Kind)
+		}
 		if artifact.MinColumnID != 0 && artifact.MaxColumnID != 0 && artifact.MinColumnID > artifact.MaxColumnID {
 			return fmt.Sprintf("table %s primary-key authority artifact[%d] column bounds min=%d max=%d",
 				entry.TableName, i, artifact.MinColumnID, artifact.MaxColumnID)
 		}
 	}
 	return ""
+}
+
+func isSupportedBSIPrimaryKeyAuthorityArtifactKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "", BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI, "bsi":
+		return true
+	default:
+		return false
+	}
 }

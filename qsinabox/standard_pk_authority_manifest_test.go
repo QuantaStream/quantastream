@@ -33,7 +33,7 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	entry.KeyCount = 7
 	entry.Artifacts = []core.BSIPrimaryKeyAuthorityManifestArtifact{
 		{
-			Kind:     "bsi",
+			Kind:     core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
 			Path:     "bitmap/sample/__qs_pk_authority",
 			KeyCount: 7,
 		},
