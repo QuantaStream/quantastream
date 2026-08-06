@@ -45,6 +45,26 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsOK(t *testing.T) {
 	if entry.AuthorityMode != BSIPrimaryKeyAuthorityModeCompoundEncodedBSI {
 		t.Fatalf("entry authority mode = %q, want %q", entry.AuthorityMode, BSIPrimaryKeyAuthorityModeCompoundEncodedBSI)
 	}
+	if entry.AuthorityField != shared.CompoundPrimaryKeyAuthorityFieldName {
+		t.Fatalf("entry authority field = %q, want %q", entry.AuthorityField, shared.CompoundPrimaryKeyAuthorityFieldName)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestEntryNamesSingleColumnAuthorityField(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("orders", "o_orderkey", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("o_orderkey", "Integer", "IntBSI", false),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+
+	if entry.AuthorityMode != BSIPrimaryKeyAuthorityModeSingleColumnBSI {
+		t.Fatalf("entry authority mode = %q, want %q", entry.AuthorityMode, BSIPrimaryKeyAuthorityModeSingleColumnBSI)
+	}
+	if entry.AuthorityField != "o_orderkey" {
+		t.Fatalf("entry authority field = %q, want o_orderkey", entry.AuthorityField)
+	}
 }
 
 func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
@@ -94,6 +114,9 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	if !strings.Contains(string(data), "authority_mode") {
 		t.Fatalf("saved manifest did not include authority_mode:\n%s", string(data))
 	}
+	if !strings.Contains(string(data), "authority_field") {
+		t.Fatalf("saved manifest did not include authority_field:\n%s", string(data))
+	}
 	if !strings.Contains(string(data), "artifacts:") || !strings.Contains(string(data), "catalog_fingerprint") {
 		t.Fatalf("saved manifest did not include artifact metadata:\n%s", string(data))
 	}
@@ -120,6 +143,9 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	loadedEntry := loaded.Entries[0]
 	if loadedEntry.AuthorityMode != entry.AuthorityMode {
 		t.Fatalf("loaded authority mode = %q, want %q", loadedEntry.AuthorityMode, entry.AuthorityMode)
+	}
+	if loadedEntry.AuthorityField != entry.AuthorityField {
+		t.Fatalf("loaded authority field = %q, want %q", loadedEntry.AuthorityField, entry.AuthorityField)
 	}
 	if loadedEntry.KeyCount != entry.KeyCount || loadedEntry.MinColumnID != entry.MinColumnID || loadedEntry.MaxColumnID != entry.MaxColumnID {
 		t.Fatalf("loaded entry bounds/count = key_count:%d min:%d max:%d", loadedEntry.KeyCount, loadedEntry.MinColumnID, loadedEntry.MaxColumnID)
@@ -313,6 +339,34 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsStaleAuthorityModeMisma
 		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusStale)
 	}
 	if !strings.Contains(observation.Detail, "authority mode") {
+		t.Fatalf("observation detail = %q", observation.Detail)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestObservationReportsStaleAuthorityFieldMismatch(t *testing.T) {
+	table := testPrimaryKeyAuthorityTable("lineitem", "l_orderkey+l_linenumber", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("l_orderkey", "Integer", "IntBSI", true),
+		testPrimaryKeyAuthorityAttribute("l_linenumber", "Integer", "IntBSI", false),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	entry.AuthorityField = "l_orderkey"
+
+	observation := BSIPrimaryKeyAuthorityManifest{
+		Version: BSIPrimaryKeyAuthorityManifestVersion,
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}.ObserveAgainstCatalog(map[string]*Table{
+		"lineitem": table,
+	})
+
+	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusStale {
+		t.Fatalf("observation status = %s, want %s", observation.Status, BSIPrimaryKeyAuthorityManifestStatusStale)
+	}
+	if !strings.Contains(observation.Detail, "authority field") {
 		t.Fatalf("observation detail = %q", observation.Detail)
 	}
 }

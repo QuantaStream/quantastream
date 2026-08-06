@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantaStream/quantastream/shared"
 	"gopkg.in/yaml.v2"
 )
 
@@ -59,6 +60,7 @@ type BSIPrimaryKeyAuthorityManifestEntry struct {
 	TableName          string                                   `yaml:"table" json:"table"`
 	PrimaryKey         string                                   `yaml:"primary_key" json:"primary_key"`
 	AuthorityMode      string                                   `yaml:"authority_mode,omitempty" json:"authority_mode,omitempty"`
+	AuthorityField     string                                   `yaml:"authority_field,omitempty" json:"authority_field,omitempty"`
 	EncodingVersion    int                                      `yaml:"encoding_version" json:"encoding_version"`
 	Fields             []BSIPrimaryKeyAuthorityManifestField    `yaml:"fields" json:"fields"`
 	LogicalShard       string                                   `yaml:"logical_shard,omitempty" json:"logical_shard,omitempty"`
@@ -201,10 +203,12 @@ func NewBSIPrimaryKeyAuthorityManifestEntry(table *Table, logicalShard string) (
 		})
 	}
 
+	eligibility := ObserveBSIPrimaryKeyAuthorityEligibility(table)
 	return BSIPrimaryKeyAuthorityManifestEntry{
 		TableName:       table.Name,
 		PrimaryKey:      strings.TrimSpace(table.PrimaryKey),
-		AuthorityMode:   ObserveBSIPrimaryKeyAuthorityEligibility(table).Mode,
+		AuthorityMode:   eligibility.Mode,
+		AuthorityField:  bsiPrimaryKeyAuthorityManifestAuthorityField(eligibility),
 		EncodingVersion: PrimaryKeyIdentityEncodingVersion,
 		Fields:          fields,
 		LogicalShard:    logicalShard,
@@ -308,6 +312,10 @@ func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityMani
 		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key authority mode=%q expected=%q",
 			entry.TableName, entry.AuthorityMode, expected.AuthorityMode)
 	}
+	if strings.TrimSpace(entry.AuthorityField) != "" && entry.AuthorityField != expected.AuthorityField {
+		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key authority field=%q expected=%q",
+			entry.TableName, entry.AuthorityField, expected.AuthorityField)
+	}
 	if len(entry.Fields) != len(expected.Fields) {
 		return BSIPrimaryKeyAuthorityManifestStatusStale, fmt.Sprintf("table %s primary-key field count=%d expected=%d",
 			entry.TableName, len(entry.Fields), len(expected.Fields))
@@ -324,6 +332,17 @@ func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityMani
 		return BSIPrimaryKeyAuthorityManifestStatusInvalid, fmt.Sprintf("table %s primary-key authority artifact is not clean", entry.TableName)
 	}
 	return "", ""
+}
+
+func bsiPrimaryKeyAuthorityManifestAuthorityField(eligibility BSIPrimaryKeyAuthorityEligibility) string {
+	switch eligibility.Mode {
+	case BSIPrimaryKeyAuthorityModeDirectColumnID, BSIPrimaryKeyAuthorityModeSingleColumnBSI:
+		return eligibility.FieldName
+	case BSIPrimaryKeyAuthorityModeCompoundEncodedBSI:
+		return shared.CompoundPrimaryKeyAuthorityFieldName
+	default:
+		return ""
+	}
 }
 
 func observeBSIPrimaryKeyAuthorityManifestField(table string, index int, actual, expected BSIPrimaryKeyAuthorityManifestField) string {
