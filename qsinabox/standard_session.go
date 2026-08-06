@@ -254,7 +254,12 @@ func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.Diagn
 	if h.Pool == nil || h.Session == nil || h.Table == "" {
 		return nil
 	}
-	h.Pool.Return(h.Table, h.Session)
+	if _, err := h.Pool.ReturnWithProfile(h.Table, h.Session); err != nil {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute,
+				fmt.Sprintf("release inabox-standard session for %s: %v", h.Table, err)),
+		}
+	}
 	return nil
 }
 

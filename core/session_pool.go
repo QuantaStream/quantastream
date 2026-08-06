@@ -101,15 +101,22 @@ func (m *SessionPool) Borrow(tableName string) (*Session, error) {
 
 // Return - Return a connection to the pool.
 func (m *SessionPool) Return(tableName string, conn *Session) {
+	_, _ = m.ReturnWithProfile(tableName, conn)
+}
+
+// ReturnWithProfile returns a connection to the pool and reports the flush
+// profile observed while releasing the session.
+func (m *SessionPool) ReturnWithProfile(tableName string, conn *Session) (shared.BatchBufferFlushProfile, error) {
 	if conn == nil {
-		return
+		return shared.BatchBufferFlushProfile{}, nil
 	}
 
 	m.sessPoolLock.Lock()
 	if m.closed {
 		m.sessPoolLock.Unlock()
 		conn.CloseSession()
-		return
+		m.returnSemaphore()
+		return conn.LastFlushProfile(), nil
 	}
 	stale := m.sessionGenerationStaleLocked(tableName, conn.poolGeneration)
 	m.sessPoolLock.Unlock()
@@ -117,21 +124,27 @@ func (m *SessionPool) Return(tableName string, conn *Session) {
 	if stale {
 		conn.CloseSession()
 		m.returnSemaphore()
-		return
+		return conn.LastFlushProfile(), nil
 	}
 
-	conn.Flush()
+	if err := conn.Flush(); err != nil {
+		profile := conn.LastFlushProfile()
+		conn.CloseSession()
+		m.returnSemaphore()
+		return profile, err
+	}
+	profile := conn.LastFlushProfile()
 
 	m.sessPoolLock.Lock()
 	defer m.sessPoolLock.Unlock()
 	if m.closed {
 		conn.CloseSession()
-		return
+		return profile, nil
 	}
 	if m.sessionGenerationStaleLocked(tableName, conn.poolGeneration) {
 		conn.CloseSession()
 		m.returnSemaphoreLocked()
-		return
+		return profile, nil
 	}
 	cp := m.getPoolByTableName(tableName)
 	conn.poolGeneration = cp.generation
@@ -144,6 +157,7 @@ func (m *SessionPool) Return(tableName string, conn *Session) {
 		}
 	default: //Don't block
 	}
+	return profile, nil
 }
 
 // InvalidateTable closes pooled sessions and cached metadata for a table after a schema change.
