@@ -19,7 +19,6 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 		Inserted:              true,
 		SourceElapsed:         time.Millisecond,
 		IdentityElapsed:       2 * time.Millisecond,
-		AlternateKeysElapsed:  3 * time.Millisecond,
 		ChildExpansionElapsed: 4 * time.Millisecond,
 		ChildTraversalElapsed: 1500 * time.Microsecond,
 		RelationElapsed:       5 * time.Millisecond,
@@ -87,7 +86,6 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	require.Equal(t, 28*time.Millisecond, snapshot.TotalElapsed)
 	require.Equal(t, time.Millisecond, snapshot.SourceElapsed)
 	require.Equal(t, 2*time.Millisecond, snapshot.IdentityElapsed)
-	require.Equal(t, 3*time.Millisecond, snapshot.AlternateKeysElapsed)
 	require.Equal(t, 4*time.Millisecond, snapshot.ChildExpansionElapsed)
 	require.Equal(t, 1500*time.Microsecond, snapshot.ChildTraversalElapsed)
 	require.Equal(t, 5*time.Millisecond, snapshot.RelationElapsed)

@@ -122,7 +122,6 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 			TotalElapsed:          1500 * time.Microsecond,
 			SourceElapsed:         100 * time.Microsecond,
 			IdentityElapsed:       200 * time.Microsecond,
-			AlternateKeysElapsed:  30 * time.Microsecond,
 			ChildExpansionElapsed: 400 * time.Microsecond,
 			ChildTraversalElapsed: 50 * time.Microsecond,
 			RelationElapsed:       50 * time.Microsecond,
@@ -253,9 +252,6 @@ func TestNativeIngestBenchmarkMetricsUsesLogicalRows(t *testing.T) {
 	}
 	if got, want := metrics["put_stage_primary_key_microseconds_per_order"], 500.0; got != want {
 		t.Fatalf("primary key stage us/order = %v, want %v", got, want)
-	}
-	if got, want := metrics["put_stage_alternate_keys_microseconds_per_order"], 3.0; got != want {
-		t.Fatalf("alternate keys us/order = %v, want %v", got, want)
 	}
 	if got, want := metrics["put_stage_child_expansion_microseconds_per_order"], 40.0; got != want {
 		t.Fatalf("child expansion us/order = %v, want %v", got, want)

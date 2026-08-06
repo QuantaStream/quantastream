@@ -132,10 +132,6 @@ func clonePrimaryKeyShadowTableBuffer(tbuf *TableBuffer) *TableBuffer {
 	for key, value := range tbuf.PKMap {
 		clone.PKMap[key] = value
 	}
-	clone.SKMap = make(map[string][]*Attribute, len(tbuf.SKMap))
-	for key, value := range tbuf.SKMap {
-		clone.SKMap[key] = append([]*Attribute(nil), value...)
-	}
 	clone.rowCache = make(map[string]interface{}, len(tbuf.rowCache))
 	for key, value := range tbuf.rowCache {
 		clone.rowCache[key] = value

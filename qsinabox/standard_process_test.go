@@ -147,8 +147,9 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	}
 	defer remoteConn.Disconnect()
 
+	tableCache := core.NewTableCacheStruct()
 	loaderSession, err := core.OpenSession(
-		core.NewTableCacheStruct(),
+		tableCache,
 		process.Backend.ConfigBaseDir(config),
 		"sample",
 		false,
@@ -157,6 +158,7 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	if err != nil {
 		t.Fatalf("OpenSession() over native gRPC error = %v", err)
 	}
+	loaderSession.SetPrimaryKeyResolver(NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)(loaderSession))
 	loaderSessionClosed := false
 	defer func() {
 		if !loaderSessionClosed {
@@ -274,8 +276,9 @@ func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testi
 	}
 	defer remoteConn.Disconnect()
 
+	tableCache := core.NewTableCacheStruct()
 	loaderSession, err := core.OpenSession(
-		core.NewTableCacheStruct(),
+		tableCache,
 		process.Backend.ConfigBaseDir(config),
 		"orders",
 		true,
@@ -284,6 +287,7 @@ func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testi
 	if err != nil {
 		t.Fatalf("OpenSession(orders) over native gRPC error = %v", err)
 	}
+	loaderSession.SetPrimaryKeyResolver(NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)(loaderSession))
 	loaderSessionClosed := false
 	defer func() {
 		if !loaderSessionClosed {
@@ -837,6 +841,10 @@ func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
 	if scenario.ReplayCount <= 0 {
 		scenario.ReplayCount = 1
 	}
+	tableCache := core.NewTableCacheStruct()
+	if scenario.PrimaryKeyResolverFactory == nil {
+		scenario.PrimaryKeyResolverFactory = NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
+	}
 	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
 		OrderCount:        scenario.OrderCount,
 		LineitemsPerOrder: scenario.LineitemsPerOrder,
@@ -891,7 +899,7 @@ func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
 	routes := make([]core.IngestRouteResult, 0, len(fixture.Envelopes))
 	for replay := 0; replay < scenario.ReplayCount; replay++ {
 		router, err := core.NewSessionRouter(core.SessionRouterConfig{
-			TableCache:                core.NewTableCacheStruct(),
+			TableCache:                tableCache,
 			BasePath:                  process.Backend.ConfigBaseDir(config),
 			Conn:                      remoteConn,
 			ShardCount:                scenario.ShardCount,

@@ -334,27 +334,6 @@ func (t *Table) GetPrimaryKeyInfo() ([]*Attribute, error) {
 	return attrs, nil
 }
 
-// GetAlternateKeyInfo - Return attributes for a given SK.
-func (t *Table) GetAlternateKeyInfo() (map[string][]*Attribute, error) {
-
-	ret := make(map[string][]*Attribute)
-	s1 := strings.Split(t.SecondaryKeys, ",")
-	for _, v := range s1 {
-		s2 := strings.Split(strings.TrimSpace(v), "+")
-		attrs := make([]*Attribute, len(s2))
-		for i, w := range s2 {
-			if attr, err := t.GetAttribute(strings.TrimSpace(w)); err == nil {
-				attrs[i] = attr
-			} else {
-				return nil, err
-			}
-		}
-		ret[strings.TrimSpace(v)] = attrs
-	}
-
-	return ret, nil
-}
-
 // GetFKSpec - Get info for foreign key
 func (a *Attribute) GetFKSpec() (string, string, error) {
 	if a.ForeignKey == "" {

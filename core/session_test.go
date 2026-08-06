@@ -289,7 +289,6 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 		timings: &putRowStageTimings{
 			sourceElapsed:         time.Millisecond,
 			identityElapsed:       2 * time.Millisecond,
-			alternateKeysElapsed:  3 * time.Millisecond,
 			childExpansionElapsed: 4 * time.Millisecond,
 			childTraversalElapsed: 1500 * time.Microsecond,
 			relationElapsed:       5 * time.Millisecond,
@@ -310,7 +309,6 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 		ExistingRow:           true,
 		SourceElapsed:         time.Millisecond,
 		IdentityElapsed:       2 * time.Millisecond,
-		AlternateKeysElapsed:  3 * time.Millisecond,
 		ChildExpansionElapsed: 4 * time.Millisecond,
 		ChildTraversalElapsed: 1500 * time.Microsecond,
 		RelationElapsed:       5 * time.Millisecond,
@@ -333,17 +331,6 @@ func TestRunPutRowPipelineRunsStagesInOrderAndRecordsTimings(t *testing.T) {
 			run: func() error {
 				time.Sleep(time.Nanosecond)
 				order = append(order, putRowStageIdentity)
-				return nil
-			},
-		},
-		putRowPipelineStage{
-			name: putRowStageAlternateKeys,
-			record: func(t *putRowStageTimings, elapsed time.Duration) {
-				t.alternateKeysElapsed += elapsed
-			},
-			run: func() error {
-				time.Sleep(time.Nanosecond)
-				order = append(order, putRowStageAlternateKeys)
 				return nil
 			},
 		},
@@ -385,13 +372,11 @@ func TestRunPutRowPipelineRunsStagesInOrderAndRecordsTimings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []putRowStageName{
 		putRowStageIdentity,
-		putRowStageAlternateKeys,
 		putRowStageChildExpansion,
 		putRowStageParentRelations,
 		putRowStageAttributes,
 	}, order)
 	assert.Greater(t, req.timings.identityElapsed, time.Duration(0))
-	assert.Greater(t, req.timings.alternateKeysElapsed, time.Duration(0))
 	assert.Greater(t, req.timings.childExpansionElapsed, time.Duration(0))
 	assert.Greater(t, req.timings.relationElapsed, time.Duration(0))
 	assert.Greater(t, req.timings.attributeElapsed, time.Duration(0))
@@ -415,7 +400,7 @@ func TestRunPutRowPipelineStopsOnErrorAndRecordsFailedStageTiming(t *testing.T) 
 			},
 		},
 		putRowPipelineStage{
-			name: putRowStageAlternateKeys,
+			name: putRowStageChildExpansion,
 			run: func() error {
 				secondStageRan = true
 				return nil
@@ -454,17 +439,6 @@ func TestPrimaryKeyModeDefaultsToVerifyExisting(t *testing.T) {
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyMode("surprise").Normalize())
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyModeVerifyExisting.Normalize())
 	assert.Equal(t, PrimaryKeyModeAssumeNew, PrimaryKeyMode("ASSUME_NEW").Normalize())
-}
-
-func TestMapAlternateKeysSkipsTablesWithoutSecondaryKeys(t *testing.T) {
-	session := &Session{}
-	tbuf := &TableBuffer{
-		Table: &Table{BasicTable: &shared.BasicTable{Name: "customers"}},
-	}
-
-	err := session.mapAlternateKeys(putRowRequest{}, tbuf)
-
-	require.NoError(t, err)
 }
 
 func TestMapAttributeValuesSkipsIdentityAndRelationshipFields(t *testing.T) {
@@ -630,21 +604,33 @@ func TestResolvePrimaryKeyColumnIDDefaultsResolverRequestToVerifyExisting(t *tes
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 
-	_, _, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, "")
+	_, _, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 0, false, "")
 
 	require.NoError(t, err)
 	require.True(t, resolver.called)
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, resolver.request.PrimaryKeyMode)
 }
 
-func TestSetPrimaryKeyResolverNilRestoresTemporaryKVFallback(t *testing.T) {
+func TestSetPrimaryKeyResolverNilClearsAuthorityAndFailsClosed(t *testing.T) {
 	session := &Session{}
 	customResolver := &recordingPrimaryKeyResolver{}
 	session.SetPrimaryKeyResolver(customResolver)
 	session.SetPrimaryKeyResolver(nil)
 
-	_, ok := session.primaryKeyColumnIDResolver().(KVPrimaryKeyResolver)
-	require.True(t, ok, "nil resolver should restore the temporary KV fallback until BSI authority becomes the core default")
+	_, ok := session.primaryKeyColumnIDResolver().(MissingPrimaryKeyResolver)
+	require.True(t, ok, "nil resolver should leave primary-key authority unconfigured")
+}
+
+func TestMissingPrimaryKeyResolverFailsClosed(t *testing.T) {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "orders", PrimaryKey: "order_id"}}
+	tbuf := &TableBuffer{Table: table}
+	session := &Session{}
+
+	_, _, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 0, false, "")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "primary key resolver is not configured")
+	require.Contains(t, err.Error(), "orders")
 }
 
 func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) {
@@ -657,6 +643,7 @@ func TestResolvePrimaryKeyColumnIDAssumeNewSkipsLookupAndStagesPK(t *testing.T) 
 	}
 	tbuf := &TableBuffer{Table: table, PKAttributes: []*Attribute{pk}}
 	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
+	session.SetPrimaryKeyResolver(KVPrimaryKeyResolver{})
 
 	updateExisting, profile, err := session.resolvePrimaryKeyColumnID(tbuf, "1001", 99, false, PrimaryKeyModeAssumeNew)
 

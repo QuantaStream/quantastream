@@ -158,7 +158,8 @@ func TestStandardBSIPrimaryKeyResolverRejectsUnsupportedCompoundKeysWithoutFallb
 		t.Fatalf("ResolvePrimaryKeyColumnID() error = nil, want unsupported compound key error")
 	}
 	if !strings.Contains(err.Error(), "standard BSI primary-key authority does not support table") ||
-		!strings.Contains(err.Error(), "compound_reader_missing") {
+		!strings.Contains(err.Error(), "compound_reader_missing") ||
+		!strings.Contains(err.Error(), "primary_key_fields=[l_orderkey(type=Integer mapping=IntBSI columnID=false), l_linenumber(type=Integer mapping=IntBSI columnID=false)]") {
 		t.Fatalf("error = %v", err)
 	}
 	if result.Profile.BSIFallbackCount != 1 {
@@ -210,6 +211,43 @@ func TestStandardBSIPrimaryKeyResolverUsesExplicitFallbackWhenInjected(t *testin
 	}
 	if result.Profile.BSIFallbackReasons["compound_reader_missing"] != 1 {
 		t.Fatalf("BSIFallbackReasons = %+v, want compound_reader_missing", result.Profile.BSIFallbackReasons)
+	}
+}
+
+func TestStandardBSIPrimaryKeyResolverReportsCompoundEncodingBlocker(t *testing.T) {
+	table := standardPrimaryKeyResolverTestTable("events", "tenant_id+event_id", []shared.BasicAttribute{
+		standardPrimaryKeyResolverTestAttribute("tenant_id", "String", "StringLexBSI", false),
+		standardPrimaryKeyResolverTestAttribute("event_id", "String", "StringLexBSI", false),
+	})
+	tbuf, err := core.NewTableBuffer(table)
+	if err != nil {
+		t.Fatalf("NewTableBuffer() error = %v", err)
+	}
+	resolver := StandardBSIPrimaryKeyResolver{
+		Reader: StandardSingleColumnBSIPrimaryKeyReader{},
+	}
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(core.PrimaryKeyResolveRequest{
+		Session:          &core.Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)},
+		TableBuffer:      tbuf,
+		LookupValue:      "acme+evt-1",
+		PrimaryKeyValues: []interface{}{"acme", "evt-1"},
+	})
+
+	if err == nil {
+		t.Fatalf("ResolvePrimaryKeyColumnID() error = nil, want compound encoding blocker")
+	}
+	if !strings.Contains(err.Error(), "compound_not_encodable") ||
+		!strings.Contains(err.Error(), "tenant_id(type=String mapping=StringLexBSI columnID=false)") ||
+		!strings.Contains(err.Error(), "value_types=[string, string]") ||
+		!strings.Contains(err.Error(), "unsupported value type string") {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Profile.BSIFallbackCount != 1 {
+		t.Fatalf("BSIFallbackCount = %d, want 1", result.Profile.BSIFallbackCount)
+	}
+	if result.Profile.BSIFallbackReasons["compound_not_encodable"] != 1 {
+		t.Fatalf("BSIFallbackReasons = %+v, want compound_not_encodable", result.Profile.BSIFallbackReasons)
 	}
 }
 

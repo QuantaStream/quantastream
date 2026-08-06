@@ -213,7 +213,6 @@ func NativeIngestBenchmarkMetrics(
 	metrics["put_stage_normalize_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.SourceElapsed, totalOrders)
 	metrics["put_stage_identity_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.IdentityElapsed, totalOrders)
 	metrics["put_stage_primary_key_microseconds_per_order"] = durationMicrosPerCount(pk.TotalElapsed, totalOrders)
-	metrics["put_stage_alternate_keys_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.AlternateKeysElapsed, totalOrders)
 	metrics["put_stage_child_expansion_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.ChildExpansionElapsed, totalOrders)
 	metrics["put_stage_child_traversal_microseconds_per_order"] = durationMicrosPerCount(putSnapshot.ChildTraversalElapsed, totalOrders)
 	metrics["put_stage_child_recursive_write_microseconds_per_order"] = durationMicrosPerCount(
@@ -377,7 +376,6 @@ var nativeIngestBenchmarkMetricDefinitions = []nativeIngestBenchmarkMetricDefini
 	{name: "put_stage_normalize_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_identity_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_primary_key_microseconds_per_order", unit: "us/order", higherIsBetter: false},
-	{name: "put_stage_alternate_keys_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_child_expansion_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_child_traversal_microseconds_per_order", unit: "us/order", higherIsBetter: false},
 	{name: "put_stage_child_recursive_write_microseconds_per_order", unit: "us/order", higherIsBetter: false},

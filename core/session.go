@@ -15,7 +15,6 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsexpr"
 	"github.com/QuantaStream/quantastream/shared"
-	"github.com/araddon/dateparse"
 	u "github.com/araddon/gou"
 	"github.com/xitongsys/parquet-go/reader"
 )
@@ -32,7 +31,6 @@ const (
 	reservationSize        = 1000
 	ifDelim                = "/"
 	primaryKey             = "P"
-	secondaryKey           = "S"
 	julianDayOfEpoch int64 = 2440588
 	microsPerDay     int64 = 3600 * 24 * 1000 * 1000
 	batchBufferSize        = 90000000 // This is a stopgap to prevent overrunning memory
@@ -82,8 +80,13 @@ type PrimaryKeyResolveResult struct {
 	Profile     PrimaryKeyResolveProfile
 }
 
+// MissingPrimaryKeyResolver fails closed when a write path did not install an
+// explicit primary-key authority.
+type MissingPrimaryKeyResolver struct{}
+
 // KVPrimaryKeyResolver preserves the older KV-backed primary-key lookup and
-// rownum assignment behavior while BSI-backed authority is promoted.
+// rownum assignment behavior only for explicit transition tests and shadow
+// comparison runs.
 type KVPrimaryKeyResolver struct{}
 
 // PrimaryKeyMode selects how PutRow resolves lookup-backed primary keys.
@@ -138,7 +141,6 @@ type PutRowResult struct {
 	Conflict              bool
 	SourceElapsed         time.Duration
 	IdentityElapsed       time.Duration
-	AlternateKeysElapsed  time.Duration
 	ChildExpansionElapsed time.Duration
 	ChildTraversalElapsed time.Duration
 	RelationElapsed       time.Duration
@@ -174,7 +176,6 @@ type putRowIdentity struct {
 type putRowStageTimings struct {
 	sourceElapsed         time.Duration
 	identityElapsed       time.Duration
-	alternateKeysElapsed  time.Duration
 	childExpansionElapsed time.Duration
 	childTraversalElapsed time.Duration
 	relationElapsed       time.Duration
@@ -188,7 +189,6 @@ type putRowStageName string
 
 const (
 	putRowStageIdentity        putRowStageName = "identity"
-	putRowStageAlternateKeys   putRowStageName = "alternate_keys"
 	putRowStageChildExpansion  putRowStageName = "expand_children"
 	putRowStageParentRelations putRowStageName = "map_parent_relations"
 	putRowStageAttributes      putRowStageName = "map_attributes"
@@ -209,7 +209,6 @@ type TableBuffer struct {
 	CurrentPKValue   []interface{}
 	PKMap            map[string]*Attribute
 	PKAttributes     []*Attribute
-	SKMap            map[string][]*Attribute
 	rowCache         map[string]interface{} // row value cache ensures parquet data is only read once
 }
 
@@ -237,11 +236,7 @@ func NewTableBuffer(table *Table) (*TableBuffer, error) {
 		tb.PKMap[v.FieldName] = v
 	}
 	tb.rowCache = make(map[string]interface{})
-	var err error
-	if table.SecondaryKeys != "" {
-		tb.SKMap, err = table.GetAlternateKeyInfo()
-	}
-	return tb, err
+	return tb, nil
 }
 
 // NextColumnID - Get a new column ID in the sequence for a given Time Quantum
@@ -341,7 +336,6 @@ func OpenSession(tableCache *TableCacheStruct, path, name string, nested bool, c
 	s.BatchBuffer = shared.NewBatchBuffer(s.BitIndex, s.KVStore, batchBufferSize)
 	s.CreatedAt = time.Now().UTC()
 	s.tableCache = tableCache
-	s.primaryKeyResolver = KVPrimaryKeyResolver{}
 
 	return s, nil
 }
@@ -519,15 +513,6 @@ func (s *Session) putRow(req putRowRequest) (PutRowResult, error) {
 			},
 		},
 		putRowPipelineStage{
-			name: putRowStageAlternateKeys,
-			record: func(t *putRowStageTimings, elapsed time.Duration) {
-				t.alternateKeysElapsed += elapsed
-			},
-			run: func() error {
-				return s.mapAlternateKeys(req, tbuf)
-			},
-		},
-		putRowPipelineStage{
 			name: putRowStageChildExpansion,
 			record: func(t *putRowStageTimings, elapsed time.Duration) {
 				t.childExpansionElapsed += elapsed
@@ -657,7 +642,6 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 	result.LogicalRowCount += req.timings.childRowCount
 	result.SourceElapsed = req.timings.sourceElapsed
 	result.IdentityElapsed = req.timings.identityElapsed
-	result.AlternateKeysElapsed = req.timings.alternateKeysElapsed
 	result.ChildExpansionElapsed = req.timings.childExpansionElapsed
 	result.ChildTraversalElapsed = req.timings.childTraversalElapsed
 	result.RelationElapsed = req.timings.relationElapsed
@@ -674,17 +658,6 @@ func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (pu
 	req.addPrimaryKeyProfile(identity.primaryKeyProfile)
 	req.addPrimaryKeyProfileForTable(tbuf.Table.Name, identity.primaryKeyProfile)
 	return identity, err
-}
-
-func (s *Session) mapAlternateKeys(req putRowRequest, tbuf *TableBuffer) error {
-
-	if tbuf.Table.SecondaryKeys == "" {
-		return nil
-	}
-	// Preserved for existing catalog behavior. Streaming ingest should not rely
-	// on alternate keys until this path is intentionally finished behind tests.
-	return s.processAlternateKeys(tbuf, req.row, req.pqTablePath, req.isChild, req.ignoreSourcePath,
-		req.useNerdCapitalization)
 }
 
 func (s *Session) expandChildRelations(req putRowRequest, tbuf *TableBuffer) error {
@@ -1307,18 +1280,46 @@ func (s *Session) primaryKeyColumnIDResolver() PrimaryKeyResolver {
 	if s.primaryKeyResolver != nil {
 		return s.primaryKeyResolver
 	}
-	return KVPrimaryKeyResolver{}
+	return MissingPrimaryKeyResolver{}
 }
 
 // SetPrimaryKeyResolver replaces the resolver used for primary-key lookup and
-// rownum assignment. Passing nil restores the temporary KV-backed fallback;
-// new write paths should inject an explicit resolver instead.
+// rownum assignment. Passing nil clears the resolver and makes writes fail
+// closed until a caller installs an explicit authority.
 func (s *Session) SetPrimaryKeyResolver(resolver PrimaryKeyResolver) {
-	if resolver == nil {
-		s.primaryKeyResolver = KVPrimaryKeyResolver{}
-		return
-	}
 	s.primaryKeyResolver = resolver
+}
+
+func (MissingPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
+	startedAt := time.Now()
+	profile := PrimaryKeyResolveProfile{ResolveCount: 1}
+	if req.DirectColumnID {
+		profile.DirectColumnIDCount++
+		profile.TotalElapsed = time.Since(startedAt)
+		columnID := uint64(0)
+		if req.TableBuffer != nil {
+			columnID = req.TableBuffer.CurrentColumnID
+		}
+		return PrimaryKeyResolveResult{ColumnID: columnID, Profile: profile}, nil
+	}
+	if req.ProvidedColumnID != 0 {
+		profile.ProvidedColumnIDCount++
+		profile.TotalElapsed = time.Since(startedAt)
+		if req.TableBuffer != nil {
+			req.TableBuffer.CurrentColumnID = req.ProvidedColumnID
+		}
+		return PrimaryKeyResolveResult{ColumnID: req.ProvidedColumnID, Profile: profile}, nil
+	}
+	tableName := ""
+	primaryKey := ""
+	if req.TableBuffer != nil && req.TableBuffer.Table != nil {
+		tableName = req.TableBuffer.Table.Name
+		primaryKey = req.TableBuffer.Table.PrimaryKey
+	}
+	profile.TotalElapsed = time.Since(startedAt)
+	return PrimaryKeyResolveResult{Profile: profile}, fmt.Errorf(
+		"primary key resolver is not configured for table %q primary key %q; inject a BSI primary-key authority resolver or an explicit KVPrimaryKeyResolver for transition-only validation",
+		tableName, primaryKey)
 }
 
 func (KVPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
@@ -1411,72 +1412,6 @@ func (KVPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveReque
 		tbuf.CurrentColumnID = req.ProvidedColumnID
 	}
 	return finish(tbuf.CurrentColumnID, false), nil
-}
-
-// Handle Secondary Keys.  Create the index in backing store
-func (s *Session) processAlternateKeys(tbuf *TableBuffer, row interface{}, pqTablePath string,
-	isChild, ignoreSourcePath, useNerdCapitalization bool) error {
-
-	pqColPaths := make([]string, len(tbuf.SKMap))
-	var skLookupVal strings.Builder
-	i := 0
-	for k, keyAttrs := range tbuf.SKMap {
-		for _, v := range keyAttrs {
-			var cval interface{}
-			vals, pqps, err := s.readColumn(row, pqTablePath, v, isChild, ignoreSourcePath, useNerdCapitalization)
-			if err != nil {
-				return fmt.Errorf("readColumn for SK - %v", err)
-			}
-			pqColPaths[i] = pqps[0]
-			if vals == nil || len(vals) == 0 || (len(vals) == 1 && vals[0] == nil) {
-
-				if isChild { // Nothing to do here, no child value
-					return nil
-				}
-				return fmt.Errorf("Empty or nil value for SK field %s, len %d", pqColPaths[i],
-					len(vals))
-			}
-			if len(vals) > 1 {
-				return fmt.Errorf("Multiple values for SK field %s [%v], Schema mapping issue?",
-					pqColPaths[0], err)
-			}
-			cval = vals[0]
-
-			switch reflect.ValueOf(cval).Kind() {
-			case reflect.String:
-				// Do nothing already a string
-				if v.MappingStrategy == "TimestampBSI" || v.MappingStrategy == "TimeStampBSI" ||
-					v.MappingStrategy == "SysMillisBSI" || v.MappingStrategy == "SysMicroBSI" {
-					strVal := cval.(string)
-					loc, _ := time.LoadLocation("Local")
-					ts, err := dateparse.ParseIn(strVal, loc)
-					if err != nil {
-						return fmt.Errorf("Date parse error for SK field %s - value %s - %v",
-							pqColPaths[i], strVal, err)
-					}
-					cval = fmt.Sprintf("%d", ts.UnixNano())
-				}
-			case reflect.Int64:
-				orig := cval.(int64)
-				cval = fmt.Sprintf("%d", orig)
-
-			default:
-				return fmt.Errorf("SK Lookup value [%v] unknown type, it is [%v]", cval,
-					reflect.ValueOf(cval).Kind())
-			}
-			if skLookupVal.Len() == 0 {
-				skLookupVal.WriteString(cval.(string))
-			} else {
-				skLookupVal.WriteString(fmt.Sprintf("+%s", cval.(string)))
-			}
-		}
-		//s.BatchBuffer.SetKeyString(tbuf.Table.Name, k, secondaryKey, skLookupVal.String(),
-		//	tbuf.CurrentColumnID)
-		lookupKey := indexPath(tbuf, tbuf.PKAttributes[0].FieldName, k+".SK")
-		s.BatchBuffer.SetPartitionedString(lookupKey, skLookupVal.String(), tbuf.CurrentColumnID)
-		i++
-	}
-	return nil
 }
 
 func (s *Session) lookupColumnID(tbuf *TableBuffer, lookupVal, fkFieldSpec string) (uint64, bool, error) {

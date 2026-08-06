@@ -99,8 +99,8 @@ func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.Primar
 		if req.Session.BatchBuffer == nil {
 			return r.resolveFallback(req, "compound_batch_buffer_missing")
 		}
-		if !standardCompoundBSIPrimaryKeyEncodable(req) {
-			return r.resolveFallback(req, "compound_not_encodable")
+		if err := standardCompoundBSIPrimaryKeyEncodeError(req); err != nil {
+			return r.resolveFallback(req, "compound_not_encodable", err.Error())
 		}
 		backend := StandardCompoundBSIPrimaryKeyBackend{
 			Table:   req.TableBuffer.Table,
@@ -110,19 +110,19 @@ func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.Primar
 		return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
 	}
 	if !eligibility.Eligible || eligibility.Mode != core.BSIPrimaryKeyAuthorityModeSingleColumnBSI {
-		return r.resolveFallback(req, standardBSIPrimaryKeyFallbackReason(eligibility))
+		return r.resolveFallback(req, standardBSIPrimaryKeyFallbackReason(eligibility), eligibility.Reason)
 	}
 	return r.resolveFallback(req, "unhandled_bsi_authority_shape")
 }
 
-func (r StandardBSIPrimaryKeyResolver) resolveFallback(req core.PrimaryKeyResolveRequest, reason string) (core.PrimaryKeyResolveResult, error) {
+func (r StandardBSIPrimaryKeyResolver) resolveFallback(req core.PrimaryKeyResolveRequest, reason string, details ...string) (core.PrimaryKeyResolveResult, error) {
 	if r.Fallback == nil {
 		var profile core.PrimaryKeyResolveProfile
 		profile.ResolveCount = 1
 		profile.RecordBSIFallback(reason)
 		return core.PrimaryKeyResolveResult{Profile: profile}, fmt.Errorf(
-			"standard BSI primary-key authority does not support table %q primary key %q: %s; update the catalog key shape or add native resolver support",
-			standardPrimaryKeyFallbackTableName(req), standardPrimaryKeyFallbackPrimaryKey(req), reason)
+			"standard BSI primary-key authority does not support table %q primary key %q: %s; %s; update the catalog key shape or add native resolver support",
+			standardPrimaryKeyFallbackTableName(req), standardPrimaryKeyFallbackPrimaryKey(req), reason, standardPrimaryKeyFallbackDetail(req, details...))
 	}
 	result, err := r.Fallback.ResolvePrimaryKeyColumnID(req)
 	result.Profile.RecordBSIFallback(reason)
@@ -141,6 +141,47 @@ func standardPrimaryKeyFallbackPrimaryKey(req core.PrimaryKeyResolveRequest) str
 		return req.TableBuffer.Table.PrimaryKey
 	}
 	return ""
+}
+
+func standardPrimaryKeyFallbackDetail(req core.PrimaryKeyResolveRequest, details ...string) string {
+	parts := []string{}
+	if req.TableBuffer == nil {
+		parts = append(parts, "table_buffer=nil")
+	} else {
+		if req.TableBuffer.Table == nil {
+			parts = append(parts, "table=nil")
+		}
+		if len(req.TableBuffer.PKAttributes) == 0 {
+			parts = append(parts, "primary_key_fields=[]")
+		} else {
+			fieldDetails := make([]string, 0, len(req.TableBuffer.PKAttributes))
+			for _, attr := range req.TableBuffer.PKAttributes {
+				if attr == nil || attr.BasicAttribute == nil {
+					fieldDetails = append(fieldDetails, "<nil>")
+					continue
+				}
+				fieldDetails = append(fieldDetails, fmt.Sprintf("%s(type=%s mapping=%s columnID=%t)",
+					attr.FieldName, attr.Type, attr.MappingStrategy, attr.ColumnID))
+			}
+			parts = append(parts, "primary_key_fields=["+strings.Join(fieldDetails, ", ")+"]")
+		}
+	}
+	if len(req.PrimaryKeyValues) > 0 {
+		valueTypes := make([]string, 0, len(req.PrimaryKeyValues))
+		for _, value := range req.PrimaryKeyValues {
+			valueTypes = append(valueTypes, fmt.Sprintf("%T", value))
+		}
+		parts = append(parts, "value_types=["+strings.Join(valueTypes, ", ")+"]")
+	}
+	for _, detail := range details {
+		if trimmed := strings.TrimSpace(detail); trimmed != "" {
+			parts = append(parts, "detail="+trimmed)
+		}
+	}
+	if len(parts) == 0 {
+		return "no key-shape detail available"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func standardBSIPrimaryKeyFallbackReason(eligibility core.BSIPrimaryKeyAuthorityEligibility) string {
@@ -193,9 +234,9 @@ func standardPrimaryKeyReaderWithProjectionCache(reader core.SingleColumnBSIPrim
 	}
 }
 
-func standardCompoundBSIPrimaryKeyEncodable(req core.PrimaryKeyResolveRequest) bool {
+func standardCompoundBSIPrimaryKeyEncodeError(req core.PrimaryKeyResolveRequest) error {
 	if req.TableBuffer == nil || req.TableBuffer.Table == nil {
-		return false
+		return fmt.Errorf("missing table buffer")
 	}
 	_, err := core.EncodeCompoundPrimaryKeyAuthorityValue(core.PrimaryKeyAuthorityValueEncodingRequest{
 		TableName:  req.TableBuffer.Table.Name,
@@ -203,5 +244,5 @@ func standardCompoundBSIPrimaryKeyEncodable(req core.PrimaryKeyResolveRequest) b
 		Attributes: append([]*core.Attribute(nil), req.TableBuffer.PKAttributes...),
 		Values:     append([]interface{}(nil), req.PrimaryKeyValues...),
 	})
-	return err == nil
+	return err
 }
