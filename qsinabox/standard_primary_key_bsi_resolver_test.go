@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,7 +102,74 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	}
 }
 
-func TestStandardBSIPrimaryKeyResolverDelegatesCompoundKeysToFallback(t *testing.T) {
+func TestStandardBSIPrimaryKeyResolverAcceptsDirectColumnIDAuthority(t *testing.T) {
+	table := standardPrimaryKeyResolverTestTable("orders", "o_orderkey", []shared.BasicAttribute{
+		standardPrimaryKeyResolverTestAttribute("o_orderkey", "Integer", "IntBSI", true),
+	})
+	tbuf, err := core.NewTableBuffer(table)
+	if err != nil {
+		t.Fatalf("NewTableBuffer() error = %v", err)
+	}
+	tbuf.CurrentColumnID = 1001
+	resolver := StandardBSIPrimaryKeyResolver{
+		Reader: panicStandardSingleColumnBSIPrimaryKeyReader{t: t},
+	}
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(core.PrimaryKeyResolveRequest{
+		Session:          &core.Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001",
+		PrimaryKeyValues: []interface{}{int64(1001)},
+		DirectColumnID:   true,
+	})
+
+	if err != nil {
+		t.Fatalf("ResolvePrimaryKeyColumnID() error = %v", err)
+	}
+	if result.ColumnID != 1001 || result.ExistingRow {
+		t.Fatalf("ResolvePrimaryKeyColumnID() = %+v, want direct column ID insert", result)
+	}
+	if result.Profile.DirectColumnIDCount != 1 || result.Profile.BSIFallbackCount != 0 {
+		t.Fatalf("profile = %+v, want direct column ID without fallback", result.Profile)
+	}
+}
+
+func TestStandardBSIPrimaryKeyResolverRejectsUnsupportedCompoundKeysWithoutFallback(t *testing.T) {
+	table := standardPrimaryKeyResolverTestTable("lineitem", "l_orderkey+l_linenumber", []shared.BasicAttribute{
+		standardPrimaryKeyResolverTestAttribute("l_orderkey", "Integer", "IntBSI", false),
+		standardPrimaryKeyResolverTestAttribute("l_linenumber", "Integer", "IntBSI", false),
+	})
+	tbuf, err := core.NewTableBuffer(table)
+	if err != nil {
+		t.Fatalf("NewTableBuffer() error = %v", err)
+	}
+	resolver := StandardBSIPrimaryKeyResolver{
+		Reader: panicStandardSingleColumnBSIPrimaryKeyReader{t: t},
+	}
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(core.PrimaryKeyResolveRequest{
+		Session:          &core.Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1001;1",
+		PrimaryKeyValues: []interface{}{int64(1001), int64(1)},
+	})
+
+	if err == nil {
+		t.Fatalf("ResolvePrimaryKeyColumnID() error = nil, want unsupported compound key error")
+	}
+	if !strings.Contains(err.Error(), "standard BSI primary-key authority does not support table") ||
+		!strings.Contains(err.Error(), "compound_reader_missing") {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Profile.BSIFallbackCount != 1 {
+		t.Fatalf("BSIFallbackCount = %d, want 1", result.Profile.BSIFallbackCount)
+	}
+	if result.Profile.BSIFallbackReasons["compound_reader_missing"] != 1 {
+		t.Fatalf("BSIFallbackReasons = %+v, want compound_reader_missing", result.Profile.BSIFallbackReasons)
+	}
+}
+
+func TestStandardBSIPrimaryKeyResolverUsesExplicitFallbackWhenInjected(t *testing.T) {
 	table := standardPrimaryKeyResolverTestTable("lineitem", "l_orderkey+l_linenumber", []shared.BasicAttribute{
 		standardPrimaryKeyResolverTestAttribute("l_orderkey", "Integer", "IntBSI", false),
 		standardPrimaryKeyResolverTestAttribute("l_linenumber", "Integer", "IntBSI", false),

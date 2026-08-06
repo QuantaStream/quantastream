@@ -1,11 +1,14 @@
 package qsinabox
 
 import (
+	"fmt"
+
 	"github.com/QuantaStream/quantastream/core"
 )
 
 // StandardBSIPrimaryKeyResolver promotes eligible PKs to the native BSI
-// authority path while preserving KV behavior for unsupported catalog shapes.
+// authority path. Unsupported catalog shapes fail closed unless a caller
+// explicitly injects a fallback resolver for transition/shadow testing.
 type StandardBSIPrimaryKeyResolver struct {
 	Reader   core.SingleColumnBSIPrimaryKeyReader
 	Fallback core.PrimaryKeyResolver
@@ -16,8 +19,7 @@ var _ core.PrimaryKeyResolver = StandardBSIPrimaryKeyResolver{}
 // NewStandardBSIPrimaryKeyResolver returns the standard-mode resolver wrapper.
 func NewStandardBSIPrimaryKeyResolver(reader core.SingleColumnBSIPrimaryKeyReader) StandardBSIPrimaryKeyResolver {
 	return StandardBSIPrimaryKeyResolver{
-		Reader:   reader,
-		Fallback: core.KVPrimaryKeyResolver{},
+		Reader: reader,
 	}
 }
 
@@ -36,7 +38,7 @@ func NewStandardBSIPrimaryKeyResolverFactory(reader core.SingleColumnBSIPrimaryK
 func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheStruct) core.SessionPrimaryKeyResolverFactory {
 	return func(session *core.Session) core.PrimaryKeyResolver {
 		if session == nil {
-			return core.KVPrimaryKeyResolver{}
+			return StandardBSIPrimaryKeyResolver{}
 		}
 		return NewStandardBSIPrimaryKeyResolver(StandardSingleColumnBSIPrimaryKeyReader{
 			TableCache:      tableCache,
@@ -54,6 +56,10 @@ func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.Primar
 		return r.resolveFallback(req, "resolver_context_missing")
 	}
 	eligibility := core.ObserveBSIPrimaryKeyAuthorityEligibility(req.TableBuffer.Table)
+	if eligibility.Eligible && eligibility.Mode == core.BSIPrimaryKeyAuthorityModeDirectColumnID {
+		backend := core.NewSingleColumnBSIPrimaryKeyBackend(req.TableBuffer.Table, r.Reader)
+		return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
+	}
 	if eligibility.Eligible && eligibility.Mode == core.BSIPrimaryKeyAuthorityModeSingleColumnBSI {
 		backend := core.NewSingleColumnBSIPrimaryKeyBackend(req.TableBuffer.Table, r.Reader)
 		return core.NewBSIPrimaryKeyResolver(backend).ResolvePrimaryKeyColumnID(req)
@@ -85,17 +91,32 @@ func (r StandardBSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req core.Primar
 	return r.resolveFallback(req, "unhandled_bsi_authority_shape")
 }
 
-func (r StandardBSIPrimaryKeyResolver) fallback() core.PrimaryKeyResolver {
-	if r.Fallback != nil {
-		return r.Fallback
-	}
-	return core.KVPrimaryKeyResolver{}
-}
-
 func (r StandardBSIPrimaryKeyResolver) resolveFallback(req core.PrimaryKeyResolveRequest, reason string) (core.PrimaryKeyResolveResult, error) {
-	result, err := r.fallback().ResolvePrimaryKeyColumnID(req)
+	if r.Fallback == nil {
+		var profile core.PrimaryKeyResolveProfile
+		profile.ResolveCount = 1
+		profile.RecordBSIFallback(reason)
+		return core.PrimaryKeyResolveResult{Profile: profile}, fmt.Errorf(
+			"standard BSI primary-key authority does not support table %q primary key %q: %s; update the catalog key shape or add native resolver support",
+			standardPrimaryKeyFallbackTableName(req), standardPrimaryKeyFallbackPrimaryKey(req), reason)
+	}
+	result, err := r.Fallback.ResolvePrimaryKeyColumnID(req)
 	result.Profile.RecordBSIFallback(reason)
 	return result, err
+}
+
+func standardPrimaryKeyFallbackTableName(req core.PrimaryKeyResolveRequest) string {
+	if req.TableBuffer != nil && req.TableBuffer.Table != nil {
+		return req.TableBuffer.Table.Name
+	}
+	return ""
+}
+
+func standardPrimaryKeyFallbackPrimaryKey(req core.PrimaryKeyResolveRequest) string {
+	if req.TableBuffer != nil && req.TableBuffer.Table != nil {
+		return req.TableBuffer.Table.PrimaryKey
+	}
+	return ""
 }
 
 func standardBSIPrimaryKeyFallbackReason(eligibility core.BSIPrimaryKeyAuthorityEligibility) string {
