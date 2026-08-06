@@ -30,6 +30,14 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
 	}
+	entry.KeyCount = 7
+	entry.Artifacts = []core.BSIPrimaryKeyAuthorityManifestArtifact{
+		{
+			Kind:     "bsi",
+			Path:     "bitmap/sample/__qs_pk_authority",
+			KeyCount: 7,
+		},
+	}
 	if err := core.SaveBSIPrimaryKeyAuthorityManifest(dataDir, core.BSIPrimaryKeyAuthorityManifest{
 		Source: "test",
 		Entries: []core.BSIPrimaryKeyAuthorityManifestEntry{
@@ -50,6 +58,12 @@ func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsOK(t *testing.T) {
 	}
 	if !strings.Contains(output, "bsi_pk_authority_manifest_entries=1") {
 		t.Fatalf("summary missing manifest entry count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_artifacts=1") {
+		t.Fatalf("summary missing manifest artifact count:\n%s", output)
+	}
+	if !strings.Contains(output, "bsi_pk_authority_manifest_entry_key_count=7") {
+		t.Fatalf("summary missing manifest key count:\n%s", output)
 	}
 }
 

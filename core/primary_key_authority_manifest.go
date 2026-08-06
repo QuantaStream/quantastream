@@ -96,10 +96,12 @@ type BSIPrimaryKeyAuthorityManifestField struct {
 // BSIPrimaryKeyAuthorityManifestObservation reports whether a persisted
 // authority manifest matches the current catalog.
 type BSIPrimaryKeyAuthorityManifestObservation struct {
-	Status        string
-	Detail        string
-	ManifestEntry string
-	Entries       int
+	Status              string
+	Detail              string
+	ManifestEntry       string
+	Entries             int
+	ArtifactDescriptors int
+	EntryKeyCount       uint64
 }
 
 // BSIPrimaryKeyAuthorityManifestPath returns the conventional persisted
@@ -204,9 +206,12 @@ func NewBSIPrimaryKeyAuthorityManifestEntry(table *Table, logicalShard string) (
 
 // ObserveAgainstCatalog validates the manifest against the current table cache.
 func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]*Table) BSIPrimaryKeyAuthorityManifestObservation {
+	artifactDescriptors, entryKeyCount := summarizeBSIPrimaryKeyAuthorityManifestEntries(m.Entries)
 	observation := BSIPrimaryKeyAuthorityManifestObservation{
-		Status:  BSIPrimaryKeyAuthorityManifestStatusOK,
-		Entries: len(m.Entries),
+		Status:              BSIPrimaryKeyAuthorityManifestStatusOK,
+		Entries:             len(m.Entries),
+		ArtifactDescriptors: artifactDescriptors,
+		EntryKeyCount:       entryKeyCount,
 	}
 	if m.Version == 0 && len(m.Entries) == 0 {
 		observation.Status = BSIPrimaryKeyAuthorityManifestStatusMissing
@@ -258,6 +263,16 @@ func (m BSIPrimaryKeyAuthorityManifest) ObserveAgainstCatalog(tables map[string]
 		}
 	}
 	return observation
+}
+
+func summarizeBSIPrimaryKeyAuthorityManifestEntries(entries []BSIPrimaryKeyAuthorityManifestEntry) (int, uint64) {
+	artifactDescriptors := 0
+	var entryKeyCount uint64
+	for _, entry := range entries {
+		artifactDescriptors += len(entry.Artifacts)
+		entryKeyCount += entry.KeyCount
+	}
+	return artifactDescriptors, entryKeyCount
 }
 
 func observeBSIPrimaryKeyAuthorityManifestEntry(entry BSIPrimaryKeyAuthorityManifestEntry, table *Table) (string, string) {

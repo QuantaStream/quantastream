@@ -30,6 +30,12 @@ func TestBSIPrimaryKeyAuthorityManifestObservationReportsOK(t *testing.T) {
 	if observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
 		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
 	}
+	if observation.ArtifactDescriptors != 0 {
+		t.Fatalf("artifact descriptors = %d, want 0", observation.ArtifactDescriptors)
+	}
+	if observation.EntryKeyCount != 0 {
+		t.Fatalf("entry key count = %d, want 0", observation.EntryKeyCount)
+	}
 	if entry.EncodingVersion != PrimaryKeyIdentityEncodingVersion {
 		t.Fatalf("entry encoding version = %d, want %d", entry.EncodingVersion, PrimaryKeyIdentityEncodingVersion)
 	}
@@ -114,6 +120,8 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if observation := loaded.ObserveAgainstCatalog(map[string]*Table{"lineitem": table}); observation.Status != BSIPrimaryKeyAuthorityManifestStatusOK {
 		t.Fatalf("observation status = %s detail=%s", observation.Status, observation.Detail)
+	} else if observation.ArtifactDescriptors != 1 || observation.EntryKeyCount != entry.KeyCount {
+		t.Fatalf("observation artifact/key summary = artifacts:%d key_count:%d", observation.ArtifactDescriptors, observation.EntryKeyCount)
 	}
 }
 
