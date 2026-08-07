@@ -47,15 +47,6 @@ func devSkipSyncEnabled() bool {
 	}
 }
 
-func deferBackgroundPersistenceEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_DEFER_BACKGROUND_PERSIST"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 var (
 	// Ensure BitmapIndex implements shared.Service
 	_ NodeService = (*BitmapIndex)(nil)
@@ -67,40 +58,34 @@ var (
 // bsiCache - In memory storage for BSI values.
 // fragQueue - All cache mutation operations pass through a fragment queue (including server startup reads)
 // workers - Count of worker threads assigned to process mutations.
-// setBitThreads - Used to identify when incoming API SetBatch calls have fallen to zero triggering writes.
-// writeSignal - Channel used by setBitThreads to initiate write operations to persist cache items.
 // tableCache - Schema metadata cache (essentially same YAML file used by loader).
 type BitmapIndex struct {
 	*Node
-	bitmapCache                      map[string]map[string]map[uint64]map[int64]*StandardBitmap
-	bitmapCacheLock                  sync.RWMutex
-	bsiCache                         map[string]map[string]map[int64]*BSIBitmap
-	bsiCacheLock                     sync.RWMutex
-	seedCache                        map[string]*SeedBitmap
-	seedCacheLock                    sync.RWMutex
-	fragQueue                        chan *BitmapFragment
-	workersCount                     int
-	fragFileLock                     sync.Mutex
-	setBitThreads                    *CountTrigger
-	writeSignal                      chan bool
-	tableCache                       map[string]*shared.BasicTable
-	tableCacheLock                   sync.RWMutex
-	partitionQueue                   chan *PartitionOperation
-	bitmapCount                      int
-	bsiCount                         int
-	workers                          []*WorkerThread
-	cleanupLock                      sync.RWMutex
-	backgroundWG                     sync.WaitGroup
-	updBitmapTime                    atomic.Uint64
-	updBSITime                       atomic.Uint64
-	saveBitmapECnt                   atomic.Uint64
-	saveBitmapTCnt                   atomic.Uint64
-	saveBitmapTime                   atomic.Uint64
-	saveBSIECnt                      atomic.Uint64
-	saveBSITCnt                      atomic.Uint64
-	saveBSITime                      atomic.Uint64
-	deferBackgroundPersistence       atomic.Bool
-	deferredBackgroundPersistSignals atomic.Uint64
+	bitmapCache     map[string]map[string]map[uint64]map[int64]*StandardBitmap
+	bitmapCacheLock sync.RWMutex
+	bsiCache        map[string]map[string]map[int64]*BSIBitmap
+	bsiCacheLock    sync.RWMutex
+	seedCache       map[string]*SeedBitmap
+	seedCacheLock   sync.RWMutex
+	fragQueue       chan *BitmapFragment
+	workersCount    int
+	fragFileLock    sync.Mutex
+	tableCache      map[string]*shared.BasicTable
+	tableCacheLock  sync.RWMutex
+	partitionQueue  chan *PartitionOperation
+	bitmapCount     int
+	bsiCount        int
+	workers         []*WorkerThread
+	cleanupLock     sync.RWMutex
+	backgroundWG    sync.WaitGroup
+	updBitmapTime   atomic.Uint64
+	updBSITime      atomic.Uint64
+	saveBitmapECnt  atomic.Uint64
+	saveBitmapTCnt  atomic.Uint64
+	saveBitmapTime  atomic.Uint64
+	saveBSIECnt     atomic.Uint64
+	saveBSITCnt     atomic.Uint64
+	saveBSITime     atomic.Uint64
 }
 
 type WorkerThread struct {
@@ -200,12 +185,6 @@ func (m *BitmapIndex) Init() error {
 	m.bsiCache = make(map[string]map[string]map[int64]*BSIBitmap)
 	m.seedCache = make(map[string]*SeedBitmap)
 	m.workersCount = 20
-	m.writeSignal = make(chan bool, 1)
-	m.setBitThreads = NewCountTrigger(m.writeSignal)
-	m.deferBackgroundPersistence.Store(deferBackgroundPersistenceEnabled())
-	if m.deferBackgroundPersistence.Load() {
-		u.Warnf("QUANTASTREAM_DEFER_BACKGROUND_PERSIST enabled; background bitmap savepoints will be deferred until explicit commit/shutdown.")
-	}
 
 	m.workers = make([]*WorkerThread, m.workersCount)
 	for i := 0; i < m.workersCount; i++ {
@@ -235,22 +214,6 @@ func (m *BitmapIndex) Init() error {
 	go func() {
 		defer m.backgroundWG.Done()
 		m.partitionProcessLoop()
-	}()
-
-	m.backgroundWG.Add(1)
-	go func() { // wait for signal to persist cache
-		defer m.backgroundWG.Done()
-		for {
-			select {
-			case <-m.Stop:
-				u.Debug("BitmapIndex Init() received stop signal", m.Node.hashKey)
-				return
-			case forceSync := <-m.writeSignal:
-				if err := m.persistCachesFromBackgroundSignal(forceSync); err != nil {
-					u.Errorf("bitmap cache persist failed: %v", err)
-				}
-			}
-		}
 	}()
 
 	return nil
@@ -292,8 +255,6 @@ func (m *BitmapIndex) JoinCluster() {
 // BatchMutate API call (used by client SetBit call for bulk loading data)
 func (m *BitmapIndex) BatchMutate(stream pb.BitmapIndex_BatchMutateServer) error {
 
-	m.setBitThreads.Add(1)
-	defer m.setBitThreads.Add(-1)
 	done := make([]chan bool, 0)
 
 	for {
@@ -525,9 +486,7 @@ func (m *BitmapIndex) batchProcessLoop(worker *WorkerThread) {
 		default:
 			// Don't block
 		}
-		// fmt.Println(m.Node.hashKey, "batchProcessLoop middle worker loop", worker.index, len(m.setBitThreads.trigger), len(m.writeSignal))
-
-		// this is where it waits for a frag or a write signal
+		// this is where it waits for a fragment or flush marker
 		select {
 		case _, open := <-m.Stop:
 			if !open {
@@ -552,19 +511,6 @@ func (m *BitmapIndex) batchProcessLoop(worker *WorkerThread) {
 			default:
 			}
 			continue
-		case <-time.After(time.Second * 10):
-
-			forceSync := false
-			select {
-			case m.writeSignal <- forceSync:
-			default:
-				// it's ok to be full.  It's just a signal.
-			}
-			m.shardCount = m.bsiCount + m.bitmapCount
-			if worker.index == 0 {
-				//u.Debug("batchProcessLoop shard count ", m.hashKey, " shard ", m.shardCount, " bsi ", m.bsiCount, " bitmap ", m.bitmapCount)
-			}
-			// no default, block
 		}
 	} // back to top, forever
 }
@@ -1425,15 +1371,6 @@ func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, e
 	return bitmapCount, bitmapWrites, bsiCount, bsiWrites, nil
 }
 
-func (m *BitmapIndex) persistCachesFromBackgroundSignal(forceSync bool) error {
-	if !forceSync && m.deferBackgroundPersistence.Load() {
-		m.deferredBackgroundPersistSignals.Add(1)
-		return nil
-	}
-	_, _, _, _, err := m.persistCaches(forceSync)
-	return err
-}
-
 func (m *BitmapIndex) cacheHasDirtyEntries() bool {
 	if m.standardBitmapCacheHasDirtyEntries() {
 		return true
@@ -1624,38 +1561,6 @@ func (m *BitmapIndex) CheckoutSequence(ctx context.Context,
 	//u.Debugf("SERVER RESPONSE [Start %d, Count %d] Queue depth = %d", res.Start, res.Count, targetBSI.sequencerQueue.Len())
 	return res, nil
 
-}
-
-// CountTrigger sends a message when counter reaches zero
-type CountTrigger struct {
-	num     int
-	lock    sync.Mutex
-	trigger chan bool
-}
-
-// NewCountTrigger constructs a CountTrigger
-func NewCountTrigger(t chan bool) *CountTrigger {
-	return &CountTrigger{trigger: t}
-}
-
-// Add function provides thread safe addition of counter value based on input parameter.
-// If counter falls to zero then a value will be sent to trigger channel.
-func (c *CountTrigger) Add(n int) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.num += n
-	if c.num == 0 {
-		const forceSync = false
-		select {
-		// the trigger is the BitmapIndex.writeSignal
-		// We don't ask it to force
-		case c.trigger <- forceSync:
-			return
-		default:
-			// it is normal for it to get full.
-			return
-		}
-	}
 }
 
 // TableOperation - Process TableOperations.

@@ -11,21 +11,16 @@ cd "$script_dir"
 
 usage() {
   cat <<'EOF'
-Usage: ./start-local.sh [--dev-fast-start] [--nodes-only] [--bulk-load-savepoint]
+Usage: ./start-local.sh [--dev-fast-start] [--nodes-only]
 
 Options:
   --dev-fast-start  Set QUANTA_DEV_SKIP_SYNC=1 to skip cross-node startup sync.
                     Use only for local development with trusted local data.
   --nodes-only      Set QUANTASTREAM_NODES_ONLY=1 to start local Consul-backed
                     nodes without starting the MySQL query proxy.
-  --bulk-load-savepoint
-                    Set QUANTASTREAM_DEFER_BACKGROUND_PERSIST=1 so background
-                    bitmap savepoints are deferred until explicit commit/shutdown.
 
 Environment:
   QUANTASTREAM_SKIP_CONSUL_START=1  Do not start the bundled local Consul helper.
-  QUANTASTREAM_DEFER_BACKGROUND_PERSIST=1
-                    Defer non-forced background bitmap savepoints.
 EOF
 }
 
@@ -36,9 +31,6 @@ for arg in "$@"; do
       ;;
     --nodes-only)
       export QUANTASTREAM_NODES_ONLY=1
-      ;;
-    --bulk-load-savepoint|--defer-background-persist)
-      export QUANTASTREAM_DEFER_BACKGROUND_PERSIST=1
       ;;
     -h|--help)
       usage
@@ -62,8 +54,5 @@ if [[ "${QUANTA_DEV_SKIP_SYNC:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
 fi
 if [[ "${QUANTASTREAM_NODES_ONLY:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
   echo "Starting nodes only; the MySQL query proxy on port 4000 will not be started."
-fi
-if [[ "${QUANTASTREAM_DEFER_BACKGROUND_PERSIST:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
-  echo "WARNING: QUANTASTREAM_DEFER_BACKGROUND_PERSIST=${QUANTASTREAM_DEFER_BACKGROUND_PERSIST}; background bitmap savepoints are deferred until explicit commit/shutdown."
 fi
 go run . > >(tee "$log_file") 2>&1

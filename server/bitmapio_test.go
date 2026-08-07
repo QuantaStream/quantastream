@@ -85,61 +85,6 @@ func TestPartitionHashKeyOmitsNegativeBSIRowID(t *testing.T) {
 	}
 }
 
-func TestDeferBackgroundPersistenceEnabledFromEnv(t *testing.T) {
-	t.Setenv("QUANTASTREAM_DEFER_BACKGROUND_PERSIST", "true")
-	if !deferBackgroundPersistenceEnabled() {
-		t.Fatal("expected background persistence deferral to be enabled")
-	}
-
-	t.Setenv("QUANTASTREAM_DEFER_BACKGROUND_PERSIST", "false")
-	if deferBackgroundPersistenceEnabled() {
-		t.Fatal("expected background persistence deferral to be disabled")
-	}
-}
-
-func TestBackgroundPersistSignalCanBeDeferred(t *testing.T) {
-	now := time.Unix(100, 0)
-	values := roaring64.NewDefaultBSI()
-	values.SetValue(1, 10)
-	values.SetValue(2, 20)
-	index := &BitmapIndex{
-		Node: &Node{
-			Conn:    shared.NewDefaultConnection("test-node"),
-			dataDir: t.TempDir(),
-		},
-		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
-			"orders": {
-				"o_orderkey": {
-					now.UnixNano(): {
-						BSI:         values,
-						ModTime:     now,
-						PersistTime: now.Add(-time.Second),
-					},
-				},
-			},
-		},
-	}
-	index.deferBackgroundPersistence.Store(true)
-
-	if err := index.persistCachesFromBackgroundSignal(false); err != nil {
-		t.Fatalf("deferred background persist returned error: %v", err)
-	}
-	if got := index.deferredBackgroundPersistSignals.Load(); got != 1 {
-		t.Fatalf("deferred signal count = %d, want 1", got)
-	}
-	path := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected deferred background persist not to write %s, stat err=%v", path, err)
-	}
-
-	if err := index.persistCachesFromBackgroundSignal(true); err != nil {
-		t.Fatalf("forced background persist returned error: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected forced background persist to write %s: %v", path, err)
-	}
-}
-
 func TestForcePersistWritesCleanStandardBitmap(t *testing.T) {
 	now := time.Unix(100, 0)
 	index := &BitmapIndex{
