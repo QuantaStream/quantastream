@@ -38,15 +38,18 @@ func TestBuildSelectedIngestRecordUsesSelectorAndShardPolicy(t *testing.T) {
 			"kind":       "order",
 			"o_orderkey": 1001,
 		},
-		EventTime:    eventTime,
-		SourceOffset: "partition-0:22",
-		DedupTTL:     48 * time.Hour,
+		EventTime:     eventTime,
+		SourceOffset:  "partition-0:22",
+		BuildShardKey: "tq:orders:o_orderdate:1785801600000000000",
+		DedupTTL:      48 * time.Hour,
 	})
 
 	require.False(t, diagnostics.BlocksNative(), "%#v", diagnostics)
 	require.NoError(t, err)
 	require.Equal(t, "orders", result.Record.TableName)
 	require.Equal(t, "dedup:tpch-stream:evt-1", result.Record.ShardKey)
+	require.Equal(t, "tq:orders:o_orderdate:1785801600000000000", result.BuildShardKey)
+	require.Equal(t, "tq:orders:o_orderdate:1785801600000000000", result.Record.BuildShardKey)
 	require.Equal(t, IngestShardKeyDedup, result.ShardKey.Mode)
 	require.Equal(t, "evt-1", result.Record.EventID)
 	require.Equal(t, "tpch-stream", result.Record.Source)

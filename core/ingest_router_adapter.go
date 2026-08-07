@@ -20,6 +20,7 @@ type IngestRouteRequest struct {
 	Envelope         map[string]interface{}
 	Payload          map[string]interface{}
 	ExplicitShardKey string
+	BuildShardKey    string
 	EventID          string
 	Source           string
 	EventTime        time.Time
@@ -31,10 +32,11 @@ type IngestRouteRequest struct {
 // IngestRouteResult captures the selected table, selected shard key, and
 // resulting transport-neutral ingest record.
 type IngestRouteResult struct {
-	Selector IngestSelectorResult
-	ShardKey IngestShardKeyResult
-	Record   IngestRecord
-	Enqueued bool
+	Selector      IngestSelectorResult
+	ShardKey      IngestShardKeyResult
+	BuildShardKey string
+	Record        IngestRecord
+	Enqueued      bool
 }
 
 // BuildSelectedIngestRecord evaluates table selectors and builds the
@@ -64,18 +66,20 @@ func BuildSelectedIngestRecord(request IngestRouteRequest) (IngestRouteResult, q
 		return IngestRouteResult{Selector: selector}, nil, err
 	}
 	return IngestRouteResult{
-		Selector: selector,
-		ShardKey: shardKey,
+		Selector:      selector,
+		ShardKey:      shardKey,
+		BuildShardKey: request.BuildShardKey,
 		Record: IngestRecord{
-			TableName:    selector.TableName,
-			Data:         request.Payload,
-			ShardKey:     shardKey.ShardKey,
-			EventID:      eventID,
-			Source:       source,
-			EventTime:    request.EventTime,
-			SourceOffset: request.SourceOffset,
-			PayloadHash:  request.PayloadHash,
-			DedupTTL:     request.DedupTTL,
+			TableName:     selector.TableName,
+			Data:          request.Payload,
+			ShardKey:      shardKey.ShardKey,
+			BuildShardKey: request.BuildShardKey,
+			EventID:       eventID,
+			Source:        source,
+			EventTime:     request.EventTime,
+			SourceOffset:  request.SourceOffset,
+			PayloadHash:   request.PayloadHash,
+			DedupTTL:      request.DedupTTL,
 		},
 	}, nil, nil
 }

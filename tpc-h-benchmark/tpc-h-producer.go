@@ -267,11 +267,13 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 		}
 
 		if m.Direct {
+			buildShardKey := m.directLoadBuildShardKey(record)
 			enqueueStartedAt := time.Now()
 			if err := m.router.Enqueue(core.IngestRecord{
-				TableName: m.Index,
-				Data:      record,
-				ShardKey:  shardKey,
+				TableName:     m.Index,
+				Data:          record,
+				ShardKey:      shardKey,
+				BuildShardKey: buildShardKey,
 			}); err != nil {
 				m.directEnqueueElapsed += time.Since(enqueueStartedAt)
 				m.failedRecs.Add(1)
@@ -456,22 +458,25 @@ func (m *Main) generateRecord(fields []string) (string, map[string]interface{}) 
 	env["data"] = data
 	env["type"] = m.Index
 	env["shardKey"] = shardKey
-	return m.directLoadShardKey(shardKey, data), env
+	return shardKey, env
 }
 
-func (m *Main) directLoadShardKey(defaultKey string, data map[string]interface{}) string {
-	if !m.Direct || m.Table == nil || m.Table.TimeQuantumType == "" || m.Table.TimeQuantumField == "" {
-		return defaultKey
+func (m *Main) directLoadBuildShardKey(record map[string]interface{}) string {
+	if !m.Direct || m.Table == nil {
+		return ""
 	}
-	raw, ok := data[m.Table.TimeQuantumField]
-	if !ok || raw == nil {
-		return defaultKey
+	data, ok := record["data"].(map[string]interface{})
+	if !ok {
+		return ""
 	}
-	tq, _, err := shared.ToTQTimestamp(m.Table.TimeQuantumType, fmt.Sprint(raw))
-	if err != nil {
-		return defaultKey
+	result, ok := core.ResolveIngestBuildShardKey(core.IngestBuildShardKeyRequest{
+		Table:   m.Table,
+		Payload: data,
+	})
+	if !ok {
+		return ""
 	}
-	return fmt.Sprintf("tq:%s:%s:%d", m.Table.Name, m.Table.TimeQuantumField, tq.UnixNano())
+	return result.BuildShardKey
 }
 
 // Init function initializes process.

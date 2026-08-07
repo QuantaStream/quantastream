@@ -75,6 +75,7 @@ func TestIngestEnvelopeRouteRequestBridgesNormalizedMetadata(t *testing.T) {
 
 	routeRequest := envelope.RouteRequest(IngestEnvelopeRouteOptions{
 		ExplicitShardKey: "manual-shard",
+		BuildShardKey:    "tq:orders:o_orderdate:1785801600000000000",
 		PayloadHash:      123,
 		DedupTTL:         time.Hour,
 	})
@@ -88,6 +89,7 @@ func TestIngestEnvelopeRouteRequestBridgesNormalizedMetadata(t *testing.T) {
 	}, routeRequest.Envelope)
 	require.Equal(t, map[string]interface{}{"kind": "order"}, routeRequest.Payload)
 	require.Equal(t, "manual-shard", routeRequest.ExplicitShardKey)
+	require.Equal(t, "tq:orders:o_orderdate:1785801600000000000", routeRequest.BuildShardKey)
 	require.Equal(t, "evt-1", routeRequest.EventID)
 	require.Equal(t, "kafka:tpch-orders", routeRequest.Source)
 	require.Equal(t, eventTime, routeRequest.EventTime)

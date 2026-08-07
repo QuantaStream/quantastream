@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/shared"
@@ -70,6 +71,36 @@ func TestBuildIngestDedupKeyRequiresSourceAndEvent(t *testing.T) {
 	key, err := BuildIngestDedupKey("tpch", "evt-1")
 	require.NoError(t, err)
 	require.Equal(t, "dedup:tpch:evt-1", key)
+}
+
+func TestResolveIngestBuildShardKeyUsesTimeQuantumField(t *testing.T) {
+	table := &shared.BasicTable{
+		Name:             "lineitem",
+		TimeQuantumType:  "YMD",
+		TimeQuantumField: "l_shipdate",
+	}
+	tq, _, err := shared.ToTQTimestamp("YMD", "1996-03-15")
+	require.NoError(t, err)
+
+	result, ok := ResolveIngestBuildShardKey(IngestBuildShardKeyRequest{
+		Table:   table,
+		Payload: map[string]interface{}{"l_shipdate": "1996-03-15"},
+	})
+
+	require.True(t, ok)
+	require.Equal(t, fmt.Sprintf("tq:lineitem:l_shipdate:%d", tq.UnixNano()), result.BuildShardKey)
+	require.Equal(t, IngestBuildShardKeyTimeQuantum, result.Mode)
+	require.Equal(t, "l_shipdate", result.Field)
+}
+
+func TestResolveIngestBuildShardKeyReturnsFalseWhenTimeQuantumIsUnavailable(t *testing.T) {
+	result, ok := ResolveIngestBuildShardKey(IngestBuildShardKeyRequest{
+		Table:   &shared.BasicTable{Name: "orders", TimeQuantumType: "YMD", TimeQuantumField: "o_orderdate"},
+		Payload: map[string]interface{}{"o_orderdate": "not-a-date"},
+	})
+
+	require.False(t, ok)
+	require.Empty(t, result.BuildShardKey)
 }
 
 func TestClassifyIngestDedup(t *testing.T) {

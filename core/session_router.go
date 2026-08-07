@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ type IngestRecord struct {
 	TableName      string
 	Data           map[string]interface{}
 	ShardKey       string
+	BuildShardKey  string
 	EventID        string
 	Source         string
 	EventTime      time.Time
@@ -99,13 +101,14 @@ func (r *SessionRouter) Enqueue(record IngestRecord) error {
 	if record.TableName == "" {
 		return fmt.Errorf("table name is required")
 	}
-	if record.ShardKey == "" {
-		return fmt.Errorf("shard key is required")
+	routeKey := record.RouteShardKey()
+	if routeKey == "" {
+		return fmt.Errorf("shard key or build shard key is required")
 	}
-	shard := r.hashTable.GetN(1, record.ShardKey)
+	shard := r.hashTable.GetN(1, routeKey)
 	ch, ok := r.shardChannels[shard[0]]
 	if !ok {
-		return fmt.Errorf("cannot locate channel for shard key %v", record.ShardKey)
+		return fmt.Errorf("cannot locate channel for route shard key %v", routeKey)
 	}
 	ch <- record
 	return nil
@@ -230,6 +233,16 @@ func (r *SessionRouter) publishDrainProfile(profile RouterDrainWorkerProfile) {
 func (r IngestRecord) PutRowOptions() PutRowOptions {
 	options, _ := r.PutRowOptionsWithPayloadHash()
 	return options
+}
+
+// RouteShardKey returns the physical router key. BuildShardKey is optional and
+// lets loaders colocate work by build/persistence shard without changing the
+// logical record shard key used by upstream envelopes and dedup policy.
+func (r IngestRecord) RouteShardKey() string {
+	if key := strings.TrimSpace(r.BuildShardKey); key != "" {
+		return key
+	}
+	return strings.TrimSpace(r.ShardKey)
 }
 
 // PutRowOptionsWithPayloadHash returns optional streaming metadata and computes

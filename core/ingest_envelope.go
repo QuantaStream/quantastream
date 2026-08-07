@@ -56,6 +56,7 @@ type BatchIngestEnvelopeRequest struct {
 type IngestEnvelopeRouteOptions struct {
 	Tables           []*Table
 	ExplicitShardKey string
+	BuildShardKey    string
 	PayloadHash      uint64
 	DedupTTL         time.Duration
 }
@@ -123,6 +124,7 @@ func (e IngestEnvelope) RouteRequest(options IngestEnvelopeRouteOptions) IngestR
 		Envelope:         e.EnvelopeMap(),
 		Payload:          cloneIngestPayload(e.Payload),
 		ExplicitShardKey: options.ExplicitShardKey,
+		BuildShardKey:    options.BuildShardKey,
 		EventID:          e.EventID,
 		Source:           e.Source,
 		EventTime:        e.EventTime,

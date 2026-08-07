@@ -37,6 +37,28 @@ type IngestShardKeyResult struct {
 	Fields   []string
 }
 
+// IngestBuildShardKeyMode identifies an optional physical build-routing key.
+type IngestBuildShardKeyMode string
+
+const (
+	// IngestBuildShardKeyTimeQuantum routes by the table time quantum shard.
+	IngestBuildShardKeyTimeQuantum IngestBuildShardKeyMode = "time_quantum"
+)
+
+// IngestBuildShardKeyRequest describes optional physical placement inputs. The
+// logical shard key remains separate and continues to represent source identity.
+type IngestBuildShardKeyRequest struct {
+	Table   *shared.BasicTable
+	Payload map[string]interface{}
+}
+
+// IngestBuildShardKeyResult captures an optional physical build-routing key.
+type IngestBuildShardKeyResult struct {
+	BuildShardKey string
+	Mode          IngestBuildShardKeyMode
+	Field         string
+}
+
 // ResolveIngestShardKey centralizes router placement policy. It does not write
 // dedup state; it only chooses the key used to route work to one session owner.
 func ResolveIngestShardKey(request IngestShardKeyRequest) (IngestShardKeyResult, error) {
@@ -51,6 +73,33 @@ func ResolveIngestShardKey(request IngestShardKeyRequest) (IngestShardKeyResult,
 		return IngestShardKeyResult{ShardKey: key, Mode: IngestShardKeyDedup}, nil
 	}
 	return resolvePrimaryKeyIngestShardKey(request.Table, request.Payload)
+}
+
+// ResolveIngestBuildShardKey returns an optional physical routing key for
+// loaders that can benefit from colocating mutations by persistence/build shard.
+func ResolveIngestBuildShardKey(request IngestBuildShardKeyRequest) (IngestBuildShardKeyResult, bool) {
+	if request.Table == nil || request.Payload == nil {
+		return IngestBuildShardKeyResult{}, false
+	}
+	tableName := strings.TrimSpace(request.Table.Name)
+	tqType := strings.TrimSpace(request.Table.TimeQuantumType)
+	field := strings.TrimSpace(request.Table.TimeQuantumField)
+	if tableName == "" || tqType == "" || field == "" {
+		return IngestBuildShardKeyResult{}, false
+	}
+	raw, ok := request.Payload[field]
+	if !ok || raw == nil {
+		return IngestBuildShardKeyResult{}, false
+	}
+	tq, _, err := shared.ToTQTimestamp(tqType, fmt.Sprint(raw))
+	if err != nil {
+		return IngestBuildShardKeyResult{}, false
+	}
+	return IngestBuildShardKeyResult{
+		BuildShardKey: fmt.Sprintf("tq:%s:%s:%d", tableName, field, tq.UnixNano()),
+		Mode:          IngestBuildShardKeyTimeQuantum,
+		Field:         field,
+	}, true
 }
 
 func resolvePrimaryKeyIngestShardKey(table *Table, payload map[string]interface{}) (IngestShardKeyResult, error) {

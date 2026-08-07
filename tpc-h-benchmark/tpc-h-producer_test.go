@@ -96,21 +96,39 @@ func TestGenerateRecordKeepsPrimaryKeyShardKeyForStreamLoads(t *testing.T) {
 	}
 }
 
-func TestGenerateRecordRoutesDirectLoadsByTimeQuantumShard(t *testing.T) {
+func TestGenerateRecordKeepsPrimaryKeyShardKeyForDirectLoads(t *testing.T) {
+	loader := testLineitemLoader(true)
+
+	shardKey, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
+
+	if shardKey != "10012" {
+		t.Fatalf("direct shardKey = %q, want primary key shard", shardKey)
+	}
+	if env["shardKey"] != "10012" {
+		t.Fatalf("envelope shardKey = %q, want preserved primary key shard", env["shardKey"])
+	}
+}
+
+func TestDirectLoadBuildShardKeyUsesTimeQuantumShard(t *testing.T) {
 	loader := testLineitemLoader(true)
 	tq, _, err := shared.ToTQTimestamp("YMD", "1996-03-15")
 	if err != nil {
 		t.Fatalf("ToTQTimestamp() error: %v", err)
 	}
-
-	shardKey, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
+	_, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
 
 	want := fmt.Sprintf("tq:lineitem:l_shipdate:%d", tq.UnixNano())
-	if shardKey != want {
-		t.Fatalf("direct shardKey = %q, want %q", shardKey, want)
+	if got := loader.directLoadBuildShardKey(env); got != want {
+		t.Fatalf("direct build shard key = %q, want %q", got, want)
 	}
-	if env["shardKey"] != "10012" {
-		t.Fatalf("envelope shardKey = %q, want preserved primary key shard", env["shardKey"])
+}
+
+func TestDirectLoadBuildShardKeyIsEmptyForStreamLoads(t *testing.T) {
+	loader := testLineitemLoader(false)
+	_, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
+
+	if got := loader.directLoadBuildShardKey(env); got != "" {
+		t.Fatalf("stream build shard key = %q, want empty", got)
 	}
 }
 

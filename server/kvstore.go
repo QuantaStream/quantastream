@@ -280,15 +280,28 @@ func (m *KVStore) Lookup(ctx context.Context, kv *pb.IndexKVPair) (*pb.IndexKVPa
 // BatchPut - Insert a batch of entries.
 func (m *KVStore) BatchPut(stream pb.KVStore_BatchPutServer) error {
 
+	start := time.Now()
 	updatedMap := make(map[string]*pogreb.DB, 0) // local cache of DBs updated
+	var getStoreElapsed time.Duration
+	var putElapsed time.Duration
+	var syncElapsed time.Duration
+	var putCount int
 
 	defer func() {
-		for _, v := range updatedMap {
-			v.Sync()
+		syncStart := time.Now()
+		for index, v := range updatedMap {
+			if err := v.Sync(); err != nil {
+				u.Errorf("%s KVStore batch sync [%s] failed: %v", m.hashKey, index, err)
+			}
+		}
+		syncElapsed = time.Since(syncStart)
+		elapsed := time.Since(start)
+		if putCount > 1000 || elapsed > 500*time.Millisecond {
+			fmt.Printf("KVStore batch put node=%s items=%d stores=%d get_store_elapsed=%s put_elapsed=%s sync_elapsed=%s total_elapsed=%s\n",
+				m.hashKey, putCount, len(updatedMap), getStoreElapsed, putElapsed, syncElapsed, elapsed)
 		}
 	}()
 
-	var putCount int32
 	for {
 		kv, err := stream.Recv()
 		if err == io.EOF {
@@ -300,11 +313,14 @@ func (m *KVStore) BatchPut(stream pb.KVStore_BatchPutServer) error {
 		if kv.IndexPath == "" {
 			return fmt.Errorf("Index must be specified")
 		}
-		db, err2 := m.getStore(kv.IndexPath)
-		if err2 != nil {
-			return err2
-		}
-		if _, found := updatedMap[kv.IndexPath]; !found {
+		db, found := updatedMap[kv.IndexPath]
+		if !found {
+			getStoreStart := time.Now()
+			db, err = m.getStore(kv.IndexPath)
+			getStoreElapsed += time.Since(getStoreStart)
+			if err != nil {
+				return err
+			}
 			updatedMap[kv.IndexPath] = db
 		}
 		if kv.Key == nil || len(kv.Key) == 0 {
@@ -316,9 +332,11 @@ func (m *KVStore) BatchPut(stream pb.KVStore_BatchPutServer) error {
 		if db == nil {
 			return fmt.Errorf("DB is nil for [%s]", kv.IndexPath)
 		}
+		putStart := time.Now()
 		if err := db.Put(kv.Key, kv.Value[0]); err != nil {
 			return err
 		}
+		putElapsed += time.Since(putStart)
 		putCount++
 	}
 }
