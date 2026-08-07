@@ -1253,6 +1253,7 @@ type bsiCachePersistSummary struct {
 	writeElapsed     time.Duration
 	marshalElapsed   time.Duration
 	encodeElapsed    time.Duration
+	pathElapsed      time.Duration
 	fileWriteElapsed time.Duration
 	cleanupElapsed   time.Duration
 	chunkCount       int
@@ -1297,6 +1298,7 @@ func (m *BitmapIndex) checkPersistBSICacheWithTimings(forceSync bool) (bsiCacheP
 					summary.writeElapsed += time.Since(writeStart)
 					summary.marshalElapsed += timings.marshalElapsed
 					summary.encodeElapsed += timings.encodeElapsed
+					summary.pathElapsed += timings.pathElapsed
 					summary.fileWriteElapsed += timings.fileWriteElapsed
 					summary.cleanupElapsed += timings.cleanupElapsed
 					summary.chunkCount += timings.chunkCount
@@ -1419,6 +1421,7 @@ type persistCachesSummary struct {
 	bsiWriteElapsed     time.Duration
 	bsiMarshalElapsed   time.Duration
 	bsiEncodeElapsed    time.Duration
+	bsiPathElapsed      time.Duration
 	bsiFileWriteElapsed time.Duration
 	bsiCleanupElapsed   time.Duration
 	bsiChunkCount       int
@@ -1454,6 +1457,7 @@ func (m *BitmapIndex) persistCachesWithTimings(forceSync bool) (persistCachesSum
 	summary.bsiWriteElapsed = bsiSummary.writeElapsed
 	summary.bsiMarshalElapsed = bsiSummary.marshalElapsed
 	summary.bsiEncodeElapsed = bsiSummary.encodeElapsed
+	summary.bsiPathElapsed = bsiSummary.pathElapsed
 	summary.bsiFileWriteElapsed = bsiSummary.fileWriteElapsed
 	summary.bsiCleanupElapsed = bsiSummary.cleanupElapsed
 	summary.bsiChunkCount = bsiSummary.chunkCount
@@ -1584,14 +1588,14 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 			manifestElapsed = time.Since(manifestStart)
 		}
 	}
-	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_path_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey,
 		persistSummary.bitmapCount, persistSummary.bitmapWrites,
 		persistSummary.bsiCount, persistSummary.bsiWrites,
 		flushElapsed, dirtyCheckElapsed, persistElapsed,
 		persistSummary.bitmapElapsed, persistSummary.bitmapScanElapsed, persistSummary.bitmapWriteElapsed,
 		persistSummary.bsiElapsed, persistSummary.bsiScanElapsed, persistSummary.bsiWriteElapsed,
-		persistSummary.bsiMarshalElapsed, persistSummary.bsiEncodeElapsed,
+		persistSummary.bsiMarshalElapsed, persistSummary.bsiEncodeElapsed, persistSummary.bsiPathElapsed,
 		persistSummary.bsiFileWriteElapsed, persistSummary.bsiCleanupElapsed,
 		persistSummary.bsiChunkCount, persistSummary.bsiChunkBytes, persistSummary.bsiBundleBytes,
 		manifestCheckElapsed, manifestElapsed)
