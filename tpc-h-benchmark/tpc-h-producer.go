@@ -452,11 +452,26 @@ func (m *Main) generateRecord(fields []string) (string, map[string]interface{}) 
 			sb.WriteString(x.(string))
 		}
 	}
+	shardKey := sb.String()
 	env["data"] = data
 	env["type"] = m.Index
-	shardKey := sb.String()
 	env["shardKey"] = shardKey
-	return shardKey, env
+	return m.directLoadShardKey(shardKey, data), env
+}
+
+func (m *Main) directLoadShardKey(defaultKey string, data map[string]interface{}) string {
+	if !m.Direct || m.Table == nil || m.Table.TimeQuantumType == "" || m.Table.TimeQuantumField == "" {
+		return defaultKey
+	}
+	raw, ok := data[m.Table.TimeQuantumField]
+	if !ok || raw == nil {
+		return defaultKey
+	}
+	tq, _, err := shared.ToTQTimestamp(m.Table.TimeQuantumType, fmt.Sprint(raw))
+	if err != nil {
+		return defaultKey
+	}
+	return fmt.Sprintf("tq:%s:%s:%d", m.Table.Name, m.Table.TimeQuantumField, tq.UnixNano())
 }
 
 // Init function initializes process.

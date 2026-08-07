@@ -61,31 +61,37 @@ var (
 // tableCache - Schema metadata cache (essentially same YAML file used by loader).
 type BitmapIndex struct {
 	*Node
-	bitmapCache     map[string]map[string]map[uint64]map[int64]*StandardBitmap
-	bitmapCacheLock sync.RWMutex
-	bsiCache        map[string]map[string]map[int64]*BSIBitmap
-	bsiCacheLock    sync.RWMutex
-	seedCache       map[string]*SeedBitmap
-	seedCacheLock   sync.RWMutex
-	fragQueue       chan *BitmapFragment
-	workersCount    int
-	fragFileLock    sync.Mutex
-	tableCache      map[string]*shared.BasicTable
-	tableCacheLock  sync.RWMutex
-	partitionQueue  chan *PartitionOperation
-	bitmapCount     int
-	bsiCount        int
-	workers         []*WorkerThread
-	cleanupLock     sync.RWMutex
-	backgroundWG    sync.WaitGroup
-	updBitmapTime   atomic.Uint64
-	updBSITime      atomic.Uint64
-	saveBitmapECnt  atomic.Uint64
-	saveBitmapTCnt  atomic.Uint64
-	saveBitmapTime  atomic.Uint64
-	saveBSIECnt     atomic.Uint64
-	saveBSITCnt     atomic.Uint64
-	saveBSITime     atomic.Uint64
+	bitmapCache           map[string]map[string]map[uint64]map[int64]*StandardBitmap
+	bitmapCacheLock       sync.RWMutex
+	bsiCache              map[string]map[string]map[int64]*BSIBitmap
+	bsiCacheLock          sync.RWMutex
+	seedCache             map[string]*SeedBitmap
+	seedCacheLock         sync.RWMutex
+	fragQueue             chan *BitmapFragment
+	workersCount          int
+	fragFileLock          sync.Mutex
+	tableCache            map[string]*shared.BasicTable
+	tableCacheLock        sync.RWMutex
+	partitionQueue        chan *PartitionOperation
+	bitmapCount           int
+	bsiCount              int
+	workers               []*WorkerThread
+	cleanupLock           sync.RWMutex
+	backgroundWG          sync.WaitGroup
+	updBitmapTime         atomic.Uint64
+	updBSITime            atomic.Uint64
+	saveBitmapECnt        atomic.Uint64
+	saveBitmapTCnt        atomic.Uint64
+	saveBitmapTime        atomic.Uint64
+	saveBSIECnt           atomic.Uint64
+	saveBSITCnt           atomic.Uint64
+	saveBSITime           atomic.Uint64
+	bsiMergeCount         atomic.Uint64
+	bsiMergeDisjointCount atomic.Uint64
+	bsiMergeOverlapCount  atomic.Uint64
+	bsiMergeCheckNanos    atomic.Uint64
+	bsiMergeClearNanos    atomic.Uint64
+	bsiMergeOrNanos       atomic.Uint64
 }
 
 type WorkerThread struct {
@@ -830,11 +836,22 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		m.bsiCacheLock.Unlock()
 		existingRows := existBm.GetExistenceBitmap()
 		newRows := newBSI.GetExistenceBitmap()
-		if existingRows.Intersects(newRows) {
+		m.bsiMergeCount.Add(1)
+		checkStart := time.Now()
+		intersects := existingRows.Intersects(newRows)
+		m.bsiMergeCheckNanos.Add(uint64(time.Since(checkStart).Nanoseconds()))
+		if intersects {
+			m.bsiMergeOverlapCount.Add(1)
+			clearStart := time.Now()
 			clearSet := roaring64.FastAnd(existingRows, newRows)
 			existBm.ClearValues(clearSet)
+			m.bsiMergeClearNanos.Add(uint64(time.Since(clearStart).Nanoseconds()))
+		} else {
+			m.bsiMergeDisjointCount.Add(1)
 		}
+		orStart := time.Now()
 		existBm.ParOr(0, newBSI.BSI)
+		m.bsiMergeOrNanos.Add(uint64(time.Since(orStart).Nanoseconds()))
 		existBm.ModTime = applyTime
 		existBm.AccessTime = applyTime
 		if f.IsInit {
@@ -1627,7 +1644,7 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 			manifestElapsed = time.Since(manifestStart)
 		}
 	}
-	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d bsi_pack_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_path_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d bsi_pack_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_path_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d bsi_merge_count=%d bsi_merge_disjoint=%d bsi_merge_overlap=%d bsi_merge_check_elapsed=%s bsi_merge_clear_elapsed=%s bsi_merge_or_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey,
 		persistSummary.bitmapCount, persistSummary.bitmapWrites,
 		persistSummary.bsiCount, persistSummary.bsiWrites, persistSummary.bsiPackWrites,
@@ -1637,6 +1654,9 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 		persistSummary.bsiMarshalElapsed, persistSummary.bsiEncodeElapsed, persistSummary.bsiPathElapsed,
 		persistSummary.bsiFileWriteElapsed, persistSummary.bsiCleanupElapsed,
 		persistSummary.bsiChunkCount, persistSummary.bsiChunkBytes, persistSummary.bsiBundleBytes,
+		m.bsiMergeCount.Load(), m.bsiMergeDisjointCount.Load(), m.bsiMergeOverlapCount.Load(),
+		time.Duration(m.bsiMergeCheckNanos.Load()), time.Duration(m.bsiMergeClearNanos.Load()),
+		time.Duration(m.bsiMergeOrNanos.Load()),
 		manifestCheckElapsed, manifestElapsed)
 	return e, nil
 }

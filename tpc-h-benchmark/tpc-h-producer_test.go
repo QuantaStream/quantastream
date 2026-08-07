@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -79,5 +80,56 @@ func TestClusterDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testing
 	}
 	if config.OnPutRowResult == nil || config.OnFlushProfile == nil || config.OnDrainProfile == nil {
 		t.Fatalf("router profile callbacks were not installed")
+	}
+}
+
+func TestGenerateRecordKeepsPrimaryKeyShardKeyForStreamLoads(t *testing.T) {
+	loader := testLineitemLoader(false)
+
+	shardKey, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
+
+	if shardKey != "10012" {
+		t.Fatalf("shardKey = %q, want primary key shard", shardKey)
+	}
+	if env["shardKey"] != "10012" {
+		t.Fatalf("envelope shardKey = %q, want primary key shard", env["shardKey"])
+	}
+}
+
+func TestGenerateRecordRoutesDirectLoadsByTimeQuantumShard(t *testing.T) {
+	loader := testLineitemLoader(true)
+	tq, _, err := shared.ToTQTimestamp("YMD", "1996-03-15")
+	if err != nil {
+		t.Fatalf("ToTQTimestamp() error: %v", err)
+	}
+
+	shardKey, env := loader.generateRecord([]string{"1001", "2", "1996-03-15"})
+
+	want := fmt.Sprintf("tq:lineitem:l_shipdate:%d", tq.UnixNano())
+	if shardKey != want {
+		t.Fatalf("direct shardKey = %q, want %q", shardKey, want)
+	}
+	if env["shardKey"] != "10012" {
+		t.Fatalf("envelope shardKey = %q, want preserved primary key shard", env["shardKey"])
+	}
+}
+
+func testLineitemLoader(direct bool) *Main {
+	table := &shared.BasicTable{
+		Name:             "lineitem",
+		PrimaryKey:       "l_orderkey+l_linenumber",
+		TimeQuantumType:  "YMD",
+		TimeQuantumField: "l_shipdate",
+		Attributes: []shared.BasicAttribute{
+			{FieldName: "l_orderkey", SourceOrdinal: 1},
+			{FieldName: "l_linenumber", SourceOrdinal: 2},
+			{FieldName: "l_shipdate", SourceOrdinal: 3},
+		},
+	}
+	return &Main{
+		Index:     "lineitem",
+		Table:     table,
+		Direct:    direct,
+		shardCols: []*shared.BasicAttribute{&table.Attributes[0], &table.Attributes[1]},
 	}
 }
