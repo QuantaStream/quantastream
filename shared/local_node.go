@@ -46,6 +46,7 @@ func (f LocalNodeObserverFunc) ObserveLocalNodeCall(call LocalNodeCall) {
 // BitmapIndex node API. Streaming/batch methods remain explicit readiness risks.
 type LocalBitmapIndexService interface {
 	Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error)
+	SyncStatus(context.Context, *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error)
 	Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error)
 	CompareBSIFields(context.Context, *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error)
 	Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error)

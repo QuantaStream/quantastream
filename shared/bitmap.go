@@ -908,6 +908,78 @@ func (c *BitmapIndex) Projection(index string, fields []string, fromTime, toTime
 	return aggregateProjectionResponses(responses)
 }
 
+// BSIDomainCardinality asks the owning readable node for BSI existence
+// cardinality without returning BSI payload bytes. It is intentionally limited
+// to a single exact shard/domain; callers that need broad ranges should use
+// Projection until a range-aware metadata path exists.
+func (c *BitmapIndex) BSIDomainCardinality(index, field string, fromTime, toTime int64) (uint64, error) {
+	if index == "" {
+		return 0, fmt.Errorf("index not specified for BSI domain cardinality")
+	}
+	if field == "" {
+		return 0, fmt.Errorf("field not specified for BSI domain cardinality")
+	}
+	if fromTime != toTime {
+		return 0, fmt.Errorf("BSI domain cardinality requires an exact shard/domain window")
+	}
+
+	req := &pb.SyncStatusRequest{
+		Index:    index,
+		Field:    field,
+		Time:     fromTime,
+		SendData: false,
+	}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.SyncStatus(ctx, req)
+		if err != nil {
+			return 0, err
+		}
+		if response == nil {
+			return 0, nil
+		}
+		return response.GetCardinality(), nil
+	}
+
+	routeKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, fromTime)))
+	indices, err := c.SelectNodes(routeKey, ReadIntent)
+	if err != nil {
+		return 0, fmt.Errorf("BSIDomainCardinality: %v", err)
+	}
+
+	resultChan := make(chan uint64, len(indices))
+	var eg errgroup.Group
+	for _, n := range indices {
+		if n < 0 || n >= len(c.client) {
+			return 0, fmt.Errorf("BSIDomainCardinality: selected node index %d outside client count %d", n, len(c.client))
+		}
+		client := c.client[n]
+		clientIndex := n
+		eg.Go(func() error {
+			response, err := c.syncStatusClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			if response != nil {
+				resultChan <- response.GetCardinality()
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return 0, err
+	}
+	close(resultChan)
+
+	var cardinality uint64
+	for partial := range resultChan {
+		cardinality += partial
+	}
+	return cardinality, nil
+}
+
 // CompareBSIFields asks readable nodes to compare two BSI fields against their
 // local shard fragments and returns the union of matching rownums.
 func (c *BitmapIndex) CompareBSIFields(index, leftField, rightField string, fromTime, toTime int64,

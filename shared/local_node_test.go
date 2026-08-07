@@ -58,6 +58,28 @@ func TestBitmapIndexQueryGroupUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexBSIDomainCardinalityUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{syncStatusCardinality: 7}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	cardinality, err := index.BSIDomainCardinality("lineitem", "l_orderkey", 123, 123)
+	if err != nil {
+		t.Fatalf("BSIDomainCardinality() error = %v", err)
+	}
+	if local.syncStatusCalls != 1 {
+		t.Fatalf("sync status calls = %d, want 1", local.syncStatusCalls)
+	}
+	if local.syncStatusRequest == nil {
+		t.Fatal("sync status request was not captured")
+	}
+	if local.syncStatusRequest.Index != "lineitem" || local.syncStatusRequest.Field != "l_orderkey" ||
+		local.syncStatusRequest.Time != 123 || local.syncStatusRequest.SendData {
+		t.Fatalf("sync status request = %#v, want no-data cardinality probe", local.syncStatusRequest)
+	}
+	if cardinality != 7 {
+		t.Fatalf("cardinality = %d, want 7", cardinality)
+	}
+}
+
 func TestBitmapIndexBatchClearValueUsesLocalBatchService(t *testing.T) {
 	local := &recordingLocalBitmapIndexService{}
 	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
@@ -196,6 +218,9 @@ func TestKVStoreItemsUsesLocalService(t *testing.T) {
 
 type recordingLocalBitmapIndexService struct {
 	queryCalls              int
+	syncStatusCalls         int
+	syncStatusRequest       *pb.SyncStatusRequest
+	syncStatusCardinality   uint64
 	compareBSIFieldsCalls   int
 	compareBSIFieldsRequest *pb.CompareBSIFieldsRequest
 	bulkClearCalls          int
@@ -218,6 +243,12 @@ func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuer
 		return nil, err
 	}
 	return &pb.QueryResult{Unions: data, Existences: empty}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) SyncStatus(_ context.Context, req *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error) {
+	s.syncStatusCalls++
+	s.syncStatusRequest = req
+	return &pb.SyncStatusResponse{Cardinality: s.syncStatusCardinality}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error) {

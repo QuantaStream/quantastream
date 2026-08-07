@@ -59,6 +59,15 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 // contains any committed values for the lookup domain.
 func (b StandardCompoundBSIPrimaryKeyBackend) PrimaryKeyDomainState(req core.BSIPrimaryKeyLookupRequest) (core.PrimaryKeyDomainState, error) {
 	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	if cardinality, ok, err := b.Reader.primaryKeyBSIDomainCardinality(req.TableName,
+		shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime); err != nil {
+		return core.PrimaryKeyDomainUnknown, err
+	} else if ok {
+		if cardinality == 0 {
+			return core.PrimaryKeyDomainEmpty, nil
+		}
+		return core.PrimaryKeyDomainNonEmpty, nil
+	}
 	bsi, _, _, err := b.Reader.projectCachedPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
 	if err != nil {
 		return core.PrimaryKeyDomainUnknown, err

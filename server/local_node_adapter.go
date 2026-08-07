@@ -71,6 +71,17 @@ func (a LocalBitmapIndexAdapter) Query(ctx context.Context, req *pb.BitmapQuery)
 	return result, err
 }
 
+// SyncStatus forwards a sync-status request without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) SyncStatus(ctx context.Context, req *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.SyncStatus(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "SyncStatus", start, err)
+	return result, err
+}
+
 // Projection forwards a projection request without a gRPC client hop.
 func (a LocalBitmapIndexAdapter) Projection(ctx context.Context, req *pb.ProjectionRequest) (*pb.ProjectionResponse, error) {
 	if a.Index == nil {

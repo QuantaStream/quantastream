@@ -1,10 +1,12 @@
 package qsinabox
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 
 	"github.com/QuantaStream/quantastream/core"
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
@@ -70,6 +72,14 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) PrimaryKeyDomainState(req core.
 		return core.PrimaryKeyDomainUnknown, err
 	}
 	fromTime, toTime := standardSingleColumnBSIPrimaryKeyWindowNanos(r.TableCache, req)
+	if cardinality, ok, err := r.primaryKeyBSIDomainCardinality(req.TableName, req.FieldName, fromTime, toTime); err != nil {
+		return core.PrimaryKeyDomainUnknown, err
+	} else if ok {
+		if cardinality == 0 {
+			return core.PrimaryKeyDomainEmpty, nil
+		}
+		return core.PrimaryKeyDomainNonEmpty, nil
+	}
 	bsi, _, _, err := r.projectCachedPrimaryKeyBSI(req.TableName, req.FieldName, fromTime, toTime)
 	if err != nil {
 		return core.PrimaryKeyDomainUnknown, err
@@ -118,6 +128,48 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) projectPrimaryKeyBSI(tableName,
 		return nil, err
 	}
 	return bsis[fieldName], nil
+}
+
+func (r StandardSingleColumnBSIPrimaryKeyReader) primaryKeyBSIDomainCardinality(tableName, fieldName string,
+	fromTime, toTime int64) (uint64, bool, error) {
+
+	if fromTime != toTime {
+		return 0, false, nil
+	}
+	if r.Direct != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), shared.Deadline)
+		defer cancel()
+		response, err := r.Direct.SyncStatus(ctx, &pb.SyncStatusRequest{
+			Index:    tableName,
+			Field:    fieldName,
+			Time:     fromTime,
+			SendData: false,
+		})
+		if err != nil {
+			return 0, true, err
+		}
+		if response == nil {
+			return 0, true, nil
+		}
+		return response.GetCardinality(), true, nil
+	}
+	if r.BitIndex != nil {
+		cardinality, err := r.BitIndex.BSIDomainCardinality(tableName, fieldName, fromTime, toTime)
+		return cardinality, true, err
+	}
+	if r.Pool == nil {
+		return 0, false, nil
+	}
+	session, err := r.Pool.Borrow(tableName)
+	if err != nil {
+		return 0, true, err
+	}
+	defer r.Pool.Return(tableName, session)
+	if session == nil || session.BitIndex == nil {
+		return 0, false, nil
+	}
+	cardinality, err := session.BitIndex.BSIDomainCardinality(tableName, fieldName, fromTime, toTime)
+	return cardinality, true, err
 }
 
 func (r StandardSingleColumnBSIPrimaryKeyReader) projectCachedPrimaryKeyBSI(tableName, fieldName string,
