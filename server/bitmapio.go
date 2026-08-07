@@ -136,15 +136,12 @@ func (m *BitmapIndex) saveCompleteStandardBundle(bitmaps map[uint64]*StandardBit
 	if err != nil {
 		return 0, err
 	}
-	_, bundlePath := m.standardBitmapBundleFilePathWithCreate(indexName, fieldName, ts, tqType, false)
-	cleanupLegacy := pathExists(filepath.Join(m.dataDir, "bitmap", indexName, fieldName)) && !pathExists(bundlePath)
+	_, bundlePath := m.standardBitmapBundleFilePath(indexName, fieldName, ts, tqType)
 	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
 		return 0, err
 	}
-	if cleanupLegacy {
-		if err := m.removeLegacyStandardBitmapShardFiles(indexName, fieldName, ts, tqType); err != nil {
-			return 0, err
-		}
+	if err := m.removeLegacyStandardBitmapShardFiles(indexName, fieldName, ts, tqType); err != nil {
+		return 0, err
 	}
 
 	persistedAt := time.Now()
@@ -163,10 +160,6 @@ func (m *BitmapIndex) saveCompleteStandardBundle(bitmaps map[uint64]*StandardBit
 }
 
 func (m *BitmapIndex) standardBitmapBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
-	return m.standardBitmapBundleFilePathWithCreate(indexName, fieldName, ts, tqType, true)
-}
-
-func (m *BitmapIndex) standardBitmapBundleFilePathWithCreate(indexName, fieldName string, ts time.Time, tqType string, create bool) (string, string) {
 	dir := filepath.Join(m.dataDir, "bitmap", indexName, fieldName, standardBundleLeafDir)
 	shard := "default"
 	switch tqType {
@@ -178,9 +171,7 @@ func (m *BitmapIndex) standardBitmapBundleFilePathWithCreate(indexName, fieldNam
 		shard = formatShardTime(ts)
 	}
 	dir = filepath.Join(dir, shard)
-	if create {
-		_ = os.MkdirAll(dir, 0755)
-	}
+	_ = os.MkdirAll(dir, 0755)
 	return dir, filepath.Join(dir, standardBundleFileName)
 }
 
@@ -188,19 +179,25 @@ func encodeStandardBitmapBundle(entries []standardBitmapBundleEntry) ([]byte, er
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("cannot encode empty standard bitmap bundle")
 	}
-	size := len(standardBitmapBundleMagic) + 4
-	for _, entry := range entries {
-		size += 16 + len(entry.Data)
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(standardBitmapBundleMagic); err != nil {
+		return nil, err
 	}
-	buf := make([]byte, 0, size)
-	buf = append(buf, standardBitmapBundleMagic...)
-	buf = appendUint32BE(buf, uint32(len(entries)))
-	for _, entry := range entries {
-		buf = appendUint64BE(buf, entry.RowID)
-		buf = appendUint64BE(buf, uint64(len(entry.Data)))
-		buf = append(buf, entry.Data...)
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(entries))); err != nil {
+		return nil, err
 	}
-	return buf, nil
+	for _, entry := range entries {
+		if err := binary.Write(&buf, binary.BigEndian, entry.RowID); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&buf, binary.BigEndian, uint64(len(entry.Data))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(entry.Data); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func decodeStandardBitmapBundle(data []byte) ([]standardBitmapBundleEntry, error) {
@@ -312,24 +309,16 @@ func (m *BitmapIndex) saveCompleteBSI(bsi *BSIBitmap, indexName, fieldName strin
 	if err != nil {
 		return err
 	}
-	dir, bundlePath := m.bsiBundleFilePathWithCreate(indexName, fieldName, ts, bsi.TQType, false)
-	cleanupLegacy := pathExists(dir) && !pathExists(bundlePath)
+	dir, bundlePath := m.bsiBundleFilePath(indexName, fieldName, ts, bsi.TQType)
 	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
 		return err
 	}
-	if cleanupLegacy {
-		return removeLegacyBSISliceFiles(dir)
-	}
-	return nil
+	return removeLegacyBSISliceFiles(dir)
 }
 
 func (m *BitmapIndex) bsiBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
-	return m.bsiBundleFilePathWithCreate(indexName, fieldName, ts, tqType, true)
-}
-
-func (m *BitmapIndex) bsiBundleFilePathWithCreate(indexName, fieldName string, ts time.Time, tqType string, create bool) (string, string) {
 	partition := &Partition{Index: indexName, Field: fieldName, Time: ts, TQType: tqType, RowIDOrBits: -1}
-	dir := m.generateBitmapFilePathWithCreate(partition, false, create)
+	dir := m.generateBitmapFilePath(partition, false)
 	return dir, filepath.Join(dir, bsiBundleFileName)
 }
 
@@ -337,32 +326,22 @@ func encodeBSIBundle(chunks [][]byte) ([]byte, error) {
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("cannot encode empty BSI bundle")
 	}
-	size := len(bsiBundleMagic) + 4
-	for _, chunk := range chunks {
-		size += 8 + len(chunk)
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(bsiBundleMagic); err != nil {
+		return nil, err
 	}
-	buf := make([]byte, 0, size)
-	buf = append(buf, bsiBundleMagic...)
-	buf = appendUint32BE(buf, uint32(len(chunks)))
-	for _, chunk := range chunks {
-		buf = appendUint64BE(buf, uint64(len(chunk)))
-		buf = append(buf, chunk...)
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(chunks))); err != nil {
+		return nil, err
 	}
-	return buf, nil
-}
-
-func appendUint32BE(buf []byte, value uint32) []byte {
-	offset := len(buf)
-	buf = append(buf, 0, 0, 0, 0)
-	binary.BigEndian.PutUint32(buf[offset:], value)
-	return buf
-}
-
-func appendUint64BE(buf []byte, value uint64) []byte {
-	offset := len(buf)
-	buf = append(buf, 0, 0, 0, 0, 0, 0, 0, 0)
-	binary.BigEndian.PutUint64(buf[offset:], value)
-	return buf
+	for _, chunk := range chunks {
+		if err := binary.Write(&buf, binary.BigEndian, uint64(len(chunk))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(chunk); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func decodeBSIBundle(data []byte) ([][]byte, error) {
@@ -433,11 +412,6 @@ func writeAtomicBundleFile(path string, data []byte, perm os.FileMode) error {
 	}
 	cleanup = false
 	return nil
-}
-
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func removeLegacyBSISliceFiles(dir string) error {
@@ -556,10 +530,6 @@ func (p *Partition) generatePath(isArchivePath bool, base, leaf string) (string,
 
 // Figure out the appropriate file path given type BSI/Standard and applicable time quantum
 func (m *BitmapIndex) generateBitmapFilePath(aop *Partition, isArchivePath bool) string {
-	return m.generateBitmapFilePathWithCreate(aop, isArchivePath, true)
-}
-
-func (m *BitmapIndex) generateBitmapFilePathWithCreate(aop *Partition, isArchivePath bool, create bool) string {
 
 	// field is a BSI if rowIDOrBits < 0
 	leafDir := "bsi"
@@ -583,9 +553,7 @@ func (m *BitmapIndex) generateBitmapFilePathWithCreate(aop *Partition, isArchive
 		baseDir = baseDir + sep + fname
 		fname = ""
 	}
-	if create {
-		os.MkdirAll(baseDir, 0755)
-	}
+	os.MkdirAll(baseDir, 0755)
 	//return baseDir + sep + fname
 	return baseDir
 }
