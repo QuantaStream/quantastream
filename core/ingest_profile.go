@@ -207,6 +207,14 @@ type RouterFlushProfileSummary struct {
 	BitmapSetElapsed                time.Duration                        `json:"bitmap_set_elapsed_nanos"`
 	BitmapClearElapsed              time.Duration                        `json:"bitmap_clear_elapsed_nanos"`
 	BSIValueElapsed                 time.Duration                        `json:"bsi_value_elapsed_nanos"`
+	BSIValueRoute                   time.Duration                        `json:"bsi_value_route_nanos"`
+	BSIValueBuild                   time.Duration                        `json:"bsi_value_build_nanos"`
+	BSIValueMarshal                 time.Duration                        `json:"bsi_value_marshal_nanos"`
+	BSIValueStream                  time.Duration                        `json:"bsi_value_stream_nanos"`
+	BSIValueStreamOpen              time.Duration                        `json:"bsi_value_stream_open_nanos"`
+	BSIValueStreamSend              time.Duration                        `json:"bsi_value_stream_send_nanos"`
+	BSIValueStreamClose             time.Duration                        `json:"bsi_value_stream_close_nanos"`
+	BSIValueStreamMax               time.Duration                        `json:"bsi_value_stream_max_nanos"`
 	BSIClearValueElapsed            time.Duration                        `json:"bsi_clear_value_elapsed_nanos"`
 	PartitionStringPutCalls         int                                  `json:"partition_string_put_calls"`
 	PartitionStringBatchCount       int                                  `json:"partition_string_batch_count"`
@@ -215,6 +223,8 @@ type RouterFlushProfileSummary struct {
 	BitmapSetEntryCount             int                                  `json:"bitmap_set_entry_count"`
 	BitmapClearEntryCount           int                                  `json:"bitmap_clear_entry_count"`
 	BSIValueEntryCount              int                                  `json:"bsi_value_entry_count"`
+	BSIValueBatchCount              int                                  `json:"bsi_value_batch_count"`
+	BSIValueRoutedItemCount         int                                  `json:"bsi_value_routed_item_count"`
 	BSIClearValueEntryCount         int                                  `json:"bsi_clear_value_entry_count"`
 	ByTable                         map[string]RouterFlushProfileCounter `json:"by_table,omitempty"`
 	ByShard                         map[string]RouterFlushProfileCounter `json:"by_shard,omitempty"`
@@ -259,6 +269,16 @@ func (p *RouterFlushProfile) Observe(shardID string, tableName string, profile s
 	p.summary.BitmapSetElapsed += profile.BitmapSetElapsed
 	p.summary.BitmapClearElapsed += profile.BitmapClearElapsed
 	p.summary.BSIValueElapsed += profile.BSIValueElapsed
+	p.summary.BSIValueRoute += profile.BSIValueRoute
+	p.summary.BSIValueBuild += profile.BSIValueBuild
+	p.summary.BSIValueMarshal += profile.BSIValueMarshal
+	p.summary.BSIValueStream += profile.BSIValueStream
+	p.summary.BSIValueStreamOpen += profile.BSIValueStreamOpen
+	p.summary.BSIValueStreamSend += profile.BSIValueStreamSend
+	p.summary.BSIValueStreamClose += profile.BSIValueStreamClose
+	if profile.BSIValueStreamMax > p.summary.BSIValueStreamMax {
+		p.summary.BSIValueStreamMax = profile.BSIValueStreamMax
+	}
 	p.summary.BSIClearValueElapsed += profile.BSIClearValueElapsed
 	p.summary.PartitionStringPutCalls += profile.PartitionStringPutCalls
 	p.summary.PartitionStringBatchCount += profile.PartitionStringBatchCount
@@ -267,6 +287,8 @@ func (p *RouterFlushProfile) Observe(shardID string, tableName string, profile s
 	p.summary.BitmapSetEntryCount += profile.BitmapSetEntryCount
 	p.summary.BitmapClearEntryCount += profile.BitmapClearEntryCount
 	p.summary.BSIValueEntryCount += profile.BSIValueEntryCount
+	p.summary.BSIValueBatchCount += profile.BSIValueBatchCount
+	p.summary.BSIValueRoutedItemCount += profile.BSIValueRoutedItemCount
 	p.summary.BSIClearValueEntryCount += profile.BSIClearValueEntryCount
 	if tableName != "" {
 		p.summary.ByTable[tableName] = addRouterFlushProfileCounter(p.summary.ByTable[tableName], profile)

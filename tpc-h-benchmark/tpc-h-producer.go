@@ -398,7 +398,7 @@ func (m *Main) logDirectProfileSummary() {
 	}
 	if m.flushProfile != nil {
 		profile := m.flushProfile.Snapshot()
-		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s partition_string_route=%s partition_string_build=%s partition_string_stream=%s partition_string_stream_open=%s partition_string_stream_send=%s partition_string_stream_close=%s partition_string_stream_max=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_put_calls=%d partition_string_batches=%d partition_string_entries=%d partition_string_routed_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
+		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s partition_string_route=%s partition_string_build=%s partition_string_stream=%s partition_string_stream_open=%s partition_string_stream_send=%s partition_string_stream_close=%s partition_string_stream_max=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_value_route=%s bsi_value_build=%s bsi_value_marshal=%s bsi_value_stream=%s bsi_value_stream_open=%s bsi_value_stream_send=%s bsi_value_stream_close=%s bsi_value_stream_max=%s bsi_clear=%s partition_string_put_calls=%d partition_string_batches=%d partition_string_entries=%d partition_string_routed_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_value_batches=%d bsi_value_routed_items=%d bsi_clear_entries=%d",
 			m.Index,
 			profile.FlushCount,
 			profile.ErrorCount,
@@ -414,6 +414,14 @@ func (m *Main) logDirectProfileSummary() {
 			profile.BitmapSetElapsed.Round(time.Millisecond),
 			profile.BitmapClearElapsed.Round(time.Millisecond),
 			profile.BSIValueElapsed.Round(time.Millisecond),
+			profile.BSIValueRoute.Round(time.Millisecond),
+			profile.BSIValueBuild.Round(time.Millisecond),
+			profile.BSIValueMarshal.Round(time.Millisecond),
+			profile.BSIValueStream.Round(time.Millisecond),
+			profile.BSIValueStreamOpen.Round(time.Millisecond),
+			profile.BSIValueStreamSend.Round(time.Millisecond),
+			profile.BSIValueStreamClose.Round(time.Millisecond),
+			profile.BSIValueStreamMax.Round(time.Millisecond),
 			profile.BSIClearValueElapsed.Round(time.Millisecond),
 			profile.PartitionStringPutCalls,
 			profile.PartitionStringBatchCount,
@@ -422,6 +430,8 @@ func (m *Main) logDirectProfileSummary() {
 			profile.BitmapSetEntryCount,
 			profile.BitmapClearEntryCount,
 			profile.BSIValueEntryCount,
+			profile.BSIValueBatchCount,
+			profile.BSIValueRoutedItemCount,
 			profile.BSIClearValueEntryCount,
 		)
 	}

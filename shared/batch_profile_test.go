@@ -52,6 +52,14 @@ func TestBatchBufferFlushRecordsProfile(t *testing.T) {
 		profile.BSIValueElapsed <= 0 || profile.BSIClearValueElapsed <= 0 {
 		t.Fatalf("phase timings = %+v, want non-zero elapsed phases", profile)
 	}
+	if profile.BSIValueBuild <= 0 || profile.BSIValueMarshal <= 0 || profile.BSIValueStream <= 0 ||
+		profile.BSIValueStreamMax <= 0 {
+		t.Fatalf("BSI value phase timings = %+v, want non-zero build/marshal/stream timings", profile)
+	}
+	if profile.BSIValueBatchCount != 1 || profile.BSIValueRoutedItemCount != 1 {
+		t.Fatalf("BSI value batch/routed counts = %d/%d, want 1/1",
+			profile.BSIValueBatchCount, profile.BSIValueRoutedItemCount)
+	}
 	if profile.Error != "" {
 		t.Fatalf("profile error = %q, want empty", profile.Error)
 	}

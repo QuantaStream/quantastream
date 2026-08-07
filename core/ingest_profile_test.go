@@ -189,15 +189,26 @@ func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {
 		PartitionStringElapsed:    time.Millisecond,
 		BitmapSetElapsed:          2 * time.Millisecond,
 		BSIValueElapsed:           3 * time.Millisecond,
+		BSIValueRoute:             4 * time.Millisecond,
+		BSIValueBuild:             5 * time.Millisecond,
+		BSIValueMarshal:           6 * time.Millisecond,
+		BSIValueStream:            7 * time.Millisecond,
+		BSIValueStreamOpen:        8 * time.Millisecond,
+		BSIValueStreamSend:        9 * time.Millisecond,
+		BSIValueStreamClose:       10 * time.Millisecond,
+		BSIValueStreamMax:         12 * time.Millisecond,
 		PartitionStringPutCalls:   1,
 		PartitionStringBatchCount: 1,
 		PartitionStringEntryCount: 2,
 		BitmapSetEntryCount:       3,
 		BSIValueEntryCount:        4,
+		BSIValueBatchCount:        5,
+		BSIValueRoutedItemCount:   6,
 	})
 	callback("shard1", "orders", shared.BatchBufferFlushProfile{
 		TotalElapsed:            7 * time.Millisecond,
 		BitmapClearElapsed:      4 * time.Millisecond,
+		BSIValueStreamMax:       2 * time.Millisecond,
 		BSIClearValueElapsed:    5 * time.Millisecond,
 		BitmapClearEntryCount:   6,
 		BSIClearValueEntryCount: 7,
@@ -213,6 +224,14 @@ func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {
 	require.Equal(t, 2*time.Millisecond, snapshot.BitmapSetElapsed)
 	require.Equal(t, 4*time.Millisecond, snapshot.BitmapClearElapsed)
 	require.Equal(t, 3*time.Millisecond, snapshot.BSIValueElapsed)
+	require.Equal(t, 4*time.Millisecond, snapshot.BSIValueRoute)
+	require.Equal(t, 5*time.Millisecond, snapshot.BSIValueBuild)
+	require.Equal(t, 6*time.Millisecond, snapshot.BSIValueMarshal)
+	require.Equal(t, 7*time.Millisecond, snapshot.BSIValueStream)
+	require.Equal(t, 8*time.Millisecond, snapshot.BSIValueStreamOpen)
+	require.Equal(t, 9*time.Millisecond, snapshot.BSIValueStreamSend)
+	require.Equal(t, 10*time.Millisecond, snapshot.BSIValueStreamClose)
+	require.Equal(t, 12*time.Millisecond, snapshot.BSIValueStreamMax)
 	require.Equal(t, 5*time.Millisecond, snapshot.BSIClearValueElapsed)
 	require.Equal(t, 1, snapshot.PartitionStringPutCalls)
 	require.Equal(t, 1, snapshot.PartitionStringBatchCount)
@@ -220,6 +239,8 @@ func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {
 	require.Equal(t, 3, snapshot.BitmapSetEntryCount)
 	require.Equal(t, 6, snapshot.BitmapClearEntryCount)
 	require.Equal(t, 4, snapshot.BSIValueEntryCount)
+	require.Equal(t, 5, snapshot.BSIValueBatchCount)
+	require.Equal(t, 6, snapshot.BSIValueRoutedItemCount)
 	require.Equal(t, 7, snapshot.BSIClearValueEntryCount)
 	require.Equal(t, RouterFlushProfileCounter{
 		FlushCount:   2,

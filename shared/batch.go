@@ -60,6 +60,14 @@ type BatchBufferFlushProfile struct {
 	BitmapSetElapsed                time.Duration
 	BitmapClearElapsed              time.Duration
 	BSIValueElapsed                 time.Duration
+	BSIValueRoute                   time.Duration
+	BSIValueBuild                   time.Duration
+	BSIValueMarshal                 time.Duration
+	BSIValueStream                  time.Duration
+	BSIValueStreamOpen              time.Duration
+	BSIValueStreamSend              time.Duration
+	BSIValueStreamClose             time.Duration
+	BSIValueStreamMax               time.Duration
 	BSIClearValueElapsed            time.Duration
 	PartitionStringPutCalls         int
 	PartitionStringBatchCount       int
@@ -68,6 +76,8 @@ type BatchBufferFlushProfile struct {
 	BitmapSetEntryCount             int
 	BitmapClearEntryCount           int
 	BSIValueEntryCount              int
+	BSIValueBatchCount              int
+	BSIValueRoutedItemCount         int
 	BSIClearValueEntryCount         int
 	Error                           string
 }
@@ -169,9 +179,20 @@ func (c *BatchBuffer) Flush() (err error) {
 	}
 	if c.batchValues != nil {
 		phaseStart := time.Now()
-		if err := c.BatchSetValue(c.batchValues); err != nil {
+		bsiProfile, err := c.BatchSetValueProfile(c.batchValues)
+		if err != nil {
 			return err
 		}
+		profile.BSIValueRoute = bsiProfile.RouteElapsed
+		profile.BSIValueBuild = bsiProfile.BuildElapsed
+		profile.BSIValueMarshal = bsiProfile.MarshalElapsed
+		profile.BSIValueStream = bsiProfile.StreamElapsed
+		profile.BSIValueStreamOpen = bsiProfile.StreamOpenElapsed
+		profile.BSIValueStreamSend = bsiProfile.StreamSendElapsed
+		profile.BSIValueStreamClose = bsiProfile.StreamCloseElapsed
+		profile.BSIValueStreamMax = bsiProfile.StreamMaxElapsed
+		profile.BSIValueBatchCount = bsiProfile.InputShardCount
+		profile.BSIValueRoutedItemCount = bsiProfile.RoutedItemCount
 		profile.BSIValueElapsed = time.Since(phaseStart)
 		c.batchValues = nil
 		c.batchValueCount = 0

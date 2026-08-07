@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	pb "github.com/QuantaStream/quantastream/grpc"
@@ -41,6 +42,34 @@ type BitmapIndex struct {
 	*Conn
 	client []pb.BitmapIndexClient
 	local  LocalBitmapIndexService
+}
+
+// BSIBatchSetValueProfile captures client-visible work for a routed BSI value batch.
+type BSIBatchSetValueProfile struct {
+	StartedAt          time.Time
+	FinishedAt         time.Time
+	TotalElapsed       time.Duration
+	RouteElapsed       time.Duration
+	BuildElapsed       time.Duration
+	MarshalElapsed     time.Duration
+	StreamElapsed      time.Duration
+	StreamOpenElapsed  time.Duration
+	StreamSendElapsed  time.Duration
+	StreamCloseElapsed time.Duration
+	StreamMaxElapsed   time.Duration
+	InputShardCount    int
+	InputEntryCount    int
+	RoutedItemCount    int
+	PutCalls           int
+	Local              bool
+}
+
+type bitmapBatchMutateItemsNodeProfile struct {
+	Items        int
+	TotalElapsed time.Duration
+	OpenElapsed  time.Duration
+	SendElapsed  time.Duration
+	CloseElapsed time.Duration
 }
 
 // CompareBSIFieldsProjectionStats summarizes projection work reported by
@@ -332,46 +361,92 @@ func (c *BitmapIndex) splitBitmapBatch(batch map[string]map[string]map[uint64]ma
 	return clients, batches, nil
 }
 
-// BatchSetValue - Send a batch of BSI mutations to the server cluster for processing.  Does this by calling
-// BatchSetValueNode in parallel for optimal throughput.
+// BatchSetValue - Send a batch of BSI mutations to the server cluster for processing.
 func (c *BitmapIndex) BatchSetValue(batch map[string]map[string]map[int64]*roaring64.BSI) error {
+	_, err := c.BatchSetValueProfile(batch)
+	return err
+}
 
+// BatchSetValueProfile sends a batch of BSI mutations and records client-side
+// routing, encoding, and stream timings.
+func (c *BitmapIndex) BatchSetValueProfile(batch map[string]map[string]map[int64]*roaring64.BSI,
+) (profile BSIBatchSetValueProfile, err error) {
+
+	profile = BSIBatchSetValueProfile{StartedAt: time.Now()}
+	defer func() {
+		profile.FinishedAt = time.Now()
+		profile.TotalElapsed = profile.FinishedAt.Sub(profile.StartedAt)
+	}()
+	if len(batch) == 0 {
+		return profile, nil
+	}
 	if c.local != nil {
 		local, ok := c.local.(LocalBitmapIndexBatchService)
 		if !ok {
-			return fmt.Errorf("local BitmapIndex adapter does not support BatchSetValue")
+			return profile, fmt.Errorf("local BitmapIndex adapter does not support BatchSetValue")
 		}
-		return c.batchSetValueLocal(local, batch)
+		return c.batchSetValueLocalProfile(local, batch)
 	}
 
-	clients, batches, err := c.splitBSIItemBatch(batch)
+	clients, batches, splitProfile, err := c.splitBSIItemBatchProfile(batch)
 	if err != nil {
-		return err
+		return profile, err
 	}
+	profile.RouteElapsed = splitProfile.RouteElapsed
+	profile.BuildElapsed = splitProfile.BuildElapsed
+	profile.MarshalElapsed = splitProfile.MarshalElapsed
+	profile.InputShardCount = splitProfile.InputShardCount
+	profile.InputEntryCount = splitProfile.InputEntryCount
+	profile.RoutedItemCount = splitProfile.RoutedItemCount
+
 	var eg errgroup.Group
+	var profileLock sync.Mutex
+	putCalls := 0
+	streamStart := time.Now()
 	for i, v := range batches {
 		if len(v) == 0 {
 			continue
 		}
 		cl := clients[i]
 		items := v
+		putCalls++
 		eg.Go(func() error {
-			return c.BatchMutateItemsNode(cl, items)
+			nodeProfile, err := c.batchMutateItemsNodeProfile(cl, items)
+			profileLock.Lock()
+			profile.StreamOpenElapsed += nodeProfile.OpenElapsed
+			profile.StreamSendElapsed += nodeProfile.SendElapsed
+			profile.StreamCloseElapsed += nodeProfile.CloseElapsed
+			if nodeProfile.TotalElapsed > profile.StreamMaxElapsed {
+				profile.StreamMaxElapsed = nodeProfile.TotalElapsed
+			}
+			profileLock.Unlock()
+			return err
 		})
 	}
+	profile.PutCalls = putCalls
 	if err := eg.Wait(); err != nil {
-		return err
+		profile.StreamElapsed = time.Since(streamStart)
+		return profile, err
 	}
-	return nil
+	profile.StreamElapsed = time.Since(streamStart)
+	return profile, nil
 }
 
 func (c *BitmapIndex) splitBSIItemBatch(batch map[string]map[string]map[int64]*roaring64.BSI,
 ) ([]pb.BitmapIndexClient, [][]*pb.IndexKVPair, error) {
 
+	clients, batches, _, err := c.splitBSIItemBatchProfile(batch)
+	return clients, batches, err
+}
+
+func (c *BitmapIndex) splitBSIItemBatchProfile(batch map[string]map[string]map[int64]*roaring64.BSI,
+) ([]pb.BitmapIndexClient, [][]*pb.IndexKVPair, BSIBatchSetValueProfile, error) {
+
 	type routedBSIItem struct {
 		routeKey string
 		item     *pb.IndexKVPair
 	}
+	profile := BSIBatchSetValueProfile{}
 	items := make([]routedBSIItem, 0)
 	for indexName, index := range batch {
 		for fieldName, field := range index {
@@ -380,16 +455,21 @@ func (c *BitmapIndex) splitBSIItemBatch(batch map[string]map[string]map[int64]*r
 					u.Debugf("BSI for %s - %s is empty.", indexName, fieldName)
 					continue
 				}
+				profile.InputShardCount++
+				profile.InputEntryCount += int(bsi.GetCardinality())
 				bitCount := bsi.BitCount()
 				if bitCount == 0 {
 					bitCount = 1
 				}
+				marshalStart := time.Now()
 				ba, err := bsi.MarshalBinary()
+				profile.MarshalElapsed += time.Since(marshalStart)
 				if err != nil {
 					u.Errorf("BSI.MarshalBinary: %v", err)
-					return nil, nil, err
+					return nil, nil, profile, err
 				}
 				tm := time.Unix(0, t)
+				buildStart := time.Now()
 				items = append(items, routedBSIItem{
 					routeKey: fmt.Sprintf("%s/%s/%s", indexName, fieldName, formatShardTime(tm)),
 					item: &pb.IndexKVPair{
@@ -399,6 +479,7 @@ func (c *BitmapIndex) splitBSIItemBatch(batch map[string]map[string]map[int64]*r
 						Time:      t,
 					},
 				})
+				profile.BuildElapsed += time.Since(buildStart)
 			}
 		}
 	}
@@ -411,33 +492,50 @@ func (c *BitmapIndex) splitBSIItemBatch(batch map[string]map[string]map[int64]*r
 		clients[i] = pb.NewBitmapIndexClient(conn)
 	}
 	if len(clients) == 0 {
-		return nil, nil, fmt.Errorf("splitBSIItemBatch: no bitmap clients available")
+		return nil, nil, profile, fmt.Errorf("splitBSIItemBatch: no bitmap clients available")
 	}
 	batches := make([][]*pb.IndexKVPair, len(clients))
 
 	for _, routed := range items {
+		routeStart := time.Now()
 		indices, err := c.Conn.selectNodesLocked(routed.routeKey, WriteIntent)
+		profile.RouteElapsed += time.Since(routeStart)
 		if err != nil {
-			return nil, nil, fmt.Errorf("splitBSIItemBatch: %v", err)
+			return nil, nil, profile, fmt.Errorf("splitBSIItemBatch: %v", err)
 		}
 		for _, i := range indices {
 			if i < 0 || i >= len(batches) {
-				return nil, nil, fmt.Errorf("splitBSIItemBatch: selected node index %d outside client count %d", i, len(batches))
+				return nil, nil, profile, fmt.Errorf("splitBSIItemBatch: selected node index %d outside client count %d", i, len(batches))
 			}
+			buildStart := time.Now()
 			batches[i] = append(batches[i], &pb.IndexKVPair{
 				IndexPath: routed.item.IndexPath,
 				Key:       routed.item.Key,
 				Value:     routed.item.Value,
 				Time:      routed.item.Time,
 			})
+			profile.RoutedItemCount++
+			profile.BuildElapsed += time.Since(buildStart)
 		}
 	}
-	return clients, batches, nil
+	return clients, batches, profile, nil
 }
 
 func (c *BitmapIndex) batchSetValueLocal(local LocalBitmapIndexBatchService,
 	batch map[string]map[string]map[int64]*roaring64.BSI) error {
 
+	_, err := c.batchSetValueLocalProfile(local, batch)
+	return err
+}
+
+func (c *BitmapIndex) batchSetValueLocalProfile(local LocalBitmapIndexBatchService,
+	batch map[string]map[string]map[int64]*roaring64.BSI) (profile BSIBatchSetValueProfile, err error) {
+
+	profile = BSIBatchSetValueProfile{StartedAt: time.Now(), Local: true}
+	defer func() {
+		profile.FinishedAt = time.Now()
+		profile.TotalElapsed = profile.FinishedAt.Sub(profile.StartedAt)
+	}()
 	kvs := make([]*pb.IndexKVPair, 0)
 	for indexName, index := range batch {
 		for fieldName, field := range index {
@@ -446,28 +544,46 @@ func (c *BitmapIndex) batchSetValueLocal(local LocalBitmapIndexBatchService,
 					u.Debugf("BSI for %s - %s is empty.", indexName, fieldName)
 					continue
 				}
+				profile.InputShardCount++
+				profile.InputEntryCount += int(bsi.GetCardinality())
 				bitCount := bsi.BitCount()
 				if bitCount == 0 {
 					bitCount = 1
 				}
+				marshalStart := time.Now()
 				ba, err := bsi.MarshalBinary()
+				profile.MarshalElapsed += time.Since(marshalStart)
 				if err != nil {
 					u.Errorf("BSI.MarshalBinary: %v", err)
-					return err
+					return profile, err
 				}
+				buildStart := time.Now()
 				kvs = append(kvs, &pb.IndexKVPair{
 					IndexPath: indexName + "/" + fieldName,
 					Key:       ToBytes(int64(bitCount * -1)),
 					Value:     ba,
 					Time:      t,
 				})
+				profile.RoutedItemCount++
+				profile.BuildElapsed += time.Since(buildStart)
 			}
 		}
 	}
+	if len(kvs) == 0 {
+		return profile, nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
-	_, err := local.BatchMutate(ctx, kvs)
-	return err
+	streamStart := time.Now()
+	_, err = local.BatchMutate(ctx, kvs)
+	profile.StreamElapsed = time.Since(streamStart)
+	profile.StreamMaxElapsed = profile.StreamElapsed
+	profile.StreamCloseElapsed = profile.StreamElapsed
+	if err != nil {
+		return profile, err
+	}
+	profile.PutCalls = 1
+	return profile, nil
 }
 
 // BatchSetValueNode - Send a batch of BSI values to a specific node.
@@ -524,30 +640,48 @@ func (c *BitmapIndex) BatchSetValueNode(client pb.BitmapIndexClient,
 
 // BatchMutateItemsNode sends pre-encoded bitmap mutation items to a node.
 func (c *BitmapIndex) BatchMutateItemsNode(client pb.BitmapIndexClient, items []*pb.IndexKVPair) error {
+	_, err := c.batchMutateItemsNodeProfile(client, items)
+	return err
+}
+
+func (c *BitmapIndex) batchMutateItemsNodeProfile(client pb.BitmapIndexClient,
+	items []*pb.IndexKVPair) (profile bitmapBatchMutateItemsNodeProfile, err error) {
 
 	if len(items) == 0 {
-		return nil
+		return profile, nil
 	}
+	profile = bitmapBatchMutateItemsNodeProfile{Items: len(items)}
+	start := time.Now()
+	defer func() {
+		profile.TotalElapsed = time.Since(start)
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
+	openStart := time.Now()
 	stream, err := client.BatchMutate(ctx)
+	profile.OpenElapsed = time.Since(openStart)
 	if err != nil {
 		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
-		return fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+		return profile, fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
 	}
 
+	sendStart := time.Now()
 	for i := 0; i < len(items); i++ {
 		if err := stream.Send(items[i]); err != nil {
+			profile.SendElapsed = time.Since(sendStart)
 			u.Errorf("%v.Send(%v) = %v", stream, items[i], err)
-			return fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
+			return profile, fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
 		}
 	}
+	profile.SendElapsed = time.Since(sendStart)
+	closeStart := time.Now()
 	_, err = stream.CloseAndRecv()
+	profile.CloseElapsed = time.Since(closeStart)
 	if err != nil {
 		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
-		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return profile, fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
 	}
-	return nil
+	return profile, nil
 }
 
 // For a given batch of BSI mutations, separate them into sub-batches based upon
