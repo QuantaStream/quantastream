@@ -398,12 +398,19 @@ func (m *Main) logDirectProfileSummary() {
 	}
 	if m.flushProfile != nil {
 		profile := m.flushProfile.Snapshot()
-		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_put_calls=%d partition_string_batches=%d partition_string_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
+		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s partition_string_route=%s partition_string_build=%s partition_string_stream=%s partition_string_stream_open=%s partition_string_stream_send=%s partition_string_stream_close=%s partition_string_stream_max=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_put_calls=%d partition_string_batches=%d partition_string_entries=%d partition_string_routed_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
 			m.Index,
 			profile.FlushCount,
 			profile.ErrorCount,
 			profile.TotalElapsed.Round(time.Millisecond),
 			profile.PartitionStringElapsed.Round(time.Millisecond),
+			profile.PartitionStringRoute.Round(time.Millisecond),
+			profile.PartitionStringBuild.Round(time.Millisecond),
+			profile.PartitionStringStream.Round(time.Millisecond),
+			profile.PartitionStringStreamOpen.Round(time.Millisecond),
+			profile.PartitionStringStreamSend.Round(time.Millisecond),
+			profile.PartitionStringStreamClose.Round(time.Millisecond),
+			profile.PartitionStringStreamMax.Round(time.Millisecond),
 			profile.BitmapSetElapsed.Round(time.Millisecond),
 			profile.BitmapClearElapsed.Round(time.Millisecond),
 			profile.BSIValueElapsed.Round(time.Millisecond),
@@ -411,6 +418,7 @@ func (m *Main) logDirectProfileSummary() {
 			profile.PartitionStringPutCalls,
 			profile.PartitionStringBatchCount,
 			profile.PartitionStringEntryCount,
+			profile.PartitionStringRoutedEntryCount,
 			profile.BitmapSetEntryCount,
 			profile.BitmapClearEntryCount,
 			profile.BSIValueEntryCount,

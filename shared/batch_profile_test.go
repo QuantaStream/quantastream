@@ -39,6 +39,9 @@ func TestBatchBufferFlushRecordsProfile(t *testing.T) {
 	if profile.PartitionStringPutCalls != 1 || profile.PartitionStringBatchCount != 1 || profile.PartitionStringEntryCount != 1 {
 		t.Fatalf("partition profile = %+v, want one KV sidecar batch and entry", profile)
 	}
+	if profile.PartitionStringRoutedEntryCount != 1 {
+		t.Fatalf("partition routed entries = %d, want 1", profile.PartitionStringRoutedEntryCount)
+	}
 	if profile.BitmapSetEntryCount != 1 || profile.BSIValueEntryCount != 1 || profile.BSIClearValueEntryCount != 1 {
 		t.Fatalf("mutation profile = %+v, want one bitmap set, BSI value, and BSI clear", profile)
 	}
@@ -116,5 +119,8 @@ func TestBatchBufferPartitionedStringFlushCollapsesPaths(t *testing.T) {
 	profile := buffer.LastFlushProfile()
 	if profile.PartitionStringPutCalls != 1 || profile.PartitionStringBatchCount != 3 || profile.PartitionStringEntryCount != 3 {
 		t.Fatalf("partition profile = %+v, want one put call for three path batches", profile)
+	}
+	if profile.PartitionStringRoutedEntryCount != 3 {
+		t.Fatalf("partition routed entries = %d, want 3", profile.PartitionStringRoutedEntryCount)
 	}
 }

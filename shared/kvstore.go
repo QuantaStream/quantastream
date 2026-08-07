@@ -11,6 +11,8 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
+	"time"
 
 	pb "github.com/QuantaStream/quantastream/grpc"
 	u "github.com/araddon/gou"
@@ -28,6 +30,33 @@ type KVStore struct {
 	*Conn
 	client []pb.KVStoreClient
 	local  LocalKVStoreService
+}
+
+// KVBatchPutRoutedProfile captures client-visible work for a routed KV batch.
+type KVBatchPutRoutedProfile struct {
+	StartedAt          time.Time
+	FinishedAt         time.Time
+	TotalElapsed       time.Duration
+	RouteElapsed       time.Duration
+	BuildElapsed       time.Duration
+	StreamElapsed      time.Duration
+	StreamOpenElapsed  time.Duration
+	StreamSendElapsed  time.Duration
+	StreamCloseElapsed time.Duration
+	StreamMaxElapsed   time.Duration
+	PathCount          int
+	InputEntryCount    int
+	RoutedEntryCount   int
+	PutCalls           int
+	Local              bool
+}
+
+type kvBatchPutItemsNodeProfile struct {
+	Items        int
+	TotalElapsed time.Duration
+	OpenElapsed  time.Duration
+	SendElapsed  time.Duration
+	CloseElapsed time.Duration
 }
 
 // NewKVStore - Construct KVStore service endpoint.
@@ -172,20 +201,29 @@ func (c *KVStore) BatchPut(indexPath string, batch map[interface{}]interface{}, 
 // It collapses many path-partitioned sidecar writes into one stream per target
 // node while preserving per-item IndexPath on the server side.
 func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interface{},
-	pathIsKey bool) (int, error) {
+	pathIsKey bool) (putCalls int, profile KVBatchPutRoutedProfile, err error) {
+
+	profile = KVBatchPutRoutedProfile{StartedAt: time.Now()}
+	defer func() {
+		profile.FinishedAt = time.Now()
+		profile.TotalElapsed = profile.FinishedAt.Sub(profile.StartedAt)
+	}()
 
 	if len(batchesByPath) == 0 {
-		return 0, nil
+		return 0, profile, nil
 	}
 	if c.local != nil {
 		local, ok := c.local.(LocalKVStoreBatchService)
 		if !ok {
-			return 0, fmt.Errorf("local KVStore adapter does not support BatchPut")
+			return 0, profile, fmt.Errorf("local KVStore adapter does not support BatchPut")
 		}
-		return c.batchPutRoutedLocal(local, batchesByPath, pathIsKey)
+		putCalls, localProfile, err := c.batchPutRoutedLocal(local, batchesByPath, pathIsKey)
+		localProfile.FinishedAt = time.Now()
+		localProfile.TotalElapsed = localProfile.FinishedAt.Sub(localProfile.StartedAt)
+		return putCalls, localProfile, err
 	}
 	if len(c.client) == 0 {
-		return 0, fmt.Errorf("%v.BatchPutRouted(_) = _, %v: ", c.client, " no available nodes!")
+		return 0, profile, fmt.Errorf("%v.BatchPutRouted(_) = _, %v: ", c.client, " no available nodes!")
 	}
 
 	routed := make([][]*pb.IndexKVPair, len(c.client))
@@ -193,17 +231,21 @@ func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interf
 		if len(batch) == 0 {
 			continue
 		}
+		profile.PathCount++
+		profile.InputEntryCount += len(batch)
 		physicalPath := indexPath
 		var pathIndices []int
 		if pathIsKey {
+			routeStart := time.Now()
 			var key string
 			key, physicalPath = checkAdjustKeyAndPath(indexPath)
 			indices, err := c.SelectNodes(key, WriteIntent)
+			profile.RouteElapsed += time.Since(routeStart)
 			if err != nil {
-				return 0, fmt.Errorf("BatchPutRouted: %v", err)
+				return 0, profile, fmt.Errorf("BatchPutRouted: %v", err)
 			}
 			if len(indices) == 0 {
-				return 0, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
+				return 0, profile, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
 			}
 			pathIndices = indices
 		}
@@ -211,14 +253,17 @@ func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interf
 			indices := pathIndices
 			var err error
 			if !pathIsKey {
+				routeStart := time.Now()
 				indices, err = c.SelectNodes(ToString(k), WriteIntent)
+				profile.RouteElapsed += time.Since(routeStart)
 				if err != nil {
-					return 0, fmt.Errorf("BatchPutRouted: %v", err)
+					return 0, profile, fmt.Errorf("BatchPutRouted: %v", err)
 				}
 				if len(indices) == 0 {
-					return 0, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
+					return 0, profile, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
 				}
 			}
+			buildStart := time.Now()
 			item := &pb.IndexKVPair{
 				IndexPath: physicalPath,
 				Key:       ToBytes(k),
@@ -226,12 +271,16 @@ func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interf
 			}
 			for _, i := range indices {
 				routed[i] = append(routed[i], item)
+				profile.RoutedEntryCount++
 			}
+			profile.BuildElapsed += time.Since(buildStart)
 		}
 	}
 
 	var eg errgroup.Group
-	putCalls := 0
+	var profileLock sync.Mutex
+	putCalls = 0
+	streamStart := time.Now()
 	for i, items := range routed {
 		if len(items) == 0 {
 			continue
@@ -240,13 +289,25 @@ func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interf
 		items := items
 		putCalls++
 		eg.Go(func() error {
-			return c.BatchPutItemsNode(client, items)
+			nodeProfile, err := c.batchPutItemsNodeProfile(client, items)
+			profileLock.Lock()
+			profile.StreamOpenElapsed += nodeProfile.OpenElapsed
+			profile.StreamSendElapsed += nodeProfile.SendElapsed
+			profile.StreamCloseElapsed += nodeProfile.CloseElapsed
+			if nodeProfile.TotalElapsed > profile.StreamMaxElapsed {
+				profile.StreamMaxElapsed = nodeProfile.TotalElapsed
+			}
+			profileLock.Unlock()
+			return err
 		})
 	}
+	profile.PutCalls = putCalls
 	if err := eg.Wait(); err != nil {
-		return putCalls, err
+		profile.StreamElapsed = time.Since(streamStart)
+		return putCalls, profile, err
 	}
-	return putCalls, nil
+	profile.StreamElapsed = time.Since(streamStart)
+	return putCalls, profile, nil
 }
 
 func (c *KVStore) batchPutLocal(local LocalKVStoreBatchService, indexPath string, batch map[interface{}]interface{}, pathIsKey bool) error {
@@ -268,35 +329,48 @@ func (c *KVStore) batchPutLocal(local LocalKVStoreBatchService, indexPath string
 }
 
 func (c *KVStore) batchPutRoutedLocal(local LocalKVStoreBatchService, batchesByPath map[string]map[interface{}]interface{},
-	pathIsKey bool) (int, error) {
+	pathIsKey bool) (int, KVBatchPutRoutedProfile, error) {
 
+	profile := KVBatchPutRoutedProfile{StartedAt: time.Now(), Local: true}
 	kvs := make([]*pb.IndexKVPair, 0)
 	for indexPath, batch := range batchesByPath {
 		if len(batch) == 0 {
 			continue
 		}
+		profile.PathCount++
+		profile.InputEntryCount += len(batch)
 		physicalPath := indexPath
 		if pathIsKey {
+			routeStart := time.Now()
 			_, physicalPath = checkAdjustKeyAndPath(indexPath)
+			profile.RouteElapsed += time.Since(routeStart)
 		}
 		for k, v := range batch {
+			buildStart := time.Now()
 			kvs = append(kvs, &pb.IndexKVPair{
 				IndexPath: physicalPath,
 				Key:       ToBytes(k),
 				Value:     [][]byte{ToBytes(v)},
 			})
+			profile.RoutedEntryCount++
+			profile.BuildElapsed += time.Since(buildStart)
 		}
 	}
 	if len(kvs) == 0 {
-		return 0, nil
+		return 0, profile, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
+	streamStart := time.Now()
 	_, err := local.BatchPut(ctx, kvs)
+	profile.StreamElapsed = time.Since(streamStart)
+	profile.StreamMaxElapsed = profile.StreamElapsed
+	profile.StreamCloseElapsed = profile.StreamElapsed
 	if err != nil {
-		return 1, err
+		return 1, profile, err
 	}
-	return 1, nil
+	profile.PutCalls = 1
+	return 1, profile, nil
 }
 
 // BatchPutNode - Put a batch of keys on a single node.
@@ -329,26 +403,44 @@ func (c *KVStore) BatchPutNode(client pb.KVStoreClient, index string, batch map[
 
 // BatchPutItemsNode writes pre-routed KV items in a single stream.
 func (c *KVStore) BatchPutItemsNode(client pb.KVStoreClient, items []*pb.IndexKVPair) error {
+	_, err := c.batchPutItemsNodeProfile(client, items)
+	return err
+}
+
+func (c *KVStore) batchPutItemsNodeProfile(client pb.KVStoreClient,
+	items []*pb.IndexKVPair) (profile kvBatchPutItemsNodeProfile, err error) {
 
 	if len(items) == 0 {
-		return nil
+		return profile, nil
 	}
+	profile = kvBatchPutItemsNodeProfile{Items: len(items)}
+	start := time.Now()
+	defer func() {
+		profile.TotalElapsed = time.Since(start)
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
+	openStart := time.Now()
 	stream, err := client.BatchPut(ctx)
+	profile.OpenElapsed = time.Since(openStart)
 	if err != nil {
-		return fmt.Errorf("%v.BatchPut(_) = _, %v: ", c.client, err)
+		return profile, fmt.Errorf("%v.BatchPut(_) = _, %v: ", c.client, err)
 	}
+	sendStart := time.Now()
 	for i := 0; i < len(items); i++ {
 		if err := stream.Send(items[i]); err != nil {
-			return fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
+			profile.SendElapsed = time.Since(sendStart)
+			return profile, fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
 		}
 	}
+	profile.SendElapsed = time.Since(sendStart)
+	closeStart := time.Now()
 	_, err = stream.CloseAndRecv()
+	profile.CloseElapsed = time.Since(closeStart)
 	if err != nil {
-		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return profile, fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
 	}
-	return nil
+	return profile, nil
 }
 
 // Lookup a single key.

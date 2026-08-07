@@ -46,22 +46,30 @@ type BatchBuffer struct {
 
 // BatchBufferFlushProfile captures one completed Flush attempt.
 type BatchBufferFlushProfile struct {
-	StartedAt                 time.Time
-	FinishedAt                time.Time
-	TotalElapsed              time.Duration
-	PartitionStringElapsed    time.Duration
-	BitmapSetElapsed          time.Duration
-	BitmapClearElapsed        time.Duration
-	BSIValueElapsed           time.Duration
-	BSIClearValueElapsed      time.Duration
-	PartitionStringPutCalls   int
-	PartitionStringBatchCount int
-	PartitionStringEntryCount int
-	BitmapSetEntryCount       int
-	BitmapClearEntryCount     int
-	BSIValueEntryCount        int
-	BSIClearValueEntryCount   int
-	Error                     string
+	StartedAt                       time.Time
+	FinishedAt                      time.Time
+	TotalElapsed                    time.Duration
+	PartitionStringElapsed          time.Duration
+	PartitionStringRoute            time.Duration
+	PartitionStringBuild            time.Duration
+	PartitionStringStream           time.Duration
+	PartitionStringStreamOpen       time.Duration
+	PartitionStringStreamSend       time.Duration
+	PartitionStringStreamClose      time.Duration
+	PartitionStringStreamMax        time.Duration
+	BitmapSetElapsed                time.Duration
+	BitmapClearElapsed              time.Duration
+	BSIValueElapsed                 time.Duration
+	BSIClearValueElapsed            time.Duration
+	PartitionStringPutCalls         int
+	PartitionStringBatchCount       int
+	PartitionStringEntryCount       int
+	PartitionStringRoutedEntryCount int
+	BitmapSetEntryCount             int
+	BitmapClearEntryCount           int
+	BSIValueEntryCount              int
+	BSIClearValueEntryCount         int
+	Error                           string
 }
 
 // NewBatchBuffer - Initializer for client side API wrappers.
@@ -123,11 +131,19 @@ func (c *BatchBuffer) Flush() (err error) {
 
 	if c.batchPartitionStr != nil {
 		phaseStart := time.Now()
-		putCalls, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true)
+		putCalls, kvProfile, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true)
 		if err != nil {
 			return err
 		}
 		profile.PartitionStringPutCalls = putCalls
+		profile.PartitionStringRoute = kvProfile.RouteElapsed
+		profile.PartitionStringBuild = kvProfile.BuildElapsed
+		profile.PartitionStringStream = kvProfile.StreamElapsed
+		profile.PartitionStringStreamOpen = kvProfile.StreamOpenElapsed
+		profile.PartitionStringStreamSend = kvProfile.StreamSendElapsed
+		profile.PartitionStringStreamClose = kvProfile.StreamCloseElapsed
+		profile.PartitionStringStreamMax = kvProfile.StreamMaxElapsed
+		profile.PartitionStringRoutedEntryCount = kvProfile.RoutedEntryCount
 		profile.PartitionStringElapsed = time.Since(phaseStart)
 		c.batchPartitionStr = nil
 		c.batchPartitionStrCount = 0
@@ -497,7 +513,7 @@ func (c *BatchBuffer) SetPartitionedString(indexPath string, key, value interfac
 	c.batchPartitionStrCount++
 
 	if c.batchPartitionStrCount >= c.partitionedStringFlushThreshold() {
-		if _, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true); err != nil {
+		if _, _, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true); err != nil {
 			return err
 		}
 		c.batchPartitionStr = nil
