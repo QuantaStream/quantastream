@@ -1199,6 +1199,7 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 		return err
 	}
 	flushElapsed := time.Since(flushStart)
+	m.calculateShardCount()
 	fmt.Printf("BitmapIndex startup load path=%s files=%d standard_files=%d bsi_files=%d ignored_fields=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_scan_entries=%d manifest_scan_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v manifest_write_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d walk_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
 		baseDir, fileCount, standardFileCount, bsiFileCount, ignoredFieldCount, manifestObservation.Status, manifestObservation.Detail, manifestObservation.ManifestEntries, manifestObservation.ManifestFiles, manifestObservation.ScanEntries, manifestObservation.ScanFiles, manifestObservation.MissingFileCount, manifestObservation.Elapsed, manifestWriteElapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, walkElapsed, enqueueElapsed, flushElapsed, time.Since(start))
 	return nil
@@ -1297,6 +1298,7 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 		return err
 	}
 	flushElapsed := time.Since(flushStart)
+	m.calculateShardCount()
 	fmt.Printf("BitmapIndex startup load_source=manifest opt_in=true files=%d standard_files=%d bsi_files=%d manifest_status=%s manifest_detail=%q manifest_entries=%d manifest_files=%d manifest_missing_files=%d manifest_observe_elapsed=%v fragments=%d standard_fragments=%d bsi_fragments=%d manifest_load_elapsed=%v enqueue_elapsed=%v flush_elapsed=%v total_elapsed=%v\n",
 		fileCount, standardFileCount, bsiFileCount, observation.Status, observation.Detail, observation.ManifestEntries, observation.ManifestFiles, observation.MissingFileCount, observation.Elapsed, fragmentCount, standardFragmentCount, bsiFragmentCount, time.Since(loadStart), enqueueElapsed, flushElapsed, time.Since(startedAt))
 	return nil

@@ -1117,6 +1117,7 @@ func (m *BitmapIndex) iterateBSICache(op func(p *Partition) error) {
 func (m *BitmapIndex) calculateMemoryUsage() {
 
 	memoryUsed := 0
+	shardCount := 0
 
 	if !m.bsiCacheLock.TryRLock() {
 		return
@@ -1124,6 +1125,7 @@ func (m *BitmapIndex) calculateMemoryUsage() {
 	for _, fm := range m.bsiCache {
 		for _, tm := range fm {
 			for _, bsi := range tm {
+				shardCount++
 				if !bsi.Lock.TryRLock() {
 					continue
 				}
@@ -1145,6 +1147,7 @@ func (m *BitmapIndex) calculateMemoryUsage() {
 		for _, rm := range fm {
 			for _, tm := range rm {
 				for _, bitmap := range tm {
+					shardCount++
 					if !bitmap.Lock.TryRLock() {
 						continue
 					}
@@ -1159,6 +1162,31 @@ func (m *BitmapIndex) calculateMemoryUsage() {
 	m.bitmapCacheLock.RUnlock()
 
 	m.memoryUsed = memoryUsed
+	m.shardCount = shardCount
+}
+
+func (m *BitmapIndex) calculateShardCount() {
+	shardCount := 0
+
+	m.bsiCacheLock.RLock()
+	for _, fm := range m.bsiCache {
+		for _, tm := range fm {
+			shardCount += len(tm)
+		}
+	}
+	m.bsiCacheLock.RUnlock()
+
+	m.bitmapCacheLock.RLock()
+	for _, fm := range m.bitmapCache {
+		for _, rm := range fm {
+			for _, tm := range rm {
+				shardCount += len(tm)
+			}
+		}
+	}
+	m.bitmapCacheLock.RUnlock()
+
+	m.shardCount = shardCount
 }
 
 func (m *BitmapIndex) truncateCaches(index string) {
@@ -1660,6 +1688,7 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 		return &empty.Empty{}, err
 	}
 	persistElapsed := time.Since(persistStart)
+	m.shardCount = persistSummary.bitmapCount + persistSummary.bsiCount
 
 	manifestElapsed := time.Duration(0)
 	if persistSummary.bitmapWrites+persistSummary.bsiWrites > 0 {

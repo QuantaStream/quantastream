@@ -816,6 +816,46 @@ func TestCalculateMemoryUsageCountsStandardBitmapAndBSI(t *testing.T) {
 	if index.memoryUsed == 0 {
 		t.Fatal("expected memory usage estimate to include cached bitmap and BSI shards")
 	}
+	if index.shardCount != 2 {
+		t.Fatalf("expected shard count to include cached bitmap and BSI shards, got %d", index.shardCount)
+	}
+}
+
+func TestCalculateShardCountCountsStandardBitmapAndBSI(t *testing.T) {
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn: shared.NewDefaultConnection("test-node"),
+		},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"customers": {
+				"isActive": {
+					0: {
+						now.UnixNano(): {
+							Bits: roaring64.BitmapOf(1, 2),
+						},
+					},
+				},
+			},
+		},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"orders": {
+				"o_orderkey": {
+					now.UnixNano(): {
+						BSI: values,
+					},
+				},
+			},
+		},
+	}
+
+	index.calculateShardCount()
+
+	if index.shardCount != 2 {
+		t.Fatalf("expected shard count to include cached bitmap and BSI shards, got %d", index.shardCount)
+	}
 }
 
 func TestCalculateMemoryUsageSkipsBusyCache(t *testing.T) {
@@ -837,6 +877,7 @@ func TestCalculateMemoryUsageSkipsBusyCache(t *testing.T) {
 		},
 	}
 	index.memoryUsed = 123
+	index.shardCount = 7
 
 	index.bitmapCacheLock.Lock()
 	index.calculateMemoryUsage()
@@ -844,5 +885,8 @@ func TestCalculateMemoryUsageSkipsBusyCache(t *testing.T) {
 
 	if index.memoryUsed != 123 {
 		t.Fatalf("expected busy cache to retain previous estimate, got %d", index.memoryUsed)
+	}
+	if index.shardCount != 7 {
+		t.Fatalf("expected busy cache to retain previous shard count, got %d", index.shardCount)
 	}
 }
