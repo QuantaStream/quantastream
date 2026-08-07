@@ -23,6 +23,9 @@ import (
 const (
 	bsiBundleFileName         = "bundle"
 	bsiBundleMagic            = "QSBIS001"
+	bsiPackLeafDir            = "_bsi_pack"
+	bsiPackFileName           = "bundle"
+	bsiPackMagic              = "QSBIP001"
 	standardBundleLeafDir     = "standard"
 	standardBundleFileName    = "bundle"
 	standardBitmapBundleMagic = "QSSTB001"
@@ -31,6 +34,11 @@ const (
 type standardBitmapBundleEntry struct {
 	RowID uint64
 	Data  []byte
+}
+
+type bsiPackBundleEntry struct {
+	Field string
+	Data  [][]byte
 }
 
 // Partition - Description of partition
@@ -360,10 +368,128 @@ func (m *BitmapIndex) saveCompleteBSIWithTimings(bsi *BSIBitmap, indexName, fiel
 	return timings, err
 }
 
+func (m *BitmapIndex) saveCompleteBSIPackWithTimings(bsis map[string]*BSIBitmap, indexName string,
+	ts time.Time, tqType string) (bsiBundlePersistTimings, error) {
+	var timings bsiBundlePersistTimings
+	if len(bsis) == 0 {
+		return timings, fmt.Errorf("cannot persist empty BSI pack")
+	}
+	fields := make([]string, 0, len(bsis))
+	for fieldName := range bsis {
+		fields = append(fields, fieldName)
+	}
+	sort.Strings(fields)
+
+	entries := make([]bsiPackBundleEntry, 0, len(fields))
+	capturedModTimes := make(map[string]time.Time, len(fields))
+	for _, fieldName := range fields {
+		bsi := bsis[fieldName]
+		if bsi == nil || bsi.BSI == nil {
+			continue
+		}
+		bsi.Lock.RLock()
+		marshalStart := time.Now()
+		data, err := bsi.MarshalBinary()
+		timings.marshalElapsed += time.Since(marshalStart)
+		modTime := bsi.ModTime
+		bsi.Lock.RUnlock()
+		if err != nil {
+			return timings, err
+		}
+		timings.chunkCount += len(data)
+		for _, chunk := range data {
+			timings.chunkBytes += uint64(len(chunk))
+		}
+		entries = append(entries, bsiPackBundleEntry{Field: fieldName, Data: data})
+		capturedModTimes[fieldName] = modTime
+	}
+	if len(entries) == 0 {
+		return timings, fmt.Errorf("cannot persist BSI pack with no entries")
+	}
+
+	encodeStart := time.Now()
+	pack, err := encodeBSIPackBundle(entries)
+	timings.encodeElapsed = time.Since(encodeStart)
+	if err != nil {
+		return timings, err
+	}
+	timings.bundleBytes = uint64(len(pack))
+
+	pathStart := time.Now()
+	_, packPath := m.bsiPackBundleFilePath(indexName, ts, tqType)
+	timings.pathElapsed = time.Since(pathStart)
+
+	fileWriteStart := time.Now()
+	if err := writeAtomicBundleFile(packPath, pack, 0666); err != nil {
+		timings.fileWriteElapsed = time.Since(fileWriteStart)
+		return timings, err
+	}
+	timings.fileWriteElapsed = time.Since(fileWriteStart)
+
+	persistedAt := time.Now()
+	for _, fieldName := range fields {
+		bsi := bsis[fieldName]
+		if bsi == nil {
+			continue
+		}
+		captured, ok := capturedModTimes[fieldName]
+		if !ok {
+			continue
+		}
+		bsi.Lock.Lock()
+		if !bsi.ModTime.After(captured) {
+			bsi.PersistTime = persistedAt
+		}
+		bsi.Lock.Unlock()
+	}
+	return timings, nil
+}
+
 func (m *BitmapIndex) bsiBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
 	partition := &Partition{Index: indexName, Field: fieldName, Time: ts, TQType: tqType, RowIDOrBits: -1}
 	dir := m.generateBitmapFilePath(partition, false)
 	return dir, filepath.Join(dir, bsiBundleFileName)
+}
+
+func (m *BitmapIndex) bsiPackBundleFilePath(indexName string, ts time.Time, tqType string) (string, string) {
+	return m.bsiPackBundleFilePathWithCreate(indexName, ts, tqType, true)
+}
+
+func (m *BitmapIndex) bsiPackBundleFilePathWithCreate(indexName string, ts time.Time, tqType string, create bool) (string, string) {
+	dir := filepath.Join(m.dataDir, "bitmap", indexName, bsiPackLeafDir)
+	shard := "default"
+	switch tqType {
+	case "YMD":
+		shard = formatShardTime(ts)
+	case "YMDH":
+		utcTime := ts.UTC()
+		dir = filepath.Join(dir, fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()))
+		shard = formatShardTime(ts)
+	}
+	dir = filepath.Join(dir, shard)
+	if create {
+		_ = os.MkdirAll(dir, 0755)
+	}
+	return dir, filepath.Join(dir, bsiPackFileName)
+}
+
+func isBSIPackBundlePath(parts []string) bool {
+	return len(parts) >= 4 && parts[1] == bsiPackLeafDir && parts[len(parts)-1] == bsiPackFileName
+}
+
+func bsiPackShardTimeFromPathParts(parts []string) (time.Time, error) {
+	if !isBSIPackBundlePath(parts) {
+		return time.Time{}, fmt.Errorf("not a BSI pack bundle path")
+	}
+	shard := parts[len(parts)-2]
+	if shard == "default" {
+		return time.Unix(0, 0), nil
+	}
+	ts, err := time.Parse(timeFmt, shard)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse BSI pack shard time %s: %w", shard, err)
+	}
+	return ts, nil
 }
 
 func encodeBSIBundle(chunks [][]byte) ([]byte, error) {
@@ -422,6 +548,125 @@ func decodeBSIBundle(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("BSI bundle has %d trailing bytes", reader.Len())
 	}
 	return chunks, nil
+}
+
+func encodeBSIPackBundle(entries []bsiPackBundleEntry) ([]byte, error) {
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("cannot encode empty BSI pack bundle")
+	}
+	ordered := append([]bsiPackBundleEntry(nil), entries...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Field < ordered[j].Field })
+
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(bsiPackMagic); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(ordered))); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(ordered))
+	for _, entry := range ordered {
+		if entry.Field == "" {
+			return nil, fmt.Errorf("cannot encode BSI pack entry with empty field")
+		}
+		if _, ok := seen[entry.Field]; ok {
+			return nil, fmt.Errorf("duplicate BSI pack field %s", entry.Field)
+		}
+		seen[entry.Field] = struct{}{}
+		field := []byte(entry.Field)
+		if err := binary.Write(&buf, binary.BigEndian, uint32(len(field))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(field); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&buf, binary.BigEndian, uint32(len(entry.Data))); err != nil {
+			return nil, err
+		}
+		for _, chunk := range entry.Data {
+			if err := binary.Write(&buf, binary.BigEndian, uint64(len(chunk))); err != nil {
+				return nil, err
+			}
+			if _, err := buf.Write(chunk); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeBSIPackBundle(data []byte) ([]bsiPackBundleEntry, error) {
+	reader := bytes.NewReader(data)
+	magic := make([]byte, len(bsiPackMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil {
+		return nil, fmt.Errorf("read BSI pack magic: %w", err)
+	}
+	if string(magic) != bsiPackMagic {
+		return nil, fmt.Errorf("invalid BSI pack magic %q", string(magic))
+	}
+	var count uint32
+	if err := binary.Read(reader, binary.BigEndian, &count); err != nil {
+		return nil, fmt.Errorf("read BSI pack entry count: %w", err)
+	}
+	if count == 0 || count > 1<<20 {
+		return nil, fmt.Errorf("invalid BSI pack entry count %d", count)
+	}
+	entries := make([]bsiPackBundleEntry, 0, count)
+	seen := make(map[string]struct{}, count)
+	for i := uint32(0); i < count; i++ {
+		var fieldLen uint32
+		if err := binary.Read(reader, binary.BigEndian, &fieldLen); err != nil {
+			return nil, fmt.Errorf("read BSI pack field length %d: %w", i, err)
+		}
+		if fieldLen == 0 || fieldLen > uint32(reader.Len()) {
+			return nil, fmt.Errorf("invalid BSI pack field length %d", fieldLen)
+		}
+		fieldBytes := make([]byte, fieldLen)
+		if _, err := io.ReadFull(reader, fieldBytes); err != nil {
+			return nil, fmt.Errorf("read BSI pack field %d: %w", i, err)
+		}
+		field := string(fieldBytes)
+		if _, ok := seen[field]; ok {
+			return nil, fmt.Errorf("duplicate BSI pack field %s", field)
+		}
+		seen[field] = struct{}{}
+		var chunkCount uint32
+		if err := binary.Read(reader, binary.BigEndian, &chunkCount); err != nil {
+			return nil, fmt.Errorf("read BSI pack chunk count %s: %w", field, err)
+		}
+		if chunkCount == 0 || chunkCount > 1<<20 {
+			return nil, fmt.Errorf("invalid BSI pack chunk count %d for field %s", chunkCount, field)
+		}
+		chunks := make([][]byte, chunkCount)
+		for j := uint32(0); j < chunkCount; j++ {
+			var chunkLen uint64
+			if err := binary.Read(reader, binary.BigEndian, &chunkLen); err != nil {
+				return nil, fmt.Errorf("read BSI pack chunk length %s[%d]: %w", field, j, err)
+			}
+			if chunkLen > uint64(reader.Len()) {
+				return nil, fmt.Errorf("BSI pack field %s chunk %d length %d exceeds remaining %d",
+					field, j, chunkLen, reader.Len())
+			}
+			chunks[j] = make([]byte, chunkLen)
+			if _, err := io.ReadFull(reader, chunks[j]); err != nil {
+				return nil, fmt.Errorf("read BSI pack chunk %s[%d]: %w", field, j, err)
+			}
+		}
+		entries = append(entries, bsiPackBundleEntry{Field: field, Data: chunks})
+	}
+	if reader.Len() != 0 {
+		return nil, fmt.Errorf("BSI pack has %d trailing bytes", reader.Len())
+	}
+	return entries, nil
+}
+
+func findBSIPackBundleEntry(entries []bsiPackBundleEntry, field string) (bsiPackBundleEntry, bool) {
+	for _, entry := range entries {
+		if entry.Field == field {
+			return entry, true
+		}
+	}
+	return bsiPackBundleEntry{}, false
 }
 
 func writeAtomicBundleFile(path string, data []byte, perm os.FileMode) error {
@@ -741,6 +986,38 @@ func (m *BitmapIndex) readBitmapFiles(fragQueue chan *BitmapFragment) error {
 			}
 			bf.IndexName = s[0]
 			bf.FieldName = s[1]
+			if isBSIPackBundlePath(s) {
+				shardTime, err := bsiPackShardTimeFromPathParts(s)
+				if err != nil {
+					return fmt.Errorf("readBitmapFiles: parse BSI pack %s: %w", path, err)
+				}
+				entries, err := decodeBSIPackBundle(data)
+				if err != nil {
+					return fmt.Errorf("readBitmapFiles: decode BSI pack %s: %w", path, err)
+				}
+				bsiFileCount++
+				for _, entry := range entries {
+					if _, err := m.getFieldConfig(bf.IndexName, entry.Field); err != nil {
+						u.Errorf("Attribute %s.%s not found in schema. ignoring", bf.IndexName, entry.Field)
+						ignoredFieldCount++
+						continue
+					}
+					manifestBuilder.addBSIPackFile(path, info, bf.IndexName, entry.Field, shardTime)
+					if err := fragMap.add(&BitmapFragment{
+						IndexName:   bf.IndexName,
+						FieldName:   entry.Field,
+						RowIDOrBits: -1,
+						Time:        shardTime,
+						BitData:     entry.Data,
+						ModTime:     info.ModTime(),
+						IsBSI:       true,
+						IsInit:      true,
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			attr, err := m.getFieldConfig(bf.IndexName, bf.FieldName)
 			if err != nil {
 				u.Errorf("Attribute %s.%s not found in schema. ignoring", bf.IndexName, bf.FieldName)
@@ -952,6 +1229,7 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 	standardFileCount := 0
 	bsiFileCount := 0
 	nextProgressFileCount := 50000
+	bsiPackCache := make(map[string][]bsiPackBundleEntry)
 
 	for _, entry := range manifest.Entries {
 		if _, err := m.getFieldConfig(entry.Table, entry.Field); err != nil {
@@ -1001,7 +1279,7 @@ func (m *BitmapIndex) readBitmapFilesFromManifest(manifest BitmapShardManifest, 
 				IsBSI:       true,
 				IsInit:      true,
 			}
-			loadedFiles, err := m.loadManifestBSIEntry(entry, frag)
+			loadedFiles, err := m.loadManifestBSIEntry(entry, frag, bsiPackCache)
 			if err != nil {
 				return err
 			}
@@ -1074,7 +1352,35 @@ func (m *BitmapIndex) loadManifestStandardBundleEntry(entry BitmapShardManifestE
 	return 1, nil
 }
 
-func (m *BitmapIndex) loadManifestBSIEntry(entry BitmapShardManifestEntry, frag *BitmapFragment) (int, error) {
+func (m *BitmapIndex) loadManifestBSIEntry(entry BitmapShardManifestEntry, frag *BitmapFragment, bsiPackCache map[string][]bsiPackBundleEntry) (int, error) {
+	if len(entry.Files) == 1 && entry.Files[0].Role == bitmapShardFileRoleBSIPack {
+		file := entry.Files[0]
+		path := filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath))
+		packEntries, ok := bsiPackCache[file.RelativePath]
+		loadedFiles := 0
+		if !ok {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return 0, fmt.Errorf("read manifest BSI pack %s: %w", file.RelativePath, err)
+			}
+			var decodeErr error
+			packEntries, decodeErr = decodeBSIPackBundle(data)
+			if decodeErr != nil {
+				return 0, fmt.Errorf("decode manifest BSI pack %s: %w", file.RelativePath, decodeErr)
+			}
+			bsiPackCache[file.RelativePath] = packEntries
+			loadedFiles = 1
+		}
+		packed, ok := findBSIPackBundleEntry(packEntries, entry.Field)
+		if !ok {
+			return loadedFiles, fmt.Errorf("manifest BSI pack %s does not contain field %s", file.RelativePath, entry.Field)
+		}
+		frag.BitData = packed.Data
+		if file.ModTime.After(frag.ModTime) {
+			frag.ModTime = file.ModTime
+		}
+		return loadedFiles, nil
+	}
 	if len(entry.Files) == 1 && (entry.Files[0].Role == bitmapShardFileRoleBundle || filepath.Base(entry.Files[0].RelativePath) == bsiBundleFileName) {
 		file := entry.Files[0]
 		data, err := os.ReadFile(filepath.Join(m.dataDir, filepath.FromSlash(file.RelativePath)))
@@ -1160,7 +1466,13 @@ func (m bitmapStartupFragmentMap) add(f *BitmapFragment) error {
 		m[f.IndexName][f.FieldName][rID] = make(map[int64]*BitmapFragment)
 	}
 	t := f.Time.UnixNano()
-	if _, ok := m[f.IndexName][f.FieldName][rID][t]; ok {
+	if existing, ok := m[f.IndexName][f.FieldName][rID][t]; ok {
+		if f.IsInit && existing.IsInit {
+			if f.ModTime.After(existing.ModTime) {
+				m[f.IndexName][f.FieldName][rID][t] = f
+			}
+			return nil
+		}
 		return fmt.Errorf("duplicate startup bitmap fragment %s.%s row=%d shard=%s",
 			f.IndexName, f.FieldName, rID, f.Time.Format(timeFmt))
 	}

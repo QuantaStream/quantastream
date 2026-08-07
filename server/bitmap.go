@@ -1249,6 +1249,7 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 type bsiCachePersistSummary struct {
 	bsiCount         int
 	bsiWrites        uint64
+	bsiPackWrites    uint64
 	scanElapsed      time.Duration
 	writeElapsed     time.Duration
 	marshalElapsed   time.Duration
@@ -1280,40 +1281,72 @@ func (m *BitmapIndex) checkPersistBSICacheWithTimings(forceSync bool) (bsiCacheP
 	defer m.bsiCacheLock.RUnlock()
 
 	start := time.Now()
+	type bsiPersistGroup struct {
+		indexName string
+		shardNano int64
+		tqType    string
+		bsis      map[string]*BSIBitmap
+		dirty     bool
+	}
+	groups := make(map[string]*bsiPersistGroup)
+	scanStart := time.Now()
 	for indexName, index := range m.bsiCache {
 		for fieldName, field := range index {
 			for t, bsi := range field {
 				summary.bsiCount++
-				entryStart := time.Now()
-				bsi.Lock.Lock()
-				if forceSync || bsi.ModTime.After(bsi.PersistTime) {
-					summary.scanElapsed += time.Since(entryStart)
-					writeStart := time.Now()
-					timings, err := m.saveCompleteBSIWithTimings(bsi, indexName, fieldName, time.Unix(0, t))
-					if err != nil {
-						bsi.Lock.Unlock()
-						return summary, fmt.Errorf("saveCompleteBSI failed index=%s field=%s time=%s: %w",
-							indexName, fieldName, time.Unix(0, t).UTC().Format(timeFmt), err)
-					}
-					summary.writeElapsed += time.Since(writeStart)
-					summary.marshalElapsed += timings.marshalElapsed
-					summary.encodeElapsed += timings.encodeElapsed
-					summary.pathElapsed += timings.pathElapsed
-					summary.fileWriteElapsed += timings.fileWriteElapsed
-					summary.cleanupElapsed += timings.cleanupElapsed
-					summary.chunkCount += timings.chunkCount
-					summary.chunkBytes += timings.chunkBytes
-					summary.bundleBytes += timings.bundleBytes
-					summary.bsiWrites++
-					manifestDirty = true
-					bsi.PersistTime = time.Now()
-				} else {
-					summary.scanElapsed += time.Since(entryStart)
+				if bsi == nil {
+					continue
 				}
-				bsi.Lock.Unlock()
+				bsi.Lock.RLock()
+				tqType := bsi.TQType
+				dirty := forceSync || bsi.ModTime.After(bsi.PersistTime)
+				bsi.Lock.RUnlock()
+				groupShardNano := t
+				if tqType == "" {
+					groupShardNano = 0
+				}
+				key := fmt.Sprintf("%s/%s/%d", indexName, tqType, groupShardNano)
+				group := groups[key]
+				if group == nil {
+					group = &bsiPersistGroup{
+						indexName: indexName,
+						shardNano: groupShardNano,
+						tqType:    tqType,
+						bsis:      make(map[string]*BSIBitmap),
+					}
+					groups[key] = group
+				}
+				group.bsis[fieldName] = bsi
+				group.dirty = group.dirty || dirty
 			}
 		}
 	}
+	summary.scanElapsed = time.Since(scanStart)
+
+	writeStart := time.Now()
+	for _, group := range groups {
+		if !group.dirty {
+			continue
+		}
+		shardTime := time.Unix(0, group.shardNano)
+		timings, err := m.saveCompleteBSIPackWithTimings(group.bsis, group.indexName, shardTime, group.tqType)
+		if err != nil {
+			return summary, fmt.Errorf("saveCompleteBSIPack failed index=%s time=%s: %w",
+				group.indexName, shardTime.UTC().Format(timeFmt), err)
+		}
+		summary.marshalElapsed += timings.marshalElapsed
+		summary.encodeElapsed += timings.encodeElapsed
+		summary.pathElapsed += timings.pathElapsed
+		summary.fileWriteElapsed += timings.fileWriteElapsed
+		summary.cleanupElapsed += timings.cleanupElapsed
+		summary.chunkCount += timings.chunkCount
+		summary.chunkBytes += timings.chunkBytes
+		summary.bundleBytes += timings.bundleBytes
+		summary.bsiWrites += uint64(len(group.bsis))
+		summary.bsiPackWrites++
+		manifestDirty = true
+	}
+	summary.writeElapsed = time.Since(writeStart)
 
 	elapsed := time.Since(start)
 	m.saveBSITime.Store(uint64(elapsed.Milliseconds()))
@@ -1413,6 +1446,7 @@ type persistCachesSummary struct {
 	bitmapWrites        uint64
 	bsiCount            int
 	bsiWrites           uint64
+	bsiPackWrites       uint64
 	bitmapElapsed       time.Duration
 	bitmapScanElapsed   time.Duration
 	bitmapWriteElapsed  time.Duration
@@ -1453,6 +1487,7 @@ func (m *BitmapIndex) persistCachesWithTimings(forceSync bool) (persistCachesSum
 	summary.bsiElapsed = time.Since(bsiStart)
 	summary.bsiCount = bsiSummary.bsiCount
 	summary.bsiWrites = bsiSummary.bsiWrites
+	summary.bsiPackWrites = bsiSummary.bsiPackWrites
 	summary.bsiScanElapsed = bsiSummary.scanElapsed
 	summary.bsiWriteElapsed = bsiSummary.writeElapsed
 	summary.bsiMarshalElapsed = bsiSummary.marshalElapsed
@@ -1588,10 +1623,10 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 			manifestElapsed = time.Since(manifestStart)
 		}
 	}
-	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_path_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d bsi_pack_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_path_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey,
 		persistSummary.bitmapCount, persistSummary.bitmapWrites,
-		persistSummary.bsiCount, persistSummary.bsiWrites,
+		persistSummary.bsiCount, persistSummary.bsiWrites, persistSummary.bsiPackWrites,
 		flushElapsed, dirtyCheckElapsed, persistElapsed,
 		persistSummary.bitmapElapsed, persistSummary.bitmapScanElapsed, persistSummary.bitmapWriteElapsed,
 		persistSummary.bsiElapsed, persistSummary.bsiScanElapsed, persistSummary.bsiWriteElapsed,

@@ -19,6 +19,7 @@ const (
 	bitmapShardKindStandard     = "standard"
 	bitmapShardKindBSI          = "bsi"
 	bitmapShardFileRoleBundle   = "bundle"
+	bitmapShardFileRoleBSIPack  = "bsi_pack"
 )
 
 // BitmapShardManifest records logical bitmap artifacts discovered on disk.
@@ -163,6 +164,21 @@ func (b *bitmapShardManifestBuilder) addBSIBundleFile(path string, info os.FileI
 	entry.BaseRelativePath = ""
 }
 
+func (b *bitmapShardManifestBuilder) addBSIPackFile(path string, info os.FileInfo, table, field string, shardTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         bitmapShardFileRoleBSIPack,
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+	}}
+	entry.FileCount = 1
+	entry.MaxBitSlice = 0
+	entry.HasExistence = true
+	entry.ModTime = info.ModTime().UTC()
+	entry.BaseRelativePath = ""
+}
+
 func (b *bitmapShardManifestBuilder) addStandardCacheEntry(path string, table, field string, rowID int64, shardTime time.Time, modTime time.Time) {
 	entry := b.entry(table, field, bitmapShardKindStandard, rowID, shardTime)
 	entry.Files = []BitmapShardManifestFile{{
@@ -193,6 +209,20 @@ func (b *bitmapShardManifestBuilder) addBSICacheEntry(basePath string, table, fi
 	entry.Files = []BitmapShardManifestFile{{
 		RelativePath: b.relativePath(filepath.Join(basePath, bsiBundleFileName)),
 		Role:         bitmapShardFileRoleBundle,
+		ModTime:      modTime.UTC(),
+	}}
+	entry.FileCount = 1
+	entry.MaxBitSlice = 0
+	entry.HasExistence = true
+	entry.ModTime = modTime.UTC()
+	entry.BaseRelativePath = ""
+}
+
+func (b *bitmapShardManifestBuilder) addBSIPackCacheEntry(path string, table, field string, shardTime time.Time, modTime time.Time) {
+	entry := b.entry(table, field, bitmapShardKindBSI, -1, shardTime)
+	entry.Files = []BitmapShardManifestFile{{
+		RelativePath: b.relativePath(path),
+		Role:         bitmapShardFileRoleBSIPack,
 		ModTime:      modTime.UTC(),
 	}}
 	entry.FileCount = 1
@@ -416,11 +446,10 @@ func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
 				if modTime.IsZero() {
 					modTime = bsi.ModTime
 				}
-				maxBitSlice := int(bsi.BitCount())
 				tqType := bsi.TQType
 				bsi.Lock.RUnlock()
-				partition := &Partition{Index: indexName, Field: fieldName, RowIDOrBits: -1, Time: shardTime, TQType: tqType}
-				builder.addBSICacheEntry(m.generateBitmapFilePathWithCreate(partition, false, false), indexName, fieldName, shardTime, maxBitSlice, modTime)
+				_, path := m.bsiPackBundleFilePathWithCreate(indexName, shardTime, tqType, false)
+				builder.addBSIPackCacheEntry(path, indexName, fieldName, shardTime, modTime)
 				bsiEntries++
 			}
 		}

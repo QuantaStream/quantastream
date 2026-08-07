@@ -742,6 +742,62 @@ func TestReadBitmapFilesFromManifestLoadsBundledBSI(t *testing.T) {
 	}
 }
 
+func TestReadBitmapFilesFromManifestLoadsPackedBSI(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Date(1994, 1, 2, 0, 0, 0, 0, time.UTC)
+	orderKey := roaring64.NewDefaultBSI()
+	orderKey.SetValue(1, 100)
+	orderKey.SetValue(2, 200)
+	quantity := roaring64.NewDefaultBSI()
+	quantity.SetValue(1, 3)
+	quantity.SetValue(2, 7)
+
+	orderChunks, err := orderKey.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal orderKey BSI: %v", err)
+	}
+	quantityChunks, err := quantity.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal quantity BSI: %v", err)
+	}
+	pack, err := encodeBSIPackBundle([]bsiPackBundleEntry{
+		{Field: "l_orderkey", Data: orderChunks},
+		{Field: "l_quantity", Data: quantityChunks},
+	})
+	if err != nil {
+		t.Fatalf("encodeBSIPackBundle returned error: %v", err)
+	}
+	target := writeManifestTestFileBytes(t, index.dataDir, filepath.ToSlash(filepath.Join("bitmap", "lineitem", bsiPackLeafDir, "1994-01-02T00", bsiPackFileName)), pack)
+	info := statManifestTestFile(t, target)
+	builder := newBitmapShardManifestBuilder(index.dataDir)
+	builder.addBSIPackFile(target, info, "lineitem", "l_orderkey", shardTime)
+	builder.addBSIPackFile(target, info, "lineitem", "l_quantity", shardTime)
+	manifest := builder.manifest(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), "test")
+	observation := BitmapShardManifestObservation{
+		Status:          "ok",
+		ManifestEntries: manifest.Stats.TotalEntries,
+		ManifestFiles:   manifest.Stats.TotalFiles,
+	}
+
+	if err := index.readBitmapFilesFromManifest(manifest, observation, index.fragQueue, time.Now()); err != nil {
+		t.Fatalf("readBitmapFilesFromManifest returned error: %v", err)
+	}
+	loadedOrder := index.bsiCache["lineitem"]["l_orderkey"][shardTime.UnixNano()]
+	if loadedOrder == nil {
+		t.Fatal("expected packed l_orderkey BSI to load from manifest")
+	}
+	if got, exists := loadedOrder.GetValue(2); !exists || got != 200 {
+		t.Fatalf("loaded l_orderkey value for column 2 = %v exists=%v, want 200 true", got, exists)
+	}
+	loadedQuantity := index.bsiCache["lineitem"]["l_quantity"][shardTime.UnixNano()]
+	if loadedQuantity == nil {
+		t.Fatal("expected packed l_quantity BSI to load from manifest")
+	}
+	if got, exists := loadedQuantity.GetValue(1); !exists || got != 3 {
+		t.Fatalf("loaded l_quantity value for column 1 = %v exists=%v, want 3 true", got, exists)
+	}
+}
+
 func BenchmarkBitmapShardManifestMarshalLineitemScale(b *testing.B) {
 	manifest := benchmarkBitmapShardManifest(15000, 31500)
 	b.Run("json", func(b *testing.B) {

@@ -132,8 +132,9 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestUsesActiveCatalog(t *testing
 	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
 		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
 	}
-	if artifact.Path != "bitmap/sample/id/bsi" {
-		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
+	expectedArtifactPath := standardBSIPrimaryKeyAuthorityArtifactPath("sample", "id", "")
+	if artifact.Path != expectedArtifactPath {
+		t.Fatalf("artifact path = %q, want %s", artifact.Path, expectedArtifactPath)
 	}
 }
 
@@ -165,8 +166,9 @@ func TestBuildStandardBSIPrimaryKeyAuthorityManifestDescribesCompoundAuthorityAr
 	if artifact.Kind != core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI {
 		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI)
 	}
-	if artifact.Path != "bitmap/lineitem/"+shared.CompoundPrimaryKeyAuthorityFieldName+"/bsi" {
-		t.Fatalf("artifact path = %q, want compound authority BSI path", artifact.Path)
+	expectedArtifactPath := standardBSIPrimaryKeyAuthorityArtifactPath("lineitem", shared.CompoundPrimaryKeyAuthorityFieldName, "")
+	if artifact.Path != expectedArtifactPath {
+		t.Fatalf("artifact path = %q, want %s", artifact.Path, expectedArtifactPath)
 	}
 }
 
@@ -232,11 +234,11 @@ func TestStandardBSIPrimaryKeyAuthorityManifestPublisherWritesAfterMutatedFlush(
 	dataDir := filepath.Join(root, "data")
 	configDir := filepath.Join(dataDir, "config")
 	writeStandardTestSchema(t, configDir, "sample")
-	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id", "bsi", "default")
-	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+	artifactFile := filepath.Join(dataDir, filepath.FromSlash(standardBSIPrimaryKeyAuthorityArtifactPath("sample", "id", "")))
+	if err := os.MkdirAll(filepath.Dir(artifactFile), 0755); err != nil {
 		t.Fatalf("mkdir artifact dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, "chunk.bsi"), []byte("unit-test"), 0644); err != nil {
+	if err := os.WriteFile(artifactFile, []byte("unit-test"), 0644); err != nil {
 		t.Fatalf("write artifact file: %v", err)
 	}
 	publisher := StandardBSIPrimaryKeyAuthorityManifestFilePublisher{
@@ -289,11 +291,11 @@ func TestRefreshStandardBSIPrimaryKeyAuthorityManifestArtifactsBootstrapsMissing
 	dataDir := filepath.Join(root, "data")
 	configDir := filepath.Join(dataDir, "config")
 	writeStandardTestSchema(t, configDir, "sample")
-	artifactDir := filepath.Join(dataDir, "bitmap", "sample", "id", "bsi", "default")
-	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+	artifactFile := filepath.Join(dataDir, filepath.FromSlash(standardBSIPrimaryKeyAuthorityArtifactPath("sample", "id", "")))
+	if err := os.MkdirAll(filepath.Dir(artifactFile), 0755); err != nil {
 		t.Fatalf("mkdir artifact dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, "chunk.bsi"), []byte("unit-test"), 0644); err != nil {
+	if err := os.WriteFile(artifactFile, []byte("unit-test"), 0644); err != nil {
 		t.Fatalf("write artifact file: %v", err)
 	}
 

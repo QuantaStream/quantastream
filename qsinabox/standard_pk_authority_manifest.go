@@ -88,11 +88,11 @@ func standardPopulateBSIPrimaryKeyAuthorityArtifacts(entry *core.BSIPrimaryKeyAu
 }
 
 func standardBSIPrimaryKeyAuthorityArtifactPath(tableName, authorityField, logicalShard string) string {
-	parts := []string{"bitmap", strings.TrimSpace(tableName), strings.TrimSpace(authorityField), "bsi"}
-	if shard := strings.TrimSpace(logicalShard); shard != "" {
-		parts = append(parts, shard)
+	shard := strings.TrimSpace(logicalShard)
+	if shard == "" {
+		shard = "default"
 	}
-	return path.Join(parts...)
+	return path.Join("bitmap", strings.TrimSpace(tableName), "_bsi_pack", shard, "bundle")
 }
 
 func observeStandardBSIPrimaryKeyAuthorityArtifacts(config StandardConfig, manifest core.BSIPrimaryKeyAuthorityManifest, observation core.BSIPrimaryKeyAuthorityManifestObservation) core.BSIPrimaryKeyAuthorityManifestObservation {

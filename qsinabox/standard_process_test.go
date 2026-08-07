@@ -1045,8 +1045,9 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 		t.Fatalf("manifest entries = %+v, want one BSI authority artifact", manifest.Entries)
 	}
 	artifact := manifest.Entries[0].Artifacts[0]
-	if artifact.Path != "bitmap/sample/id/bsi" {
-		t.Fatalf("artifact path = %q, want bitmap/sample/id/bsi", artifact.Path)
+	expectedArtifactPath := standardBSIPrimaryKeyAuthorityArtifactPath("sample", "id", "")
+	if artifact.Path != expectedArtifactPath {
+		t.Fatalf("artifact path = %q, want %s", artifact.Path, expectedArtifactPath)
 	}
 	if artifact.FileCount == 0 {
 		t.Fatalf("manifest artifact file count = 0, want SQL COMMIT refresh to record persisted BSI files")
