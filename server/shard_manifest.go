@@ -80,6 +80,14 @@ type BitmapShardManifestObservation struct {
 	Elapsed          time.Duration
 }
 
+type bitmapShardManifestSaveTimings struct {
+	manifestBytes  int
+	marshalElapsed time.Duration
+	writeElapsed   time.Duration
+	renameElapsed  time.Duration
+	totalElapsed   time.Duration
+}
+
 func useBitmapShardManifestEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_USE_SHARD_MANIFEST"))) {
 	case "0", "false", "no", "off":
@@ -293,6 +301,13 @@ func (m *BitmapIndex) bitmapShardManifestPath() string {
 }
 
 func (m *BitmapIndex) saveBitmapShardManifest(manifest BitmapShardManifest) error {
+	_, err := m.saveBitmapShardManifestWithTimings(manifest)
+	return err
+}
+
+func (m *BitmapIndex) saveBitmapShardManifestWithTimings(manifest BitmapShardManifest) (bitmapShardManifestSaveTimings, error) {
+	start := time.Now()
+	var timings bitmapShardManifestSaveTimings
 	if manifest.Version == 0 {
 		manifest.Version = bitmapShardManifestVersion
 	}
@@ -300,21 +315,32 @@ func (m *BitmapIndex) saveBitmapShardManifest(manifest BitmapShardManifest) erro
 		manifest.GeneratedAt = time.Now().UTC()
 	}
 	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
-		return fmt.Errorf("create bitmap manifest directory: %w", err)
+		return timings, fmt.Errorf("create bitmap manifest directory: %w", err)
 	}
+
+	marshalStart := time.Now()
 	data, err := yaml.Marshal(manifest)
+	timings.marshalElapsed = time.Since(marshalStart)
 	if err != nil {
-		return fmt.Errorf("marshal bitmap shard manifest: %w", err)
+		return timings, fmt.Errorf("marshal bitmap shard manifest: %w", err)
 	}
+	timings.manifestBytes = len(data)
 	path := m.bitmapShardManifestPath()
 	tmpPath := path + ".tmp"
+
+	writeStart := time.Now()
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write bitmap shard manifest: %w", err)
+		return timings, fmt.Errorf("write bitmap shard manifest: %w", err)
 	}
+	timings.writeElapsed = time.Since(writeStart)
+
+	renameStart := time.Now()
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace bitmap shard manifest: %w", err)
+		return timings, fmt.Errorf("replace bitmap shard manifest: %w", err)
 	}
-	return nil
+	timings.renameElapsed = time.Since(renameStart)
+	timings.totalElapsed = time.Since(start)
+	return timings, nil
 }
 
 func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
@@ -326,6 +352,7 @@ func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
 	standardEntries := 0
 	bsiEntries := 0
 
+	standardStart := time.Now()
 	m.bitmapCacheLock.RLock()
 	type standardManifestGroup struct {
 		indexName string
@@ -380,7 +407,9 @@ func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
 		standardEntries++
 	}
 	m.bitmapCacheLock.RUnlock()
+	standardElapsed := time.Since(standardStart)
 
+	bsiStart := time.Now()
 	m.bsiCacheLock.RLock()
 	for indexName, index := range m.bsiCache {
 		for fieldName, field := range index {
@@ -404,19 +433,26 @@ func (m *BitmapIndex) saveBitmapShardManifestFromCache(source string) error {
 		}
 	}
 	m.bsiCacheLock.RUnlock()
+	bsiElapsed := time.Since(bsiStart)
 
+	buildStart := time.Now()
 	manifest := builder.manifest(time.Now().UTC(), source)
+	buildElapsed := time.Since(buildStart)
 	if len(manifest.Entries) == 0 {
 		if err := m.invalidateBitmapShardManifest("empty cache manifest refresh"); err != nil {
 			return err
 		}
 		return nil
 	}
-	if err := m.saveBitmapShardManifest(manifest); err != nil {
+	saveTimings, err := m.saveBitmapShardManifestWithTimings(manifest)
+	if err != nil {
 		return fmt.Errorf("save bitmap shard manifest from cache: %w", err)
 	}
-	fmt.Printf("BitmapIndex refreshed shard manifest source=%s entries=%d files=%d standard_entries=%d bsi_entries=%d elapsed=%v\n",
-		source, manifest.Stats.TotalEntries, manifest.Stats.TotalFiles, standardEntries, bsiEntries, time.Since(start))
+	fmt.Printf("BitmapIndex refreshed shard manifest source=%s entries=%d files=%d standard_entries=%d bsi_entries=%d elapsed=%v standard_scan_elapsed=%s bsi_scan_elapsed=%s manifest_build_elapsed=%s manifest_save_elapsed=%s manifest_marshal_elapsed=%s manifest_write_elapsed=%s manifest_rename_elapsed=%s manifest_bytes=%d\n",
+		source, manifest.Stats.TotalEntries, manifest.Stats.TotalFiles, standardEntries, bsiEntries,
+		time.Since(start), standardElapsed, bsiElapsed, buildElapsed,
+		saveTimings.totalElapsed, saveTimings.marshalElapsed, saveTimings.writeElapsed,
+		saveTimings.renameElapsed, saveTimings.manifestBytes)
 	return nil
 }
 
