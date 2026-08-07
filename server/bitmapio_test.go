@@ -281,7 +281,7 @@ func TestSaveCompleteStandardBundleRemovesLegacyRowFiles(t *testing.T) {
 	}
 }
 
-func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
+func TestCommitForcesCleanStandardBitmapSavepoint(t *testing.T) {
 	cleanTime := time.Unix(100, 0)
 	dirtyTime := cleanTime.Add(time.Hour)
 	index := &BitmapIndex{
@@ -321,8 +321,8 @@ func TestCommitSkipsCleanStandardBitmap(t *testing.T) {
 	}
 
 	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
-	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
-		t.Fatalf("expected clean standard bitmap not to be rewritten by commit, stat err=%v", err)
+	if _, err := os.Stat(cleanPath); err != nil {
+		t.Fatalf("expected clean standard bitmap to be persisted by commit savepoint, stat err=%v", err)
 	}
 	dirtyPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "dirty_isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {
@@ -388,7 +388,7 @@ func TestDirtyStandardBitmapPersistsCompleteShardBundle(t *testing.T) {
 	}
 }
 
-func TestCommitSkipsCleanBSI(t *testing.T) {
+func TestCommitForcesCleanBSISavepoint(t *testing.T) {
 	cleanTime := time.Unix(100, 0)
 	dirtyTime := cleanTime.Add(time.Hour)
 	cleanValues := roaring64.NewDefaultBSI()
@@ -428,8 +428,8 @@ func TestCommitSkipsCleanBSI(t *testing.T) {
 	}
 
 	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
-	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
-		t.Fatalf("expected clean BSI not to be rewritten by commit, stat err=%v", err)
+	if _, err := os.Stat(cleanPath); err != nil {
+		t.Fatalf("expected clean BSI to be persisted by commit savepoint, stat err=%v", err)
 	}
 	dirtyPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "dirty_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {

@@ -1420,9 +1420,10 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 	if err != nil {
 		return &empty.Empty{}, err
 	}
-	// Commit is a savepoint for dirty work, not a request to rewrite every
-	// mounted shard. Startup-loaded shards are marked clean with PersistTime.
-	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(false)
+	// Commit is an explicit durability savepoint. Force current cache contents
+	// to disk so a concurrent/background persist cannot leave a clean-marked but
+	// stale bundle as the post-restart source of truth.
+	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(true)
 	if err != nil {
 		return &empty.Empty{}, err
 	}
