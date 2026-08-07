@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	"github.com/golang/protobuf/ptypes/empty"
+	"gopkg.in/yaml.v2"
 )
 
 func TestBitmapShardManifestBuilderGroupsStandardAndBSIFiles(t *testing.T) {
@@ -111,6 +113,47 @@ func TestBitmapShardManifestSaveAndLoad(t *testing.T) {
 	}
 	if loaded.Entries[0].RowIDOrBits != 0 {
 		t.Fatalf("row-zero entry was not preserved: %+v", loaded.Entries[0])
+	}
+}
+
+func TestBitmapShardManifestLoadLegacyYAML(t *testing.T) {
+	index := newManifestPersistenceTestIndex(t)
+	legacyYAML := []byte(`version: 1
+generated_at: 2026-07-18T12:00:00Z
+source: legacy-yaml
+stats:
+  total_entries: 1
+  standard_entries: 1
+  bsi_entries: 0
+  total_files: 1
+  standard_files: 1
+  bsi_files: 0
+entries:
+- table: customer
+  field: is_active
+  kind: standard
+  row_id_or_bits: 0
+  shard: 1994-01-02T00
+  shard_time: 1994-01-02T00:00:00Z
+  files:
+  - relative_path: bitmap/customer/is_active/0/1994-01-02T00
+    role: bitmap
+    size_bytes: 0
+    mod_time: 1994-01-02T00:00:00Z
+`)
+	if err := os.WriteFile(filepath.Join(index.dataDir, BitmapShardManifestFileName), legacyYAML, 0644); err != nil {
+		t.Fatalf("write legacy YAML manifest: %v", err)
+	}
+
+	loaded, err := index.loadBitmapShardManifest()
+	if err != nil {
+		t.Fatalf("loadBitmapShardManifest returned error: %v", err)
+	}
+	if loaded.Source != "legacy-yaml" || loaded.Stats.TotalEntries != 1 || len(loaded.Entries) != 1 {
+		t.Fatalf("unexpected legacy YAML manifest: %+v", loaded)
+	}
+	if loaded.Entries[0].Files[0].RelativePath != "bitmap/customer/is_active/0/1994-01-02T00" {
+		t.Fatalf("legacy YAML relative path was not preserved: %+v", loaded.Entries[0].Files[0])
 	}
 }
 
@@ -697,6 +740,41 @@ func TestReadBitmapFilesFromManifestLoadsBundledBSI(t *testing.T) {
 	if got := loaded.GetExistenceBitmap().GetCardinality(); got != 2 {
 		t.Fatalf("loaded bundled BSI existence cardinality = %d, want 2", got)
 	}
+}
+
+func BenchmarkBitmapShardManifestMarshalLineitemScale(b *testing.B) {
+	manifest := benchmarkBitmapShardManifest(15000, 31500)
+	b.Run("json", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if _, err := json.Marshal(manifest); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("yaml", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if _, err := yaml.Marshal(manifest); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func benchmarkBitmapShardManifest(standardEntries, bsiEntries int) BitmapShardManifest {
+	builder := newBitmapShardManifestBuilder("/tmp/quantastream-manifest-benchmark")
+	baseTime := time.Date(1994, 1, 1, 0, 0, 0, 0, time.UTC)
+	modTime := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < standardEntries; i++ {
+		shardTime := baseTime.Add(time.Duration(i) * time.Hour)
+		path := filepath.Join(builder.dataDir, "bitmap", "lineitem", "l_shipmode", standardBundleLeafDir, formatShardTime(shardTime), standardBundleFileName)
+		builder.addStandardBundleCacheEntry(path, "lineitem", "l_shipmode", shardTime, modTime)
+	}
+	for i := 0; i < bsiEntries; i++ {
+		shardTime := baseTime.Add(time.Duration(i) * time.Hour)
+		path := filepath.Join(builder.dataDir, "bitmap", "lineitem", "l_quantity", "bsi", formatShardTime(shardTime))
+		builder.addBSICacheEntry(path, "lineitem", "l_quantity", shardTime, 0, modTime)
+	}
+	return builder.manifest(modTime, "benchmark")
 }
 
 func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManifest) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,46 +27,46 @@ const (
 // bitmap/KV files remain authoritative; a missing or stale manifest must be
 // rebuilt from disk rather than trusted blindly.
 type BitmapShardManifest struct {
-	Version     int                        `yaml:"version"`
-	GeneratedAt time.Time                  `yaml:"generated_at"`
-	Source      string                     `yaml:"source"`
-	Stats       BitmapShardManifestStats   `yaml:"stats"`
-	Entries     []BitmapShardManifestEntry `yaml:"entries"`
+	Version     int                        `yaml:"version" json:"version"`
+	GeneratedAt time.Time                  `yaml:"generated_at" json:"generated_at"`
+	Source      string                     `yaml:"source" json:"source"`
+	Stats       BitmapShardManifestStats   `yaml:"stats" json:"stats"`
+	Entries     []BitmapShardManifestEntry `yaml:"entries" json:"entries"`
 }
 
 // BitmapShardManifestStats summarizes the manifest for startup diagnostics.
 type BitmapShardManifestStats struct {
-	TotalEntries    int `yaml:"total_entries"`
-	StandardEntries int `yaml:"standard_entries"`
-	BSIEntries      int `yaml:"bsi_entries"`
-	TotalFiles      int `yaml:"total_files"`
-	StandardFiles   int `yaml:"standard_files"`
-	BSIFiles        int `yaml:"bsi_files"`
+	TotalEntries    int `yaml:"total_entries" json:"total_entries"`
+	StandardEntries int `yaml:"standard_entries" json:"standard_entries"`
+	BSIEntries      int `yaml:"bsi_entries" json:"bsi_entries"`
+	TotalFiles      int `yaml:"total_files" json:"total_files"`
+	StandardFiles   int `yaml:"standard_files" json:"standard_files"`
+	BSIFiles        int `yaml:"bsi_files" json:"bsi_files"`
 }
 
 // BitmapShardManifestEntry describes one logical standard bitmap or BSI shard.
 type BitmapShardManifestEntry struct {
-	Table            string                    `yaml:"table"`
-	Field            string                    `yaml:"field"`
-	Kind             string                    `yaml:"kind"`
-	RowIDOrBits      int64                     `yaml:"row_id_or_bits"`
-	Shard            string                    `yaml:"shard"`
-	ShardTime        time.Time                 `yaml:"shard_time"`
-	BaseRelativePath string                    `yaml:"base_relative_path,omitempty"`
-	FileCount        int                       `yaml:"file_count,omitempty"`
-	MaxBitSlice      int                       `yaml:"max_bit_slice,omitempty"`
-	HasExistence     bool                      `yaml:"has_existence,omitempty"`
-	ModTime          time.Time                 `yaml:"mod_time,omitempty"`
-	Files            []BitmapShardManifestFile `yaml:"files,omitempty"`
+	Table            string                    `yaml:"table" json:"table"`
+	Field            string                    `yaml:"field" json:"field"`
+	Kind             string                    `yaml:"kind" json:"kind"`
+	RowIDOrBits      int64                     `yaml:"row_id_or_bits" json:"row_id_or_bits"`
+	Shard            string                    `yaml:"shard" json:"shard"`
+	ShardTime        time.Time                 `yaml:"shard_time" json:"shard_time"`
+	BaseRelativePath string                    `yaml:"base_relative_path,omitempty" json:"base_relative_path,omitempty"`
+	FileCount        int                       `yaml:"file_count,omitempty" json:"file_count,omitempty"`
+	MaxBitSlice      int                       `yaml:"max_bit_slice,omitempty" json:"max_bit_slice,omitempty"`
+	HasExistence     bool                      `yaml:"has_existence,omitempty" json:"has_existence,omitempty"`
+	ModTime          time.Time                 `yaml:"mod_time,omitempty" json:"mod_time,omitempty"`
+	Files            []BitmapShardManifestFile `yaml:"files,omitempty" json:"files,omitempty"`
 }
 
 // BitmapShardManifestFile describes one physical file backing a logical shard.
 type BitmapShardManifestFile struct {
-	RelativePath string    `yaml:"relative_path"`
-	Role         string    `yaml:"role"`
-	BitSlice     int       `yaml:"bit_slice,omitempty"`
-	SizeBytes    int64     `yaml:"size_bytes"`
-	ModTime      time.Time `yaml:"mod_time"`
+	RelativePath string    `yaml:"relative_path" json:"relative_path"`
+	Role         string    `yaml:"role" json:"role"`
+	BitSlice     int       `yaml:"bit_slice,omitempty" json:"bit_slice,omitempty"`
+	SizeBytes    int64     `yaml:"size_bytes" json:"size_bytes"`
+	ModTime      time.Time `yaml:"mod_time" json:"mod_time"`
 }
 
 // BitmapShardManifestObservation reports whether the persisted manifest looks usable.
@@ -319,7 +320,7 @@ func (m *BitmapIndex) saveBitmapShardManifestWithTimings(manifest BitmapShardMan
 	}
 
 	marshalStart := time.Now()
-	data, err := yaml.Marshal(manifest)
+	data, err := json.Marshal(manifest)
 	timings.marshalElapsed = time.Since(marshalStart)
 	if err != nil {
 		return timings, fmt.Errorf("marshal bitmap shard manifest: %w", err)
@@ -476,6 +477,9 @@ func (m *BitmapIndex) loadBitmapShardManifest() (BitmapShardManifest, error) {
 	}
 	if err != nil {
 		return manifest, fmt.Errorf("read bitmap shard manifest: %w", err)
+	}
+	if err := json.Unmarshal(data, &manifest); err == nil {
+		return manifest, nil
 	}
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return manifest, fmt.Errorf("parse bitmap shard manifest: %w", err)
