@@ -1480,7 +1480,7 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 		manifest, observation := m.loadAndObserveBitmapShardManifest(nil)
 		manifestCheckElapsed = time.Since(manifestCheckStart)
 		if observation.Status == "ok" {
-			u.Infof("BitmapIndex commit reused clean savepoint node=%s manifest_entries=%d manifest_files=%d flush_elapsed=%s manifest_check_elapsed=%s",
+			fmt.Printf("BitmapIndex commit reused clean savepoint node=%s manifest_entries=%d manifest_files=%d flush_elapsed=%s manifest_check_elapsed=%s\n",
 				m.Node.hashKey, manifest.Stats.TotalEntries, manifest.Stats.TotalFiles, flushElapsed, manifestCheckElapsed)
 			return e, nil
 		}
@@ -1504,7 +1504,7 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 		}
 		manifestElapsed = time.Since(manifestStart)
 	}
-	u.Infof("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s persist_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s persist_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey, bitmapCount, bitmapWrites, bsiCount, bsiWrites, flushElapsed, persistElapsed, manifestCheckElapsed, manifestElapsed)
 	return e, nil
 }
