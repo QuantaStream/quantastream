@@ -29,6 +29,18 @@ This sets `QUANTA_DEV_SKIP_SYNC=1`, marks nodes active without the normal sync
 push/verification phase, and logs a warning. Use it only with trusted local data;
 do not use it for QIAB or production-like runs.
 
+For trusted bulk-load experiments, you can defer non-forced background bitmap
+savepoints until explicit commit/shutdown:
+
+```sh
+./start-local.sh --dev-fast-start --bulk-load-savepoint
+```
+
+This sets `QUANTASTREAM_DEFER_BACKGROUND_PERSIST=1`. Mutations still live in
+memory immediately, and explicit table commits remain durable savepoints. The
+tradeoff is that an uncommitted in-flight load may need to be restarted after a
+node crash.
+
 ## How to start direct mode locally
 
 `start-direct.sh` starts the same Consul-backed local nodes, but skips the MySQL
@@ -40,6 +52,12 @@ mode.
 ```
 
 Then run direct-mode SQLRunner suites from `../sqlrunner`.
+
+For direct-mode bulk-load runs:
+
+```sh
+./start-direct.sh --dev-fast-start --bulk-load-savepoint
+```
 
 Or, use a debugger or `go run .` directly.
 

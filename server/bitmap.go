@@ -47,6 +47,15 @@ func devSkipSyncEnabled() bool {
 	}
 }
 
+func deferBackgroundPersistenceEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_DEFER_BACKGROUND_PERSIST"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 var (
 	// Ensure BitmapIndex implements shared.Service
 	_ NodeService = (*BitmapIndex)(nil)
@@ -63,33 +72,35 @@ var (
 // tableCache - Schema metadata cache (essentially same YAML file used by loader).
 type BitmapIndex struct {
 	*Node
-	bitmapCache     map[string]map[string]map[uint64]map[int64]*StandardBitmap
-	bitmapCacheLock sync.RWMutex
-	bsiCache        map[string]map[string]map[int64]*BSIBitmap
-	bsiCacheLock    sync.RWMutex
-	seedCache       map[string]*SeedBitmap
-	seedCacheLock   sync.RWMutex
-	fragQueue       chan *BitmapFragment
-	workersCount    int
-	fragFileLock    sync.Mutex
-	setBitThreads   *CountTrigger
-	writeSignal     chan bool
-	tableCache      map[string]*shared.BasicTable
-	tableCacheLock  sync.RWMutex
-	partitionQueue  chan *PartitionOperation
-	bitmapCount     int
-	bsiCount        int
-	workers         []*WorkerThread
-	cleanupLock     sync.RWMutex
-	backgroundWG    sync.WaitGroup
-	updBitmapTime   atomic.Uint64
-	updBSITime      atomic.Uint64
-	saveBitmapECnt  atomic.Uint64
-	saveBitmapTCnt  atomic.Uint64
-	saveBitmapTime  atomic.Uint64
-	saveBSIECnt     atomic.Uint64
-	saveBSITCnt     atomic.Uint64
-	saveBSITime     atomic.Uint64
+	bitmapCache                      map[string]map[string]map[uint64]map[int64]*StandardBitmap
+	bitmapCacheLock                  sync.RWMutex
+	bsiCache                         map[string]map[string]map[int64]*BSIBitmap
+	bsiCacheLock                     sync.RWMutex
+	seedCache                        map[string]*SeedBitmap
+	seedCacheLock                    sync.RWMutex
+	fragQueue                        chan *BitmapFragment
+	workersCount                     int
+	fragFileLock                     sync.Mutex
+	setBitThreads                    *CountTrigger
+	writeSignal                      chan bool
+	tableCache                       map[string]*shared.BasicTable
+	tableCacheLock                   sync.RWMutex
+	partitionQueue                   chan *PartitionOperation
+	bitmapCount                      int
+	bsiCount                         int
+	workers                          []*WorkerThread
+	cleanupLock                      sync.RWMutex
+	backgroundWG                     sync.WaitGroup
+	updBitmapTime                    atomic.Uint64
+	updBSITime                       atomic.Uint64
+	saveBitmapECnt                   atomic.Uint64
+	saveBitmapTCnt                   atomic.Uint64
+	saveBitmapTime                   atomic.Uint64
+	saveBSIECnt                      atomic.Uint64
+	saveBSITCnt                      atomic.Uint64
+	saveBSITime                      atomic.Uint64
+	deferBackgroundPersistence       atomic.Bool
+	deferredBackgroundPersistSignals atomic.Uint64
 }
 
 type WorkerThread struct {
@@ -191,6 +202,10 @@ func (m *BitmapIndex) Init() error {
 	m.workersCount = 20
 	m.writeSignal = make(chan bool, 1)
 	m.setBitThreads = NewCountTrigger(m.writeSignal)
+	m.deferBackgroundPersistence.Store(deferBackgroundPersistenceEnabled())
+	if m.deferBackgroundPersistence.Load() {
+		u.Warnf("QUANTASTREAM_DEFER_BACKGROUND_PERSIST enabled; background bitmap savepoints will be deferred until explicit commit/shutdown.")
+	}
 
 	m.workers = make([]*WorkerThread, m.workersCount)
 	for i := 0; i < m.workersCount; i++ {
@@ -231,12 +246,9 @@ func (m *BitmapIndex) Init() error {
 				u.Debug("BitmapIndex Init() received stop signal", m.Node.hashKey)
 				return
 			case forceSync := <-m.writeSignal:
-				// fmt.Println(m.Node.hashKey, "had writeSignal, checkPersist*Cache(", forceSync, ")")
-				// go
-				if _, _, _, _, err := m.persistCaches(forceSync); err != nil {
+				if err := m.persistCachesFromBackgroundSignal(forceSync); err != nil {
 					u.Errorf("bitmap cache persist failed: %v", err)
 				}
-				// fmt.Println(m.Node.hashKey, "had writeSignal DONE")
 			}
 		}
 	}()
@@ -1411,6 +1423,15 @@ func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, e
 		return bitmapCount, bitmapWrites, bsiCount, bsiWrites, err
 	}
 	return bitmapCount, bitmapWrites, bsiCount, bsiWrites, nil
+}
+
+func (m *BitmapIndex) persistCachesFromBackgroundSignal(forceSync bool) error {
+	if !forceSync && m.deferBackgroundPersistence.Load() {
+		m.deferredBackgroundPersistSignals.Add(1)
+		return nil
+	}
+	_, _, _, _, err := m.persistCaches(forceSync)
+	return err
 }
 
 func (m *BitmapIndex) cacheHasDirtyEntries() bool {
