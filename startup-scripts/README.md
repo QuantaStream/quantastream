@@ -19,15 +19,21 @@ You can still start Consul explicitly:
 ./start-consul.sh
 ```
 
-For fast local code iteration, you can skip cross-node startup synchronization:
+Local cluster startup defaults to fast local iteration: cross-node startup
+synchronization is skipped and nodes are marked active against trusted local
+data.
 
 ```sh
-./start-local.sh --dev-fast-start
+./start-local.sh
 ```
 
-This sets `QUANTA_DEV_SKIP_SYNC=1`, marks nodes active without the normal sync
-push/verification phase, and logs a warning. Use it only with trusted local data;
-do not use it for QIAB or production-like runs.
+This sets `QUANTA_DEV_SKIP_SYNC=1` when the variable is not already specified.
+The full startup sync path is retained for future distributed-mode work and can
+be exercised explicitly:
+
+```sh
+./start-local.sh --sync-startup
+```
 
 Nodes do not take autonomous timed bitmap savepoints. Mutations live in memory
 immediately, and durability is established by explicit commit/checkpoint calls
@@ -43,7 +49,7 @@ query front door. Use it when SQLRunner owns the query engine in `inabox-direct`
 mode.
 
 ```sh
-./start-direct.sh --dev-fast-start
+./start-direct.sh
 ```
 
 Then run direct-mode SQLRunner suites from `../sqlrunner`.

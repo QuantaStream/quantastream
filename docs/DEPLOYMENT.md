@@ -49,11 +49,15 @@ Local workflow:
 
 ```bash
 cd ~/projects/quantastream/startup-scripts
-./start-direct.sh --dev-fast-start
+./start-direct.sh
 
 cd ~/projects/quantastream/sqlrunner
 go run . -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500
 ```
+
+Local direct startup skips cross-node synchronization by default. Use
+`./start-direct.sh --sync-startup` only when intentionally exercising the
+future distributed synchronization path.
 
 ### `inabox-standard`
 
@@ -211,7 +215,7 @@ Local workflow:
 
 ```bash
 cd ~/projects/quantastream/startup-scripts
-./start-local.sh --dev-fast-start
+./start-local.sh
 
 cd ~/projects/quantastream/sqlrunner
 go run . -engine inabox-local -suite_file sqltests/basic_queries.yaml
@@ -221,6 +225,10 @@ go run . -engine inabox-local -suite_file sqltests/mutate_tests_body.yaml
 
 These suites validate the MySQL wire path through the native front door while still
 using the local node cluster.
+
+Local cluster startup skips cross-node synchronization by default. Use
+`./start-local.sh --sync-startup` only when intentionally exercising the future
+distributed synchronization path.
 
 Schema-change propagation note:
 

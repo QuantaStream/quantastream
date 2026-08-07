@@ -22,7 +22,7 @@ Start Quanta-in-a-Box:
 
 ```bash
 cd startup-scripts
-./start-local.sh --dev-fast-start
+./start-local.sh
 ```
 
 Then run SQLRunner:
@@ -185,7 +185,7 @@ make build_all
 make test
 
 cd startup-scripts
-./start-local.sh --dev-fast-start
+./start-local.sh
 
 cd sqlrunner
 go run . -suite_file sqltests/joins_sql.yaml \
