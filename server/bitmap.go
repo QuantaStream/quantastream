@@ -1134,9 +1134,22 @@ func (m *BitmapIndex) truncateCaches(index string) {
 
 // Iterate standard bitmap cache looking for potential writes (dirty data)
 func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, error) {
+	summary, err := m.checkPersistBitmapCacheWithTimings(forceSync)
+	return summary.bitmapCount, summary.bitmapWrites, err
+}
+
+type bitmapCachePersistSummary struct {
+	bitmapCount  int
+	bitmapWrites uint64
+	scanElapsed  time.Duration
+	writeElapsed time.Duration
+}
+
+func (m *BitmapIndex) checkPersistBitmapCacheWithTimings(forceSync bool) (bitmapCachePersistSummary, error) {
+	var summary bitmapCachePersistSummary
 
 	if m.persistenceDisabled() {
-		return 0, 0, nil // test mode, persistence disabled
+		return summary, nil // test mode, persistence disabled
 	}
 	manifestDirty := false
 	defer func() {
@@ -1150,8 +1163,6 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 	m.bitmapCacheLock.RLock()
 	defer m.bitmapCacheLock.RUnlock()
 
-	bitmapCount := 0
-	var writeCount uint64
 	start := time.Now()
 	type standardPersistGroup struct {
 		indexName string
@@ -1162,11 +1173,12 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 		dirty     bool
 	}
 	groups := make(map[string]*standardPersistGroup)
+	scanStart := time.Now()
 	for indexName, index := range m.bitmapCache {
 		for fieldName, field := range index {
 			for rowID, ts := range field {
 				for t, bitmap := range ts {
-					bitmapCount++
+					summary.bitmapCount++
 					if bitmap == nil {
 						continue
 					}
@@ -1196,39 +1208,56 @@ func (m *BitmapIndex) checkPersistBitmapCache(forceSync bool) (int, uint64, erro
 			}
 		}
 	}
+	summary.scanElapsed = time.Since(scanStart)
+
+	writeStart := time.Now()
 	for _, group := range groups {
 		if !group.dirty {
 			continue
 		}
 		shardTime := time.Unix(0, group.shardNano)
 		if _, err := m.saveCompleteStandardBundle(group.bitmaps, group.indexName, group.fieldName, shardTime, group.tqType); err != nil {
-			return bitmapCount, writeCount, fmt.Errorf("saveCompleteStandardBundle failed index=%s field=%s time=%s: %w",
+			return summary, fmt.Errorf("saveCompleteStandardBundle failed index=%s field=%s time=%s: %w",
 				group.indexName, group.fieldName, shardTime.UTC().Format(timeFmt), err)
 		}
-		writeCount++
+		summary.bitmapWrites++
 		manifestDirty = true
 	}
+	summary.writeElapsed = time.Since(writeStart)
 
 	elapsed := time.Since(start)
 	m.saveBitmapTime.Store(uint64(elapsed.Milliseconds()))
-	m.bitmapCount = bitmapCount
-	if writeCount > 0 {
+	m.bitmapCount = summary.bitmapCount
+	if summary.bitmapWrites > 0 {
 		if forceSync {
-			m.saveBitmapTCnt.Store(writeCount)
+			m.saveBitmapTCnt.Store(summary.bitmapWrites)
 			//u.Debugf("Persist [timer expired] %d files done in %v", writeCount, elapsed)
 		} else {
-			m.saveBitmapECnt.Store(writeCount)
+			m.saveBitmapECnt.Store(summary.bitmapWrites)
 			//u.Debugf("Persist [edge triggered] %d files done in %v", writeCount, elapsed)
 		}
 	}
-	return bitmapCount, writeCount, nil
+	return summary, nil
 }
 
 // Iterate BSI cache looking for potential writes (dirty data)
 func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) {
+	summary, err := m.checkPersistBSICacheWithTimings(forceSync)
+	return summary.bsiCount, summary.bsiWrites, err
+}
+
+type bsiCachePersistSummary struct {
+	bsiCount     int
+	bsiWrites    uint64
+	scanElapsed  time.Duration
+	writeElapsed time.Duration
+}
+
+func (m *BitmapIndex) checkPersistBSICacheWithTimings(forceSync bool) (bsiCachePersistSummary, error) {
+	var summary bsiCachePersistSummary
 
 	if m.persistenceDisabled() {
-		return 0, 0, nil // test mode persistence disabled
+		return summary, nil // test mode persistence disabled
 	}
 	manifestDirty := false
 	defer func() {
@@ -1242,24 +1271,28 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 	m.bsiCacheLock.RLock()
 	defer m.bsiCacheLock.RUnlock()
 
-	var writeCount uint64
-	bsiCount := 0
 	start := time.Now()
 	for indexName, index := range m.bsiCache {
 		for fieldName, field := range index {
 			for t, bsi := range field {
-				bsiCount++
+				summary.bsiCount++
+				entryStart := time.Now()
 				bsi.Lock.Lock()
 				if forceSync || bsi.ModTime.After(bsi.PersistTime) {
+					summary.scanElapsed += time.Since(entryStart)
+					writeStart := time.Now()
 					if err := m.saveCompleteBSI(bsi, indexName, fieldName, int(bsi.BitCount()),
 						time.Unix(0, t)); err != nil {
 						bsi.Lock.Unlock()
-						return bsiCount, writeCount, fmt.Errorf("saveCompleteBSI failed index=%s field=%s time=%s: %w",
+						return summary, fmt.Errorf("saveCompleteBSI failed index=%s field=%s time=%s: %w",
 							indexName, fieldName, time.Unix(0, t).UTC().Format(timeFmt), err)
 					}
-					writeCount++
+					summary.writeElapsed += time.Since(writeStart)
+					summary.bsiWrites++
 					manifestDirty = true
 					bsi.PersistTime = time.Now()
+				} else {
+					summary.scanElapsed += time.Since(entryStart)
 				}
 				bsi.Lock.Unlock()
 			}
@@ -1268,17 +1301,17 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 
 	elapsed := time.Since(start)
 	m.saveBSITime.Store(uint64(elapsed.Milliseconds()))
-	m.bsiCount = bsiCount
-	if writeCount > 0 {
+	m.bsiCount = summary.bsiCount
+	if summary.bsiWrites > 0 {
 		if forceSync {
-			m.saveBSITCnt.Store(writeCount)
+			m.saveBSITCnt.Store(summary.bsiWrites)
 			//u.Debugf("Persist BSI [timer expired] %d files done in %v", writeCount, elapsed)
 		} else {
-			m.saveBSIECnt.Store(writeCount)
+			m.saveBSIECnt.Store(summary.bsiWrites)
 			//u.Debugf("Persist BSI [edge triggered] %d files done in %v", writeCount, elapsed)
 		}
 	}
-	return bsiCount, writeCount, nil
+	return summary, nil
 }
 
 func (m *BitmapIndex) persistenceDisabled() bool {
@@ -1360,12 +1393,16 @@ func (m *BitmapIndex) persistDirtyCaches() (int, uint64, int, uint64, error) {
 }
 
 type persistCachesSummary struct {
-	bitmapCount   int
-	bitmapWrites  uint64
-	bsiCount      int
-	bsiWrites     uint64
-	bitmapElapsed time.Duration
-	bsiElapsed    time.Duration
+	bitmapCount        int
+	bitmapWrites       uint64
+	bsiCount           int
+	bsiWrites          uint64
+	bitmapElapsed      time.Duration
+	bitmapScanElapsed  time.Duration
+	bitmapWriteElapsed time.Duration
+	bsiElapsed         time.Duration
+	bsiScanElapsed     time.Duration
+	bsiWriteElapsed    time.Duration
 }
 
 func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, error) {
@@ -1377,19 +1414,23 @@ func (m *BitmapIndex) persistCachesWithTimings(forceSync bool) (persistCachesSum
 	var summary persistCachesSummary
 
 	bitmapStart := time.Now()
-	bitmapCount, bitmapWrites, err := m.checkPersistBitmapCache(forceSync)
+	bitmapSummary, err := m.checkPersistBitmapCacheWithTimings(forceSync)
 	summary.bitmapElapsed = time.Since(bitmapStart)
-	summary.bitmapCount = bitmapCount
-	summary.bitmapWrites = bitmapWrites
+	summary.bitmapCount = bitmapSummary.bitmapCount
+	summary.bitmapWrites = bitmapSummary.bitmapWrites
+	summary.bitmapScanElapsed = bitmapSummary.scanElapsed
+	summary.bitmapWriteElapsed = bitmapSummary.writeElapsed
 	if err != nil {
 		return summary, err
 	}
 
 	bsiStart := time.Now()
-	bsiCount, bsiWrites, err := m.checkPersistBSICache(forceSync)
+	bsiSummary, err := m.checkPersistBSICacheWithTimings(forceSync)
 	summary.bsiElapsed = time.Since(bsiStart)
-	summary.bsiCount = bsiCount
-	summary.bsiWrites = bsiWrites
+	summary.bsiCount = bsiSummary.bsiCount
+	summary.bsiWrites = bsiSummary.bsiWrites
+	summary.bsiScanElapsed = bsiSummary.scanElapsed
+	summary.bsiWriteElapsed = bsiSummary.writeElapsed
 	if err != nil {
 		return summary, err
 	}
@@ -1515,12 +1556,13 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 			manifestElapsed = time.Since(manifestStart)
 		}
 	}
-	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bsi_persist_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey,
 		persistSummary.bitmapCount, persistSummary.bitmapWrites,
 		persistSummary.bsiCount, persistSummary.bsiWrites,
 		flushElapsed, dirtyCheckElapsed, persistElapsed,
-		persistSummary.bitmapElapsed, persistSummary.bsiElapsed,
+		persistSummary.bitmapElapsed, persistSummary.bitmapScanElapsed, persistSummary.bitmapWriteElapsed,
+		persistSummary.bsiElapsed, persistSummary.bsiScanElapsed, persistSummary.bsiWriteElapsed,
 		manifestCheckElapsed, manifestElapsed)
 	return e, nil
 }
