@@ -36,7 +36,7 @@ func TestBatchBufferFlushRecordsProfile(t *testing.T) {
 	}
 
 	profile := buffer.LastFlushProfile()
-	if profile.PartitionStringBatchCount != 1 || profile.PartitionStringEntryCount != 1 {
+	if profile.PartitionStringPutCalls != 1 || profile.PartitionStringBatchCount != 1 || profile.PartitionStringEntryCount != 1 {
 		t.Fatalf("partition profile = %+v, want one KV sidecar batch and entry", profile)
 	}
 	if profile.BitmapSetEntryCount != 1 || profile.BSIValueEntryCount != 1 || profile.BSIClearValueEntryCount != 1 {
@@ -85,5 +85,36 @@ func TestBatchBufferPartitionedStringsFlushAtConfiguredBatchSize(t *testing.T) {
 	}
 	if kvService.batchPutCalls != 1 || len(kvService.batchPutItems) != 10 {
 		t.Fatalf("KV batch put calls/items = %d/%d, want one 10-entry batch", kvService.batchPutCalls, len(kvService.batchPutItems))
+	}
+}
+
+func TestBatchBufferPartitionedStringFlushCollapsesPaths(t *testing.T) {
+	kvService := &recordingLocalKVStoreService{}
+	conn := &Conn{
+		LocalNodeServices: LocalNodeServices{
+			KVStore: kvService,
+		},
+	}
+	buffer := NewBatchBuffer(NewBitmapIndex(conn), NewKVStore(conn), 100)
+
+	paths := []string{
+		"lineitem/l_comment/1994-10-16T00,lineitem/l_comment/lex_remainders/1994-10-16T00",
+		"lineitem/l_comment/1994-10-17T00,lineitem/l_comment/lex_remainders/1994-10-17T00",
+		"lineitem/l_comment/1994-10-18T00,lineitem/l_comment/lex_remainders/1994-10-18T00",
+	}
+	for i, path := range paths {
+		if err := buffer.SetPartitionedString(path, uint64(i+1), "value"); err != nil {
+			t.Fatalf("SetPartitionedString(%d) error = %v", i, err)
+		}
+	}
+	if err := buffer.Flush(); err != nil {
+		t.Fatalf("Flush returned error: %v", err)
+	}
+	if kvService.batchPutCalls != 1 || len(kvService.batchPutItems) != 3 {
+		t.Fatalf("KV batch put calls/items = %d/%d, want one collapsed 3-entry batch", kvService.batchPutCalls, len(kvService.batchPutItems))
+	}
+	profile := buffer.LastFlushProfile()
+	if profile.PartitionStringPutCalls != 1 || profile.PartitionStringBatchCount != 3 || profile.PartitionStringEntryCount != 3 {
+		t.Fatalf("partition profile = %+v, want one put call for three path batches", profile)
 	}
 }

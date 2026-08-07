@@ -54,6 +54,7 @@ type BatchBufferFlushProfile struct {
 	BitmapClearElapsed        time.Duration
 	BSIValueElapsed           time.Duration
 	BSIClearValueElapsed      time.Duration
+	PartitionStringPutCalls   int
 	PartitionStringBatchCount int
 	PartitionStringEntryCount int
 	BitmapSetEntryCount       int
@@ -122,11 +123,11 @@ func (c *BatchBuffer) Flush() (err error) {
 
 	if c.batchPartitionStr != nil {
 		phaseStart := time.Now()
-		for indexPath, valueMap := range c.batchPartitionStr {
-			if err := c.KVStore.BatchPut(indexPath, valueMap, true); err != nil {
-				return err
-			}
+		putCalls, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true)
+		if err != nil {
+			return err
 		}
+		profile.PartitionStringPutCalls = putCalls
 		profile.PartitionStringElapsed = time.Since(phaseStart)
 		c.batchPartitionStr = nil
 		c.batchPartitionStrCount = 0
@@ -496,10 +497,8 @@ func (c *BatchBuffer) SetPartitionedString(indexPath string, key, value interfac
 	c.batchPartitionStrCount++
 
 	if c.batchPartitionStrCount >= c.partitionedStringFlushThreshold() {
-		for indexPath, valueMap := range c.batchPartitionStr {
-			if err := c.KVStore.BatchPut(indexPath, valueMap, true); err != nil {
-				return err
-			}
+		if _, err := c.KVStore.BatchPutRouted(c.batchPartitionStr, true); err != nil {
+			return err
 		}
 		c.batchPartitionStr = nil
 		c.batchPartitionStrCount = 0

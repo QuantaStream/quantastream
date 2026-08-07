@@ -396,7 +396,7 @@ func (m *Main) logDirectProfileSummary() {
 	}
 	if m.flushProfile != nil {
 		profile := m.flushProfile.Snapshot()
-		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_batches=%d partition_string_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
+		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_put_calls=%d partition_string_batches=%d partition_string_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
 			m.Index,
 			profile.FlushCount,
 			profile.ErrorCount,
@@ -406,6 +406,7 @@ func (m *Main) logDirectProfileSummary() {
 			profile.BitmapClearElapsed.Round(time.Millisecond),
 			profile.BSIValueElapsed.Round(time.Millisecond),
 			profile.BSIClearValueElapsed.Round(time.Millisecond),
+			profile.PartitionStringPutCalls,
 			profile.PartitionStringBatchCount,
 			profile.PartitionStringEntryCount,
 			profile.BitmapSetEntryCount,

@@ -344,22 +344,95 @@ func (c *BitmapIndex) BatchSetValue(batch map[string]map[string]map[int64]*roari
 		return c.batchSetValueLocal(local, batch)
 	}
 
-	clients, batches, err := c.splitBSIBatch(batch)
+	clients, batches, err := c.splitBSIItemBatch(batch)
 	if err != nil {
 		return err
 	}
 	var eg errgroup.Group
 	for i, v := range batches {
+		if len(v) == 0 {
+			continue
+		}
 		cl := clients[i]
-		batch := v
+		items := v
 		eg.Go(func() error {
-			return c.BatchSetValueNode(cl, batch)
+			return c.BatchMutateItemsNode(cl, items)
 		})
 	}
 	if err := eg.Wait(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (c *BitmapIndex) splitBSIItemBatch(batch map[string]map[string]map[int64]*roaring64.BSI,
+) ([]pb.BitmapIndexClient, [][]*pb.IndexKVPair, error) {
+
+	type routedBSIItem struct {
+		routeKey string
+		item     *pb.IndexKVPair
+	}
+	items := make([]routedBSIItem, 0)
+	for indexName, index := range batch {
+		for fieldName, field := range index {
+			for t, bsi := range field {
+				if bsi.GetCardinality() == 0 {
+					u.Debugf("BSI for %s - %s is empty.", indexName, fieldName)
+					continue
+				}
+				bitCount := bsi.BitCount()
+				if bitCount == 0 {
+					bitCount = 1
+				}
+				ba, err := bsi.MarshalBinary()
+				if err != nil {
+					u.Errorf("BSI.MarshalBinary: %v", err)
+					return nil, nil, err
+				}
+				tm := time.Unix(0, t)
+				items = append(items, routedBSIItem{
+					routeKey: fmt.Sprintf("%s/%s/%s", indexName, fieldName, formatShardTime(tm)),
+					item: &pb.IndexKVPair{
+						IndexPath: indexName + "/" + fieldName,
+						Key:       ToBytes(int64(bitCount * -1)),
+						Value:     ba,
+						Time:      t,
+					},
+				})
+			}
+		}
+	}
+
+	c.Conn.nodeMapLock.RLock()
+	defer c.Conn.nodeMapLock.RUnlock()
+
+	clients := make([]pb.BitmapIndexClient, len(c.Conn.clientConn))
+	for i, conn := range c.Conn.clientConn {
+		clients[i] = pb.NewBitmapIndexClient(conn)
+	}
+	if len(clients) == 0 {
+		return nil, nil, fmt.Errorf("splitBSIItemBatch: no bitmap clients available")
+	}
+	batches := make([][]*pb.IndexKVPair, len(clients))
+
+	for _, routed := range items {
+		indices, err := c.Conn.selectNodesLocked(routed.routeKey, WriteIntent)
+		if err != nil {
+			return nil, nil, fmt.Errorf("splitBSIItemBatch: %v", err)
+		}
+		for _, i := range indices {
+			if i < 0 || i >= len(batches) {
+				return nil, nil, fmt.Errorf("splitBSIItemBatch: selected node index %d outside client count %d", i, len(batches))
+			}
+			batches[i] = append(batches[i], &pb.IndexKVPair{
+				IndexPath: routed.item.IndexPath,
+				Key:       routed.item.Key,
+				Value:     routed.item.Value,
+				Time:      routed.item.Time,
+			})
+		}
+	}
+	return clients, batches, nil
 }
 
 func (c *BitmapIndex) batchSetValueLocal(local LocalBitmapIndexBatchService,
@@ -439,6 +512,34 @@ func (c *BitmapIndex) BatchSetValueNode(client pb.BitmapIndexClient,
 		if err := stream.Send(b[i]); err != nil {
 			u.Errorf("%v.Send(%v) = %v", stream, b[i], err)
 			return fmt.Errorf("%v.Send(%v) = %v", stream, b[i], err)
+		}
+	}
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+	}
+	return nil
+}
+
+// BatchMutateItemsNode sends pre-encoded bitmap mutation items to a node.
+func (c *BitmapIndex) BatchMutateItemsNode(client pb.BitmapIndexClient, items []*pb.IndexKVPair) error {
+
+	if len(items) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	stream, err := client.BatchMutate(ctx)
+	if err != nil {
+		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+		return fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
+	}
+
+	for i := 0; i < len(items); i++ {
+		if err := stream.Send(items[i]); err != nil {
+			u.Errorf("%v.Send(%v) = %v", stream, items[i], err)
+			return fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
 		}
 	}
 	_, err = stream.CloseAndRecv()

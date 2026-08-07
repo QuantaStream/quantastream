@@ -11,6 +11,7 @@ import (
 
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/stvp/rendezvous"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -48,6 +49,51 @@ func TestBatchSetValueRequiresBitmapClients(t *testing.T) {
 	err := index.BatchSetValue(batch)
 	if err == nil || !strings.Contains(err.Error(), "no bitmap clients available") {
 		t.Fatalf("expected no-client batch set value error, got %v", err)
+	}
+}
+
+func TestSplitBSIItemBatchPreEncodesReplicatedItems(t *testing.T) {
+	conn := NewDefaultConnection("bsi-item-batch")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = []*grpc.ClientConn{{}, {}, {}}
+	conn.nodeMap = map[string]int{"node-0": 0, "node-1": 1, "node-2": 2}
+	conn.HashTable = rendezvous.New(conn.ids)
+	for _, id := range conn.ids {
+		conn.nodeStatusMap.Store(id, &pb.StatusMessage{NodeState: "Active"})
+	}
+
+	values := roaring64.NewDefaultBSI()
+	values.SetBigValue(1, big.NewInt(10))
+	index := NewBitmapIndex(conn)
+	_, batches, err := index.splitBSIItemBatch(map[string]map[string]map[int64]*roaring64.BSI{
+		"orders": {
+			"o_orderkey": {
+				time.Unix(0, 0).UnixNano(): values,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("splitBSIItemBatch returned error: %v", err)
+	}
+
+	var routed []*pb.IndexKVPair
+	for _, batch := range batches {
+		routed = append(routed, batch...)
+	}
+	if len(routed) != conn.Replicas {
+		t.Fatalf("routed item count = %d, want %d replicas", len(routed), conn.Replicas)
+	}
+	for _, item := range routed {
+		if item.IndexPath != "orders/o_orderkey" || item.Time != time.Unix(0, 0).UnixNano() {
+			t.Fatalf("routed item = %+v", item)
+		}
+		if len(item.Value) == 0 || len(item.Value[0]) == 0 {
+			t.Fatalf("routed item has empty BSI payload")
+		}
+	}
+	if &routed[0].Value[0][0] != &routed[1].Value[0][0] {
+		t.Fatalf("replicated routed BSI items should share one encoded payload")
 	}
 }
 

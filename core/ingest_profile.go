@@ -201,6 +201,7 @@ type RouterFlushProfileSummary struct {
 	BitmapClearElapsed        time.Duration                        `json:"bitmap_clear_elapsed_nanos"`
 	BSIValueElapsed           time.Duration                        `json:"bsi_value_elapsed_nanos"`
 	BSIClearValueElapsed      time.Duration                        `json:"bsi_clear_value_elapsed_nanos"`
+	PartitionStringPutCalls   int                                  `json:"partition_string_put_calls"`
 	PartitionStringBatchCount int                                  `json:"partition_string_batch_count"`
 	PartitionStringEntryCount int                                  `json:"partition_string_entry_count"`
 	BitmapSetEntryCount       int                                  `json:"bitmap_set_entry_count"`
@@ -242,6 +243,7 @@ func (p *RouterFlushProfile) Observe(shardID string, tableName string, profile s
 	p.summary.BitmapClearElapsed += profile.BitmapClearElapsed
 	p.summary.BSIValueElapsed += profile.BSIValueElapsed
 	p.summary.BSIClearValueElapsed += profile.BSIClearValueElapsed
+	p.summary.PartitionStringPutCalls += profile.PartitionStringPutCalls
 	p.summary.PartitionStringBatchCount += profile.PartitionStringBatchCount
 	p.summary.PartitionStringEntryCount += profile.PartitionStringEntryCount
 	p.summary.BitmapSetEntryCount += profile.BitmapSetEntryCount

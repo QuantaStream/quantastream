@@ -168,6 +168,87 @@ func (c *KVStore) BatchPut(indexPath string, batch map[interface{}]interface{}, 
 	return nil
 }
 
+// BatchPutRouted writes batches that already carry their logical index path.
+// It collapses many path-partitioned sidecar writes into one stream per target
+// node while preserving per-item IndexPath on the server side.
+func (c *KVStore) BatchPutRouted(batchesByPath map[string]map[interface{}]interface{},
+	pathIsKey bool) (int, error) {
+
+	if len(batchesByPath) == 0 {
+		return 0, nil
+	}
+	if c.local != nil {
+		local, ok := c.local.(LocalKVStoreBatchService)
+		if !ok {
+			return 0, fmt.Errorf("local KVStore adapter does not support BatchPut")
+		}
+		return c.batchPutRoutedLocal(local, batchesByPath, pathIsKey)
+	}
+	if len(c.client) == 0 {
+		return 0, fmt.Errorf("%v.BatchPutRouted(_) = _, %v: ", c.client, " no available nodes!")
+	}
+
+	routed := make([][]*pb.IndexKVPair, len(c.client))
+	for indexPath, batch := range batchesByPath {
+		if len(batch) == 0 {
+			continue
+		}
+		physicalPath := indexPath
+		var pathIndices []int
+		if pathIsKey {
+			var key string
+			key, physicalPath = checkAdjustKeyAndPath(indexPath)
+			indices, err := c.SelectNodes(key, WriteIntent)
+			if err != nil {
+				return 0, fmt.Errorf("BatchPutRouted: %v", err)
+			}
+			if len(indices) == 0 {
+				return 0, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
+			}
+			pathIndices = indices
+		}
+		for k, v := range batch {
+			indices := pathIndices
+			var err error
+			if !pathIsKey {
+				indices, err = c.SelectNodes(ToString(k), WriteIntent)
+				if err != nil {
+					return 0, fmt.Errorf("BatchPutRouted: %v", err)
+				}
+				if len(indices) == 0 {
+					return 0, fmt.Errorf("BatchPutRouted: no available nodes for path %s", indexPath)
+				}
+			}
+			item := &pb.IndexKVPair{
+				IndexPath: physicalPath,
+				Key:       ToBytes(k),
+				Value:     [][]byte{ToBytes(v)},
+			}
+			for _, i := range indices {
+				routed[i] = append(routed[i], item)
+			}
+		}
+	}
+
+	var eg errgroup.Group
+	putCalls := 0
+	for i, items := range routed {
+		if len(items) == 0 {
+			continue
+		}
+		client := c.client[i]
+		items := items
+		putCalls++
+		eg.Go(func() error {
+			return c.BatchPutItemsNode(client, items)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return putCalls, err
+	}
+	return putCalls, nil
+}
+
 func (c *KVStore) batchPutLocal(local LocalKVStoreBatchService, indexPath string, batch map[interface{}]interface{}, pathIsKey bool) error {
 	if pathIsKey {
 		_, indexPath = checkAdjustKeyAndPath(indexPath)
@@ -184,6 +265,38 @@ func (c *KVStore) batchPutLocal(local LocalKVStoreBatchService, indexPath string
 	defer cancel()
 	_, err := local.BatchPut(ctx, kvs)
 	return err
+}
+
+func (c *KVStore) batchPutRoutedLocal(local LocalKVStoreBatchService, batchesByPath map[string]map[interface{}]interface{},
+	pathIsKey bool) (int, error) {
+
+	kvs := make([]*pb.IndexKVPair, 0)
+	for indexPath, batch := range batchesByPath {
+		if len(batch) == 0 {
+			continue
+		}
+		physicalPath := indexPath
+		if pathIsKey {
+			_, physicalPath = checkAdjustKeyAndPath(indexPath)
+		}
+		for k, v := range batch {
+			kvs = append(kvs, &pb.IndexKVPair{
+				IndexPath: physicalPath,
+				Key:       ToBytes(k),
+				Value:     [][]byte{ToBytes(v)},
+			})
+		}
+	}
+	if len(kvs) == 0 {
+		return 0, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	_, err := local.BatchPut(ctx, kvs)
+	if err != nil {
+		return 1, err
+	}
+	return 1, nil
 }
 
 // BatchPutNode - Put a batch of keys on a single node.
@@ -210,6 +323,30 @@ func (c *KVStore) BatchPutNode(client pb.KVStoreClient, index string, batch map[
 	_, err2 := stream.CloseAndRecv()
 	if err2 != nil {
 		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err2, nil)
+	}
+	return nil
+}
+
+// BatchPutItemsNode writes pre-routed KV items in a single stream.
+func (c *KVStore) BatchPutItemsNode(client pb.KVStoreClient, items []*pb.IndexKVPair) error {
+
+	if len(items) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+	stream, err := client.BatchPut(ctx)
+	if err != nil {
+		return fmt.Errorf("%v.BatchPut(_) = _, %v: ", c.client, err)
+	}
+	for i := 0; i < len(items); i++ {
+		if err := stream.Send(items[i]); err != nil {
+			return fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
+		}
+	}
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		return fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
 	}
 	return nil
 }
