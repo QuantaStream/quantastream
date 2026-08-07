@@ -35,3 +35,31 @@ func TestStandardDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testin
 		t.Fatalf("router sizing = shards %d channel %d, want 1/8", config.ShardCount, config.ChannelSize)
 	}
 }
+
+func TestClusterDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testing.T) {
+	loader := NewMain()
+	loader.tableCache = core.NewTableCacheStruct()
+	loader.BasePath = t.TempDir()
+	loader.conn = shared.NewDefaultConnection("tpch-cluster-loader-test")
+	loader.Workers = 3
+	loader.BatchSize = 11
+
+	config := loader.clusterDirectRouterConfig()
+
+	if config.PrimaryKeyResolverFactory == nil {
+		t.Fatalf("PrimaryKeyResolverFactory = nil, want BSI authority factory")
+	}
+	resolver := config.PrimaryKeyResolverFactory(&core.Session{})
+	if _, ok := resolver.(qsinabox.StandardBSIPrimaryKeyResolver); !ok {
+		t.Fatalf("resolver = %T, want qsinabox.StandardBSIPrimaryKeyResolver", resolver)
+	}
+	if config.TableCache != loader.tableCache {
+		t.Fatalf("TableCache was not preserved")
+	}
+	if config.Conn != loader.conn {
+		t.Fatalf("Conn was not preserved")
+	}
+	if config.ShardCount != 3 || config.ChannelSize != 33 {
+		t.Fatalf("router sizing = shards %d channel %d, want 3/33", config.ShardCount, config.ChannelSize)
+	}
+}

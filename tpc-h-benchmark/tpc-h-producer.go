@@ -401,23 +401,28 @@ func (m *Main) initDirect() error {
 	if m.Workers <= 0 {
 		m.Workers = 3
 	}
-	router, err := core.NewSessionRouter(core.SessionRouterConfig{
-		TableCache:    m.tableCache,
-		BasePath:      m.BasePath,
-		Conn:          m.conn,
-		ShardCount:    m.Workers,
-		ChannelSize:   m.BatchSize * m.Workers,
-		FlushInterval: time.Second,
-		OnError: func(err error) {
-			m.failedRecs.Add(1)
-			log.Printf("direct load error %v", err)
-		},
-	})
+	router, err := core.NewSessionRouter(m.clusterDirectRouterConfig())
 	if err != nil {
 		return err
 	}
 	m.router = router
 	return nil
+}
+
+func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
+	return core.SessionRouterConfig{
+		TableCache:                m.tableCache,
+		BasePath:                  m.BasePath,
+		Conn:                      m.conn,
+		ShardCount:                m.Workers,
+		ChannelSize:               m.BatchSize * m.Workers,
+		FlushInterval:             time.Second,
+		PrimaryKeyResolverFactory: qsinabox.NewStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
+		OnError: func(err error) {
+			m.failedRecs.Add(1)
+			log.Printf("direct load error %v", err)
+		},
+	}
 }
 
 func (m *Main) initStandardDirect() error {
