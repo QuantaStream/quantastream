@@ -217,11 +217,19 @@ func (r BSIPrimaryKeyResolver) shouldSkipLookupForEmptyDomain(
 		return false, nil
 	}
 	domainKey := bsiPrimaryKeyDomainKey(lookupReq, tbuf)
-	if session.bsiPrimaryKeyDomainSkipAllowed(domainKey) {
-		if profile != nil {
-			profile.EmptyDomainSkipCount++
+	if cachedState, ok := session.cachedBSIPrimaryKeyDomainState(domainKey); ok {
+		switch cachedState {
+		case PrimaryKeyDomainEmpty:
+			if profile != nil {
+				profile.EmptyDomainSkipCount++
+			}
+			return true, nil
+		case PrimaryKeyDomainNonEmpty:
+			if profile != nil {
+				profile.EmptyDomainNonEmptyCount++
+			}
+			return false, nil
 		}
-		return true, nil
 	}
 	backend, ok := r.Backend.(BSIPrimaryKeyDomainStateBackend)
 	if !ok {
@@ -238,12 +246,13 @@ func (r BSIPrimaryKeyResolver) shouldSkipLookupForEmptyDomain(
 	}
 	switch normalizePrimaryKeyDomainState(state) {
 	case PrimaryKeyDomainEmpty:
-		session.markBSIPrimaryKeyDomainSkipAllowed(domainKey)
+		session.markBSIPrimaryKeyDomainState(domainKey, PrimaryKeyDomainEmpty)
 		if profile != nil {
 			profile.EmptyDomainSkipCount++
 		}
 		return true, nil
 	case PrimaryKeyDomainNonEmpty:
+		session.markBSIPrimaryKeyDomainState(domainKey, PrimaryKeyDomainNonEmpty)
 		if profile != nil {
 			profile.EmptyDomainNonEmptyCount++
 		}

@@ -51,7 +51,7 @@ type Session struct {
 	primaryKeyResolver PrimaryKeyResolver
 	lastFlushProfile   shared.BatchBufferFlushProfile
 
-	primaryKeyEmptyDomainSkips map[string]bool
+	primaryKeyDomainStates map[string]PrimaryKeyDomainState
 }
 
 // PrimaryKeyResolver owns primary-key lookup and rownum assignment.

@@ -472,17 +472,18 @@ func TestBSIPrimaryKeyResolverSkipsLookupForEmptyDomainAndCachesDecision(t *test
 	require.Len(t, backend.stageRequests, 2)
 }
 
-func TestBSIPrimaryKeyResolverLooksUpNonEmptyDomain(t *testing.T) {
-	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+func TestBSIPrimaryKeyResolverLooksUpNonEmptyDomainAndCachesDecision(t *testing.T) {
 	backend := &recordingBSIPrimaryKeyBackend{
 		domainState:  PrimaryKeyDomainNonEmpty,
 		lookupResult: BSIPrimaryKeyLookupResult{ColumnID: 4242, Found: true},
 	}
 	resolver := NewBSIPrimaryKeyResolver(backend)
+	session := &Session{}
 
+	first, _ := newBSIPrimaryKeyTestBuffer()
 	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
-		Session:          &Session{},
-		TableBuffer:      tbuf,
+		Session:          session,
+		TableBuffer:      first,
 		LookupValue:      "1003",
 		PrimaryKeyValues: []interface{}{int64(1003)},
 	})
@@ -496,6 +497,25 @@ func TestBSIPrimaryKeyResolverLooksUpNonEmptyDomain(t *testing.T) {
 	require.Equal(t, 1, result.Profile.BSILookupCount)
 	require.Len(t, backend.domainStateRequests, 1)
 	require.Len(t, backend.lookupRequests, 1)
+	require.Empty(t, backend.stageRequests)
+
+	second, _ := newBSIPrimaryKeyTestBuffer()
+	secondResult, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      second,
+		LookupValue:      "1004",
+		PrimaryKeyValues: []interface{}{int64(1004)},
+	})
+
+	require.NoError(t, err)
+	require.True(t, secondResult.ExistingRow)
+	require.Equal(t, uint64(4242), secondResult.ColumnID)
+	require.Zero(t, secondResult.Profile.EmptyDomainProbeCount)
+	require.Equal(t, 1, secondResult.Profile.EmptyDomainNonEmptyCount)
+	require.Zero(t, secondResult.Profile.EmptyDomainSkipCount)
+	require.Equal(t, 1, secondResult.Profile.BSILookupCount)
+	require.Len(t, backend.domainStateRequests, 1)
+	require.Len(t, backend.lookupRequests, 2)
 	require.Empty(t, backend.stageRequests)
 }
 

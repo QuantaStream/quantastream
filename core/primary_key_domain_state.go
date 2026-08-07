@@ -35,24 +35,38 @@ func bsiPrimaryKeyDomainKey(req BSIPrimaryKeyLookupRequest, tbuf *TableBuffer) s
 }
 
 func (s *Session) bsiPrimaryKeyDomainSkipAllowed(domainKey string) bool {
-	if s == nil || domainKey == "" {
-		return false
-	}
-	s.stateLock.Lock()
-	defer s.stateLock.Unlock()
-	return s.primaryKeyEmptyDomainSkips[domainKey]
+	state, ok := s.cachedBSIPrimaryKeyDomainState(domainKey)
+	return ok && state == PrimaryKeyDomainEmpty
 }
 
 func (s *Session) markBSIPrimaryKeyDomainSkipAllowed(domainKey string) {
+	s.markBSIPrimaryKeyDomainState(domainKey, PrimaryKeyDomainEmpty)
+}
+
+func (s *Session) cachedBSIPrimaryKeyDomainState(domainKey string) (PrimaryKeyDomainState, bool) {
 	if s == nil || domainKey == "" {
+		return PrimaryKeyDomainUnknown, false
+	}
+	s.stateLock.Lock()
+	defer s.stateLock.Unlock()
+	state, ok := s.primaryKeyDomainStates[domainKey]
+	return normalizePrimaryKeyDomainState(state), ok
+}
+
+func (s *Session) markBSIPrimaryKeyDomainState(domainKey string, state PrimaryKeyDomainState) {
+	if s == nil || domainKey == "" {
+		return
+	}
+	state = normalizePrimaryKeyDomainState(state)
+	if state == PrimaryKeyDomainUnknown {
 		return
 	}
 	s.stateLock.Lock()
 	defer s.stateLock.Unlock()
-	if s.primaryKeyEmptyDomainSkips == nil {
-		s.primaryKeyEmptyDomainSkips = map[string]bool{}
+	if s.primaryKeyDomainStates == nil {
+		s.primaryKeyDomainStates = map[string]PrimaryKeyDomainState{}
 	}
-	s.primaryKeyEmptyDomainSkips[domainKey] = true
+	s.primaryKeyDomainStates[domainKey] = state
 }
 
 func normalizePrimaryKeyDomainState(state PrimaryKeyDomainState) PrimaryKeyDomainState {
