@@ -28,6 +28,8 @@ var (
 const (
 	timeFmt = "2006-01-02T15"
 	ifDelim = "/"
+
+	bitmapBatchMutateItemsChunkSize = 4096
 )
 
 func formatShardTime(t time.Time) string {
@@ -657,30 +659,20 @@ func (c *BitmapIndex) batchMutateItemsNodeProfile(client pb.BitmapIndexClient,
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
-	openStart := time.Now()
-	stream, err := client.BatchMutate(ctx)
-	profile.OpenElapsed = time.Since(openStart)
-	if err != nil {
-		u.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
-		return profile, fmt.Errorf("%v.BatchMutate(_) = _, %v: ", c.client, err)
-	}
 
 	sendStart := time.Now()
-	for i := 0; i < len(items); i++ {
-		if err := stream.Send(items[i]); err != nil {
+	for startIndex := 0; startIndex < len(items); startIndex += bitmapBatchMutateItemsChunkSize {
+		endIndex := startIndex + bitmapBatchMutateItemsChunkSize
+		if endIndex > len(items) {
+			endIndex = len(items)
+		}
+		if _, err := client.BatchMutateItems(ctx, &pb.IndexKVBatch{Items: items[startIndex:endIndex]}); err != nil {
 			profile.SendElapsed = time.Since(sendStart)
-			u.Errorf("%v.Send(%v) = %v", stream, items[i], err)
-			return profile, fmt.Errorf("%v.Send(%v) = %v", stream, items[i], err)
+			u.Errorf("%v.BatchMutateItems(_) = _, %v: ", c.client, err)
+			return profile, fmt.Errorf("%v.BatchMutateItems(_) = _, %v: ", c.client, err)
 		}
 	}
 	profile.SendElapsed = time.Since(sendStart)
-	closeStart := time.Now()
-	_, err = stream.CloseAndRecv()
-	profile.CloseElapsed = time.Since(closeStart)
-	if err != nil {
-		u.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
-		return profile, fmt.Errorf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
-	}
 	return profile, nil
 }
 

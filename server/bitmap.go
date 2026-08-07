@@ -277,46 +277,82 @@ func (m *BitmapIndex) BatchMutate(stream pb.BitmapIndex_BatchMutateServer) error
 		if kv == nil {
 			return fmt.Errorf("KV Pair must not be nil")
 		}
-		if kv.Key == nil || len(kv.Key) == 0 {
-			return fmt.Errorf("key must be specified")
-		}
-
-		s := strings.Split(kv.IndexPath, "/")
-		if len(s) != 2 {
-			err = fmt.Errorf("IndexPath %s not valid", kv.IndexPath)
-			u.Errorf("%s", err)
-			return err
-		}
-		indexName := s[0]
-		fieldName := s[1]
-
-		_, err = m.getFieldConfig(indexName, fieldName)
+		doneCh, err := m.enqueueBatchMutation(kv)
 		if err != nil {
 			return err
 		}
-
-		rowIDOrBits := int64(binary.LittleEndian.Uint64(kv.Key))
-		isBSI := m.isBSI(indexName, fieldName)
-		ts := time.Unix(0, kv.Time)
-
-		frag := newBitmapFragment(indexName, fieldName, rowIDOrBits, ts, kv.Value,
-			isBSI, kv.IsClear, kv.IsUpdate)
-
-		if kv.Sync {
-			if frag.IsBSI {
-				m.updateBSICache(frag)
-			} else {
-				m.updateBitmapCache(frag)
-			}
-			return nil
+		if doneCh != nil {
+			done = append(done, doneCh)
 		}
-		select {
-		case m.fragQueue <- frag:
-			done = append(done, frag.Done)
-			// fmt.Println(m.hashKey, "svr BatchMutate sent to fragQueue", frag.FieldName, frag.RowIDOrBits, frag.Time.Format(timeFmt), uintptr(unsafe.Pointer(m)))
-		default:
-			return fmt.Errorf("BatchMutate: fragment queue is full")
+	}
+}
+
+// BatchMutateItems API call applies a pre-chunked batch of bitmap or BSI
+// mutations. It is semantically equivalent to BatchMutate but avoids one gRPC
+// stream send per item on high-volume load paths.
+func (m *BitmapIndex) BatchMutateItems(_ context.Context, batch *pb.IndexKVBatch) (*empty.Empty, error) {
+	if batch == nil || len(batch.Items) == 0 {
+		return &empty.Empty{}, nil
+	}
+	done := make([]chan bool, 0, len(batch.Items))
+	for _, kv := range batch.Items {
+		if kv == nil {
+			return nil, fmt.Errorf("KV Pair must not be nil")
 		}
+		doneCh, err := m.enqueueBatchMutation(kv)
+		if err != nil {
+			return nil, err
+		}
+		if doneCh != nil {
+			done = append(done, doneCh)
+		}
+	}
+	for _, ch := range done {
+		<-ch
+	}
+	return &empty.Empty{}, nil
+}
+
+func (m *BitmapIndex) enqueueBatchMutation(kv *pb.IndexKVPair) (chan bool, error) {
+	if kv.Key == nil || len(kv.Key) == 0 {
+		return nil, fmt.Errorf("key must be specified")
+	}
+
+	s := strings.Split(kv.IndexPath, "/")
+	if len(s) != 2 {
+		err := fmt.Errorf("IndexPath %s not valid", kv.IndexPath)
+		u.Errorf("%s", err)
+		return nil, err
+	}
+	indexName := s[0]
+	fieldName := s[1]
+
+	_, err := m.getFieldConfig(indexName, fieldName)
+	if err != nil {
+		return nil, err
+	}
+
+	rowIDOrBits := int64(binary.LittleEndian.Uint64(kv.Key))
+	isBSI := m.isBSI(indexName, fieldName)
+	ts := time.Unix(0, kv.Time)
+
+	frag := newBitmapFragment(indexName, fieldName, rowIDOrBits, ts, kv.Value,
+		isBSI, kv.IsClear, kv.IsUpdate)
+
+	if kv.Sync {
+		if frag.IsBSI {
+			m.updateBSICache(frag)
+		} else {
+			m.updateBitmapCache(frag)
+		}
+		return nil, nil
+	}
+	select {
+	case m.fragQueue <- frag:
+		// fmt.Println(m.hashKey, "svr BatchMutate sent to fragQueue", frag.FieldName, frag.RowIDOrBits, frag.Time.Format(timeFmt), uintptr(unsafe.Pointer(m)))
+		return frag.Done, nil
+	default:
+		return nil, fmt.Errorf("BatchMutate: fragment queue is full")
 	}
 }
 

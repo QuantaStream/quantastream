@@ -811,6 +811,7 @@ var StringSearch_ServiceDesc = grpc.ServiceDesc{
 
 const (
 	BitmapIndex_BatchMutate_FullMethodName       = "/shared.BitmapIndex/BatchMutate"
+	BitmapIndex_BatchMutateItems_FullMethodName  = "/shared.BitmapIndex/BatchMutateItems"
 	BitmapIndex_BulkClear_FullMethodName         = "/shared.BitmapIndex/BulkClear"
 	BitmapIndex_Query_FullMethodName             = "/shared.BitmapIndex/Query"
 	BitmapIndex_Join_FullMethodName              = "/shared.BitmapIndex/Join"
@@ -830,6 +831,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BitmapIndexClient interface {
 	BatchMutate(ctx context.Context, opts ...grpc.CallOption) (BitmapIndex_BatchMutateClient, error)
+	BatchMutateItems(ctx context.Context, in *IndexKVBatch, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BulkClear(ctx context.Context, in *BulkClearRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Query(ctx context.Context, in *BitmapQuery, opts ...grpc.CallOption) (*QueryResult, error)
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
@@ -884,6 +886,15 @@ func (x *bitmapIndexBatchMutateClient) CloseAndRecv() (*emptypb.Empty, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func (c *bitmapIndexClient) BatchMutateItems(ctx context.Context, in *IndexKVBatch, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BitmapIndex_BatchMutateItems_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *bitmapIndexClient) BulkClear(ctx context.Context, in *BulkClearRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -999,6 +1010,7 @@ func (c *bitmapIndexClient) OfflinePartitions(ctx context.Context, in *Partition
 // for forward compatibility
 type BitmapIndexServer interface {
 	BatchMutate(BitmapIndex_BatchMutateServer) error
+	BatchMutateItems(context.Context, *IndexKVBatch) (*emptypb.Empty, error)
 	BulkClear(context.Context, *BulkClearRequest) (*emptypb.Empty, error)
 	Query(context.Context, *BitmapQuery) (*QueryResult, error)
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
@@ -1019,6 +1031,9 @@ type UnimplementedBitmapIndexServer struct {
 
 func (UnimplementedBitmapIndexServer) BatchMutate(BitmapIndex_BatchMutateServer) error {
 	return status.Errorf(codes.Unimplemented, "method BatchMutate not implemented")
+}
+func (UnimplementedBitmapIndexServer) BatchMutateItems(context.Context, *IndexKVBatch) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchMutateItems not implemented")
 }
 func (UnimplementedBitmapIndexServer) BulkClear(context.Context, *BulkClearRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BulkClear not implemented")
@@ -1092,6 +1107,24 @@ func (x *bitmapIndexBatchMutateServer) Recv() (*IndexKVPair, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func _BitmapIndex_BatchMutateItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexKVBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BitmapIndexServer).BatchMutateItems(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BitmapIndex_BatchMutateItems_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BitmapIndexServer).BatchMutateItems(ctx, req.(*IndexKVBatch))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BitmapIndex_BulkClear_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1317,6 +1350,10 @@ var BitmapIndex_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "shared.BitmapIndex",
 	HandlerType: (*BitmapIndexServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "BatchMutateItems",
+			Handler:    _BitmapIndex_BatchMutateItems_Handler,
+		},
 		{
 			MethodName: "BulkClear",
 			Handler:    _BitmapIndex_BulkClear_Handler,

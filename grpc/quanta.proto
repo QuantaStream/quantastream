@@ -33,6 +33,7 @@ service StringSearch {
 
 service BitmapIndex {
   rpc BatchMutate(stream IndexKVPair) returns (google.protobuf.Empty) {}
+  rpc BatchMutateItems(IndexKVBatch) returns (google.protobuf.Empty) {}
   rpc BulkClear(BulkClearRequest) returns (google.protobuf.Empty) {}
   rpc Query(BitmapQuery) returns (QueryResult) {}
   rpc Join(JoinRequest) returns (JoinResponse) {}

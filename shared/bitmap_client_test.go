@@ -14,6 +14,7 @@ import (
 	"github.com/stvp/rendezvous"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestBatchMutateRequiresBitmapClients(t *testing.T) {
@@ -116,6 +117,56 @@ func TestActiveClientsSnapshotKeepsNodesWithMissingCachedStatus(t *testing.T) {
 	}
 }
 
+func TestBatchMutateItemsNodeUsesUnaryChunks(t *testing.T) {
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	fake := &batchMutateItemsBitmapIndexServer{}
+	pb.RegisterBitmapIndexServer(server, fake)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	dialer := func(context.Context, string) (net.Conn, error) {
+		return listener.Dial()
+	}
+	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithInsecure())
+	if err != nil {
+		t.Fatalf("dial bufnet: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = conn.Close()
+	})
+
+	items := make([]*pb.IndexKVPair, bitmapBatchMutateItemsChunkSize+1)
+	for i := range items {
+		items[i] = &pb.IndexKVPair{
+			IndexPath: "orders/o_orderkey",
+			Key:       ToBytes(int64(1)),
+			Value:     [][]byte{[]byte("payload")},
+			Time:      int64(i),
+		}
+	}
+
+	index := NewBitmapIndex(NewDefaultConnection("batch-mutate-items"))
+	profile, err := index.batchMutateItemsNodeProfile(pb.NewBitmapIndexClient(conn), items)
+	if err != nil {
+		t.Fatalf("batchMutateItemsNodeProfile() error = %v", err)
+	}
+	if profile.Items != len(items) || profile.SendElapsed <= 0 || profile.TotalElapsed <= 0 {
+		t.Fatalf("profile = %+v, want item count and non-zero elapsed timings", profile)
+	}
+	if got, want := fake.batchSizes(), []int{bitmapBatchMutateItemsChunkSize, 1}; !equalIntSlices(got, want) {
+		t.Fatalf("BatchMutateItems batch sizes = %v, want %v", got, want)
+	}
+	if got := fake.streamCallCount(); got != 0 {
+		t.Fatalf("BatchMutate stream calls = %d, want 0", got)
+	}
+}
+
 func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
@@ -185,6 +236,39 @@ func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
 	}
 }
 
+type batchMutateItemsBitmapIndexServer struct {
+	pb.UnimplementedBitmapIndexServer
+	mu             sync.Mutex
+	batchSizesSeen []int
+	streamCalls    int
+}
+
+func (s *batchMutateItemsBitmapIndexServer) BatchMutateItems(_ context.Context, batch *pb.IndexKVBatch) (*emptypb.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchSizesSeen = append(s.batchSizesSeen, len(batch.GetItems()))
+	return &emptypb.Empty{}, nil
+}
+
+func (s *batchMutateItemsBitmapIndexServer) BatchMutate(pb.BitmapIndex_BatchMutateServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamCalls++
+	return nil
+}
+
+func (s *batchMutateItemsBitmapIndexServer) batchSizes() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.batchSizesSeen...)
+}
+
+func (s *batchMutateItemsBitmapIndexServer) streamCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streamCalls
+}
+
 type compareFanoutBitmapIndexServer struct {
 	pb.UnimplementedBitmapIndexServer
 	mu    sync.Mutex
@@ -221,4 +305,16 @@ func (s *compareFanoutBitmapIndexServer) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+func equalIntSlices(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
