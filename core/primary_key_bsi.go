@@ -139,8 +139,14 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		}
 		profile.LocalCacheLookupElapsed += time.Since(localLookupStart)
 	}
+	domainSkip, err := r.shouldSkipLookupForEmptyDomain(req, tbuf, lookupReq, &profile)
+	if err != nil {
+		return finish(0, false), err
+	}
 	if req.PrimaryKeyMode.assumeNew() {
 		profile.AssumeNewCount++
+		profile.SkippedBSILookupCount++
+	} else if domainSkip {
 		profile.SkippedBSILookupCount++
 	} else {
 		lookupStart := time.Now()
@@ -194,6 +200,60 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		profile.BatchCacheWriteElapsed += time.Since(batchCacheWriteStart)
 	}
 	return finish(tbuf.CurrentColumnID, false), nil
+}
+
+func (r BSIPrimaryKeyResolver) shouldSkipLookupForEmptyDomain(
+	req PrimaryKeyResolveRequest,
+	tbuf *TableBuffer,
+	lookupReq BSIPrimaryKeyLookupRequest,
+	profile *PrimaryKeyResolveProfile,
+) (bool, error) {
+
+	if req.PrimaryKeyMode.assumeNew() {
+		return false, nil
+	}
+	session := req.Session
+	if session == nil {
+		return false, nil
+	}
+	domainKey := bsiPrimaryKeyDomainKey(lookupReq, tbuf)
+	if session.bsiPrimaryKeyDomainSkipAllowed(domainKey) {
+		if profile != nil {
+			profile.EmptyDomainSkipCount++
+		}
+		return true, nil
+	}
+	backend, ok := r.Backend.(BSIPrimaryKeyDomainStateBackend)
+	if !ok {
+		return false, nil
+	}
+	probeStart := time.Now()
+	state, err := backend.PrimaryKeyDomainState(lookupReq)
+	if profile != nil {
+		profile.EmptyDomainProbeCount++
+		profile.EmptyDomainProbeElapsed += time.Since(probeStart)
+	}
+	if err != nil {
+		return false, fmt.Errorf("BSI primary key domain state error - %w", err)
+	}
+	switch normalizePrimaryKeyDomainState(state) {
+	case PrimaryKeyDomainEmpty:
+		session.markBSIPrimaryKeyDomainSkipAllowed(domainKey)
+		if profile != nil {
+			profile.EmptyDomainSkipCount++
+		}
+		return true, nil
+	case PrimaryKeyDomainNonEmpty:
+		if profile != nil {
+			profile.EmptyDomainNonEmptyCount++
+		}
+		return false, nil
+	default:
+		if profile != nil {
+			profile.EmptyDomainUnknownCount++
+		}
+		return false, nil
+	}
 }
 
 func validateBSIPrimaryKeyValues(req PrimaryKeyResolveRequest, tbuf *TableBuffer) error {

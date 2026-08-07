@@ -449,11 +449,15 @@ func TestStandardProcessNativeGRPCRouterDefaultsToBSIPrimaryKeyAuthority(t *test
 		DirectColumnIDCount: 4,
 	})
 	requirePrimaryKeyTableProfile(t, result.PutProfile, "lineitem", core.PrimaryKeyResolveProfile{
-		ResolveCount:        12,
-		LookupRequiredCount: 12,
-		BSILookupCount:      12,
-		BSIHitCount:         6,
-		BSIStageWriteCount:  6,
+		ResolveCount:             12,
+		LookupRequiredCount:      12,
+		BSILookupCount:           6,
+		BSIHitCount:              6,
+		SkippedBSILookupCount:    6,
+		EmptyDomainProbeCount:    7,
+		EmptyDomainSkipCount:     6,
+		EmptyDomainNonEmptyCount: 6,
+		BSIStageWriteCount:       6,
 	})
 }
 
@@ -498,14 +502,18 @@ func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorit
 		DirectColumnIDCount: expectedOrderResolves,
 	})
 	requirePrimaryKeyTableProfile(t, result.PutProfile, "lineitem", core.PrimaryKeyResolveProfile{
-		ResolveCount:        expectedLineitemResolves,
-		LookupRequiredCount: expectedLineitemResolves,
-		BSILookupCount:      expectedLineitemResolves,
-		BSIHitCount:         orderCount * lineitemsPerOrder,
-		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
+		ResolveCount:             expectedLineitemResolves,
+		LookupRequiredCount:      expectedLineitemResolves,
+		BSILookupCount:           orderCount * lineitemsPerOrder,
+		BSIHitCount:              orderCount * lineitemsPerOrder,
+		SkippedBSILookupCount:    orderCount * lineitemsPerOrder,
+		EmptyDomainProbeCount:    orderCount*lineitemsPerOrder + 1,
+		EmptyDomainSkipCount:     orderCount * lineitemsPerOrder,
+		EmptyDomainNonEmptyCount: orderCount * lineitemsPerOrder,
+		BSIStageWriteCount:       orderCount * lineitemsPerOrder,
 	})
 	requirePrimaryKeyTableProjectionCacheProfile(t, result.PutProfile, "lineitem",
-		expectedLineitemResolves, (orderCount*lineitemsPerOrder-1)*replayCount)
+		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder)
 }
 
 func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing.T) {
@@ -541,13 +549,15 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 	}
 	firstProfile := routeStandardProcessNativeTPCHEnvelopes(t, first, config, fixture, core.NewTableCacheStruct())
 	requirePrimaryKeyTableProfile(t, firstProfile, "lineitem", core.PrimaryKeyResolveProfile{
-		ResolveCount:        orderCount * lineitemsPerOrder,
-		LookupRequiredCount: orderCount * lineitemsPerOrder,
-		BSILookupCount:      orderCount * lineitemsPerOrder,
-		BSIStageWriteCount:  orderCount * lineitemsPerOrder,
+		ResolveCount:          orderCount * lineitemsPerOrder,
+		LookupRequiredCount:   orderCount * lineitemsPerOrder,
+		SkippedBSILookupCount: orderCount * lineitemsPerOrder,
+		EmptyDomainProbeCount: 1,
+		EmptyDomainSkipCount:  orderCount * lineitemsPerOrder,
+		BSIStageWriteCount:    orderCount * lineitemsPerOrder,
 	})
 	requirePrimaryKeyTableProjectionCacheProfile(t, firstProfile, "lineitem",
-		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
+		0, 0)
 	requireStandardProcessScalarString(t, first, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 	requireStandardProcessSQLSuccess(t, first, "commit")
 	requireStandardProcessBSIPrimaryKeyAuthorityManifestArtifact(t, config, "standard-sql-commit")
@@ -564,13 +574,15 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 	}
 	secondProfile := routeStandardProcessNativeTPCHEnvelopes(t, second, config, fixture, core.NewTableCacheStruct())
 	requirePrimaryKeyTableProfile(t, secondProfile, "lineitem", core.PrimaryKeyResolveProfile{
-		ResolveCount:        orderCount * lineitemsPerOrder,
-		LookupRequiredCount: orderCount * lineitemsPerOrder,
-		BSILookupCount:      orderCount * lineitemsPerOrder,
-		BSIHitCount:         orderCount * lineitemsPerOrder,
+		ResolveCount:             orderCount * lineitemsPerOrder,
+		LookupRequiredCount:      orderCount * lineitemsPerOrder,
+		BSILookupCount:           orderCount * lineitemsPerOrder,
+		BSIHitCount:              orderCount * lineitemsPerOrder,
+		EmptyDomainProbeCount:    orderCount * lineitemsPerOrder,
+		EmptyDomainNonEmptyCount: orderCount * lineitemsPerOrder,
 	})
 	requirePrimaryKeyTableProjectionCacheProfile(t, secondProfile, "lineitem",
-		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
+		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder)
 	requireStandardProcessScalarString(t, second, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 }
 
@@ -651,6 +663,18 @@ func requirePrimaryKeyTableProfile(
 	}
 	if profile.BSIHitCount != expected.BSIHitCount {
 		t.Fatalf("%s primary key profile = %+v, want %d BSI hits", tableName, profile, expected.BSIHitCount)
+	}
+	if profile.SkippedBSILookupCount != expected.SkippedBSILookupCount {
+		t.Fatalf("%s primary key profile = %+v, want %d skipped BSI lookups", tableName, profile, expected.SkippedBSILookupCount)
+	}
+	if profile.EmptyDomainProbeCount != expected.EmptyDomainProbeCount {
+		t.Fatalf("%s primary key profile = %+v, want %d empty-domain probes", tableName, profile, expected.EmptyDomainProbeCount)
+	}
+	if profile.EmptyDomainSkipCount != expected.EmptyDomainSkipCount {
+		t.Fatalf("%s primary key profile = %+v, want %d empty-domain skips", tableName, profile, expected.EmptyDomainSkipCount)
+	}
+	if profile.EmptyDomainNonEmptyCount != expected.EmptyDomainNonEmptyCount {
+		t.Fatalf("%s primary key profile = %+v, want %d non-empty domain observations", tableName, profile, expected.EmptyDomainNonEmptyCount)
 	}
 	if profile.BSIStageWriteCount != expected.BSIStageWriteCount {
 		t.Fatalf("%s primary key profile = %+v, want %d BSI stage writes", tableName, profile, expected.BSIStageWriteCount)

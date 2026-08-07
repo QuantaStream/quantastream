@@ -70,8 +70,12 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	if !first.Inserted || first.ExistingRow || first.ColumnID == 0 {
 		t.Fatalf("first PutRowWithOptions() = %+v, want inserted row", first)
 	}
-	if first.PrimaryKey.BSILookupCount != 1 || first.PrimaryKey.BSIStageWriteCount != 1 {
-		t.Fatalf("first primary-key profile = %+v, want BSI miss/stage", first.PrimaryKey)
+	if first.PrimaryKey.BSILookupCount != 0 ||
+		first.PrimaryKey.SkippedBSILookupCount != 1 ||
+		first.PrimaryKey.EmptyDomainProbeCount != 1 ||
+		first.PrimaryKey.EmptyDomainSkipCount != 1 ||
+		first.PrimaryKey.BSIStageWriteCount != 1 {
+		t.Fatalf("first primary-key profile = %+v, want empty-domain skip/stage", first.PrimaryKey)
 	}
 	if err := firstSession.Flush(); err != nil {
 		t.Fatalf("first Flush() error = %v", err)

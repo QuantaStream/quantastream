@@ -11,6 +11,12 @@ type SingleColumnBSIPrimaryKeyReader interface {
 	LookupSingleColumnBSIPrimaryKey(SingleColumnBSIPrimaryKeyReadRequest) (SingleColumnBSIPrimaryKeyReadResult, error)
 }
 
+// SingleColumnBSIPrimaryKeyDomainReader optionally reports whether a PK BSI
+// domain is empty, non-empty, or unknown without testing a specific key value.
+type SingleColumnBSIPrimaryKeyDomainReader interface {
+	PrimaryKeyDomainState(SingleColumnBSIPrimaryKeyReadRequest) (PrimaryKeyDomainState, error)
+}
+
 // SingleColumnBSIPrimaryKeyReadRequest carries the narrow lookup shape for a
 // single-column, BSI-backed primary key.
 type SingleColumnBSIPrimaryKeyReadRequest struct {
@@ -77,6 +83,31 @@ func (b SingleColumnBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLook
 		result.Found = true
 	}
 	return result, nil
+}
+
+// PrimaryKeyDomainState reports whether the single-column PK BSI authority
+// domain is empty, non-empty, or unknown when the reader supports that probe.
+func (b SingleColumnBSIPrimaryKeyBackend) PrimaryKeyDomainState(req BSIPrimaryKeyLookupRequest) (PrimaryKeyDomainState, error) {
+	eligibility := ObserveBSIPrimaryKeyAuthorityEligibility(b.Table)
+	if !eligibility.Eligible || eligibility.Mode != BSIPrimaryKeyAuthorityModeSingleColumnBSI {
+		return PrimaryKeyDomainUnknown, nil
+	}
+	reader, ok := b.Reader.(SingleColumnBSIPrimaryKeyDomainReader)
+	if !ok {
+		return PrimaryKeyDomainUnknown, nil
+	}
+	attr, err := b.Table.GetAttribute(eligibility.FieldName)
+	if err != nil {
+		return PrimaryKeyDomainUnknown, err
+	}
+	return reader.PrimaryKeyDomainState(SingleColumnBSIPrimaryKeyReadRequest{
+		TableName:          eligibility.TableName,
+		FieldName:          eligibility.FieldName,
+		MappingStrategy:    eligibility.MappingStrategy,
+		Attribute:          attr,
+		ShardTimestamp:     req.ShardTimestamp,
+		RequiresShardScope: eligibility.RequiresShardScope,
+	})
 }
 
 // StagePrimaryKey is intentionally a no-op for the single-column BSI authority

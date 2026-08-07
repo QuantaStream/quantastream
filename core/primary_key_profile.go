@@ -14,6 +14,10 @@ type PrimaryKeyResolveProfile struct {
 	BSILookupCount                int            `json:"bsi_lookup_count"`
 	BSIHitCount                   int            `json:"bsi_hit_count"`
 	SkippedBSILookupCount         int            `json:"skipped_bsi_lookup_count"`
+	EmptyDomainProbeCount         int            `json:"empty_domain_probe_count"`
+	EmptyDomainSkipCount          int            `json:"empty_domain_skip_count"`
+	EmptyDomainNonEmptyCount      int            `json:"empty_domain_non_empty_count"`
+	EmptyDomainUnknownCount       int            `json:"empty_domain_unknown_count"`
 	BSIFallbackCount              int            `json:"bsi_fallback_count"`
 	BSIFallbackReasons            map[string]int `json:"bsi_fallback_reasons,omitempty"`
 	BSIProjectionCacheLookupCount int            `json:"bsi_projection_cache_lookup_count"`
@@ -28,6 +32,7 @@ type PrimaryKeyResolveProfile struct {
 	BSIIdentityEncodeElapsed      time.Duration  `json:"bsi_identity_encode_elapsed_nanos"`
 	BSIAuthorityEncodeElapsed     time.Duration  `json:"bsi_authority_encode_elapsed_nanos"`
 	BSILookupElapsed              time.Duration  `json:"bsi_lookup_elapsed_nanos"`
+	EmptyDomainProbeElapsed       time.Duration  `json:"empty_domain_probe_elapsed_nanos"`
 	BSIProjectionElapsed          time.Duration  `json:"bsi_projection_elapsed_nanos"`
 	BSICompareElapsed             time.Duration  `json:"bsi_compare_elapsed_nanos"`
 	BSIMatchExtractionElapsed     time.Duration  `json:"bsi_match_extraction_elapsed_nanos"`
@@ -46,6 +51,10 @@ func (p PrimaryKeyResolveProfile) add(other PrimaryKeyResolveProfile) PrimaryKey
 	p.BSILookupCount += other.BSILookupCount
 	p.BSIHitCount += other.BSIHitCount
 	p.SkippedBSILookupCount += other.SkippedBSILookupCount
+	p.EmptyDomainProbeCount += other.EmptyDomainProbeCount
+	p.EmptyDomainSkipCount += other.EmptyDomainSkipCount
+	p.EmptyDomainNonEmptyCount += other.EmptyDomainNonEmptyCount
+	p.EmptyDomainUnknownCount += other.EmptyDomainUnknownCount
 	p.BSIFallbackCount += other.BSIFallbackCount
 	p.BSIFallbackReasons = addPrimaryKeyResolveReasonCounts(p.BSIFallbackReasons, other.BSIFallbackReasons)
 	p.BSIProjectionCacheLookupCount += other.BSIProjectionCacheLookupCount
@@ -60,6 +69,7 @@ func (p PrimaryKeyResolveProfile) add(other PrimaryKeyResolveProfile) PrimaryKey
 	p.BSIIdentityEncodeElapsed += other.BSIIdentityEncodeElapsed
 	p.BSIAuthorityEncodeElapsed += other.BSIAuthorityEncodeElapsed
 	p.BSILookupElapsed += other.BSILookupElapsed
+	p.EmptyDomainProbeElapsed += other.EmptyDomainProbeElapsed
 	p.BSIProjectionElapsed += other.BSIProjectionElapsed
 	p.BSICompareElapsed += other.BSICompareElapsed
 	p.BSIMatchExtractionElapsed += other.BSIMatchExtractionElapsed

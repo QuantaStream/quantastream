@@ -21,6 +21,7 @@ type StandardSingleColumnBSIPrimaryKeyReader struct {
 }
 
 var _ core.SingleColumnBSIPrimaryKeyReader = StandardSingleColumnBSIPrimaryKeyReader{}
+var _ core.SingleColumnBSIPrimaryKeyDomainReader = StandardSingleColumnBSIPrimaryKeyReader{}
 
 // LookupSingleColumnBSIPrimaryKey maps the typed key value through the catalog
 // mapper and evaluates equality against the existing PK BSI.
@@ -54,6 +55,29 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) LookupSingleColumnBSIPrimaryKey
 	return core.SingleColumnBSIPrimaryKeyReadResult{
 		ColumnIDs: standardSingleColumnBSIPrimaryKeyColumnIDs(matches),
 	}, nil
+}
+
+// PrimaryKeyDomainState reports whether the projected PK BSI domain currently
+// contains any committed values.
+func (r StandardSingleColumnBSIPrimaryKeyReader) PrimaryKeyDomainState(req core.SingleColumnBSIPrimaryKeyReadRequest) (core.PrimaryKeyDomainState, error) {
+	if req.TableName == "" {
+		return core.PrimaryKeyDomainUnknown, fmt.Errorf("single-column BSI primary-key domain probe requires table name")
+	}
+	if req.FieldName == "" {
+		return core.PrimaryKeyDomainUnknown, fmt.Errorf("single-column BSI primary-key domain probe requires field name")
+	}
+	if _, err := r.primaryKeyAttribute(req); err != nil {
+		return core.PrimaryKeyDomainUnknown, err
+	}
+	fromTime, toTime := standardSingleColumnBSIPrimaryKeyWindowNanos(r.TableCache, req)
+	bsi, _, _, err := r.projectCachedPrimaryKeyBSI(req.TableName, req.FieldName, fromTime, toTime)
+	if err != nil {
+		return core.PrimaryKeyDomainUnknown, err
+	}
+	if bsi == nil || bsi.GetCardinality() == 0 {
+		return core.PrimaryKeyDomainEmpty, nil
+	}
+	return core.PrimaryKeyDomainNonEmpty, nil
 }
 
 func (r StandardSingleColumnBSIPrimaryKeyReader) primaryKeyAttribute(req core.SingleColumnBSIPrimaryKeyReadRequest) (*core.Attribute, error) {

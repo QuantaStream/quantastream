@@ -18,6 +18,7 @@ type StandardCompoundBSIPrimaryKeyBackend struct {
 }
 
 var _ core.BSIPrimaryKeyBackend = StandardCompoundBSIPrimaryKeyBackend{}
+var _ core.BSIPrimaryKeyDomainStateBackend = StandardCompoundBSIPrimaryKeyBackend{}
 
 // LookupPrimaryKey resolves the compact compound authority value to matching
 // rownums.
@@ -52,6 +53,20 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 		MatchedColumnIDs: matchedColumnIDs,
 		Profile:          profile,
 	}, nil
+}
+
+// PrimaryKeyDomainState reports whether the hidden compound authority BSI
+// contains any committed values for the lookup domain.
+func (b StandardCompoundBSIPrimaryKeyBackend) PrimaryKeyDomainState(req core.BSIPrimaryKeyLookupRequest) (core.PrimaryKeyDomainState, error) {
+	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	bsi, _, _, err := b.Reader.projectCachedPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
+	if err != nil {
+		return core.PrimaryKeyDomainUnknown, err
+	}
+	if bsi == nil || bsi.GetCardinality() == 0 {
+		return core.PrimaryKeyDomainEmpty, nil
+	}
+	return core.PrimaryKeyDomainNonEmpty, nil
 }
 
 // StagePrimaryKey stages the compact compound authority value in the hidden BSI.

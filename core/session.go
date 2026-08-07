@@ -50,6 +50,8 @@ type Session struct {
 	tableCache         *TableCacheStruct
 	primaryKeyResolver PrimaryKeyResolver
 	lastFlushProfile   shared.BatchBufferFlushProfile
+
+	primaryKeyEmptyDomainSkips map[string]bool
 }
 
 // PrimaryKeyResolver owns primary-key lookup and rownum assignment.

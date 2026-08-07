@@ -11,11 +11,14 @@ import (
 )
 
 type recordingBSIPrimaryKeyBackend struct {
-	lookupRequests []BSIPrimaryKeyLookupRequest
-	stageRequests  []BSIPrimaryKeyStageRequest
-	lookupResult   BSIPrimaryKeyLookupResult
-	lookupErr      error
-	stageErr       error
+	lookupRequests      []BSIPrimaryKeyLookupRequest
+	stageRequests       []BSIPrimaryKeyStageRequest
+	domainStateRequests []BSIPrimaryKeyLookupRequest
+	lookupResult        BSIPrimaryKeyLookupResult
+	lookupErr           error
+	stageErr            error
+	domainState         PrimaryKeyDomainState
+	domainStateErr      error
 }
 
 func (b *recordingBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLookupRequest) (BSIPrimaryKeyLookupResult, error) {
@@ -26,6 +29,11 @@ func (b *recordingBSIPrimaryKeyBackend) LookupPrimaryKey(req BSIPrimaryKeyLookup
 func (b *recordingBSIPrimaryKeyBackend) StagePrimaryKey(req BSIPrimaryKeyStageRequest) error {
 	b.stageRequests = append(b.stageRequests, req)
 	return b.stageErr
+}
+
+func (b *recordingBSIPrimaryKeyBackend) PrimaryKeyDomainState(req BSIPrimaryKeyLookupRequest) (PrimaryKeyDomainState, error) {
+	b.domainStateRequests = append(b.domainStateRequests, req)
+	return b.domainState, b.domainStateErr
 }
 
 type mapBSIPrimaryKeyBackend struct {
@@ -419,6 +427,76 @@ func TestBSIPrimaryKeyResolverAllocatesAndStagesMiss(t *testing.T) {
 	require.Equal(t, "1002", stageReq.RenderedValue)
 	require.Equal(t, tbuf.CurrentTimestamp, stageReq.ShardTimestamp)
 	require.Equal(t, uint64(9001), stageReq.ColumnID)
+}
+
+func TestBSIPrimaryKeyResolverSkipsLookupForEmptyDomainAndCachesDecision(t *testing.T) {
+	backend := &recordingBSIPrimaryKeyBackend{domainState: PrimaryKeyDomainEmpty}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+	session := &Session{BatchBuffer: shared.NewBatchBuffer(nil, nil, 1000)}
+
+	first, _ := newBSIPrimaryKeyTestBuffer()
+	firstResult, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      first,
+		LookupValue:      "1003",
+		PrimaryKeyValues: []interface{}{int64(1003)},
+		ProvidedColumnID: 77,
+	})
+
+	require.NoError(t, err)
+	require.False(t, firstResult.ExistingRow)
+	require.Equal(t, uint64(77), firstResult.ColumnID)
+	require.Equal(t, 1, firstResult.Profile.EmptyDomainProbeCount)
+	require.Equal(t, 1, firstResult.Profile.EmptyDomainSkipCount)
+	require.Equal(t, 1, firstResult.Profile.SkippedBSILookupCount)
+	require.Zero(t, firstResult.Profile.BSILookupCount)
+
+	second, _ := newBSIPrimaryKeyTestBuffer()
+	secondResult, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          session,
+		TableBuffer:      second,
+		LookupValue:      "1004",
+		PrimaryKeyValues: []interface{}{int64(1004)},
+		ProvidedColumnID: 78,
+	})
+
+	require.NoError(t, err)
+	require.False(t, secondResult.ExistingRow)
+	require.Equal(t, uint64(78), secondResult.ColumnID)
+	require.Zero(t, secondResult.Profile.EmptyDomainProbeCount)
+	require.Equal(t, 1, secondResult.Profile.EmptyDomainSkipCount)
+	require.Equal(t, 1, secondResult.Profile.SkippedBSILookupCount)
+	require.Zero(t, secondResult.Profile.BSILookupCount)
+	require.Len(t, backend.domainStateRequests, 1)
+	require.Empty(t, backend.lookupRequests)
+	require.Len(t, backend.stageRequests, 2)
+}
+
+func TestBSIPrimaryKeyResolverLooksUpNonEmptyDomain(t *testing.T) {
+	tbuf, _ := newBSIPrimaryKeyTestBuffer()
+	backend := &recordingBSIPrimaryKeyBackend{
+		domainState:  PrimaryKeyDomainNonEmpty,
+		lookupResult: BSIPrimaryKeyLookupResult{ColumnID: 4242, Found: true},
+	}
+	resolver := NewBSIPrimaryKeyResolver(backend)
+
+	result, err := resolver.ResolvePrimaryKeyColumnID(PrimaryKeyResolveRequest{
+		Session:          &Session{},
+		TableBuffer:      tbuf,
+		LookupValue:      "1003",
+		PrimaryKeyValues: []interface{}{int64(1003)},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.ExistingRow)
+	require.Equal(t, uint64(4242), result.ColumnID)
+	require.Equal(t, 1, result.Profile.EmptyDomainProbeCount)
+	require.Equal(t, 1, result.Profile.EmptyDomainNonEmptyCount)
+	require.Zero(t, result.Profile.EmptyDomainSkipCount)
+	require.Equal(t, 1, result.Profile.BSILookupCount)
+	require.Len(t, backend.domainStateRequests, 1)
+	require.Len(t, backend.lookupRequests, 1)
+	require.Empty(t, backend.stageRequests)
 }
 
 func TestBSIPrimaryKeyResolverAssumeNewSkipsLookupAndStagesProvidedColumnID(t *testing.T) {
