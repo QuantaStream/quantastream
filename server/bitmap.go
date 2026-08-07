@@ -828,8 +828,12 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		// Lock de-escalation
 		existBm.Lock.Lock()
 		m.bsiCacheLock.Unlock()
-		clearSet := roaring64.FastAnd(existBm.GetExistenceBitmap(), newBSI.GetExistenceBitmap())
-		existBm.ClearValues(clearSet)
+		existingRows := existBm.GetExistenceBitmap()
+		newRows := newBSI.GetExistenceBitmap()
+		if existingRows.Intersects(newRows) {
+			clearSet := roaring64.FastAnd(existingRows, newRows)
+			existBm.ClearValues(clearSet)
+		}
 		existBm.ParOr(0, newBSI.BSI)
 		existBm.ModTime = applyTime
 		existBm.AccessTime = applyTime
