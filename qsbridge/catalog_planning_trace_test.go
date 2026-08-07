@@ -114,17 +114,19 @@ func TestPlanResultCatalogPlanningTraceShowsBackingStringTraits(t *testing.T) {
 	trace := testCatalogPlanningTrace(t, parser)
 	field := catalogTraceFieldByName(t, trace, "c.c_name")
 
-	if field.Encoding != EncodingBackingString || field.LegacyEncoding != "StringHashBSI" {
-		t.Fatalf("field encoding = %q/%q, want backing StringHashBSI", field.Encoding, field.LegacyEncoding)
+	if field.Encoding != EncodingStringLexBSI || field.LegacyEncoding != "StringLexBSI" {
+		t.Fatalf("field encoding = %q/%q, want StringLexBSI", field.Encoding, field.LegacyEncoding)
 	}
 	if !field.Searchable || field.SearchMode != "text" {
 		t.Fatalf("search = %v/%q, want text searchable", field.Searchable, field.SearchMode)
 	}
-	if field.Rehydration != RehydrationLookup || field.RehydrationStore != "kv" || !field.RequiresLookup {
-		t.Fatalf("rehydration = %q store=%q lookup=%v, want kv lookup", field.Rehydration, field.RehydrationStore, field.RequiresLookup)
+	if field.Rehydration != RehydrationInline || field.RequiresLookup {
+		t.Fatalf("rehydration = %q store=%q lookup=%v, want inline lexical value", field.Rehydration, field.RehydrationStore, field.RequiresLookup)
 	}
-	if !predicateTraceHas(field.PredicateCapabilities, PredicateCapabilityEquality) {
-		t.Fatalf("predicate capabilities = %#v, want equality", field.PredicateCapabilities)
+	if !predicateTraceHas(field.PredicateCapabilities, PredicateCapabilityEquality) ||
+		!predicateTraceHas(field.PredicateCapabilities, PredicateCapabilityRange) ||
+		!predicateTraceHas(field.PredicateCapabilities, PredicateCapabilityPrefix) {
+		t.Fatalf("predicate capabilities = %#v, want lexical capabilities", field.PredicateCapabilities)
 	}
 }
 

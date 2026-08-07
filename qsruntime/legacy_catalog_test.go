@@ -344,7 +344,7 @@ func legacyCatalogTestCache() *core.TableCacheStruct {
 		BasicTable: &shared.BasicTable{Name: "part", PrimaryKey: "p_partkey"},
 		Attributes: []core.Attribute{
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "p_partkey", Type: "Integer", MappingStrategy: "IntBSI", Required: true}},
-			{BasicAttribute: &shared.BasicAttribute{FieldName: "p_brand", Type: "String", MappingStrategy: "StringHashBSI"}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "p_brand", Type: "String", MappingStrategy: "StringLexBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{
 				FieldName:       "p_name",
 				Type:            "String",

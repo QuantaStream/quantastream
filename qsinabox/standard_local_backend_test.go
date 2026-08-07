@@ -209,7 +209,9 @@ attributes:
   type: Integer
 - fieldName: city
   sourceName: /city
-  mappingStrategy: StringHashBSI
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
   type: String
 `
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {

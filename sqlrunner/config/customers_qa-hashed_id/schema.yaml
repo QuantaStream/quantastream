@@ -58,7 +58,7 @@ attributes:
     granularity: "millisecond"
   type: DateTime  
 # - fieldName: hashedCustId
-#   mappingStrategy: StringHashBSI
+#   mappingStrategy: StringLexBSI
 #   type: String
 #  defaultValue: hash.sha256(cust_id)
 - fieldName: phone

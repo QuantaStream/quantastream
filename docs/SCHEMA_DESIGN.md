@@ -140,7 +140,7 @@ Exact equality and `IN` predicates are currently lowered only for full-inline
 `StringLexBSI` fields. Prefix-plus-remainder fields need a follow-up suffix
 rehydration check before they can be treated as exact matches.
 
-`StringHashBSI` still exists for compatibility with older schemas, but new
+`StringLexBSI` still exists for compatibility with older schemas, but new
 schema work should prefer `StringLexBSI`. Hash strings solve equality lookups,
 but projection can become expensive because Quanta must use a backing store to
 rehydrate values. That cost matters most when large result sets project string

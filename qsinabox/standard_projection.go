@@ -572,7 +572,7 @@ func (r StandardProjectionDictionaryIDReader) ReadProjectionDictionaryIDs(ctx co
 	}, nil, nil
 }
 
-// StandardBackingStringLookupReader resolves StringHashBSI backing strings via
+// StandardBackingStringLookupReader resolves StringLexBSI backing strings via
 // local KVStore unary lookups.
 type StandardBackingStringLookupReader struct {
 	Pool       *core.SessionPool
@@ -651,7 +651,7 @@ func (r StandardBackingStringLookupReader) LookupProjectionBackingStrings(ctx co
 		}
 		for rownum, outputPositions := range positions[path] {
 			visible, ok := standardBackingStringLookupValue(lookup, rownum)
-			if !ok || visible == "" {
+			if !ok {
 				continue
 			}
 			for _, outputPosition := range outputPositions {
@@ -734,6 +734,13 @@ func standardProjectionRowKey(value qsbridge.ResultCell) (uint64, bool) {
 		return 0, false
 	}
 	switch typed := value.Value.(type) {
+	case qsruntime.NativeProjectionStringRemainderKey:
+		return typed.RowNum, true
+	case *qsruntime.NativeProjectionStringRemainderKey:
+		if typed == nil {
+			return 0, false
+		}
+		return typed.RowNum, true
 	case uint64:
 		return typed, true
 	case int64:
@@ -749,7 +756,7 @@ func standardBackingStringLookupValue(values map[interface{}]interface{}, rownum
 	for _, key := range []interface{}{rownum, int64(rownum), int(rownum)} {
 		if value, ok := values[key]; ok {
 			text, ok := value.(string)
-			if !ok || text == "" || text == "<nil>" {
+			if !ok || text == "<nil>" {
 				return "", false
 			}
 			return text, true
@@ -781,20 +788,7 @@ func standardBackingStringLookupTarget(request qsruntime.NativeProjectionBacking
 
 func standardBackingStringPath(table *core.Table, field string, ts time.Time) string {
 	store := standardBackingStringStore(table, field)
-	shard := ts.UTC().Format("2006-01-02T15")
-	key := fmt.Sprintf("%s/%s/%s", table.Name, field, shard)
-	lookupPath := fmt.Sprintf("%s,/%s/%s/%s/%s", key, table.Name, field, store, shard)
-	if table.TimeQuantumType == "YMDH" {
-		utcTime := ts.UTC()
-		fpath := fmt.Sprintf("/%s/%s/%s/%s/%s",
-			table.Name,
-			field,
-			store,
-			fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()),
-			shard)
-		lookupPath = key + "," + fpath
-	}
-	return lookupPath
+	return core.PartitionedStringIndexPath(table.Name, field, store, ts)
 }
 
 func standardBackingStringStore(table *core.Table, field string) string {

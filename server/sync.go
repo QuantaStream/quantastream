@@ -304,14 +304,6 @@ func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue
 				return &wrappers.Int64Value{Value: int64(-1)}, fmt.Errorf("mergeBSIDiff failed - %v", err)
 			}
 		}
-		// Process backing strings for StringHashBSI
-		if attr.MappingStrategy == "StringHashBSI" {
-			if err := m.syncStringBackingStore(peerKVClient, newKVClient, indexName, fieldName, t,
-				pushDiff, pullDiff); err != nil {
-				u.Errorf("String backing store sync failed for '%s' - %v", key, err)
-			}
-		}
-
 		// At this point we've finished any attribute specific processing, if this is the PK anchor attribute
 		// then we need to process PK/SK indices used for ingestion.
 		if !fieldIsPrimaryKeyAnchor {
@@ -713,98 +705,6 @@ func (m *BitmapIndex) mergeBSIDiff(index, field string, ts int64, diff *roaring6
 	sbsi.ClearValues(diff.GetExistenceBitmap())
 	sbsi.ParOr(0, diff)
 	sbsi.ModTime = time.Now()
-
-	return nil
-}
-
-// Synchronize string backing store with remote.
-func (m *BitmapIndex) syncStringBackingStore(peerKV *shared.KVStore, remoteKV pb.KVStoreClient, index, field string,
-	ts int64, pushDiff, pullDiff *roaring64.Bitmap) error {
-
-	timeStr := formatShardTime(time.Unix(0, ts))
-
-	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
-	kvPath := fmt.Sprintf("%s%s%s%s%s", index, sep, field, sep, timeStr)
-
-	u.Debugf("%s syncStringBackingStore kvPath %s", m.hashKey, kvPath)
-	defer u.Debugf("%s syncStringBackingStore DONE %s", m.hashKey, kvPath)
-	var db *pogreb.DB
-	err := shared.Retry(5, 20*time.Second, func() (err error) {
-		var errx error
-		db, errx = localKV.getStore(kvPath)
-		if errx != nil {
-			err = errx
-		}
-		return
-	})
-	if err != nil {
-		return fmt.Errorf("syncStringBackingStore:getStore failed for %s.%s.%s - %v", index, field, timeStr, err)
-	}
-	defer localKV.closeStore(kvPath)
-
-	// TODO: Pass this as a parameter
-	verifyOnly := false
-
-	// Iterate over columnID values in the remote existence bitmap diff and lookup values in local backing store
-	pushBatch := make(map[interface{}]interface{}, pushDiff.GetCardinality())
-	foundCount := 0
-	if pushDiff != nil {
-		for _, v := range pushDiff.ToArray() {
-			val, err := db.Get(shared.ToBytes(v))
-			if err != nil {
-				return fmt.Errorf("syncStringBackingStore:db.Get - %v", err)
-			}
-			if val != nil {
-				foundCount++
-				pushBatch[v] = string(val)
-			}
-		}
-	}
-
-	// Iterate over columnID values in the local existence bitmap diff and lookup values in the remote backing store
-	var pullBatch map[interface{}]interface{}
-	if pullDiff != nil {
-		pullBatch := make(map[interface{}]interface{}, pullDiff.GetCardinality())
-		for _, v := range pullDiff.ToArray() {
-			pullBatch[v] = ""
-		}
-		pullBatch, err = peerKV.BatchLookupNode(remoteKV, kvPath, pullBatch)
-		if err != nil {
-			return fmt.Errorf("syncStringBackingStore:remoteKV.BatchLookupNode failed for %s.%s.%s - %v", index, field,
-				timeStr, err)
-		}
-	}
-
-	if verifyOnly {
-		if foundCount > 0 {
-			u.Infof("Remote is missing %d backing strings for %s.%s.%s.", foundCount, index, field, timeStr)
-		}
-		if pullBatch != nil && len(pullBatch) > 0 {
-			u.Infof("Local is missing %d backing strings for %s.%s.%s.", len(pullBatch),
-				index, field, timeStr)
-		}
-		return nil
-	}
-
-	// Begin writes
-
-	// Push to remote
-	if foundCount > 0 {
-		err = peerKV.BatchPutNode(remoteKV, kvPath, pushBatch)
-		if err != nil {
-			return fmt.Errorf("syncStringBackingStore:remoteKV.BatchPut failed for %s.%s.%s - %v", index, field, timeStr, err)
-		}
-	}
-
-	// Update local
-	if pullBatch != nil && len(pullBatch) > 0 {
-		defer db.Sync()
-		for k, v := range pullBatch {
-			if err := db.Put(shared.ToBytes(k), shared.ToBytes(v)); err != nil {
-				return fmt.Errorf("syncStringBackingStore:db.Put failed for %s.%s.%s - %v", index, field, timeStr, err)
-			}
-		}
-	}
 
 	return nil
 }

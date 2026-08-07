@@ -4,7 +4,7 @@ selector: type="region"
 attributes:
 - fieldName: r_regionkey
   sourceName: /data/r_regionkey
-  #mappingStrategy: StringHashBSI
+  #mappingStrategy: StringLexBSI
   mappingStrategy: IntBSI
   type: Integer
   sourceOrdinal: 1

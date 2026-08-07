@@ -54,7 +54,7 @@ func TestIndexPathUsesShardRoutingKeyForYMD(t *testing.T) {
 	}
 
 	got := indexPath(tbuf, "l_comment", "lex_remainders")
-	want := "lineitem/l_comment/1994-10-16T00,/lineitem/l_comment/lex_remainders/1994-10-16T00"
+	want := "lineitem/l_comment/1994-10-16T00,/lineitem/l_comment/lex_remainders"
 	if got != want {
 		t.Fatalf("indexPath() = %q, want %q", got, want)
 	}

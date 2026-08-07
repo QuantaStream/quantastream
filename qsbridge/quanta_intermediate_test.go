@@ -1275,7 +1275,7 @@ where p_brand <> 'Brand#45'
 	}
 }
 
-func TestQuantaIntermediateLowererLowersBackingStringEqualityPredicate(t *testing.T) {
+func TestQuantaIntermediateLowererLowersStringLexEqualityPredicate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
 		PlanRequest{SQL: "select c.c_custkey as customer_id from customer as c where c.c_name = 'Annie'"},
@@ -1291,17 +1291,17 @@ func TestQuantaIntermediateLowererLowersBackingStringEqualityPredicate(t *testin
 	}
 	fragment := intermediate.Fragments[0]
 	if fragment.BSIOp != QuantaBSIOpEQ || fragment.Value == nil {
-		t.Fatalf("fragment = %#v, want StringHashBSI BSI equality payload", fragment)
+		t.Fatalf("fragment = %#v, want StringLexBSI BSI equality payload", fragment)
 	}
-	if want := quantaIntermediateStringHashBSIValue("Annie"); fragment.Value.Cmp(want) != 0 {
-		t.Fatalf("value = %v, want hash %v", fragment.Value, want)
+	if want := quantaIntermediateStringLexBSIValue("Annie", 10); fragment.Value.Cmp(want) != 0 {
+		t.Fatalf("value = %v, want lexical prefix %v", fragment.Value, want)
 	}
 	if fragment.HasLiteral {
-		t.Fatalf("fragment = %#v, did not expect raw literal payload for legacy StringHashBSI", fragment)
+		t.Fatalf("fragment = %#v, did not expect raw literal payload for StringLexBSI", fragment)
 	}
 }
 
-func TestQuantaIntermediateLowererLowersBackingStringInequalityPredicate(t *testing.T) {
+func TestQuantaIntermediateLowererLowersStringLexInequalityPredicate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
 		PlanRequest{SQL: "select c.c_custkey as customer_id from customer as c where c.c_name != 'Annie'"},
@@ -1317,7 +1317,7 @@ func TestQuantaIntermediateLowererLowersBackingStringInequalityPredicate(t *test
 	}
 	fragment := intermediate.Fragments[0]
 	if fragment.BSIOp != QuantaBSIOpEQ || fragment.Operation != QuantaOperationDifference || fragment.Negate || fragment.Value == nil {
-		t.Fatalf("fragment = %#v, want StringHashBSI equality payload as bitmap DIFFERENCE", fragment)
+		t.Fatalf("fragment = %#v, want StringLexBSI equality payload as bitmap DIFFERENCE", fragment)
 	}
 }
 
@@ -1427,9 +1427,9 @@ func TestQuantaIntermediateLowererLowersLiteralInPredicate(t *testing.T) {
 	if len(fragment.Values) != 2 {
 		t.Fatalf("values = %d, want 2", len(fragment.Values))
 	}
-	if fragment.Values[0].Cmp(quantaIntermediateStringHashBSIValue("Annie")) != 0 ||
-		fragment.Values[1].Cmp(quantaIntermediateStringHashBSIValue("Bob")) != 0 {
-		t.Fatalf("values = %#v, want Annie/Bob hashes", fragment.Values)
+	if fragment.Values[0].Cmp(quantaIntermediateStringLexBSIValue("Annie", 10)) != 0 ||
+		fragment.Values[1].Cmp(quantaIntermediateStringLexBSIValue("Bob", 10)) != 0 {
+		t.Fatalf("values = %#v, want Annie/Bob lexical prefixes", fragment.Values)
 	}
 }
 

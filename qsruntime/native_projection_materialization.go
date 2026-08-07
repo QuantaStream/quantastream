@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +73,13 @@ type NativeProjectionValueRehydrationRequest struct {
 	Values     []qsbridge.ResultCell
 }
 
+// NativeProjectionStringRemainderKey carries the BSI-decoded StringLex prefix
+// together with the rownum needed to look up the KV suffix.
+type NativeProjectionStringRemainderKey struct {
+	RowNum uint64
+	Prefix string
+}
+
 // NativeProjectionValueRehydrationResult is one rehydrated value-vector response.
 type NativeProjectionValueRehydrationResult struct {
 	Values []qsbridge.ResultCell
@@ -113,7 +121,10 @@ func (r NativeProjectionCompositeRehydrator) RehydrateProjectionValues(ctx conte
 			LookupRef: request.LookupRef,
 			Values:    append([]qsbridge.ResultCell(nil), request.Values...),
 		})
-		return NativeProjectionValueRehydrationResult{Values: result.Values, Probes: result.Probes}, diagnostics, err
+		return NativeProjectionValueRehydrationResult{
+			Values: nativeProjectionJoinStringLexRemainders(request.Values, result.Values),
+			Probes: result.Probes,
+		}, diagnostics, err
 	case NativeProjectionLookupDictionary, NativeProjectionLookupUnknown:
 		if r.Dictionary == nil {
 			return NativeProjectionValueRehydrationResult{}, qsbridge.DiagnosticSet{
@@ -125,6 +136,50 @@ func (r NativeProjectionCompositeRehydrator) RehydrateProjectionValues(ctx conte
 		return NativeProjectionValueRehydrationResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "native projection rehydrator cannot handle lookup kind "+string(request.LookupKind)),
 		}, nil
+	}
+}
+
+func nativeProjectionJoinStringLexRemainders(encoded []qsbridge.ResultCell, suffixes []qsbridge.ResultCell) []qsbridge.ResultCell {
+	if len(encoded) != len(suffixes) {
+		return suffixes
+	}
+	values := append([]qsbridge.ResultCell(nil), suffixes...)
+	for i, encodedCell := range encoded {
+		prefix, ok := nativeProjectionStringLexRemainderPrefix(encodedCell)
+		if !ok {
+			continue
+		}
+		if suffixes[i].Kind == qsbridge.ValueNull {
+			values[i] = qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}
+			continue
+		}
+		values[i] = qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: prefix + nativeProjectionStringSuffixValue(suffixes[i])}
+	}
+	return values
+}
+
+func nativeProjectionStringLexRemainderPrefix(cell qsbridge.ResultCell) (string, bool) {
+	switch value := cell.Value.(type) {
+	case NativeProjectionStringRemainderKey:
+		return value.Prefix, true
+	case *NativeProjectionStringRemainderKey:
+		if value == nil {
+			return "", false
+		}
+		return value.Prefix, true
+	default:
+		return "", false
+	}
+}
+
+func nativeProjectionStringSuffixValue(cell qsbridge.ResultCell) string {
+	switch value := cell.Value.(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	default:
+		return fmt.Sprint(value)
 	}
 }
 
@@ -501,7 +556,7 @@ type NativeProjectionBackingStringLookupResult struct {
 	Probes []ExecutionProbe
 }
 
-// NativeProjectionBackingStringLookupReader resolves StringHashBSI/backing-string ids.
+// NativeProjectionBackingStringLookupReader resolves StringLexBSI/backing-string ids.
 type NativeProjectionBackingStringLookupReader interface {
 	LookupProjectionBackingStrings(context.Context, NativeProjectionBackingStringLookupRequest) (NativeProjectionBackingStringLookupResult, qsbridge.DiagnosticSet, error)
 }

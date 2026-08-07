@@ -374,7 +374,7 @@ func TestLegacyDirectFullTableScanSeedUsesPrimaryKeyForNonPhysicalTimestampTable
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "customers_qa", PrimaryKey: "cust_id", TimeQuantumField: "birthdate"},
 		Attributes: []core.Attribute{
-			{BasicAttribute: &shared.BasicAttribute{FieldName: "cust_id", Type: "String", MappingStrategy: "StringHashBSI"}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "cust_id", Type: "String", MappingStrategy: "StringLexBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "birthdate", Type: "DateTime", MappingStrategy: "SysMillisBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "rownum", Type: "Int", MappingStrategy: "IntBSI"}},
 		},

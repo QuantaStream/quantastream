@@ -33,26 +33,6 @@ func TestLegacyEncodingProfileMapsNonExclusiveStringEnumToSetMultiplicity(t *tes
 	}
 }
 
-func TestLegacyEncodingProfileMapsStringHashConservatively(t *testing.T) {
-	profile := LegacyEncodingProfile("StringHashBSI", LegacyEncodingOptions{Searchable: true})
-
-	if profile.Kind != EncodingBackingString {
-		t.Fatalf("Kind = %q, want %q", profile.Kind, EncodingBackingString)
-	}
-	if !profile.RequiresLookup() {
-		t.Fatalf("expected StringHashBSI projection to require KV lookup")
-	}
-	if !profile.Searchable() {
-		t.Fatalf("expected searchable option to survive legacy mapping")
-	}
-	if profile.SupportsPrefix() {
-		t.Fatalf("legacy StringHashBSI must not imply lexical prefix capability")
-	}
-	if !profile.SupportsPredicate(PredicateCapabilityEquality) {
-		t.Fatalf("expected equality capability")
-	}
-}
-
 func TestLegacyEncodingProfileMapsStringLexBSI(t *testing.T) {
 	profile := LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{
 		Searchable:     true,

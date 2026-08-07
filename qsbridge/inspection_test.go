@@ -395,7 +395,7 @@ func TestInspectQueryExposesFieldEncodingSummaries(t *testing.T) {
 		Index: IndexBackingString,
 		Encoding: EncodingProfile{
 			Kind:         EncodingBackingString,
-			LegacyName:   "StringHashBSI",
+			LegacyName:   "StringLexBSI",
 			Multiplicity: MultiplicityScalar,
 			Search:       SearchProfile{Enabled: true, Mode: "text"},
 			Rehydration:  RehydrationProfile{Kind: RehydrationLookup, Store: "kv"},

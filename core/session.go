@@ -1247,18 +1247,15 @@ func (s *Session) lookupColumnID(tbuf *TableBuffer, lookupVal, fkFieldSpec strin
 }
 
 func indexPath(tbuf *TableBuffer, field, path string) string {
+	return PartitionedStringIndexPath(tbuf.Table.Name, field, path, tbuf.CurrentTimestamp)
+}
 
-	ts := tbuf.CurrentTimestamp
-	key := fmt.Sprintf("%s/%s/%s", tbuf.Table.Name, field, formatShardTime(ts))
-	lookupPath := fmt.Sprintf("%s,/%s/%s/%s/%s", key, tbuf.Table.Name, field, path,
-		formatShardTime(ts))
-	if tbuf.Table.TimeQuantumType == "YMDH" {
-		utcTime := ts.UTC()
-		fpath := fmt.Sprintf("/%s/%s/%s/%s/%s", tbuf.Table.Name, field, path,
-			fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()), formatShardTime(ts))
-		lookupPath = key + "," + fpath
-	}
-	return lookupPath
+// PartitionedStringIndexPath returns a KV sidecar path with a shard-aware
+// routing key and a coarse physical store path. The route key keeps the sidecar
+// collocated with the BSI shard while avoiding one Pogreb store per time shard.
+func PartitionedStringIndexPath(table, field, path string, ts time.Time) string {
+	key := fmt.Sprintf("%s/%s/%s", table, field, formatShardTime(ts))
+	return fmt.Sprintf("%s,/%s/%s/%s", key, table, field, path)
 }
 
 // LookupKeyBatch - Process a batch of keys.

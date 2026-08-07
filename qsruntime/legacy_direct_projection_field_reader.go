@@ -123,7 +123,7 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionField(ctx context.Context,
 		return r.readProjectionDictionaryIDs(ctx, request, index, fieldName)
 	}
 	if nativeProjectionAttributeIsBackingString(attr) {
-		return r.readProjectionBackingStringKeys(request, index, fieldName), nil, nil
+		return r.readProjectionStringLexRemainderKeys(ctx, request, index, fieldName, attr)
 	}
 	if nativeProjectionAttributeIsDirectBitmap(attr) {
 		return r.readProjectionDirectBitmapIDs(ctx, request, index, fieldName, attr)
@@ -450,19 +450,93 @@ func (r NativeProjectionBSIFieldReader) readProjectionDictionaryIDs(ctx context.
 	}, nil, nil
 }
 
-func (r NativeProjectionBSIFieldReader) readProjectionBackingStringKeys(request NativeProjectionFieldReadRequest, index string, fieldName string) NativeProjectionFieldReadResult {
+func (r NativeProjectionBSIFieldReader) readProjectionStringLexRemainderKeys(ctx context.Context, request NativeProjectionFieldReadRequest, index string, fieldName string, attr *core.Attribute) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
 	lookupRef := index + "." + fieldName
-	values := make([]qsbridge.ResultCell, 0, len(request.Rownums))
-	for _, rownum := range request.Rownums {
-		values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: uint64(rownum)})
+	if len(request.Rownums) == 0 {
+		return NativeProjectionFieldReadResult{
+			Field:      request.Field,
+			Encoded:    true,
+			LookupKind: NativeProjectionLookupBackingString,
+			LookupRef:  lookupRef,
+		}, nil, nil
+	}
+	if r.Reader == nil {
+		return NativeProjectionFieldReadResult{}, nativeProjectionUnsupported("native StringLexBSI projection has no BSI reader for " + index + "." + fieldName), nil
+	}
+	bsiRequest := NativeProjectionBSIReadRequest{
+		Index:           index,
+		Field:           request.Field,
+		PhysicalField:   fieldName,
+		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+		FromEpochMillis: request.FromEpochMillis,
+		ToEpochMillis:   request.ToEpochMillis,
+	}
+	if valueReader, ok := r.Reader.(NativeProjectionBSIValueBatchReader); ok {
+		readResults, diagnostics, err := valueReader.ReadProjectionBSIValues(ctx, []NativeProjectionBSIReadRequest{bsiRequest})
+		if err != nil || diagnostics.BlocksNative() {
+			probes := []ExecutionProbe(nil)
+			if len(readResults) > 0 {
+				probes = readResults[0].Probes
+			}
+			return NativeProjectionFieldReadResult{Probes: probes}, diagnostics, err
+		}
+		if len(readResults) == 1 {
+			result, resultDiagnostics := nativeProjectionStringLexRemainderResultFromValues(request, bsiRequest, attr, readResults[0])
+			return result, resultDiagnostics, nil
+		}
+	}
+	readResult, diagnostics, err := r.Reader.ReadProjectionBSI(ctx, bsiRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, diagnostics, err
+	}
+	return nativeProjectionStringLexRemainderResultFromBSI(request, bsiRequest, attr, readResult)
+}
+
+func nativeProjectionStringLexRemainderResultFromBSI(request NativeProjectionFieldReadRequest, bsiRequest NativeProjectionBSIReadRequest, attr *core.Attribute, readResult NativeProjectionBSIReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	if readResult.BSI == nil {
+		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, nativeProjectionUnsupported("native StringLexBSI projection returned no BSI for " + bsiRequest.Index + "." + bsiRequest.PhysicalField), nil
+	}
+	return nativeProjectionStringLexRemainderResultFromBigValues(request, bsiRequest, attr, readResult.BSI.GetBigValues(nativeProjectionRownumColumnIDs(bsiRequest.Rownums)), readResult.Probes)
+}
+
+func nativeProjectionStringLexRemainderResultFromValues(request NativeProjectionFieldReadRequest, bsiRequest NativeProjectionBSIReadRequest, attr *core.Attribute, readResult NativeProjectionBSIValueReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet) {
+	if len(readResult.Values) != len(bsiRequest.Rownums) {
+		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native StringLexBSI value projection returned "+strconv.Itoa(len(readResult.Values))+" values for "+strconv.Itoa(len(bsiRequest.Rownums))+" rownums"),
+		}
+	}
+	result, diagnostics, _ := nativeProjectionStringLexRemainderResultFromBigValues(request, bsiRequest, attr, readResult.Values, readResult.Probes)
+	return result, diagnostics
+}
+
+func nativeProjectionStringLexRemainderResultFromBigValues(request NativeProjectionFieldReadRequest, bsiRequest NativeProjectionBSIReadRequest, attr *core.Attribute, bigValues []*big.Int, probes []ExecutionProbe) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	if len(bigValues) != len(bsiRequest.Rownums) {
+		return NativeProjectionFieldReadResult{Probes: probes}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native StringLexBSI projection returned "+strconv.Itoa(len(bigValues))+" values for "+strconv.Itoa(len(bsiRequest.Rownums))+" rownums"),
+		}, nil
+	}
+	values := make([]qsbridge.ResultCell, 0, len(bigValues))
+	for i, value := range bigValues {
+		if value == nil {
+			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
+			continue
+		}
+		values = append(values, qsbridge.ResultCell{
+			Kind: qsbridge.ValueInt,
+			Value: NativeProjectionStringRemainderKey{
+				RowNum: uint64(bsiRequest.Rownums[i]),
+				Prefix: nativeProjectionStringLexRender(attr, value),
+			},
+		})
 	}
 	return NativeProjectionFieldReadResult{
 		Field:      request.Field,
 		Values:     values,
 		Encoded:    true,
 		LookupKind: NativeProjectionLookupBackingString,
-		LookupRef:  lookupRef,
-	}
+		LookupRef:  bsiRequest.Index + "." + bsiRequest.PhysicalField,
+		Probes:     probes,
+	}, nil, nil
 }
 
 func (r NativeProjectionBSIFieldReader) readProjectionDirectBitmapIDs(ctx context.Context, request NativeProjectionFieldReadRequest, index string, fieldName string, attr *core.Attribute) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
@@ -886,7 +960,7 @@ func nativeProjectionAttributeRequiresFallback(attr *core.Attribute) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
-	case "stringhashbsi", "stringenum":
+	case "stringenum":
 		return true
 	case "stringlexbsi":
 		return nativeProjectionStringLexNeedsRemainder(attr)
@@ -905,10 +979,7 @@ func nativeProjectionAttributeIsStringEnum(attr *core.Attribute) bool {
 }
 
 func nativeProjectionAttributeIsBackingString(attr *core.Attribute) bool {
-	if attr == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(attr.MappingStrategy), "StringHashBSI")
+	return nativeProjectionStringLexNeedsRemainder(attr)
 }
 
 func nativeProjectionStringLexNeedsRemainder(attr *core.Attribute) bool {

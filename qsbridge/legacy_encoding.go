@@ -4,7 +4,6 @@ import "strings"
 
 const (
 	legacyStringEnum     = "StringEnum"
-	legacyStringHashBSI  = "StringHashBSI"
 	legacyStringLexBSI   = "StringLexBSI"
 	legacyFloatScaleBSI  = "FloatScaleBSI"
 	legacyIntBSI         = "IntBSI"
@@ -32,8 +31,7 @@ type LegacyEncodingOptions struct {
 // LegacyEncodingProfile maps current Quanta storage names into the qsbridge encoding model.
 //
 // The mapping is intentionally conservative. It records compatibility semantics
-// without claiming future capabilities such as StringLexBSI prefix behavior for
-// legacy StringHashBSI fields.
+// while keeping the planner-facing encoding contract explicit.
 func LegacyEncodingProfile(legacyName string, options LegacyEncodingOptions) EncodingProfile {
 	multiplicity := MultiplicityScalar
 	if options.NonExclusive {
@@ -51,21 +49,6 @@ func LegacyEncodingProfile(legacyName string, options LegacyEncodingOptions) Enc
 				PredicateCapabilityEquality,
 				PredicateCapabilityMembership,
 				PredicateCapabilityPrefix,
-			},
-			ProjectionCapabilities: ProjectionCapabilities{
-				ProjectionCapabilityLookup,
-				ProjectionCapabilityOriginalValue,
-			},
-		}
-	case strings.ToLower(legacyStringHashBSI):
-		return EncodingProfile{
-			Kind:         EncodingBackingString,
-			LegacyName:   legacyStringHashBSI,
-			Multiplicity: multiplicity,
-			Search:       SearchProfile{Enabled: options.Searchable, Mode: legacySearchMode(options.Searchable)},
-			Rehydration:  RehydrationProfile{Kind: RehydrationLookup, Store: "kv"},
-			PredicateCapabilities: PredicateCapabilities{
-				PredicateCapabilityEquality,
 			},
 			ProjectionCapabilities: ProjectionCapabilities{
 				ProjectionCapabilityLookup,

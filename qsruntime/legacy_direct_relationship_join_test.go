@@ -1079,7 +1079,7 @@ func TestLegacyDirectRelationshipSingleEdgePrefiltersParentResidualBeforeReducti
 		BasicTable: &shared.BasicTable{Name: "part", PrimaryKey: "p_partkey"},
 		AttributeNameMap: map[string]*core.Attribute{
 			"p_partkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "p_partkey", SourceName: "p_partkey", Type: "Integer", MappingStrategy: "IntBSI"}},
-			"p_name":    {BasicAttribute: &shared.BasicAttribute{FieldName: "p_name", SourceName: "p_name", Type: "String", MappingStrategy: "StringHashBSI"}},
+			"p_name":    {BasicAttribute: &shared.BasicAttribute{FieldName: "p_name", SourceName: "p_name", Type: "String", MappingStrategy: "StringLexBSI"}},
 		},
 	}
 	cache.TableCache["lineitem"] = &core.Table{
@@ -1666,7 +1666,7 @@ func TestLegacyDirectRelationshipAllRownumRequestPrefersCatalogIdentityOverEndpo
 			TimeQuantumField: "createdAtTimestamp",
 		},
 		Attributes: []core.Attribute{
-			{BasicAttribute: &shared.BasicAttribute{FieldName: "cust_id", Type: "string", MappingStrategy: "StringHashBSI"}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "cust_id", Type: "string", MappingStrategy: "StringLexBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "createdAtTimestamp", Type: "DateTime", MappingStrategy: "SysMicroBSI"}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "rownum", Type: "int", MappingStrategy: "IntDirect"}},
 		},

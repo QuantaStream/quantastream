@@ -31,7 +31,7 @@ const (
 	ProjectionMaterializationReasonNativeDictionary ProjectionMaterializationCapabilityReason = "native_dictionary"
 	// ProjectionMaterializationReasonNativeBackingString means backing-string ids can be rehydrated through KV/cache lookup.
 	ProjectionMaterializationReasonNativeBackingString ProjectionMaterializationCapabilityReason = "native_backing_string_kvstore"
-	// ProjectionMaterializationReasonBackingStringKV means StringHashBSI/backing-string fields still need KV/cache rehydration.
+	// ProjectionMaterializationReasonBackingStringKV means StringLexBSI/backing-string fields still need KV/cache rehydration.
 	ProjectionMaterializationReasonBackingStringKV ProjectionMaterializationCapabilityReason = "backing_string_kvstore_needed"
 	// ProjectionMaterializationReasonUnsupportedEncoding means the encoding is not yet natively materializable.
 	ProjectionMaterializationReasonUnsupportedEncoding ProjectionMaterializationCapabilityReason = "unsupported_encoding"

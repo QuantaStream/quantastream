@@ -459,6 +459,42 @@ func TestNativeProjectionCompositeRehydratorRoutesBackingStringLookups(t *testin
 	}
 }
 
+func TestNativeProjectionCompositeRehydratorJoinsStringLexPrefixAndSuffix(t *testing.T) {
+	rehydrator := NativeProjectionCompositeRehydrator{
+		BackingStrings: NativeProjectionBackingStringLookupReaderFunc(func(_ context.Context, request NativeProjectionBackingStringLookupRequest) (NativeProjectionBackingStringLookupResult, qsbridge.DiagnosticSet, error) {
+			if len(request.Values) != 2 {
+				t.Fatalf("request values = %#v, want two StringLex remainder keys", request.Values)
+			}
+			return NativeProjectionBackingStringLookupResult{
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "ires"},
+					{Kind: qsbridge.ValueString, Value: ""},
+				},
+			}, nil, nil
+		}),
+	}
+
+	result, diagnostics, err := rehydrator.RehydrateProjectionValues(context.Background(), NativeProjectionValueRehydrationRequest{
+		Index:      "customer",
+		Field:      qsbridge.QuantaProjectionField{Index: "customer", Field: "c_name", Type: qsbridge.DataTypeString},
+		LookupKind: NativeProjectionLookupBackingString,
+		LookupRef:  "customer.c_name",
+		Values: []qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: NativeProjectionStringRemainderKey{RowNum: 11, Prefix: "Buenos A"}},
+			{Kind: qsbridge.ValueInt, Value: NativeProjectionStringRemainderKey{RowNum: 12, Prefix: "Seattle"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RehydrateProjectionValues error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if result.Values[0].Value != "Buenos Aires" || result.Values[1].Value != "Seattle" {
+		t.Fatalf("values = %#v, want full StringLex values", result.Values)
+	}
+}
+
 func TestFallbackProjectionMaterializationKernelUsesFallbackForUnsupportedNative(t *testing.T) {
 	field := qsbridge.QuantaProjectionField{Index: "orders", Field: "o_orderkey", Visible: true}
 	calledFallback := false

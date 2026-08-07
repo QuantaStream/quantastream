@@ -101,9 +101,9 @@ func TestBatchBufferPartitionedStringFlushCollapsesPaths(t *testing.T) {
 	buffer := NewBatchBuffer(NewBitmapIndex(conn), NewKVStore(conn), 100)
 
 	paths := []string{
-		"lineitem/l_comment/1994-10-16T00,/lineitem/l_comment/lex_remainders/1994-10-16T00",
-		"lineitem/l_comment/1994-10-17T00,/lineitem/l_comment/lex_remainders/1994-10-17T00",
-		"lineitem/l_comment/1994-10-18T00,/lineitem/l_comment/lex_remainders/1994-10-18T00",
+		"lineitem/l_comment/1994-10-16T00,/lineitem/l_comment/lex_remainders",
+		"lineitem/l_comment/1994-10-17T00,/lineitem/l_comment/lex_remainders",
+		"lineitem/l_comment/1994-10-18T00,/lineitem/l_comment/lex_remainders",
 	}
 	for i, path := range paths {
 		if err := buffer.SetPartitionedString(path, uint64(i+1), "value"); err != nil {
@@ -115,6 +115,11 @@ func TestBatchBufferPartitionedStringFlushCollapsesPaths(t *testing.T) {
 	}
 	if kvService.batchPutCalls != 1 || len(kvService.batchPutItems) != 3 {
 		t.Fatalf("KV batch put calls/items = %d/%d, want one collapsed 3-entry batch", kvService.batchPutCalls, len(kvService.batchPutItems))
+	}
+	for _, item := range kvService.batchPutItems {
+		if item.IndexPath != "lineitem/l_comment/lex_remainders" {
+			t.Fatalf("routed item path = %q, want coarse sidecar path", item.IndexPath)
+		}
 	}
 	profile := buffer.LastFlushProfile()
 	if profile.PartitionStringPutCalls != 1 || profile.PartitionStringBatchCount != 3 || profile.PartitionStringEntryCount != 3 {

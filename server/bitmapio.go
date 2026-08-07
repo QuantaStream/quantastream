@@ -48,7 +48,6 @@ type Partition struct {
 	RowIDOrBits int64
 	Time        time.Time
 	TQType      string
-	HasStrings  bool
 	IsPK        bool // is primary key
 	Shard       interface{}
 }
@@ -76,12 +75,6 @@ func (m *BitmapIndex) NewPartitionOperation(p *Partition, removeOnly bool) *Part
 		return nil
 	}
 	p.IsPK = p.Field == pka[0].FieldName
-	attr, err := table.GetAttribute(p.Field)
-	if err != nil {
-		u.Errorf("assertion fail: %v", err)
-	} else {
-		p.HasStrings = attr.MappingStrategy == "StringHashBSI"
-	}
 	return &PartitionOperation{Partition: p, RemoveOnly: removeOnly}
 }
 
@@ -733,25 +726,14 @@ func (m *BitmapIndex) executeOperation(aop *PartitionOperation) error {
 		return nil
 	}
 	localKV := m.Node.GetNodeService("KVStore").(*KVStore)
-	if aop.HasStrings {
+	if aop.IsPK {
 		var iname string
-		oldPath, iname = m.generateStringsFilePath(aop, false)
+		oldPath, iname = m.generateIndexFilePath(aop, false, 0)
 		localKV.closeStore(iname)
-		aop.newPath, _ = m.generateStringsFilePath(aop, true)
+		aop.newPath, _ = m.generateIndexFilePath(aop, true, 0)
 		os.MkdirAll(aop.newPath, 0755)
 		if err := filepath.Walk(oldPath, aop.perform); err != nil {
 			return err
-		}
-	} else {
-		if aop.IsPK {
-			var iname string
-			oldPath, iname = m.generateIndexFilePath(aop, false, 0)
-			localKV.closeStore(iname)
-			aop.newPath, _ = m.generateIndexFilePath(aop, true, 0)
-			os.MkdirAll(aop.newPath, 0755)
-			if err := filepath.Walk(oldPath, aop.perform); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

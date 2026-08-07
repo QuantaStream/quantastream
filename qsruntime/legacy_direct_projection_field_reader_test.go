@@ -363,21 +363,46 @@ func TestNativeProjectionDictionaryIDCellsChoosesLowestIDForMultiValueRow(t *tes
 	}
 }
 
-func TestLegacyDirectProjectionBSIFieldReaderReadsBackingStringKeys(t *testing.T) {
-	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
-		"customer": {
-			BasicTable: &shared.BasicTable{Name: "customer"},
-			AttributeNameMap: map[string]*core.Attribute{
-				"c_name": {BasicAttribute: &shared.BasicAttribute{FieldName: "c_name", Type: "String", MappingStrategy: "StringHashBSI"}},
-			},
-		},
+func TestLegacyDirectProjectionBSIFieldReaderReadsStringLexRemainderKeys(t *testing.T) {
+	attr := &core.Attribute{BasicAttribute: &shared.BasicAttribute{
+		FieldName:       "c_name",
+		Type:            "String",
+		MappingStrategy: "StringLexBSI",
+		MapperConfig:    map[string]string{"length": "8"},
+		Size:            32,
 	}}
-	reader := NativeProjectionBSIFieldReader{TableCache: tableCache}
+	table := &core.Table{
+		BasicTable:       &shared.BasicTable{Name: "customer"},
+		AttributeNameMap: map[string]*core.Attribute{"c_name": attr},
+	}
+	attr.Parent = table
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"customer": table,
+	}}
+	mapper, err := core.NewStringLexBSIMapper(map[string]string{"length": "8"})
+	if err != nil {
+		t.Fatalf("NewStringLexBSIMapper returned error: %v", err)
+	}
+	encoded, err := mapper.MapValue(attr, "Buenos Aires", nil, false)
+	if err != nil {
+		t.Fatalf("MapValue returned error: %v", err)
+	}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(11, encoded)
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader: NativeProjectionBSIReaderFunc(func(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			if request.Index != "customer" || request.PhysicalField != "c_name" {
+				t.Fatalf("read request = %#v, want customer.c_name", request)
+			}
+			return NativeProjectionBSIReadResult{BSI: bsi}, nil, nil
+		}),
+	}
 
 	result, diagnostics, err := reader.ReadProjectionField(context.Background(), NativeProjectionFieldReadRequest{
 		Index:   "customer",
 		Field:   qsbridge.QuantaProjectionField{Index: "customer", Field: "c_name", Type: qsbridge.DataTypeString},
-		Rownums: []qsbridge.QuantaRownum{11, 17},
+		Rownums: []qsbridge.QuantaRownum{11},
 	})
 	if err != nil {
 		t.Fatalf("ReadProjectionField error = %v", err)
@@ -386,10 +411,11 @@ func TestLegacyDirectProjectionBSIFieldReaderReadsBackingStringKeys(t *testing.T
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
 	if !result.Encoded || result.LookupKind != NativeProjectionLookupBackingString || result.LookupRef != "customer.c_name" {
-		t.Fatalf("result = %#v, want encoded backing-string lookup keys", result)
+		t.Fatalf("result = %#v, want encoded StringLex remainder lookup keys", result)
 	}
-	if result.Values[0].Value != uint64(11) || result.Values[1].Value != uint64(17) {
-		t.Fatalf("values = %#v, want rownum lookup keys 11 and 17", result.Values)
+	key, ok := result.Values[0].Value.(NativeProjectionStringRemainderKey)
+	if !ok || key.RowNum != 11 || key.Prefix != "Buenos A" {
+		t.Fatalf("values = %#v, want rownum 11 with StringLex prefix Buenos A", result.Values)
 	}
 }
 

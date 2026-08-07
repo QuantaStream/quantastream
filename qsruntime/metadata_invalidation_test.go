@@ -55,7 +55,7 @@ func TestSchemaMutationInvalidatesStringEnumDictionariesForCachedTable(t *testin
 		BasicTable: &shared.BasicTable{Name: "customers_qa"},
 		Attributes: []core.Attribute{
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "city", MappingStrategy: "StringEnum"}},
-			{BasicAttribute: &shared.BasicAttribute{FieldName: "state", MappingStrategy: "StringHashBSI"}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "state", MappingStrategy: "StringLexBSI"}},
 		},
 	}
 	handle := LegacyQuantaSessionHandle{

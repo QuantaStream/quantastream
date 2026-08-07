@@ -240,7 +240,7 @@ table access, and metadata-aware write coordination.
 
 The table and catalog-shaped code in `shared` also needs a careful migration.
 Data nodes legitimately need catalog and encoding metadata: they own local
-storage artifacts, relationship vectors, BSI layouts, StringEnum/StringHash
+storage artifacts, relationship vectors, BSI layouts, StringEnum/StringLex
 state, shard windows, and physical index reads. That node visibility should
 come from the same Consul-backed metadata source as other components, ideally
 through the new catalog vocabulary or a node-side adapter that can translate it

@@ -1464,10 +1464,10 @@ The intended distinction is:
 - **Backing string** fields are ordinary string payloads that may need residual
   expression evaluation unless a more specific string index capability is
   present.
-- **StringHashBSI** should be treated as a legacy/equality-oriented strategy, not
+- **StringLexBSI** should be treated as a legacy/equality-oriented strategy, not
   as evidence that prefix or contains predicates are native.
 - **StringLexBSI** is the preferred future direction for replacing
-  `StringHashBSI` if lexical ordering, range-like string predicates, or cleaner
+  `StringLexBSI` if lexical ordering, range-like string predicates, or cleaner
   prefix planning become important.
 - **Text/search indexes** should be modeled as a separate capability family.
   Full-text search, substring matching, and searchable-schema behavior should

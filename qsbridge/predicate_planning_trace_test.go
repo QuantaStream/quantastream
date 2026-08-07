@@ -82,7 +82,7 @@ func TestPlanResultPredicatePlanningTraceShowsStringEnumPrefixLike(t *testing.T)
 	}
 }
 
-func TestPlanResultPredicatePlanningTraceShowsResidualBackingString(t *testing.T) {
+func TestPlanResultPredicatePlanningTraceShowsStringLexPushdown(t *testing.T) {
 	parser := stubParserBridge{statement: UnboundStatement{
 		SQL:  "select c_name from customer where c_name = ?",
 		Kind: QueryKindSelect,
@@ -99,7 +99,7 @@ func TestPlanResultPredicatePlanningTraceShowsResidualBackingString(t *testing.T
 					UnboundField("c", "c_name"),
 					UnboundParameter(1, DataTypeString),
 				),
-				Placement: PredicateResidualScan,
+				Placement: PredicatePushdown,
 				Scope:     PredicateScopeWhere,
 			}},
 			Result: ResultShape{Kind: ResultQuery},
@@ -108,17 +108,17 @@ func TestPlanResultPredicatePlanningTraceShowsResidualBackingString(t *testing.T
 	trace := testPredicatePlanningTrace(t, parser)
 	step := predicateTraceStep(t, trace, 0)
 
-	if step.Placement != PredicateResidualScan {
-		t.Fatalf("placement = %q, want residual scan", step.Placement)
+	if step.Placement != PredicatePushdown {
+		t.Fatalf("placement = %q, want pushdown", step.Placement)
 	}
-	if !planTraceHas(step.InferredCapabilities, CapabilityResidualScan) {
-		t.Fatalf("inferred capabilities = %#v, want residual scan", step.InferredCapabilities)
+	if !planTraceHas(step.InferredCapabilities, CapabilityEncodingEquality) {
+		t.Fatalf("inferred capabilities = %#v, want EncodingEquality", step.InferredCapabilities)
 	}
-	if len(step.FieldEvidence) != 1 || step.FieldEvidence[0].Encoding != EncodingBackingString {
-		t.Fatalf("field evidence = %#v, want backing string", step.FieldEvidence)
+	if len(step.FieldEvidence) != 1 || step.FieldEvidence[0].Encoding != EncodingStringLexBSI {
+		t.Fatalf("field evidence = %#v, want StringLexBSI", step.FieldEvidence)
 	}
-	if !step.FieldEvidence[0].Searchable || step.FieldEvidence[0].RehydrationStore != "kv" {
-		t.Fatalf("field evidence = %#v, want searchable kv-backed string", step.FieldEvidence[0])
+	if !step.FieldEvidence[0].Searchable || step.FieldEvidence[0].RequiresLookup {
+		t.Fatalf("field evidence = %#v, want searchable inline lexical string", step.FieldEvidence[0])
 	}
 }
 

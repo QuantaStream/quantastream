@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	hash "github.com/aviddiviner/go-murmur"
 )
 
 // QuantaFragmentOperation names a logical bitmap operation in Quanta's execution dialect.
@@ -1197,10 +1195,6 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		fragment, diagnostics, ok := quantaIntermediateNullCheckFragment(op, field)
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
 	}
-	if field.Index == IndexBackingString && field.Encoding.LegacyName == legacyStringHashBSI {
-		fragment, diagnostics, ok := quantaIntermediateStringHashBSIComparisonFragment(op, field, value)
-		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
-	}
 	if field.Encoding.Kind == EncodingStringLexBSI {
 		fragment, diagnostics, ok := quantaIntermediateStringLexBSIComparisonFragment(op, field, value)
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
@@ -1451,38 +1445,11 @@ func quantaIntermediateBoolDirectComparisonFragment(op BinaryOp, field FieldRef,
 	}, nil, true
 }
 
-func quantaIntermediateStringHashBSIComparisonFragment(op BinaryOp, field FieldRef, value LiteralExpr) (QuantaQueryFragment, DiagnosticSet, bool) {
-	switch op {
-	case BinaryOpEqual, BinaryOpNotEqual:
-	default:
-		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("only equality predicates are lowered for StringHashBSI fields"), false
-	}
-	if value.Kind != ValueString {
-		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringHashBSI predicates require string values"), false
-	}
-	text, ok := value.Value.(string)
-	if !ok {
-		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringHashBSI predicates require string values"), false
-	}
-	return QuantaQueryFragment{
-		Index:     field.Table.Table,
-		Role:      quantaIntermediateTableRole(field.Table),
-		Field:     quantaIntermediateFieldName(field),
-		Operation: quantaIntermediateEqualityOperation(op),
-		BSIOp:     QuantaBSIOpEQ,
-		Value:     quantaIntermediateStringHashBSIValue(text),
-	}, nil, true
-}
-
 func quantaIntermediateEqualityOperation(op BinaryOp) QuantaFragmentOperation {
 	if op == BinaryOpNotEqual {
 		return QuantaOperationDifference
 	}
 	return QuantaOperationIntersect
-}
-
-func quantaIntermediateStringHashBSIValue(value string) *big.Int {
-	return big.NewInt(int64(hash.MurmurHash2([]byte(value), 0)))
 }
 
 func quantaIntermediateStringLexBSIComparisonFragment(op BinaryOp, field FieldRef, value LiteralExpr) (QuantaQueryFragment, DiagnosticSet, bool) {
@@ -1660,9 +1627,6 @@ func (l QuantaIntermediateLowerer) lowerInPredicate(predicate Predicate, paramet
 	if !ok {
 		return QuantaQueryFragment{}, nil, false
 	}
-	if field.Index == IndexBackingString && field.Encoding.LegacyName == legacyStringHashBSI {
-		return l.lowerStringHashBSIInPredicate(field, list, parameters, quantaIntermediateInNegated(predicate))
-	}
 	if field.Encoding.Kind == EncodingStringLexBSI {
 		return l.lowerStringLexBSIInPredicate(field, list, parameters, quantaIntermediateInNegated(predicate))
 	}
@@ -1699,36 +1663,6 @@ func (l QuantaIntermediateLowerer) lowerInPredicate(predicate Predicate, paramet
 		Values:    values,
 		Literals:  literals,
 		Negate:    quantaIntermediateInNegated(predicate),
-	}, nil, true
-}
-
-func (l QuantaIntermediateLowerer) lowerStringHashBSIInPredicate(field FieldRef, list ListExpr, parameters ParameterBindingSet, negate bool) (QuantaQueryFragment, DiagnosticSet, bool) {
-	values := make([]*big.Int, 0, len(list.Items))
-	for _, item := range list.Items {
-		value, diagnostics, ok := quantaIntermediateValue(item, parameters)
-		if !ok {
-			return QuantaQueryFragment{}, diagnostics, false
-		}
-		if value.Kind != ValueString {
-			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringHashBSI IN predicates require string values"), false
-		}
-		text, ok := value.Value.(string)
-		if !ok {
-			return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringHashBSI IN predicates require string values"), false
-		}
-		values = append(values, quantaIntermediateStringHashBSIValue(text))
-	}
-	operation := QuantaOperationIntersect
-	if negate {
-		operation = QuantaOperationDifference
-	}
-	return QuantaQueryFragment{
-		Index:     field.Table.Table,
-		Role:      quantaIntermediateTableRole(field.Table),
-		Field:     quantaIntermediateFieldName(field),
-		Operation: operation,
-		BSIOp:     QuantaBSIOpBatchEQ,
-		Values:    values,
 	}, nil, true
 }
 

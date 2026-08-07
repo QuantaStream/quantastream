@@ -96,17 +96,17 @@ func TestBindContextResolveFieldPreservesEncodingProfile(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
 	}
-	if ref.Encoding.Kind != EncodingBackingString {
-		t.Fatalf("Encoding.Kind = %q, want %q", ref.Encoding.Kind, EncodingBackingString)
+	if ref.Encoding.Kind != EncodingStringLexBSI {
+		t.Fatalf("Encoding.Kind = %q, want %q", ref.Encoding.Kind, EncodingStringLexBSI)
 	}
-	if !ref.Encoding.RequiresLookup() {
-		t.Fatalf("expected backing string projection to require lookup")
+	if ref.Encoding.RequiresLookup() {
+		t.Fatalf("expected full-inline StringLexBSI projection to avoid lookup")
 	}
 	if !ref.Encoding.Searchable() {
-		t.Fatalf("expected searchable legacy encoding to survive binding")
+		t.Fatalf("expected searchable encoding to survive binding")
 	}
-	if ref.Encoding.SupportsPrefix() {
-		t.Fatalf("legacy backing string should not imply prefix capability")
+	if !ref.Encoding.SupportsPrefix() {
+		t.Fatalf("expected StringLexBSI to support prefix capability")
 	}
 }
 
@@ -131,7 +131,7 @@ func TestBindContextResolveRownumPseudoField(t *testing.T) {
 	}
 }
 
-func TestBindPredicateDemotesBackingStringRangeToResidualScan(t *testing.T) {
+func TestBindPredicateKeepsStringLexRangeAsPushdown(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	if _, diagnostics := context.AddTable(UnboundTable{Name: "customer", Alias: "c"}); diagnostics.BlocksNative() {
 		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
@@ -149,8 +149,8 @@ func TestBindPredicateDemotesBackingStringRangeToResidualScan(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
 	}
-	if predicate.Placement != PredicateResidualScan {
-		t.Fatalf("Placement = %q, want %q", predicate.Placement, PredicateResidualScan)
+	if predicate.Placement != PredicatePushdown {
+		t.Fatalf("Placement = %q, want %q", predicate.Placement, PredicatePushdown)
 	}
 }
 
@@ -283,7 +283,7 @@ func testBindCatalog() MemoryCatalog {
 				Name:   "customer",
 				Fields: []FieldDefinition{
 					{Name: "c_custkey", Type: DataTypeInt, Index: IndexBSI},
-					{Name: "c_name", Type: DataTypeString, Index: IndexBackingString, Encoding: LegacyEncodingProfile("StringHashBSI", LegacyEncodingOptions{Searchable: true})},
+					{Name: "c_name", Type: DataTypeString, Index: IndexBSI, Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{Searchable: true, PrefixLength: 10, MaxLength: 10})},
 					{Name: "shared_key", Type: DataTypeInt, Index: IndexBSI},
 				},
 			},

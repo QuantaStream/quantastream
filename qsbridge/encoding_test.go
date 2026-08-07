@@ -5,7 +5,7 @@ import "testing"
 func TestEncodingProfileStringLexBSIRequiresLookupForLongValues(t *testing.T) {
 	profile := EncodingProfile{
 		Kind:           EncodingStringLexBSI,
-		LegacyName:     "StringHashBSI",
+		LegacyName:     "StringLexBSI",
 		PrefixLength:   16,
 		MaxLength:      -1,
 		RemainderStore: "kv",

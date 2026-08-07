@@ -13,7 +13,7 @@ import (
 	"github.com/QuantaStream/quantastream/source"
 )
 
-// LegacyDirectBackingStringLookupReader resolves legacy StringHashBSI backing
+// LegacyDirectBackingStringLookupReader resolves legacy StringLexBSI backing
 // strings through KVStore without going through core.Projector.
 type LegacyDirectBackingStringLookupReader struct {
 	Source     *source.QuantaSource
@@ -92,7 +92,7 @@ func (r LegacyDirectBackingStringLookupReader) LookupProjectionBackingStrings(_ 
 		}
 		for rownum, outputPositions := range positions[path] {
 			visible, ok := nativeProjectionBackingStringLookupValue(lookup, rownum)
-			if !ok || visible == "" {
+			if !ok {
 				continue
 			}
 			for _, outputPosition := range outputPositions {
@@ -123,20 +123,7 @@ func legacyDirectBackingStringLookupTarget(request NativeProjectionBackingString
 
 func legacyDirectBackingStringPath(table *core.Table, field string, ts time.Time) string {
 	store := legacyDirectBackingStringStore(table, field)
-	shard := ts.UTC().Format("2006-01-02T15")
-	key := fmt.Sprintf("%s/%s/%s", table.Name, field, shard)
-	lookupPath := fmt.Sprintf("%s,/%s/%s/%s/%s", key, table.Name, field, store, shard)
-	if table.TimeQuantumType == "YMDH" {
-		utcTime := ts.UTC()
-		fpath := fmt.Sprintf("/%s/%s/%s/%s/%s",
-			table.Name,
-			field,
-			store,
-			fmt.Sprintf("%d%02d%02d", utcTime.Year(), utcTime.Month(), utcTime.Day()),
-			shard)
-		lookupPath = key + "," + fpath
-	}
-	return lookupPath
+	return core.PartitionedStringIndexPath(table.Name, field, store, ts)
 }
 
 func legacyDirectBackingStringStore(table *core.Table, field string) string {
@@ -153,6 +140,13 @@ func nativeProjectionBackingStringRowKey(value qsbridge.ResultCell) (uint64, boo
 		return 0, false
 	}
 	switch typed := value.Value.(type) {
+	case NativeProjectionStringRemainderKey:
+		return typed.RowNum, true
+	case *NativeProjectionStringRemainderKey:
+		if typed == nil {
+			return 0, false
+		}
+		return typed.RowNum, true
 	case int:
 		if typed < 0 {
 			return 0, false

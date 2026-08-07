@@ -143,7 +143,6 @@ There is a list of the "built-in" strategies:
 | `TimestampBSI`      | Datetime to BSI range encoding with configurable second/millisecond/microsecond/nanosecond granularity |
 | `StringEnum`        | Direct mapping of set of enumerated strings to rowID (<500 cardinality)                   |
 | `StringLexBSI`      | Lexical string BSI encoding with optional KV-backed remainder for long strings            |
-| `StringHashBSI`     | Compatibility hash-string BSI mapper for older schemas                                    |
 | `UUIDBSI`           | UUID to 128-bit BSI encoding with configurable RFC 4122 or middle-endian byte order        |
 | `StringToIntDirect` | Parse string to int and use directly.                                                     |
 | `BoolRegex`         | Map string to a boolean value via a pattern (requires configuration)                      |
