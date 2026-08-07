@@ -345,7 +345,7 @@ func (m *BitmapIndex) saveCompleteBSIWithTimings(bsi *BSIBitmap, indexName, fiel
 	timings.bundleBytes = uint64(len(bundle))
 
 	pathStart := time.Now()
-	dir, bundlePath := m.bsiBundleFilePathWithCreate(indexName, fieldName, ts, bsi.TQType, false)
+	dir, bundlePath := m.bsiBundleFilePath(indexName, fieldName, ts, bsi.TQType)
 	timings.pathElapsed = time.Since(pathStart)
 	fileWriteStart := time.Now()
 	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
@@ -361,12 +361,8 @@ func (m *BitmapIndex) saveCompleteBSIWithTimings(bsi *BSIBitmap, indexName, fiel
 }
 
 func (m *BitmapIndex) bsiBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
-	return m.bsiBundleFilePathWithCreate(indexName, fieldName, ts, tqType, true)
-}
-
-func (m *BitmapIndex) bsiBundleFilePathWithCreate(indexName, fieldName string, ts time.Time, tqType string, create bool) (string, string) {
 	partition := &Partition{Index: indexName, Field: fieldName, Time: ts, TQType: tqType, RowIDOrBits: -1}
-	dir := m.generateBitmapFilePathWithCreate(partition, false, create)
+	dir := m.generateBitmapFilePath(partition, false)
 	return dir, filepath.Join(dir, bsiBundleFileName)
 }
 
