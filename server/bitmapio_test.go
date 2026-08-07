@@ -281,7 +281,7 @@ func TestSaveCompleteStandardBundleRemovesLegacyRowFiles(t *testing.T) {
 	}
 }
 
-func TestCommitForcesCleanStandardBitmapSavepoint(t *testing.T) {
+func TestCommitPersistsDirtyStandardBitmapWithoutRewritingCleanBundle(t *testing.T) {
 	cleanTime := time.Unix(100, 0)
 	dirtyTime := cleanTime.Add(time.Hour)
 	index := &BitmapIndex{
@@ -316,13 +316,29 @@ func TestCommitForcesCleanStandardBitmapSavepoint(t *testing.T) {
 	}
 	go index.batchProcessLoop(index.workers[0])
 
+	cleanBitmap := index.bitmapCache["customers"]["isActive"][0][cleanTime.UnixNano()]
+	if _, err := index.saveCompleteStandardBundle(map[uint64]*StandardBitmap{0: cleanBitmap},
+		"customers", "isActive", cleanTime, ""); err != nil {
+		t.Fatalf("saveCompleteStandardBundle returned error: %v", err)
+	}
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
+	beforeClean, err := os.Stat(cleanPath)
+	if err != nil {
+		t.Fatalf("expected clean standard bitmap precondition to be persisted, stat err=%v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
 	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
 		t.Fatalf("Commit returned error: %v", err)
 	}
 
-	cleanPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
-	if _, err := os.Stat(cleanPath); err != nil {
-		t.Fatalf("expected clean standard bitmap to be persisted by commit savepoint, stat err=%v", err)
+	afterClean, err := os.Stat(cleanPath)
+	if err != nil {
+		t.Fatalf("expected clean standard bitmap bundle to remain available, stat err=%v", err)
+	}
+	if !afterClean.ModTime().Equal(beforeClean.ModTime()) {
+		t.Fatalf("dirty commit rewrote clean standard bitmap bundle: before=%s after=%s",
+			beforeClean.ModTime(), afterClean.ModTime())
 	}
 	dirtyPath := index.dataDir + sep + "bitmap" + sep + "customers" + sep + "dirty_isActive" + sep + standardBundleLeafDir + sep + "default" + sep + standardBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {
@@ -388,7 +404,7 @@ func TestDirtyStandardBitmapPersistsCompleteShardBundle(t *testing.T) {
 	}
 }
 
-func TestCommitForcesCleanBSISavepoint(t *testing.T) {
+func TestCommitPersistsDirtyBSIWithoutRewritingCleanBundle(t *testing.T) {
 	cleanTime := time.Unix(100, 0)
 	dirtyTime := cleanTime.Add(time.Hour)
 	cleanValues := roaring64.NewDefaultBSI()
@@ -423,13 +439,28 @@ func TestCommitForcesCleanBSISavepoint(t *testing.T) {
 	}
 	go index.batchProcessLoop(index.workers[0])
 
+	cleanBSI := index.bsiCache["orders"]["clean_orderkey"][cleanTime.UnixNano()]
+	if err := index.saveCompleteBSI(cleanBSI, "orders", "clean_orderkey", int(cleanBSI.BitCount()), cleanTime); err != nil {
+		t.Fatalf("saveCompleteBSI returned error: %v", err)
+	}
+	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
+	beforeClean, err := os.Stat(cleanPath)
+	if err != nil {
+		t.Fatalf("expected clean BSI precondition to be persisted, stat err=%v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
 	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
 		t.Fatalf("Commit returned error: %v", err)
 	}
 
-	cleanPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "clean_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
-	if _, err := os.Stat(cleanPath); err != nil {
-		t.Fatalf("expected clean BSI to be persisted by commit savepoint, stat err=%v", err)
+	afterClean, err := os.Stat(cleanPath)
+	if err != nil {
+		t.Fatalf("expected clean BSI bundle to remain available, stat err=%v", err)
+	}
+	if !afterClean.ModTime().Equal(beforeClean.ModTime()) {
+		t.Fatalf("dirty commit rewrote clean BSI bundle: before=%s after=%s",
+			beforeClean.ModTime(), afterClean.ModTime())
 	}
 	dirtyPath := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "dirty_orderkey" + sep + "bsi" + sep + "default" + sep + bsiBundleFileName
 	if _, err := os.Stat(dirtyPath); err != nil {

@@ -391,6 +391,70 @@ func TestCommitReusesCleanManifestSavepoint(t *testing.T) {
 	}
 }
 
+func TestCommitDirtySavepointDoesNotRewriteCleanStandardBundle(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Unix(0, 0)
+	now := time.Unix(100, 0)
+	cleanBitmap := &StandardBitmap{
+		Bits:        roaring64.BitmapOf(1, 2, 3),
+		ModTime:     now,
+		PersistTime: now,
+	}
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customer": {
+			"c_mktsegment": {
+				10: {
+					shardTime.UnixNano(): cleanBitmap,
+				},
+			},
+		},
+	}
+	if _, err := index.saveCompleteStandardBundle(map[uint64]*StandardBitmap{10: cleanBitmap},
+		"customer", "c_mktsegment", shardTime, ""); err != nil {
+		t.Fatalf("saveCompleteStandardBundle returned error: %v", err)
+	}
+	_, standardPath := index.standardBitmapBundleFilePath("customer", "c_mktsegment", shardTime, "")
+	before, err := os.Stat(standardPath)
+	if err != nil {
+		t.Fatalf("stat clean standard bundle before commit: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	values.SetValue(2, 20)
+	index.bsiCache = map[string]map[string]map[int64]*BSIBitmap{
+		"lineitem": {
+			"l_quantity": {
+				shardTime.UnixNano(): {
+					BSI:         values,
+					ModTime:     now.Add(time.Second),
+					PersistTime: now,
+				},
+			},
+		},
+	}
+
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+	after, err := os.Stat(standardPath)
+	if err != nil {
+		t.Fatalf("stat clean standard bundle after commit: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("dirty commit rewrote unrelated clean standard bundle: before=%s after=%s",
+			before.ModTime(), after.ModTime())
+	}
+	manifest, observation := index.loadAndObserveBitmapShardManifest(nil)
+	if observation.Status != "ok" {
+		t.Fatalf("commit manifest status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+	if manifest.Stats.StandardEntries != 1 || manifest.Stats.BSIEntries != 1 {
+		t.Fatalf("manifest stats = %+v, want one standard and one BSI entry", manifest.Stats)
+	}
+}
+
 func TestObserveBitmapShardManifestReportsMissing(t *testing.T) {
 	index := newManifestPersistenceTestIndex(t)
 	scan := BitmapShardManifest{
