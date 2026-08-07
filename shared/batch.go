@@ -495,7 +495,7 @@ func (c *BatchBuffer) SetPartitionedString(indexPath string, key, value interfac
 
 	c.batchPartitionStrCount++
 
-	if c.batchPartitionStrCount >= c.batchSize/100 {
+	if c.batchPartitionStrCount >= c.partitionedStringFlushThreshold() {
 		for indexPath, valueMap := range c.batchPartitionStr {
 			if err := c.KVStore.BatchPut(indexPath, valueMap, true); err != nil {
 				return err
@@ -505,6 +505,13 @@ func (c *BatchBuffer) SetPartitionedString(indexPath string, key, value interfac
 		c.batchPartitionStrCount = 0
 	}
 	return nil
+}
+
+func (c *BatchBuffer) partitionedStringFlushThreshold() int {
+	if c.batchSize <= 0 {
+		return 1
+	}
+	return c.batchSize
 }
 
 // LookupLocalCIDForString - Lookup possible columnID in local batch cache

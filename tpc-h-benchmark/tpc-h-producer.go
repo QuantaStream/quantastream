@@ -47,29 +47,40 @@ type Main struct {
 	AWSRegion string
 	//S3svc        *s3.S3
 	//S3files      []*s3.Object
-	totalBytes   int64
-	bytesLock    sync.RWMutex
-	totalRecs    *Counter
-	failedRecs   *Counter
-	Stream       string
-	IsNested     bool
-	ConsulAddr   string
-	ConsulClient *api.Client
-	Table        *shared.BasicTable
-	outClient    *kinesis.Kinesis
-	conn         *shared.Conn
-	router       *core.SessionRouter
-	tableCache   *core.TableCacheStruct
-	lock         *api.Lock
-	shardCols    []*shared.BasicAttribute
-	Direct       bool
-	DirectMode   string
-	Workers      int
-	ConfigDir    string
-	DataDir      string
-	Database     string
-	BasePath     string
-	stdBackend   *qsinabox.StandardLocalBackend
+	totalBytes    int64
+	bytesLock     sync.RWMutex
+	totalRecs     *Counter
+	failedRecs    *Counter
+	Stream        string
+	IsNested      bool
+	ConsulAddr    string
+	ConsulClient  *api.Client
+	Table         *shared.BasicTable
+	outClient     *kinesis.Kinesis
+	conn          *shared.Conn
+	router        *core.SessionRouter
+	tableCache    *core.TableCacheStruct
+	lock          *api.Lock
+	shardCols     []*shared.BasicAttribute
+	Direct        bool
+	DirectMode    string
+	Workers       int
+	ConfigDir     string
+	DataDir       string
+	Database      string
+	BasePath      string
+	stdBackend    *qsinabox.StandardLocalBackend
+	putRowProfile *core.RouterPutRowProfile
+	flushProfile  *core.RouterFlushProfile
+	drainProfile  *core.RouterDrainProfile
+
+	splitElapsed          time.Duration
+	recordGenerateElapsed time.Duration
+	jsonMarshalElapsed    time.Duration
+	directEnqueueElapsed  time.Duration
+	kinesisPutElapsed     time.Duration
+	directEnqueueCount    int64
+	kinesisPutCount       int64
 }
 
 type LoadSummary struct {
@@ -80,6 +91,13 @@ type LoadSummary struct {
 	EnqueueDuration time.Duration
 	DrainDuration   time.Duration
 	TotalDuration   time.Duration
+	SplitElapsed    time.Duration
+	RecordElapsed   time.Duration
+	JSONElapsed     time.Duration
+	DirectEnqueue   time.Duration
+	KinesisPut      time.Duration
+	DirectEnqueues  int64
+	KinesisPuts     int64
 }
 
 // NewMain allocates a new pointer to Main struct with empty record counter
@@ -199,8 +217,16 @@ func main() {
 		EnqueueDuration: enqueueFinishedAt.Sub(enqueueStartedAt),
 		DrainDuration:   finishedAt.Sub(enqueueFinishedAt),
 		TotalDuration:   finishedAt.Sub(startedAt),
+		SplitElapsed:    main.splitElapsed,
+		RecordElapsed:   main.recordGenerateElapsed,
+		JSONElapsed:     main.jsonMarshalElapsed,
+		DirectEnqueue:   main.directEnqueueElapsed,
+		KinesisPut:      main.kinesisPutElapsed,
+		DirectEnqueues:  main.directEnqueueCount,
+		KinesisPuts:     main.kinesisPutCount,
 	}
 	main.logLoadSummary(summary)
+	main.logDirectProfileSummary()
 	if summary.Failures > 0 {
 		log.Fatalf("TPC-H load failed table=%s failures=%d records=%d", summary.Table, summary.Failures, summary.Records)
 	}
@@ -223,11 +249,17 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 	for fileScanner.Scan() {
 
 		// Split the pipe delimited text line
+		splitStartedAt := time.Now()
 		s := strings.Split(fileScanner.Text(), "|")
+		m.splitElapsed += time.Since(splitStartedAt)
 		i++
 
+		recordStartedAt := time.Now()
 		shardKey, record := m.generateRecord(s)
+		m.recordGenerateElapsed += time.Since(recordStartedAt)
+		marshalStartedAt := time.Now()
 		outData, err := json.Marshal(record)
+		m.jsonMarshalElapsed += time.Since(marshalStartedAt)
 		if err != nil {
 			m.failedRecs.Add(1)
 			log.Printf("marshal error %v", err)
@@ -235,15 +267,19 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 		}
 
 		if m.Direct {
+			enqueueStartedAt := time.Now()
 			if err := m.router.Enqueue(core.IngestRecord{
 				TableName: m.Index,
 				Data:      record,
 				ShardKey:  shardKey,
 			}); err != nil {
+				m.directEnqueueElapsed += time.Since(enqueueStartedAt)
 				m.failedRecs.Add(1)
 				log.Printf("direct load error %v", err)
 				continue
 			}
+			m.directEnqueueElapsed += time.Since(enqueueStartedAt)
+			m.directEnqueueCount++
 		} else {
 			putBatch = append(putBatch, &kinesis.PutRecordsRequestEntry{
 				Data:         outData,
@@ -252,10 +288,13 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 
 			if i%m.BatchSize == 0 {
 				// put data to stream
+				kinesisStartedAt := time.Now()
 				putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
 					Records:    putBatch,
 					StreamName: aws.String(m.Stream),
 				})
+				m.kinesisPutElapsed += time.Since(kinesisStartedAt)
+				m.kinesisPutCount++
 				if err != nil {
 					log.Println(err)
 					continue
@@ -270,10 +309,13 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 	}
 
 	if !m.Direct && len(putBatch) > 0 {
+		kinesisStartedAt := time.Now()
 		putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
 			Records:    putBatch,
 			StreamName: aws.String(m.Stream),
 		})
+		m.kinesisPutElapsed += time.Since(kinesisStartedAt)
+		m.kinesisPutCount++
 		if err != nil {
 			log.Println(err)
 		}
@@ -295,7 +337,7 @@ func (m *Main) logLoadSummary(summary LoadSummary) {
 		enqueueRowsPerSecond /= enqueueSeconds
 	}
 
-	log.Printf("TPC-H load summary table=%s mode=%s records=%d failures=%d bytes=%s enqueue=%s drain=%s total=%s rows_per_sec=%.2f enqueue_rows_per_sec=%.2f bytes_per_sec=%s",
+	log.Printf("TPC-H load summary table=%s mode=%s records=%d failures=%d bytes=%s enqueue=%s drain=%s total=%s split=%s record=%s json=%s direct_enqueue=%s direct_enqueue_count=%d kinesis_put=%s kinesis_put_count=%d rows_per_sec=%.2f enqueue_rows_per_sec=%.2f bytes_per_sec=%s",
 		summary.Table,
 		m.loadMode(),
 		summary.Records,
@@ -304,10 +346,85 @@ func (m *Main) logLoadSummary(summary LoadSummary) {
 		summary.EnqueueDuration.Round(time.Millisecond),
 		summary.DrainDuration.Round(time.Millisecond),
 		summary.TotalDuration.Round(time.Millisecond),
+		summary.SplitElapsed.Round(time.Millisecond),
+		summary.RecordElapsed.Round(time.Millisecond),
+		summary.JSONElapsed.Round(time.Millisecond),
+		summary.DirectEnqueue.Round(time.Millisecond),
+		summary.DirectEnqueues,
+		summary.KinesisPut.Round(time.Millisecond),
+		summary.KinesisPuts,
 		rowsPerSecond,
 		enqueueRowsPerSecond,
 		core.Bytes(bytesPerSecond),
 	)
+}
+
+func (m *Main) logDirectProfileSummary() {
+	if !m.Direct {
+		return
+	}
+	if m.putRowProfile != nil {
+		profile := m.putRowProfile.Snapshot()
+		pk := profile.PrimaryKey
+		log.Printf("TPC-H direct putrow profile table=%s records=%d logical_rows=%d child_rows=%d inserted=%d existing=%d duplicate=%d conflict=%d total=%s source=%s identity=%s child_expand=%s child_traverse=%s relation=%s attributes=%s pk_total=%s pk_resolves=%d pk_lookup_required=%d pk_bsi_lookup=%d pk_bsi_hit=%d pk_bsi_projection=%s pk_bsi_compare=%s pk_bsi_stage_write=%s pk_rownum_alloc=%s pk_batch_cache=%s",
+			m.Index,
+			profile.RecordCount,
+			profile.LogicalRowCount,
+			profile.ChildRowCount,
+			profile.InsertedCount,
+			profile.ExistingCount,
+			profile.DuplicateCount,
+			profile.ConflictCount,
+			profile.TotalElapsed.Round(time.Millisecond),
+			profile.SourceElapsed.Round(time.Millisecond),
+			profile.IdentityElapsed.Round(time.Millisecond),
+			profile.ChildExpansionElapsed.Round(time.Millisecond),
+			profile.ChildTraversalElapsed.Round(time.Millisecond),
+			profile.RelationElapsed.Round(time.Millisecond),
+			profile.AttributeElapsed.Round(time.Millisecond),
+			pk.TotalElapsed.Round(time.Millisecond),
+			pk.ResolveCount,
+			pk.LookupRequiredCount,
+			pk.BSILookupCount,
+			pk.BSIHitCount,
+			pk.BSIProjectionElapsed.Round(time.Millisecond),
+			pk.BSICompareElapsed.Round(time.Millisecond),
+			pk.BSIStageWriteElapsed.Round(time.Millisecond),
+			pk.RownumAllocationElapsed.Round(time.Millisecond),
+			pk.BatchCacheWriteElapsed.Round(time.Millisecond),
+		)
+	}
+	if m.flushProfile != nil {
+		profile := m.flushProfile.Snapshot()
+		log.Printf("TPC-H direct flush profile table=%s flushes=%d errors=%d total=%s partition_string=%s bitmap_set=%s bitmap_clear=%s bsi_value=%s bsi_clear=%s partition_string_batches=%d partition_string_entries=%d bitmap_set_entries=%d bitmap_clear_entries=%d bsi_value_entries=%d bsi_clear_entries=%d",
+			m.Index,
+			profile.FlushCount,
+			profile.ErrorCount,
+			profile.TotalElapsed.Round(time.Millisecond),
+			profile.PartitionStringElapsed.Round(time.Millisecond),
+			profile.BitmapSetElapsed.Round(time.Millisecond),
+			profile.BitmapClearElapsed.Round(time.Millisecond),
+			profile.BSIValueElapsed.Round(time.Millisecond),
+			profile.BSIClearValueElapsed.Round(time.Millisecond),
+			profile.PartitionStringBatchCount,
+			profile.PartitionStringEntryCount,
+			profile.BitmapSetEntryCount,
+			profile.BitmapClearEntryCount,
+			profile.BSIValueEntryCount,
+			profile.BSIClearValueEntryCount,
+		)
+	}
+	if m.drainProfile != nil {
+		profile := m.drainProfile.Snapshot()
+		log.Printf("TPC-H direct drain profile table=%s workers=%d sessions=%d errors=%d total=%s max=%s",
+			m.Index,
+			profile.WorkerCount,
+			profile.SessionCount,
+			profile.ErrorCount,
+			profile.TotalElapsed.Round(time.Millisecond),
+			profile.MaxElapsed.Round(time.Millisecond),
+		)
+	}
 }
 
 func (m *Main) loadMode() string {
@@ -410,7 +527,7 @@ func (m *Main) initDirect() error {
 }
 
 func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
-	return core.SessionRouterConfig{
+	return m.withDirectProfileCallbacks(core.SessionRouterConfig{
 		TableCache:                m.tableCache,
 		BasePath:                  m.BasePath,
 		Conn:                      m.conn,
@@ -422,7 +539,7 @@ func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)
 		},
-	}
+	})
 }
 
 func (m *Main) initStandardDirect() error {
@@ -460,7 +577,7 @@ func (m *Main) initStandardDirect() error {
 }
 
 func (m *Main) standardDirectRouterConfig() core.SessionRouterConfig {
-	return core.SessionRouterConfig{
+	return m.withDirectProfileCallbacks(core.SessionRouterConfig{
 		TableCache:                m.tableCache,
 		BasePath:                  m.BasePath,
 		Conn:                      m.conn,
@@ -472,6 +589,26 @@ func (m *Main) standardDirectRouterConfig() core.SessionRouterConfig {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)
 		},
+	})
+}
+
+func (m *Main) withDirectProfileCallbacks(cfg core.SessionRouterConfig) core.SessionRouterConfig {
+	m.ensureDirectProfiles()
+	cfg.OnPutRowResult = m.putRowProfile.Callback()
+	cfg.OnFlushProfile = m.flushProfile.Callback()
+	cfg.OnDrainProfile = m.drainProfile.Callback()
+	return cfg
+}
+
+func (m *Main) ensureDirectProfiles() {
+	if m.putRowProfile == nil {
+		m.putRowProfile = &core.RouterPutRowProfile{}
+	}
+	if m.flushProfile == nil {
+		m.flushProfile = &core.RouterFlushProfile{}
+	}
+	if m.drainProfile == nil {
+		m.drainProfile = &core.RouterDrainProfile{}
 	}
 }
 

@@ -62,3 +62,28 @@ func TestBatchBufferFlushRecordsProfile(t *testing.T) {
 		t.Fatalf("bitmap batch mutate calls = %d, want 3", bitmapService.batchMutateCalls)
 	}
 }
+
+func TestBatchBufferPartitionedStringsFlushAtConfiguredBatchSize(t *testing.T) {
+	kvService := &recordingLocalKVStoreService{}
+	conn := &Conn{
+		LocalNodeServices: LocalNodeServices{
+			KVStore: kvService,
+		},
+	}
+	buffer := NewBatchBuffer(NewBitmapIndex(conn), NewKVStore(conn), 10)
+
+	for i := 0; i < 9; i++ {
+		if err := buffer.SetPartitionedString("sample/comment", uint64(i+1), "value"); err != nil {
+			t.Fatalf("SetPartitionedString(%d) error = %v", i, err)
+		}
+	}
+	if kvService.batchPutCalls != 0 {
+		t.Fatalf("KV batch put calls = %d, want no early flush before configured batch size", kvService.batchPutCalls)
+	}
+	if err := buffer.SetPartitionedString("sample/comment", uint64(10), "value"); err != nil {
+		t.Fatalf("SetPartitionedString threshold error = %v", err)
+	}
+	if kvService.batchPutCalls != 1 || len(kvService.batchPutItems) != 10 {
+		t.Fatalf("KV batch put calls/items = %d/%d, want one 10-entry batch", kvService.batchPutCalls, len(kvService.batchPutItems))
+	}
+}
