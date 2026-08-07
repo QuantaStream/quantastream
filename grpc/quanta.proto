@@ -17,6 +17,7 @@ service ClusterAdmin {
 service KVStore {
   rpc Put(IndexKVPair) returns (google.protobuf.Empty) {}
   rpc BatchPut(stream IndexKVPair) returns (google.protobuf.Empty) {}
+  rpc BatchPutItems(IndexKVBatch) returns (google.protobuf.Empty) {}
   rpc Lookup(IndexKVPair) returns (IndexKVPair) {}
   rpc BatchLookup(stream IndexKVPair) returns (stream IndexKVPair) {}
   rpc Items(google.protobuf.StringValue) returns (stream IndexKVPair) {}
@@ -64,6 +65,10 @@ message IndexKVPair {
   bool      isClear = 5;
   bool      sync = 6;
   bool      isUpdate = 7;
+}
+
+message IndexKVBatch {
+  repeated IndexKVPair items = 1;
 }
 
 message StringEnum {

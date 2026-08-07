@@ -83,6 +83,32 @@ func TestKVStoreBatchPutWritesMultipleIndexPaths(t *testing.T) {
 	}
 }
 
+func TestKVStoreBatchPutItemsWritesMultipleIndexPaths(t *testing.T) {
+	store := &KVStore{
+		Node:       &Node{hashKey: "test-node", dataDir: t.TempDir()},
+		storeCache: map[string]*cacheEntry{},
+		exit:       make(chan bool),
+	}
+	t.Cleanup(store.Shutdown)
+
+	_, err := store.BatchPutItems(context.Background(), &pb.IndexKVBatch{
+		Items: []*pb.IndexKVPair{
+			{IndexPath: "comment-1996", Key: shared.ToBytes(uint64(1)), Value: [][]byte{shared.ToBytes("first")}},
+			{IndexPath: "comment-1997", Key: shared.ToBytes(uint64(2)), Value: [][]byte{shared.ToBytes("second")}},
+			{IndexPath: "comment-1996", Key: shared.ToBytes(uint64(3)), Value: [][]byte{shared.ToBytes("third")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BatchPutItems() error = %v", err)
+	}
+	assertKVStoreValue(t, store, "comment-1996", uint64(1), "first")
+	assertKVStoreValue(t, store, "comment-1996", uint64(3), "third")
+	assertKVStoreValue(t, store, "comment-1997", uint64(2), "second")
+	if got := len(store.storeCache); got != 2 {
+		t.Fatalf("store cache length = %d, want 2 reused stores", got)
+	}
+}
+
 func openKVStoreShutdownTestDB(t *testing.T, path string) *pogreb.DB {
 	t.Helper()
 	db, err := pogreb.Open(path, nil)

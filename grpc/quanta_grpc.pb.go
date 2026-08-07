@@ -148,6 +148,7 @@ var ClusterAdmin_ServiceDesc = grpc.ServiceDesc{
 const (
 	KVStore_Put_FullMethodName                     = "/shared.KVStore/Put"
 	KVStore_BatchPut_FullMethodName                = "/shared.KVStore/BatchPut"
+	KVStore_BatchPutItems_FullMethodName           = "/shared.KVStore/BatchPutItems"
 	KVStore_Lookup_FullMethodName                  = "/shared.KVStore/Lookup"
 	KVStore_BatchLookup_FullMethodName             = "/shared.KVStore/BatchLookup"
 	KVStore_Items_FullMethodName                   = "/shared.KVStore/Items"
@@ -162,6 +163,7 @@ const (
 type KVStoreClient interface {
 	Put(ctx context.Context, in *IndexKVPair, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BatchPut(ctx context.Context, opts ...grpc.CallOption) (KVStore_BatchPutClient, error)
+	BatchPutItems(ctx context.Context, in *IndexKVBatch, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Lookup(ctx context.Context, in *IndexKVPair, opts ...grpc.CallOption) (*IndexKVPair, error)
 	BatchLookup(ctx context.Context, opts ...grpc.CallOption) (KVStore_BatchLookupClient, error)
 	Items(ctx context.Context, in *wrapperspb.StringValue, opts ...grpc.CallOption) (KVStore_ItemsClient, error)
@@ -219,6 +221,15 @@ func (x *kVStoreBatchPutClient) CloseAndRecv() (*emptypb.Empty, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func (c *kVStoreClient) BatchPutItems(ctx context.Context, in *IndexKVBatch, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KVStore_BatchPutItems_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *kVStoreClient) Lookup(ctx context.Context, in *IndexKVPair, opts ...grpc.CallOption) (*IndexKVPair, error) {
@@ -326,6 +337,7 @@ func (c *kVStoreClient) IndexInfo(ctx context.Context, in *IndexInfoRequest, opt
 type KVStoreServer interface {
 	Put(context.Context, *IndexKVPair) (*emptypb.Empty, error)
 	BatchPut(KVStore_BatchPutServer) error
+	BatchPutItems(context.Context, *IndexKVBatch) (*emptypb.Empty, error)
 	Lookup(context.Context, *IndexKVPair) (*IndexKVPair, error)
 	BatchLookup(KVStore_BatchLookupServer) error
 	Items(*wrapperspb.StringValue, KVStore_ItemsServer) error
@@ -343,6 +355,9 @@ func (UnimplementedKVStoreServer) Put(context.Context, *IndexKVPair) (*emptypb.E
 }
 func (UnimplementedKVStoreServer) BatchPut(KVStore_BatchPutServer) error {
 	return status.Errorf(codes.Unimplemented, "method BatchPut not implemented")
+}
+func (UnimplementedKVStoreServer) BatchPutItems(context.Context, *IndexKVBatch) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchPutItems not implemented")
 }
 func (UnimplementedKVStoreServer) Lookup(context.Context, *IndexKVPair) (*IndexKVPair, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Lookup not implemented")
@@ -416,6 +431,24 @@ func (x *kVStoreBatchPutServer) Recv() (*IndexKVPair, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func _KVStore_BatchPutItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IndexKVBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVStoreServer).BatchPutItems(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVStore_BatchPutItems_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVStoreServer).BatchPutItems(ctx, req.(*IndexKVBatch))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _KVStore_Lookup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -547,6 +580,10 @@ var KVStore_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Put",
 			Handler:    _KVStore_Put_Handler,
+		},
+		{
+			MethodName: "BatchPutItems",
+			Handler:    _KVStore_BatchPutItems_Handler,
 		},
 		{
 			MethodName: "Lookup",

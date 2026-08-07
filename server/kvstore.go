@@ -279,66 +279,104 @@ func (m *KVStore) Lookup(ctx context.Context, kv *pb.IndexKVPair) (*pb.IndexKVPa
 
 // BatchPut - Insert a batch of entries.
 func (m *KVStore) BatchPut(stream pb.KVStore_BatchPutServer) error {
-
-	start := time.Now()
-	updatedMap := make(map[string]*pogreb.DB, 0) // local cache of DBs updated
-	var getStoreElapsed time.Duration
-	var putElapsed time.Duration
-	var syncElapsed time.Duration
-	var putCount int
-
-	defer func() {
-		syncStart := time.Now()
-		for index, v := range updatedMap {
-			if err := v.Sync(); err != nil {
-				u.Errorf("%s KVStore batch sync [%s] failed: %v", m.hashKey, index, err)
-			}
-		}
-		syncElapsed = time.Since(syncStart)
-		elapsed := time.Since(start)
-		if putCount > 1000 || elapsed > 500*time.Millisecond {
-			fmt.Printf("KVStore batch put node=%s items=%d stores=%d get_store_elapsed=%s put_elapsed=%s sync_elapsed=%s total_elapsed=%s\n",
-				m.hashKey, putCount, len(updatedMap), getStoreElapsed, putElapsed, syncElapsed, elapsed)
-		}
-	}()
+	state := newKVBatchPutState()
+	defer state.finish(m, "stream")
 
 	for {
 		kv, err := stream.Recv()
 		if err == io.EOF {
 			return stream.SendAndClose(&empty.Empty{})
 		}
-		if kv == nil {
-			return fmt.Errorf("KV Pair must not be nil")
-		}
-		if kv.IndexPath == "" {
-			return fmt.Errorf("Index must be specified")
-		}
-		db, found := updatedMap[kv.IndexPath]
-		if !found {
-			getStoreStart := time.Now()
-			db, err = m.getStore(kv.IndexPath)
-			getStoreElapsed += time.Since(getStoreStart)
-			if err != nil {
-				return err
-			}
-			updatedMap[kv.IndexPath] = db
-		}
-		if kv.Key == nil || len(kv.Key) == 0 {
-			return fmt.Errorf("Key must be specified")
-		}
-		if kv.Value == nil || len(kv.Value) == 0 {
-			return fmt.Errorf("Value must be specified")
-		}
-		if db == nil {
-			return fmt.Errorf("DB is nil for [%s]", kv.IndexPath)
-		}
-		putStart := time.Now()
-		if err := db.Put(kv.Key, kv.Value[0]); err != nil {
+		if err != nil {
 			return err
 		}
-		putElapsed += time.Since(putStart)
-		putCount++
+		if err := m.batchPutKV(state, kv); err != nil {
+			return err
+		}
 	}
+}
+
+// BatchPutItems inserts a bulk batch of entries without per-item gRPC stream
+// messages.
+func (m *KVStore) BatchPutItems(ctx context.Context, batch *pb.IndexKVBatch) (*empty.Empty, error) {
+	if batch == nil {
+		return &empty.Empty{}, fmt.Errorf("KV batch must not be nil")
+	}
+	state := newKVBatchPutState()
+	defer state.finish(m, "bulk")
+	for _, kv := range batch.Items {
+		if err := m.batchPutKV(state, kv); err != nil {
+			return &empty.Empty{}, err
+		}
+	}
+	return &empty.Empty{}, nil
+}
+
+type kvBatchPutState struct {
+	start           time.Time
+	updatedMap      map[string]*pogreb.DB
+	getStoreElapsed time.Duration
+	putElapsed      time.Duration
+	syncElapsed     time.Duration
+	putCount        int
+}
+
+func newKVBatchPutState() *kvBatchPutState {
+	return &kvBatchPutState{
+		start:      time.Now(),
+		updatedMap: make(map[string]*pogreb.DB, 0),
+	}
+}
+
+func (s *kvBatchPutState) finish(m *KVStore, mode string) {
+	syncStart := time.Now()
+	for index, v := range s.updatedMap {
+		if err := v.Sync(); err != nil {
+			u.Errorf("%s KVStore batch sync [%s] failed: %v", m.hashKey, index, err)
+		}
+	}
+	s.syncElapsed = time.Since(syncStart)
+	elapsed := time.Since(s.start)
+	if s.putCount > 1000 || elapsed > 500*time.Millisecond {
+		fmt.Printf("KVStore batch put node=%s mode=%s items=%d stores=%d get_store_elapsed=%s put_elapsed=%s sync_elapsed=%s total_elapsed=%s\n",
+			m.hashKey, mode, s.putCount, len(s.updatedMap), s.getStoreElapsed, s.putElapsed, s.syncElapsed, elapsed)
+	}
+}
+
+func (m *KVStore) batchPutKV(state *kvBatchPutState, kv *pb.IndexKVPair) error {
+	if kv == nil {
+		return fmt.Errorf("KV Pair must not be nil")
+	}
+	if kv.IndexPath == "" {
+		return fmt.Errorf("Index must be specified")
+	}
+	db, found := state.updatedMap[kv.IndexPath]
+	if !found {
+		getStoreStart := time.Now()
+		var err error
+		db, err = m.getStore(kv.IndexPath)
+		state.getStoreElapsed += time.Since(getStoreStart)
+		if err != nil {
+			return err
+		}
+		state.updatedMap[kv.IndexPath] = db
+	}
+	if kv.Key == nil || len(kv.Key) == 0 {
+		return fmt.Errorf("Key must be specified")
+	}
+	if kv.Value == nil || len(kv.Value) == 0 {
+		return fmt.Errorf("Value must be specified")
+	}
+	if db == nil {
+		return fmt.Errorf("DB is nil for [%s]", kv.IndexPath)
+	}
+	putStart := time.Now()
+	if err := db.Put(kv.Key, kv.Value[0]); err != nil {
+		return err
+	}
+	state.putElapsed += time.Since(putStart)
+	state.putCount++
+	return nil
 }
 
 // BatchLookup - Lookup a batch of keys and return values.
