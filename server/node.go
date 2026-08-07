@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -115,6 +116,7 @@ type Node struct {
 
 	State         StateType
 	localServices map[string]NodeService
+	servicesOnce  sync.Once
 
 	TableCache *core.TableCacheStruct
 
@@ -333,7 +335,9 @@ func (n *Node) Shutdown(ctx context.Context, e *empty.Empty) (*empty.Empty, erro
 
 	u.Warn("Received Shutdown call via API.")
 	err := n.Leave() // closes Stop
-	n.listener.Close()
+	if n.listener != nil {
+		n.listener.Close()
+	}
 	// fmt.Println(n.hashKey, "Node Shutdown sending n.Stop")
 	// n.Stop <- true
 	return e, err
@@ -350,10 +354,12 @@ func (n *Node) AddNodeService(api NodeService) {
 // ShutdownServices - Invoke service interface for Shutdown event
 func (n *Node) ShutdownServices() {
 
-	u.Warn("Shutting down services.")
-	for _, v := range n.localServices {
-		v.Shutdown()
-	}
+	n.servicesOnce.Do(func() {
+		u.Warn("Shutting down services.")
+		for _, v := range n.localServices {
+			v.Shutdown()
+		}
+	})
 }
 
 // JoinServices - Invoke service interface for Join event

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/golang/protobuf/ptypes/empty"
 )
 
 func TestBitmapShardManifestBuilderGroupsStandardAndBSIFiles(t *testing.T) {
@@ -285,6 +287,107 @@ func TestSaveBitmapShardManifestFromCacheRefreshesAfterDirtyWrites(t *testing.T)
 	observation := index.observeBitmapShardManifest(manifest)
 	if observation.Status != "ok" {
 		t.Fatalf("refreshed manifest observation status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+}
+
+func TestCommitSavepointRefreshesManifestForColdStandardBundleLoad(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Unix(0, 0)
+	now := time.Unix(100, 0)
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customer": {
+			"c_mktsegment": {
+				10: {
+					shardTime.UnixNano(): {
+						Bits:        roaring64.BitmapOf(1, 2, 3),
+						ModTime:     now,
+						PersistTime: now,
+					},
+				},
+				20: {
+					shardTime.UnixNano(): {
+						Bits:        roaring64.BitmapOf(7, 8),
+						ModTime:     now,
+						PersistTime: now,
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+	manifest, observation := index.loadAndObserveBitmapShardManifest(nil)
+	if observation.Status != "ok" {
+		t.Fatalf("commit manifest status = %s detail=%s, want ok", observation.Status, observation.Detail)
+	}
+	if manifest.Source != "commit" {
+		t.Fatalf("manifest source = %q, want commit", manifest.Source)
+	}
+	if manifest.Stats.StandardEntries != 1 || manifest.Stats.StandardFiles != 1 {
+		t.Fatalf("manifest standard stats = %+v, want one bundled standard shard", manifest.Stats)
+	}
+
+	cold := newManifestLoadTestIndex(t)
+	cold.Node.dataDir = index.dataDir
+	if err := cold.readBitmapFiles(cold.fragQueue); err != nil {
+		t.Fatalf("cold readBitmapFiles returned error: %v", err)
+	}
+	loadedLeft := cold.bitmapCache["customer"]["c_mktsegment"][10][shardTime.UnixNano()]
+	if loadedLeft == nil {
+		t.Fatal("expected cold restart to materialize row 10 from committed standard bundle")
+	}
+	if got := loadedLeft.Bits.GetCardinality(); got != 3 {
+		t.Fatalf("cold row 10 cardinality = %d, want 3", got)
+	}
+	loadedRight := cold.bitmapCache["customer"]["c_mktsegment"][20][shardTime.UnixNano()]
+	if loadedRight == nil {
+		t.Fatal("expected cold restart to materialize row 20 from committed standard bundle")
+	}
+	if got := loadedRight.Bits.GetCardinality(); got != 2 {
+		t.Fatalf("cold row 20 cardinality = %d, want 2", got)
+	}
+}
+
+func TestCommitReusesCleanManifestSavepoint(t *testing.T) {
+	index := newManifestLoadTestIndex(t)
+	shardTime := time.Unix(0, 0)
+	now := time.Unix(100, 0)
+	index.bitmapCache = map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+		"customer": {
+			"c_mktsegment": {
+				10: {
+					shardTime.UnixNano(): {
+						Bits:        roaring64.BitmapOf(1, 2, 3),
+						ModTime:     now,
+						PersistTime: now,
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("first Commit returned error: %v", err)
+	}
+	before, err := index.loadBitmapShardManifest()
+	if err != nil {
+		t.Fatalf("loadBitmapShardManifest before second commit returned error: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, err := index.Commit(context.Background(), &empty.Empty{}); err != nil {
+		t.Fatalf("second Commit returned error: %v", err)
+	}
+	after, err := index.loadBitmapShardManifest()
+	if err != nil {
+		t.Fatalf("loadBitmapShardManifest after second commit returned error: %v", err)
+	}
+	if !after.GeneratedAt.Equal(before.GeneratedAt) {
+		t.Fatalf("clean second commit rewrote manifest generated_at: before=%s after=%s", before.GeneratedAt, after.GeneratedAt)
+	}
+	if after.Source != before.Source {
+		t.Fatalf("clean second commit changed manifest source: before=%q after=%q", before.Source, after.Source)
 	}
 }
 

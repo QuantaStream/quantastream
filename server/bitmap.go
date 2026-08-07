@@ -1413,22 +1413,99 @@ func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, e
 	return bitmapCount, bitmapWrites, bsiCount, bsiWrites, nil
 }
 
+func (m *BitmapIndex) cacheHasDirtyEntries() bool {
+	if m.standardBitmapCacheHasDirtyEntries() {
+		return true
+	}
+	return m.bsiCacheHasDirtyEntries()
+}
+
+func (m *BitmapIndex) standardBitmapCacheHasDirtyEntries() bool {
+	m.bitmapCacheLock.RLock()
+	defer m.bitmapCacheLock.RUnlock()
+	for _, index := range m.bitmapCache {
+		for _, field := range index {
+			for _, ts := range field {
+				for _, bitmap := range ts {
+					if bitmap == nil {
+						continue
+					}
+					bitmap.Lock.RLock()
+					dirty := bitmap.ModTime.After(bitmap.PersistTime)
+					bitmap.Lock.RUnlock()
+					if dirty {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (m *BitmapIndex) bsiCacheHasDirtyEntries() bool {
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+	for _, index := range m.bsiCache {
+		for _, field := range index {
+			for _, bsi := range field {
+				if bsi == nil {
+					continue
+				}
+				bsi.Lock.RLock()
+				dirty := bsi.ModTime.After(bsi.PersistTime)
+				bsi.Lock.RUnlock()
+				if dirty {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Commit flushes queued mutations and persists dirty shards to a savepoint.
 func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty, error) {
 
+	flushStart := time.Now()
 	err := m.flush()
 	if err != nil {
 		return &empty.Empty{}, err
 	}
+	flushElapsed := time.Since(flushStart)
+
+	manifestCheckElapsed := time.Duration(0)
+	if !m.cacheHasDirtyEntries() {
+		manifestCheckStart := time.Now()
+		manifest, observation := m.loadAndObserveBitmapShardManifest(nil)
+		manifestCheckElapsed = time.Since(manifestCheckStart)
+		if observation.Status == "ok" {
+			u.Infof("BitmapIndex commit reused clean savepoint node=%s manifest_entries=%d manifest_files=%d flush_elapsed=%s manifest_check_elapsed=%s",
+				m.Node.hashKey, manifest.Stats.TotalEntries, manifest.Stats.TotalFiles, flushElapsed, manifestCheckElapsed)
+			return e, nil
+		}
+	}
+
 	// Commit is an explicit durability savepoint. Force current cache contents
 	// to disk so a concurrent/background persist cannot leave a clean-marked but
 	// stale bundle as the post-restart source of truth.
+	persistStart := time.Now()
 	bitmapCount, bitmapWrites, bsiCount, bsiWrites, err := m.persistCaches(true)
 	if err != nil {
 		return &empty.Empty{}, err
 	}
-	u.Infof("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d",
-		m.Node.hashKey, bitmapCount, bitmapWrites, bsiCount, bsiWrites)
+	persistElapsed := time.Since(persistStart)
+
+	manifestElapsed := time.Duration(0)
+	if bitmapWrites+bsiWrites > 0 {
+		manifestStart := time.Now()
+		if err := m.saveBitmapShardManifestFromCache("commit"); err != nil {
+			return &empty.Empty{}, err
+		}
+		manifestElapsed = time.Since(manifestStart)
+	}
+	u.Infof("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s persist_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s",
+		m.Node.hashKey, bitmapCount, bitmapWrites, bsiCount, bsiWrites, flushElapsed, persistElapsed, manifestCheckElapsed, manifestElapsed)
 	return e, nil
 }
 

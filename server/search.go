@@ -17,6 +17,7 @@ import (
 	"hash/fnv"
 	"io"
 	"regexp"
+	"sync"
 	"time"
 )
 
@@ -37,7 +38,8 @@ var (
 // StringSearch service state.
 type StringSearch struct {
 	*Node
-	store *pogreb.DB
+	store        *pogreb.DB
+	shutdownOnce sync.Once
 }
 
 // NewStringSearch - Construct server side state for search service.
@@ -79,10 +81,18 @@ func (m *StringSearch) Init() error {
 // Shutdown search service.
 func (m *StringSearch) Shutdown() {
 
-	if m.store != nil {
-		m.store.Sync()
-		m.store.Close()
-	}
+	m.shutdownOnce.Do(func() {
+		if m.store == nil {
+			return
+		}
+		if err := m.store.Sync(); err != nil {
+			u.Errorf("StringSearch sync failed: %v", err)
+		}
+		if err := m.store.Close(); err != nil {
+			u.Errorf("StringSearch close failed: %v", err)
+		}
+		m.store = nil
+	})
 }
 
 // JoinCluster - Join the cluster
