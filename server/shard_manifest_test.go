@@ -760,6 +760,16 @@ func BenchmarkBitmapShardManifestMarshalLineitemScale(b *testing.B) {
 	})
 }
 
+func BenchmarkBitmapShardManifestFromCacheLineitemScale(b *testing.B) {
+	index := newBenchmarkManifestCacheIndex(b, 15000, 31500)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := index.saveBitmapShardManifestFromCache("benchmark"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func benchmarkBitmapShardManifest(standardEntries, bsiEntries int) BitmapShardManifest {
 	builder := newBitmapShardManifestBuilder("/tmp/quantastream-manifest-benchmark")
 	baseTime := time.Date(1994, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -775,6 +785,50 @@ func benchmarkBitmapShardManifest(standardEntries, bsiEntries int) BitmapShardMa
 		builder.addBSICacheEntry(path, "lineitem", "l_quantity", shardTime, 0, modTime)
 	}
 	return builder.manifest(modTime, "benchmark")
+}
+
+func newBenchmarkManifestCacheIndex(b *testing.B, standardEntries, bsiEntries int) *BitmapIndex {
+	b.Helper()
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("benchmark-node"),
+			dataDir: b.TempDir(),
+		},
+		bitmapCache: make(map[string]map[string]map[uint64]map[int64]*StandardBitmap),
+		bsiCache:    make(map[string]map[string]map[int64]*BSIBitmap),
+	}
+	index.ServicePort = 1
+	baseTime := time.Date(1994, 1, 1, 0, 0, 0, 0, time.UTC)
+	modTime := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	index.bitmapCache["lineitem"] = map[string]map[uint64]map[int64]*StandardBitmap{
+		"l_shipmode": {},
+	}
+	for i := 0; i < standardEntries; i++ {
+		shardTime := baseTime.Add(time.Duration(i) * time.Hour)
+		index.bitmapCache["lineitem"]["l_shipmode"][uint64(i)] = map[int64]*StandardBitmap{
+			shardTime.UnixNano(): {
+				Bits:        roaring64.BitmapOf(uint64(i)),
+				ModTime:     modTime,
+				PersistTime: modTime,
+				TQType:      "YMDH",
+			},
+		}
+	}
+	index.bsiCache["lineitem"] = map[string]map[int64]*BSIBitmap{
+		"l_quantity": {},
+	}
+	for i := 0; i < bsiEntries; i++ {
+		shardTime := baseTime.Add(time.Duration(i) * time.Hour)
+		values := roaring64.NewDefaultBSI()
+		values.SetValue(uint64(i), int64(i%100))
+		index.bsiCache["lineitem"]["l_quantity"][shardTime.UnixNano()] = &BSIBitmap{
+			BSI:         values,
+			ModTime:     modTime,
+			PersistTime: modTime,
+			TQType:      "YMDH",
+		}
+	}
+	return index
 }
 
 func newObservedManifestTestIndex(t *testing.T) (*BitmapIndex, BitmapShardManifest) {

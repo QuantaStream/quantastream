@@ -160,6 +160,10 @@ func (m *BitmapIndex) saveCompleteStandardBundle(bitmaps map[uint64]*StandardBit
 }
 
 func (m *BitmapIndex) standardBitmapBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {
+	return m.standardBitmapBundleFilePathWithCreate(indexName, fieldName, ts, tqType, true)
+}
+
+func (m *BitmapIndex) standardBitmapBundleFilePathWithCreate(indexName, fieldName string, ts time.Time, tqType string, create bool) (string, string) {
 	dir := filepath.Join(m.dataDir, "bitmap", indexName, fieldName, standardBundleLeafDir)
 	shard := "default"
 	switch tqType {
@@ -171,7 +175,9 @@ func (m *BitmapIndex) standardBitmapBundleFilePath(indexName, fieldName string, 
 		shard = formatShardTime(ts)
 	}
 	dir = filepath.Join(dir, shard)
-	_ = os.MkdirAll(dir, 0755)
+	if create {
+		_ = os.MkdirAll(dir, 0755)
+	}
 	return dir, filepath.Join(dir, standardBundleFileName)
 }
 
@@ -530,6 +536,10 @@ func (p *Partition) generatePath(isArchivePath bool, base, leaf string) (string,
 
 // Figure out the appropriate file path given type BSI/Standard and applicable time quantum
 func (m *BitmapIndex) generateBitmapFilePath(aop *Partition, isArchivePath bool) string {
+	return m.generateBitmapFilePathWithCreate(aop, isArchivePath, true)
+}
+
+func (m *BitmapIndex) generateBitmapFilePathWithCreate(aop *Partition, isArchivePath bool, create bool) string {
 
 	// field is a BSI if rowIDOrBits < 0
 	leafDir := "bsi"
@@ -553,7 +563,9 @@ func (m *BitmapIndex) generateBitmapFilePath(aop *Partition, isArchivePath bool)
 		baseDir = baseDir + sep + fname
 		fname = ""
 	}
-	os.MkdirAll(baseDir, 0755)
+	if create {
+		os.MkdirAll(baseDir, 0755)
+	}
 	//return baseDir + sep + fname
 	return baseDir
 }
