@@ -101,9 +101,9 @@ func TestBatchBufferPartitionedStringFlushCollapsesPaths(t *testing.T) {
 	buffer := NewBatchBuffer(NewBitmapIndex(conn), NewKVStore(conn), 100)
 
 	paths := []string{
-		"lineitem/l_comment/1994-10-16T00,lineitem/l_comment/lex_remainders/1994-10-16T00",
-		"lineitem/l_comment/1994-10-17T00,lineitem/l_comment/lex_remainders/1994-10-17T00",
-		"lineitem/l_comment/1994-10-18T00,lineitem/l_comment/lex_remainders/1994-10-18T00",
+		"lineitem/l_comment/1994-10-16T00,/lineitem/l_comment/lex_remainders/1994-10-16T00",
+		"lineitem/l_comment/1994-10-17T00,/lineitem/l_comment/lex_remainders/1994-10-17T00",
+		"lineitem/l_comment/1994-10-18T00,/lineitem/l_comment/lex_remainders/1994-10-18T00",
 	}
 	for i, path := range paths {
 		if err := buffer.SetPartitionedString(path, uint64(i+1), "value"); err != nil {

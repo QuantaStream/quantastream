@@ -1250,7 +1250,7 @@ func indexPath(tbuf *TableBuffer, field, path string) string {
 
 	ts := tbuf.CurrentTimestamp
 	key := fmt.Sprintf("%s/%s/%s", tbuf.Table.Name, field, formatShardTime(ts))
-	lookupPath := fmt.Sprintf("%s,%s/%s/%s/%s", key, tbuf.Table.Name, field, path,
+	lookupPath := fmt.Sprintf("%s,/%s/%s/%s/%s", key, tbuf.Table.Name, field, path,
 		formatShardTime(ts))
 	if tbuf.Table.TimeQuantumType == "YMDH" {
 		utcTime := ts.UTC()

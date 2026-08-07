@@ -783,7 +783,7 @@ func standardBackingStringPath(table *core.Table, field string, ts time.Time) st
 	store := standardBackingStringStore(table, field)
 	shard := ts.UTC().Format("2006-01-02T15")
 	key := fmt.Sprintf("%s/%s/%s", table.Name, field, shard)
-	lookupPath := fmt.Sprintf("%s,%s/%s/%s/%s", key, table.Name, field, store, shard)
+	lookupPath := fmt.Sprintf("%s,/%s/%s/%s/%s", key, table.Name, field, store, shard)
 	if table.TimeQuantumType == "YMDH" {
 		utcTime := ts.UTC()
 		fpath := fmt.Sprintf("/%s/%s/%s/%s/%s",
