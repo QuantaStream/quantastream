@@ -306,20 +306,55 @@ func removeEmptyParents(path, stopDir string) {
 // Persist a BSI field to disk
 func (m *BitmapIndex) saveCompleteBSI(bsi *BSIBitmap, indexName, fieldName string, _ int,
 	ts time.Time) error {
+	_, err := m.saveCompleteBSIWithTimings(bsi, indexName, fieldName, ts)
+	return err
+}
 
+type bsiBundlePersistTimings struct {
+	marshalElapsed   time.Duration
+	encodeElapsed    time.Duration
+	fileWriteElapsed time.Duration
+	cleanupElapsed   time.Duration
+	chunkCount       int
+	chunkBytes       uint64
+	bundleBytes      uint64
+}
+
+func (m *BitmapIndex) saveCompleteBSIWithTimings(bsi *BSIBitmap, indexName, fieldName string,
+	ts time.Time) (bsiBundlePersistTimings, error) {
+	var timings bsiBundlePersistTimings
+
+	marshalStart := time.Now()
 	data, err := bsi.MarshalBinary()
+	timings.marshalElapsed = time.Since(marshalStart)
 	if err != nil {
-		return err
+		return timings, err
 	}
+	timings.chunkCount = len(data)
+	for _, chunk := range data {
+		timings.chunkBytes += uint64(len(chunk))
+	}
+
+	encodeStart := time.Now()
 	bundle, err := encodeBSIBundle(data)
+	timings.encodeElapsed = time.Since(encodeStart)
 	if err != nil {
-		return err
+		return timings, err
 	}
+	timings.bundleBytes = uint64(len(bundle))
+
 	dir, bundlePath := m.bsiBundleFilePath(indexName, fieldName, ts, bsi.TQType)
+	fileWriteStart := time.Now()
 	if err := writeAtomicBundleFile(bundlePath, bundle, 0666); err != nil {
-		return err
+		timings.fileWriteElapsed = time.Since(fileWriteStart)
+		return timings, err
 	}
-	return removeLegacyBSISliceFiles(dir)
+	timings.fileWriteElapsed = time.Since(fileWriteStart)
+
+	cleanupStart := time.Now()
+	err = removeLegacyBSISliceFiles(dir)
+	timings.cleanupElapsed = time.Since(cleanupStart)
+	return timings, err
 }
 
 func (m *BitmapIndex) bsiBundleFilePath(indexName, fieldName string, ts time.Time, tqType string) (string, string) {

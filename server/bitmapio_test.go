@@ -243,6 +243,38 @@ func TestSaveCompleteBSIRemovesLegacySliceFiles(t *testing.T) {
 	}
 }
 
+func TestSaveCompleteBSIWithTimingsReportsBundleWork(t *testing.T) {
+	now := time.Unix(100, 0)
+	values := roaring64.NewDefaultBSI()
+	values.SetValue(1, 10)
+	values.SetValue(2, 20)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("test-node"),
+			dataDir: t.TempDir(),
+		},
+	}
+
+	timings, err := index.saveCompleteBSIWithTimings(&BSIBitmap{BSI: values}, "orders", "o_orderkey", now)
+	if err != nil {
+		t.Fatalf("saveCompleteBSIWithTimings returned error: %v", err)
+	}
+	if timings.chunkCount == 0 {
+		t.Fatal("expected BSI marshal to report at least one chunk")
+	}
+	if timings.chunkBytes == 0 {
+		t.Fatal("expected BSI marshal to report chunk bytes")
+	}
+	if timings.bundleBytes <= timings.chunkBytes {
+		t.Fatalf("expected bundle bytes to include bundle framing, chunk_bytes=%d bundle_bytes=%d",
+			timings.chunkBytes, timings.bundleBytes)
+	}
+	dir := index.dataDir + sep + "bitmap" + sep + "orders" + sep + "o_orderkey" + sep + "bsi" + sep + "default"
+	if _, err := os.Stat(dir + sep + bsiBundleFileName); err != nil {
+		t.Fatalf("expected BSI bundle to be persisted: %v", err)
+	}
+}
+
 func TestSaveCompleteStandardBundleRemovesLegacyRowFiles(t *testing.T) {
 	now := time.Unix(100, 0)
 	index := &BitmapIndex{

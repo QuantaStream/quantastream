@@ -1247,10 +1247,17 @@ func (m *BitmapIndex) checkPersistBSICache(forceSync bool) (int, uint64, error) 
 }
 
 type bsiCachePersistSummary struct {
-	bsiCount     int
-	bsiWrites    uint64
-	scanElapsed  time.Duration
-	writeElapsed time.Duration
+	bsiCount         int
+	bsiWrites        uint64
+	scanElapsed      time.Duration
+	writeElapsed     time.Duration
+	marshalElapsed   time.Duration
+	encodeElapsed    time.Duration
+	fileWriteElapsed time.Duration
+	cleanupElapsed   time.Duration
+	chunkCount       int
+	chunkBytes       uint64
+	bundleBytes      uint64
 }
 
 func (m *BitmapIndex) checkPersistBSICacheWithTimings(forceSync bool) (bsiCachePersistSummary, error) {
@@ -1281,13 +1288,20 @@ func (m *BitmapIndex) checkPersistBSICacheWithTimings(forceSync bool) (bsiCacheP
 				if forceSync || bsi.ModTime.After(bsi.PersistTime) {
 					summary.scanElapsed += time.Since(entryStart)
 					writeStart := time.Now()
-					if err := m.saveCompleteBSI(bsi, indexName, fieldName, int(bsi.BitCount()),
-						time.Unix(0, t)); err != nil {
+					timings, err := m.saveCompleteBSIWithTimings(bsi, indexName, fieldName, time.Unix(0, t))
+					if err != nil {
 						bsi.Lock.Unlock()
 						return summary, fmt.Errorf("saveCompleteBSI failed index=%s field=%s time=%s: %w",
 							indexName, fieldName, time.Unix(0, t).UTC().Format(timeFmt), err)
 					}
 					summary.writeElapsed += time.Since(writeStart)
+					summary.marshalElapsed += timings.marshalElapsed
+					summary.encodeElapsed += timings.encodeElapsed
+					summary.fileWriteElapsed += timings.fileWriteElapsed
+					summary.cleanupElapsed += timings.cleanupElapsed
+					summary.chunkCount += timings.chunkCount
+					summary.chunkBytes += timings.chunkBytes
+					summary.bundleBytes += timings.bundleBytes
 					summary.bsiWrites++
 					manifestDirty = true
 					bsi.PersistTime = time.Now()
@@ -1393,16 +1407,23 @@ func (m *BitmapIndex) persistDirtyCaches() (int, uint64, int, uint64, error) {
 }
 
 type persistCachesSummary struct {
-	bitmapCount        int
-	bitmapWrites       uint64
-	bsiCount           int
-	bsiWrites          uint64
-	bitmapElapsed      time.Duration
-	bitmapScanElapsed  time.Duration
-	bitmapWriteElapsed time.Duration
-	bsiElapsed         time.Duration
-	bsiScanElapsed     time.Duration
-	bsiWriteElapsed    time.Duration
+	bitmapCount         int
+	bitmapWrites        uint64
+	bsiCount            int
+	bsiWrites           uint64
+	bitmapElapsed       time.Duration
+	bitmapScanElapsed   time.Duration
+	bitmapWriteElapsed  time.Duration
+	bsiElapsed          time.Duration
+	bsiScanElapsed      time.Duration
+	bsiWriteElapsed     time.Duration
+	bsiMarshalElapsed   time.Duration
+	bsiEncodeElapsed    time.Duration
+	bsiFileWriteElapsed time.Duration
+	bsiCleanupElapsed   time.Duration
+	bsiChunkCount       int
+	bsiChunkBytes       uint64
+	bsiBundleBytes      uint64
 }
 
 func (m *BitmapIndex) persistCaches(forceSync bool) (int, uint64, int, uint64, error) {
@@ -1431,6 +1452,13 @@ func (m *BitmapIndex) persistCachesWithTimings(forceSync bool) (persistCachesSum
 	summary.bsiWrites = bsiSummary.bsiWrites
 	summary.bsiScanElapsed = bsiSummary.scanElapsed
 	summary.bsiWriteElapsed = bsiSummary.writeElapsed
+	summary.bsiMarshalElapsed = bsiSummary.marshalElapsed
+	summary.bsiEncodeElapsed = bsiSummary.encodeElapsed
+	summary.bsiFileWriteElapsed = bsiSummary.fileWriteElapsed
+	summary.bsiCleanupElapsed = bsiSummary.cleanupElapsed
+	summary.bsiChunkCount = bsiSummary.chunkCount
+	summary.bsiChunkBytes = bsiSummary.chunkBytes
+	summary.bsiBundleBytes = bsiSummary.bundleBytes
 	if err != nil {
 		return summary, err
 	}
@@ -1556,13 +1584,16 @@ func (m *BitmapIndex) Commit(ctx context.Context, e *empty.Empty) (*empty.Empty,
 			manifestElapsed = time.Since(manifestStart)
 		}
 	}
-	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
+	fmt.Printf("BitmapIndex commit persisted node=%s bitmap_shards=%d bitmap_writes=%d bsi_shards=%d bsi_writes=%d flush_elapsed=%s dirty_check_elapsed=%s persist_elapsed=%s bitmap_persist_elapsed=%s bitmap_scan_elapsed=%s bitmap_write_elapsed=%s bsi_persist_elapsed=%s bsi_scan_elapsed=%s bsi_write_elapsed=%s bsi_marshal_elapsed=%s bsi_encode_elapsed=%s bsi_file_write_elapsed=%s bsi_cleanup_elapsed=%s bsi_chunks=%d bsi_chunk_bytes=%d bsi_bundle_bytes=%d manifest_check_elapsed=%s manifest_refresh_elapsed=%s\n",
 		m.Node.hashKey,
 		persistSummary.bitmapCount, persistSummary.bitmapWrites,
 		persistSummary.bsiCount, persistSummary.bsiWrites,
 		flushElapsed, dirtyCheckElapsed, persistElapsed,
 		persistSummary.bitmapElapsed, persistSummary.bitmapScanElapsed, persistSummary.bitmapWriteElapsed,
 		persistSummary.bsiElapsed, persistSummary.bsiScanElapsed, persistSummary.bsiWriteElapsed,
+		persistSummary.bsiMarshalElapsed, persistSummary.bsiEncodeElapsed,
+		persistSummary.bsiFileWriteElapsed, persistSummary.bsiCleanupElapsed,
+		persistSummary.bsiChunkCount, persistSummary.bsiChunkBytes, persistSummary.bsiBundleBytes,
 		manifestCheckElapsed, manifestElapsed)
 	return e, nil
 }
