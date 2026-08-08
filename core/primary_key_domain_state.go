@@ -34,6 +34,10 @@ func bsiPrimaryKeyDomainKey(req BSIPrimaryKeyLookupRequest, tbuf *TableBuffer) s
 	return fmt.Sprintf("%s|%s|%d", req.TableName, req.PrimaryKey, shardNanos)
 }
 
+func bsiPrimaryKeyAuthorityKey(req BSIPrimaryKeyLookupRequest) string {
+	return fmt.Sprintf("%s|%s|authority", req.TableName, req.PrimaryKey)
+}
+
 func (s *Session) bsiPrimaryKeyDomainSkipAllowed(domainKey string) bool {
 	state, ok := s.cachedBSIPrimaryKeyDomainState(domainKey)
 	return ok && state == PrimaryKeyDomainEmpty
@@ -41,6 +45,15 @@ func (s *Session) bsiPrimaryKeyDomainSkipAllowed(domainKey string) bool {
 
 func (s *Session) markBSIPrimaryKeyDomainSkipAllowed(domainKey string) {
 	s.markBSIPrimaryKeyDomainState(domainKey, PrimaryKeyDomainEmpty)
+}
+
+func (s *Session) bsiPrimaryKeyAuthorityKnownNonEmpty(authorityKey string) bool {
+	state, ok := s.cachedBSIPrimaryKeyDomainState(authorityKey)
+	return ok && state == PrimaryKeyDomainNonEmpty
+}
+
+func (s *Session) markBSIPrimaryKeyAuthorityNonEmpty(authorityKey string) {
+	s.markBSIPrimaryKeyDomainState(authorityKey, PrimaryKeyDomainNonEmpty)
 }
 
 func (s *Session) cachedBSIPrimaryKeyDomainState(domainKey string) (PrimaryKeyDomainState, bool) {

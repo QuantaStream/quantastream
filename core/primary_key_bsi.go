@@ -168,6 +168,8 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 		}
 		if len(matchedColumnIDs) == 1 {
 			profile.BSIHitCount++
+			session.markBSIPrimaryKeyDomainState(bsiPrimaryKeyDomainKey(lookupReq, tbuf), PrimaryKeyDomainNonEmpty)
+			session.markBSIPrimaryKeyAuthorityNonEmpty(bsiPrimaryKeyAuthorityKey(lookupReq))
 			tbuf.CurrentColumnID = matchedColumnIDs[0]
 			return finish(matchedColumnIDs[0], true), nil
 		}
@@ -217,19 +219,27 @@ func (r BSIPrimaryKeyResolver) shouldSkipLookupForEmptyDomain(
 		return false, nil
 	}
 	domainKey := bsiPrimaryKeyDomainKey(lookupReq, tbuf)
+	authorityKey := bsiPrimaryKeyAuthorityKey(lookupReq)
 	if cachedState, ok := session.cachedBSIPrimaryKeyDomainState(domainKey); ok {
 		switch cachedState {
-		case PrimaryKeyDomainEmpty:
-			if profile != nil {
-				profile.EmptyDomainSkipCount++
-			}
-			return true, nil
 		case PrimaryKeyDomainNonEmpty:
 			if profile != nil {
 				profile.EmptyDomainNonEmptyCount++
 			}
 			return false, nil
 		}
+	}
+	if session.bsiPrimaryKeyAuthorityKnownNonEmpty(authorityKey) {
+		if profile != nil {
+			profile.EmptyDomainNonEmptyCount++
+		}
+		return false, nil
+	}
+	if cachedState, ok := session.cachedBSIPrimaryKeyDomainState(domainKey); ok && cachedState == PrimaryKeyDomainEmpty {
+		if profile != nil {
+			profile.EmptyDomainSkipCount++
+		}
+		return true, nil
 	}
 	backend, ok := r.Backend.(BSIPrimaryKeyDomainStateBackend)
 	if !ok {
@@ -253,6 +263,7 @@ func (r BSIPrimaryKeyResolver) shouldSkipLookupForEmptyDomain(
 		return true, nil
 	case PrimaryKeyDomainNonEmpty:
 		session.markBSIPrimaryKeyDomainState(domainKey, PrimaryKeyDomainNonEmpty)
+		session.markBSIPrimaryKeyAuthorityNonEmpty(authorityKey)
 		if profile != nil {
 			profile.EmptyDomainNonEmptyCount++
 		}
