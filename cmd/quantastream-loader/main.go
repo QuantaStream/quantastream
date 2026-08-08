@@ -16,6 +16,12 @@ import (
 	"github.com/QuantaStream/quantastream/shared"
 )
 
+const loaderShutdownTimeout = 5 * time.Second
+
+type loaderCloseable interface {
+	Close() error
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -69,7 +75,13 @@ func run(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "start quantastream-loader: %v\n", err)
 		return 2
 	}
-	defer loader.Close()
+	defer func() {
+		if loader != nil {
+			if err := closeLoaderWithin(loader, loaderShutdownTimeout); err != nil {
+				logger.Printf("quantastream-loader close: %v", err)
+			}
+		}
+	}()
 
 	server := &http.Server{
 		Addr:              *listen,
@@ -84,12 +96,15 @@ func run(ctx context.Context, args []string) int {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(os.Stderr, "shutdown quantastream-loader: %v\n", err)
+		logger.Printf("quantastream-loader shutdown requested")
+		if err := server.Close(); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "close quantastream-loader http server: %v\n", err)
 			return 1
 		}
+		if err := closeLoaderWithin(loader, loaderShutdownTimeout); err != nil {
+			logger.Printf("quantastream-loader close: %v", err)
+		}
+		loader = nil
 		return 0
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
@@ -113,4 +128,23 @@ func splitCSV(value string) []string {
 		}
 	}
 	return items
+}
+
+func closeLoaderWithin(loader loaderCloseable, timeout time.Duration) error {
+	if loader == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		return loader.Close()
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- loader.Close()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out after %s draining loader sessions", timeout)
+	}
 }
