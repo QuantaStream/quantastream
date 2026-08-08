@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,4 +51,19 @@ func TestLoadTableWithRelation(t *testing.T) {
 	assert.Nil(t, err3)
 	assert.NotNil(t, tab)
 	assert.NotNil(t, spec)
+}
+
+func TestAttributeGetValueUsesLocalCacheHit(t *testing.T) {
+	table := &Table{BasicTable: &shared.BasicTable{Name: "lineitem"}}
+	attr := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{FieldName: "l_shipmode"},
+		Parent:         table,
+		valueMap:       map[interface{}]uint64{"TRUCK": 7},
+		reverseMap:     map[uint64]interface{}{7: "TRUCK"},
+	}
+
+	value, err := attr.GetValue(" TRUCK ")
+
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(7), value)
 }

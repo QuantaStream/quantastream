@@ -881,6 +881,72 @@ func TestReadColumnExplicitValueOverridesDefaultExpression(t *testing.T) {
 	assert.Equal(t, "9.99", values[0])
 }
 
+func TestReadColumnReadsDataEnvelopeSource(t *testing.T) {
+	session := &Session{}
+	table := &Table{BasicTable: &shared.BasicTable{Name: "lineitem"}}
+	orderKey := Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:  "l_orderkey",
+			SourceName: "/data/l_orderkey",
+			Required:   true,
+		},
+		Parent: table,
+	}
+	table.Attributes = []Attribute{orderKey}
+	row := map[string]interface{}{
+		"data": map[string]interface{}{
+			"l_orderkey": int64(60000),
+		},
+	}
+	session.TableBuffers = map[string]*TableBuffer{
+		table.Name: {
+			Table:    table,
+			rowCache: row,
+		},
+	}
+
+	values, paths, err := session.readColumn(row, "/", &orderKey, false, false, false)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"/data/l_orderkey"}, paths)
+	require.Len(t, values, 1)
+	assert.Equal(t, int64(60000), values[0])
+}
+
+func TestReadColumnFallsBackForNestedDataEnvelopeSource(t *testing.T) {
+	session := &Session{}
+	table := &Table{BasicTable: &shared.BasicTable{Name: "nested"}}
+	status := Attribute{
+		BasicAttribute: &shared.BasicAttribute{
+			FieldName:  "status",
+			SourceName: "/data/order/status",
+			Required:   true,
+		},
+		Parent: table,
+	}
+	table.Attributes = []Attribute{status}
+	row := map[string]interface{}{
+		"data": map[string]interface{}{
+			"order": map[string]interface{}{
+				"status": "ready",
+			},
+		},
+	}
+	session.TableBuffers = map[string]*TableBuffer{
+		table.Name: {
+			Table:    table,
+			rowCache: row,
+		},
+	}
+
+	values, paths, err := session.readColumn(row, "/", &status, false, false, false)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"/data/order/status"}, paths)
+	require.Len(t, values, 1)
+	assert.Equal(t, "ready", values[0])
+}
+
 func TestExpandChildRowsRequiresChildBufferForNestedArray(t *testing.T) {
 	session := &Session{TableBuffers: map[string]*TableBuffer{}}
 	table := &Table{BasicTable: &shared.BasicTable{Name: "orders"}}

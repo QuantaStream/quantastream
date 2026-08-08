@@ -357,19 +357,6 @@ func (a *Attribute) GetFKSpec() (string, string, error) {
 // GetValue - Return row ID for a given input value (StringEnum).
 func (a *Attribute) GetValue(invalue interface{}) (uint64, error) {
 
-	parentTable := a.Parent //.(*Table)
-
-	parentTable.tableCache.TableCacheLock.RLock()
-	defer parentTable.tableCache.TableCacheLock.RUnlock()
-
-	//la, lerr := tableCache[a.Parent.Name].GetAttribute(a.FieldName)
-	// why are we doing this? We have the parent, why look in the cache?
-	la, lerr := parentTable.tableCache.TableCache[parentTable.Name].GetAttribute(a.FieldName)
-	if lerr != nil {
-		return 0, fmt.Errorf("Cannot lookup attribute %s from table cache.", a.FieldName)
-	}
-	la.localLock.RLock()
-
 	value := invalue
 	switch invalue.(type) {
 	case string:
@@ -377,21 +364,26 @@ func (a *Attribute) GetValue(invalue interface{}) (uint64, error) {
 	}
 	var v uint64
 	var ok bool
+	a.localLock.RLock()
 	if v, ok = a.valueMap[value]; !ok {
 		/* If the value does not exist in the valueMap local cache  we will add it and then
 		 *  Call the string enum service to add it.
 		 */
 
-		la.localLock.RUnlock()
+		a.localLock.RUnlock()
 
-		if a.Parent.kvStore == nil {
+		if a.Parent == nil || a.Parent.kvStore == nil {
 			return 0, fmt.Errorf("kvStore is not initialized")
 		}
 		if a.Parent.Name == "" {
 			panic("a.Parent.Name is empty")
 		}
 
-		la.localLock.Lock()
+		a.localLock.Lock()
+		defer a.localLock.Unlock()
+		if v, ok = a.valueMap[value]; ok {
+			return v, nil
+		}
 
 		// OK, value not anywhere to be found, invoke service to add.
 		rowID, err := a.Parent.kvStore.PutStringEnum(a.Parent.Name+SEP+a.FieldName+".StringEnum",
@@ -400,17 +392,21 @@ func (a *Attribute) GetValue(invalue interface{}) (uint64, error) {
 			return 0, err
 		}
 
+		if a.valueMap == nil {
+			a.valueMap = make(map[interface{}]uint64)
+		}
+		if a.reverseMap == nil {
+			a.reverseMap = make(map[uint64]interface{})
+		}
 		a.Values = append(a.Values, shared.Value{Value: value, RowID: rowID})
 		a.valueMap[value] = rowID
 		a.reverseMap[rowID] = value
 
 		v = rowID
 		u.Infof("Added enum for field = %s, value = %v, ID = %v", a.FieldName, value, v)
-
-		la.localLock.Unlock()
-		la.localLock.RLock()
+		return v, nil
 	}
-	la.localLock.RUnlock()
+	a.localLock.RUnlock()
 	return v, nil
 }
 

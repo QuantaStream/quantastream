@@ -980,6 +980,9 @@ func (s *Session) readColumn(row interface{}, pqTablePath string, v *Attribute,
 				val, found = childRow[v.SourceName]
 			}
 		}
+		if !found && !isChild && !ignoreSourcePath && !useNerdCapitalization {
+			val, found = readRowCacheSourceFast(tbuf.rowCache, source)
+		}
 		if !found {
 			src := v.FieldName
 			if len(source) > 1 {
@@ -1011,6 +1014,39 @@ func (s *Session) readColumn(row interface{}, pqTablePath string, v *Attribute,
 		}
 	}
 	return retVals, pqColPaths, nil
+}
+
+func readRowCacheSourceFast(rowCache map[string]interface{}, source string) (interface{}, bool) {
+	if rowCache == nil || source == "" {
+		return nil, false
+	}
+	if val, found := rowCache[source]; found {
+		return val, true
+	}
+
+	trimmed := strings.TrimPrefix(source, "/")
+	if trimmed == "" {
+		return nil, false
+	}
+	if !strings.Contains(trimmed, "/") {
+		val, found := rowCache[trimmed]
+		return val, found
+	}
+
+	const dataPrefix = "data/"
+	if !strings.HasPrefix(trimmed, dataPrefix) {
+		return nil, false
+	}
+	leaf := strings.TrimPrefix(trimmed, dataPrefix)
+	if leaf == "" || strings.Contains(leaf, "/") {
+		return nil, false
+	}
+	data, ok := rowCache["data"].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	val, found := data[leaf]
+	return val, found
 }
 
 // // Get the defalue value for a column (can be an expression)
