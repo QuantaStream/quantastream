@@ -28,6 +28,15 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 	}
 	var profile core.BSIPrimaryKeyLookupProfile
 	fromTime, toTime := b.lookupWindowNanos(req.ShardTimestamp)
+	lookupStart := time.Now()
+	if matchedColumnIDs, ok := b.Reader.lookupCachedPrimaryKeyBigValue(req.TableName,
+		shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime, req.AuthorityValue); ok {
+		profile.CompareElapsed = time.Since(lookupStart)
+		return core.BSIPrimaryKeyLookupResult{
+			MatchedColumnIDs: matchedColumnIDs,
+			Profile:          profile,
+		}, nil
+	}
 	projectionStart := time.Now()
 	bsi, cacheLookup, cacheHit, err := b.Reader.projectCachedPrimaryKeyBSI(req.TableName, shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime)
 	profile.ProjectionElapsed = time.Since(projectionStart)
@@ -44,6 +53,14 @@ func (b StandardCompoundBSIPrimaryKeyBackend) LookupPrimaryKey(req core.BSIPrima
 		return core.BSIPrimaryKeyLookupResult{Profile: profile}, nil
 	}
 	compareStart := time.Now()
+	if lookup, ok := b.Reader.storeCachedPrimaryKeyBigValueLookup(req.TableName,
+		shared.CompoundPrimaryKeyAuthorityFieldName, fromTime, toTime, bsi); ok {
+		profile.CompareElapsed = time.Since(compareStart)
+		return core.BSIPrimaryKeyLookupResult{
+			MatchedColumnIDs: standardBSIBigValueLookupColumnIDs(lookup, req.AuthorityValue),
+			Profile:          profile,
+		}, nil
+	}
 	matches := bsi.CompareBigValue(0, roaring64.EQ, req.AuthorityValue, nil, nil)
 	profile.CompareElapsed = time.Since(compareStart)
 	extractionStart := time.Now()

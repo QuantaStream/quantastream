@@ -513,7 +513,7 @@ func TestStandardProcessNativeGRPCRouterReplayProfilesConcretePrimaryKeyAuthorit
 		BSIStageWriteCount:       orderCount * lineitemsPerOrder,
 	})
 	requirePrimaryKeyTableProjectionCacheProfile(t, result.PutProfile, "lineitem",
-		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
+		1, 0)
 }
 
 func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing.T) {
@@ -582,7 +582,7 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 		EmptyDomainNonEmptyCount: orderCount * lineitemsPerOrder,
 	})
 	requirePrimaryKeyTableProjectionCacheProfile(t, secondProfile, "lineitem",
-		orderCount*lineitemsPerOrder, orderCount*lineitemsPerOrder-1)
+		1, 0)
 	requireStandardProcessScalarString(t, second, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 }
 

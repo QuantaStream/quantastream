@@ -46,12 +46,22 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) LookupSingleColumnBSIPrimaryKey
 		return core.SingleColumnBSIPrimaryKeyReadResult{}, nil
 	}
 	fromTime, toTime := standardSingleColumnBSIPrimaryKeyWindowNanos(r.TableCache, req)
-	bsi, err := r.projectPrimaryKeyBSI(req.TableName, req.FieldName, fromTime, toTime)
+	if columnIDs, ok := r.lookupCachedPrimaryKeyBigValue(req.TableName, req.FieldName, fromTime, toTime, mapped); ok {
+		return core.SingleColumnBSIPrimaryKeyReadResult{
+			ColumnIDs: columnIDs,
+		}, nil
+	}
+	bsi, _, _, err := r.projectCachedPrimaryKeyBSI(req.TableName, req.FieldName, fromTime, toTime)
 	if err != nil {
 		return core.SingleColumnBSIPrimaryKeyReadResult{}, err
 	}
 	if bsi == nil {
 		return core.SingleColumnBSIPrimaryKeyReadResult{}, nil
+	}
+	if lookup, ok := r.storeCachedPrimaryKeyBigValueLookup(req.TableName, req.FieldName, fromTime, toTime, bsi); ok {
+		return core.SingleColumnBSIPrimaryKeyReadResult{
+			ColumnIDs: standardBSIBigValueLookupColumnIDs(lookup, mapped),
+		}, nil
 	}
 	matches := bsi.CompareBigValue(0, roaring64.EQ, mapped, nil, nil)
 	return core.SingleColumnBSIPrimaryKeyReadResult{
@@ -198,6 +208,24 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) stageCachedPrimaryKeyBSI(tableN
 	r.ProjectionCache.StageBigValue(tableName, fieldName, fromTime, toTime, columnID, value)
 }
 
+func (r StandardSingleColumnBSIPrimaryKeyReader) lookupCachedPrimaryKeyBigValue(tableName, fieldName string,
+	fromTime, toTime int64, value *big.Int) ([]uint64, bool) {
+
+	if r.ProjectionCache == nil {
+		return nil, false
+	}
+	return r.ProjectionCache.LookupBigValue(tableName, fieldName, fromTime, toTime, value)
+}
+
+func (r StandardSingleColumnBSIPrimaryKeyReader) storeCachedPrimaryKeyBigValueLookup(tableName, fieldName string,
+	fromTime, toTime int64, bsi *roaring64.BSI) (map[string][]uint64, bool) {
+
+	if r.ProjectionCache == nil {
+		return nil, false
+	}
+	return r.ProjectionCache.StoreBigValueLookup(tableName, fieldName, fromTime, toTime, bsi), true
+}
+
 func standardSingleColumnBSIPrimaryKeyWindowNanos(cache *core.TableCacheStruct, req core.SingleColumnBSIPrimaryKeyReadRequest) (int64, int64) {
 	if req.RequiresShardScope && !req.ShardTimestamp.IsZero() {
 		nanos := req.ShardTimestamp.UTC().UnixNano()
@@ -216,4 +244,11 @@ func standardSingleColumnBSIPrimaryKeyColumnIDs(bitmap *roaring64.Bitmap) []uint
 		ids = append(ids, it.Next())
 	}
 	return ids
+}
+
+func standardBSIBigValueLookupColumnIDs(lookup map[string][]uint64, value *big.Int) []uint64 {
+	if len(lookup) == 0 || value == nil {
+		return nil
+	}
+	return append([]uint64(nil), lookup[standardBSIBigValueLookupKey(value)]...)
 }
