@@ -166,6 +166,39 @@ TPCH_DDL_MODE=admin ./create-tpch.sh
 TPCH_DDL_MODE=sql QUANTA_PORT=4000 ./create-tpch.sh
 ```
 
+## Stream TPC-H Orders And Lineitems
+
+`cmd/quantastream-loader` is the first standalone loader endpoint. It accepts
+JSON events over HTTP, evaluates schema selectors, and writes through the native
+loader connection. Start `quantastream` with native gRPC enabled, then start the
+loader:
+
+```bash
+cd ..
+go run ./cmd/quantastream-loader \
+  -config-dir tpc-h-benchmark/config \
+  -native-grpc-addr 127.0.0.1:4100 \
+  -listen 127.0.0.1:8088 \
+  -tables orders,lineitem
+```
+
+Then generate TPC-H-shaped streaming events:
+
+```bash
+go run ./tpc-h-benchmark/tpch-stream-producer \
+  -target http://127.0.0.1:8088/ingest/json \
+  -orders 10 \
+  -lineitems 4 \
+  -batch-size 25
+```
+
+The producer emits flat `orders` and `lineitem` records that match the real
+TPC-H schema. When using the full schema, load parent dimension tables first
+(`customer`, `part`, and `supplier`) so FK checks can succeed.
+
+See `docs/configuration/STREAMING_LOADER.md` for the loader endpoint contract,
+JSON payload shapes, and operational notes.
+
 ## Load Data Into Stock MySQL
 
 Use `load-mysql-tpch.sh` to load the same generated `.tbl` files into a

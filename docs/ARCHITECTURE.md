@@ -249,6 +249,41 @@ The expected end state is that batch loaders and streaming adapters converge on
 the same schema selection, session routing, dictionary update, and mutation
 writer contracts.
 
+### Streaming Loader Endpoint
+
+`cmd/quantastream-loader` is the first standalone streaming loader process. It
+listens for JSON events over HTTP, normalizes them into `IngestEnvelope`
+records, evaluates table selectors, and routes accepted records through
+`SessionRouter` to the native engine mutation lane.
+
+The initial protocol surface is:
+
+```text
+POST /ingest/json
+GET  /healthz
+```
+
+JSON is the first adapter, not the loader architecture. Additional protocol
+adapters should plug into the same normalized envelope boundary.
+
+For `inabox-standard`, the loader connects to the native gRPC endpoint exposed
+by a separately running `cmd/quantastream` process:
+
+```bash
+go run ./cmd/quantastream-loader \
+  -config-dir tpc-h-benchmark/config \
+  -native-grpc-addr 127.0.0.1:4100 \
+  -listen 127.0.0.1:8088 \
+  -tables orders,lineitem
+```
+
+`tpc-h-benchmark/tpch-stream-producer` is the first driver for this endpoint. It
+generates TPC-H-shaped `orders` and `lineitem` JSON events and posts them to the
+loader. Against the full TPC-H schema, dimension and parent tables such as
+`customer`, `part`, and `supplier` must already be loaded because normal FK
+rules still apply. See `docs/configuration/STREAMING_LOADER.md` for user-facing
+setup and payload details.
+
 ### Kinesis Loader Routing
 
 The Kinesis consumer uses schema selectors to determine which Quanta table a
