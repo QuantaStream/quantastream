@@ -408,13 +408,18 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 	req := putRowRequest{
 		tableName: "customers",
 		timings: &putRowStageTimings{
-			sourceElapsed:         time.Millisecond,
-			identityElapsed:       2 * time.Millisecond,
-			childExpansionElapsed: 4 * time.Millisecond,
-			childTraversalElapsed: 1500 * time.Microsecond,
-			relationElapsed:       5 * time.Millisecond,
-			attributeElapsed:      6 * time.Millisecond,
-			childRowCount:         7,
+			sourceElapsed:          time.Millisecond,
+			identityElapsed:        2 * time.Millisecond,
+			childExpansionElapsed:  4 * time.Millisecond,
+			childTraversalElapsed:  1500 * time.Microsecond,
+			relationElapsed:        5 * time.Millisecond,
+			attributeElapsed:       6 * time.Millisecond,
+			attributeReadElapsed:   7 * time.Millisecond,
+			attributeMapElapsed:    8 * time.Millisecond,
+			primaryKeyReadElapsed:  9 * time.Millisecond,
+			primaryKeyMapElapsed:   10 * time.Millisecond,
+			primaryKeyStageElapsed: 11 * time.Millisecond,
+			childRowCount:          7,
 		},
 	}
 	tbuf := &TableBuffer{CurrentColumnID: 42}
@@ -423,18 +428,23 @@ func TestPutRowResultIncludesStageTimings(t *testing.T) {
 	result := req.putRowResult(tbuf, identity, 21*time.Millisecond)
 
 	assert.Equal(t, PutRowResult{
-		TableName:             "customers",
-		ColumnID:              42,
-		ChildRowCount:         7,
-		LogicalRowCount:       8,
-		ExistingRow:           true,
-		SourceElapsed:         time.Millisecond,
-		IdentityElapsed:       2 * time.Millisecond,
-		ChildExpansionElapsed: 4 * time.Millisecond,
-		ChildTraversalElapsed: 1500 * time.Microsecond,
-		RelationElapsed:       5 * time.Millisecond,
-		AttributeElapsed:      6 * time.Millisecond,
-		TotalElapsed:          21 * time.Millisecond,
+		TableName:              "customers",
+		ColumnID:               42,
+		ChildRowCount:          7,
+		LogicalRowCount:        8,
+		ExistingRow:            true,
+		SourceElapsed:          time.Millisecond,
+		IdentityElapsed:        2 * time.Millisecond,
+		ChildExpansionElapsed:  4 * time.Millisecond,
+		ChildTraversalElapsed:  1500 * time.Microsecond,
+		RelationElapsed:        5 * time.Millisecond,
+		AttributeElapsed:       6 * time.Millisecond,
+		AttributeReadElapsed:   7 * time.Millisecond,
+		AttributeMapElapsed:    8 * time.Millisecond,
+		PrimaryKeyReadElapsed:  9 * time.Millisecond,
+		PrimaryKeyMapElapsed:   10 * time.Millisecond,
+		PrimaryKeyStageElapsed: 11 * time.Millisecond,
+		TotalElapsed:           21 * time.Millisecond,
 	}, result)
 }
 

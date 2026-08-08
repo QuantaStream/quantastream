@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	_ "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -391,7 +392,7 @@ func (m *Main) logDirectProfileSummary() {
 	if m.putRowProfile != nil {
 		profile := m.putRowProfile.Snapshot()
 		pk := profile.PrimaryKey
-		log.Printf("TPC-H direct putrow profile table=%s records=%d logical_rows=%d child_rows=%d inserted=%d existing=%d duplicate=%d conflict=%d total=%s source=%s identity=%s child_expand=%s child_traverse=%s relation=%s attributes=%s pk_total=%s pk_resolves=%d pk_lookup_required=%d pk_bsi_lookup=%d pk_bsi_hit=%d pk_empty_domain_probe=%d pk_empty_domain_skip=%d pk_empty_domain_non_empty=%d pk_empty_domain_unknown=%d pk_empty_domain_probe_elapsed=%s pk_bsi_projection_cache_lookup=%d pk_bsi_projection_cache_hit=%d pk_bsi_projection=%s pk_bsi_compare=%s pk_bsi_stage_write=%s pk_rownum_alloc=%s pk_batch_cache=%s",
+		log.Printf("TPC-H direct putrow profile table=%s records=%d logical_rows=%d child_rows=%d inserted=%d existing=%d duplicate=%d conflict=%d total=%s source=%s identity=%s child_expand=%s child_traverse=%s relation=%s attributes=%s attribute_read=%s attribute_map=%s pk_read=%s pk_map=%s pk_stage_map=%s attribute_by_mapper=%q pk_total=%s pk_resolves=%d pk_lookup_required=%d pk_bsi_lookup=%d pk_bsi_hit=%d pk_empty_domain_probe=%d pk_empty_domain_skip=%d pk_empty_domain_non_empty=%d pk_empty_domain_unknown=%d pk_empty_domain_probe_elapsed=%s pk_bsi_projection_cache_lookup=%d pk_bsi_projection_cache_hit=%d pk_bsi_projection=%s pk_bsi_compare=%s pk_bsi_stage_write=%s pk_rownum_alloc=%s pk_batch_cache=%s",
 			m.Index,
 			profile.RecordCount,
 			profile.LogicalRowCount,
@@ -407,6 +408,12 @@ func (m *Main) logDirectProfileSummary() {
 			profile.ChildTraversalElapsed.Round(time.Millisecond),
 			profile.RelationElapsed.Round(time.Millisecond),
 			profile.AttributeElapsed.Round(time.Millisecond),
+			profile.AttributeReadElapsed.Round(time.Millisecond),
+			profile.AttributeMapElapsed.Round(time.Millisecond),
+			profile.PrimaryKeyReadElapsed.Round(time.Millisecond),
+			profile.PrimaryKeyMapElapsed.Round(time.Millisecond),
+			profile.PrimaryKeyStageElapsed.Round(time.Millisecond),
+			formatPutRowMapperProfiles(profile.AttributeByMapper),
 			pk.TotalElapsed.Round(time.Millisecond),
 			pk.ResolveCount,
 			pk.LookupRequiredCount,
@@ -476,6 +483,28 @@ func (m *Main) logDirectProfileSummary() {
 			profile.MaxElapsed.Round(time.Millisecond),
 		)
 	}
+}
+
+func formatPutRowMapperProfiles(profiles map[string]core.PutRowMapperProfile) string {
+	if len(profiles) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(profiles))
+	for key := range profiles {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		profile := profiles[key]
+		parts = append(parts, fmt.Sprintf("%s[count=%d,read=%s,map=%s]",
+			key,
+			profile.ValueCount,
+			profile.ReadElapsed.Round(time.Millisecond),
+			profile.MapElapsed.Round(time.Millisecond),
+		))
+	}
+	return strings.Join(parts, ";")
 }
 
 func (m *Main) loadMode() string {

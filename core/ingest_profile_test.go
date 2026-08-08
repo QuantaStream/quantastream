@@ -13,17 +13,34 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	callback := profile.Callback()
 
 	callback("shard0", IngestRecord{TableName: "orders"}, PutRowResult{
-		TableName:             "orders",
-		ChildRowCount:         3,
-		LogicalRowCount:       4,
-		Inserted:              true,
-		SourceElapsed:         time.Millisecond,
-		IdentityElapsed:       2 * time.Millisecond,
-		ChildExpansionElapsed: 4 * time.Millisecond,
-		ChildTraversalElapsed: 1500 * time.Microsecond,
-		RelationElapsed:       5 * time.Millisecond,
-		AttributeElapsed:      6 * time.Millisecond,
-		TotalElapsed:          21 * time.Millisecond,
+		TableName:              "orders",
+		ChildRowCount:          3,
+		LogicalRowCount:        4,
+		Inserted:               true,
+		SourceElapsed:          time.Millisecond,
+		IdentityElapsed:        2 * time.Millisecond,
+		ChildExpansionElapsed:  4 * time.Millisecond,
+		ChildTraversalElapsed:  1500 * time.Microsecond,
+		RelationElapsed:        5 * time.Millisecond,
+		AttributeElapsed:       6 * time.Millisecond,
+		AttributeReadElapsed:   7 * time.Millisecond,
+		AttributeMapElapsed:    8 * time.Millisecond,
+		PrimaryKeyReadElapsed:  9 * time.Millisecond,
+		PrimaryKeyMapElapsed:   10 * time.Millisecond,
+		PrimaryKeyStageElapsed: 11 * time.Millisecond,
+		attributeByMapper: putRowMapperProfiles{
+			int(IntBSI): {
+				ValueCount:  2,
+				ReadElapsed: 3 * time.Millisecond,
+				MapElapsed:  4 * time.Millisecond,
+			},
+			int(StringLexBSI): {
+				ValueCount:  1,
+				ReadElapsed: time.Millisecond,
+				MapElapsed:  2 * time.Millisecond,
+			},
+		},
+		TotalElapsed: 21 * time.Millisecond,
 		PrimaryKey: PrimaryKeyResolveProfile{
 			ResolveCount:                 4,
 			LookupRequiredCount:          4,
@@ -90,6 +107,21 @@ func TestRouterPutRowProfileAggregatesResultTimings(t *testing.T) {
 	require.Equal(t, 1500*time.Microsecond, snapshot.ChildTraversalElapsed)
 	require.Equal(t, 5*time.Millisecond, snapshot.RelationElapsed)
 	require.Equal(t, 6*time.Millisecond, snapshot.AttributeElapsed)
+	require.Equal(t, 7*time.Millisecond, snapshot.AttributeReadElapsed)
+	require.Equal(t, 8*time.Millisecond, snapshot.AttributeMapElapsed)
+	require.Equal(t, 9*time.Millisecond, snapshot.PrimaryKeyReadElapsed)
+	require.Equal(t, 10*time.Millisecond, snapshot.PrimaryKeyMapElapsed)
+	require.Equal(t, 11*time.Millisecond, snapshot.PrimaryKeyStageElapsed)
+	require.Equal(t, PutRowMapperProfile{
+		ValueCount:  2,
+		ReadElapsed: 3 * time.Millisecond,
+		MapElapsed:  4 * time.Millisecond,
+	}, snapshot.AttributeByMapper["IntBSI"])
+	require.Equal(t, PutRowMapperProfile{
+		ValueCount:  1,
+		ReadElapsed: time.Millisecond,
+		MapElapsed:  2 * time.Millisecond,
+	}, snapshot.AttributeByMapper["StringLexBSI"])
 	require.Equal(t, PrimaryKeyResolveProfile{
 		ResolveCount:                 5,
 		LookupRequiredCount:          5,
@@ -170,14 +202,23 @@ func TestRouterPutRowProfileSnapshotIsStableCopy(t *testing.T) {
 		PrimaryKey: PrimaryKeyResolveProfile{
 			ResolveCount: 1,
 		},
+		attributeByMapper: putRowMapperProfiles{
+			int(StringLexBSI): {
+				ValueCount:  1,
+				ReadElapsed: time.Millisecond,
+				MapElapsed:  2 * time.Millisecond,
+			},
+		},
 	})
 
 	snapshot := profile.Snapshot()
 	snapshot.ByTable["orders"] = RouterPutRowProfileCounter{}
 	snapshot.PrimaryKeyByTable["orders"] = PrimaryKeyResolveProfile{}
+	snapshot.AttributeByMapper["StringLexBSI"] = PutRowMapperProfile{}
 
 	require.Equal(t, 1, profile.Snapshot().ByTable["orders"].RecordCount)
 	require.Equal(t, 1, profile.Snapshot().PrimaryKeyByTable["orders"].ResolveCount)
+	require.Equal(t, 1, profile.Snapshot().AttributeByMapper["StringLexBSI"].ValueCount)
 }
 
 func TestRouterFlushProfileAggregatesFlushTimings(t *testing.T) {

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -72,6 +73,42 @@ func (b *mapBSIPrimaryKeyBackend) StagePrimaryKey(req BSIPrimaryKeyStageRequest)
 	}
 	b.rows[key] = req.ColumnID
 	return nil
+}
+
+func TestNewBSIPrimaryKeyStageRequestFromLookupReusesEncodedIdentity(t *testing.T) {
+	attr := &Attribute{BasicAttribute: &shared.BasicAttribute{
+		FieldName:       "l_orderkey",
+		Type:            "Integer",
+		MappingStrategy: "IntBSI",
+	}}
+	authorityValue := big.NewInt(9001)
+	lookupReq := BSIPrimaryKeyLookupRequest{
+		TableName:      "lineitem",
+		PrimaryKey:     "l_orderkey+l_linenumber",
+		Attributes:     []*Attribute{attr},
+		Values:         []interface{}{int64(7)},
+		AuthorityValue: authorityValue,
+		Identity:       []byte{1, 2, 3},
+		RenderedValue:  "7+1",
+		ShardTimestamp: time.Unix(123, 0).UTC(),
+	}
+
+	stageReq := newBSIPrimaryKeyStageRequestFromLookup(lookupReq, 42)
+
+	require.Equal(t, lookupReq.TableName, stageReq.TableName)
+	require.Equal(t, lookupReq.PrimaryKey, stageReq.PrimaryKey)
+	require.Equal(t, lookupReq.Attributes, stageReq.Attributes)
+	require.Equal(t, lookupReq.Values, stageReq.Values)
+	require.Equal(t, lookupReq.Identity, stageReq.Identity)
+	require.Equal(t, lookupReq.RenderedValue, stageReq.RenderedValue)
+	require.Equal(t, lookupReq.ShardTimestamp, stageReq.ShardTimestamp)
+	require.Equal(t, uint64(42), stageReq.ColumnID)
+	require.Equal(t, 0, stageReq.AuthorityValue.Cmp(authorityValue))
+
+	lookupReq.Identity[0] = 9
+	authorityValue.SetInt64(1234)
+	require.Equal(t, []byte{1, 2, 3}, stageReq.Identity)
+	require.Equal(t, int64(9001), stageReq.AuthorityValue.Int64())
 }
 
 func TestBSIPrimaryKeyResolverUsesTypedLookupValues(t *testing.T) {

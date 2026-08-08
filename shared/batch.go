@@ -38,11 +38,14 @@ type BatchBuffer struct {
 	batchValueCount         int
 	batchClearValueCount    int
 	batchPartitionStrCount  int
+	pendingMutationCount    int
 	batchMutex              sync.RWMutex
 	lastFlushProfile        BatchBufferFlushProfile
 	ModifiedAt              time.Time
 	FlushedAt               time.Time
 }
+
+const batchModifiedAtRefreshInterval = 1024
 
 // BatchBufferFlushProfile captures one completed Flush attempt.
 type BatchBufferFlushProfile struct {
@@ -100,6 +103,14 @@ func (c *BatchBuffer) LastFlushProfile() BatchBufferFlushProfile {
 	return c.lastFlushProfile
 }
 
+func (c *BatchBuffer) touchModifiedAtLocked() {
+	if c.pendingMutationCount == 0 || c.pendingMutationCount >= batchModifiedAtRefreshInterval {
+		c.ModifiedAt = time.Now()
+		c.pendingMutationCount = 0
+	}
+	c.pendingMutationCount++
+}
+
 type Bitmap struct {
 	Bits     *roaring64.Bitmap
 	IsUpdate bool
@@ -134,6 +145,8 @@ func (c *BatchBuffer) Flush() (err error) {
 		}
 		c.batchMutex.Lock()
 		c.lastFlushProfile = profile
+		c.ModifiedAt = profile.FinishedAt
+		c.pendingMutationCount = 0
 		c.batchMutex.Unlock()
 	}()
 
@@ -356,7 +369,7 @@ func (c *BatchBuffer) MergeInto(to *BatchBuffer) {
 		}
 	}
 
-	to.ModifiedAt = time.Now()
+	to.touchModifiedAtLocked()
 }
 
 // SetBit - Set a bit in a "standard" bitmap.  Operations are batched.
@@ -365,7 +378,7 @@ func (c *BatchBuffer) SetBit(index, field string, columnID, rowID uint64, ts tim
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
 
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 
 	if c.batchSets == nil {
 		c.batchSets = make(map[string]map[string]map[uint64]map[int64]*Bitmap)
@@ -405,7 +418,7 @@ func (c *BatchBuffer) ClearBit(index, field string, columnID, rowID uint64, ts t
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
 
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 
 	if c.batchClears == nil {
 		c.batchClears = make(map[string]map[string]map[uint64]map[int64]*Bitmap)
@@ -444,7 +457,7 @@ func (c *BatchBuffer) SetValue(index, field string, columnID uint64, value *big.
 
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 
 	if c.batchValues == nil {
 		c.batchValues = make(map[string]map[string]map[int64]*roaring64.BSI)
@@ -482,7 +495,7 @@ func (c *BatchBuffer) ClearValue(index, field string, columnID uint64, ts time.T
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
 
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 
 	if c.batchClearValues == nil {
 		c.batchClearValues = make(map[string]map[string]map[int64]*roaring64.Bitmap)
@@ -519,7 +532,7 @@ func (c *BatchBuffer) SetPartitionedString(indexPath string, key, value interfac
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
 
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 
 	if c.batchPartitionStr == nil {
 		c.batchPartitionStr = make(map[string]map[interface{}]interface{})
@@ -574,7 +587,7 @@ func (c *BatchBuffer) SetPrimaryKeyIdentity(identity []byte, columnID uint64) {
 	c.batchMutex.Lock()
 	defer c.batchMutex.Unlock()
 
-	c.ModifiedAt = time.Now()
+	c.touchModifiedAtLocked()
 	if c.batchPrimaryKeyIdentity == nil {
 		c.batchPrimaryKeyIdentity = make(map[string]uint64)
 	}

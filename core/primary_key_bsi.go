@@ -183,13 +183,7 @@ func (r BSIPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRe
 	}
 	stageStart := time.Now()
 	profile.BSIStageWriteCount++
-	stageReq, identityEncodeElapsed, authorityEncodeElapsed, err := newBSIPrimaryKeyStageRequest(req, tbuf)
-	profile.BSIIdentityEncodeElapsed += identityEncodeElapsed
-	profile.BSIAuthorityEncodeElapsed += authorityEncodeElapsed
-	if err != nil {
-		profile.BSIStageWriteElapsed += time.Since(stageStart)
-		return finish(0, false), fmt.Errorf("BSI primary key identity error - %w", err)
-	}
+	stageReq := newBSIPrimaryKeyStageRequestFromLookup(lookupReq, tbuf.CurrentColumnID)
 	if err := r.Backend.StagePrimaryKey(stageReq); err != nil {
 		profile.BSIStageWriteElapsed += time.Since(stageStart)
 		return finish(0, false), fmt.Errorf("BSI primary key stage error - %w", err)
@@ -361,6 +355,23 @@ func newBSIPrimaryKeyLookupRequest(req PrimaryKeyResolveRequest, tbuf *TableBuff
 	)
 	authorityEncodeElapsed := time.Since(authorityEncodeStart)
 	return lookupReq, identityEncodeElapsed, authorityEncodeElapsed, nil
+}
+
+func newBSIPrimaryKeyStageRequestFromLookup(req BSIPrimaryKeyLookupRequest, columnID uint64) BSIPrimaryKeyStageRequest {
+	stageReq := BSIPrimaryKeyStageRequest{
+		TableName:      req.TableName,
+		PrimaryKey:     req.PrimaryKey,
+		Attributes:     append([]*Attribute(nil), req.Attributes...),
+		Values:         append([]interface{}(nil), req.Values...),
+		Identity:       append([]byte(nil), req.Identity...),
+		RenderedValue:  req.RenderedValue,
+		ShardTimestamp: req.ShardTimestamp,
+		ColumnID:       columnID,
+	}
+	if req.AuthorityValue != nil {
+		stageReq.AuthorityValue = new(big.Int).Set(req.AuthorityValue)
+	}
+	return stageReq
 }
 
 func newBSIPrimaryKeyStageRequest(req PrimaryKeyResolveRequest, tbuf *TableBuffer) (BSIPrimaryKeyStageRequest, time.Duration, time.Duration, error) {

@@ -20,6 +20,39 @@ func TestSetValueMarksBatchNonEmpty(t *testing.T) {
 	}
 }
 
+func TestBatchBufferModifiedAtRefreshIsThrottled(t *testing.T) {
+	batch := NewBatchBuffer(nil, nil, 1_000_000)
+	batch.ModifiedAt = time.Unix(1, 0)
+
+	if err := batch.SetValue("part", "p_partkey", 1, big.NewInt(1), time.Unix(0, 0)); err != nil {
+		t.Fatalf("SetValue returned error: %v", err)
+	}
+	firstTouch := batch.ModifiedAt
+	if !firstTouch.After(time.Unix(1, 0)) {
+		t.Fatalf("first mutation did not refresh ModifiedAt: %s", firstTouch)
+	}
+	if batch.pendingMutationCount != 1 {
+		t.Fatalf("pendingMutationCount = %d, want 1", batch.pendingMutationCount)
+	}
+
+	for i := 0; i < batchModifiedAtRefreshInterval-1; i++ {
+		if err := batch.SetValue("part", "p_partkey", uint64(i+2), big.NewInt(1), time.Unix(0, 0)); err != nil {
+			t.Fatalf("SetValue returned error: %v", err)
+		}
+	}
+	if !batch.ModifiedAt.Equal(firstTouch) {
+		t.Fatalf("ModifiedAt refreshed before throttle interval: got %s want %s", batch.ModifiedAt, firstTouch)
+	}
+
+	batch.ModifiedAt = time.Unix(2, 0)
+	if err := batch.SetValue("part", "p_partkey", 2000, big.NewInt(1), time.Unix(0, 0)); err != nil {
+		t.Fatalf("SetValue returned error: %v", err)
+	}
+	if !batch.ModifiedAt.After(time.Unix(2, 0)) {
+		t.Fatalf("ModifiedAt did not refresh after throttle interval: %s", batch.ModifiedAt)
+	}
+}
+
 func TestBatchBufferPrimaryKeyIdentityCacheIsLocalToBatch(t *testing.T) {
 	batch := NewBatchBuffer(nil, nil, 1000)
 	identity := []byte("typed-primary-key-identity")

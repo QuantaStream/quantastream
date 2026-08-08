@@ -16,24 +16,30 @@ type RouterPutRowProfile struct {
 
 // RouterPutRowProfileSummary is a point-in-time load-path profile summary.
 type RouterPutRowProfileSummary struct {
-	RecordCount           int                                   `json:"record_count"`
-	ChildRowCount         int                                   `json:"child_row_count"`
-	LogicalRowCount       int                                   `json:"logical_row_count"`
-	InsertedCount         int                                   `json:"inserted_count"`
-	ExistingCount         int                                   `json:"existing_count"`
-	DuplicateCount        int                                   `json:"duplicate_count"`
-	ConflictCount         int                                   `json:"conflict_count"`
-	TotalElapsed          time.Duration                         `json:"total_elapsed_nanos"`
-	SourceElapsed         time.Duration                         `json:"source_elapsed_nanos"`
-	IdentityElapsed       time.Duration                         `json:"identity_elapsed_nanos"`
-	ChildExpansionElapsed time.Duration                         `json:"child_expansion_elapsed_nanos"`
-	ChildTraversalElapsed time.Duration                         `json:"child_traversal_elapsed_nanos"`
-	RelationElapsed       time.Duration                         `json:"relation_elapsed_nanos"`
-	AttributeElapsed      time.Duration                         `json:"attribute_elapsed_nanos"`
-	PrimaryKey            PrimaryKeyResolveProfile              `json:"primary_key"`
-	PrimaryKeyByTable     map[string]PrimaryKeyResolveProfile   `json:"primary_key_by_table,omitempty"`
-	ByTable               map[string]RouterPutRowProfileCounter `json:"by_table,omitempty"`
-	ByShard               map[string]RouterPutRowProfileCounter `json:"by_shard,omitempty"`
+	RecordCount            int                                   `json:"record_count"`
+	ChildRowCount          int                                   `json:"child_row_count"`
+	LogicalRowCount        int                                   `json:"logical_row_count"`
+	InsertedCount          int                                   `json:"inserted_count"`
+	ExistingCount          int                                   `json:"existing_count"`
+	DuplicateCount         int                                   `json:"duplicate_count"`
+	ConflictCount          int                                   `json:"conflict_count"`
+	TotalElapsed           time.Duration                         `json:"total_elapsed_nanos"`
+	SourceElapsed          time.Duration                         `json:"source_elapsed_nanos"`
+	IdentityElapsed        time.Duration                         `json:"identity_elapsed_nanos"`
+	ChildExpansionElapsed  time.Duration                         `json:"child_expansion_elapsed_nanos"`
+	ChildTraversalElapsed  time.Duration                         `json:"child_traversal_elapsed_nanos"`
+	RelationElapsed        time.Duration                         `json:"relation_elapsed_nanos"`
+	AttributeElapsed       time.Duration                         `json:"attribute_elapsed_nanos"`
+	AttributeReadElapsed   time.Duration                         `json:"attribute_read_elapsed_nanos"`
+	AttributeMapElapsed    time.Duration                         `json:"attribute_map_elapsed_nanos"`
+	PrimaryKeyReadElapsed  time.Duration                         `json:"primary_key_read_elapsed_nanos"`
+	PrimaryKeyMapElapsed   time.Duration                         `json:"primary_key_map_elapsed_nanos"`
+	PrimaryKeyStageElapsed time.Duration                         `json:"primary_key_stage_elapsed_nanos"`
+	AttributeByMapper      map[string]PutRowMapperProfile        `json:"attribute_by_mapper,omitempty"`
+	PrimaryKey             PrimaryKeyResolveProfile              `json:"primary_key"`
+	PrimaryKeyByTable      map[string]PrimaryKeyResolveProfile   `json:"primary_key_by_table,omitempty"`
+	ByTable                map[string]RouterPutRowProfileCounter `json:"by_table,omitempty"`
+	ByShard                map[string]RouterPutRowProfileCounter `json:"by_shard,omitempty"`
 }
 
 // RouterPutRowProfileCounter is a grouped count/timing accumulator.
@@ -85,6 +91,12 @@ func (p *RouterPutRowProfile) Observe(shardID string, record IngestRecord, resul
 	p.summary.ChildTraversalElapsed += result.ChildTraversalElapsed
 	p.summary.RelationElapsed += result.RelationElapsed
 	p.summary.AttributeElapsed += result.AttributeElapsed
+	p.summary.AttributeReadElapsed += result.AttributeReadElapsed
+	p.summary.AttributeMapElapsed += result.AttributeMapElapsed
+	p.summary.PrimaryKeyReadElapsed += result.PrimaryKeyReadElapsed
+	p.summary.PrimaryKeyMapElapsed += result.PrimaryKeyMapElapsed
+	p.summary.PrimaryKeyStageElapsed += result.PrimaryKeyStageElapsed
+	p.summary.AttributeByMapper = addPutRowMapperProfiles(p.summary.AttributeByMapper, result.attributeByMapper)
 	p.summary.PrimaryKey = p.summary.PrimaryKey.add(result.PrimaryKey)
 	if len(result.PrimaryKeyByTable) > 0 {
 		p.summary.PrimaryKeyByTable = addPrimaryKeyResolveProfilesByTable(p.summary.PrimaryKeyByTable, result.PrimaryKeyByTable)
@@ -124,10 +136,44 @@ func (p *RouterPutRowProfile) ensureMaps() {
 
 func (s RouterPutRowProfileSummary) copy() RouterPutRowProfileSummary {
 	cp := s
+	cp.AttributeByMapper = copyPutRowMapperProfiles(s.AttributeByMapper)
 	cp.PrimaryKeyByTable = copyPrimaryKeyResolveProfiles(s.PrimaryKeyByTable)
 	cp.ByTable = copyRouterPutRowProfileCounters(s.ByTable)
 	cp.ByShard = copyRouterPutRowProfileCounters(s.ByShard)
 	return cp
+}
+
+func addPutRowMapperProfiles(dst map[string]PutRowMapperProfile, src putRowMapperProfiles) map[string]PutRowMapperProfile {
+	for mapperIndex, profile := range src {
+		if profile.ValueCount == 0 && profile.ReadElapsed == 0 && profile.MapElapsed == 0 {
+			continue
+		}
+		mapperType := MapperType(mapperIndex)
+		if !validPutRowMapperProfileSlot(mapperType) {
+			mapperType = undefined
+		}
+		if dst == nil {
+			dst = map[string]PutRowMapperProfile{}
+		}
+		name := mapperType.String()
+		current := dst[name]
+		current.ValueCount += profile.ValueCount
+		current.ReadElapsed += profile.ReadElapsed
+		current.MapElapsed += profile.MapElapsed
+		dst[name] = current
+	}
+	return dst
+}
+
+func copyPutRowMapperProfiles(src map[string]PutRowMapperProfile) map[string]PutRowMapperProfile {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]PutRowMapperProfile, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 func copyPrimaryKeyResolveProfiles(src map[string]PrimaryKeyResolveProfile) map[string]PrimaryKeyResolveProfile {

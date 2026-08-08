@@ -301,11 +301,11 @@ func (mt MapperType) MutateBitmap(c *Session, table, field string, mval interfac
 	if !ok {
 		return fmt.Errorf("table %s invalid or not opened", table)
 	}
-	at, err := tbuf.Table.GetAttribute(field)
-	if err != nil {
-		return err
-	}
 	if !mt.IsBSI() {
+		at, lookupErr := tbuf.Table.GetAttribute(field)
+		if lookupErr != nil {
+			return lookupErr
+		}
 		var val *big.Int
 		switch mval.(type) {
 		case *big.Int:

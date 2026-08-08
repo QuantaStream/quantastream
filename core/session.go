@@ -124,24 +124,42 @@ type PutRowOptions struct {
 // PutRowResult describes the row identity observed by the load path. Duplicate
 // and conflict semantics are reserved for the streaming dedup boundary.
 type PutRowResult struct {
-	TableName             string
-	ColumnID              uint64
-	ChildRowCount         int
-	LogicalRowCount       int
-	Inserted              bool
-	ExistingRow           bool
-	Duplicate             bool
-	Conflict              bool
-	SourceElapsed         time.Duration
-	IdentityElapsed       time.Duration
-	ChildExpansionElapsed time.Duration
-	ChildTraversalElapsed time.Duration
-	RelationElapsed       time.Duration
-	AttributeElapsed      time.Duration
-	TotalElapsed          time.Duration
-	PrimaryKey            PrimaryKeyResolveProfile
-	PrimaryKeyByTable     map[string]PrimaryKeyResolveProfile `json:"primary_key_by_table,omitempty"`
+	TableName              string
+	ColumnID               uint64
+	ChildRowCount          int
+	LogicalRowCount        int
+	Inserted               bool
+	ExistingRow            bool
+	Duplicate              bool
+	Conflict               bool
+	SourceElapsed          time.Duration
+	IdentityElapsed        time.Duration
+	ChildExpansionElapsed  time.Duration
+	ChildTraversalElapsed  time.Duration
+	RelationElapsed        time.Duration
+	AttributeElapsed       time.Duration
+	AttributeReadElapsed   time.Duration
+	AttributeMapElapsed    time.Duration
+	PrimaryKeyReadElapsed  time.Duration
+	PrimaryKeyMapElapsed   time.Duration
+	PrimaryKeyStageElapsed time.Duration
+	TotalElapsed           time.Duration
+	PrimaryKey             PrimaryKeyResolveProfile
+	PrimaryKeyByTable      map[string]PrimaryKeyResolveProfile `json:"primary_key_by_table,omitempty"`
+	attributeByMapper      putRowMapperProfiles
 }
+
+const putRowMapperProfileSlots = int(StringBSI) + 1
+
+// PutRowMapperProfile captures source-read and mapper execution time for one
+// mapping strategy in the PutRow path.
+type PutRowMapperProfile struct {
+	ValueCount  int           `json:"value_count"`
+	ReadElapsed time.Duration `json:"read_elapsed_nanos"`
+	MapElapsed  time.Duration `json:"map_elapsed_nanos"`
+}
+
+type putRowMapperProfiles [putRowMapperProfileSlots]PutRowMapperProfile
 
 type putRowRequest struct {
 	tableName             string
@@ -167,15 +185,21 @@ type putRowIdentity struct {
 }
 
 type putRowStageTimings struct {
-	sourceElapsed         time.Duration
-	identityElapsed       time.Duration
-	childExpansionElapsed time.Duration
-	childTraversalElapsed time.Duration
-	relationElapsed       time.Duration
-	attributeElapsed      time.Duration
-	childRowCount         int
-	primaryKeyProfile     PrimaryKeyResolveProfile
-	primaryKeyByTable     map[string]PrimaryKeyResolveProfile
+	sourceElapsed          time.Duration
+	identityElapsed        time.Duration
+	childExpansionElapsed  time.Duration
+	childTraversalElapsed  time.Duration
+	relationElapsed        time.Duration
+	attributeElapsed       time.Duration
+	attributeReadElapsed   time.Duration
+	attributeMapElapsed    time.Duration
+	primaryKeyReadElapsed  time.Duration
+	primaryKeyMapElapsed   time.Duration
+	primaryKeyStageElapsed time.Duration
+	childRowCount          int
+	primaryKeyProfile      PrimaryKeyResolveProfile
+	primaryKeyByTable      map[string]PrimaryKeyResolveProfile
+	attributeByMapper      putRowMapperProfiles
 }
 
 type putRowStageName string
@@ -617,6 +641,50 @@ func (req putRowRequest) addPrimaryKeyProfilesByTable(profiles map[string]Primar
 	}
 }
 
+func (req putRowRequest) addAttributeMapperTiming(attr *Attribute, readElapsed, mapElapsed time.Duration, valueCount int) {
+	if req.timings == nil || attr == nil {
+		return
+	}
+	req.timings.attributeReadElapsed += readElapsed
+	req.timings.attributeMapElapsed += mapElapsed
+	if valueCount <= 0 && readElapsed <= 0 && mapElapsed <= 0 {
+		return
+	}
+	mapperType := MapperTypeFromString(attr.MappingStrategy)
+	if !validPutRowMapperProfileSlot(mapperType) {
+		mapperType = undefined
+	}
+	profile := &req.timings.attributeByMapper[int(mapperType)]
+	profile.ValueCount += valueCount
+	profile.ReadElapsed += readElapsed
+	profile.MapElapsed += mapElapsed
+}
+
+func (req putRowRequest) addPrimaryKeyReadTiming(elapsed time.Duration) {
+	if req.timings == nil || elapsed <= 0 {
+		return
+	}
+	req.timings.primaryKeyReadElapsed += elapsed
+}
+
+func (req putRowRequest) addPrimaryKeyMapTiming(elapsed time.Duration) {
+	if req.timings == nil || elapsed <= 0 {
+		return
+	}
+	req.timings.primaryKeyMapElapsed += elapsed
+}
+
+func (req putRowRequest) addPrimaryKeyStageTiming(elapsed time.Duration) {
+	if req.timings == nil || elapsed <= 0 {
+		return
+	}
+	req.timings.primaryKeyStageElapsed += elapsed
+}
+
+func validPutRowMapperProfileSlot(mapperType MapperType) bool {
+	return int(mapperType) >= 0 && int(mapperType) < putRowMapperProfileSlots
+}
+
 func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity, totalElapsed time.Duration) PutRowResult {
 	result := PutRowResult{
 		TableName:       req.tableName,
@@ -637,15 +705,20 @@ func (req putRowRequest) putRowResult(tbuf *TableBuffer, identity putRowIdentity
 	result.ChildTraversalElapsed = req.timings.childTraversalElapsed
 	result.RelationElapsed = req.timings.relationElapsed
 	result.AttributeElapsed = req.timings.attributeElapsed
+	result.AttributeReadElapsed = req.timings.attributeReadElapsed
+	result.AttributeMapElapsed = req.timings.attributeMapElapsed
+	result.PrimaryKeyReadElapsed = req.timings.primaryKeyReadElapsed
+	result.PrimaryKeyMapElapsed = req.timings.primaryKeyMapElapsed
+	result.PrimaryKeyStageElapsed = req.timings.primaryKeyStageElapsed
 	result.PrimaryKey = req.timings.primaryKeyProfile
 	result.PrimaryKeyByTable = copyPrimaryKeyResolveProfileMap(req.timings.primaryKeyByTable)
+	result.attributeByMapper = req.timings.attributeByMapper
 	return result
 }
 
 func (s *Session) establishRowIdentity(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
 
-	identity, err := s.processPrimaryKey(tbuf, req.row, req.pqTablePath, req.providedColID, req.isChild,
-		req.ignoreSourcePath, req.useNerdCapitalization, req.primaryKeyMode)
+	identity, err := s.processPrimaryKey(req, tbuf)
 	req.addPrimaryKeyProfile(identity.primaryKeyProfile)
 	req.addPrimaryKeyProfileForTable(tbuf.Table.Name, identity.primaryKeyProfile)
 	return identity, err
@@ -869,20 +942,32 @@ func (s *Session) resolveParentRelationColumnID(req putRowRequest, tbuf, relBuf 
 
 func (s *Session) mapAttributeValue(req putRowRequest, attr *Attribute, update bool) error {
 
+	readStart := time.Now()
 	vals, pqps, err := s.readColumn(req.row, req.pqTablePath, attr, req.isChild, req.ignoreSourcePath,
 		req.useNerdCapitalization)
+	readElapsed := time.Since(readStart)
 	if err != nil {
+		req.addAttributeMapperTiming(attr, readElapsed, 0, 0)
 		return fmt.Errorf("read column error - %v", err)
 	}
+	var mapElapsed time.Duration
+	valueCount := 0
+	mapStart := time.Now()
 	for _, cval := range vals {
 		if cval == nil {
 			continue
 		}
 		// Map and index the value
-		if _, err := attr.MapValue(cval, s, update); err != nil {
+		_, err := attr.MapValue(cval, s, update)
+		if err != nil {
+			mapElapsed = time.Since(mapStart)
+			req.addAttributeMapperTiming(attr, readElapsed, mapElapsed, valueCount)
 			return fmt.Errorf("%s - %v", pqps[0], err)
 		}
+		valueCount++
 	}
+	mapElapsed = time.Since(mapStart)
+	req.addAttributeMapperTiming(attr, readElapsed, mapElapsed, valueCount)
 	return nil
 }
 
@@ -1088,9 +1173,7 @@ func (s *Session) getDefaultValueForColumn(a *Attribute, row interface{}, ignore
 //  1. Resolve row identity through the configured primary-key authority.
 //  2. Establish ColumnID for all fields in this row.
 //  3. Value mapping.
-func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTablePath string,
-	providedColID uint64, isChild, ignoreSourcePath, useNerdCapitalization bool,
-	primaryKeyMode PrimaryKeyMode) (putRowIdentity, error) {
+func (s *Session) processPrimaryKey(req putRowRequest, tbuf *TableBuffer) (putRowIdentity, error) {
 
 	if tbuf.Table.TimeQuantumType == "" {
 		tbuf.CurrentTimestamp = time.Unix(0, 0)
@@ -1102,13 +1185,16 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 	var pkLookupVal strings.Builder
 	for i, pk := range tbuf.PKAttributes {
 		var cval interface{}
-		vals, pqps, err := s.readColumn(row, pqTablePath, pk, isChild, ignoreSourcePath, useNerdCapitalization)
+		readStart := time.Now()
+		vals, pqps, err := s.readColumn(req.row, req.pqTablePath, pk, req.isChild, req.ignoreSourcePath,
+			req.useNerdCapitalization)
+		req.addPrimaryKeyReadTiming(time.Since(readStart))
 		if err != nil {
 			return putRowIdentity{}, fmt.Errorf("readColumn for PK - %v", err)
 		}
 		pqColPaths[i] = pqps[0]
 		if vals == nil || len(vals) == 0 || (len(vals) == 1 && vals[0] == nil) {
-			if isChild { // Nothing to do here, no child value
+			if req.isChild { // Nothing to do here, no child value
 				return putRowIdentity{}, nil
 			}
 			return putRowIdentity{}, fmt.Errorf("empty or nil value for PK field %s - %s, len %d", pk.FieldName, pqColPaths[i],
@@ -1121,9 +1207,11 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		cval = vals[0]
 		tbuf.CurrentPKValue[i] = cval
 
+		mapStart := time.Now()
 		var strVal string
 		mval, err := pk.MapValue(cval, nil, false)
 		if err != nil {
+			req.addPrimaryKeyMapTiming(time.Since(mapStart))
 			return putRowIdentity{}, fmt.Errorf("error mapping PK field %s [%v], Schema mapping issue?",
 				pqColPaths[0], err)
 		}
@@ -1155,16 +1243,18 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		default:
 			strVal = pk.Render(mval)
 		}
+		req.addPrimaryKeyMapTiming(time.Since(mapStart))
 
 		if pkLookupVal.Len() == 0 {
 			pkLookupVal.WriteString(strVal)
 		} else {
-			pkLookupVal.WriteString(fmt.Sprintf("+%s", strVal))
+			pkLookupVal.WriteByte('+')
+			pkLookupVal.WriteString(strVal)
 		}
 	}
 
 	updateExisting, primaryKeyProfile, err := s.resolvePrimaryKeyColumnID(
-		tbuf, pkLookupVal.String(), providedColID, directColumnID, primaryKeyMode)
+		tbuf, pkLookupVal.String(), req.providedColID, directColumnID, req.primaryKeyMode)
 	if err != nil {
 		return putRowIdentity{}, err
 	}
@@ -1184,7 +1274,10 @@ func (s *Session) processPrimaryKey(tbuf *TableBuffer, row interface{}, pqTableP
 		if v == nil {
 			return putRowIdentity{}, fmt.Errorf("PK mapping error %s - nil value", pqColPaths[i])
 		}
-		if _, err := tbuf.PKAttributes[i].MapValue(v, s, false); err != nil {
+		stageStart := time.Now()
+		_, err := tbuf.PKAttributes[i].MapValue(v, s, false)
+		req.addPrimaryKeyStageTiming(time.Since(stageStart))
+		if err != nil {
 			return putRowIdentity{}, fmt.Errorf("PK mapping error %s - %v", pqColPaths[i], err)
 		}
 	}
