@@ -21,6 +21,12 @@ type streamEvent struct {
 	Payload      map[string]interface{} `json:"payload"`
 }
 
+type ingestResponse struct {
+	Accepted int      `json:"accepted"`
+	Failed   int      `json:"failed"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -107,9 +113,25 @@ func postBatch(client *http.Client, target string, events []streamEvent) error {
 		return err
 	}
 	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("loader returned %s: %s", resp.Status, string(data))
+	}
+	var result ingestResponse
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &result); err != nil {
+			return fmt.Errorf("decode loader response: %w", err)
+		}
+	}
+	if result.Failed > 0 {
+		detail := ""
+		if len(result.Errors) > 0 {
+			detail = fmt.Sprintf(": %s", result.Errors[0])
+		}
+		return fmt.Errorf("loader accepted %d events and failed %d%s", result.Accepted, result.Failed, detail)
 	}
 	return nil
 }

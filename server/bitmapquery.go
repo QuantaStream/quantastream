@@ -591,8 +591,8 @@ func (m *BitmapIndex) timeRangeExistenceWithCount(index, field string, fromTime,
 // the parent index results to formulate the final results.
 func (m *BitmapIndex) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
 
-	fromTime := time.Unix(0, req.FromTime)
-	toTime := time.Unix(0, req.ToTime)
+	fromTime := time.Unix(0, req.FromTime).UTC()
+	toTime := time.Unix(0, req.ToTime).UTC()
 
 	if req.DriverIndex == "" {
 		return nil, fmt.Errorf("Index not specified for join criteria")
@@ -655,8 +655,8 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 
 	u.Debugf("Projection retrieval started for %v - %v", req.Index, req.Fields)
 
-	fromTime := time.Unix(0, req.FromTime)
-	toTime := time.Unix(0, req.ToTime)
+	fromTime := time.Unix(0, req.FromTime).UTC()
+	toTime := time.Unix(0, req.ToTime).UTC()
 
 	if req.Index == "" {
 		return nil, fmt.Errorf("index not specified for projection criteria")

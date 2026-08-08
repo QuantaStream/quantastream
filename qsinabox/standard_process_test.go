@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsfixture"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -586,6 +588,118 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 	requireStandardProcessScalarString(t, second, "select count(*) from lineitem", fmt.Sprint(orderCount*lineitemsPerOrder))
 }
 
+func TestStandardProcessNativeGRPCRouterFlatTimeShardedLineitemReplayUsesCompoundAuthority(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTPCHFlatSchemas(t, configDir)
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-flat-tpch-router-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		t.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	tableCache := core.NewTableCacheStruct()
+	tables := loadStandardTestTables(t, tableCache, configDir, "orders", "lineitem")
+	envelopes := []core.IngestEnvelope{
+		mustStreamEnvelope(t, "tpch.orders.100000001", map[string]interface{}{
+			"type": "orders",
+			"data": map[string]interface{}{
+				"o_orderkey":    int64(100000001),
+				"o_orderstatus": "O",
+			},
+		}),
+		mustStreamEnvelope(t, "tpch.lineitem.100000001.1", flatLineitemPayload(100000001, 1)),
+		mustStreamEnvelope(t, "tpch.lineitem.100000001.2", flatLineitemPayload(100000001, 2)),
+	}
+	routeStandardProcessNativeFlatTPCHEnvelopes(t, process, config, tableCache, tables, envelopes)
+	requireStandardProcessScalarString(t, process, "select count(*) from orders", "1")
+	requireStandardProcessScalarString(t, process, "select count(*) from lineitem", "2")
+	lineitemTable := tables[1]
+	pkAttrs, err := lineitemTable.GetPrimaryKeyInfo()
+	if err != nil {
+		t.Fatalf("lineitem GetPrimaryKeyInfo() error = %v", err)
+	}
+	expectedAuthority, err := core.EncodeCompoundPrimaryKeyAuthorityValue(core.PrimaryKeyAuthorityValueEncodingRequest{
+		TableName:  "lineitem",
+		PrimaryKey: "l_orderkey+l_linenumber",
+		Attributes: pkAttrs,
+		Values:     []interface{}{"1995-03-16", int64(100000001), int64(1)},
+	})
+	if err != nil {
+		t.Fatalf("EncodeCompoundPrimaryKeyAuthorityValue() error = %v", err)
+	}
+	fromTime, _, err := shared.ToTQTimestamp("YMD", "1995-03-16")
+	if err != nil {
+		t.Fatalf("ToTQTimestamp() error = %v", err)
+	}
+	remoteBSIs, _, err := shared.NewBitmapIndex(remoteConn).Projection("lineitem",
+		[]string{shared.CompoundPrimaryKeyAuthorityFieldName}, fromTime.UnixNano(), fromTime.UnixNano(), nil, false)
+	if err != nil {
+		t.Fatalf("remote Projection(__qs_pk_authority) error = %v", err)
+	}
+	remoteAuthorityBSI := remoteBSIs[shared.CompoundPrimaryKeyAuthorityFieldName]
+	if remoteAuthorityBSI == nil {
+		t.Fatalf("remote Projection(__qs_pk_authority) returned fields=%v, want %s",
+			standardTestMapKeys(remoteBSIs), shared.CompoundPrimaryKeyAuthorityFieldName)
+	}
+	if got := remoteAuthorityBSI.CompareBigValue(0, roaring64.EQ, expectedAuthority, nil, nil).GetCardinality(); got != 1 {
+		t.Fatalf("remote Projection(__qs_pk_authority) expected authority matches = %d, want 1", got)
+	}
+
+	replay := envelopes[1:]
+	profile := routeStandardProcessNativeFlatTPCHEnvelopes(t, process, config, tableCache, tables, replay)
+	requirePrimaryKeyTableProfile(t, profile, "lineitem", core.PrimaryKeyResolveProfile{
+		ResolveCount:             2,
+		LookupRequiredCount:      2,
+		BSILookupCount:           2,
+		BSIHitCount:              2,
+		EmptyDomainProbeCount:    1,
+		EmptyDomainNonEmptyCount: 2,
+	})
+	requireStandardProcessScalarString(t, process, "select count(*) from lineitem", "2")
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
+	}
+}
+
 func TestStandardProcessNativeGRPCRouterParallelReplayUsesBSIPrimaryKeyAuthority(t *testing.T) {
 	orderCount := 8
 	lineitemsPerOrder := 3
@@ -801,6 +915,60 @@ func routeStandardProcessNativeTPCHEnvelopes(tb testing.TB, process StandardProc
 		}
 	case <-time.After(5 * time.Second):
 		tb.Fatalf("native gRPC server did not stop")
+	}
+	return putRowProfile.Snapshot()
+}
+
+func routeStandardProcessNativeFlatTPCHEnvelopes(tb testing.TB, process StandardProcess, config StandardConfig,
+	tableCache *core.TableCacheStruct, tables []*core.Table, envelopes []core.IngestEnvelope) core.RouterPutRowProfileSummary {
+
+	tb.Helper()
+	if process.NativeNode == nil {
+		tb.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-flat-tpch-router-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		tb.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	putRowProfile := &core.RouterPutRowProfile{}
+	router, err := core.NewSessionRouter(core.SessionRouterConfig{
+		TableCache:                tableCache,
+		BasePath:                  process.Backend.ConfigBaseDir(config),
+		Conn:                      remoteConn,
+		ShardCount:                1,
+		ChannelSize:               len(envelopes),
+		FlushInterval:             10 * time.Millisecond,
+		PrimaryKeyMode:            core.PrimaryKeyModeVerifyExisting,
+		PrimaryKeyResolverFactory: NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache),
+		OnPutRowResult:            putRowProfile.Callback(),
+	})
+	if err != nil {
+		tb.Fatalf("NewSessionRouter() error = %v", err)
+	}
+	for _, envelope := range envelopes {
+		route, routeDiagnostics, err := core.RouteSelectedIngestEnvelope(router, envelope, core.IngestEnvelopeRouteOptions{
+			Tables: tables,
+		})
+		if routeDiagnostics.BlocksNative() {
+			tb.Fatalf("route diagnostics = %#v, want none", routeDiagnostics)
+		}
+		if err != nil {
+			tb.Fatalf("RouteSelectedIngestEnvelope(%s) error = %v", envelope.EventID, err)
+		}
+		if !route.Enqueued {
+			tb.Fatalf("route result = %+v, want enqueued record", route)
+		}
+	}
+	if err := router.Close(); err != nil {
+		tb.Fatalf("router Close() error = %v", err)
 	}
 	return putRowProfile.Snapshot()
 }
@@ -1434,6 +1602,109 @@ attributes:
 	}
 	if err := shared.ActivateCatalogTable(configDir, "quanta", "lineitem", now); err != nil {
 		tb.Fatalf("activate lineitem catalog object: %v", err)
+	}
+}
+
+func writeStandardTPCHFlatSchemas(tb testing.TB, configDir string) {
+	tb.Helper()
+	now := time.Now().UTC()
+	writeStandardTPCHNestedSchema(tb, configDir, "orders", `tableName: orders
+primaryKey: o_orderkey
+selector: type="orders"
+attributes:
+- fieldName: o_orderkey
+  sourceName: /data/o_orderkey
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
+- fieldName: o_orderstatus
+  sourceName: /data/o_orderstatus
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "1"
+  type: String
+`)
+	writeStandardTPCHNestedSchema(tb, configDir, "lineitem", `tableName: lineitem
+primaryKey: l_orderkey+l_linenumber
+selector: type="lineitem"
+timeQuantumType: YMD
+timeQuantumField: l_shipdate
+attributes:
+- fieldName: l_orderkey
+  sourceName: /data/l_orderkey
+  mappingStrategy: ParentRelation
+  foreignKey: orders
+  type: Integer
+- fieldName: l_linenumber
+  sourceName: /data/l_linenumber
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_quantity
+  sourceName: /data/l_quantity
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_shipdate
+  sourceName: /data/l_shipdate
+  mappingStrategy: TimestampBSI
+  configuration:
+    granularity: "millisecond"
+  type: DateTime
+`)
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "orders", now); err != nil {
+		tb.Fatalf("activate orders catalog object: %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "lineitem", now); err != nil {
+		tb.Fatalf("activate lineitem catalog object: %v", err)
+	}
+}
+
+func loadStandardTestTables(tb testing.TB, tableCache *core.TableCacheStruct, configDir string, names ...string) []*core.Table {
+	tb.Helper()
+	tables := make([]*core.Table, 0, len(names))
+	for _, name := range names {
+		table, err := core.LoadTable(tableCache, configDir, nil, name, nil)
+		if err != nil {
+			tb.Fatalf("LoadTable(%s) error = %v", name, err)
+		}
+		tables = append(tables, table)
+	}
+	return tables
+}
+
+func standardTestMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func mustStreamEnvelope(tb testing.TB, eventID string, payload map[string]interface{}) core.IngestEnvelope {
+	tb.Helper()
+	envelope, err := core.NewStreamIngestEnvelope(core.StreamIngestEnvelopeRequest{
+		EventID:      eventID,
+		Source:       "tpch-flat-test",
+		EventTime:    time.Date(1995, 3, 15, 12, 0, 0, 0, time.UTC),
+		SourceOffset: eventID,
+		Payload:      payload,
+	})
+	if err != nil {
+		tb.Fatalf("NewStreamIngestEnvelope(%s) error = %v", eventID, err)
+	}
+	return envelope
+}
+
+func flatLineitemPayload(orderKey int64, lineNumber int) map[string]interface{} {
+	shipDate := time.Date(1995, 3, 15+lineNumber, 0, 0, 0, 0, time.UTC)
+	return map[string]interface{}{
+		"type": "lineitem",
+		"data": map[string]interface{}{
+			"l_orderkey":   orderKey,
+			"l_linenumber": int64(lineNumber),
+			"l_quantity":   int64(lineNumber + 1),
+			"l_shipdate":   shipDate.Format("2006-01-02"),
+		},
 	}
 }
 
