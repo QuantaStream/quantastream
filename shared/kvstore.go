@@ -728,13 +728,13 @@ func (c *KVStore) PutStringEnum(index, value string) (uint64, error) {
 
 	// Parallel iterate over remaining client list and perform Put operation (replication)
 	var eg errgroup.Group
-	for _, i := range indices {
-		c := c.client[indices[i]]
+	for _, i := range stringEnumReplicaNodes(indices) {
+		client := c.client[i]
 		eg.Go(func() error {
-			_, err := c.Put(ctx, &pb.IndexKVPair{IndexPath: index, Key: ToBytes(value),
+			_, err := client.Put(ctx, &pb.IndexKVPair{IndexPath: index, Key: ToBytes(value),
 				Value: [][]byte{ToBytes(rowID.Value)}})
 			if err != nil {
-				return fmt.Errorf("%v.Put(_) = _, %v: ", c, err)
+				return fmt.Errorf("%v.Put(_) = _, %v: ", client, err)
 			}
 			return nil
 		})
@@ -743,6 +743,15 @@ func (c *KVStore) PutStringEnum(index, value string) (uint64, error) {
 		return 0, err
 	}
 	return rowID.Value, nil
+}
+
+func stringEnumReplicaNodes(indices []int) []int {
+	if len(indices) <= 1 {
+		return nil
+	}
+	replicas := make([]int, len(indices)-1)
+	copy(replicas, indices[1:])
+	return replicas
 }
 
 // DeleteIndicesWithPrefix - Delete indices with a table prefix, optionally retain StringEnum data

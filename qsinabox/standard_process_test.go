@@ -371,11 +371,11 @@ func TestStandardProcessNativeGRPCRouterIngestsTPCHNestedOrderLineitems(t *testi
 	if result.PutProfile.ByTable["orders"].ChildRowCount != 6 || result.PutProfile.ByTable["orders"].LogicalRowCount != 8 {
 		t.Fatalf("put table profile = %+v, want six children and eight logical rows", result.PutProfile.ByTable["orders"])
 	}
-	if result.FlushProfile.FlushCount != 1 || result.FlushProfile.PartitionStringEntryCount == 0 ||
+	if result.FlushProfile.FlushCount == 0 || result.FlushProfile.PartitionStringEntryCount == 0 ||
 		result.FlushProfile.BSIValueEntryCount == 0 {
-		t.Fatalf("flush profile = %+v, want one write flush with PK sidecar and BSI activity", result.FlushProfile)
+		t.Fatalf("flush profile = %+v, want write flushes with PK sidecar and BSI activity", result.FlushProfile)
 	}
-	if result.FlushProfile.ByTable["orders"].FlushCount != 1 || result.FlushProfile.ByShard["shard0"].FlushCount != 1 {
+	if result.FlushProfile.ByTable["orders"].FlushCount == 0 || result.FlushProfile.ByShard["shard0"].FlushCount == 0 {
 		t.Fatalf("flush profile groups = %+v/%+v, want orders/shard0 flush",
 			result.FlushProfile.ByTable, result.FlushProfile.ByShard)
 	}

@@ -17,7 +17,6 @@ import (
 	u "github.com/araddon/gou"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/golang/protobuf/ptypes/wrappers"
-	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -34,7 +33,8 @@ type KVStore struct {
 	*Node
 	storeCache     map[string]*cacheEntry
 	storeCacheLock sync.RWMutex
-	enumGuard      singleflight.Group
+	enumCache      map[string]*enumCacheEntry
+	enumCacheLock  sync.Mutex
 	exit           chan bool
 	shutdownOnce   sync.Once
 	cleanupLatency int64 // current cleanup thread duration (Prometheus)
@@ -45,12 +45,18 @@ type cacheEntry struct {
 	accessTime time.Time
 }
 
+type enumCacheEntry struct {
+	values        map[string]uint64
+	greatestRowID uint64
+}
+
 // NewKVStore - Construct server side state.
 func NewKVStore(node *Node) *KVStore {
 
 	e := &KVStore{Node: node}
 	e.exit = make(chan bool, 1)
 	e.storeCache = make(map[string]*cacheEntry)
+	e.enumCache = make(map[string]*enumCacheEntry)
 	pb.RegisterKVStoreServer(node.server, e)
 	return e
 }
@@ -162,6 +168,9 @@ func (m *KVStore) Shutdown() {
 			}
 			delete(m.storeCache, k)
 		}
+		m.enumCacheLock.Lock()
+		m.enumCache = make(map[string]*enumCacheEntry)
+		m.enumCacheLock.Unlock()
 	})
 }
 
@@ -216,6 +225,7 @@ func (m *KVStore) closeStore(index string) {
 			}
 		}
 		delete(m.storeCache, index)
+		m.invalidateStringEnumCache(index)
 	}
 }
 
@@ -239,6 +249,7 @@ func (m *KVStore) Put(ctx context.Context, kv *pb.IndexKVPair) (*empty.Empty, er
 	if err != nil {
 		return &empty.Empty{}, err
 	}
+	m.invalidateStringEnumCache(kv.IndexPath)
 	return &empty.Empty{}, nil
 }
 
@@ -374,6 +385,7 @@ func (m *KVStore) batchPutKV(state *kvBatchPutState, kv *pb.IndexKVPair) error {
 	if err := db.Put(kv.Key, kv.Value[0]); err != nil {
 		return err
 	}
+	m.invalidateStringEnumCache(kv.IndexPath)
 	state.putElapsed += time.Since(putStart)
 	state.putCount++
 	return nil
@@ -446,6 +458,58 @@ func (m *KVStore) Items(index *wrappers.StringValue, stream pb.KVStore_ItemsServ
 	return nil
 }
 
+func (m *KVStore) getStringEnumCacheLocked(indexPath string, db *pogreb.DB) (*enumCacheEntry, error) {
+	if m.enumCache == nil {
+		m.enumCache = make(map[string]*enumCacheEntry)
+	}
+	if cache, ok := m.enumCache[indexPath]; ok {
+		return cache, nil
+	}
+
+	cache := &enumCacheEntry{values: make(map[string]uint64)}
+	it := db.Items()
+	for {
+		key, v, err := it.Next()
+		if err != nil {
+			if err != pogreb.ErrIterationDone {
+				return nil, err
+			}
+			break
+		}
+		if len(v) < 8 {
+			return nil, fmt.Errorf("StringEnum value for %s/%s is not a uint64", indexPath, string(key))
+		}
+		rowID := binary.LittleEndian.Uint64(v)
+		if rowID > cache.greatestRowID {
+			cache.greatestRowID = rowID
+		}
+		cache.values[string(key)] = rowID
+	}
+	m.enumCache[indexPath] = cache
+	return cache, nil
+}
+
+func (m *KVStore) invalidateStringEnumCache(indexPath string) {
+	if !strings.HasSuffix(indexPath, ".StringEnum") {
+		return
+	}
+	m.enumCacheLock.Lock()
+	defer m.enumCacheLock.Unlock()
+	if m.enumCache != nil {
+		delete(m.enumCache, indexPath)
+	}
+}
+
+func (m *KVStore) invalidateStringEnumCachesWithPrefix(prefix string) {
+	m.enumCacheLock.Lock()
+	defer m.enumCacheLock.Unlock()
+	for indexPath := range m.enumCache {
+		if strings.HasPrefix(indexPath, prefix) && strings.HasSuffix(indexPath, ".StringEnum") {
+			delete(m.enumCache, indexPath)
+		}
+	}
+}
+
 // PutStringEnum - Insert a new enumeration value and return the new enumeration key (integer sequence).
 func (m *KVStore) PutStringEnum(ctx context.Context, se *pb.StringEnum) (*wrappers.UInt64Value, error) {
 
@@ -463,41 +527,27 @@ func (m *KVStore) PutStringEnum(ctx context.Context, se *pb.StringEnum) (*wrappe
 		return &wrappers.UInt64Value{}, err
 	}
 
-	// Guard against multiple requests updating the same enumeration group.
-	v, err, _ := m.enumGuard.Do(se.IndexPath, func() (interface{}, error) {
+	m.enumCacheLock.Lock()
+	defer m.enumCacheLock.Unlock()
 
-		var greatestRowID uint64
-		eMap := make(map[string]uint64)
-
-		it := db.Items()
-		for {
-			key, v, err := it.Next()
-			if err != nil {
-				if err != pogreb.ErrIterationDone {
-					return 0, err
-				}
-				break
-			}
-			r := binary.LittleEndian.Uint64(v)
-			if r > greatestRowID {
-				greatestRowID = r
-			}
-			eMap[string(key)] = r
-		}
-
-		if rowID, found := eMap[se.Value]; found {
-			return rowID, nil
-		}
-		greatestRowID++
-
-		defer db.Sync()
-		return greatestRowID, db.Put(shared.ToBytes(se.Value), shared.ToBytes(greatestRowID))
-	})
-
+	cache, err := m.getStringEnumCacheLocked(se.IndexPath, db)
 	if err != nil {
 		return &wrappers.UInt64Value{}, err
 	}
-	return &wrappers.UInt64Value{Value: v.(uint64)}, nil
+	if rowID, found := cache.values[se.Value]; found {
+		return &wrappers.UInt64Value{Value: rowID}, nil
+	}
+	cache.greatestRowID++
+	rowID := cache.greatestRowID
+	if err := db.Put(shared.ToBytes(se.Value), shared.ToBytes(rowID)); err != nil {
+		cache.greatestRowID--
+		return &wrappers.UInt64Value{}, err
+	}
+	cache.values[se.Value] = rowID
+	if err := db.Sync(); err != nil {
+		u.Errorf("%s KVStore StringEnum sync [%s] failed: %v", m.hashKey, se.IndexPath, err)
+	}
+	return &wrappers.UInt64Value{Value: rowID}, nil
 }
 
 // DeleteIndicesWithPrefix - Close and delete all indices with a specific prefix
@@ -509,6 +559,9 @@ func (m *KVStore) DeleteIndicesWithPrefix(ctx context.Context,
 	}
 
 	u.Infof("Deleting index files for prefix %v, retain enums = %v", req.Prefix, req.RetainEnums)
+	if !req.RetainEnums {
+		m.invalidateStringEnumCachesWithPrefix(req.Prefix + sep)
+	}
 
 	// Interate over storeCache and close everything currently open for this prefix
 	m.storeCacheLock.Lock()

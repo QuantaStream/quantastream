@@ -109,6 +109,75 @@ func TestKVStoreBatchPutItemsWritesMultipleIndexPaths(t *testing.T) {
 	}
 }
 
+func TestKVStorePutStringEnumCachesDictionary(t *testing.T) {
+	store := &KVStore{
+		Node:       &Node{hashKey: "test-node", dataDir: t.TempDir()},
+		storeCache: map[string]*cacheEntry{},
+		exit:       make(chan bool),
+	}
+	t.Cleanup(store.Shutdown)
+
+	ctx := context.Background()
+	index := "sample/status.StringEnum"
+	open, err := store.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: "OPEN"})
+	if err != nil {
+		t.Fatalf("PutStringEnum(OPEN) error = %v", err)
+	}
+	if open.Value != 1 {
+		t.Fatalf("PutStringEnum(OPEN) = %d, want 1", open.Value)
+	}
+	closed, err := store.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: "CLOSED"})
+	if err != nil {
+		t.Fatalf("PutStringEnum(CLOSED) error = %v", err)
+	}
+	if closed.Value != 2 {
+		t.Fatalf("PutStringEnum(CLOSED) = %d, want 2", closed.Value)
+	}
+	openAgain, err := store.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: "OPEN"})
+	if err != nil {
+		t.Fatalf("PutStringEnum(OPEN again) error = %v", err)
+	}
+	if openAgain.Value != open.Value {
+		t.Fatalf("PutStringEnum(OPEN again) = %d, want %d", openAgain.Value, open.Value)
+	}
+
+	store.enumCacheLock.Lock()
+	cache := store.enumCache[index]
+	store.enumCacheLock.Unlock()
+	if cache == nil || len(cache.values) != 2 || cache.greatestRowID != 2 {
+		t.Fatalf("enum cache = %+v, want two cached values with max row ID 2", cache)
+	}
+
+	if _, err := store.Put(ctx, &pb.IndexKVPair{
+		IndexPath: index,
+		Key:       shared.ToBytes("PENDING"),
+		Value:     [][]byte{shared.ToBytes(uint64(99))},
+	}); err != nil {
+		t.Fatalf("Put(PENDING) error = %v", err)
+	}
+	store.enumCacheLock.Lock()
+	_, cached := store.enumCache[index]
+	store.enumCacheLock.Unlock()
+	if cached {
+		t.Fatalf("generic Put did not invalidate enum cache for %s", index)
+	}
+
+	pending, err := store.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: "PENDING"})
+	if err != nil {
+		t.Fatalf("PutStringEnum(PENDING) error = %v", err)
+	}
+	if pending.Value != 99 {
+		t.Fatalf("PutStringEnum(PENDING) = %d, want persisted ID 99", pending.Value)
+	}
+	done, err := store.PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: "DONE"})
+	if err != nil {
+		t.Fatalf("PutStringEnum(DONE) error = %v", err)
+	}
+	if done.Value != 100 {
+		t.Fatalf("PutStringEnum(DONE) = %d, want next persisted ID 100", done.Value)
+	}
+}
+
 func openKVStoreShutdownTestDB(t *testing.T, path string) *pogreb.DB {
 	t.Helper()
 	db, err := pogreb.Open(path, nil)

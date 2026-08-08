@@ -43,6 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	source := flags.String("source", "tpch-stream-producer", "event source")
 	startedAtRaw := flags.String("started-at", "1995-03-15T12:00:00Z", "first event timestamp")
 	interval := flags.Duration("interval", 0, "sleep interval between generated orders")
+	progressInterval := flags.Duration("progress-interval", 5*time.Second, "minimum interval between progress messages; set 0 to disable")
 	customerCount := flags.Int64("customer-count", 1500, "existing customer key domain size")
 	partCount := flags.Int64("part-count", 2000, "existing part key domain size")
 	supplierCount := flags.Int64("supplier-count", 100, "existing supplier key domain size")
@@ -62,6 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	client := &http.Client{Timeout: 30 * time.Second}
 	batch := make([]streamEvent, 0, *batchSize)
 	sent := 0
+	startedAtWall := time.Now()
+	lastProgressAt := startedAtWall
 
 	flush := func() bool {
 		if len(batch) == 0 {
@@ -73,6 +76,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		sent += len(batch)
 		batch = batch[:0]
+		if *progressInterval > 0 && time.Since(lastProgressAt) >= *progressInterval {
+			elapsed := time.Since(startedAtWall)
+			rate := float64(sent) / elapsed.Seconds()
+			fmt.Fprintf(stdout, "tpch stream producer progress events=%d/%d elapsed=%s rate=%.1f events/s\n",
+				sent, *orders*(1+*lineitems), elapsed.Round(time.Second), rate)
+			lastProgressAt = time.Now()
+		}
 		return true
 	}
 
