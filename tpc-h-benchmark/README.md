@@ -95,11 +95,15 @@ cd tpc-h-benchmark
 TPCH_LOAD_MODE=standard-remote \
 TPCH_STANDARD_CONFIG_DIR=config \
 TPCH_NATIVE_GRPC_ADDR=127.0.0.1:4100 \
+TPCH_DIRECT_FLUSH_INTERVAL=30s \
   ./tpch-direct.sh local/data/sf-0.01 1 1000
 ```
 
 Use one worker for `inabox-standard` loads for now. Cluster-direct loads can use
 multiple workers; standard loader parallelism remains an explicit tuning target.
+`TPCH_DIRECT_FLUSH_INTERVAL` controls router-owned session flushing during batch
+loads. Larger values improve BSI shard coalescing for replay/bulk load runs;
+lower values trade throughput for fresher streaming visibility.
 
 `TPCH_LOAD_MODE=standard-offline` is the explicit bootstrap/dev path. It mounts
 the lightweight local backend inside the loader process and writes directly to
@@ -114,6 +118,7 @@ rm -rf local/standard-data
 TPCH_LOAD_MODE=standard-offline \
 TPCH_STANDARD_CONFIG_DIR=config \
 TPCH_STANDARD_DATA_DIR=local/standard-data \
+TPCH_DIRECT_FLUSH_INTERVAL=30s \
   ./tpch-direct.sh local/data/sf-0.01 1 1000
 ```
 

@@ -16,6 +16,7 @@ TPCH_STANDARD_CONFIG_DIR=${TPCH_STANDARD_CONFIG_DIR:-config}
 TPCH_STANDARD_DATA_DIR=${TPCH_STANDARD_DATA_DIR:-local/standard-data}
 TPCH_STANDARD_DB=${TPCH_STANDARD_DB:-quanta}
 TPCH_NATIVE_GRPC_ADDR=${TPCH_NATIVE_GRPC_ADDR:-127.0.0.1:4100}
+TPCH_DIRECT_FLUSH_INTERVAL=${TPCH_DIRECT_FLUSH_INTERVAL:-30s}
 
 if [[ ! -d "${DATA_DIR}" ]]; then
   echo "TPC-H data directory not found: ${DATA_DIR}" >&2
@@ -39,7 +40,7 @@ TABLES=(
 )
 
 start_epoch=$(date +%s)
-echo "TPC-H direct load starting mode=${TPCH_LOAD_MODE} data_dir=${DATA_DIR} workers=${WORKERS} batch_size=${BATCH_SIZE}"
+echo "TPC-H direct load starting mode=${TPCH_LOAD_MODE} data_dir=${DATA_DIR} workers=${WORKERS} batch_size=${BATCH_SIZE} flush_interval=${TPCH_DIRECT_FLUSH_INTERVAL}"
 echo "TPC-H direct load log=${LOG_FILE}"
 if [[ "${TPCH_LOAD_MODE}" == "standard" ]]; then
   echo "warning: TPCH_LOAD_MODE=standard is deprecated; use standard-offline or standard-remote" >&2
@@ -96,6 +97,7 @@ for table in "${TABLES[@]}"; do
       --native-grpc-addr "${TPCH_NATIVE_GRPC_ADDR}" \
       --workers "${WORKERS}" \
       --batch-size "${BATCH_SIZE}" \
+      --direct-flush-interval "${TPCH_DIRECT_FLUSH_INTERVAL}" \
       "${DATA_DIR}" "${table}"
   elif [[ "${TPCH_LOAD_MODE}" == "standard-offline" ]]; then
     go run . \
@@ -106,9 +108,10 @@ for table in "${TABLES[@]}"; do
       --database "${TPCH_STANDARD_DB}" \
       --workers "${WORKERS}" \
       --batch-size "${BATCH_SIZE}" \
+      --direct-flush-interval "${TPCH_DIRECT_FLUSH_INTERVAL}" \
       "${DATA_DIR}" "${table}"
   else
-    go run . --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}" "${DATA_DIR}" "${table}"
+    go run . --direct --workers "${WORKERS}" --batch-size "${BATCH_SIZE}" --direct-flush-interval "${TPCH_DIRECT_FLUSH_INTERVAL}" "${DATA_DIR}" "${table}"
   fi
   table_end=$(date +%s)
   echo "Loaded ${table} elapsed=$((table_end - table_start))s"

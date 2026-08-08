@@ -42,6 +42,8 @@ const (
 	directModeStandard        = "standard"
 	directModeStandardRemote  = "standard-remote"
 	directModeStandardOffline = "standard-offline"
+
+	defaultDirectFlushInterval = 30 * time.Second
 )
 
 // Main strct defines command line arguments variables and various global meta-data associated with record loads.
@@ -55,33 +57,34 @@ type Main struct {
 	AWSRegion string
 	//S3svc        *s3.S3
 	//S3files      []*s3.Object
-	totalBytes     int64
-	bytesLock      sync.RWMutex
-	totalRecs      *Counter
-	failedRecs     *Counter
-	Stream         string
-	IsNested       bool
-	ConsulAddr     string
-	ConsulClient   *api.Client
-	Table          *shared.BasicTable
-	outClient      *kinesis.Kinesis
-	conn           *shared.Conn
-	router         *core.SessionRouter
-	tableCache     *core.TableCacheStruct
-	lock           *api.Lock
-	shardCols      []*shared.BasicAttribute
-	Direct         bool
-	DirectMode     string
-	Workers        int
-	ConfigDir      string
-	DataDir        string
-	Database       string
-	NativeGRPCAddr string
-	BasePath       string
-	stdBackend     *qsinabox.StandardLocalBackend
-	putRowProfile  *core.RouterPutRowProfile
-	flushProfile   *core.RouterFlushProfile
-	drainProfile   *core.RouterDrainProfile
+	totalBytes          int64
+	bytesLock           sync.RWMutex
+	totalRecs           *Counter
+	failedRecs          *Counter
+	Stream              string
+	IsNested            bool
+	ConsulAddr          string
+	ConsulClient        *api.Client
+	Table               *shared.BasicTable
+	outClient           *kinesis.Kinesis
+	conn                *shared.Conn
+	router              *core.SessionRouter
+	tableCache          *core.TableCacheStruct
+	lock                *api.Lock
+	shardCols           []*shared.BasicAttribute
+	Direct              bool
+	DirectMode          string
+	Workers             int
+	ConfigDir           string
+	DataDir             string
+	Database            string
+	NativeGRPCAddr      string
+	DirectFlushInterval time.Duration
+	BasePath            string
+	stdBackend          *qsinabox.StandardLocalBackend
+	putRowProfile       *core.RouterPutRowProfile
+	flushProfile        *core.RouterFlushProfile
+	drainProfile        *core.RouterDrainProfile
 
 	splitElapsed          time.Duration
 	recordGenerateElapsed time.Duration
@@ -135,6 +138,7 @@ func main() {
 	dataDir := app.Flag("data-dir", "Data directory for inabox-standard direct loads.").Default("local/standard-data").String()
 	database := app.Flag("database", "Database/schema name for inabox-standard direct loads.").Default("quanta").String()
 	nativeGRPCAddr := app.Flag("native-grpc-addr", "Native gRPC address for standard-remote direct loads.").Default("127.0.0.1:4100").String()
+	directFlushInterval := app.Flag("direct-flush-interval", "Direct-load session router flush interval. Larger values improve batch-load coalescing; lower values improve streaming freshness.").Default("30s").Duration()
 	environment := app.Flag("env", "Environment [DEV, QA, STG, VAL, PROD]").Default("DEV").String()
 	consul := app.Flag("consul-endpoint", "Consul agent address/port").Default("127.0.0.1:8500").String()
 
@@ -155,6 +159,7 @@ func main() {
 	main.DataDir = *dataDir
 	main.Database = *database
 	main.NativeGRPCAddr = *nativeGRPCAddr
+	main.DirectFlushInterval = *directFlushInterval
 	if !main.Direct && main.Stream == "" {
 		log.Fatal("stream is required unless --direct is set")
 	}
@@ -167,7 +172,7 @@ func main() {
 	log.Printf("Batch size %d.\n", main.BatchSize)
 	log.Printf("AWS region %s\n", main.AWSRegion)
 	if main.Direct {
-		log.Printf("Direct load mode %s workers %d.\n", main.DirectMode, main.Workers)
+		log.Printf("Direct load mode %s workers %d flush_interval %s.\n", main.DirectMode, main.Workers, main.directFlushInterval())
 		switch main.DirectMode {
 		case directModeStandardRemote:
 			log.Printf("Direct standard remote config_dir=%s database=%s native_grpc_addr=%s\n", main.ConfigDir, main.Database, main.NativeGRPCAddr)
@@ -622,7 +627,7 @@ func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
 		Conn:                      m.conn,
 		ShardCount:                m.Workers,
 		ChannelSize:               m.BatchSize * m.Workers,
-		FlushInterval:             time.Second,
+		FlushInterval:             m.directFlushInterval(),
 		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
 		OnError: func(err error) {
 			m.failedRecs.Add(1)
@@ -709,13 +714,20 @@ func (m *Main) standardDirectRouterConfig() core.SessionRouterConfig {
 		Conn:                      m.conn,
 		ShardCount:                m.Workers,
 		ChannelSize:               m.BatchSize * m.Workers,
-		FlushInterval:             time.Second,
+		FlushInterval:             m.directFlushInterval(),
 		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
 		OnError: func(err error) {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)
 		},
 	})
+}
+
+func (m *Main) directFlushInterval() time.Duration {
+	if m.DirectFlushInterval > 0 {
+		return m.DirectFlushInterval
+	}
+	return defaultDirectFlushInterval
 }
 
 func (m *Main) withDirectProfileCallbacks(cfg core.SessionRouterConfig) core.SessionRouterConfig {

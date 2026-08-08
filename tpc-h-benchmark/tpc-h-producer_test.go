@@ -19,6 +19,7 @@ func TestStandardDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testin
 	loader.conn = shared.NewDefaultConnection("tpch-standard-loader-test")
 	loader.Workers = 1
 	loader.BatchSize = 8
+	loader.DirectFlushInterval = 45 * time.Second
 
 	config := loader.standardDirectRouterConfig()
 
@@ -37,6 +38,9 @@ func TestStandardDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testin
 	}
 	if config.ShardCount != 1 || config.ChannelSize != 8 {
 		t.Fatalf("router sizing = shards %d channel %d, want 1/8", config.ShardCount, config.ChannelSize)
+	}
+	if config.FlushInterval != 45*time.Second {
+		t.Fatalf("FlushInterval = %s, want 45s", config.FlushInterval)
 	}
 	if config.OnPutRowResult == nil || config.OnFlushProfile == nil || config.OnDrainProfile == nil {
 		t.Fatalf("router profile callbacks were not installed")
@@ -80,6 +84,9 @@ func TestClusterDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testing
 	}
 	if config.ShardCount != 3 || config.ChannelSize != 33 {
 		t.Fatalf("router sizing = shards %d channel %d, want 3/33", config.ShardCount, config.ChannelSize)
+	}
+	if config.FlushInterval != defaultDirectFlushInterval {
+		t.Fatalf("FlushInterval = %s, want default %s", config.FlushInterval, defaultDirectFlushInterval)
 	}
 	if config.OnPutRowResult == nil || config.OnFlushProfile == nil || config.OnDrainProfile == nil {
 		t.Fatalf("router profile callbacks were not installed")
