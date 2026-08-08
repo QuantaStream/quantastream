@@ -645,6 +645,9 @@ func extractSecondsAndNanosToBigInt(mapv map[string]interface{}, secsSource,
 
 func parseTimestampMapperString(value string) (time.Time, error) {
 	trimmed := strings.TrimSpace(value)
+	if parsed, ok := shared.ParseFastUTCTimestamp(trimmed); ok {
+		return parsed, nil
+	}
 	for _, layout := range []string{
 		time.RFC3339Nano,
 		"2006-01-02 15:04:05.999999999Z07:00",

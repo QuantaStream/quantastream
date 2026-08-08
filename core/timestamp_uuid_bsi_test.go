@@ -48,6 +48,23 @@ func TestTimestampBSIMapperDefaultsToNanosecondGranularity(t *testing.T) {
 	}
 }
 
+func TestTimestampBSIMapperParsesTPCHDateLiteral(t *testing.T) {
+	mapper, err := NewTimestampBSIMapper(map[string]string{"granularity": "millisecond"})
+	if err != nil {
+		t.Fatalf("NewTimestampBSIMapper returned error: %v", err)
+	}
+	attr := timestampBSITestAttribute("ship_date")
+	valueTime := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+
+	value, err := mapper.MapValue(attr, "2026-08-08", nil, false)
+	if err != nil {
+		t.Fatalf("MapValue returned error: %v", err)
+	}
+	if got, want := value.Int64(), valueTime.UnixMilli(); got != want {
+		t.Fatalf("encoded timestamp = %d, want epoch millis %d", got, want)
+	}
+}
+
 func TestUUIDBSIMapperRoundTripsRFC4122String(t *testing.T) {
 	mapper, err := NewUUIDBSIMapper(nil)
 	if err != nil {

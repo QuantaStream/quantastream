@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/shared"
 )
 
 // EnvelopeRequest is the loader-internal representation produced by protocol
@@ -231,6 +232,9 @@ func timeField(record map[string]interface{}, key string) (time.Time, error) {
 	case string:
 		if strings.TrimSpace(typed) == "" {
 			return time.Time{}, nil
+		}
+		if parsed, ok := shared.ParseFastUTCTimestamp(typed); ok {
+			return parsed.UTC(), nil
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, typed)
 		if err != nil {
