@@ -60,6 +60,23 @@ type SessionRouter struct {
 	closeOnce     sync.Once
 }
 
+// SessionRouterStats is a point-in-time view of router queue/session pressure.
+type SessionRouterStats struct {
+	ShardCount       int                           `json:"shard_count"`
+	ChannelSize      int                           `json:"channel_size"`
+	PrimaryKeyMode   PrimaryKeyMode                `json:"primary_key_mode"`
+	TotalQueued      int                           `json:"total_queued"`
+	TotalCapacity    int                           `json:"total_capacity"`
+	OpenSessionCount int                           `json:"open_session_count"`
+	Shards           map[string]SessionRouterShard `json:"shards,omitempty"`
+}
+
+// SessionRouterShard is the queue state for one router worker.
+type SessionRouterShard struct {
+	Queued   int `json:"queued"`
+	Capacity int `json:"capacity"`
+}
+
 // NewSessionRouter creates session workers and deterministic shard routing.
 func NewSessionRouter(cfg SessionRouterConfig) (*SessionRouter, error) {
 	if cfg.TableCache == nil {
@@ -94,6 +111,33 @@ func NewSessionRouter(cfg SessionRouterConfig) (*SessionRouter, error) {
 		router.startWorker(shardID, router.shardChannels[shardID])
 	}
 	return router, nil
+}
+
+// Snapshot returns queue and session ownership state for instrumentation.
+func (r *SessionRouter) Snapshot() SessionRouterStats {
+	if r == nil {
+		return SessionRouterStats{}
+	}
+	stats := SessionRouterStats{
+		ShardCount:     len(r.shardChannels),
+		ChannelSize:    r.cfg.ChannelSize,
+		PrimaryKeyMode: r.cfg.PrimaryKeyMode,
+		Shards:         map[string]SessionRouterShard{},
+	}
+	for shardID, ch := range r.shardChannels {
+		shard := SessionRouterShard{
+			Queued:   len(ch),
+			Capacity: cap(ch),
+		}
+		stats.Shards[shardID] = shard
+		stats.TotalQueued += shard.Queued
+		stats.TotalCapacity += shard.Capacity
+	}
+	r.sessionCache.Range(func(_, _ interface{}) bool {
+		stats.OpenSessionCount++
+		return true
+	})
+	return stats
 }
 
 // Enqueue routes a record to the session worker selected by its shard key.
@@ -190,13 +234,17 @@ func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTabl
 	}
 	record.PayloadHash = options.PayloadHash
 	record.PrimaryKeyMode = options.PrimaryKeyMode
-	result, err := conn.(*Session).PutRowWithOptions(record.TableName, record.Data, 0, false, false, options)
+	session := conn.(*Session)
+	result, err := session.PutRowWithOptions(record.TableName, record.Data, 0, false, false, options)
 	if err != nil {
 		return fmt.Errorf("ERROR in PutRow, shard %s - %v", shardID, err)
 	}
 	r.publishPutRowResult(shardID, record, result)
 	if r.cfg.OnProcessed != nil {
 		r.cfg.OnProcessed()
+	}
+	if err := r.flushActiveSession(shardID, record.TableName, session); err != nil {
+		return err
 	}
 	return nil
 }
@@ -300,6 +348,22 @@ func (r *SessionRouter) flushIdleSessions(shardID string, shardTableKeys *sync.M
 		return true
 	})
 	return firstErr
+}
+
+func (r *SessionRouter) flushActiveSession(shardID, tableName string, session *Session) error {
+	if session == nil || session.BatchBuffer == nil || session.IsFlushing() {
+		return nil
+	}
+	if session.BatchBuffer.IsEmpty() || time.Since(session.BatchBuffer.FlushedAt) <= r.cfg.FlushInterval {
+		return nil
+	}
+	before := session.LastFlushProfile()
+	if err := session.Flush(); err != nil {
+		r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
+		return err
+	}
+	r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
+	return nil
 }
 
 func (r *SessionRouter) closeWorkerSessions(shardTableKeys *sync.Map) (int, error) {

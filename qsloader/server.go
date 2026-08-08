@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -45,6 +46,7 @@ type Server struct {
 	putProfile   *core.RouterPutRowProfile
 	flushProfile *core.RouterFlushProfile
 	drainProfile *core.RouterDrainProfile
+	startedAt    time.Time
 	logger       *log.Logger
 }
 
@@ -63,6 +65,51 @@ type IngestRouteReply struct {
 	EventID      string `json:"event_id,omitempty"`
 	ShardMode    string `json:"shard_mode,omitempty"`
 	BuildSharded bool   `json:"build_sharded,omitempty"`
+}
+
+// StatsResponse is a point-in-time operational profile for the loader process.
+type StatsResponse struct {
+	Status    string                          `json:"status"`
+	StartedAt time.Time                       `json:"started_at"`
+	Uptime    time.Duration                   `json:"uptime_nanos"`
+	Config    StatsConfig                     `json:"config"`
+	Tables    []string                        `json:"tables"`
+	Rates     StatsRates                      `json:"rates"`
+	Router    core.SessionRouterStats         `json:"router"`
+	PutRow    core.RouterPutRowProfileSummary `json:"putrow"`
+	Flush     core.RouterFlushProfileSummary  `json:"flush"`
+	Drain     core.RouterDrainProfileSummary  `json:"drain"`
+	Runtime   StatsRuntime                    `json:"runtime"`
+}
+
+// StatsConfig exposes non-secret loader tuning knobs.
+type StatsConfig struct {
+	ListenAddress        string                      `json:"listen_address"`
+	ConnectionMode       shared.LoaderConnectionMode `json:"connection_mode"`
+	NativeGRPCAddr       string                      `json:"native_grpc_addr,omitempty"`
+	ConsulAddr           string                      `json:"consul_addr,omitempty"`
+	Workers              int                         `json:"workers"`
+	ChannelSize          int                         `json:"channel_size"`
+	FlushInterval        time.Duration               `json:"flush_interval_nanos"`
+	PhysicalBuildRouting bool                        `json:"physical_build_routing"`
+}
+
+// StatsRates gives quick live throughput signals derived from profile counters.
+type StatsRates struct {
+	RecordsPerSecond     float64 `json:"records_per_second"`
+	LogicalRowsPerSecond float64 `json:"logical_rows_per_second"`
+	FlushesPerSecond     float64 `json:"flushes_per_second"`
+}
+
+// StatsRuntime captures coarse Go runtime pressure.
+type StatsRuntime struct {
+	Goroutines      int    `json:"goroutines"`
+	AllocBytes      uint64 `json:"alloc_bytes"`
+	TotalAllocBytes uint64 `json:"total_alloc_bytes"`
+	SysBytes        uint64 `json:"sys_bytes"`
+	HeapAllocBytes  uint64 `json:"heap_alloc_bytes"`
+	HeapSysBytes    uint64 `json:"heap_sys_bytes"`
+	NumGC           uint32 `json:"num_gc"`
 }
 
 // NewServer constructs a loader server and connects to the configured engine
@@ -112,6 +159,7 @@ func NewServer(ctx context.Context, config Config, logger *log.Logger) (*Server,
 		putProfile:   putProfile,
 		flushProfile: flushProfile,
 		drainProfile: drainProfile,
+		startedAt:    time.Now().UTC(),
 		logger:       logger,
 	}, nil
 }
@@ -209,6 +257,7 @@ func loadSelectorTables(tableCache *core.TableCacheStruct, config Config) ([]*co
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/ingest/json", s.handleJSONIngest)
 	return mux
 }
@@ -241,6 +290,48 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tables":          len(s.tables),
 		"connection_mode": string(s.config.ConnectionMode),
 	})
+}
+
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Stats())
+}
+
+// Stats returns the current loader instrumentation snapshot.
+func (s *Server) Stats() StatsResponse {
+	now := time.Now().UTC()
+	startedAt := s.startedAt
+	if startedAt.IsZero() {
+		startedAt = now
+	}
+	uptime := now.Sub(startedAt)
+	putRow := s.putProfile.Snapshot()
+	flush := s.flushProfile.Snapshot()
+	return StatsResponse{
+		Status:    "ok",
+		StartedAt: startedAt,
+		Uptime:    uptime,
+		Config: StatsConfig{
+			ListenAddress:        s.config.ListenAddress,
+			ConnectionMode:       s.config.ConnectionMode,
+			NativeGRPCAddr:       s.config.NativeGRPCAddr,
+			ConsulAddr:           s.config.ConsulAddr,
+			Workers:              s.config.Workers,
+			ChannelSize:          s.config.ChannelSize,
+			FlushInterval:        s.config.FlushInterval,
+			PhysicalBuildRouting: s.config.PhysicalBuildRouting,
+		},
+		Tables:  s.tableNames(),
+		Rates:   loaderStatsRates(putRow, flush, uptime),
+		Router:  s.router.Snapshot(),
+		PutRow:  putRow,
+		Flush:   flush,
+		Drain:   s.drainProfile.Snapshot(),
+		Runtime: loaderRuntimeStats(),
+	}
 }
 
 func (s *Server) handleJSONIngest(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +398,21 @@ func (s *Server) Route(requests []EnvelopeRequest) IngestResponse {
 	return response
 }
 
+func (s *Server) tableNames() []string {
+	if s == nil {
+		return nil
+	}
+	names := make([]string, 0, len(s.tables))
+	for _, table := range s.tables {
+		if table == nil || table.BasicTable == nil || strings.TrimSpace(table.Name) == "" {
+			continue
+		}
+		names = append(names, table.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func payloadDataMap(payload map[string]interface{}) map[string]interface{} {
 	if payload == nil {
 		return nil
@@ -337,4 +443,32 @@ func writeJSON(w http.ResponseWriter, status int, value interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func loaderStatsRates(putRow core.RouterPutRowProfileSummary, flush core.RouterFlushProfileSummary,
+	uptime time.Duration) StatsRates {
+
+	if uptime <= 0 {
+		return StatsRates{}
+	}
+	seconds := uptime.Seconds()
+	return StatsRates{
+		RecordsPerSecond:     float64(putRow.RecordCount) / seconds,
+		LogicalRowsPerSecond: float64(putRow.LogicalRowCount) / seconds,
+		FlushesPerSecond:     float64(flush.FlushCount) / seconds,
+	}
+}
+
+func loaderRuntimeStats() StatsRuntime {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	return StatsRuntime{
+		Goroutines:      runtime.NumGoroutine(),
+		AllocBytes:      mem.Alloc,
+		TotalAllocBytes: mem.TotalAlloc,
+		SysBytes:        mem.Sys,
+		HeapAllocBytes:  mem.HeapAlloc,
+		HeapSysBytes:    mem.HeapSys,
+		NumGC:           mem.NumGC,
+	}
 }

@@ -35,6 +35,7 @@ go run ./cmd/quantastream \
   -bind 127.0.0.1 \
   -mysql-port 4000 \
   -native-grpc-port 4100 \
+  -pprof-bind 127.0.0.1:6060 \
   -database quanta
 ```
 
@@ -49,6 +50,7 @@ go run ./cmd/quantastream-loader \
   -config-dir tpc-h-benchmark/config \
   -native-grpc-addr 127.0.0.1:4100 \
   -listen 127.0.0.1:8088 \
+  -pprof-bind 127.0.0.1:6061 \
   -tables orders,lineitem
 ```
 
@@ -68,12 +70,34 @@ Important flags:
 | `-flush-interval` | `1s` | Idle flush interval for router-owned sessions. |
 | `-default-source` | `json-http` | Source used when a JSON event omits `source`. |
 | `-physical-build-routing` | `false` | Optional time-quantum build-shard routing for safe source shapes. |
+| `-pprof-bind` | disabled | Optional pprof listen address. Use a different port than the engine. |
 
 Use `GET /healthz` to confirm the loader is ready:
 
 ```bash
 curl http://127.0.0.1:8088/healthz
 ```
+
+Use `GET /stats` to inspect live ingest pressure and timing summaries:
+
+```bash
+curl -s http://127.0.0.1:8088/stats | jq .
+```
+
+The stats response includes router queue depth, open router sessions,
+per-table PutRow counters, flush counters, drain counters, derived rates, and
+coarse Go runtime memory/goroutine counters.
+
+When `-pprof-bind` is enabled, capture profiles while a producer run is active:
+
+```bash
+go tool pprof -top http://127.0.0.1:6060/debug/pprof/profile?seconds=30
+go tool pprof -top http://127.0.0.1:6061/debug/pprof/profile?seconds=30
+```
+
+Use the engine profile to inspect server-side mutation/persistence cost. Use
+the loader profile to inspect JSON decode, selector routing, PutRow staging,
+native gRPC batching, and router pressure.
 
 ## JSON Ingest Endpoint
 

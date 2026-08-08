@@ -5,9 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,6 +43,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	database := flags.String("database", "quanta", "default database/schema name")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
+	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
 	printBSIPKAuthorityManifest := flags.Bool("print-bsi-pk-authority-manifest", false, "print the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
@@ -111,6 +115,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 0
 	}
 
+	startPprofServer(*pprofBind, stderr)
+
 	mountStart := time.Now()
 	process, diagnostics, err := qsinabox.MountStandardProcess(ctx, config)
 	mountElapsed := time.Since(mountStart)
@@ -162,4 +168,17 @@ func envBool(name string) bool {
 	}
 	parsed, err := strconv.ParseBool(value)
 	return err == nil && parsed
+}
+
+func startPprofServer(bind string, stderr io.Writer) {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		return
+	}
+	go func() {
+		fmt.Fprintf(stderr, "pprof_listening=%s\n", bind)
+		if err := http.ListenAndServe(bind, http.DefaultServeMux); err != nil {
+			fmt.Fprintf(stderr, "pprof stopped: %v\n", err)
+		}
+	}()
 }

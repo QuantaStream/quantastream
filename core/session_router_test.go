@@ -150,6 +150,33 @@ func TestSessionRouterPreservesExplicitAssumeNewPrimaryKeyMode(t *testing.T) {
 	require.Equal(t, PrimaryKeyModeAssumeNew, router.cfg.PrimaryKeyMode)
 }
 
+func TestSessionRouterSnapshotReportsQueueAndSessions(t *testing.T) {
+	router := &SessionRouter{
+		cfg: SessionRouterConfig{
+			ChannelSize:    3,
+			PrimaryKeyMode: PrimaryKeyModeVerifyExisting,
+		},
+		shardChannels: map[string]chan IngestRecord{
+			"shard0": make(chan IngestRecord, 3),
+			"shard1": make(chan IngestRecord, 3),
+		},
+	}
+	router.shardChannels["shard0"] <- IngestRecord{TableName: "orders"}
+	router.shardChannels["shard0"] <- IngestRecord{TableName: "lineitem"}
+	router.sessionCache.Store("shard0+orders", &Session{})
+
+	stats := router.Snapshot()
+
+	require.Equal(t, 2, stats.ShardCount)
+	require.Equal(t, 3, stats.ChannelSize)
+	require.Equal(t, PrimaryKeyModeVerifyExisting, stats.PrimaryKeyMode)
+	require.Equal(t, 2, stats.TotalQueued)
+	require.Equal(t, 6, stats.TotalCapacity)
+	require.Equal(t, 1, stats.OpenSessionCount)
+	require.Equal(t, SessionRouterShard{Queued: 2, Capacity: 3}, stats.Shards["shard0"])
+	require.Equal(t, SessionRouterShard{Queued: 0, Capacity: 3}, stats.Shards["shard1"])
+}
+
 func TestIngestRecordRouteShardKeyPrefersBuildShardKey(t *testing.T) {
 	record := IngestRecord{
 		ShardKey:      "pk:lineitem:l_orderkey=1",

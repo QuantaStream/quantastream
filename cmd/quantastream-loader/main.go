@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -44,10 +45,12 @@ func run(ctx context.Context, args []string) int {
 	flushInterval := flags.Duration("flush-interval", time.Second, "session router idle flush interval")
 	defaultSource := flags.String("default-source", "json-http", "source value used when a JSON event omits source")
 	physicalBuildRouting := flags.Bool("physical-build-routing", false, "route by physical time-quantum build shard when safe for the source shape")
+	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6061")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	logger := log.New(os.Stderr, "", log.LstdFlags)
 	mode := shared.LoaderConnectionMode(strings.TrimSpace(*connectionMode))
 	switch mode {
 	case shared.LoaderConnectionStandardNative, shared.LoaderConnectionDistributed:
@@ -55,8 +58,8 @@ func run(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "unsupported -connection-mode %q\n", *connectionMode)
 		return 2
 	}
+	startPprofServer(*pprofBind, logger)
 
-	logger := log.New(os.Stderr, "", log.LstdFlags)
 	loader, err := qsloader.NewServer(ctx, qsloader.Config{
 		ListenAddress:        *listen,
 		ConfigDir:            *configDir,
@@ -128,6 +131,23 @@ func splitCSV(value string) []string {
 		}
 	}
 	return items
+}
+
+func startPprofServer(bind string, logger *log.Logger) {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		return
+	}
+	go func() {
+		if logger != nil {
+			logger.Printf("quantastream-loader pprof listening=%s", bind)
+		}
+		if err := http.ListenAndServe(bind, http.DefaultServeMux); err != nil {
+			if logger != nil {
+				logger.Printf("quantastream-loader pprof stopped: %v", err)
+			}
+		}
+	}()
 }
 
 func closeLoaderWithin(loader loaderCloseable, timeout time.Duration) error {
