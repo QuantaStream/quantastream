@@ -368,7 +368,7 @@ func (m *Main) logDirectProfileSummary() {
 	if m.putRowProfile != nil {
 		profile := m.putRowProfile.Snapshot()
 		pk := profile.PrimaryKey
-		log.Printf("TPC-H direct putrow profile table=%s records=%d logical_rows=%d child_rows=%d inserted=%d existing=%d duplicate=%d conflict=%d total=%s source=%s identity=%s child_expand=%s child_traverse=%s relation=%s attributes=%s pk_total=%s pk_resolves=%d pk_lookup_required=%d pk_bsi_lookup=%d pk_bsi_hit=%d pk_empty_domain_probe=%d pk_empty_domain_skip=%d pk_empty_domain_non_empty=%d pk_empty_domain_unknown=%d pk_empty_domain_probe_elapsed=%s pk_bsi_projection=%s pk_bsi_compare=%s pk_bsi_stage_write=%s pk_rownum_alloc=%s pk_batch_cache=%s",
+		log.Printf("TPC-H direct putrow profile table=%s records=%d logical_rows=%d child_rows=%d inserted=%d existing=%d duplicate=%d conflict=%d total=%s source=%s identity=%s child_expand=%s child_traverse=%s relation=%s attributes=%s pk_total=%s pk_resolves=%d pk_lookup_required=%d pk_bsi_lookup=%d pk_bsi_hit=%d pk_empty_domain_probe=%d pk_empty_domain_skip=%d pk_empty_domain_non_empty=%d pk_empty_domain_unknown=%d pk_empty_domain_probe_elapsed=%s pk_bsi_projection_cache_lookup=%d pk_bsi_projection_cache_hit=%d pk_bsi_projection=%s pk_bsi_compare=%s pk_bsi_stage_write=%s pk_rownum_alloc=%s pk_batch_cache=%s",
 			m.Index,
 			profile.RecordCount,
 			profile.LogicalRowCount,
@@ -394,6 +394,8 @@ func (m *Main) logDirectProfileSummary() {
 			pk.EmptyDomainNonEmptyCount,
 			pk.EmptyDomainUnknownCount,
 			pk.EmptyDomainProbeElapsed.Round(time.Millisecond),
+			pk.BSIProjectionCacheLookupCount,
+			pk.BSIProjectionCacheHitCount,
 			pk.BSIProjectionElapsed.Round(time.Millisecond),
 			pk.BSICompareElapsed.Round(time.Millisecond),
 			pk.BSIStageWriteElapsed.Round(time.Millisecond),
