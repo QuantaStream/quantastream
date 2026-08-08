@@ -62,38 +62,20 @@ path.
 
 ## Load Data Into Inabox-Standard Storage
 
-`inabox-standard` can load TPC-H data into a local data directory without a
-Consul cluster or gRPC node hop. This is an offline/in-process load: do not run
-the standalone `quantastream` server against the same data directory while the
-loader is writing.
+The normal `inabox-standard` load path keeps the engine and loader in separate
+processes. Start `cmd/quantastream` once with the MySQL-compatible endpoint and
+the native gRPC loader endpoint enabled, then run the TPC-H loader against that
+native endpoint.
 
-This loader mode is intentionally a little different from the SQLRunner
-`inabox-direct` mode:
-
-- SQLRunner `inabox-direct` hosts the query engine inside SQLRunner and talks to
-  local clustered nodes.
-- TPC-H `TPCH_LOAD_MODE=standard` hosts the lightweight local storage backend
-  inside the loader process and writes directly to an `inabox-standard` data
-  directory.
-- The loader does not start the MySQL server. After the load finishes, start
-  `cmd/quantastream` against the same config and data directories to query the
-  data over the MySQL-compatible endpoint.
+For a clean load, stop any running standard server and clear the data directory
+before starting it:
 
 ```bash
 cd tpc-h-benchmark
 rm -rf local/standard-data
-TPCH_LOAD_MODE=standard \
-TPCH_STANDARD_CONFIG_DIR=config \
-TPCH_STANDARD_DATA_DIR=local/standard-data \
-  ./tpch-direct.sh local/data/sf-0.01 1 1000
 ```
 
-Use one worker for `inabox-standard` loads for now. Cluster-direct loads can use
-multiple workers; the local standard storage path is intentionally serialized
-until the multi-session write path is validated.
-
-After the load completes, start `inabox-standard` against the same schema and
-data directories:
+Start the server:
 
 ```bash
 cd ..
@@ -102,11 +84,41 @@ go run ./cmd/quantastream \
   -data-dir tpc-h-benchmark/local/standard-data \
   -bind 127.0.0.1 \
   -mysql-port 4000 \
+  -native-grpc-port 4100 \
   -database quanta
 ```
 
-To run the full offline load, start a temporary `quantastream` process, compare
-table counts to the `.tbl` files, and run the TPC-H smoke suite:
+Then load through the native gRPC lane:
+
+```bash
+cd tpc-h-benchmark
+TPCH_LOAD_MODE=standard-remote \
+TPCH_STANDARD_CONFIG_DIR=config \
+TPCH_NATIVE_GRPC_ADDR=127.0.0.1:4100 \
+  ./tpch-direct.sh local/data/sf-0.01 1 1000
+```
+
+Use one worker for `inabox-standard` loads for now. Cluster-direct loads can use
+multiple workers; standard loader parallelism remains an explicit tuning target.
+
+`TPCH_LOAD_MODE=standard-offline` is the explicit bootstrap/dev path. It mounts
+the lightweight local backend inside the loader process and writes directly to
+an `inabox-standard` data directory. Do not run the standalone `quantastream`
+server against the same data directory while this offline loader is writing.
+
+Offline load:
+
+```bash
+cd tpc-h-benchmark
+rm -rf local/standard-data
+TPCH_LOAD_MODE=standard-offline \
+TPCH_STANDARD_CONFIG_DIR=config \
+TPCH_STANDARD_DATA_DIR=local/standard-data \
+  ./tpch-direct.sh local/data/sf-0.01 1 1000
+```
+
+To run the full offline load, then start a temporary `quantastream` process,
+compare table counts to the `.tbl` files, and run the TPC-H smoke suite:
 
 ```bash
 cd tpc-h-benchmark

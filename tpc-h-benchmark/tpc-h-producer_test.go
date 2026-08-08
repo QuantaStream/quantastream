@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsinabox"
@@ -83,6 +86,100 @@ func TestClusterDirectRouterConfigInjectsBSIPrimaryKeyResolverFactory(t *testing
 	}
 }
 
+func TestNormalizeDirectMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		want string
+	}{
+		{name: "empty defaults to cluster", mode: "", want: directModeCluster},
+		{name: "cluster stays cluster", mode: directModeCluster, want: directModeCluster},
+		{name: "standard remote stays remote", mode: directModeStandardRemote, want: directModeStandardRemote},
+		{name: "standard offline stays offline", mode: directModeStandardOffline, want: directModeStandardOffline},
+		{name: "standard alias maps offline", mode: directModeStandard, want: directModeStandardOffline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeDirectMode(tt.mode); got != tt.want {
+				t.Fatalf("normalizeDirectMode(%q) = %q, want %q", tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadModeIncludesDirectTopology(t *testing.T) {
+	loader := NewMain()
+	loader.Direct = true
+	loader.DirectMode = directModeStandardRemote
+
+	if got := loader.loadMode(); got != "direct-standard-remote" {
+		t.Fatalf("loadMode() = %q, want direct-standard-remote", got)
+	}
+}
+
+func TestInitStandardRemoteDirectUsesRunningNativeEndpoint(t *testing.T) {
+	config := qsinabox.StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveTPCHEphemeralPort(t),
+		NativeGRPCPort: reserveTPCHEphemeralPort(t),
+		ConfigDir:      "config",
+		DataDir:        t.TempDir(),
+		Database:       "quanta",
+	}
+	process, diagnostics, err := qsinabox.MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC endpoint")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+	defer func() {
+		process.NativeNode.Close()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("native gRPC server exited with error %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("native gRPC server did not stop")
+		}
+	}()
+
+	loader := NewMain()
+	loader.Index = "region"
+	loader.Direct = true
+	loader.DirectMode = directModeStandardRemote
+	loader.ConfigDir = "config"
+	loader.Database = "quanta"
+	loader.NativeGRPCAddr = process.NativeNode.Address
+	loader.Workers = 1
+	loader.BatchSize = 8
+
+	if err := loader.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	defer loader.Close()
+	if loader.stdBackend != nil {
+		t.Fatalf("stdBackend = %T, want nil for standard-remote", loader.stdBackend)
+	}
+	if loader.conn == nil {
+		t.Fatalf("remote conn = nil, want connected standard native client")
+	}
+	if len(loader.conn.ClientConnections()) != 1 {
+		t.Fatalf("remote conn clients = %d, want 1", len(loader.conn.ClientConnections()))
+	}
+	if loader.Table == nil || loader.Table.Name != "region" {
+		t.Fatalf("Table = %#v, want region schema", loader.Table)
+	}
+}
+
 func TestGenerateRecordKeepsPrimaryKeyShardKeyForStreamLoads(t *testing.T) {
 	loader := testLineitemLoader(false)
 
@@ -150,4 +247,14 @@ func testLineitemLoader(direct bool) *Main {
 		Direct:    direct,
 		shardCols: []*shared.BasicAttribute{&table.Attributes[0], &table.Attributes[1]},
 	}
+}
+
+func reserveTPCHEphemeralPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,6 +37,13 @@ const (
 	Success = 0
 )
 
+const (
+	directModeCluster         = "cluster"
+	directModeStandard        = "standard"
+	directModeStandardRemote  = "standard-remote"
+	directModeStandardOffline = "standard-offline"
+)
+
 // Main strct defines command line arguments variables and various global meta-data associated with record loads.
 type Main struct {
 	Index     string
@@ -47,32 +55,33 @@ type Main struct {
 	AWSRegion string
 	//S3svc        *s3.S3
 	//S3files      []*s3.Object
-	totalBytes    int64
-	bytesLock     sync.RWMutex
-	totalRecs     *Counter
-	failedRecs    *Counter
-	Stream        string
-	IsNested      bool
-	ConsulAddr    string
-	ConsulClient  *api.Client
-	Table         *shared.BasicTable
-	outClient     *kinesis.Kinesis
-	conn          *shared.Conn
-	router        *core.SessionRouter
-	tableCache    *core.TableCacheStruct
-	lock          *api.Lock
-	shardCols     []*shared.BasicAttribute
-	Direct        bool
-	DirectMode    string
-	Workers       int
-	ConfigDir     string
-	DataDir       string
-	Database      string
-	BasePath      string
-	stdBackend    *qsinabox.StandardLocalBackend
-	putRowProfile *core.RouterPutRowProfile
-	flushProfile  *core.RouterFlushProfile
-	drainProfile  *core.RouterDrainProfile
+	totalBytes     int64
+	bytesLock      sync.RWMutex
+	totalRecs      *Counter
+	failedRecs     *Counter
+	Stream         string
+	IsNested       bool
+	ConsulAddr     string
+	ConsulClient   *api.Client
+	Table          *shared.BasicTable
+	outClient      *kinesis.Kinesis
+	conn           *shared.Conn
+	router         *core.SessionRouter
+	tableCache     *core.TableCacheStruct
+	lock           *api.Lock
+	shardCols      []*shared.BasicAttribute
+	Direct         bool
+	DirectMode     string
+	Workers        int
+	ConfigDir      string
+	DataDir        string
+	Database       string
+	NativeGRPCAddr string
+	BasePath       string
+	stdBackend     *qsinabox.StandardLocalBackend
+	putRowProfile  *core.RouterPutRowProfile
+	flushProfile   *core.RouterFlushProfile
+	drainProfile   *core.RouterDrainProfile
 
 	splitElapsed          time.Duration
 	recordGenerateElapsed time.Duration
@@ -120,11 +129,12 @@ func main() {
 	region := app.Flag("aws-region", "AWS region.").Default("us-east-1").String()
 	batchSize := app.Flag("batch-size", "PutRecords batch size").Default("100").Int32()
 	direct := app.Flag("direct", "Load directly into Quanta sessions instead of writing to Kinesis.").Bool()
-	directMode := app.Flag("direct-mode", "Direct load target: cluster uses Consul/gRPC nodes; standard writes an inabox-standard local data directory.").Default("cluster").Enum("cluster", "standard")
+	directMode := app.Flag("direct-mode", "Direct load target: cluster uses Consul/gRPC nodes; standard-remote connects to a running inabox-standard native gRPC endpoint; standard-offline mounts a local in-process backend.").Default(directModeCluster).Enum(directModeCluster, directModeStandardRemote, directModeStandardOffline, directModeStandard)
 	workers := app.Flag("workers", "Direct-load session worker count.").Default("3").Int()
 	configDir := app.Flag("config-dir", "Schema config directory for inabox-standard direct loads.").Default("config").String()
 	dataDir := app.Flag("data-dir", "Data directory for inabox-standard direct loads.").Default("local/standard-data").String()
 	database := app.Flag("database", "Database/schema name for inabox-standard direct loads.").Default("quanta").String()
+	nativeGRPCAddr := app.Flag("native-grpc-addr", "Native gRPC address for standard-remote direct loads.").Default("127.0.0.1:4100").String()
 	environment := app.Flag("env", "Environment [DEV, QA, STG, VAL, PROD]").Default("DEV").String()
 	consul := app.Flag("consul-endpoint", "Consul agent address/port").Default("127.0.0.1:8500").String()
 
@@ -139,13 +149,18 @@ func main() {
 	main.Stream = *stream
 	main.ConsulAddr = *consul
 	main.Direct = *direct
-	main.DirectMode = *directMode
+	main.DirectMode = normalizeDirectMode(*directMode)
 	main.Workers = *workers
 	main.ConfigDir = *configDir
 	main.DataDir = *dataDir
 	main.Database = *database
+	main.NativeGRPCAddr = *nativeGRPCAddr
 	if !main.Direct && main.Stream == "" {
 		log.Fatal("stream is required unless --direct is set")
+	}
+	if main.Direct && *directMode == directModeStandard {
+		log.Printf("Direct load mode %s is deprecated; use %s for offline bootstrap loads or %s for a running standard server.\n",
+			directModeStandard, directModeStandardOffline, directModeStandardRemote)
 	}
 
 	log.Printf("Table name %v.\n", main.Index)
@@ -153,8 +168,11 @@ func main() {
 	log.Printf("AWS region %s\n", main.AWSRegion)
 	if main.Direct {
 		log.Printf("Direct load mode %s workers %d.\n", main.DirectMode, main.Workers)
-		if main.DirectMode == "standard" {
-			log.Printf("Direct standard config_dir=%s data_dir=%s database=%s\n", main.ConfigDir, main.DataDir, main.Database)
+		switch main.DirectMode {
+		case directModeStandardRemote:
+			log.Printf("Direct standard remote config_dir=%s database=%s native_grpc_addr=%s\n", main.ConfigDir, main.Database, main.NativeGRPCAddr)
+		case directModeStandardOffline:
+			log.Printf("Direct standard offline config_dir=%s data_dir=%s database=%s\n", main.ConfigDir, main.DataDir, main.Database)
 		}
 	} else {
 		log.Printf("Kinesis stream  %s.\n", main.Stream)
@@ -457,9 +475,25 @@ func (m *Main) logDirectProfileSummary() {
 
 func (m *Main) loadMode() string {
 	if m.Direct {
+		if m.DirectMode != "" {
+			return "direct-" + m.DirectMode
+		}
 		return "direct"
 	}
 	return "kinesis"
+}
+
+func normalizeDirectMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "", directModeCluster:
+		return directModeCluster
+	case directModeStandardRemote:
+		return directModeStandardRemote
+	case directModeStandardOffline, directModeStandard:
+		return directModeStandardOffline
+	default:
+		return mode
+	}
 }
 
 // generateRecord builds the loader envelope consumed by Kinesis and direct load.
@@ -509,8 +543,17 @@ func (m *Main) Init() error {
 
 	var err error
 
-	if m.Direct && m.DirectMode == "standard" {
-		return m.initStandardDirect()
+	m.DirectMode = normalizeDirectMode(m.DirectMode)
+	if m.Direct {
+		switch m.DirectMode {
+		case directModeStandardRemote:
+			return m.initStandardRemoteDirect()
+		case directModeStandardOffline:
+			return m.initStandardOfflineDirect()
+		case directModeCluster:
+		default:
+			return fmt.Errorf("unsupported direct load mode %q", m.DirectMode)
+		}
 	}
 
 	m.ConsulClient, err = api.NewClient(&api.Config{Address: m.ConsulAddr})
@@ -588,7 +631,44 @@ func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
 	})
 }
 
-func (m *Main) initStandardDirect() error {
+func (m *Main) initStandardRemoteDirect() error {
+	if strings.TrimSpace(m.NativeGRPCAddr) == "" {
+		return fmt.Errorf("standard-remote direct load requires --native-grpc-addr")
+	}
+	m.BasePath = m.ConfigDir
+	var err error
+	m.Table, err = shared.LoadSchema(m.BasePath, m.Index, nil)
+	if err != nil {
+		return err
+	}
+	pkInfo, err := m.Table.GetPrimaryKeyInfo()
+	if err != nil {
+		return err
+	}
+	m.shardCols = pkInfo
+	m.tableCache = core.NewTableCacheStruct()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.conn, err = shared.NewLoaderConnection(ctx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "tpch-standard-remote-loader",
+		Address: m.NativeGRPCAddr,
+	})
+	if err != nil {
+		return err
+	}
+	if m.Workers <= 0 {
+		m.Workers = 1
+	}
+	router, err := core.NewSessionRouter(m.standardDirectRouterConfig())
+	if err != nil {
+		return err
+	}
+	m.router = router
+	return nil
+}
+
+func (m *Main) initStandardOfflineDirect() error {
 	config := qsinabox.StandardConfig{
 		ConfigDir: m.ConfigDir,
 		DataDir:   m.DataDir,
@@ -682,7 +762,8 @@ func (m *Main) commitDirectLoad() error {
 	if !m.Direct || m.conn == nil {
 		return nil
 	}
-	if m.DirectMode != "standard" {
+	switch m.DirectMode {
+	case directModeCluster:
 		state, activeCount, targetSize := m.conn.GetClusterState()
 		clientCount := len(m.conn.ClientConnections())
 		log.Printf("TPC-H direct load commit cluster table=%s state=%s active=%d target=%d clients=%d",
@@ -691,8 +772,13 @@ func (m *Main) commitDirectLoad() error {
 			return fmt.Errorf("direct load commit requires green cluster table=%s state=%s active=%d target=%d clients=%d",
 				m.Index, state, activeCount, targetSize, clientCount)
 		}
-	} else {
-		log.Printf("TPC-H direct load commit standard table=%s data_dir=%s config_dir=%s", m.Index, m.DataDir, m.BasePath)
+	case directModeStandardRemote:
+		log.Printf("TPC-H direct load commit standard-remote table=%s native_grpc_addr=%s config_dir=%s",
+			m.Index, m.NativeGRPCAddr, m.BasePath)
+	case directModeStandardOffline:
+		log.Printf("TPC-H direct load commit standard-offline table=%s data_dir=%s config_dir=%s", m.Index, m.DataDir, m.BasePath)
+	default:
+		return fmt.Errorf("unsupported direct load mode %q", m.DirectMode)
 	}
 	session, err := core.OpenSession(m.tableCache, m.BasePath, m.Index, true, m.conn)
 	if err != nil {
@@ -706,6 +792,10 @@ func (m *Main) commitDirectLoad() error {
 }
 
 func (m *Main) Close() {
+	if m.conn != nil {
+		_ = m.conn.Disconnect()
+		m.conn = nil
+	}
 	if m.stdBackend != nil {
 		m.stdBackend.Close()
 		m.stdBackend = nil

@@ -254,8 +254,8 @@ if [[ "${RUN_LOAD}" == "1" ]]; then
   if [[ "${CLEAN_DATA}" == "1" ]]; then
     run_step "clean_standard_data" rm -rf "${STANDARD_DATA_DIR}"
   fi
-  run_step "standard_direct_load" env \
-    TPCH_LOAD_MODE=standard \
+  run_step "standard_offline_load" env \
+    TPCH_LOAD_MODE=standard-offline \
     TPCH_STANDARD_CONFIG_DIR="${CONFIG_DIR}" \
     TPCH_STANDARD_DATA_DIR="${STANDARD_DATA_DIR}" \
     TPCH_STANDARD_DB="${DB}" \
