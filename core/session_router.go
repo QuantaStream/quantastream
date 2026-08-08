@@ -171,6 +171,8 @@ func (r *SessionRouter) Close() error {
 func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 	r.eg.Go(func() error {
 		var shardTableKeys sync.Map
+		ticker := time.NewTicker(r.cfg.FlushInterval)
+		defer ticker.Stop()
 		for {
 			select {
 			case record, open := <-ch:
@@ -194,14 +196,13 @@ func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 					}
 					return err
 				}
-			default:
+			case <-ticker.C:
 				if err := r.flushIdleSessions(shardID, &shardTableKeys); err != nil {
 					if r.cfg.OnError != nil {
 						r.cfg.OnError(err)
 					}
 					return err
 				}
-				time.Sleep(r.cfg.FlushInterval)
 			}
 		}
 	})

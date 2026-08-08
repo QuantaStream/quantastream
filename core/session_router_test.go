@@ -88,6 +88,32 @@ func TestSessionRouterPublishesDrainProfileOnClose(t *testing.T) {
 	require.True(t, seen["shard1"])
 }
 
+func TestSessionRouterCloseDoesNotWaitForIdleFlushInterval(t *testing.T) {
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{},
+		ShardCount:    1,
+		ChannelSize:   1,
+		FlushInterval: 500 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	time.Sleep(25 * time.Millisecond)
+
+	startedAt := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		done <- router.Close()
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Less(t, time.Since(startedAt), 100*time.Millisecond)
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("router Close waited for idle flush interval")
+	}
+}
+
 func TestSessionRouterDoesNotPublishStaleFlushProfile(t *testing.T) {
 	called := false
 	router := &SessionRouter{
