@@ -52,6 +52,41 @@ func TestCatalogExpressionEvaluatorEvaluatesNestedSelector(t *testing.T) {
 	}
 }
 
+func TestCompiledCatalogExpressionEvaluatorEvaluatesSelector(t *testing.T) {
+	evaluator, diagnostics := CompileSelectorExpression(
+		qsbridge.TableSelectorExpression(`payload.kind = "order" && payload.id != null`),
+	)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("compile diagnostics = %#v", diagnostics)
+	}
+
+	matched, diagnostics := evaluator.EvaluateSelector(
+		qsbridge.TableSelectorExpression(`payload.kind = "order" && payload.id != null`),
+		map[string]any{
+			"payload": map[string]any{
+				"kind": "order",
+				"id":   1001,
+			},
+		},
+	)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("evaluate diagnostics = %#v", diagnostics)
+	}
+	if !matched {
+		t.Fatalf("matched = false, want true")
+	}
+}
+
+func TestCompileCatalogExpressionRejectsInvalidExpression(t *testing.T) {
+	evaluator, diagnostics := CompileSelectorExpression(qsbridge.TableSelectorExpression(`payload.kind =`))
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocking diagnostic", diagnostics)
+	}
+	if evaluator != nil {
+		t.Fatalf("evaluator = %#v, want nil on compile failure", evaluator)
+	}
+}
+
 func TestCatalogExpressionEvaluatorEvaluatesSelectorAliasThroughRegistry(t *testing.T) {
 	evaluator := CatalogExpressionEvaluator{}
 	matched, diagnostics := evaluator.EvaluateSelector(

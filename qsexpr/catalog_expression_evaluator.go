@@ -13,7 +13,31 @@ import (
 
 // CatalogExpressionEvaluator evaluates schema-owned defaults and selectors without qlbridge.
 type CatalogExpressionEvaluator struct {
-	Now func() time.Time
+	Now        func() time.Time
+	expression qsbridge.CatalogExpression
+	node       catalogExpressionNode
+}
+
+// CompileCatalogExpression returns an evaluator with expression parsed once for
+// repeated selector/default evaluation.
+func CompileCatalogExpression(expression qsbridge.CatalogExpression) (*CatalogExpressionEvaluator, qsbridge.DiagnosticSet) {
+	node, diagnostics := parseCatalogExpression(expression.Raw)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	return &CatalogExpressionEvaluator{expression: expression, node: node}, nil
+}
+
+// CompileDefaultExpression returns an evaluator with a default expression parsed
+// once for repeated evaluation.
+func CompileDefaultExpression(expression qsbridge.CatalogExpression) (*CatalogExpressionEvaluator, qsbridge.DiagnosticSet) {
+	return CompileCatalogExpression(expression)
+}
+
+// CompileSelectorExpression returns an evaluator with a selector expression
+// parsed once for repeated evaluation.
+func CompileSelectorExpression(expression qsbridge.CatalogExpression) (*CatalogExpressionEvaluator, qsbridge.DiagnosticSet) {
+	return CompileCatalogExpression(expression)
 }
 
 // EvaluateDefault evaluates a blind-column INSERT default expression against row values.
@@ -57,9 +81,13 @@ func CatalogExpressionDependencies(raw string) ([]qsbridge.CatalogExpressionPath
 }
 
 func (e CatalogExpressionEvaluator) evaluate(expression qsbridge.CatalogExpression, values map[string]any) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
-	node, diagnostics := parseCatalogExpression(expression.Raw)
-	if diagnostics.BlocksNative() {
-		return qsbridge.ResultCell{Kind: qsbridge.ValueNull}, diagnostics
+	node := e.node
+	if node == nil || e.expression.Raw != expression.Raw || e.expression.Purpose != expression.Purpose {
+		var diagnostics qsbridge.DiagnosticSet
+		node, diagnostics = parseCatalogExpression(expression.Raw)
+		if diagnostics.BlocksNative() {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueNull}, diagnostics
+		}
 	}
 	value, diagnostics := node.eval(catalogExpressionEvalContext{values: values, now: e.now, purpose: expression.Purpose})
 	if diagnostics.BlocksNative() {

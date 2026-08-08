@@ -3,6 +3,8 @@ package core
 import (
 	"testing"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsexpr"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/require"
 )
@@ -60,6 +62,22 @@ func TestSelectIngestTableSupportsBarePayloadSelector(t *testing.T) {
 	require.False(t, diagnostics.BlocksNative(), "%#v", diagnostics)
 	require.True(t, result.Matched)
 	require.Equal(t, "cities", result.TableName)
+}
+
+func TestSelectIngestTableUsesCompiledSelectorNode(t *testing.T) {
+	orders := ingestSelectorTable("orders", `payload.kind = "order"`)
+	selector, diagnostics := qsexpr.CompileSelectorExpression(qsbridge.TableSelectorExpression(orders.Selector))
+	require.False(t, diagnostics.BlocksNative(), "%#v", diagnostics)
+	orders.SelectorNode = selector
+
+	result, diagnostics := SelectIngestTable(IngestSelectorRequest{
+		Tables:  []*Table{orders},
+		Payload: map[string]interface{}{"kind": "order"},
+	})
+
+	require.False(t, diagnostics.BlocksNative(), "%#v", diagnostics)
+	require.True(t, result.Matched)
+	require.Equal(t, "orders", result.TableName)
 }
 
 func TestSelectIngestTableReturnsFalseWhenNoSelectorMatches(t *testing.T) {

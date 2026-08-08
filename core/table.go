@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsexpr"
 	"github.com/QuantaStream/quantastream/shared"
 	u "github.com/araddon/gou"
@@ -262,7 +263,11 @@ func LoadTable(tableCache *TableCacheStruct, path string, kvStore *shared.KVStor
 
 	// Parse and verify selector expression if it exists.
 	if table.Selector != "" {
-		table.SelectorNode = &qsexpr.CatalogExpressionEvaluator{}
+		selector, diagnostics := qsexpr.CompileSelectorExpression(qsbridge.TableSelectorExpression(table.Selector))
+		if diagnostics.BlocksNative() {
+			return nil, fmt.Errorf("invalid selector expression for table %s: %s", table.Name, diagnostics[0].Message)
+		}
+		table.SelectorNode = selector
 	}
 	table.AvroSchema = shared.ToAvroSchema(table.BasicTable)
 	tableCache.TableCache[name] = table
