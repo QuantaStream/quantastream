@@ -37,14 +37,30 @@ func NewStandardBSIPrimaryKeyResolverFactory(reader core.SingleColumnBSIPrimaryK
 // connection, so this works for native gRPC loader sessions without sharing
 // in-process server pointers.
 func NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheStruct) core.SessionPrimaryKeyResolverFactory {
+	return newStandardSessionBSIPrimaryKeyResolverFactory(tableCache, nil)
+}
+
+// NewSharedStandardSessionBSIPrimaryKeyResolverFactory builds a resolver
+// factory whose resolver instances share one projection cache. SessionRouter
+// loaders use this to avoid re-projecting the same authority domain per worker
+// session during replay.
+func NewSharedStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheStruct) core.SessionPrimaryKeyResolverFactory {
+	return newStandardSessionBSIPrimaryKeyResolverFactory(tableCache, NewStandardBSIProjectionCache())
+}
+
+func newStandardSessionBSIPrimaryKeyResolverFactory(tableCache *core.TableCacheStruct, sharedCache *StandardBSIProjectionCache) core.SessionPrimaryKeyResolverFactory {
 	return func(session *core.Session) core.PrimaryKeyResolver {
 		if session == nil {
 			return StandardBSIPrimaryKeyResolver{}
 		}
+		projectionCache := sharedCache
+		if projectionCache == nil {
+			projectionCache = NewStandardBSIProjectionCache()
+		}
 		return NewStandardBSIPrimaryKeyResolver(StandardSingleColumnBSIPrimaryKeyReader{
 			TableCache:      tableCache,
 			BitIndex:        session.BitIndex,
-			ProjectionCache: NewStandardBSIProjectionCache(),
+			ProjectionCache: projectionCache,
 		})
 	}
 }

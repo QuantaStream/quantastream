@@ -1,10 +1,12 @@
 package qsinabox
 
 import (
+	"fmt"
 	"math/big"
 	"sync"
 
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"golang.org/x/sync/singleflight"
 )
 
 type standardBSIProjectionCacheKey struct {
@@ -21,6 +23,7 @@ type StandardBSIProjectionCache struct {
 	mu         sync.RWMutex
 	entries    map[standardBSIProjectionCacheKey]*roaring64.BSI
 	bigLookups map[standardBSIProjectionCacheKey]map[string][]uint64
+	flights    singleflight.Group
 }
 
 // NewStandardBSIProjectionCache creates an empty per-session projection cache.
@@ -67,6 +70,39 @@ func (c *StandardBSIProjectionCache) Store(table, field string, fromTime, toTime
 	}
 	c.entries[key] = bsi
 	return bsi
+}
+
+func (c *StandardBSIProjectionCache) LoadOrProject(table, field string, fromTime, toTime int64,
+	project func() (*roaring64.BSI, error)) (*roaring64.BSI, bool, bool, error) {
+
+	if c == nil {
+		bsi, err := project()
+		return bsi, false, false, err
+	}
+	if bsi, ok := c.Lookup(table, field, fromTime, toTime); ok {
+		return bsi, true, true, nil
+	}
+	key := standardBSIProjectionCacheKey{
+		table:    table,
+		field:    field,
+		fromTime: fromTime,
+		toTime:   toTime,
+	}
+	value, err, shared := c.flights.Do(key.flightKey(), func() (interface{}, error) {
+		if bsi, ok := c.Lookup(table, field, fromTime, toTime); ok {
+			return bsi, nil
+		}
+		bsi, err := project()
+		if err != nil {
+			return nil, err
+		}
+		return c.Store(table, field, fromTime, toTime, bsi), nil
+	})
+	if err != nil {
+		return nil, true, false, err
+	}
+	bsi, _ := value.(*roaring64.BSI)
+	return bsi, true, shared, nil
 }
 
 func (c *StandardBSIProjectionCache) StageBigValue(table, field string, fromTime, toTime int64, columnID uint64, value *big.Int) {
@@ -123,6 +159,12 @@ func (c *StandardBSIProjectionCache) StoreBigValueLookup(table, field string, fr
 		fromTime: fromTime,
 		toTime:   toTime,
 	}
+	c.mu.RLock()
+	if existing := c.bigLookups[key]; existing != nil {
+		c.mu.RUnlock()
+		return existing
+	}
+	c.mu.RUnlock()
 	lookup := standardBSIBigValueLookupFromBSI(bsi)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -159,6 +201,10 @@ func standardBSIBigValueLookupFromBSI(bsi *roaring64.BSI) map[string][]uint64 {
 		lookup[valueKey] = append(lookup[valueKey], columnID)
 	}
 	return lookup
+}
+
+func (key standardBSIProjectionCacheKey) flightKey() string {
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", key.table, key.field, key.fromTime, key.toTime)
 }
 
 func standardBSIBigValueLookupKey(value *big.Int) string {

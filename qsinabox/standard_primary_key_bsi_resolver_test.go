@@ -349,6 +349,34 @@ func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testi
 	}
 }
 
+func TestStandardSessionBSIPrimaryKeyResolverFactoriesScopeProjectionCache(t *testing.T) {
+	tableCache := core.NewTableCacheStruct()
+
+	isolatedFactory := NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
+	isolatedFirst := isolatedFactory(&core.Session{}).(StandardBSIPrimaryKeyResolver)
+	isolatedSecond := isolatedFactory(&core.Session{}).(StandardBSIPrimaryKeyResolver)
+	isolatedFirstReader := isolatedFirst.Reader.(StandardSingleColumnBSIPrimaryKeyReader)
+	isolatedSecondReader := isolatedSecond.Reader.(StandardSingleColumnBSIPrimaryKeyReader)
+	if isolatedFirstReader.ProjectionCache == nil || isolatedSecondReader.ProjectionCache == nil {
+		t.Fatalf("isolated factory projection cache = nil")
+	}
+	if isolatedFirstReader.ProjectionCache == isolatedSecondReader.ProjectionCache {
+		t.Fatalf("isolated factory reused projection cache; want one cache per resolver")
+	}
+
+	sharedFactory := NewSharedStandardSessionBSIPrimaryKeyResolverFactory(tableCache)
+	sharedFirst := sharedFactory(&core.Session{}).(StandardBSIPrimaryKeyResolver)
+	sharedSecond := sharedFactory(&core.Session{}).(StandardBSIPrimaryKeyResolver)
+	sharedFirstReader := sharedFirst.Reader.(StandardSingleColumnBSIPrimaryKeyReader)
+	sharedSecondReader := sharedSecond.Reader.(StandardSingleColumnBSIPrimaryKeyReader)
+	if sharedFirstReader.ProjectionCache == nil || sharedSecondReader.ProjectionCache == nil {
+		t.Fatalf("shared factory projection cache = nil")
+	}
+	if sharedFirstReader.ProjectionCache != sharedSecondReader.ProjectionCache {
+		t.Fatalf("shared factory did not reuse projection cache")
+	}
+}
+
 func TestStandardDirectPrimaryKeyResolverFactoryUsesBSIWhenManifestMissing(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

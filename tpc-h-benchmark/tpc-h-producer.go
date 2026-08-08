@@ -578,7 +578,7 @@ func (m *Main) clusterDirectRouterConfig() core.SessionRouterConfig {
 		ShardCount:                m.Workers,
 		ChannelSize:               m.BatchSize * m.Workers,
 		FlushInterval:             time.Second,
-		PrimaryKeyResolverFactory: qsinabox.NewStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
+		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
 		OnError: func(err error) {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)
@@ -628,7 +628,7 @@ func (m *Main) standardDirectRouterConfig() core.SessionRouterConfig {
 		ShardCount:                m.Workers,
 		ChannelSize:               m.BatchSize * m.Workers,
 		FlushInterval:             time.Second,
-		PrimaryKeyResolverFactory: qsinabox.NewStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
+		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(m.tableCache),
 		OnError: func(err error) {
 			m.failedRecs.Add(1)
 			log.Printf("direct load error %v", err)

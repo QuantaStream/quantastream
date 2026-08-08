@@ -189,14 +189,9 @@ func (r StandardSingleColumnBSIPrimaryKeyReader) projectCachedPrimaryKeyBSI(tabl
 		bsi, err := r.projectPrimaryKeyBSI(tableName, fieldName, fromTime, toTime)
 		return bsi, false, false, err
 	}
-	if bsi, ok := r.ProjectionCache.Lookup(tableName, fieldName, fromTime, toTime); ok {
-		return bsi, true, true, nil
-	}
-	bsi, err := r.projectPrimaryKeyBSI(tableName, fieldName, fromTime, toTime)
-	if err != nil {
-		return nil, true, false, err
-	}
-	return r.ProjectionCache.Store(tableName, fieldName, fromTime, toTime, bsi), true, false, nil
+	return r.ProjectionCache.LoadOrProject(tableName, fieldName, fromTime, toTime, func() (*roaring64.BSI, error) {
+		return r.projectPrimaryKeyBSI(tableName, fieldName, fromTime, toTime)
+	})
 }
 
 func (r StandardSingleColumnBSIPrimaryKeyReader) stageCachedPrimaryKeyBSI(tableName, fieldName string,
