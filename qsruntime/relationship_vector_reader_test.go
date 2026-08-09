@@ -420,6 +420,63 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesReverseArtifactQueryMo
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendUsesPhysicalReverseArtifact(t *testing.T) {
+	calls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   testRelationshipVectorBSI(map[uint64]int64{2: 7}),
+			Calls: &calls,
+		},
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{2, 4, 6},
+				},
+				Mode:         "reverse_artifact_server",
+				CacheHit:     true,
+				Rows:         4,
+				Values:       3,
+				SourceValues: 2,
+				TargetRows:   3,
+			},
+			OK: true,
+		},
+	}
+	request := testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{8, 7},
+	)
+	request.Edge.Capabilities = qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion}
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(WithQueryScratchpad(context.Background()), read)
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if result.CandidateCacheMode != "reverse_artifact" || result.CandidateMode != "reverse_artifact_server" {
+		t.Fatalf("candidate cache/mode = %q/%q, want physical reverse artifact", result.CandidateCacheMode, result.CandidateMode)
+	}
+	if !result.CandidateCacheHit {
+		t.Fatalf("candidate cache hit = false, want true")
+	}
+	if calls != 0 {
+		t.Fatalf("projection calls = %d, want 0 when physical reverse artifact is available", calls)
+	}
+	want := []qsbridge.QuantaRownum{2, 4, 6}
+	if !reflect.DeepEqual(result.TargetCandidates.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", result.TargetCandidates.Rownums, want)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendUsesReverseArtifactProcessCache(t *testing.T) {
 	t.Setenv(relationshipVectorReverseArtifactEnv, "process")
 	t.Setenv(relationshipVectorReverseArtifactEdgeEnv, "lineitem.l_partkey")
@@ -1074,6 +1131,21 @@ type fakeLegacyDirectRelationshipVectorSourceKeyReader struct {
 
 func (r fakeLegacyDirectRelationshipVectorSourceKeyReader) ReadRelationshipVectorSourceKeyValues(_ context.Context, _ LegacyDirectRelationshipVectorReadRequest) ([]int64, qsbridge.DiagnosticSet, error) {
 	return append([]int64(nil), r.Values...), r.Diagnostics, r.Err
+}
+
+type fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader struct {
+	Result      LegacyDirectRelationshipVectorReverseArtifactCandidateResult
+	Diagnostics qsbridge.DiagnosticSet
+	Err         error
+	OK          bool
+}
+
+func (r fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader) ReadRelationshipVectorReverseArtifactCandidates(
+	context.Context,
+	LegacyDirectRelationshipVectorReadRequest,
+	[]int64,
+) (LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error) {
+	return r.Result, r.Diagnostics, r.OK, r.Err
 }
 
 func testRelationshipVectorBSI(values map[uint64]int64) *roaring64.BSI {

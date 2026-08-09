@@ -117,14 +117,18 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	relationshipSourceKeyReader := StandardRelationshipVectorSourceKeyReader{
 		Reader: bsiReader,
 	}
+	relationshipReverseArtifactReader := StandardRelationshipReverseArtifactCandidateReader{
+		Direct: b.Adapter.BitmapIndex,
+	}
 	reverseArtifacts := qsruntime.NewRelationshipVectorReverseArtifactManager(qsruntime.RelationshipVectorReverseArtifactConfigFromEnv())
 	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
 		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
-			Sessions:         sessions,
-			TableCache:       tableCache,
-			ProjectionReader: relationshipProjectionReader,
-			SourceKeyReader:  relationshipSourceKeyReader,
-			ReverseArtifacts: reverseArtifacts,
+			Sessions:                       sessions,
+			TableCache:                     tableCache,
+			ProjectionReader:               relationshipProjectionReader,
+			SourceKeyReader:                relationshipSourceKeyReader,
+			ReverseArtifacts:               reverseArtifacts,
+			ReverseArtifactCandidateReader: relationshipReverseArtifactReader,
 		},
 	}
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
@@ -136,15 +140,16 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		SameRowComparison:   sameRowComparison,
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
-			Sessions:                     sessions,
-			TableCache:                   tableCache,
-			Materialization:              materialization,
-			ProjectionBSIReader:          bsiReader,
-			SameRowComparison:            sameRowComparison,
-			RelationshipProjectionReader: relationshipProjectionReader,
-			RelationshipSourceKeyReader:  relationshipSourceKeyReader,
-			ReverseArtifacts:             reverseArtifacts,
-			ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
+			Sessions:                       sessions,
+			TableCache:                     tableCache,
+			Materialization:                materialization,
+			ProjectionBSIReader:            bsiReader,
+			SameRowComparison:              sameRowComparison,
+			RelationshipProjectionReader:   relationshipProjectionReader,
+			RelationshipSourceKeyReader:    relationshipSourceKeyReader,
+			ReverseArtifacts:               reverseArtifacts,
+			ReverseArtifactCandidateReader: relationshipReverseArtifactReader,
+			ApplyRecommendedEdgeOrder:      qsruntime.DefaultApplyRecommendedEdgeOrder,
 		},
 	}
 	return StandardDirectRuntimeMount{

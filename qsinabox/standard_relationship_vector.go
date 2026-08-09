@@ -19,6 +19,45 @@ type StandardRelationshipVectorProjectionReader struct {
 	Direct     *server.BitmapIndex
 }
 
+// StandardRelationshipReverseArtifactCandidateReader reads maintained
+// parent-to-child artifacts from the in-process bitmap tier.
+type StandardRelationshipReverseArtifactCandidateReader struct {
+	Direct *server.BitmapIndex
+}
+
+// ReadRelationshipVectorReverseArtifactCandidates returns candidate child rows
+// from a schema-declared reverse artifact when the local bitmap tier owns one.
+func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVectorReverseArtifactCandidates(
+	_ context.Context,
+	read qsruntime.LegacyDirectRelationshipVectorReadRequest,
+	sourceValues []int64,
+) (qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error) {
+	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" {
+		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, false, nil
+	}
+	rownums, stats, ok, err := r.Direct.RelationshipReverseArtifactCandidates(read.VectorIndex, read.VectorField, sourceValues)
+	if err != nil || !ok {
+		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, ok, err
+	}
+	candidateRows := make([]qsbridge.QuantaRownum, 0, len(rownums))
+	for _, rownum := range rownums {
+		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
+	}
+	return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+		Candidates: qsbridge.QuantaCandidateSet{
+			Index:   read.TargetDomain,
+			Rownums: candidateRows,
+		},
+		Mode:          "reverse_artifact_server",
+		CacheHit:      true,
+		Rows:          stats.Rows,
+		Values:        stats.Values,
+		SourceValues:  stats.SourceValues,
+		TargetRows:    stats.TargetRows,
+		LookupElapsed: stats.LookupElapsed,
+	}, nil, true, nil
+}
+
 // ReadRelationshipVectorProjection returns the requested relationship-vector BSI.
 func (r StandardRelationshipVectorProjectionReader) ReadRelationshipVectorProjection(ctx context.Context, read qsruntime.LegacyDirectRelationshipVectorReadRequest) (*roaring64.BSI, qsbridge.DiagnosticSet, error) {
 	if read.VectorIndex == "" || read.VectorField == "" {

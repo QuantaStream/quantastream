@@ -67,6 +67,8 @@ type BitmapIndex struct {
 	bsiCacheLock          sync.RWMutex
 	seedCache             map[string]*SeedBitmap
 	seedCacheLock         sync.RWMutex
+	reverseArtifactCache  map[string]map[string]*relationshipReverseArtifact
+	reverseArtifactLock   sync.RWMutex
 	fragQueue             chan *BitmapFragment
 	workersCount          int
 	fragFileLock          sync.Mutex
@@ -190,6 +192,7 @@ func (m *BitmapIndex) Init() error {
 	m.bitmapCache = make(map[string]map[string]map[uint64]map[int64]*StandardBitmap)
 	m.bsiCache = make(map[string]map[string]map[int64]*BSIBitmap)
 	m.seedCache = make(map[string]*SeedBitmap)
+	m.reverseArtifactCache = make(map[string]map[string]*relationshipReverseArtifact)
 	m.workersCount = 20
 
 	m.workers = make([]*WorkerThread, m.workersCount)
@@ -827,6 +830,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		}
 		existBm.Lock.Lock()
 		clearSet := roaring64.FastAnd(existBm.GetExistenceBitmap(), ebm)
+		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, existBm.BSI, clearSet, nil)
 		existBm.ClearValues(clearSet)
 		existBm.ModTime = applyTime
 		existBm.AccessTime = applyTime
@@ -866,6 +870,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 	if existBm, ok := m.bsiCache[f.IndexName][f.FieldName][f.Time.UnixNano()]; !ok {
 		m.bsiCache[f.IndexName][f.FieldName][f.Time.UnixNano()] = newBSI
 		m.bsiCacheLock.Unlock()
+		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, nil, nil, newBSI.BSI)
 	} else {
 		// Lock de-escalation
 		existBm.Lock.Lock()
@@ -880,10 +885,12 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 			m.bsiMergeOverlapCount.Add(1)
 			clearStart := time.Now()
 			clearSet := roaring64.FastAnd(existingRows, newRows)
+			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, existBm.BSI, clearSet, newBSI.BSI)
 			existBm.ClearValues(clearSet)
 			m.bsiMergeClearNanos.Add(uint64(time.Since(clearStart).Nanoseconds()))
 		} else {
 			m.bsiMergeDisjointCount.Add(1)
+			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, nil, nil, newBSI.BSI)
 		}
 		orStart := time.Now()
 		existBm.ParOr(0, newBSI.BSI)
@@ -912,6 +919,7 @@ func (m *BitmapIndex) Truncate(index string) {
 	defer m.bitmapCacheLock.Unlock()
 	defer m.bsiCacheLock.Unlock()
 	m.clearSeedCacheForIndex(index)
+	m.clearRelationshipReverseArtifactsForIndex(index)
 
 	fm := m.bitmapCache[index]
 	for _, rm := range fm {

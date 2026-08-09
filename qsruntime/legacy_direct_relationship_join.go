@@ -34,6 +34,8 @@ type LegacyDirectRelationshipVectorJoinExecutor struct {
 	RelationshipSourceKeyReader LegacyDirectRelationshipVectorSourceKeyReader
 	// ReverseArtifacts optionally serves parent-to-child expansion through reverse artifacts.
 	ReverseArtifacts *RelationshipVectorReverseArtifactManager
+	// ReverseArtifactCandidateReader exposes physical-tier maintained reverse artifacts.
+	ReverseArtifactCandidateReader LegacyDirectRelationshipVectorReverseArtifactCandidateReader
 	// ApplyRecommendedEdgeOrder enables dependency-ordered graph reduction.
 	ApplyRecommendedEdgeOrder bool
 }
@@ -1391,6 +1393,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		ProjectionCache:                    projectionCache,
 		PreferDirectParentToChildCandidate: true,
 		ReverseArtifacts:                   e.ReverseArtifacts,
+		ReverseArtifactCandidateReader:     e.ReverseArtifactCandidateReader,
 	}
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(observation.edge, parentRows)
 	start := time.Now()

@@ -64,6 +64,29 @@ type relationshipVectorReverseArtifactTiming struct {
 	TargetRows    int
 }
 
+// LegacyDirectRelationshipVectorReverseArtifactCandidateResult is the
+// physical-tier result for a prebuilt parent-value to child-row artifact.
+type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
+	Candidates    qsbridge.QuantaCandidateSet
+	Mode          string
+	CacheHit      bool
+	Rows          uint64
+	Values        uint64
+	SourceValues  int
+	TargetRows    uint64
+	LookupElapsed time.Duration
+}
+
+// LegacyDirectRelationshipVectorReverseArtifactCandidateReader exposes
+// schema-declared reverse relationship artifacts owned by the physical tier.
+type LegacyDirectRelationshipVectorReverseArtifactCandidateReader interface {
+	ReadRelationshipVectorReverseArtifactCandidates(
+		context.Context,
+		LegacyDirectRelationshipVectorReadRequest,
+		[]int64,
+	) (LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error)
+}
+
 type relationshipVectorReverseArtifact struct {
 	ByValue map[int64]*roaring64.Bitmap
 	Rows    uint64
