@@ -67,3 +67,32 @@ func TestAttributeGetValueUsesLocalCacheHit(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(7), value)
 }
+
+func TestStringEnumAttributeCopyCanonicalizesToTableCache(t *testing.T) {
+	tcs := NewTableCacheStruct()
+	table := &Table{
+		BasicTable:       &shared.BasicTable{Name: "orders"},
+		AttributeNameMap: map[string]*Attribute{},
+		tableCache:       tcs,
+	}
+	canonical := &Attribute{
+		BasicAttribute: &shared.BasicAttribute{FieldName: "o_orderstatus", MappingStrategy: "StringEnum"},
+		Parent:         table,
+		valueMap:       map[interface{}]uint64{"READY": 9},
+		reverseMap:     map[uint64]interface{}{9: "READY"},
+	}
+	table.AttributeNameMap["o_orderstatus"] = canonical
+	tcs.TableCache["orders"] = table
+
+	copied := *canonical
+	copied.valueMap = map[interface{}]uint64{}
+	copied.reverseMap = map[uint64]interface{}{}
+
+	assert.Same(t, canonical, copied.canonicalStringEnumAttribute())
+	value, err := copied.GetValue("READY")
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(9), value)
+	reverse, err := copied.GetValueForID(9)
+	assert.NoError(t, err)
+	assert.Equal(t, "READY", reverse)
+}

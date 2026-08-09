@@ -229,6 +229,123 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	}
 }
 
+func TestStandardProcessNativeGRPCLoaderRefreshesStringEnumDictionary(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardStringEnumTestSchema(t, configDir, "sample_enum")
+	config := StandardConfig{
+		BindAddress:    "127.0.0.1",
+		MySQLPort:      reserveStandardTestPort(t),
+		NativeGRPCPort: reserveStandardTestPort(t),
+		ConfigDir:      configDir,
+		DataDir:        filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.NativeNode == nil {
+		t.Fatalf("NativeNode = nil, want native gRPC listener")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := process.NativeNode.Start(ctx)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	remoteConn, err := shared.NewLoaderConnection(dialCtx, shared.LoaderConnectionConfig{
+		Mode:    shared.LoaderConnectionStandardNative,
+		Owner:   "standard-native-enum-loader-test",
+		Address: process.NativeNode.Address,
+	})
+	if err != nil {
+		t.Fatalf("NewLoaderConnection() error = %v", err)
+	}
+	defer remoteConn.Disconnect()
+
+	tableCache := core.NewTableCacheStruct()
+	loaderSession, err := core.OpenSession(
+		tableCache,
+		process.Backend.ConfigBaseDir(config),
+		"sample_enum",
+		false,
+		remoteConn,
+	)
+	if err != nil {
+		t.Fatalf("OpenSession() over native gRPC error = %v", err)
+	}
+	loaderSession.SetPrimaryKeyResolver(NewStandardSessionBSIPrimaryKeyResolverFactory(tableCache)(loaderSession))
+	loaderSessionClosed := false
+	defer func() {
+		if !loaderSessionClosed {
+			_ = loaderSession.CloseSession()
+		}
+	}()
+
+	putResult, err := loaderSession.PutRowWithOptions("sample_enum", map[string]interface{}{
+		"id":     101,
+		"status": "READY",
+	}, 0, false, false, core.PutRowOptions{
+		EventID:      "native-loader-enum-101",
+		Source:       "native-loader-enum",
+		EventTime:    time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC),
+		SourceOffset: "unit-test:101",
+	})
+	if err != nil {
+		t.Fatalf("PutRowWithOptions() over native gRPC error = %v", err)
+	}
+	if !putResult.Inserted || putResult.ColumnID == 0 {
+		t.Fatalf("PutRowWithOptions() result = %+v, want inserted row with column ID", putResult)
+	}
+	if err := loaderSession.Flush(); err != nil {
+		t.Fatalf("loader Flush() over native gRPC error = %v", err)
+	}
+
+	requireStandardProcessScalarString(t, process, "select count(*) from sample_enum where status = 'READY'", "1")
+	result, err := process.FrontDoor.Server.ExecuteSQL(
+		context.Background(),
+		"select id, status from sample_enum where id = 101",
+		qsbridge.ExecutionOptions{},
+	)
+	if err != nil {
+		t.Fatalf("verification SELECT error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("verification SELECT diagnostics = %#v runtime=%#v, want none", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("verification SELECT chunk diagnostics = %#v", chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("verification rows = %#v, want one projected row", chunk.Rows)
+	}
+	if fmt.Sprint(chunk.Rows[0][0].Value) != "101" || fmt.Sprint(chunk.Rows[0][1].Value) != "READY" {
+		t.Fatalf("verification row = %#v, want [101 READY]", chunk.Rows[0])
+	}
+	if err := loaderSession.CloseSession(); err != nil {
+		t.Fatalf("loader CloseSession() over native gRPC error = %v", err)
+	}
+	loaderSessionClosed = true
+
+	cancel()
+	process.NativeNode.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native gRPC server exited with error %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("native gRPC server did not stop")
+	}
+}
+
 func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testing.T) {
 	fixture, err := qsfixture.NewTPCHOrderLineitemEnvelopeFixture(qsfixture.TPCHOrderLineitemEnvelopeOptions{
 		OrderCount:        2,
@@ -1554,6 +1671,32 @@ attributes:
 	}
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
+	}
+}
+
+func writeStandardStringEnumTestSchema(t *testing.T, configDir, table string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	schema := `tableName: ` + table + `
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: status
+  sourceName: /status
+  mappingStrategy: StringEnum
+  type: String
+`
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", table, time.Now().UTC()); err != nil {
+		t.Fatalf("activate catalog object: %v", err)
 	}
 }
 

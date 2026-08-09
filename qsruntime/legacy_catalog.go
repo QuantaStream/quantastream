@@ -416,6 +416,7 @@ func (r LegacyTableCacheDictionaryResolver) Dictionary(ref qsbridge.DictionaryRe
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryNotFound, qsbridge.PhaseBind, "dictionary not found: "+ref.QualifiedName()),
 		}
 	}
+	_ = attribute.RefreshStringEnumValues()
 	return qsbridge.DictionaryDefinition{
 		Ref:         r.normalizedRef(ref),
 		Version:     qsbridge.DictionaryVersion("legacy-live-table-cache"),
@@ -438,17 +439,14 @@ func (r LegacyTableCacheDictionaryResolver) LookupLabel(ref qsbridge.DictionaryR
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryNotFound, qsbridge.PhaseBind, "dictionary not found: "+ref.QualifiedName()),
 		}
 	}
+	if entry, ok := r.lookupLabelInAttributes(ref, attributes, label); ok {
+		return entry, nil
+	}
 	for _, attribute := range attributes {
-		for _, value := range attribute.Values {
-			if fmt.Sprint(value.Value) == label {
-				return qsbridge.DictionaryEntry{
-					Ref:     r.normalizedRef(ref),
-					Label:   label,
-					ID:      qsbridge.StringEnumID(value.RowID),
-					Version: qsbridge.DictionaryVersion("legacy-live-table-cache"),
-				}, nil
-			}
-		}
+		_ = attribute.RefreshStringEnumValues()
+	}
+	if entry, ok := r.lookupLabelInAttributes(ref, attributes, label); ok {
+		return entry, nil
 	}
 	return qsbridge.DictionaryEntry{}, qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryLabelNotFound, qsbridge.PhaseBind, "dictionary label not found: "+ref.QualifiedName()),
@@ -463,6 +461,37 @@ func (r LegacyTableCacheDictionaryResolver) LookupID(ref qsbridge.DictionaryRef,
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryNotFound, qsbridge.PhaseBind, "dictionary not found: "+ref.QualifiedName()),
 		}
 	}
+	if entry, ok := r.lookupIDInAttributes(ref, attributes, id); ok {
+		return entry, nil
+	}
+	for _, attribute := range attributes {
+		_ = attribute.RefreshStringEnumValues()
+	}
+	if entry, ok := r.lookupIDInAttributes(ref, attributes, id); ok {
+		return entry, nil
+	}
+	return qsbridge.DictionaryEntry{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryIDNotFound, qsbridge.PhaseBind, "dictionary id not found: "+ref.QualifiedName()),
+	}
+}
+
+func (r LegacyTableCacheDictionaryResolver) lookupLabelInAttributes(ref qsbridge.DictionaryRef, attributes []*core.Attribute, label string) (qsbridge.DictionaryEntry, bool) {
+	for _, attribute := range attributes {
+		for _, value := range attribute.Values {
+			if fmt.Sprint(value.Value) == label {
+				return qsbridge.DictionaryEntry{
+					Ref:     r.normalizedRef(ref),
+					Label:   label,
+					ID:      qsbridge.StringEnumID(value.RowID),
+					Version: qsbridge.DictionaryVersion("legacy-live-table-cache"),
+				}, true
+			}
+		}
+	}
+	return qsbridge.DictionaryEntry{}, false
+}
+
+func (r LegacyTableCacheDictionaryResolver) lookupIDInAttributes(ref qsbridge.DictionaryRef, attributes []*core.Attribute, id qsbridge.StringEnumID) (qsbridge.DictionaryEntry, bool) {
 	for _, attribute := range attributes {
 		for _, value := range attribute.Values {
 			if qsbridge.StringEnumID(value.RowID) == id {
@@ -471,25 +500,23 @@ func (r LegacyTableCacheDictionaryResolver) LookupID(ref qsbridge.DictionaryRef,
 					Label:   fmt.Sprint(value.Value),
 					ID:      id,
 					Version: qsbridge.DictionaryVersion("legacy-live-table-cache"),
-				}, nil
+				}, true
 			}
 		}
 	}
-	return qsbridge.DictionaryEntry{}, qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryIDNotFound, qsbridge.PhaseBind, "dictionary id not found: "+ref.QualifiedName()),
-	}
+	return qsbridge.DictionaryEntry{}, false
 }
 
-func (r LegacyTableCacheDictionaryResolver) attribute(ref qsbridge.DictionaryRef) (core.Attribute, bool) {
+func (r LegacyTableCacheDictionaryResolver) attribute(ref qsbridge.DictionaryRef) (*core.Attribute, bool) {
 	attributes := r.attributes(ref)
 	if len(attributes) == 0 {
-		return core.Attribute{}, false
+		return nil, false
 	}
 	return attributes[0], true
 }
 
-func (r LegacyTableCacheDictionaryResolver) attributes(ref qsbridge.DictionaryRef) []core.Attribute {
-	var attributes []core.Attribute
+func (r LegacyTableCacheDictionaryResolver) attributes(ref qsbridge.DictionaryRef) []*core.Attribute {
+	var attributes []*core.Attribute
 	for _, tableCache := range r.tableCaches() {
 		if tableCache == nil {
 			continue
@@ -499,7 +526,8 @@ func (r LegacyTableCacheDictionaryResolver) attributes(ref qsbridge.DictionaryRe
 			if table == nil || (!strings.EqualFold(tableName, ref.Table) && !strings.EqualFold(table.Name, ref.Table)) {
 				continue
 			}
-			for _, attribute := range table.Attributes {
+			for i := range table.Attributes {
+				attribute := &table.Attributes[i]
 				fieldName := attribute.FieldName
 				if fieldName == "" {
 					fieldName = attribute.SourceName

@@ -354,8 +354,38 @@ func (a *Attribute) GetFKSpec() (string, string, error) {
 	return table, fieldSpec, nil
 }
 
+// canonicalStringEnumAttribute returns the process-local table-cache attribute
+// for StringEnum reads and writes. Attribute values are copied in a few older
+// paths; without canonicalization those copies can share enum maps while using
+// different locks.
+func (a *Attribute) canonicalStringEnumAttribute() *Attribute {
+	if a == nil || a.MappingStrategy != "StringEnum" || a.Parent == nil || a.Parent.tableCache == nil {
+		return a
+	}
+	if a.Parent.Name == "" || a.FieldName == "" {
+		return a
+	}
+	tableCache := a.Parent.tableCache
+	tableCache.TableCacheLock.RLock()
+	defer tableCache.TableCacheLock.RUnlock()
+	table := tableCache.TableCache[a.Parent.Name]
+	if table == nil || table.AttributeNameMap == nil {
+		return a
+	}
+	if attr, ok := table.AttributeNameMap[a.FieldName]; ok && attr != nil {
+		return attr
+	}
+	return a
+}
+
 // GetValue - Return row ID for a given input value (StringEnum).
 func (a *Attribute) GetValue(invalue interface{}) (uint64, error) {
+	if a == nil {
+		return 0, fmt.Errorf("attribute is nil")
+	}
+	if target := a.canonicalStringEnumAttribute(); target != a {
+		return target.GetValue(invalue)
+	}
 
 	value := invalue
 	switch invalue.(type) {
@@ -410,51 +440,80 @@ func (a *Attribute) GetValue(invalue interface{}) (uint64, error) {
 	return v, nil
 }
 
+// RefreshStringEnumValues reloads a StringEnum dictionary from the backing
+// KVStore into this process-local attribute cache.
+func (a *Attribute) RefreshStringEnumValues() error {
+	if a == nil {
+		return fmt.Errorf("attribute is nil")
+	}
+	if target := a.canonicalStringEnumAttribute(); target != a {
+		return target.RefreshStringEnumValues()
+	}
+	if a.MappingStrategy != "StringEnum" {
+		return fmt.Errorf("attribute %s is not a StringEnum", a.FieldName)
+	}
+	if a.Parent == nil || a.Parent.kvStore == nil {
+		return fmt.Errorf("kvStore is not initialized")
+	}
+	lookupName := a.Parent.Name + SEP + a.FieldName + ".StringEnum"
+	items, err := a.Parent.kvStore.Items(lookupName, reflect.String, reflect.Uint64)
+	if err != nil {
+		return fmt.Errorf("ERROR: Cannot open enum for table %s, field %s. [%v]", a.Parent.Name,
+			a.FieldName, err)
+	}
+
+	a.localLock.Lock()
+	defer a.localLock.Unlock()
+	if a.valueMap == nil {
+		a.valueMap = make(map[interface{}]uint64)
+	}
+	if a.reverseMap == nil {
+		a.reverseMap = make(map[uint64]interface{})
+	}
+	existing := make(map[uint64]struct{}, len(a.Values))
+	for _, value := range a.Values {
+		existing[value.RowID] = struct{}{}
+	}
+	for kk, vv := range items {
+		label := kk.(string)
+		rowID := vv.(uint64)
+		a.valueMap[label] = rowID
+		a.reverseMap[rowID] = label
+		if _, ok := existing[rowID]; !ok {
+			a.Values = append(a.Values, shared.Value{Value: label, RowID: rowID})
+			existing[rowID] = struct{}{}
+		}
+	}
+	return nil
+}
+
 // GetValueForID - Reverse map a value for a given row ID.  (StringEnum)
 func (a *Attribute) GetValueForID(id uint64) (interface{}, error) {
 
-	parentTable := a.Parent
-
-	if parentTable.AttributeNameMap == nil {
-		parentTable.tableCache.TableCacheLock.Lock()
-		defer parentTable.tableCache.TableCacheLock.Unlock()
-	} else {
-		parentTable.tableCache.TableCacheLock.RLock()
-		defer parentTable.tableCache.TableCacheLock.RUnlock()
+	if a == nil {
+		return 0, fmt.Errorf("attribute is nil")
 	}
-
-	la, lerr := parentTable.tableCache.TableCache[a.Parent.Name].GetAttribute(a.FieldName)
-	if lerr != nil {
-		return 0, fmt.Errorf("Cannot lookup attribute %s from table cache.", a.FieldName)
-	}
-	la.localLock.RLock()
-
-	if v, ok := a.reverseMap[id]; ok {
-		la.localLock.RUnlock()
-		return v, nil
-	}
-	la.localLock.RUnlock()
-	la.localLock.Lock()
-	defer la.localLock.Unlock()
-
 	if a.MappingStrategy != "StringEnum" {
 		return 0, fmt.Errorf("GetValueForID attribute %s is not a StringEnum", a.FieldName)
 	}
-	lookupName := a.Parent.Name + SEP + a.FieldName + ".StringEnum"
-	x, err := a.Parent.kvStore.Items(lookupName, reflect.String, reflect.Uint64)
-	if err != nil {
-		return nil, fmt.Errorf("ERROR: Cannot open enum for table %s, field %s. [%v]", a.Parent.Name,
-			a.FieldName, err)
-	}
-	for kk, vv := range x {
-		k := kk.(string)
-		v := vv.(uint64)
-		a.reverseMap[v] = k
-	}
-	if v, ok := a.reverseMap[id]; ok { // Try again
+	target := a.canonicalStringEnumAttribute()
+
+	target.localLock.RLock()
+	if v, ok := target.reverseMap[id]; ok {
+		target.localLock.RUnlock()
 		return v, nil
 	}
-	return 0, fmt.Errorf("Attribute %s - Cannot locate value for rowID '%v'", a.FieldName, id)
+	target.localLock.RUnlock()
+
+	if err := target.RefreshStringEnumValues(); err != nil {
+		return nil, err
+	}
+	target.localLock.RLock()
+	defer target.localLock.RUnlock()
+	if v, ok := target.reverseMap[id]; ok {
+		return v, nil
+	}
+	return 0, fmt.Errorf("Attribute %s - Cannot locate value for rowID '%v'", target.FieldName, id)
 }
 
 // Transform - Perform a tranformation of a value (optional)
