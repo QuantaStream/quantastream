@@ -82,6 +82,7 @@ func TestRuntimeOwnershipForFileSeparatesDurableContractsFromNativeStaging(t *te
 		"inspection_rows.go":                 RuntimeOwnershipComposition,
 		"materialization.go":                 RuntimeOwnershipComposition,
 		"relationship_join_plan.go":          RuntimeOwnershipComposition,
+		"direct_physical_tier.go":            RuntimeOwnershipComposition,
 		"relationship_tuple_rowset.go":       RuntimeOwnershipNativeKernelStaging,
 		"direct_bitmap_runtime.go":           RuntimeOwnershipNativeKernelStaging,
 		"exists_subquery_materialization.go": RuntimeOwnershipNativeKernelStaging,

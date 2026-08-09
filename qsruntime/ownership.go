@@ -167,6 +167,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"direct_config.go",
 		"direct_executor.go",
 		"direct_factory.go",
+		"direct_physical_tier.go",
 		"direct_session.go",
 		"execution.go",
 		"execution_instrumentation.go",

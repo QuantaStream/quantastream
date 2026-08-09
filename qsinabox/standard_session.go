@@ -125,27 +125,28 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 			SourceKeyReader:  relationshipSourceKeyReader,
 		},
 	}
-	return StandardDirectRuntimeMount{
-		Pool: pool,
-		Runtime: qsruntime.DirectBitmapRuntime{
-			Sessions:            sessions,
-			Adapter:             qsruntime.BitmapQueryResultAdapter{},
-			FilterAdapter:       qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
-			Materialization:     materialization,
-			ProjectionBSIReader: bsiReader,
-			SameRowComparison:   sameRowComparison,
-			RelationshipReader:  relationshipReader,
-			RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
-				Sessions:                     sessions,
-				TableCache:                   tableCache,
-				Materialization:              materialization,
-				ProjectionBSIReader:          bsiReader,
-				SameRowComparison:            sameRowComparison,
-				RelationshipProjectionReader: relationshipProjectionReader,
-				RelationshipSourceKeyReader:  relationshipSourceKeyReader,
-				ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
-			},
+	physicalTier := qsruntime.DirectPhysicalExecutionTier{
+		Sessions:            sessions,
+		Adapter:             qsruntime.BitmapQueryResultAdapter{},
+		FilterAdapter:       qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
+		Materialization:     materialization,
+		ProjectionBSIReader: bsiReader,
+		SameRowComparison:   sameRowComparison,
+		RelationshipReader:  relationshipReader,
+		RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
+			Sessions:                     sessions,
+			TableCache:                   tableCache,
+			Materialization:              materialization,
+			ProjectionBSIReader:          bsiReader,
+			SameRowComparison:            sameRowComparison,
+			RelationshipProjectionReader: relationshipProjectionReader,
+			RelationshipSourceKeyReader:  relationshipSourceKeyReader,
+			ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
 		},
+	}
+	return StandardDirectRuntimeMount{
+		Pool:    pool,
+		Runtime: physicalTier.Runtime(),
 	}
 }
 

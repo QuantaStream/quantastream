@@ -115,7 +115,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			TableCache: tableCache,
 		},
 	}
-	return DirectBitmapRuntime{
+	physicalTier := DirectPhysicalExecutionTier{
 		Sessions:            sessions,
 		Adapter:             BitmapQueryResultAdapter{},
 		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization),
@@ -132,7 +132,8 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			SameRowComparison:         sameRowComparison,
 			ApplyRecommendedEdgeOrder: DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},
-	}, nil
+	}
+	return physicalTier.Runtime(), nil
 }
 
 func legacyDirectCatalogTableLoader(quantaSource *source.QuantaSource, baseDir string) LegacyTableLoader {
