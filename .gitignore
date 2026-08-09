@@ -3,6 +3,7 @@
 /local/
 /start-local
 /tpc-h-benchmark/local/logs/
+/tpc-h-benchmark/local/data/
 /tpc-h-benchmark/local/ingest-benchmarks/
 /tpc-h-benchmark/local/profile-reports/
 /tpc-h-benchmark/local/standard-data*/
