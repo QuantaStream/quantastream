@@ -214,23 +214,151 @@ func directBitmapFilterDomainRewriteProbes(rewrite qsbridge.FilterDomainRewriteR
 		return nil
 	}
 	probes := make([]ExecutionProbe, 0, len(rewrite.Branches)+len(rewrite.Leaves))
-	for _, branch := range rewrite.Branches {
+	for i, branch := range rewrite.Branches {
 		probes = append(probes, ExecutionProbe{
 			Section: "filter_domain",
 			Name:    "normalized_branch",
 			Value:   strconv.Itoa(len(branch.CandidateSet.Rownums)),
 			Detail:  directBitmapFilterDomainBranchProbeDetail(branch),
 		})
+		probes = append(probes, directBitmapFilterDomainBranchExpansionProbes(i+1, branch)...)
 	}
-	for _, leaf := range rewrite.Leaves {
+	for i, leaf := range rewrite.Leaves {
 		probes = append(probes, ExecutionProbe{
 			Section: "filter_domain",
 			Name:    "normalized_leaf",
 			Value:   strconv.Itoa(len(leaf.CandidateSet.Rownums)),
 			Detail:  directBitmapFilterDomainLeafProbeDetail(leaf),
 		})
+		probes = append(probes, directBitmapFilterDomainLeafExpansionProbes(i+1, leaf)...)
 	}
 	return probes
+}
+
+func directBitmapFilterDomainBranchExpansionProbes(index int, branch qsbridge.FilterDomainNormalizedBranch) []ExecutionProbe {
+	prefix := "branch_" + directBitmapFilterDomainProbeOrdinal(index) + "_"
+	detail := directBitmapFilterDomainExpansionProbeDetail(
+		branch.SourceDomain,
+		branch.TargetDomain,
+		branch.Direction,
+		branch.VectorIndex,
+		branch.VectorField,
+		branch.CandidateSet.Index,
+	)
+	return directBitmapFilterDomainExpansionProbes(prefix, detail, filterDomainExpansionProbeValues{
+		sourceRows:                 branch.SourceCount,
+		targetRows:                 len(branch.CandidateSet.Rownums),
+		sourceElapsed:              branch.SourceElapsed,
+		translationElapsed:         branch.TranslationElapsed,
+		projectionElapsed:          branch.ProjectionElapsed,
+		projectionCacheHit:         branch.ProjectionCacheHit,
+		sourceKeyProjectionUsed:    branch.SourceKeyProjectionUsed,
+		sourceKeyProjectionElapsed: branch.SourceKeyProjectionElapsed,
+		sourceValues:               branch.SourceValueCount,
+		candidateCacheHit:          branch.CandidateCacheHit,
+		candidateCacheMode:         branch.CandidateCacheMode,
+		candidateMode:              branch.CandidateMode,
+		candidateElapsed:           branch.CandidateElapsed,
+		batchEqualElapsed:          branch.BatchEqualElapsed,
+		candidateScanElapsed:       branch.CandidateScanElapsed,
+	})
+}
+
+func directBitmapFilterDomainLeafExpansionProbes(index int, leaf qsbridge.FilterDomainNormalizedLeaf) []ExecutionProbe {
+	prefix := "leaf_" + directBitmapFilterDomainProbeOrdinal(index) + "_"
+	detail := directBitmapFilterDomainExpansionProbeDetail(
+		leaf.SourceDomain,
+		leaf.TargetDomain,
+		leaf.Direction,
+		leaf.VectorIndex,
+		leaf.VectorField,
+		leaf.CandidateSet.Index,
+	)
+	return directBitmapFilterDomainExpansionProbes(prefix, detail, filterDomainExpansionProbeValues{
+		sourceRows:                 leaf.SourceCount,
+		targetRows:                 len(leaf.CandidateSet.Rownums),
+		sourceElapsed:              leaf.SourceElapsed,
+		translationElapsed:         leaf.TranslationElapsed,
+		projectionElapsed:          leaf.ProjectionElapsed,
+		projectionCacheHit:         leaf.ProjectionCacheHit,
+		sourceKeyProjectionUsed:    leaf.SourceKeyProjectionUsed,
+		sourceKeyProjectionElapsed: leaf.SourceKeyProjectionElapsed,
+		sourceValues:               leaf.SourceValueCount,
+		candidateCacheHit:          leaf.CandidateCacheHit,
+		candidateCacheMode:         leaf.CandidateCacheMode,
+		candidateMode:              leaf.CandidateMode,
+		candidateElapsed:           leaf.CandidateElapsed,
+		batchEqualElapsed:          leaf.BatchEqualElapsed,
+		candidateScanElapsed:       leaf.CandidateScanElapsed,
+	})
+}
+
+type filterDomainExpansionProbeValues struct {
+	sourceRows                 int
+	targetRows                 int
+	sourceElapsed              time.Duration
+	translationElapsed         time.Duration
+	projectionElapsed          time.Duration
+	projectionCacheHit         bool
+	sourceKeyProjectionUsed    bool
+	sourceKeyProjectionElapsed time.Duration
+	sourceValues               int
+	candidateCacheHit          bool
+	candidateCacheMode         string
+	candidateMode              string
+	candidateElapsed           time.Duration
+	batchEqualElapsed          time.Duration
+	candidateScanElapsed       time.Duration
+}
+
+func directBitmapFilterDomainExpansionProbes(prefix, detail string, values filterDomainExpansionProbeValues) []ExecutionProbe {
+	return []ExecutionProbe{
+		directBitmapFilterDomainExpansionProbe(prefix+"source_rows", strconv.Itoa(values.sourceRows), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"target_rows", strconv.Itoa(values.targetRows), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"source_elapsed", values.sourceElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"translation_elapsed", values.translationElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"projection_elapsed", values.projectionElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"projection_cache_hit", strconv.FormatBool(values.projectionCacheHit), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"source_key_projection_used", strconv.FormatBool(values.sourceKeyProjectionUsed), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"source_key_projection_elapsed", values.sourceKeyProjectionElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"source_values", strconv.Itoa(values.sourceValues), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_cache_hit", strconv.FormatBool(values.candidateCacheHit), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_cache_mode", values.candidateCacheMode, detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_mode", values.candidateMode, detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_elapsed", values.candidateElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"batch_equal_elapsed", values.batchEqualElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_scan_elapsed", values.candidateScanElapsed.String(), detail),
+	}
+}
+
+func directBitmapFilterDomainExpansionProbe(name, value, detail string) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "filter_domain_expansion",
+		Name:    name,
+		Value:   value,
+		Detail:  detail,
+	}
+}
+
+func directBitmapFilterDomainExpansionProbeDetail(source, target string, direction qsbridge.FilterDomainRelationshipVectorDirection, vectorIndex, vectorField, targetIndex string) string {
+	details := []string{
+		"source=" + source,
+		"target=" + target,
+		"direction=" + string(direction),
+		"vector=" + vectorIndex + "." + vectorField,
+		"target_index=" + targetIndex,
+	}
+	return strings.Join(details, " ")
+}
+
+func directBitmapFilterDomainProbeOrdinal(index int) string {
+	if index < 10 {
+		return "00" + strconv.Itoa(index)
+	}
+	if index < 100 {
+		return "0" + strconv.Itoa(index)
+	}
+	return strconv.Itoa(index)
 }
 
 func directBitmapFilterDomainBranchProbeDetail(branch qsbridge.FilterDomainNormalizedBranch) string {
@@ -248,6 +376,8 @@ func directBitmapFilterDomainBranchProbeDetail(branch qsbridge.FilterDomainNorma
 		"source_key_projection_reason=" + branch.SourceKeyProjectionReason,
 		"source_key_projection_elapsed=" + branch.SourceKeyProjectionElapsed.String(),
 		"source_values=" + strconv.Itoa(branch.SourceValueCount),
+		"candidate_cache_hit=" + strconv.FormatBool(branch.CandidateCacheHit),
+		"candidate_cache_mode=" + branch.CandidateCacheMode,
 		"candidate_mode=" + branch.CandidateMode,
 		"candidate_elapsed=" + branch.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + branch.BatchEqualElapsed.String(),
@@ -273,6 +403,8 @@ func directBitmapFilterDomainLeafProbeDetail(leaf qsbridge.FilterDomainNormalize
 		"source_key_projection_reason=" + leaf.SourceKeyProjectionReason,
 		"source_key_projection_elapsed=" + leaf.SourceKeyProjectionElapsed.String(),
 		"source_values=" + strconv.Itoa(leaf.SourceValueCount),
+		"candidate_cache_hit=" + strconv.FormatBool(leaf.CandidateCacheHit),
+		"candidate_cache_mode=" + leaf.CandidateCacheMode,
 		"candidate_mode=" + leaf.CandidateMode,
 		"candidate_elapsed=" + leaf.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + leaf.BatchEqualElapsed.String(),

@@ -579,6 +579,8 @@ type FilterDomainNormalizedLeaf struct {
 	SourceKeyProjectionReason  string
 	SourceKeyProjectionElapsed time.Duration
 	SourceValueCount           int
+	CandidateCacheHit          bool
+	CandidateCacheMode         string
 	CandidateMode              string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
@@ -603,6 +605,8 @@ type FilterDomainNormalizedBranch struct {
 	SourceKeyProjectionReason  string
 	SourceKeyProjectionElapsed time.Duration
 	SourceValueCount           int
+	CandidateCacheHit          bool
+	CandidateCacheMode         string
 	CandidateMode              string
 	CandidateElapsed           time.Duration
 	BatchEqualElapsed          time.Duration
