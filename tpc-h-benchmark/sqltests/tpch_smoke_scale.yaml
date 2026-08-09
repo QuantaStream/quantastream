@@ -120,21 +120,27 @@ tests:
   - id: "tpch_smoke_scale.030.customer_orders_projection"
     status: supported
     kind: query
-    capabilities: [tpch, two-table-join, projection, scale-variable]
+    capabilities: [tpch, two-table-join, projection, scale-variable, bounded-result]
     sql: |-
       select c.c_custkey, c.c_name, o.o_orderkey, o.o_orderdate
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
+      limit 10
+    expect:
+      row_count: 10
 
   - id: "tpch_smoke_scale.031.customer_orders_lineitem_projection"
     status: supported
     kind: query
-    capabilities: [tpch, three-table-join, projection, scale-variable]
+    capabilities: [tpch, three-table-join, projection, scale-variable, bounded-result]
     sql: |-
       select c.c_custkey, o.o_orderkey, l.l_linenumber, l.l_quantity
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
       inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      limit 10
+    expect:
+      row_count: 10
 
   - id: "tpch_smoke_scale.040.region_nation_projection"
     status: supported
