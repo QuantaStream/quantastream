@@ -20,12 +20,13 @@ const legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue = 512
 
 // LegacyDirectBitIndexRelationshipVectorBackend reads relationship-vector BSIs through the legacy BitIndex.
 type LegacyDirectBitIndexRelationshipVectorBackend struct {
-	Source           *source.QuantaSource
-	Sessions         DirectSessionProvider
-	TableCache       *core.TableCacheStruct
-	ProjectionReader legacyDirectRelationshipVectorProjectionReader
-	SourceKeyReader  LegacyDirectRelationshipVectorSourceKeyReader
-	ProjectionCache  *LegacyDirectRelationshipVectorProjectionCache
+	Source                             *source.QuantaSource
+	Sessions                           DirectSessionProvider
+	TableCache                         *core.TableCacheStruct
+	ProjectionReader                   legacyDirectRelationshipVectorProjectionReader
+	SourceKeyReader                    LegacyDirectRelationshipVectorSourceKeyReader
+	ProjectionCache                    *LegacyDirectRelationshipVectorProjectionCache
+	PreferDirectParentToChildCandidate bool
 }
 
 // LegacyDirectFilterTreeAdapter wires grouped-filter evaluation to relationship-vector normalization.
@@ -86,23 +87,25 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 				CandidateElapsed:           time.Since(candidateStart),
 			}, nil, nil
 		}
-		if candidates, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
-			if read.AllowCandidateSuperset && candidateErr == nil && !candidateDiagnostics.BlocksNative() {
-				b.storeRelationshipVectorCandidateSuperset(ctx, candidateCacheKey, sourceValueResult.Values, candidates.Rownums)
+		if b.shouldReadRelationshipVectorParentToChildCandidatesDirect(sourceValueResult.Values) {
+			if candidates, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
+				if read.AllowCandidateSuperset && candidateErr == nil && !candidateDiagnostics.BlocksNative() {
+					b.storeRelationshipVectorCandidateSuperset(ctx, candidateCacheKey, sourceValueResult.Values, candidates.Rownums)
+				}
+				return qsbridge.FilterDomainRelationshipVectorResult{
+					TargetCandidates:           candidates,
+					VectorIndex:                read.VectorIndex,
+					VectorField:                read.VectorField,
+					Direction:                  read.Direction,
+					SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
+					SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
+					SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
+					SourceValueCount:           sourceValueResult.ValueCount,
+					CandidateCacheMode:         "direct_query",
+					CandidateMode:              "direct_batch_eq",
+					CandidateElapsed:           time.Since(candidateStart),
+				}, candidateDiagnostics, candidateErr
 			}
-			return qsbridge.FilterDomainRelationshipVectorResult{
-				TargetCandidates:           candidates,
-				VectorIndex:                read.VectorIndex,
-				VectorField:                read.VectorField,
-				Direction:                  read.Direction,
-				SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
-				SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
-				SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
-				SourceValueCount:           sourceValueResult.ValueCount,
-				CandidateCacheMode:         "direct_query",
-				CandidateMode:              "direct_batch_eq",
-				CandidateElapsed:           time.Since(candidateStart),
-			}, candidateDiagnostics, candidateErr
 		}
 	}
 	projector := b.ProjectionReader
@@ -160,6 +163,16 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 		BatchEqualElapsed:          candidateTiming.BatchEqualElapsed,
 		CandidateScanElapsed:       candidateTiming.ScanElapsed,
 	}, nil, nil
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) shouldReadRelationshipVectorParentToChildCandidatesDirect(sourceValues []int64) bool {
+	if b.Sessions == nil || len(sourceValues) > directBitmapMembershipMaxDynamicBatchEQValues {
+		return false
+	}
+	if b.ProjectionReader == nil {
+		return true
+	}
+	return b.PreferDirectParentToChildCandidate
 }
 
 // cachedRelationshipVectorProjection returns a projected FK BSI when request-scoped reuse is available.

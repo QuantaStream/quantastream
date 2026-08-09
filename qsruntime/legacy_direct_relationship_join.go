@@ -1381,12 +1381,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		projectionCache = NewLegacyDirectRelationshipVectorProjectionCache()
 	}
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
-		Source:           e.Source,
-		Sessions:         e.Sessions,
-		TableCache:       e.TableCache,
-		ProjectionReader: e.RelationshipProjectionReader,
-		SourceKeyReader:  e.RelationshipSourceKeyReader,
-		ProjectionCache:  projectionCache,
+		Source:                             e.Source,
+		Sessions:                           e.Sessions,
+		TableCache:                         e.TableCache,
+		ProjectionReader:                   e.RelationshipProjectionReader,
+		SourceKeyReader:                    e.RelationshipSourceKeyReader,
+		ProjectionCache:                    projectionCache,
+		PreferDirectParentToChildCandidate: true,
 	}
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(observation.edge, parentRows)
 	start := time.Now()

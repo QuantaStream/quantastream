@@ -531,11 +531,62 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesProjectedSourceKeyValu
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendPrefersProjectionReaderForParentToChildExpansion(t *testing.T) {
+	projectionCalls := 0
+	borrowCalls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI: testRelationshipVectorBSI(map[uint64]int64{
+				20: 8,
+				21: 7,
+				22: 9,
+			}),
+			Calls: &projectionCalls,
+		},
+		SourceKeyReader: fakeLegacyDirectRelationshipVectorSourceKeyReader{
+			Values: []int64{7, 8},
+		},
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			borrowCalls++
+			return nil, nil, nil
+		}),
+	}
+	request := testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{100, 101},
+	)
+	request.Edge.Right.PhysicalName = "p_partkey"
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(context.Background(), read)
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !reflect.DeepEqual(result.TargetCandidates.Rownums, []qsbridge.QuantaRownum{20, 21}) {
+		t.Fatalf("candidates = %#v, want [20 21]", result.TargetCandidates.Rownums)
+	}
+	if result.CandidateMode != "batch_equal" || result.CandidateCacheMode != "miss" {
+		t.Fatalf("candidate mode/cache = %q/%q, want batch_equal/miss", result.CandidateMode, result.CandidateCacheMode)
+	}
+	if projectionCalls != 1 || borrowCalls != 0 {
+		t.Fatalf("calls projection/borrow = %d/%d, want 1/0", projectionCalls, borrowCalls)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendUsesDirectBatchEQForBoundedParentToChildExpansion(t *testing.T) {
 	projectionCalls := 0
 	borrowCalls := 0
 	queryCalls := 0
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		PreferDirectParentToChildCandidate: true,
 		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
 			BSI:   testRelationshipVectorBSI(map[uint64]int64{20: 8}),
 			Calls: &projectionCalls,
