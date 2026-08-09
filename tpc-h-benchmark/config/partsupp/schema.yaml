@@ -7,12 +7,16 @@ attributes:
   mappingStrategy: ParentRelation
   type: Integer
   foreignKey: part
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 1
 - fieldName: ps_suppkey
   sourceName: /data/ps_suppkey
   mappingStrategy: ParentRelation
   type: Integer
   foreignKey: supplier
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 2
 - fieldName: ps_availqty
   sourceName: /data/ps_availqty

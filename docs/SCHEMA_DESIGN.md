@@ -185,7 +185,8 @@ relationshipArtifacts:
 ```
 
 Use this for relationship edges where parent-domain filters are frequently
-expanded into child-domain candidates. The optimizer may still choose a regular
+expanded into child-domain candidates. The runtime treats this as an eligibility
+signal, not a command: the optimizer may still choose a regular
 relationship-vector path when that is cheaper for a specific query shape.
 
 When possible:

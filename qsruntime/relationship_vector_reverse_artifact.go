@@ -15,7 +15,7 @@ import (
 const (
 	relationshipVectorReverseArtifactEnv         = "QUANTASTREAM_RELATIONSHIP_VECTOR_REVERSE_ARTIFACT"
 	relationshipVectorReverseArtifactEdgeEnv     = "QUANTASTREAM_RELATIONSHIP_VECTOR_REVERSE_ARTIFACT_EDGE"
-	relationshipVectorReverseArtifactDefaultEdge = "lineitem.l_partkey"
+	relationshipVectorReverseArtifactDefaultEdge = "all"
 )
 
 // RelationshipVectorReverseArtifactMode selects the reversible POC execution mode.

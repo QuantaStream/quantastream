@@ -9,6 +9,8 @@ attributes:
   mappingStrategy: ParentRelation
   foreignKey: orders
   type: Integer
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 1
 - fieldName: l_partkey
   sourceName: /data/l_partkey
@@ -23,6 +25,8 @@ attributes:
   mappingStrategy: ParentRelation
   type: Integer
   foreignKey: supplier
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 3
 - fieldName: l_linenumber
   sourceName: /data/l_linenumber

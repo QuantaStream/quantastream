@@ -55,9 +55,12 @@ This avoids the extra primary-key lookup path required by string-key schemas.
 For TPC-H, foreign-key values are already the parent row identifiers Quanta
 needs for efficient relationship traversal.
 
-The `lineitem.l_partkey -> part` edge also opts into the parent-to-child
-relationship artifact because Q19-style part filters repeatedly expand from the
-part domain into the lineitem domain.
+Selected parent-to-child expansion paths also opt into relationship artifacts so
+the optimizer can avoid repeatedly rebuilding broad child-domain candidates.
+This includes the fact-table edges from `lineitem`, the customer-to-orders edge,
+the nation-to-customer/supplier edges, and the part/supplier-to-partsupp edges.
+The tiny `region -> nation` dimension hop is intentionally left on the regular
+relationship-vector path until probes show it matters.
 
 ## Existing Load Artifacts
 

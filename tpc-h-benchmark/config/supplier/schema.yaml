@@ -29,6 +29,8 @@ attributes:
   mappingStrategy: ParentRelation
   type: Integer
   foreignKey: nation
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 4
 - fieldName: s_phone
   sourceName: /data/s_phone
