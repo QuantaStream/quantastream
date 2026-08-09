@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/shared"
 )
 
@@ -89,5 +90,22 @@ func TestStandardFrontDoorConfigCanEnableRuntimeProbeLogging(t *testing.T) {
 
 	if config.Server.ProbeLogger == nil {
 		t.Fatalf("ProbeLogger = nil, want runtime probe logger when enabled")
+	}
+}
+
+func TestStandardDirectRuntimeWiresRelationshipReaderSessions(t *testing.T) {
+	mount := (StandardLocalBackend{}).NewDirectRuntime(StandardConfig{DataDir: t.TempDir()}, nil, 1)
+	defer mount.Close()
+
+	reader, ok := mount.Runtime.RelationshipReader.(*qsruntime.LegacyDirectRelationshipVectorReader)
+	if !ok || reader == nil {
+		t.Fatalf("relationship reader = %T, want *LegacyDirectRelationshipVectorReader", mount.Runtime.RelationshipReader)
+	}
+	backend, ok := reader.Backend.(qsruntime.LegacyDirectBitIndexRelationshipVectorBackend)
+	if !ok {
+		t.Fatalf("relationship backend = %T, want LegacyDirectBitIndexRelationshipVectorBackend", reader.Backend)
+	}
+	if backend.Sessions == nil {
+		t.Fatalf("relationship backend sessions = nil, want standard session provider for direct candidate expansion")
 	}
 }

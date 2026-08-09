@@ -119,6 +119,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	}
 	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
 		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
+			Sessions:         sessions,
 			TableCache:       tableCache,
 			ProjectionReader: relationshipProjectionReader,
 			SourceKeyReader:  relationshipSourceKeyReader,
