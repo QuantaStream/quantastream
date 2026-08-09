@@ -276,6 +276,13 @@ func TestLegacyTableCacheCatalogDerivesParentRelationMetadata(t *testing.T) {
 	if !relationship.Encoding.Supports(qsbridge.RelationshipCapabilityAntiJoinDifference) {
 		t.Fatalf("relationship encoding = %#v, want anti-join difference capability", relationship.Encoding)
 	}
+	partRelationship, ok := legacyCatalogRelationshipByField(table.Relationships, "l_partkey")
+	if !ok {
+		t.Fatalf("relationships = %#v, missing lineitem.l_partkey relation", table.Relationships)
+	}
+	if !partRelationship.Encoding.Supports(qsbridge.RelationshipCapabilityChildExpansion) {
+		t.Fatalf("part relationship encoding = %#v, want child expansion artifact capability", partRelationship.Encoding)
+	}
 
 	byName, relDiagnostics := catalog.Relationship(relationship.Name)
 	if relDiagnostics.BlocksNative() {
@@ -367,7 +374,15 @@ func legacyCatalogTestCache() *core.TableCacheStruct {
 		BasicTable: &shared.BasicTable{Name: "lineitem"},
 		Attributes: []core.Attribute{
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "l_orderkey", Type: "Integer", MappingStrategy: "ParentRelation", ForeignKey: "orders.o_orderkey"}},
-			{BasicAttribute: &shared.BasicAttribute{FieldName: "l_partkey", Type: "Integer", MappingStrategy: "ParentRelation", ForeignKey: "part.p_partkey"}},
+			{BasicAttribute: &shared.BasicAttribute{
+				FieldName:       "l_partkey",
+				Type:            "Integer",
+				MappingStrategy: "ParentRelation",
+				ForeignKey:      "part.p_partkey",
+				RelationshipArtifacts: shared.RelationshipArtifactConfig{
+					ParentToChild: true,
+				},
+			}},
 			{BasicAttribute: &shared.BasicAttribute{FieldName: "l_quantity", Type: "Integer", MappingStrategy: "IntBSI"}},
 		},
 	}

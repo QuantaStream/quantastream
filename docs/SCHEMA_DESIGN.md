@@ -177,6 +177,17 @@ use this pattern:
 This avoids extra primary-key lookup work during joins and makes bitmap/BSI
 relationship traversal cheaper.
 
+A `ParentRelation` can also opt into maintained relationship artifacts:
+
+```yaml
+relationshipArtifacts:
+  parentToChild: true
+```
+
+Use this for relationship edges where parent-domain filters are frequently
+expanded into child-domain candidates. The optimizer may still choose a regular
+relationship-vector path when that is cheaper for a specific query shape.
+
 When possible:
 
 - make stable integer primary keys the row ID via `columnID: true`

@@ -117,12 +117,14 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	relationshipSourceKeyReader := StandardRelationshipVectorSourceKeyReader{
 		Reader: bsiReader,
 	}
+	reverseArtifacts := qsruntime.NewRelationshipVectorReverseArtifactManager(qsruntime.RelationshipVectorReverseArtifactConfigFromEnv())
 	relationshipReader := &qsruntime.LegacyDirectRelationshipVectorReader{
 		Backend: qsruntime.LegacyDirectBitIndexRelationshipVectorBackend{
 			Sessions:         sessions,
 			TableCache:       tableCache,
 			ProjectionReader: relationshipProjectionReader,
 			SourceKeyReader:  relationshipSourceKeyReader,
+			ReverseArtifacts: reverseArtifacts,
 		},
 	}
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
@@ -141,6 +143,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 			SameRowComparison:            sameRowComparison,
 			RelationshipProjectionReader: relationshipProjectionReader,
 			RelationshipSourceKeyReader:  relationshipSourceKeyReader,
+			ReverseArtifacts:             reverseArtifacts,
 			ApplyRecommendedEdgeOrder:    qsruntime.DefaultApplyRecommendedEdgeOrder,
 		},
 	}

@@ -108,17 +108,19 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			TableCache: tableCache,
 		},
 	}
+	reverseArtifacts := NewRelationshipVectorReverseArtifactManager(RelationshipVectorReverseArtifactConfigFromEnv())
 	relationshipReader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
-			Source:     quantaSource,
-			Sessions:   sessions,
-			TableCache: tableCache,
+			Source:           quantaSource,
+			Sessions:         sessions,
+			TableCache:       tableCache,
+			ReverseArtifacts: reverseArtifacts,
 		},
 	}
 	physicalTier := DirectPhysicalExecutionTier{
 		Sessions:            sessions,
 		Adapter:             BitmapQueryResultAdapter{},
-		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization),
+		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization, reverseArtifacts),
 		Materialization:     materialization,
 		ProjectionBSIReader: bsiReader,
 		SameRowComparison:   sameRowComparison,
@@ -130,6 +132,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			Materialization:           materialization,
 			ProjectionBSIReader:       bsiReader,
 			SameRowComparison:         sameRowComparison,
+			ReverseArtifacts:          reverseArtifacts,
 			ApplyRecommendedEdgeOrder: DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},
 	}

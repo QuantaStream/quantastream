@@ -15,6 +15,8 @@ attributes:
   mappingStrategy: ParentRelation
   type: Integer
   foreignKey: part
+  relationshipArtifacts:
+    parentToChild: true
   sourceOrdinal: 2
 - fieldName: l_suppkey
   sourceName: /data/l_suppkey
@@ -99,4 +101,3 @@ attributes:
   type: String
   maxLen: 256
   sourceOrdinal: 16
-

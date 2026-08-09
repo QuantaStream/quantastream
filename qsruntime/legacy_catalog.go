@@ -283,8 +283,19 @@ func (c LegacyTableCacheCatalog) relationshipsForTable(table *core.Table) []qsbr
 				},
 			},
 		})
+		if attribute.RelationshipArtifacts.ParentToChild {
+			last := &relationships[len(relationships)-1]
+			last.Encoding.Capabilities = appendRelationshipCapabilityOnce(last.Encoding.Capabilities, qsbridge.RelationshipCapabilityChildExpansion)
+		}
 	}
 	return relationships
+}
+
+func appendRelationshipCapabilityOnce(capabilities qsbridge.RelationshipCapabilities, capability qsbridge.RelationshipCapability) qsbridge.RelationshipCapabilities {
+	if capabilities.Has(capability) {
+		return capabilities
+	}
+	return append(capabilities, capability)
 }
 
 func legacyDataType(legacyType string) qsbridge.DataType {

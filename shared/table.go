@@ -38,33 +38,39 @@ type AttributeInterface interface {
 	GetParent() TableInterface
 }
 
+// RelationshipArtifactConfig declares optional maintained relationship artifacts.
+type RelationshipArtifactConfig struct {
+	ParentToChild bool `yaml:"parentToChild,omitempty" json:"parentToChild,omitempty"`
+}
+
 // BasicAttribute - Field structure.
 type BasicAttribute struct {
-	Parent          *BasicTable       `yaml:"-" json:"-"`
-	FieldName       string            `yaml:"fieldName,omitempty"`
-	ChildTable      string            `yaml:"childTable,omitempty"`
-	SourceName      string            `yaml:"sourceName,omitempty"`
-	Type            string            `yaml:"type,omitempty"`
-	ForeignKey      string            `yaml:"foreignKey,omitempty"`
-	MappingStrategy string            `yaml:"mappingStrategy"`
-	Size            int               `yaml:"maxLen,omitempty"`
-	Ordinal         int               `yaml:"-"`
-	Scale           int               `yaml:"scale,omitempty"`
-	Values          []Value           `yaml:"values,omitempty"`
-	MapperConfig    map[string]string `yaml:"configuration,omitempty"`
-	Desc            string            `yaml:"desc,omitempty"`
-	MinValue        int               `yaml:"minValue,omitempty"`
-	MaxValue        int               `yaml:"maxValue,omitempty"`
-	CallTransform   bool              `yaml:"callTransform,omitempty"`
-	HighCard        bool              `yaml:"highCard,omitempty"`
-	System          bool              `yaml:"system,omitempty"`
-	Required        bool              `yaml:"required,omitempty"`
-	Searchable      bool              `yaml:"searchable,omitempty"`
-	DefaultValue    string            `yaml:"defaultValue,omitempty"`
-	ColumnID        bool              `yaml:"columnID,omitempty"`
-	TimeQuantumType string            `yaml:"timeQuantumType,omitempty"`
-	NonExclusive    bool              `yaml:"nonExclusive,omitempty"`
-	SourceOrdinal   int               `yaml:"sourceOrdinal,omitempty"`
+	Parent                *BasicTable                `yaml:"-" json:"-"`
+	FieldName             string                     `yaml:"fieldName,omitempty"`
+	ChildTable            string                     `yaml:"childTable,omitempty"`
+	SourceName            string                     `yaml:"sourceName,omitempty"`
+	Type                  string                     `yaml:"type,omitempty"`
+	ForeignKey            string                     `yaml:"foreignKey,omitempty"`
+	MappingStrategy       string                     `yaml:"mappingStrategy"`
+	Size                  int                        `yaml:"maxLen,omitempty"`
+	Ordinal               int                        `yaml:"-"`
+	Scale                 int                        `yaml:"scale,omitempty"`
+	Values                []Value                    `yaml:"values,omitempty"`
+	MapperConfig          map[string]string          `yaml:"configuration,omitempty"`
+	RelationshipArtifacts RelationshipArtifactConfig `yaml:"relationshipArtifacts,omitempty"`
+	Desc                  string                     `yaml:"desc,omitempty"`
+	MinValue              int                        `yaml:"minValue,omitempty"`
+	MaxValue              int                        `yaml:"maxValue,omitempty"`
+	CallTransform         bool                       `yaml:"callTransform,omitempty"`
+	HighCard              bool                       `yaml:"highCard,omitempty"`
+	System                bool                       `yaml:"system,omitempty"`
+	Required              bool                       `yaml:"required,omitempty"`
+	Searchable            bool                       `yaml:"searchable,omitempty"`
+	DefaultValue          string                     `yaml:"defaultValue,omitempty"`
+	ColumnID              bool                       `yaml:"columnID,omitempty"`
+	TimeQuantumType       string                     `yaml:"timeQuantumType,omitempty"`
+	NonExclusive          bool                       `yaml:"nonExclusive,omitempty"`
+	SourceOrdinal         int                        `yaml:"sourceOrdinal,omitempty"`
 }
 
 func (a *BasicAttribute) GetParent() TableInterface {
