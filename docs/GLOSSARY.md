@@ -5,6 +5,38 @@ Quanta's logical planning model, and bitmap execution internals. New refactor
 work should prefer these terms unless an adapter is explicitly speaking a
 legacy or third-party API.
 
+## Deployment Topology
+
+### single-node
+
+`single-node` is the durable architecture term for a QuantaStream deployment
+where one service process owns the MySQL-compatible front door, query engine,
+and local node/storage adapter.
+
+The current compatibility profile name for this topology is
+`inabox-standard`. Use that profile name when documenting existing flags,
+scripts, suites, or logs. Prefer `single-node` in new architecture prose.
+
+### distributed
+
+`distributed` is the durable architecture term for a QuantaStream deployment
+where query processors, loaders, and storage nodes can run as separate
+services connected through the normal service-discovery and network boundary.
+
+Local distributed validation may still use compatibility profile names such as
+`inabox-local` or `inabox-direct`, depending on the harness. Prefer
+`distributed` when discussing the architecture itself.
+
+### distributed harness
+
+`distributed harness` describes a development or conformance posture that
+exercises distributed node behavior without exposing the final product process
+boundary.
+
+The current SQLRunner compatibility profile name for this posture is
+`inabox-direct`. Use `inabox-direct` only when documenting existing command-line
+interfaces, suite names, or benchmark artifacts.
+
 ## Tuple Identity
 
 ### rownum

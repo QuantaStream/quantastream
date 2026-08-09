@@ -12,7 +12,7 @@ environment. It is not the intended limit of production topology.
 
 QuantaStream's go-forward deployment vocabulary should describe topology and
 physical boundaries rather than historical harness names. The two durable
-concepts are:
+concepts, also defined in [GLOSSARY.md](GLOSSARY.md), are:
 
 - **single-node**: one QuantaStream service owns the MySQL-compatible front
   door, query engine, and a local node/storage adapter.
