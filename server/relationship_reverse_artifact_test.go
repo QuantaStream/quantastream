@@ -88,7 +88,89 @@ func TestRelationshipReverseArtifactRequiresSchemaFlag(t *testing.T) {
 	}
 }
 
+func TestRelationshipReverseArtifactRebuiltFromPersistedBSIStartup(t *testing.T) {
+	hot := newRelationshipReverseArtifactPersistenceTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+	now := time.Unix(100, 0).UTC()
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(2, 7)
+	bsi.SetValue(4, 8)
+	bsi.SetValue(6, 8)
+	hot.bsiCache["lineitem"] = map[string]map[int64]*BSIBitmap{
+		"l_orderkey": {
+			shardTime.UnixNano(): {
+				BSI:         bsi,
+				ModTime:     now,
+				PersistTime: now.Add(-time.Second),
+			},
+		},
+	}
+
+	if _, _, _, _, err := hot.persistCaches(true); err != nil {
+		t.Fatalf("persistCaches returned error: %v", err)
+	}
+	if err := hot.saveBitmapShardManifestFromCache("test_reverse_artifact"); err != nil {
+		t.Fatalf("saveBitmapShardManifestFromCache returned error: %v", err)
+	}
+
+	cold := newRelationshipReverseArtifactPersistenceTestIndex(t, true)
+	cold.Node.dataDir = hot.Node.dataDir
+	if err := cold.readBitmapFiles(cold.fragQueue); err != nil {
+		t.Fatalf("cold readBitmapFiles returned error: %v", err)
+	}
+
+	rownums, stats, ok, err := cold.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidates returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("artifact lookup ok = false after cold startup, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4, 6}) {
+		t.Fatalf("cold startup rownums = %#v, want [4 6]", rownums)
+	}
+	if stats.Rows != 3 || stats.Values != 2 || stats.TargetRows != 2 {
+		t.Fatalf("cold startup stats = %#v, want rows=3 values=2 targetRows=2", stats)
+	}
+	snapshot := cold.relationshipReverseArtifactSnapshot()
+	if snapshot.Fields != 1 || snapshot.Values != 2 || snapshot.Rows != 3 {
+		t.Fatalf("cold startup snapshot = %#v, want fields=1 values=2 rows=3", snapshot)
+	}
+}
+
 func newRelationshipReverseArtifactTestIndex(t *testing.T, parentToChild bool) *BitmapIndex {
+	t.Helper()
+	table := newRelationshipReverseArtifactTestTable(t, parentToChild)
+	return &BitmapIndex{
+		tableCache:           map[string]*shared.BasicTable{"lineitem": table},
+		bsiCache:             make(map[string]map[string]map[int64]*BSIBitmap),
+		seedCache:            make(map[string]*SeedBitmap),
+		reverseArtifactCache: make(map[string]map[string]*relationshipReverseArtifact),
+	}
+}
+
+func newRelationshipReverseArtifactPersistenceTestIndex(t *testing.T, parentToChild bool) *BitmapIndex {
+	t.Helper()
+	table := newRelationshipReverseArtifactTestTable(t, parentToChild)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn:    shared.NewDefaultConnection("reverse-artifact-test"),
+			dataDir: t.TempDir(),
+		},
+		bitmapCache:          make(map[string]map[string]map[uint64]map[int64]*StandardBitmap),
+		bsiCache:             make(map[string]map[string]map[int64]*BSIBitmap),
+		seedCache:            make(map[string]*SeedBitmap),
+		reverseArtifactCache: make(map[string]map[string]*relationshipReverseArtifact),
+		tableCache:           map[string]*shared.BasicTable{"lineitem": table},
+		fragQueue:            make(chan *BitmapFragment, 16),
+		workers:              []*WorkerThread{NewWorkerThread(0)},
+	}
+	index.ServicePort = 1
+	go index.batchProcessLoop(index.workers[0])
+	return index
+}
+
+func newRelationshipReverseArtifactTestTable(t *testing.T, parentToChild bool) *shared.BasicTable {
 	t.Helper()
 	configDir := t.TempDir()
 	tableDir := filepath.Join(configDir, "lineitem")
@@ -118,12 +200,7 @@ attributes:
 	if err != nil {
 		t.Fatalf("LoadSchema error = %v", err)
 	}
-	return &BitmapIndex{
-		tableCache:           map[string]*shared.BasicTable{"lineitem": table},
-		bsiCache:             make(map[string]map[string]map[int64]*BSIBitmap),
-		seedCache:            make(map[string]*SeedBitmap),
-		reverseArtifactCache: make(map[string]map[string]*relationshipReverseArtifact),
-	}
+	return table
 }
 
 func testRelationshipReverseArtifactBSIFragment(t *testing.T, shardTime time.Time, values map[uint64]int64, update bool) *BitmapFragment {

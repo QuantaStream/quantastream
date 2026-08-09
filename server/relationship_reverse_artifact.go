@@ -16,6 +16,12 @@ type RelationshipReverseArtifactStats struct {
 	LookupElapsed time.Duration
 }
 
+type relationshipReverseArtifactSnapshot struct {
+	Fields uint64
+	Values uint64
+	Rows   uint64
+}
+
 type relationshipReverseArtifact struct {
 	byValue map[int64]*roaring64.Bitmap
 	rows    uint64
@@ -29,7 +35,12 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 		return nil, RelationshipReverseArtifactStats{}, false, nil
 	}
 	m.reverseArtifactLock.RLock()
-	artifact := m.reverseArtifactCache[index][field]
+	fields := m.reverseArtifactCache[index]
+	if fields == nil {
+		m.reverseArtifactLock.RUnlock()
+		return nil, RelationshipReverseArtifactStats{}, false, nil
+	}
+	artifact := fields[field]
 	if artifact == nil {
 		m.reverseArtifactLock.RUnlock()
 		return nil, RelationshipReverseArtifactStats{}, false, nil
@@ -60,6 +71,24 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 		rownums = append(rownums, it.Next())
 	}
 	return rownums, stats, true, nil
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactSnapshot() relationshipReverseArtifactSnapshot {
+	m.reverseArtifactLock.RLock()
+	defer m.reverseArtifactLock.RUnlock()
+
+	var snapshot relationshipReverseArtifactSnapshot
+	for _, fields := range m.reverseArtifactCache {
+		for _, artifact := range fields {
+			if artifact == nil {
+				continue
+			}
+			snapshot.Fields++
+			snapshot.Values += uint64(len(artifact.byValue))
+			snapshot.Rows += artifact.rows
+		}
+	}
+	return snapshot
 }
 
 func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, field string, oldBSI *roaring64.BSI, removedRows *roaring64.Bitmap, addedBSI *roaring64.BSI) {
