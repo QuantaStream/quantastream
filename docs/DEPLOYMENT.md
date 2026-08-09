@@ -10,21 +10,31 @@ environment. It is not the intended limit of production topology.
 
 ## Deployment Modes
 
-QuantaStream uses named deployment modes so local development, single-process
-QIAB, local distributed validation, and full distributed deployments do not get
-blurred together. The current deployment vocabulary names four important
-modes:
+QuantaStream's go-forward deployment vocabulary should describe topology and
+physical boundaries rather than historical harness names. The two durable
+concepts are:
 
-- `inabox-direct`: a development/conformance mode where the query engine runs
-  inside the SQLRunner process and talks to a local data-node cluster.
-- `inabox-standard`: the intended simple QIAB profile, with the MySQL-compatible
-  server, query engine, and one lightweight in-process node adapter in one
-  process.
-- `inabox-local`: the local distributed-shape profile, with the new
-  MySQL-compatible front door talking to local nodes through the normal
+- **single-node**: one QuantaStream service owns the MySQL-compatible front
+  door, query engine, and a local node/storage adapter.
+- **distributed**: query processors, loaders, and storage nodes are separable
+  services connected through the normal service-discovery and network boundary.
+
+Some current command-line flags, scripts, and SQLRunner suites still use older
+compatibility profile names. Treat those names as transitional handles:
+
+- `inabox-standard`: current compatibility name for the single-node product
+  profile.
+- `inabox-direct`: current SQLRunner compatibility name for a distributed-shape
+  development harness where the query engine runs inside the test process and
+  talks to a local data-node cluster.
+- `inabox-local`: current compatibility name for local distributed validation,
+  with a MySQL-compatible front door talking to local nodes through the normal
   service-discovery and gRPC path.
-- `distributed`: the multi-host architecture with independently deployed query
-  processors, nodes, and loaders.
+- `distributed`: the multi-host distributed architecture with independently
+  deployed query processors, nodes, and loaders.
+
+New prose should prefer **single-node** and **distributed** unless it is
+documenting a specific existing flag, script, suite, or compatibility profile.
 
 ### `inabox-direct`
 
