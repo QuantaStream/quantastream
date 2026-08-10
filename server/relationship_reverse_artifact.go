@@ -62,6 +62,17 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 // RelationshipReverseArtifactCandidateValues returns child-domain rownums plus
 // the parent-domain value encoded for each returned child row.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, true)
+}
+
+// RelationshipReverseArtifactCandidateValuesUnordered returns child-domain
+// rownums without sorting them. It is intended for callers that reconstruct
+// child-domain order from their own candidate row set.
+func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesUnordered(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, false)
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	start := time.Now()
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
@@ -77,36 +88,34 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 		m.reverseArtifactLock.RUnlock()
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
-	unique := make(map[int64]struct{}, len(sourceValues))
-	candidates := roaring64.NewBitmap()
-	parentValueByChild := make(map[uint64]int64)
-	for _, value := range sourceValues {
-		if _, ok := unique[value]; ok {
-			continue
-		}
-		unique[value] = struct{}{}
+	uniqueValues := relationshipReverseArtifactUniqueInt64Values(sourceValues)
+	targetCapacity := relationshipReverseArtifactCandidateCapacity(artifact, len(uniqueValues))
+	rownums := make([]uint64, 0, targetCapacity)
+	parentValueByChild := make(map[uint64]int64, targetCapacity)
+	for _, value := range uniqueValues {
 		if bitmap := artifact.byValue[value]; bitmap != nil {
-			candidates.Or(bitmap)
 			it := bitmap.Iterator()
 			for it.HasNext() {
-				parentValueByChild[it.Next()] = value
+				rownum := it.Next()
+				if _, ok := parentValueByChild[rownum]; ok {
+					continue
+				}
+				parentValueByChild[rownum] = value
+				rownums = append(rownums, rownum)
 			}
 		}
+	}
+	if sortRows && len(rownums) > 1 {
+		sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
 	}
 	stats := RelationshipReverseArtifactStats{
 		Rows:          artifact.rows,
 		Values:        uint64(len(artifact.byValue)),
-		SourceValues:  len(unique),
-		TargetRows:    candidates.GetCardinality(),
+		SourceValues:  len(uniqueValues),
+		TargetRows:    uint64(len(rownums)),
 		LookupElapsed: time.Since(start),
 	}
 	m.reverseArtifactLock.RUnlock()
-
-	rownums := make([]uint64, 0, candidates.GetCardinality())
-	it := candidates.Iterator()
-	for it.HasNext() {
-		rownums = append(rownums, it.Next())
-	}
 	return rownums, parentValueByChild, stats, true, nil
 }
 
@@ -456,6 +465,37 @@ func relationshipReverseArtifactUniqueUint64Count(values []uint64) int {
 		unique[value] = struct{}{}
 	}
 	return len(unique)
+}
+
+func relationshipReverseArtifactUniqueInt64Values(values []int64) []int64 {
+	if len(values) == 0 {
+		return nil
+	}
+	unique := make([]int64, 0, len(values))
+	seen := make(map[int64]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
+}
+
+func relationshipReverseArtifactCandidateCapacity(artifact *relationshipReverseArtifact, sourceValueCount int) int {
+	if artifact == nil || sourceValueCount <= 0 || artifact.rows == 0 || len(artifact.byValue) == 0 {
+		return 0
+	}
+	averageRowsPerValue := artifact.rows / uint64(len(artifact.byValue))
+	if averageRowsPerValue == 0 {
+		averageRowsPerValue = 1
+	}
+	estimate := uint64(sourceValueCount) * averageRowsPerValue
+	if estimate > artifact.rows {
+		estimate = artifact.rows
+	}
+	return int(estimate)
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactSnapshot() relationshipReverseArtifactSnapshot {
