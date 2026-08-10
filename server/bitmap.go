@@ -47,6 +47,20 @@ func devSkipSyncEnabled() bool {
 	}
 }
 
+func bitmapFlushTimeout() time.Duration {
+	const defaultTimeout = 5 * time.Minute
+
+	raw := strings.TrimSpace(os.Getenv("QUANTASTREAM_BITMAP_FLUSH_TIMEOUT"))
+	if raw == "" {
+		return defaultTimeout
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return defaultTimeout
+	}
+	return timeout
+}
+
 var (
 	// Ensure BitmapIndex implements shared.Service
 	_ NodeService = (*BitmapIndex)(nil)
@@ -1482,6 +1496,7 @@ func (m *BitmapIndex) BulkClear(ctx context.Context, req *pb.BulkClearRequest) (
 func (m *BitmapIndex) flush() error {
 
 	// fmt.Println("flush starting", m.Node.hashKey)
+	timeout := bitmapFlushTimeout()
 
 	// part 1. Put a nop on the queue, wait for it reach some worker
 	frag := newBitmapFragment("", "", 0, time.Now(), nil, false, false, false)
@@ -1490,7 +1505,7 @@ func (m *BitmapIndex) flush() error {
 	select {
 	case <-frag.Done:
 		// fmt.Println("flush part 1 done", m.Node.hashKey)
-	case <-time.After(30 * time.Second):
+	case <-time.After(timeout):
 		err := fmt.Errorf("flush part 1 timeout %v", m.Node.hashKey)
 		return err
 	}
@@ -1509,7 +1524,7 @@ func (m *BitmapIndex) flush() error {
 			select {
 			case <-frag.Done:
 				// fmt.Println("flush part 2 done")
-			case <-time.After(30 * time.Second):
+			case <-time.After(timeout):
 				err := fmt.Errorf("flush part 2 timeout index= %v %v", w.index, m.Node.hashKey)
 				return err
 			}
