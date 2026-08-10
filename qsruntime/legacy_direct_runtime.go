@@ -46,6 +46,14 @@ type LegacyDirectRuntimeOptions struct {
 	DisableRecommendedEdgeOrder bool
 	DictionaryResolver          qsbridge.DictionaryResolver
 	DictionaryInvalidator       RuntimeDictionaryInvalidator
+	PrimaryKeyResolverFactory   core.SessionPrimaryKeyResolverFactory
+}
+
+// NativeProxyRuntimeLegacyOptions carries adapter-island dependencies needed
+// while the native proxy runtime still borrows core sessions through the legacy
+// QuantaSource path.
+type NativeProxyRuntimeLegacyOptions struct {
+	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
 }
 
 // NewLegacyDirectBitmapRuntimeFromSource builds the direct bitmap runtime around an existing Quanta source.
@@ -61,9 +69,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		}
 	}
 	sessions := LegacyQuantaSourceSessionProvider{
-		Source:                quantaSource,
-		SchemaDir:             options.SchemaDir,
-		DictionaryInvalidator: options.DictionaryInvalidator,
+		Source:                    quantaSource,
+		SchemaDir:                 options.SchemaDir,
+		DictionaryInvalidator:     options.DictionaryInvalidator,
+		PrimaryKeyResolverFactory: options.PrimaryKeyResolverFactory,
 	}
 	bsiReader := LegacyDirectProjectionBSIReader{
 		Source:     quantaSource,
@@ -171,6 +180,12 @@ func legacyDirectCachedTable(tableCache *core.TableCacheStruct, name string) *co
 
 // NewNativeProxyRuntimeFromSource builds a SQL-facing runtime over an existing Quanta source.
 func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.QuantaSource, tableCache *core.TableCacheStruct, config NativeProxyRuntimeConfig) (NativeProxyRuntime, qsbridge.DiagnosticSet, error) {
+	return NewNativeProxyRuntimeFromSourceWithLegacyOptions(ctx, quantaSource, tableCache, config, NativeProxyRuntimeLegacyOptions{})
+}
+
+// NewNativeProxyRuntimeFromSourceWithLegacyOptions builds a SQL-facing runtime
+// over an existing Quanta source with explicit adapter-island dependencies.
+func NewNativeProxyRuntimeFromSourceWithLegacyOptions(ctx context.Context, quantaSource *source.QuantaSource, tableCache *core.TableCacheStruct, config NativeProxyRuntimeConfig, legacyOptions NativeProxyRuntimeLegacyOptions) (NativeProxyRuntime, qsbridge.DiagnosticSet, error) {
 	config = config.WithDefaults()
 	if quantaSource == nil || quantaSource.GetSessionPool() == nil {
 		return NativeProxyRuntime{}, qsbridge.DiagnosticSet{
@@ -209,6 +224,7 @@ func NewNativeProxyRuntimeFromSource(ctx context.Context, quantaSource *source.Q
 					SchemaDir:                   config.SchemaDir,
 					DisableRecommendedEdgeOrder: config.DisableRecommendedEdgeOrder,
 					DictionaryResolver:          cachedDictionaryResolver,
+					PrimaryKeyResolverFactory:   legacyOptions.PrimaryKeyResolverFactory,
 					DictionaryInvalidator: RuntimeDictionaryInvalidator{
 						Dictionaries:  cachedDictionaryResolver,
 						DefaultSchema: config.DefaultSchema,
@@ -244,9 +260,10 @@ func (f LegacyQuantaSourceFactory) ensureTableCache() qsbridge.DiagnosticSet {
 
 // LegacyQuantaSourceSessionProvider borrows direct sessions from a legacy Quanta source.
 type LegacyQuantaSourceSessionProvider struct {
-	Source                *source.QuantaSource
-	SchemaDir             string
-	DictionaryInvalidator RuntimeDictionaryInvalidator
+	Source                    *source.QuantaSource
+	SchemaDir                 string
+	DictionaryInvalidator     RuntimeDictionaryInvalidator
+	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
 }
 
 // BorrowDirectSession borrows a table-scoped session from the source session pool.
@@ -291,6 +308,9 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 	session, err := pool.Borrow(tableName)
 	if err != nil {
 		return nil, nil, err
+	}
+	if p.PrimaryKeyResolverFactory != nil {
+		session.SetPrimaryKeyResolver(p.PrimaryKeyResolverFactory(session))
 	}
 	return LegacyQuantaSessionHandle{
 		TableName:             tableName,

@@ -53,6 +53,51 @@ func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
 	}
 }
 
+func TestBulkClearUpdatesCachedBSISeed(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_shipdate"
+	day := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230602,
+		2: 20230602,
+	})
+
+	seed, err := index.timeRangeExistence("lineitem", field, day, day)
+	if err != nil {
+		t.Fatalf("timeRangeExistence returned error: %v", err)
+	}
+	if got, want := seed.GetCardinality(), uint64(2); got != want {
+		t.Fatalf("seed cardinality before clear = %d, want %d", got, want)
+	}
+
+	index.clearAll("lineitem", day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(1))
+
+	cached, count, ok := index.cachedSeedBitmap("lineitem", field, day, day)
+	if !ok {
+		t.Fatal("expected cached seed after bulk clear")
+	}
+	if cached.Contains(1) {
+		t.Fatalf("cached seed still contains cleared rownum 1: %#v", cached.ToArray())
+	}
+	if !cached.Contains(2) {
+		t.Fatalf("cached seed lost surviving rownum 2: %#v", cached.ToArray())
+	}
+	if got, want := cached.GetCardinality(), uint64(1); got != want {
+		t.Fatalf("cached seed cardinality after clear = %d, want %d", got, want)
+	}
+	if got, want := count, uint64(1); got != want {
+		t.Fatalf("cached seed row count after clear = %d, want %d", got, want)
+	}
+
+	nextSeed, err := index.timeRangeExistence("lineitem", field, day, day)
+	if err != nil {
+		t.Fatalf("timeRangeExistence after clear returned error: %v", err)
+	}
+	if got, want := nextSeed.GetCardinality(), uint64(1); got != want {
+		t.Fatalf("seed cardinality after clear = %d, want %d", got, want)
+	}
+}
+
 func TestLiveBSIUpdateUsesApplyTimeForDirtyTracking(t *testing.T) {
 	index := newSeedCacheTestIndex(t)
 	field := "l_shipdate"

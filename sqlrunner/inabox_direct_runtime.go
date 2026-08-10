@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"
@@ -84,7 +85,7 @@ func (s *inaboxDirectHarnessState) rebuild(ctx context.Context) error {
 }
 
 func inaboxDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config qsruntime.DirectRuntimeConfig, catalogTableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) (qsruntime.SQLRuntime, qsbridge.DiagnosticSet, error) {
-	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSource(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
+	proxyRuntime, diagnostics, err := qsruntime.NewNativeProxyRuntimeFromSourceWithLegacyOptions(ctx, quantaSource, catalogTableCache, qsruntime.NativeProxyRuntimeConfig{
 		Direct:                  config,
 		DefaultSchema:           inaboxDirectDefaultSchema(cfg.Database),
 		SchemaDir:               inaboxDirectConfigDir(),
@@ -93,6 +94,10 @@ func inaboxDirectBuildSQLRuntime(ctx context.Context, cfg runnerConfig, config q
 		Profile:                 qsruntime.LegacyDirectRuntimeProfile(),
 		ContextWrapper:          qsruntime.WithQueryScratchpad,
 		EnableFilterExpressions: true,
+	}, qsruntime.NativeProxyRuntimeLegacyOptions{
+		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(
+			catalogTableCache,
+		),
 	})
 	return proxyRuntime.Runtime, diagnostics, err
 }

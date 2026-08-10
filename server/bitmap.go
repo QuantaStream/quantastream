@@ -808,12 +808,21 @@ func (m *BitmapIndex) clearAll(index string, start, end int64, nbm *roaring64.Bi
 	}
 
 	if fm, ok := m.bsiCache[index]; ok {
-		for _, tm := range fm {
+		for field, tm := range fm {
 			for ts, bsi := range tm {
 				if ts < start || ts > end {
 					continue
 				}
-				bsi.ClearValues(nbm)
+				bsi.Lock.Lock()
+				clearSet := roaring64.FastAnd(bsi.GetExistenceBitmap(), nbm)
+				if !clearSet.IsEmpty() {
+					m.updateRelationshipReverseArtifactForBSIFragment(index, field, bsi.BSI, clearSet, nil)
+					bsi.ClearValues(clearSet)
+					bsi.ModTime = time.Now()
+					bsi.AccessTime = bsi.ModTime
+					m.updateSeedCacheForBSIFragment(index, field, ts, nil, clearSet)
+				}
+				bsi.Lock.Unlock()
 			}
 		}
 	}
