@@ -77,6 +77,13 @@ type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
 	LookupElapsed time.Duration
 }
 
+// LegacyDirectRelationshipVectorReverseArtifactStats describes a maintained
+// parent-to-child artifact without materializing lookup candidates.
+type LegacyDirectRelationshipVectorReverseArtifactStats struct {
+	Rows   uint64
+	Values uint64
+}
+
 // LegacyDirectRelationshipVectorReverseArtifactCandidateReader exposes
 // schema-declared reverse relationship artifacts owned by the physical tier.
 type LegacyDirectRelationshipVectorReverseArtifactCandidateReader interface {
@@ -85,6 +92,15 @@ type LegacyDirectRelationshipVectorReverseArtifactCandidateReader interface {
 		LegacyDirectRelationshipVectorReadRequest,
 		[]int64,
 	) (LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error)
+}
+
+// LegacyDirectRelationshipVectorReverseArtifactStatsReader is optionally
+// implemented by physical tiers that can expose artifact cardinality cheaply.
+type LegacyDirectRelationshipVectorReverseArtifactStatsReader interface {
+	RelationshipVectorReverseArtifactStats(
+		context.Context,
+		LegacyDirectRelationshipVectorReadRequest,
+	) (LegacyDirectRelationshipVectorReverseArtifactStats, bool, error)
 }
 
 type relationshipVectorReverseArtifact struct {

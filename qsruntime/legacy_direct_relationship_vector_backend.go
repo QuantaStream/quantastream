@@ -17,6 +17,8 @@ import (
 )
 
 const legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue = 512
+const legacyDirectRelationshipReverseArtifactMaxSourceCoverageNumerator = 1
+const legacyDirectRelationshipReverseArtifactMaxSourceCoverageDenominator = 2
 
 // LegacyDirectBitIndexRelationshipVectorBackend reads relationship-vector BSIs through the legacy BitIndex.
 type LegacyDirectBitIndexRelationshipVectorBackend struct {
@@ -244,6 +246,19 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 	if b.ReverseArtifactCandidateReader == nil || !read.Edge.Capabilities.Has(qsbridge.RelationshipCapabilityChildExpansion) {
 		return qsbridge.QuantaCandidateSet{}, relationshipVectorReverseArtifactTiming{}, nil, nil, false
 	}
+	sourceValueCount := len(legacyDirectRelationshipUniqueInt64s(sourceValues))
+	if stats, ok, err := b.relationshipVectorReverseArtifactStats(ctx, read); err == nil && ok &&
+		legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount, stats.Values) {
+		timing := relationshipVectorReverseArtifactTiming{
+			Mode:         "reverse_artifact_skip_unselective_source",
+			CacheHit:     true,
+			Rows:         stats.Rows,
+			Values:       stats.Values,
+			SourceValues: sourceValueCount,
+		}
+		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
+		return qsbridge.QuantaCandidateSet{}, timing, nil, nil, false
+	}
 	result, diagnostics, ok, err := b.ReverseArtifactCandidateReader.ReadRelationshipVectorReverseArtifactCandidates(ctx, read, sourceValues)
 	if err != nil || diagnostics.BlocksNative() {
 		return result.Candidates, relationshipVectorReverseArtifactTiming{
@@ -270,6 +285,22 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 	}
 	legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 	return result.Candidates, timing, diagnostics, err, true
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorReverseArtifactStats(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (LegacyDirectRelationshipVectorReverseArtifactStats, bool, error) {
+	statsReader, ok := b.ReverseArtifactCandidateReader.(LegacyDirectRelationshipVectorReverseArtifactStatsReader)
+	if !ok {
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, false, nil
+	}
+	return statsReader.RelationshipVectorReverseArtifactStats(ctx, read)
+}
+
+func legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount int, artifactValues uint64) bool {
+	if sourceValueCount <= 0 || artifactValues == 0 {
+		return false
+	}
+	return uint64(sourceValueCount)*legacyDirectRelationshipReverseArtifactMaxSourceCoverageDenominator >
+		artifactValues*legacyDirectRelationshipReverseArtifactMaxSourceCoverageNumerator
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) shouldReadRelationshipVectorParentToChildCandidatesDirect(sourceValues []int64) bool {

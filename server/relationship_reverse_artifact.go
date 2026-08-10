@@ -73,6 +73,28 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 	return rownums, stats, true, nil
 }
 
+// RelationshipReverseArtifactStats returns maintained artifact cardinality
+// without scanning source values or materializing candidates.
+func (m *BitmapIndex) RelationshipReverseArtifactStats(index, field string) (RelationshipReverseArtifactStats, bool, error) {
+	if !m.relationshipReverseArtifactEnabled(index, field) {
+		return RelationshipReverseArtifactStats{}, false, nil
+	}
+	m.reverseArtifactLock.RLock()
+	defer m.reverseArtifactLock.RUnlock()
+	fields := m.reverseArtifactCache[index]
+	if fields == nil {
+		return RelationshipReverseArtifactStats{}, false, nil
+	}
+	artifact := fields[field]
+	if artifact == nil {
+		return RelationshipReverseArtifactStats{}, false, nil
+	}
+	return RelationshipReverseArtifactStats{
+		Rows:   artifact.rows,
+		Values: uint64(len(artifact.byValue)),
+	}, true, nil
+}
+
 func (m *BitmapIndex) relationshipReverseArtifactSnapshot() relationshipReverseArtifactSnapshot {
 	m.reverseArtifactLock.RLock()
 	defer m.reverseArtifactLock.RUnlock()

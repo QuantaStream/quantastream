@@ -25,6 +25,25 @@ type StandardRelationshipReverseArtifactCandidateReader struct {
 	Direct *server.BitmapIndex
 }
 
+// RelationshipVectorReverseArtifactStats returns artifact cardinality without
+// materializing candidate rows.
+func (r StandardRelationshipReverseArtifactCandidateReader) RelationshipVectorReverseArtifactStats(
+	_ context.Context,
+	read qsruntime.LegacyDirectRelationshipVectorReadRequest,
+) (qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats, bool, error) {
+	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" {
+		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats{}, false, nil
+	}
+	stats, ok, err := r.Direct.RelationshipReverseArtifactStats(read.VectorIndex, read.VectorField)
+	if err != nil || !ok {
+		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats{}, ok, err
+	}
+	return qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats{
+		Rows:   stats.Rows,
+		Values: stats.Values,
+	}, true, nil
+}
+
 // ReadRelationshipVectorReverseArtifactCandidates returns candidate child rows
 // from a schema-declared reverse artifact when the local bitmap tier owns one.
 func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVectorReverseArtifactCandidates(
