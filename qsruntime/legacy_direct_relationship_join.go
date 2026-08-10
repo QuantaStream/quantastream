@@ -652,6 +652,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	result.Probes = append(result.Probes, initialRowProbes...)
 	result.Probes = append(result.Probes, prefilterProbes...)
 	iterations := 0
+	singlePassApplied := false
+	singlePassReason := "not_evaluated"
 	reductionStart := time.Now()
 	for {
 		iterations++
@@ -659,6 +661,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		edgeOrderPolicy := legacyDirectRelationshipEdgeOrderPolicy(edges, rowsByTable, e.ApplyRecommendedEdgeOrder)
 		result.Probes = append(result.Probes, legacyDirectRelationshipEdgeOrderPolicyProbes(fmt.Sprintf("graph_iter_%d_", iterations), edgeOrderPolicy)...)
 		executionCandidates := legacyDirectRelationshipEdgeOrderExecutionCandidates(edges, edgeOrderPolicy)
+		singlePassPolicy := legacyDirectRelationshipSinglePassParentToChildPolicy(executionCandidates)
+		if iterations != 1 {
+			singlePassPolicy.Eligible = false
+			singlePassPolicy.Reason = "not_first_iteration"
+		}
+		if iterations == 1 {
+			singlePassReason = singlePassPolicy.Reason
+		}
 		for edgeIndex, candidate := range executionCandidates {
 			edge := candidate.Edge
 			parentRows := rowsByTable[edge.parentKey()]
@@ -720,7 +730,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				rowsByTable[edge.childKey()] = nextChildRows
 			}
 		}
+		singlePassAppliedThisIteration := changed && singlePassPolicy.Eligible
+		result.Probes = append(result.Probes, legacyDirectRelationshipSinglePassPolicyProbes(fmt.Sprintf("graph_iter_%d_", iterations), singlePassPolicy, singlePassAppliedThisIteration)...)
 		if !changed {
+			break
+		}
+		if singlePassAppliedThisIteration {
+			singlePassApplied = true
 			break
 		}
 		if iterations > len(edges)+1 {
@@ -743,6 +759,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	result.Count = uint64(len(finalRows))
 	result.Probes = append(result.Probes,
 		legacyDirectRelationshipProbe("graph_iterations", strconv.Itoa(iterations)),
+		legacyDirectRelationshipProbe("graph_single_pass_applied", strconv.FormatBool(singlePassApplied)),
+		legacyDirectRelationshipProbe("graph_single_pass_reason", singlePassReason),
 		legacyDirectRelationshipProbe("phase_graph_reduction_elapsed", reductionElapsed.String()),
 		legacyDirectRelationshipProbe("graph_sink_role", sinkRole),
 		legacyDirectRelationshipProbe("graph_sink", sink),

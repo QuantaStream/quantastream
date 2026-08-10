@@ -186,6 +186,94 @@ func TestLegacyDirectRelationshipEdgeOrderExecutionCandidatesKeepInputForLateOnl
 	}
 }
 
+func TestLegacyDirectRelationshipSinglePassParentToChildPolicyAllowsTopologicalChain(t *testing.T) {
+	candidates := []legacyDirectRelationshipEdgeOrderCandidate{
+		{
+			Edge: legacyDirectRelationshipEdge{
+				parentRole:  "c",
+				parentTable: "customer",
+				childRole:   "o",
+				childTable:  "orders",
+				sqlKind:     qsbridge.JoinKindInner,
+			},
+		},
+		{
+			Edge: legacyDirectRelationshipEdge{
+				parentRole:  "o",
+				parentTable: "orders",
+				childRole:   "l",
+				childTable:  "lineitem",
+				sqlKind:     qsbridge.JoinKindInner,
+			},
+		},
+	}
+
+	policy := legacyDirectRelationshipSinglePassParentToChildPolicy(candidates)
+
+	if !policy.Eligible {
+		t.Fatalf("eligible = false, reason %q", policy.Reason)
+	}
+	if policy.Mode != "single_pass_parent_to_child" || policy.Reason != "topological_parent_to_child" {
+		t.Fatalf("policy = %#v, want single-pass topological", policy)
+	}
+}
+
+func TestLegacyDirectRelationshipSinglePassParentToChildPolicyRejectsLateDependency(t *testing.T) {
+	candidates := []legacyDirectRelationshipEdgeOrderCandidate{
+		{
+			Edge: legacyDirectRelationshipEdge{
+				parentRole:  "o",
+				parentTable: "orders",
+				childRole:   "l",
+				childTable:  "lineitem",
+				sqlKind:     qsbridge.JoinKindInner,
+			},
+		},
+		{
+			Edge: legacyDirectRelationshipEdge{
+				parentRole:  "c",
+				parentTable: "customer",
+				childRole:   "o",
+				childTable:  "orders",
+				sqlKind:     qsbridge.JoinKindInner,
+			},
+		},
+	}
+
+	policy := legacyDirectRelationshipSinglePassParentToChildPolicy(candidates)
+
+	if policy.Eligible {
+		t.Fatalf("eligible = true, want false")
+	}
+	if policy.Reason != "dependency_after_consumer" {
+		t.Fatalf("reason = %q, want dependency_after_consumer", policy.Reason)
+	}
+}
+
+func TestLegacyDirectRelationshipSinglePassParentToChildPolicyRejectsOuterJoin(t *testing.T) {
+	candidates := []legacyDirectRelationshipEdgeOrderCandidate{
+		{
+			Edge: legacyDirectRelationshipEdge{
+				parentRole:               "c",
+				parentTable:              "customer",
+				childRole:                "o",
+				childTable:               "orders",
+				sqlKind:                  qsbridge.JoinKindLeftOuter,
+				leftOuterPreservesParent: true,
+			},
+		},
+	}
+
+	policy := legacyDirectRelationshipSinglePassParentToChildPolicy(candidates)
+
+	if policy.Eligible {
+		t.Fatalf("eligible = true, want false")
+	}
+	if policy.Reason != "non_inner_join" {
+		t.Fatalf("reason = %q, want non_inner_join", policy.Reason)
+	}
+}
+
 func TestLegacyDirectRelationshipEdgeOrderPolicyPrefersConnectedFrontier(t *testing.T) {
 	edges := []legacyDirectRelationshipEdge{
 		{parentRole: "a", parentTable: "a", childRole: "b", childTable: "b"},

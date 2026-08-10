@@ -49,6 +49,12 @@ type legacyDirectRelationshipEdgeOrderPolicyResult struct {
 	ObserveOnly         bool
 }
 
+type legacyDirectRelationshipSinglePassPolicyResult struct {
+	Eligible bool
+	Mode     string
+	Reason   string
+}
+
 func legacyDirectRelationshipEdgeOrderPolicy(edges []legacyDirectRelationshipEdge, rowsByRole map[string][]qsbridge.QuantaRownum, applyRecommended bool) legacyDirectRelationshipEdgeOrderPolicyResult {
 	result := legacyDirectRelationshipEdgeOrderPolicyResult{
 		Candidates:          make([]legacyDirectRelationshipEdgeOrderCandidate, 0, len(edges)),
@@ -106,6 +112,54 @@ func legacyDirectRelationshipEdgeOrderPolicy(edges []legacyDirectRelationshipEdg
 		}
 	}
 	return result
+}
+
+func legacyDirectRelationshipSinglePassParentToChildPolicy(candidates []legacyDirectRelationshipEdgeOrderCandidate) legacyDirectRelationshipSinglePassPolicyResult {
+	result := legacyDirectRelationshipSinglePassPolicyResult{
+		Mode:   "single_pass_parent_to_child",
+		Reason: "topological_parent_to_child",
+	}
+	if len(candidates) == 0 {
+		result.Reason = "no_edges"
+		return result
+	}
+	for i, candidate := range candidates {
+		edge := candidate.Edge
+		parentKey := edge.parentKey()
+		childKey := edge.childKey()
+		if parentKey == "" || childKey == "" {
+			result.Reason = "missing_role_key"
+			return result
+		}
+		if parentKey == childKey {
+			result.Reason = "self_edge"
+			return result
+		}
+		if edge.sqlKind != qsbridge.JoinKindInner || edge.leftOuterPreservesParent {
+			result.Reason = "non_inner_join"
+			return result
+		}
+		for dependencyIndex, dependency := range candidates {
+			if dependencyIndex == i {
+				continue
+			}
+			if dependency.Edge.childKey() == parentKey && dependencyIndex > i {
+				result.Reason = "dependency_after_consumer"
+				return result
+			}
+		}
+	}
+	result.Eligible = true
+	return result
+}
+
+func legacyDirectRelationshipSinglePassPolicyProbes(prefix string, policy legacyDirectRelationshipSinglePassPolicyResult, applied bool) []ExecutionProbe {
+	return []ExecutionProbe{
+		legacyDirectRelationshipProbe(prefix+"single_pass_mode", policy.Mode),
+		legacyDirectRelationshipProbe(prefix+"single_pass_eligible", strconv.FormatBool(policy.Eligible)),
+		legacyDirectRelationshipProbe(prefix+"single_pass_reason", policy.Reason),
+		legacyDirectRelationshipProbe(prefix+"single_pass_applied", strconv.FormatBool(applied)),
+	}
 }
 
 func legacyDirectRelationshipEdgeOrderExecutionCandidates(edges []legacyDirectRelationshipEdge, policy legacyDirectRelationshipEdgeOrderPolicyResult) []legacyDirectRelationshipEdgeOrderCandidate {
