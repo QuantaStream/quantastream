@@ -25,7 +25,29 @@ type legacyDirectRelationshipQ3OrderRevenueGroup struct {
 	revenue  float64
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueResult(ctx context.Context, request ExecutionRequest, sink string, rownums []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fields []qsbridge.QuantaProjectionField, alignedRows map[string][]qsbridge.QuantaRownum, alignmentElapsed time.Duration, result ExecutionResult) (ExecutionResult, bool, error) {
+type legacyDirectRelationshipQ3AttributionSnapshot struct {
+	graphReductionElapsed              time.Duration
+	alignmentElapsed                   time.Duration
+	preAggregateMaterializationElapsed time.Duration
+	preAggregateElapsed                time.Duration
+	groupedRowsElapsed                 time.Duration
+	havingElapsed                      time.Duration
+	finalMaterializationElapsed        time.Duration
+	sortElapsed                        time.Duration
+	outputElapsed                      time.Duration
+	limitElapsed                       time.Duration
+	inputLineRows                      int
+	inputOrderRows                     int
+	preAggregateGroups                 int
+	postHavingGroups                   int
+	finalMaterializationRows           int
+	finalMaterializationFields         int
+	outputRows                         int
+	preAggregateProbes                 []ExecutionProbe
+	finalMaterializationProbes         []ExecutionProbe
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueResult(ctx context.Context, request ExecutionRequest, sink string, rownums []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fields []qsbridge.QuantaProjectionField, alignedRows map[string][]qsbridge.QuantaRownum, graphReductionElapsed time.Duration, alignmentElapsed time.Duration, result ExecutionResult) (ExecutionResult, bool, error) {
 	if !strings.EqualFold(sink, "lineitem") {
 		return result, false, nil
 	}
@@ -114,6 +136,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	result.Probes = append(result.Probes,
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_late_materialization", "q3_order_revenue_projection"),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_aligned_roles", legacyDirectRelationshipAlignedRoleDebug(alignedRows)),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_graph_reduction_elapsed", graphReductionElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_alignment_elapsed", alignmentElapsed.String()),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_rows", strconv.Itoa(len(lineRows))),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_groups", strconv.Itoa(len(groupsByOrder))),
@@ -131,6 +154,27 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	)
 	result.Probes = append(result.Probes, priceProbes...)
 	result.Probes = append(result.Probes, finalProbes...)
+	result.Probes = append(result.Probes, legacyDirectRelationshipQ3AttributionProbes(legacyDirectRelationshipQ3AttributionSnapshot{
+		graphReductionElapsed:              graphReductionElapsed,
+		alignmentElapsed:                   alignmentElapsed,
+		preAggregateMaterializationElapsed: preAggregateMaterializationElapsed,
+		preAggregateElapsed:                preAggregateElapsed,
+		groupedRowsElapsed:                 groupedRowsElapsed,
+		havingElapsed:                      havingElapsed,
+		finalMaterializationElapsed:        finalMaterializationElapsed,
+		sortElapsed:                        sortElapsed,
+		outputElapsed:                      outputElapsed,
+		limitElapsed:                       limitElapsed,
+		inputLineRows:                      len(lineRows),
+		inputOrderRows:                     len(orderRows),
+		preAggregateGroups:                 len(groupsByOrder),
+		postHavingGroups:                   postHavingGroups,
+		finalMaterializationRows:           len(groupRows),
+		finalMaterializationFields:         len(plan.finalFields),
+		outputRows:                         outputRowSet.CandidateCount(),
+		preAggregateProbes:                 priceProbes,
+		finalMaterializationProbes:         finalProbes,
+	})...)
 	result.Probes = append(result.Probes, directBitmapGroupedAggregateProbes(directBitmapGroupedAggregateProbe{
 		CandidateRows:    len(groupRows),
 		GroupCount:       len(groupRows),
@@ -149,6 +193,63 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	})...)
 	result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
 	return result, true, nil
+}
+
+func legacyDirectRelationshipQ3AttributionProbes(snapshot legacyDirectRelationshipQ3AttributionSnapshot) []ExecutionProbe {
+	storageTotal := legacyDirectRelationshipProbeDuration(snapshot.preAggregateProbes, "phase_graph_grouped_aggregate_preagg_storage_elapsed")
+	preAggregateTotal := snapshot.preAggregateMaterializationElapsed + snapshot.preAggregateElapsed
+	if storageTotal > 0 {
+		preAggregateTotal = storageTotal
+	}
+	finalSortOutput := snapshot.sortElapsed + snapshot.outputElapsed + snapshot.limitElapsed
+	finalStageTotal := snapshot.groupedRowsElapsed + snapshot.havingElapsed + snapshot.finalMaterializationElapsed + finalSortOutput
+	knownTotal := snapshot.graphReductionElapsed + snapshot.alignmentElapsed + preAggregateTotal + finalStageTotal
+	storageLookup := legacyDirectRelationshipProbeDuration(snapshot.preAggregateProbes, "phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed")
+	storageProjection := legacyDirectRelationshipProbeDuration(snapshot.preAggregateProbes, "phase_graph_grouped_aggregate_preagg_storage_projection_elapsed")
+	storageAggregate := legacyDirectRelationshipProbeDuration(snapshot.preAggregateProbes, "phase_graph_grouped_aggregate_preagg_storage_aggregate_elapsed")
+	finalFetch := legacyDirectRelationshipProbeDurationBySuffix(snapshot.finalMaterializationProbes, "_fetch_elapsed")
+	finalAttach := legacyDirectRelationshipProbeDurationBySuffix(snapshot.finalMaterializationProbes, "_attach_elapsed")
+	return []ExecutionProbe{
+		legacyDirectRelationshipProbe("q3_attribution_scope", "graph_reduction_to_output"),
+		legacyDirectRelationshipProbe("q3_attribution_input_line_rows", strconv.Itoa(snapshot.inputLineRows)),
+		legacyDirectRelationshipProbe("q3_attribution_input_order_rows", strconv.Itoa(snapshot.inputOrderRows)),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_groups", strconv.Itoa(snapshot.preAggregateGroups)),
+		legacyDirectRelationshipProbe("q3_attribution_post_having_groups", strconv.Itoa(snapshot.postHavingGroups)),
+		legacyDirectRelationshipProbe("q3_attribution_final_materialization_rows", strconv.Itoa(snapshot.finalMaterializationRows)),
+		legacyDirectRelationshipProbe("q3_attribution_final_materialization_fields", strconv.Itoa(snapshot.finalMaterializationFields)),
+		legacyDirectRelationshipProbe("q3_attribution_output_rows", strconv.Itoa(snapshot.outputRows)),
+		legacyDirectRelationshipProbe("q3_attribution_graph_reduction_elapsed", snapshot.graphReductionElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_alignment_elapsed", snapshot.alignmentElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_total_elapsed", preAggregateTotal.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_materialization_elapsed", snapshot.preAggregateMaterializationElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_accumulate_elapsed", snapshot.preAggregateElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_storage_elapsed", storageTotal.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_storage_lookup_elapsed", storageLookup.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_storage_projection_elapsed", storageProjection.String()),
+		legacyDirectRelationshipProbe("q3_attribution_preagg_storage_aggregate_elapsed", storageAggregate.String()),
+		legacyDirectRelationshipProbe("q3_attribution_final_stage_elapsed", finalStageTotal.String()),
+		legacyDirectRelationshipProbe("q3_attribution_final_materialization_elapsed", snapshot.finalMaterializationElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_final_fetch_elapsed", finalFetch.String()),
+		legacyDirectRelationshipProbe("q3_attribution_final_attach_elapsed", finalAttach.String()),
+		legacyDirectRelationshipProbe("q3_attribution_group_row_build_elapsed", snapshot.groupedRowsElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_having_elapsed", snapshot.havingElapsed.String()),
+		legacyDirectRelationshipProbe("q3_attribution_sort_output_elapsed", finalSortOutput.String()),
+		legacyDirectRelationshipProbe("q3_attribution_known_elapsed", knownTotal.String()),
+	}
+}
+
+func legacyDirectRelationshipProbeDurationBySuffix(probes []ExecutionProbe, suffix string) time.Duration {
+	var total time.Duration
+	for _, probe := range probes {
+		if probe.Section != "relationship_join" || !strings.HasSuffix(probe.Name, suffix) {
+			continue
+		}
+		duration, err := time.ParseDuration(probe.Value)
+		if err == nil {
+			total += duration
+		}
+	}
+	return total
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenuePreAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error) {

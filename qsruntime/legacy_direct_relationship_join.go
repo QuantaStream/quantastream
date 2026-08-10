@@ -1095,6 +1095,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if len(request.Materialization.ProjectionFields) > 0 {
 		fields = request.Materialization.ProjectionFields
 	}
+	graphReductionElapsed := legacyDirectRelationshipProbeDuration(result.Probes, "phase_graph_reduction_elapsed")
 	alignmentStart := time.Now()
 	alignedRows, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
 	alignmentElapsed := time.Since(alignmentStart)
@@ -1105,7 +1106,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if lateResult, handled, err := e.legacyDirectRelationshipQ18LargeOrderProjectionResult(ctx, request, sink, rownums, edges, fields, alignedRows, alignmentElapsed, result); handled || err != nil {
 		return lateResult, err
 	}
-	if preAggResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, alignmentElapsed, result); handled || err != nil {
+	if preAggResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, graphReductionElapsed, alignmentElapsed, result); handled || err != nil {
 		return preAggResult, err
 	}
 	tupleExpansionStart := time.Now()
@@ -3948,6 +3949,19 @@ func relationshipTupleAggregateAlias(request ExecutionRequest) string {
 
 func legacyDirectRelationshipProbe(name string, value string) ExecutionProbe {
 	return ExecutionProbe{Section: "relationship_join", Name: name, Value: value}
+}
+
+func legacyDirectRelationshipProbeDuration(probes []ExecutionProbe, name string) time.Duration {
+	for _, probe := range probes {
+		if probe.Section != "relationship_join" || probe.Name != name {
+			continue
+		}
+		duration, err := time.ParseDuration(probe.Value)
+		if err == nil {
+			return duration
+		}
+	}
+	return 0
 }
 
 func legacyDirectRelationshipPrefixedProbes(prefix string, probes []ExecutionProbe) []ExecutionProbe {

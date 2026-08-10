@@ -3901,6 +3901,7 @@ func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T
 		fields,
 		alignedRows,
 		0,
+		0,
 		ExecutionResult{},
 	)
 	if err != nil {
@@ -3937,6 +3938,9 @@ func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_late_materialization", "q3_order_revenue_projection")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_rows", "5")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_scope", "graph_reduction_to_output")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_input_line_rows", "5")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_final_materialization_rows", "3")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "relationship_preaggregate")
 }
 
@@ -4031,6 +4035,7 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 		fields,
 		alignedRows,
 		0,
+		0,
 		ExecutionResult{},
 	)
 	if err != nil {
@@ -4064,6 +4069,8 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_mode", "storage_relationship_sum")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_mode", "reverse_artifact_sum")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_preagg_groups", "3")
+	assertExecutionProbeName(t, result.Probes, "relationship_join", "q3_attribution_preagg_storage_elapsed")
 }
 
 func TestLegacyDirectRelationshipSiblingRootMaterializedValuesHydratesTupleRoles(t *testing.T) {
