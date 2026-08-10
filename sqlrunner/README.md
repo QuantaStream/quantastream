@@ -302,6 +302,12 @@ TPC-H checkpoint intended for repeatable performance comparisons. Override
 `SUITE_FILE` when intentionally running a broader roadmap suite such as
 `../tpc-h-benchmark/sqltests/tpch_queries.yaml`.
 
+For SF1 benchmark comparisons, use
+`../tpc-h-benchmark/sqltests/tpch_benchmark_readonly_sf1_scale_safe.yaml`. It
+keeps the same compact read-only query mix but uses SF1-safe expectations and a
+distinct suite name so benchmark reports can be compared against SF1 MySQL
+reference runs.
+
 Generated benchmark artifacts should stay under ignored local paths unless a
 specific report is intentionally promoted. Render a human-readable summary with:
 
