@@ -18,22 +18,26 @@ type directBitmapGroupedAggregateRow struct {
 }
 
 type directBitmapGroupedAggregateProbe struct {
-	CandidateRows      int
-	GroupCount         int
-	PostHavingGroups   int
-	SortInputGroups    int
-	Limit              int
-	FinalRows          int
-	TopNCandidate      bool
-	OrderStrategy      string
-	GroupStrategy      string
-	GroupValuesTime    time.Duration
-	AggregateInputTime time.Duration
-	GroupTime          time.Duration
-	HavingTime         time.Duration
-	OrderTime          time.Duration
-	OutputTime         time.Duration
-	LimitTime          time.Duration
+	CandidateRows                int
+	GroupExpressionCount         int
+	ComputedGroupExpressionCount int
+	GroupExpressionShapes        string
+	GroupExpressionFields        string
+	GroupCount                   int
+	PostHavingGroups             int
+	SortInputGroups              int
+	Limit                        int
+	FinalRows                    int
+	TopNCandidate                bool
+	OrderStrategy                string
+	GroupStrategy                string
+	GroupValuesTime              time.Duration
+	AggregateInputTime           time.Duration
+	GroupTime                    time.Duration
+	HavingTime                   time.Duration
+	OrderTime                    time.Duration
+	OutputTime                   time.Duration
+	LimitTime                    time.Duration
 }
 
 type directBitmapGroupExpression struct {
@@ -58,6 +62,10 @@ func directBitmapMaterializedGroupedAggregateResult(request ExecutionRequest, ma
 	if result.Diagnostics.BlocksNative() {
 		return result
 	}
+	probe.GroupExpressionCount = len(groupExpressions)
+	probe.ComputedGroupExpressionCount = directBitmapComputedGroupExpressionCount(groupExpressions)
+	probe.GroupExpressionShapes = directBitmapGroupExpressionShapes(groupExpressions)
+	probe.GroupExpressionFields = directBitmapGroupExpressionFields(groupExpressions)
 	groupValuesStart := time.Now()
 	groupValues, diagnostics := directBitmapGroupValueColumns(materialized, groupExpressions)
 	probe.GroupValuesTime = time.Since(groupValuesStart)
@@ -118,6 +126,10 @@ func directBitmapMaterializedGroupedAggregateResult(request ExecutionRequest, ma
 func directBitmapGroupedAggregateProbes(probe directBitmapGroupedAggregateProbe) []ExecutionProbe {
 	return []ExecutionProbe{
 		{Section: "grouped_aggregate", Name: "candidate_rows", Value: strconv.Itoa(probe.CandidateRows)},
+		{Section: "grouped_aggregate", Name: "group_expression_count", Value: strconv.Itoa(probe.GroupExpressionCount)},
+		{Section: "grouped_aggregate", Name: "group_expression_computed_count", Value: strconv.Itoa(probe.ComputedGroupExpressionCount)},
+		{Section: "grouped_aggregate", Name: "group_expression_shapes", Value: probe.GroupExpressionShapes},
+		{Section: "grouped_aggregate", Name: "group_expression_fields", Value: probe.GroupExpressionFields},
 		{Section: "grouped_aggregate", Name: "groups", Value: strconv.Itoa(probe.GroupCount)},
 		{Section: "grouped_aggregate", Name: "post_having_groups", Value: strconv.Itoa(probe.PostHavingGroups)},
 		{Section: "grouped_aggregate", Name: "sort_input_groups", Value: strconv.Itoa(probe.SortInputGroups)},
@@ -807,6 +819,63 @@ func directBitmapGroupExpressions(groupBy []qsbridge.Expr) ([]directBitmapGroupE
 		groupExpressions = append(groupExpressions, directBitmapGroupExpression{Expr: expr, Field: refs[0]})
 	}
 	return groupExpressions, nil
+}
+
+func directBitmapComputedGroupExpressionCount(groupExpressions []directBitmapGroupExpression) int {
+	count := 0
+	for _, groupExpression := range groupExpressions {
+		if !directBitmapGroupExpressionIsField(groupExpression) {
+			count++
+		}
+	}
+	return count
+}
+
+func directBitmapGroupExpressionShapes(groupExpressions []directBitmapGroupExpression) string {
+	shapes := make([]string, 0, len(groupExpressions))
+	for _, groupExpression := range groupExpressions {
+		shapes = append(shapes, directBitmapGroupExpressionShape(groupExpression.Expr))
+	}
+	return strings.Join(shapes, ";")
+}
+
+func directBitmapGroupExpressionFields(groupExpressions []directBitmapGroupExpression) string {
+	fields := make([]string, 0, len(groupExpressions))
+	for _, groupExpression := range groupExpressions {
+		fields = append(fields, directBitmapGroupExpressionFieldLabel(groupExpression.Field))
+	}
+	return strings.Join(fields, ";")
+}
+
+func directBitmapGroupExpressionShape(expr qsbridge.Expr) string {
+	if field, ok := directBitmapExprField(expr); ok {
+		return "field:" + directBitmapGroupExpressionFieldLabel(field)
+	}
+	if call, ok := directBitmapCallExpr(expr); ok {
+		args := make([]string, 0, len(call.Args))
+		for _, arg := range call.Args {
+			args = append(args, directBitmapGroupExpressionShape(arg))
+		}
+		return "call:" + strings.ToLower(call.Name) + "(" + strings.Join(args, ",") + ")"
+	}
+	if _, ok := directBitmapLiteralExpr(expr); ok {
+		return "literal"
+	}
+	if binary, ok := directBitmapBinaryExpr(expr); ok {
+		return "binary:" + string(binary.Op)
+	}
+	return "expr"
+}
+
+func directBitmapGroupExpressionFieldLabel(field qsbridge.FieldRef) string {
+	name := field.Name
+	if name == "" {
+		name = field.PhysicalName
+	}
+	if ref := field.Table.RefName(); ref != "" {
+		return ref + "." + name
+	}
+	return name
 }
 
 func directBitmapGroupValueColumns(materialized qsbridge.QuantaProjectedRowSet, groupExpressions []directBitmapGroupExpression) ([][]qsbridge.ResultCell, qsbridge.DiagnosticSet) {

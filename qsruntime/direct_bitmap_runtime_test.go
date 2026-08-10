@@ -2552,6 +2552,10 @@ func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T)
 		t.Fatalf("second row = %#v, want part 2 value 2000", chunk.Rows[1])
 	}
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "candidate_rows", "6")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_count", "1")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_computed_count", "0")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_shapes", "field:partsupp.ps_partkey")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_fields", "partsupp.ps_partkey")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "groups", "5")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "post_having_groups", "4")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "sort_input_groups", "4")
@@ -2943,6 +2947,10 @@ func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedYearGroup(t *te
 	if got := chunk.Rows[1][2].Value; got != float64(25) {
 		t.Fatalf("second average = %v, want 25", got)
 	}
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_count", "1")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_computed_count", "1")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_shapes", "call:year(field:o.o_orderdate)")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_fields", "o.o_orderdate")
 }
 
 func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedSubstringGroup(t *testing.T) {

@@ -750,6 +750,52 @@ cluster topology changes, and eventually multiple proxies. Cache fragments
 should be tagged with table, shard, schema, and data-version metadata rather
 than simple TTL alone.
 
+### AWS SF1 MySQL Comparison Checkpoint
+
+An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware
+using `tpch_benchmark_readonly_sf1_scale_safe`. The benchmark artifacts were
+preserved under the local ignored AWS benchmark artifact directory on the
+benchmark runner, including the MySQL reference JSON, QuantaStream target JSON,
+comparison markdown, and `/tmp/aws-sf1-slow-path-probes.log`.
+
+| Case | MySQL Median | QuantaStream Median | Ratio | Read |
+| --- | ---: | ---: | ---: | --- |
+| lineitem seed count | 518ms | 56ms | 0.11x | QS seed bitmap win |
+| Q6 discounted revenue | 1406ms | 474ms | 0.34x | QS selective bitmap/date-filter win |
+| Q5 combined graph regional count | 8872ms | 2304ms | 0.26x | QS relationship-vector win |
+| Q3 grouped revenue limit | 6150ms | 6193ms | 1.01x | roughly tied |
+| Q12 same-row date comparison | 1674ms | 2229ms | 1.33x | close, still same-row/date-path work |
+| Q19 formal discounted revenue | 115ms | 393ms | 3.42x | MySQL small-selective join win |
+| Q16 part filter count | 69ms | 295ms | 4.28x | MySQL small-dimension filter win |
+| Q1 grouped lineitem shape | 2368ms | 11536ms | 4.87x | broad grouping/materialization target |
+| shipdate year group count | 1448ms | 12340ms | 8.52x | broad residual function grouping target |
+| Q21 sibling exists count | 7060ms | 20465ms | 2.90x | correlated sibling semi-join target |
+
+The result is encouraging but clarifies the next optimization boundary.
+QuantaStream is already competitive or better when bitmap seeds, selective
+filters, and relationship vectors reduce the candidate domain. The weak spots
+are broad grouping/materialization paths and the repeated-alias Q21 sibling
+membership path.
+
+Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` for focused
+follow-up profiling. It keeps the three slow SF1 shapes scale-variable so the
+same suite can run against SF0.01, SF0.05, or SF1 while emitting grouped
+aggregate and relationship probes through `-capture_profile`.
+
+The local SF0.01 slow-path run is a useful miniature of the same problem. In
+that run, `functions.shipdate_year_group_count` spent about 111ms of a 186ms
+first run reading `lineitem.l_shipdate` for 60,175 rows before the grouped
+aggregate could evaluate `year(l_shipdate)`. That points to a future physical
+expression-projection path for coarse `TimestampBSI` functions such as `year`,
+`monthofyear`, and similar bucketing operations. The grouped aggregate reducer
+is not the interesting bottleneck until storage can return derived grouping
+values directly.
+
+The same local profile also keeps Q21 visible as the repeated-alias sibling
+membership canary. At SF0.01, the slowest Q21 run spent most of its time in
+`correlated_sibling_bsi_right_read_elapsed`, which matches the SF1 result where
+Q21 remains the largest comparison gap.
+
 ## Time-Quantized Shard Planning
 
 TPC-H date fields create many time-quantized shards even at small scale

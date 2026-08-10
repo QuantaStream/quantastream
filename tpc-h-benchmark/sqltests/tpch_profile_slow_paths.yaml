@@ -1,0 +1,52 @@
+version: 1
+name: "tpch_profile_slow_paths"
+
+tests:
+  - id: "tpch_profile_slow_paths.q1.grouped_lineitem_shape"
+    status: supported
+    issue: "scale profile - broad lineitem grouping over returnflag/linestatus"
+    timeout: 180s
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q1, single-table, group-by, count, profile, scale-variable, slow-path]
+    sql: |-
+      select l_returnflag, l_linestatus, count(*) as count_order
+      from lineitem
+      group by l_returnflag, l_linestatus
+    expect:
+      row_count: 4
+
+  - id: "tpch_profile_slow_paths.functions.shipdate_year_group_count"
+    status: supported
+    issue: "scale profile - broad residual date-function grouping"
+    timeout: 180s
+    kind: query
+    order: rowsort
+    capabilities: [sql-functions, date-function, residual-group-by, profile, scale-variable, slow-path]
+    sql: |-
+      select year(l_shipdate) as l_year, count(*) as line_count
+      from lineitem
+      where l_shipdate >= '1992-01-01'
+      group by year(l_shipdate)
+      order by l_year
+    expect:
+      row_count: 7
+
+  - id: "tpch_profile_slow_paths.q21.sibling_exists_count"
+    status: supported
+    issue: "scale profile - correlated same-order sibling semi-join"
+    timeout: 180s
+    kind: query
+    capabilities: [tpch-q21, correlated-exists, repeated-table-alias, sibling-domain, semi-join, profile, scale-variable, slow-path]
+    sql: |-
+      select count(*) as late_line_with_other_supplier_count
+      from lineitem as l1
+      where l1.l_receiptdate > l1.l_commitdate
+        and exists (
+          select *
+          from lineitem as l2
+          where l2.l_orderkey = l1.l_orderkey
+            and l2.l_suppkey <> l1.l_suppkey
+        )
+    expect:
+      row_count: 1
