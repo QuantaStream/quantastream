@@ -2559,7 +2559,7 @@ func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T)
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "final_rows", "2")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "topn_candidate", "true")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "order_strategy", "heap_topn")
-	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "streaming")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "index_replay")
 	assertExecutionProbeName(t, result.Probes, "direct_bitmap", "phase_bitmap_query_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_materialization_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_residual_elapsed")
@@ -2570,6 +2570,41 @@ func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T)
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_order_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_output_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_limit_elapsed")
+}
+
+func TestDirectBitmapGroupedAggregateStreamingCandidateRequiresLargeSimpleShape(t *testing.T) {
+	table := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	orderKey := qsbridge.FieldRef{Table: table, Name: "l_orderkey", Type: qsbridge.DataTypeInt}
+	extendedPrice := qsbridge.FieldRef{Table: table, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
+	request := ExecutionRequest{
+		GroupBy: []qsbridge.Expr{qsbridge.Field(orderKey)},
+		SQLAggregates: []qsbridge.Aggregate{{
+			Function: "sum",
+			Input:    qsbridge.Field(extendedPrice),
+			Alias:    "revenue",
+			Type:     qsbridge.DataTypeFloat,
+		}},
+	}
+	largeGroupValues := [][]qsbridge.ResultCell{make([]qsbridge.ResultCell, directBitmapStreamingGroupedAggregateMinRows)}
+	largeAggregateInputs := [][]qsbridge.ResultCell{make([]qsbridge.ResultCell, directBitmapStreamingGroupedAggregateMinRows)}
+	if !directBitmapStreamingGroupedAggregateCandidate(request, largeGroupValues, largeAggregateInputs) {
+		t.Fatalf("streaming candidate = false, want true for large simple grouped sum")
+	}
+	smallGroupValues := [][]qsbridge.ResultCell{make([]qsbridge.ResultCell, directBitmapStreamingGroupedAggregateMinRows-1)}
+	if directBitmapStreamingGroupedAggregateCandidate(request, smallGroupValues, largeAggregateInputs) {
+		t.Fatalf("streaming candidate = true, want false below row threshold")
+	}
+	distinct := request
+	distinct.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Mode:     qsbridge.AggregateDistinct,
+		Input:    qsbridge.Field(extendedPrice),
+		Alias:    "distinct_revenue",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	if directBitmapStreamingGroupedAggregateCandidate(distinct, largeGroupValues, largeAggregateInputs) {
+		t.Fatalf("streaming candidate = true, want false for distinct aggregate")
+	}
 }
 
 func assertExecutionProbe(t *testing.T, probes []ExecutionProbe, section string, name string, value string) {

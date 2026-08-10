@@ -41,6 +41,8 @@ type directBitmapGroupExpression struct {
 	Field qsbridge.FieldRef
 }
 
+const directBitmapStreamingGroupedAggregateMinRows = 250000
+
 func directBitmapMaterializedGroupedAggregateResult(request ExecutionRequest, materialized qsbridge.QuantaProjectedRowSet, result ExecutionResult) ExecutionResult {
 	probe := directBitmapGroupedAggregateProbe{
 		CandidateRows: materialized.CandidateCount(),
@@ -153,7 +155,7 @@ func directBitmapGroupedAggregateInputs(aggregates []qsbridge.Aggregate, materia
 }
 
 func directBitmapGroupedAggregateRows(request ExecutionRequest, groupValues [][]qsbridge.ResultCell, aggregateInputs [][]qsbridge.ResultCell) ([]directBitmapGroupedAggregateRow, string, qsbridge.DiagnosticSet) {
-	if directBitmapStreamingGroupedAggregateCandidate(request, aggregateInputs) {
+	if directBitmapStreamingGroupedAggregateCandidate(request, groupValues, aggregateInputs) {
 		rows, diagnostics := directBitmapStreamingGroupedAggregateRows(request, groupValues, aggregateInputs)
 		return rows, "streaming", diagnostics
 	}
@@ -161,7 +163,10 @@ func directBitmapGroupedAggregateRows(request ExecutionRequest, groupValues [][]
 	return rows, "index_replay", diagnostics
 }
 
-func directBitmapStreamingGroupedAggregateCandidate(request ExecutionRequest, aggregateInputs [][]qsbridge.ResultCell) bool {
+func directBitmapStreamingGroupedAggregateCandidate(request ExecutionRequest, groupValues [][]qsbridge.ResultCell, aggregateInputs [][]qsbridge.ResultCell) bool {
+	if len(groupValues) == 0 || len(groupValues[0]) < directBitmapStreamingGroupedAggregateMinRows {
+		return false
+	}
 	if len(request.SQLAggregates) != len(aggregateInputs) {
 		return false
 	}
@@ -206,21 +211,21 @@ func directBitmapStreamingGroupedAggregateRows(request ExecutionRequest, groupVa
 	states := make([]directBitmapStreamingGroupedAggregateState, 0)
 	keys := make([]string, 0)
 	for i := 0; i < groupCount; i++ {
-		cells := make([]qsbridge.ResultCell, len(groupValues))
-		for j := range groupValues {
-			if i >= len(groupValues[j]) {
-				return nil, directBitmapAggregateDiagnostics("group value field has fewer values than grouped candidates")
-			}
-			cells[j] = groupValues[j][i]
+		key, diagnostics := directBitmapGroupValuesKeyAt(groupValues, i)
+		if diagnostics.BlocksNative() {
+			return nil, diagnostics
 		}
-		key := directBitmapGroupCellsKey(cells)
 		stateIndex, ok := stateByKey[key]
 		if !ok {
+			cells, diagnostics := directBitmapGroupValueCellsAt(groupValues, i)
+			if diagnostics.BlocksNative() {
+				return nil, diagnostics
+			}
 			stateIndex = len(states)
 			stateByKey[key] = stateIndex
 			keys = append(keys, key)
 			states = append(states, directBitmapStreamingGroupedAggregateState{
-				Groups: append([]qsbridge.ResultCell(nil), cells...),
+				Groups: cells,
 				Aggs:   make([]directBitmapStreamingGroupedAggregateAccumulator, len(request.SQLAggregates)),
 			})
 		}
@@ -304,13 +309,16 @@ func directBitmapGroupedAggregateRowsByIndexReplay(request ExecutionRequest, gro
 	groupIndexes := make(map[string][]int)
 	groupCells := make(map[string][]qsbridge.ResultCell)
 	for i := 0; i < len(groupValues[0]); i++ {
-		cells := make([]qsbridge.ResultCell, len(groupValues))
-		for j := range groupValues {
-			cells[j] = groupValues[j][i]
+		key, diagnostics := directBitmapGroupValuesKeyAt(groupValues, i)
+		if diagnostics.BlocksNative() {
+			return nil, diagnostics
 		}
-		key := directBitmapGroupCellsKey(cells)
 		groupIndexes[key] = append(groupIndexes[key], i)
 		if _, ok := groupCells[key]; !ok {
+			cells, diagnostics := directBitmapGroupValueCellsAt(groupValues, i)
+			if diagnostics.BlocksNative() {
+				return nil, diagnostics
+			}
 			groupCells[key] = cells
 		}
 	}
@@ -1098,6 +1106,37 @@ func directBitmapGroupCellsKey(cells []qsbridge.ResultCell) string {
 		builder.WriteString(fmt.Sprint(cell.Value))
 	}
 	return builder.String()
+}
+
+func directBitmapGroupValuesKeyAt(groupValues [][]qsbridge.ResultCell, row int) (string, qsbridge.DiagnosticSet) {
+	if len(groupValues) == 0 {
+		return "", nil
+	}
+	var builder strings.Builder
+	for i := range groupValues {
+		if row >= len(groupValues[i]) {
+			return "", directBitmapAggregateDiagnostics("group value field has fewer values than grouped candidates")
+		}
+		if i > 0 {
+			builder.WriteByte('\x1f')
+		}
+		cell := groupValues[i][row]
+		builder.WriteString(string(cell.Kind))
+		builder.WriteByte(':')
+		builder.WriteString(fmt.Sprint(cell.Value))
+	}
+	return builder.String(), nil
+}
+
+func directBitmapGroupValueCellsAt(groupValues [][]qsbridge.ResultCell, row int) ([]qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	cells := make([]qsbridge.ResultCell, len(groupValues))
+	for i := range groupValues {
+		if row >= len(groupValues[i]) {
+			return nil, directBitmapAggregateDiagnostics("group value field has fewer values than grouped candidates")
+		}
+		cells[i] = groupValues[i][row]
+	}
+	return cells, nil
 }
 
 func directBitmapCellEqual(left qsbridge.ResultCell, right qsbridge.ResultCell) bool {
