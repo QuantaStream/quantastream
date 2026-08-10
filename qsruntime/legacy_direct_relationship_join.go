@@ -1815,6 +1815,9 @@ func legacyDirectRelationshipPruneRedundantParentEdges(request ExecutionRequest,
 		}
 	}
 	requiredRoles := legacyDirectRelationshipRequiredGraphRoles(request)
+	if sinkRole, ok := legacyDirectRelationshipRequiredSinkRoleForCountGraph(request, edges); ok {
+		requiredRoles[strings.ToLower(sinkRole)] = struct{}{}
+	}
 	requiredPathEdges := legacyDirectRelationshipRequiredPathEdges(edges, requiredRoles)
 	pruned := 0
 	result := make([]legacyDirectRelationshipEdge, 0, len(edges))
@@ -1848,9 +1851,35 @@ func legacyDirectRelationshipCanPruneEdgesForResult(request ExecutionRequest, ed
 		return true
 	}
 	if directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
-		return false
+		_, ok := legacyDirectRelationshipRequiredSinkRoleForCountGraph(request, edges)
+		return ok
 	}
 	return true
+}
+
+func legacyDirectRelationshipRequiredSinkRoleForCountGraph(request ExecutionRequest, edges []legacyDirectRelationshipEdge) (string, bool) {
+	if len(edges) <= 1 || len(request.SQLAggregates) == 0 {
+		return "", false
+	}
+	if !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) ||
+		directBitmapHasResidualScanPredicates(request) ||
+		!request.NativePredicates.Empty() {
+		return "", false
+	}
+	for _, edge := range edges {
+		if edge.sqlKind != qsbridge.JoinKindInner || edge.leftOuterPreservesParent {
+			return "", false
+		}
+		if !edge.capabilities.Has(qsbridge.RelationshipCapabilityJoinReduction) &&
+			!edge.capabilities.Has(qsbridge.RelationshipCapabilityParentLookup) {
+			return "", false
+		}
+	}
+	sinkRole, _, diagnostics := legacyDirectRelationshipGraphSink(edges)
+	if diagnostics.BlocksNative() || sinkRole == "" {
+		return "", false
+	}
+	return sinkRole, true
 }
 
 func legacyDirectRelationshipRequiredPathEdges(edges []legacyDirectRelationshipEdge, requiredRoles map[string]struct{}) map[int]struct{} {

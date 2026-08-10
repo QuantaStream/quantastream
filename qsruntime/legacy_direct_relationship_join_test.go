@@ -4090,6 +4090,43 @@ func TestLegacyDirectRelationshipPruneRedundantParentEdgesKeepsCountStarTupleGra
 	assertExecutionProbe(t, probes, "relationship_join", "graph_prune_reason", "result_requires_join_tuple_multiplicity")
 }
 
+func TestLegacyDirectRelationshipPruneRedundantParentEdgesRetainsSinkPathForFKBackedCountStarTupleGraph(t *testing.T) {
+	region := qsbridge.TableInstance{Table: "region", Alias: "r"}
+	name := qsbridge.FieldRef{Table: region, Name: "r_name", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "q5_graph_count", Type: qsbridge.DataTypeInt}}
+	request.Predicates = []qsbridge.Predicate{{
+		Expr: qsbridge.Binary(
+			qsbridge.BinaryOpEqual,
+			qsbridge.Field(name),
+			qsbridge.Literal(qsbridge.ValueString, "ASIA"),
+		),
+		Scope: qsbridge.PredicateScopeWhere,
+	}}
+	capabilities := qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityJoinReduction}
+	edges := []legacyDirectRelationshipEdge{
+		{parentRole: "c", parentTable: "customer", childRole: "o", childTable: "orders", sqlKind: qsbridge.JoinKindInner, capabilities: capabilities},
+		{parentRole: "o", parentTable: "orders", childRole: "l", childTable: "lineitem", sqlKind: qsbridge.JoinKindInner, capabilities: capabilities},
+		{parentRole: "s", parentTable: "supplier", childRole: "l", childTable: "lineitem", sqlKind: qsbridge.JoinKindInner, capabilities: capabilities},
+		{parentRole: "n", parentTable: "nation", childRole: "s", childTable: "supplier", sqlKind: qsbridge.JoinKindInner, capabilities: capabilities},
+		{parentRole: "r", parentTable: "region", childRole: "n", childTable: "nation", sqlKind: qsbridge.JoinKindInner, capabilities: capabilities},
+	}
+
+	pruned, probes := legacyDirectRelationshipPruneRedundantParentEdges(request, edges)
+
+	if len(pruned) != 3 {
+		t.Fatalf("pruned edges = %d, want supplier sink path of 3 retained: %#v", len(pruned), pruned)
+	}
+	for i, want := range []string{"s", "n", "r"} {
+		if pruned[i].parentRole != want {
+			t.Fatalf("pruned[%d].parentRole = %q, want %q in retained sink path: %#v", i, pruned[i].parentRole, want, pruned)
+		}
+	}
+	assertExecutionProbe(t, probes, "relationship_join", "graph_pruned_edges", "2")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_prune_applied", "true")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_required_roles", "l,r,region")
+}
+
 func TestLegacyDirectRelationshipPruneRedundantParentEdgesKeepsGroupedCountStarTupleGraph(t *testing.T) {
 	customer := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	city := qsbridge.FieldRef{Table: customer, Name: "city", Type: qsbridge.DataTypeString}
