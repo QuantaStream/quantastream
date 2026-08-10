@@ -142,6 +142,7 @@ func ProjectionMaterializationSelectionPlanForRequest(request qsbridge.Projectio
 	for _, materializationRequest := range request.Requests {
 		nativeRequest := cloneMaterializationRequestWithoutProjectionFields(materializationRequest)
 		compatRequest := cloneMaterializationRequestWithoutProjectionFields(materializationRequest)
+		nativeRequest.ProjectionExpressions = append(nativeRequest.ProjectionExpressions, materializationRequest.ProjectionExpressions...)
 		for _, field := range materializationRequest.ProjectionFields {
 			if capabilityIndex >= len(plan.Report.Fields) {
 				break
@@ -168,6 +169,7 @@ func cloneMaterializationRequestWithoutProjectionFields(request qsbridge.QuantaM
 	cloned := request
 	cloned.Rownums = append([]qsbridge.QuantaRownum(nil), request.Rownums...)
 	cloned.ProjectionFields = nil
+	cloned.ProjectionExpressions = nil
 	return cloned
 }
 

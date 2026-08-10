@@ -30,9 +30,32 @@ type NativeProjectionFieldReadResult struct {
 	Probes     []ExecutionProbe
 }
 
+// NativeProjectionExpressionReadRequest is one storage-neutral derived
+// projection read.
+type NativeProjectionExpressionReadRequest struct {
+	Index           string
+	Expression      qsbridge.QuantaProjectionExpression
+	Rownums         []qsbridge.QuantaRownum
+	FromEpochMillis int64
+	ToEpochMillis   int64
+}
+
+// NativeProjectionExpressionReadResult is one derived projection response.
+type NativeProjectionExpressionReadResult struct {
+	Expression qsbridge.QuantaProjectionExpression
+	Values     []qsbridge.ResultCell
+	Probes     []ExecutionProbe
+}
+
 // NativeProjectionFieldReader reads one projected field for candidate rownums.
 type NativeProjectionFieldReader interface {
 	ReadProjectionField(context.Context, NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error)
+}
+
+// NativeProjectionExpressionReader reads derived projections without requiring
+// the caller to materialize source fields into SQL-visible cells first.
+type NativeProjectionExpressionReader interface {
+	ReadProjectionExpression(context.Context, NativeProjectionExpressionReadRequest) (NativeProjectionExpressionReadResult, qsbridge.DiagnosticSet, error)
 }
 
 // NativeProjectionBatchFieldReader optionally reads several projection fields
@@ -390,6 +413,43 @@ func (k NativeProjectionMaterializationKernel) materializeOne(ctx context.Contex
 			Values: values,
 		})
 	}
+	for _, expression := range request.ProjectionExpressions {
+		expressionRequest := NativeProjectionExpressionReadRequest{
+			Index:           request.Index,
+			Expression:      expression,
+			Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			FromEpochMillis: request.FromEpochMillis,
+			ToEpochMillis:   request.ToEpochMillis,
+		}
+		expressionStart := time.Now()
+		expressionResult, expressionDiagnostics, err := k.readProjectionExpression(ctx, expressionRequest)
+		expressionElapsed := time.Since(expressionStart)
+		diagnostics = append(diagnostics, expressionDiagnostics...)
+		item.Probes = append(item.Probes, expressionResult.Probes...)
+		timingProbes = append(timingProbes, nativeProjectionMaterializationExpressionProbe("expression_read_elapsed", expressionElapsed.String(), expressionRequest))
+		if err != nil || diagnostics.BlocksNative() {
+			item.Diagnostics = diagnostics
+			return item, diagnostics, err
+		}
+		values := append([]qsbridge.ResultCell(nil), expressionResult.Values...)
+		if len(values) != len(expressionRequest.Rownums) {
+			diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"native projection expression returned "+strconv.Itoa(len(values))+" values for "+strconv.Itoa(len(expressionRequest.Rownums))+" rownums",
+			))
+			item.Diagnostics = diagnostics
+			return item, diagnostics, nil
+		}
+		output := expressionResult.Expression.Output
+		if output.Field == "" && output.PhysicalName == "" {
+			output = expression.Output
+		}
+		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
+			Field:  output,
+			Values: values,
+		})
+	}
 	item.Probes = append(item.Probes, timingProbes...)
 	item.RowSet = rowSet
 	item.Diagnostics = diagnostics
@@ -448,6 +508,16 @@ func (k NativeProjectionMaterializationKernel) readProjectionFields(ctx context.
 	return results, timings, diagnostics, nil
 }
 
+func (k NativeProjectionMaterializationKernel) readProjectionExpression(ctx context.Context, request NativeProjectionExpressionReadRequest) (NativeProjectionExpressionReadResult, qsbridge.DiagnosticSet, error) {
+	expressionReader, ok := k.Reader.(NativeProjectionExpressionReader)
+	if !ok {
+		return NativeProjectionExpressionReadResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "native projection materialization has no expression reader"),
+		}, nil
+	}
+	return expressionReader.ReadProjectionExpression(ctx, request)
+}
+
 func nativeProjectionMaterializationFieldProbe(name, value string, request qsbridge.QuantaMaterializationRequest, field qsbridge.QuantaProjectionField) ExecutionProbe {
 	fieldName := field.Field
 	if fieldName == "" {
@@ -465,6 +535,15 @@ func nativeProjectionMaterializationFieldProbe(name, value string, request qsbri
 	}
 }
 
+func nativeProjectionMaterializationExpressionProbe(name, value string, request NativeProjectionExpressionReadRequest) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    name,
+		Value:   value,
+		Detail:  nativeProjectionExpressionDetail(request),
+	}
+}
+
 func nativeProjectionValueCacheProbes(request qsbridge.QuantaMaterializationRequest, field qsbridge.QuantaProjectionField, hit bool, mode string, lookup ProjectionValueCacheLookup) []ExecutionProbe {
 	value := "false"
 	if hit {
@@ -476,6 +555,20 @@ func nativeProjectionValueCacheProbes(request qsbridge.QuantaMaterializationRequ
 		nativeProjectionMaterializationFieldProbe("projection_value_cache_covered_rows", strconv.Itoa(lookup.CoveredRows), request, field),
 		nativeProjectionMaterializationFieldProbe("projection_value_cache_missing_rows", strconv.Itoa(lookup.MissingCount()), request, field),
 	}
+}
+
+func nativeProjectionExpressionDetail(request NativeProjectionExpressionReadRequest) string {
+	output := request.Expression.Output.Field
+	if output == "" {
+		output = request.Expression.Output.PhysicalName
+	}
+	if output == "" {
+		output = "expression"
+	}
+	if request.Index != "" {
+		return request.Index + "." + output + " rows=" + strconv.Itoa(len(request.Rownums))
+	}
+	return output + " rows=" + strconv.Itoa(len(request.Rownums))
 }
 
 func nativeProjectionValueCacheDetail(key ProjectionValueCacheKey, rows int) string {
@@ -742,6 +835,9 @@ func (k FallbackProjectionMaterializationKernel) MaterializeProjectionBatches(ct
 		if err != nil || !result.Diagnostics.BlocksNative() || !projectionMaterializationDiagnosticsAreUnsupported(result.Diagnostics) {
 			return result, err
 		}
+		if projectionMaterializationRequestHasExpressions(request) {
+			return result, err
+		}
 		if k.Fallback != nil {
 			fallbackResult, fallbackErr := k.Fallback.MaterializeProjectionBatches(ctx, request)
 			fallbackResult.Probes = append(projectionMaterializationFallbackProbes(request, result.Diagnostics), fallbackResult.Probes...)
@@ -753,6 +849,15 @@ func (k FallbackProjectionMaterializationKernel) MaterializeProjectionBatches(ct
 		return UnsupportedProjectionMaterializationKernel{}.MaterializeProjectionBatches(ctx, request)
 	}
 	return k.Fallback.MaterializeProjectionBatches(ctx, request)
+}
+
+func projectionMaterializationRequestHasExpressions(request ProjectionMaterializationKernelRequest) bool {
+	for _, materializationRequest := range request.Requests {
+		if len(materializationRequest.ProjectionExpressions) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func projectionMaterializationDiagnosticsAreUnsupported(diagnostics qsbridge.DiagnosticSet) bool {

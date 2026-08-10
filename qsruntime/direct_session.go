@@ -19,6 +19,13 @@ type DirectSessionProvider interface {
 	BorrowDirectSession(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error)
 }
 
+// DirectTimeBucketBoundsProvider optionally reports observed time-bucket bounds
+// for a physical timestamp field. Runtimes use this only as an optimization;
+// absence must preserve the conservative full-window behavior.
+type DirectTimeBucketBoundsProvider interface {
+	TimeBucketYearBounds(ctx context.Context, request ExecutionRequest, field qsbridge.FieldRef) (int, int, bool)
+}
+
 // DirectSessionProviderFunc adapts a function to DirectSessionProvider.
 type DirectSessionProviderFunc func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error)
 

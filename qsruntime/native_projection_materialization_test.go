@@ -59,6 +59,57 @@ func TestNativeProjectionMaterializationKernelReadsSimpleFields(t *testing.T) {
 	}
 }
 
+func TestNativeProjectionMaterializationKernelReadsProjectionExpressions(t *testing.T) {
+	table := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	shipDate := qsbridge.FieldRef{Table: table, Name: "l_shipdate", Type: qsbridge.DataTypeTime}
+	expression := qsbridge.QuantaProjectionExpression{
+		Expr: qsbridge.FunctionCall(
+			qsbridge.FunctionDefinition{Name: "year", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeInt},
+			qsbridge.Field(shipDate),
+		),
+		Output: qsbridge.QuantaProjectionField{Index: "lineitem", Role: "l", Field: "year_l_shipdate", Type: qsbridge.DataTypeInt},
+	}
+	reader := &recordingNativeProjectionExpressionReader{}
+	kernel := NativeProjectionMaterializationKernel{Reader: reader}
+
+	result, err := kernel.MaterializeProjectionBatches(context.Background(), ProjectionMaterializationKernelRequest{
+		ID:          "projection_materialization",
+		ProbePrefix: "projection_materialization_",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index:                 "lineitem",
+			Rownums:               []qsbridge.QuantaRownum{7, 8},
+			ProjectionExpressions: []qsbridge.QuantaProjectionExpression{expression},
+			DependencyID:          "lineitem_expr",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("MaterializeProjectionBatches error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if reader.fieldCalls != 0 {
+		t.Fatalf("field reader calls = %d, want 0", reader.fieldCalls)
+	}
+	if len(reader.expressionRequests) != 1 {
+		t.Fatalf("expression requests = %#v, want one", reader.expressionRequests)
+	}
+	rowSet := result.Results[0].RowSet
+	if rowSet.CandidateCount() != 2 || rowSet.ProjectionCount() != 1 {
+		t.Fatalf("rowSet = %#v, want two candidates and one derived vector", rowSet)
+	}
+	vector := rowSet.ProjectionVectors[0]
+	if vector.Field.Field != "year_l_shipdate" {
+		t.Fatalf("derived field = %#v, want year_l_shipdate", vector.Field)
+	}
+	if vector.Values[0].Value != int64(1998) || vector.Values[1].Value != int64(1999) {
+		t.Fatalf("derived values = %#v, want 1998/1999", vector.Values)
+	}
+	if !nativeProjectionMaterializationTestProbeName(result.Probes, "expression_read_elapsed") {
+		t.Fatalf("probes = %#v, want expression_read_elapsed", result.Probes)
+	}
+}
+
 func TestNativeProjectionMaterializationKernelReusesCachedProjectionValues(t *testing.T) {
 	ctx := WithQueryScratchpad(context.Background())
 	field := qsbridge.QuantaProjectionField{Index: "lineitem", Field: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Visible: true}
@@ -192,6 +243,28 @@ func (r *recordingNativeProjectionBatchFieldReader) ReadProjectionFields(_ conte
 		results = append(results, NativeProjectionFieldReadResult{Field: request.Field, Values: values})
 	}
 	return results, nil, nil
+}
+
+type recordingNativeProjectionExpressionReader struct {
+	fieldCalls         int
+	expressionRequests []NativeProjectionExpressionReadRequest
+}
+
+func (r *recordingNativeProjectionExpressionReader) ReadProjectionField(_ context.Context, request NativeProjectionFieldReadRequest) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet, error) {
+	r.fieldCalls++
+	return NativeProjectionFieldReadResult{Field: request.Field}, nil, nil
+}
+
+func (r *recordingNativeProjectionExpressionReader) ReadProjectionExpression(_ context.Context, request NativeProjectionExpressionReadRequest) (NativeProjectionExpressionReadResult, qsbridge.DiagnosticSet, error) {
+	r.expressionRequests = append(r.expressionRequests, request)
+	return NativeProjectionExpressionReadResult{
+		Expression: request.Expression,
+		Values: []qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: int64(1998)},
+			{Kind: qsbridge.ValueInt, Value: int64(1999)},
+		},
+		Probes: []ExecutionProbe{{Section: "native_projection_materialization", Name: "fake_expression_read", Value: "year"}},
+	}, nil, nil
 }
 
 func nativeProjectionMaterializationTestProbeName(probes []ExecutionProbe, name string) bool {
@@ -539,6 +612,42 @@ func TestFallbackProjectionMaterializationKernelUsesFallbackForUnsupportedNative
 	}
 	if len(result.Probes) < 2 || result.Probes[0].Name != "fallback_to_compat" || result.Probes[0].Value != "true" {
 		t.Fatalf("fallback probes = %#v, want fallback_to_compat marker", result.Probes)
+	}
+}
+
+func TestFallbackProjectionMaterializationKernelDoesNotFallbackForExpressions(t *testing.T) {
+	calledFallback := false
+	kernel := FallbackProjectionMaterializationKernel{
+		Preferred: NativeProjectionMaterializationKernel{},
+		Fallback: qsruntimeMaterializationKernelFunc(func(_ context.Context, request qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			calledFallback = true
+			return qsbridge.ProjectionMaterializationKernelResult{ID: request.ID}, nil
+		}),
+	}
+
+	result, err := kernel.MaterializeProjectionBatches(context.Background(), ProjectionMaterializationKernelRequest{
+		ID: "projection_materialization",
+		Requests: []qsbridge.QuantaMaterializationRequest{{
+			Index:   "lineitem",
+			Rownums: []qsbridge.QuantaRownum{7},
+			ProjectionExpressions: []qsbridge.QuantaProjectionExpression{{
+				Expr: qsbridge.Call("year", qsbridge.Field(qsbridge.FieldRef{
+					Table: qsbridge.TableInstance{Table: "lineitem", Alias: "l"},
+					Name:  "l_shipdate",
+					Type:  qsbridge.DataTypeTime,
+				})),
+				Output: qsbridge.QuantaProjectionField{Index: "lineitem", Field: "year_l_shipdate", Type: qsbridge.DataTypeInt},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("MaterializeProjectionBatches error = %v", err)
+	}
+	if calledFallback {
+		t.Fatalf("fallback kernel was called for expression projection")
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want native unsupported diagnostic", result.Diagnostics)
 	}
 }
 

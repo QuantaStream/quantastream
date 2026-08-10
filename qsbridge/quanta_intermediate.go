@@ -105,6 +105,13 @@ type QuantaProjectionField struct {
 	Visible      bool
 }
 
+// QuantaProjectionExpression describes one derived projection that storage may
+// compute without materializing its source field into SQL-visible cells first.
+type QuantaProjectionExpression struct {
+	Expr   Expr
+	Output QuantaProjectionField
+}
+
 // QuantaAggregateOperation names a Quanta-native aggregate runtime primitive.
 type QuantaAggregateOperation string
 
@@ -238,16 +245,17 @@ func (s QuantaCandidateSet) MaterializationRequest(fields []QuantaProjectionFiel
 
 // QuantaMaterializationRequest asks a runtime adapter to fetch projection values for rownums.
 type QuantaMaterializationRequest struct {
-	Index            string
-	LogicalShard     ShardID
-	Replica          ReplicaID
-	DependencyID     string
-	ProbePrefix      string
-	Batch            ProjectionBatch
-	Rownums          []QuantaRownum
-	ProjectionFields []QuantaProjectionField
-	FromEpochMillis  int64
-	ToEpochMillis    int64
+	Index                 string
+	LogicalShard          ShardID
+	Replica               ReplicaID
+	DependencyID          string
+	ProbePrefix           string
+	Batch                 ProjectionBatch
+	Rownums               []QuantaRownum
+	ProjectionFields      []QuantaProjectionField
+	ProjectionExpressions []QuantaProjectionExpression
+	FromEpochMillis       int64
+	ToEpochMillis         int64
 }
 
 // CandidateCount reports how many tuple/entity candidates need materialization.
@@ -255,9 +263,9 @@ func (r QuantaMaterializationRequest) CandidateCount() int {
 	return len(r.Rownums)
 }
 
-// ProjectionCount reports how many fields need materialization.
+// ProjectionCount reports how many fields or derived expressions need materialization.
 func (r QuantaMaterializationRequest) ProjectionCount() int {
-	return len(r.ProjectionFields)
+	return len(r.ProjectionFields) + len(r.ProjectionExpressions)
 }
 
 // QuantaProjectionVector stores one projected field as a columnar value vector.

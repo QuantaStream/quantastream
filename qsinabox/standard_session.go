@@ -68,6 +68,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		Pool:                                 pool,
 		SchemaDir:                            b.ConfigBaseDir(config),
 		Conn:                                 b.NewLocalConnection(),
+		Direct:                               b.Adapter.BitmapIndex,
 		PrimaryKeyResolverFactory:            standardDirectPrimaryKeyResolverFactory(config, tableCache, b.Adapter.BitmapIndex, pool),
 		PrimaryKeyAuthorityManifestPublisher: StandardBSIPrimaryKeyAuthorityManifestFilePublisher{Config: config, Source: "standard-session-flush"},
 	}
@@ -169,6 +170,7 @@ type StandardDirectSessionProvider struct {
 	Pool                                 *core.SessionPool
 	SchemaDir                            string
 	Conn                                 *shared.Conn
+	Direct                               *server.BitmapIndex
 	PrimaryKeyResolverFactory            core.SessionPrimaryKeyResolverFactory
 	PrimaryKeyAuthorityManifestPublisher StandardBSIPrimaryKeyAuthorityManifestPublisher
 }
@@ -211,6 +213,26 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		Result:                               qsruntime.LegacyBitmapQueryResultAdapter{},
 		PrimaryKeyAuthorityManifestPublisher: p.PrimaryKeyAuthorityManifestPublisher,
 	}, nil, nil
+}
+
+// TimeBucketYearBounds reports observed BSI shard years for local standard mode.
+func (p StandardDirectSessionProvider) TimeBucketYearBounds(ctx context.Context, request qsruntime.ExecutionRequest, field qsbridge.FieldRef) (int, int, bool) {
+	if p.Direct == nil {
+		return 0, 0, false
+	}
+	table := field.Table.Table
+	if table == "" {
+		root, ok := request.RootIndex()
+		if !ok {
+			return 0, 0, false
+		}
+		table = root
+	}
+	physical := field.PhysicalName
+	if physical == "" {
+		physical = field.Name
+	}
+	return p.Direct.BSIShardYearRange(table, physical)
 }
 
 func standardDirectPrimaryKeyResolverFactory(config StandardConfig, tableCache *core.TableCacheStruct, direct *server.BitmapIndex, pool *core.SessionPool) core.SessionPrimaryKeyResolverFactory {

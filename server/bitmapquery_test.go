@@ -12,6 +12,28 @@ import (
 	"github.com/stvp/rendezvous"
 )
 
+func TestBitmapIndexBSIShardYearRange(t *testing.T) {
+	index := &BitmapIndex{
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"lineitem": {
+				"l_shipdate": {
+					time.Date(1992, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(): nil,
+					time.Date(1994, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano(): nil,
+					time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(): nil,
+				},
+			},
+		},
+	}
+
+	minYear, maxYear, ok := index.BSIShardYearRange("LINEITEM", "L_SHIPDATE")
+	if !ok {
+		t.Fatal("BSIShardYearRange ok = false, want true")
+	}
+	if minYear != 1992 || maxYear != 1998 {
+		t.Fatalf("BSIShardYearRange = %d..%d, want 1992..1998", minYear, maxYear)
+	}
+}
+
 func TestTimeRangeBSIReadsLocalNonTimeShardRegardlessOfCurrentOwner(t *testing.T) {
 	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "part", nil)
 	if err != nil {

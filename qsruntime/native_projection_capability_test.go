@@ -147,6 +147,14 @@ func TestProjectionMaterializationSelectionPlanSplitsNativeAndCompatFields(t *te
 				{Index: "orders", Field: "o_orderpriority", Type: qsbridge.DataTypeString},
 				{Index: "orders", Field: "o_comment", Type: qsbridge.DataTypeString},
 			},
+			ProjectionExpressions: []qsbridge.QuantaProjectionExpression{{
+				Expr: qsbridge.Call("year", qsbridge.Field(qsbridge.FieldRef{
+					Table: qsbridge.TableInstance{Table: "orders", Alias: "o"},
+					Name:  "o_orderdate",
+					Type:  qsbridge.DataTypeTime,
+				})),
+				Output: qsbridge.QuantaProjectionField{Index: "orders", Field: "year_o_orderdate", Type: qsbridge.DataTypeInt},
+			}},
 		}},
 	}
 
@@ -158,11 +166,17 @@ func TestProjectionMaterializationSelectionPlanSplitsNativeAndCompatFields(t *te
 	if plan.Native.RequestCount() != 1 || plan.Compat.RequestCount() != 1 {
 		t.Fatalf("plan request counts = native %d compat %d, want 1/1", plan.Native.RequestCount(), plan.Compat.RequestCount())
 	}
-	if got := plan.Native.Requests[0].ProjectionCount(); got != 2 {
-		t.Fatalf("native projection count = %d, want int plus dictionary string", got)
+	if got := plan.Native.Requests[0].ProjectionCount(); got != 3 {
+		t.Fatalf("native projection count = %d, want int plus dictionary string plus expression", got)
 	}
 	if got := plan.Compat.Requests[0].ProjectionCount(); got != 1 {
 		t.Fatalf("compat projection count = %d, want backing string only", got)
+	}
+	if len(plan.Native.Requests[0].ProjectionExpressions) != 1 {
+		t.Fatalf("native expressions = %#v, want expression carried on native request", plan.Native.Requests[0].ProjectionExpressions)
+	}
+	if len(plan.Compat.Requests[0].ProjectionExpressions) != 0 {
+		t.Fatalf("compat expressions = %#v, want none", plan.Compat.Requests[0].ProjectionExpressions)
 	}
 	if plan.Compat.Requests[0].ProjectionFields[0].Field != "o_comment" {
 		t.Fatalf("compat field = %#v, want o_comment", plan.Compat.Requests[0].ProjectionFields)

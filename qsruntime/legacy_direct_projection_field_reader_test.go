@@ -231,6 +231,69 @@ func TestLegacyDirectProjectionBSIFieldReaderDecodesTimeGranularity(t *testing.T
 	}
 }
 
+func TestLegacyDirectProjectionBSIFieldReaderProjectsTimestampYearExpression(t *testing.T) {
+	table := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"lineitem": {
+			BasicTable: &shared.BasicTable{Name: "lineitem"},
+			AttributeNameMap: map[string]*core.Attribute{
+				"l_shipdate": {
+					BasicAttribute: &shared.BasicAttribute{
+						FieldName:       "l_shipdate",
+						Type:            "DateTime",
+						MappingStrategy: "TimestampBSI",
+						MapperConfig:    map[string]string{"granularity": "millisecond"},
+					},
+				},
+			},
+		},
+	}}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(7, time.Date(1998, 12, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+	bsi.SetValue(9, time.Date(1995, 3, 14, 0, 0, 0, 0, time.UTC).UnixMilli())
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader: NativeProjectionBSIReaderFunc(func(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+			if request.Index != "lineitem" || request.PhysicalField != "l_shipdate" {
+				t.Fatalf("read request = %#v, want lineitem.l_shipdate", request)
+			}
+			return NativeProjectionBSIReadResult{
+				BSI:    bsi,
+				Probes: []ExecutionProbe{{Section: "native_projection_materialization", Name: "fake_bsi_read"}},
+			}, nil, nil
+		}),
+	}
+	expression := qsbridge.QuantaProjectionExpression{
+		Expr: qsbridge.FunctionCall(
+			qsbridge.FunctionDefinition{Name: "year", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeInt},
+			qsbridge.Field(qsbridge.FieldRef{Table: table, Name: "l_shipdate", Type: qsbridge.DataTypeTime}),
+		),
+		Output: qsbridge.QuantaProjectionField{Index: "lineitem", Role: "l", Field: "year_l_shipdate", Type: qsbridge.DataTypeInt},
+	}
+
+	result, diagnostics, err := reader.ReadProjectionExpression(context.Background(), NativeProjectionExpressionReadRequest{
+		Index:      "lineitem",
+		Expression: expression,
+		Rownums:    []qsbridge.QuantaRownum{7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("ReadProjectionExpression error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if got := result.Expression.Output.Field; got != "year_l_shipdate" {
+		t.Fatalf("output field = %q, want year_l_shipdate", got)
+	}
+	if result.Values[0].Value != int64(1998) || result.Values[1].Kind != qsbridge.ValueNull || result.Values[2].Value != int64(1995) {
+		t.Fatalf("year values = %#v, want 1998/null/1995", result.Values)
+	}
+	if !legacyProjectionTestProbeName(result.Probes, "expression_projection_rows") ||
+		!legacyProjectionTestProbeName(result.Probes, "expression_projection_function") {
+		t.Fatalf("probes = %#v, want expression projection probes", result.Probes)
+	}
+}
+
 func TestLegacyDirectProjectionBSIFieldReaderReadsBoolDirect(t *testing.T) {
 	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
 		"customers_qa": {
@@ -524,4 +587,13 @@ func TestLegacyDirectProjectionBSIFieldReaderFallsBackForStringEnumWithoutDictio
 	if !diagnostics.BlocksNative() || diagnostics.Codes()[0] != qsbridge.DiagnosticUnsupportedSQL {
 		t.Fatalf("diagnostics = %#v, want unsupported fallback", diagnostics)
 	}
+}
+
+func legacyProjectionTestProbeName(probes []ExecutionProbe, name string) bool {
+	for _, probe := range probes {
+		if probe.Name == name {
+			return true
+		}
+	}
+	return false
 }

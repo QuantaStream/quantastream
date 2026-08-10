@@ -2,12 +2,30 @@ package qsruntime
 
 import (
 	"context"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
+
+type yearBucketBoundsTestProvider struct {
+	minYear   int
+	maxYear   int
+	queryFunc func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error)
+}
+
+func (p yearBucketBoundsTestProvider) BorrowDirectSession(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+	return DirectSessionHandleFunc{
+		QueryFunc:   p.queryFunc,
+		ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+	}, nil, nil
+}
+
+func (p yearBucketBoundsTestProvider) TimeBucketYearBounds(ctx context.Context, request ExecutionRequest, field qsbridge.FieldRef) (int, int, bool) {
+	return p.minYear, p.maxYear, true
+}
 
 func TestDirectBitmapSeedMembershipOnlyRequestUsesLeftFieldExistence(t *testing.T) {
 	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
@@ -2107,6 +2125,180 @@ func TestDirectBitmapRuntimeMaterializesGroupedCountAggregate(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeUsesYearBucketRangeCountsForGroupedCount(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
+	shipdate := qsbridge.FieldRef{
+		Table:        table,
+		Name:         "l_shipdate",
+		PhysicalName: "l_shipdate",
+		Type:         qsbridge.DataTypeTime,
+		Encoding:     qsbridge.NewTimeBSIProfile(qsbridge.TimeGranularityMillisecond),
+	}
+	lower, ok := directBitmapEncodeTimeValue(shipdate.Encoding.Granularity, time.Date(1992, 1, 1, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("failed to encode lower bound")
+	}
+	upper, ok := directBitmapEncodeTimeValue(shipdate.Encoding.Granularity, time.Date(1995, 1, 1, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("failed to encode upper bound")
+	}
+	groupExpr := qsbridge.Call("year", qsbridge.Field(shipdate))
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{
+			{Index: "lineitem", Field: "l_shipdate", Operation: qsbridge.QuantaOperationIntersect, BSIOp: qsbridge.QuantaBSIOpGE, Value: big.NewInt(lower)},
+			{Index: "lineitem", Field: "l_shipdate", Operation: qsbridge.QuantaOperationIntersect, BSIOp: qsbridge.QuantaBSIOpLT, Value: big.NewInt(upper)},
+		},
+	})
+	request.SourceIndexes = []string{"lineitem"}
+	request.GroupBy = []qsbridge.Expr{groupExpr}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "line_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	request.OrderBy = []qsbridge.SortSpec{{Expr: groupExpr, Direction: qsbridge.SortAscending}}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: groupExpr, Alias: "l_year", Type: qsbridge.DataTypeInt},
+		{Expr: qsbridge.AggregateRef("line_count", 0), Alias: "line_count", Type: qsbridge.DataTypeInt},
+	}
+	testRownums := func(count uint64) []qsbridge.QuantaRownum {
+		rownums := make([]qsbridge.QuantaRownum, int(count))
+		for i := range rownums {
+			rownums[i] = qsbridge.QuantaRownum(i + 1)
+		}
+		return rownums
+	}
+	bucketCounts := map[int]uint64{1992: 2, 1993: 3, 1994: 1}
+	queryCount := 0
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCount++
+					for _, fragment := range request.Query.Fragments {
+						if fragment.Index != "lineitem" || fragment.Field != "l_shipdate" || fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil {
+							continue
+						}
+						begin, ok := directBitmapDecodeTimeValue(shipdate.Encoding.Granularity, fragment.Begin.Int64())
+						if !ok {
+							t.Fatalf("could not decode bucket begin %v", fragment.Begin)
+						}
+						count := bucketCounts[begin.Year()]
+						return BitmapQueryResult{Success: true, Count: count, Rownums: testRownums(count)}, nil, nil
+					}
+					return BitmapQueryResult{Success: true, Count: 6, Rownums: testRownums(6)}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("year bucket grouped count should use BSI range counts instead of materialization")
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if queryCount != 4 {
+		t.Fatalf("bitmap queries = %d, want initial plus 3 year buckets", queryCount)
+	}
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_mode", "timestamp_bsi_range")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_bound_mode", "predicate_bounds")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_queries", "3")
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	want := [][]any{{int64(1992), int64(2)}, {int64(1993), int64(3)}, {int64(1994), int64(1)}}
+	if len(chunk.Rows) != len(want) {
+		t.Fatalf("rows = %#v, want %d grouped rows", chunk.Rows, len(want))
+	}
+	for i := range want {
+		if chunk.Rows[i][0].Value != want[i][0] || chunk.Rows[i][1].Value != want[i][1] {
+			t.Fatalf("row %d = %#v, want %#v", i, chunk.Rows[i], want[i])
+		}
+	}
+}
+
+func TestDirectBitmapRuntimeUsesObservedYearBucketBounds(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
+	shipdate := qsbridge.FieldRef{
+		Table:        table,
+		Name:         "l_shipdate",
+		PhysicalName: "l_shipdate",
+		Type:         qsbridge.DataTypeTime,
+		Encoding:     qsbridge.NewTimeBSIProfile(qsbridge.TimeGranularityMillisecond),
+	}
+	lower, ok := directBitmapEncodeTimeValue(shipdate.Encoding.Granularity, time.Date(1992, 1, 1, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("failed to encode lower bound")
+	}
+	groupExpr := qsbridge.Call("year", qsbridge.Field(shipdate))
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{
+			{Index: "lineitem", Field: "l_shipdate", Operation: qsbridge.QuantaOperationIntersect, BSIOp: qsbridge.QuantaBSIOpGE, Value: big.NewInt(lower)},
+		},
+	})
+	request.SourceIndexes = []string{"lineitem"}
+	request.GroupBy = []qsbridge.Expr{groupExpr}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "line_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: groupExpr, Alias: "l_year", Type: qsbridge.DataTypeInt},
+		{Expr: qsbridge.AggregateRef("line_count", 0), Alias: "line_count", Type: qsbridge.DataTypeInt},
+	}
+	queryCount := 0
+	runtime := DirectBitmapRuntime{
+		Sessions: yearBucketBoundsTestProvider{
+			minYear: 1990,
+			maxYear: 1994,
+			queryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+				queryCount++
+				for _, fragment := range request.Query.Fragments {
+					if fragment.BSIOp != qsbridge.QuantaBSIOpRange || fragment.Begin == nil {
+						continue
+					}
+					begin, ok := directBitmapDecodeTimeValue(shipdate.Encoding.Granularity, fragment.Begin.Int64())
+					if !ok {
+						t.Fatalf("could not decode bucket begin %v", fragment.Begin)
+					}
+					if begin.Year() < 1992 || begin.Year() > 1994 {
+						t.Fatalf("unexpected year bucket %d from observed bounds", begin.Year())
+					}
+					return BitmapQueryResult{Success: true, Count: 1, Rownums: []qsbridge.QuantaRownum{1}}, nil, nil
+				}
+				return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+			},
+		},
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("year bucket grouped count should use observed BSI shard bounds instead of materialization")
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if queryCount != 4 {
+		t.Fatalf("bitmap queries = %d, want initial plus 3 observed year buckets", queryCount)
+	}
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_bound_mode", "observed_shards")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_queries", "3")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "year_bucket_range", "1992-1994")
+}
+
 func TestDirectBitmapRuntimeAppliesSingleTableMembershipBeforeCountAggregate(t *testing.T) {
 	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
 	customers := qsbridge.TableInstance{Table: "customers", Alias: "c"}
@@ -2951,6 +3143,64 @@ func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedYearGroup(t *te
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_computed_count", "1")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_shapes", "call:year(field:o.o_orderdate)")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_expression_fields", "o.o_orderdate")
+}
+
+func TestDirectBitmapMaterializedGroupedAggregateUsesDerivedYearProjection(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "orders", Table: "orders", Alias: "o"}
+	orderDate := qsbridge.FieldRef{Table: table, Name: "o_orderdate", Type: qsbridge.DataTypeTime}
+	yearExpr := qsbridge.FunctionCall(
+		qsbridge.FunctionDefinition{Name: "year", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeInt},
+		qsbridge.Field(orderDate),
+	)
+	request := ExecutionRequest{
+		SourceIndexes: []string{"orders"},
+		GroupBy:       []qsbridge.Expr{yearExpr},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: yearExpr, Alias: "o_year", Type: qsbridge.DataTypeInt},
+			{Expr: qsbridge.AggregateRef("order_count", 0), Alias: "order_count", Type: qsbridge.DataTypeInt},
+		},
+		SQLAggregates: []qsbridge.Aggregate{{
+			Function: "count",
+			Alias:    "order_count",
+			Type:     qsbridge.DataTypeInt,
+		}},
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "orders",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "year_o_orderdate", Type: qsbridge.DataTypeInt},
+			Values: []qsbridge.ResultCell{
+				{Kind: qsbridge.ValueInt, Value: int64(1995)},
+				{Kind: qsbridge.ValueInt, Value: int64(1996)},
+				{Kind: qsbridge.ValueInt, Value: int64(1996)},
+			},
+		}},
+	}
+
+	result := directBitmapMaterializedGroupedAggregateResult(request, materialized, ExecutionResult{})
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two grouped rows", chunk.Rows)
+	}
+	if got := chunk.Rows[0][0].Value; got != int64(1995) {
+		t.Fatalf("first year = %v, want 1995", got)
+	}
+	if got := chunk.Rows[0][1].Value; got != int64(1) {
+		t.Fatalf("first count = %v, want 1", got)
+	}
+	if got := chunk.Rows[1][0].Value; got != int64(1996) {
+		t.Fatalf("second year = %v, want 1996", got)
+	}
+	if got := chunk.Rows[1][1].Value; got != int64(2) {
+		t.Fatalf("second count = %v, want 2", got)
+	}
 }
 
 func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedSubstringGroup(t *testing.T) {

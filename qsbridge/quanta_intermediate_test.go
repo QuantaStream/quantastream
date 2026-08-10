@@ -760,6 +760,13 @@ func TestQuantaCandidateSetBuildsMaterializationRequest(t *testing.T) {
 	if request.Rownums[0] != 1001 || request.ProjectionFields[1].Field != "o_totalprice" {
 		t.Fatalf("request materialization payload = %#v", request)
 	}
+	request.ProjectionExpressions = append(request.ProjectionExpressions, QuantaProjectionExpression{
+		Expr:   Call("year", Field(FieldRef{Table: TableInstance{Table: "orders", Alias: "o"}, Name: "o_orderdate", Type: DataTypeTime})),
+		Output: QuantaProjectionField{Index: "orders", Field: "year_o_orderdate", Type: DataTypeInt},
+	})
+	if request.ProjectionCount() != 3 {
+		t.Fatalf("projection count with derived expression = %d, want 3", request.ProjectionCount())
+	}
 }
 
 func TestQuantaCandidateSetMaterializationRequestCopiesSlices(t *testing.T) {

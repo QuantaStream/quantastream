@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	u "github.com/araddon/gou"
@@ -800,6 +801,54 @@ func (m *BitmapIndex) ProjectBSI(index, field string, fromTime, toTime int64, fo
 // in-process callers that need to diagnose projection cost.
 func (m *BitmapIndex) ProjectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool) (*roaring64.BSI, ProjectBSIStats, error) {
 	return m.projectBSIWithStats(index, field, fromTime, toTime, foundSet, negate, true)
+}
+
+// BSIShardYearRange returns the observed year range for loaded BSI shards.
+func (m *BitmapIndex) BSIShardYearRange(index, field string) (int, int, bool) {
+	if index == "" || field == "" {
+		return 0, 0, false
+	}
+	m.bsiCacheLock.RLock()
+	defer m.bsiCacheLock.RUnlock()
+	fields, ok := m.bsiCache[index]
+	if !ok {
+		for candidateIndex, candidateFields := range m.bsiCache {
+			if strings.EqualFold(candidateIndex, index) {
+				fields = candidateFields
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok {
+		return 0, 0, false
+	}
+	shards, ok := fields[field]
+	if !ok {
+		for candidateField, candidateShards := range fields {
+			if strings.EqualFold(candidateField, field) {
+				shards = candidateShards
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok || len(shards) == 0 {
+		return 0, 0, false
+	}
+	var minYear, maxYear int
+	found := false
+	for shardNanos := range shards {
+		year := time.Unix(0, shardNanos).UTC().Year()
+		if !found || year < minYear {
+			minYear = year
+		}
+		if !found || year > maxYear {
+			maxYear = year
+		}
+		found = true
+	}
+	return minYear, maxYear, found
 }
 
 // ProjectBSIsWithStats returns several projected BSIs under one in-process

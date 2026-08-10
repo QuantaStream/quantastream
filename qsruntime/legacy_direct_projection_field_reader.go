@@ -286,6 +286,55 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionFields(ctx context.Context
 	return results, diagnostics, nil
 }
 
+// ReadProjectionExpression reads one derived BSI-backed projection expression.
+func (r NativeProjectionBSIFieldReader) ReadProjectionExpression(ctx context.Context, request NativeProjectionExpressionReadRequest) (NativeProjectionExpressionReadResult, qsbridge.DiagnosticSet, error) {
+	call, sourceField, ok := nativeProjectionYearFieldExpression(request.Expression.Expr)
+	if !ok {
+		return NativeProjectionExpressionReadResult{}, nativeProjectionUnsupported("native expression projection does not yet support " + nativeProjectionExpressionLabel(request.Expression.Expr)), nil
+	}
+	index := sourceField.Table.Table
+	if index == "" {
+		index = request.Index
+	}
+	fieldReadRequest := NativeProjectionFieldReadRequest{
+		Index:           index,
+		Field:           nativeProjectionFieldFromRef(index, sourceField),
+		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+		FromEpochMillis: request.FromEpochMillis,
+		ToEpochMillis:   request.ToEpochMillis,
+	}
+	plan, ok := r.nativeProjectionBSIFieldReadPlan(fieldReadRequest, 0)
+	if !ok {
+		return NativeProjectionExpressionReadResult{}, nativeProjectionUnsupported("native expression projection cannot read source field " + index + "." + nativeProjectionPhysicalField(fieldReadRequest.Field)), nil
+	}
+	if !nativeProjectionAttributeIsTimeBSI(plan.Attribute) {
+		return NativeProjectionExpressionReadResult{}, nativeProjectionUnsupported("native expression projection year() requires TimestampBSI source field " + index + "." + nativeProjectionPhysicalField(fieldReadRequest.Field)), nil
+	}
+	values, probes, diagnostics, err := r.readProjectionBSIValues(ctx, plan)
+	if err != nil || diagnostics.BlocksNative() {
+		return NativeProjectionExpressionReadResult{Probes: probes}, diagnostics, err
+	}
+	cells, valueDiagnostics := nativeProjectionYearCells(plan.Table, plan.Attribute, values)
+	if valueDiagnostics.BlocksNative() {
+		return NativeProjectionExpressionReadResult{Probes: probes}, valueDiagnostics, nil
+	}
+	output := request.Expression.Output
+	if output.Field == "" && output.PhysicalName == "" {
+		output = nativeProjectionYearOutputField(index, sourceField)
+	}
+	return NativeProjectionExpressionReadResult{
+		Expression: qsbridge.QuantaProjectionExpression{
+			Expr:   request.Expression.Expr,
+			Output: output,
+		},
+		Values: cells,
+		Probes: append(probes,
+			nativeProjectionExpressionRowsProbe(index, nativeProjectionPhysicalField(fieldReadRequest.Field), call.Name, len(request.Rownums)),
+			nativeProjectionExpressionFunctionProbe(index, nativeProjectionPhysicalField(fieldReadRequest.Field), call.Name),
+		),
+	}, nil, nil
+}
+
 type nativeProjectionBSIFieldReadPlan struct {
 	Position   int
 	Request    NativeProjectionFieldReadRequest
@@ -407,6 +456,52 @@ func nativeProjectionBSIFieldResultFromValues(plan nativeProjectionBSIFieldReadP
 		Values: values,
 		Probes: readResult.Probes,
 	}, nil
+}
+
+func (r NativeProjectionBSIFieldReader) readProjectionBSIValues(ctx context.Context, plan nativeProjectionBSIFieldReadPlan) ([]*big.Int, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	if valueReader, ok := r.Reader.(NativeProjectionBSIValueBatchReader); ok {
+		readResults, diagnostics, err := valueReader.ReadProjectionBSIValues(ctx, []NativeProjectionBSIReadRequest{plan.BSIRequest})
+		if err != nil || diagnostics.BlocksNative() {
+			probes := []ExecutionProbe(nil)
+			if len(readResults) > 0 {
+				probes = readResults[0].Probes
+			}
+			return nil, probes, diagnostics, err
+		}
+		if len(readResults) != 1 {
+			return nil, nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI value projection returned "+strconv.Itoa(len(readResults))+" field reads for expression projection"),
+			}, nil
+		}
+		if len(readResults[0].Values) != len(plan.BSIRequest.Rownums) {
+			return nil, readResults[0].Probes, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI value projection returned "+strconv.Itoa(len(readResults[0].Values))+" values for "+strconv.Itoa(len(plan.BSIRequest.Rownums))+" rownums"),
+			}, nil
+		}
+		return append([]*big.Int(nil), readResults[0].Values...), readResults[0].Probes, nil, nil
+	}
+	readResult, diagnostics, err := r.Reader.ReadProjectionBSI(ctx, plan.BSIRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, readResult.Probes, diagnostics, err
+	}
+	if readResult.BSI == nil {
+		return nil, readResult.Probes, nativeProjectionUnsupported("native BSI projection returned no BSI for " + plan.BSIRequest.Index + "." + plan.BSIRequest.PhysicalField), nil
+	}
+	values := readResult.BSI.GetBigValues(nativeProjectionRownumColumnIDs(plan.BSIRequest.Rownums))
+	return values, readResult.Probes, nil, nil
+}
+
+func nativeProjectionYearCells(table *core.Table, attr *core.Attribute, values []*big.Int) ([]qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	cells := make([]qsbridge.ResultCell, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			cells = append(cells, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
+			continue
+		}
+		nanos := legacyDirectRelationshipEncodedTimeToNanos(table, attr.FieldName, value.Int64())
+		cells = append(cells, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(time.Unix(0, nanos).UTC().Year())})
+	}
+	return cells, nil
 }
 
 func nativeProjectionRownumColumnIDs(rownums []qsbridge.QuantaRownum) []uint64 {
@@ -1103,6 +1198,132 @@ func nativeProjectionStringLexRender(attr *core.Attribute, value *big.Int) strin
 		return ""
 	}
 	return mapper.Render(attr, value)
+}
+
+func nativeProjectionYearFieldExpression(expr qsbridge.Expr) (qsbridge.CallExpr, qsbridge.FieldRef, bool) {
+	call, ok := nativeProjectionCallExpr(expr)
+	if !ok || !nativeProjectionFunctionIsYear(call.Name) || len(call.Args) != 1 {
+		return qsbridge.CallExpr{}, qsbridge.FieldRef{}, false
+	}
+	field, ok := nativeProjectionFieldExpr(call.Args[0])
+	return call, field, ok
+}
+
+func nativeProjectionCallExpr(expr qsbridge.Expr) (qsbridge.CallExpr, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.CallExpr:
+		return typed, true
+	case *qsbridge.CallExpr:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return qsbridge.CallExpr{}, false
+}
+
+func nativeProjectionFieldExpr(expr qsbridge.Expr) (qsbridge.FieldRef, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.FieldExpr:
+		return typed.Ref, true
+	case *qsbridge.FieldExpr:
+		if typed != nil {
+			return typed.Ref, true
+		}
+	}
+	return qsbridge.FieldRef{}, false
+}
+
+func nativeProjectionFunctionIsYear(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "year", "yy":
+		return true
+	default:
+		return false
+	}
+}
+
+func nativeProjectionFieldFromRef(defaultIndex string, field qsbridge.FieldRef) qsbridge.QuantaProjectionField {
+	index := field.Table.Table
+	if index == "" {
+		index = defaultIndex
+	}
+	name := field.PhysicalName
+	if name == "" {
+		name = field.Name
+	}
+	return qsbridge.QuantaProjectionField{
+		Index:        index,
+		Role:         qsbridge.TableInstanceID(materializationFieldRole(defaultIndex, field)),
+		Field:        name,
+		Type:         field.Type,
+		PhysicalName: field.PhysicalName,
+		Roles:        field.Roles,
+	}
+}
+
+func nativeProjectionYearOutputField(defaultIndex string, field qsbridge.FieldRef) qsbridge.QuantaProjectionField {
+	source := nativeProjectionFieldFromRef(defaultIndex, field)
+	name := source.Field
+	if name == "" {
+		name = source.PhysicalName
+	}
+	source.Field = "year_" + name
+	source.PhysicalName = source.Field
+	source.Type = qsbridge.DataTypeInt
+	source.Visible = false
+	return source
+}
+
+func nativeProjectionAttributeIsTimeBSI(attr *core.Attribute) bool {
+	if attr == nil {
+		return false
+	}
+	profile := qsbridge.LegacyEncodingProfile(attr.MappingStrategy, qsbridge.LegacyEncodingOptions{
+		Granularity: LegacyTimeBSIGranularity(attr.MapperConfig),
+	})
+	return profile.Kind == qsbridge.EncodingTimeBSI
+}
+
+func nativeProjectionExpressionLabel(expr qsbridge.Expr) string {
+	if call, ok := nativeProjectionCallExpr(expr); ok {
+		parts := make([]string, 0, len(call.Args))
+		for _, arg := range call.Args {
+			parts = append(parts, nativeProjectionExpressionLabel(arg))
+		}
+		return strings.ToLower(call.Name) + "(" + strings.Join(parts, ",") + ")"
+	}
+	if field, ok := nativeProjectionFieldExpr(expr); ok {
+		name := field.PhysicalName
+		if name == "" {
+			name = field.Name
+		}
+		if ref := field.Table.RefName(); ref != "" {
+			return ref + "." + name
+		}
+		return name
+	}
+	if expr == nil {
+		return "<nil>"
+	}
+	return string(expr.ExpressionKind())
+}
+
+func nativeProjectionExpressionRowsProbe(index, field, function string, rows int) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "expression_projection_rows",
+		Value:   strconv.Itoa(rows),
+		Detail:  index + "." + strings.ToLower(function) + "(" + field + ")",
+	}
+}
+
+func nativeProjectionExpressionFunctionProbe(index, field, function string) ExecutionProbe {
+	return ExecutionProbe{
+		Section: "native_projection_materialization",
+		Name:    "expression_projection_function",
+		Value:   strings.ToLower(function),
+		Detail:  index + "." + field,
+	}
 }
 
 func nativeProjectionWindowNanos(cache *core.TableCacheStruct, request NativeProjectionBSIReadRequest) (int64, int64) {

@@ -150,6 +150,218 @@ func MaterializationRequestFromExecution(request ExecutionRequest, result Bitmap
 	return candidates.MaterializationRequest(materializationRootProjectionFields(rootIndex, fields)), nil
 }
 
+type physicalGroupProjectionExpression struct {
+	Expression qsbridge.QuantaProjectionExpression
+	SourceKey  string
+	OutputKey  string
+}
+
+func projectionMaterializationKernelSupportsExpressions(kernel ProjectionMaterializationKernel) bool {
+	switch typed := kernel.(type) {
+	case nil:
+		return false
+	case NativeProjectionMaterializationKernel:
+		return nativeProjectionReaderSupportsExpressions(typed.Reader)
+	case *NativeProjectionMaterializationKernel:
+		return typed != nil && nativeProjectionReaderSupportsExpressions(typed.Reader)
+	case FallbackProjectionMaterializationKernel:
+		return projectionMaterializationKernelSupportsExpressions(typed.Preferred)
+	case *FallbackProjectionMaterializationKernel:
+		return typed != nil && projectionMaterializationKernelSupportsExpressions(typed.Preferred)
+	case ProjectionMaterializationKernelAdapter:
+		return projectionMaterializationKernelSupportsExpressions(typed.Kernel)
+	case *ProjectionMaterializationKernelAdapter:
+		return typed != nil && projectionMaterializationKernelSupportsExpressions(typed.Kernel)
+	default:
+		return false
+	}
+}
+
+func nativeProjectionReaderSupportsExpressions(reader NativeProjectionFieldReader) bool {
+	_, ok := reader.(NativeProjectionExpressionReader)
+	return ok
+}
+
+func materializationRequestWithPhysicalGroupExpressions(request ExecutionRequest, materialization qsbridge.QuantaMaterializationRequest) qsbridge.QuantaMaterializationRequest {
+	if len(request.GroupBy) == 0 {
+		return materialization
+	}
+	rootIndex := materialization.Index
+	if rootIndex == "" {
+		rootIndex, _ = request.RootIndex()
+	}
+	expressions := make([]physicalGroupProjectionExpression, 0, len(request.GroupBy))
+	seenOutputs := make(map[string]struct{})
+	for _, expr := range request.GroupBy {
+		groupExpression, ok := physicalGroupProjectionExpressionForExpr(rootIndex, expr)
+		if !ok {
+			continue
+		}
+		if _, seen := seenOutputs[groupExpression.OutputKey]; seen {
+			continue
+		}
+		seenOutputs[groupExpression.OutputKey] = struct{}{}
+		expressions = append(expressions, groupExpression)
+	}
+	if len(expressions) == 0 {
+		return materialization
+	}
+	requiredSourceKeys := materializationRequiredSourceKeysOutsidePhysicalGroupExpressions(request, rootIndex, expressions)
+	filteredFields := make([]qsbridge.QuantaProjectionField, 0, len(materialization.ProjectionFields))
+	for _, field := range materialization.ProjectionFields {
+		key := materializationProjectionFieldStorageKey(field)
+		if _, derived := physicalGroupProjectionExpressionSourceKeys(expressions)[key]; derived {
+			if _, required := requiredSourceKeys[key]; !required {
+				continue
+			}
+		}
+		filteredFields = append(filteredFields, field)
+	}
+	materialization.ProjectionFields = filteredFields
+	for _, expression := range expressions {
+		if materializationProjectionExpressionExists(materialization.ProjectionExpressions, expression.OutputKey) {
+			continue
+		}
+		materialization.ProjectionExpressions = append(materialization.ProjectionExpressions, expression.Expression)
+	}
+	return materialization
+}
+
+func physicalGroupProjectionExpressionSourceKeys(expressions []physicalGroupProjectionExpression) map[string]struct{} {
+	keys := make(map[string]struct{}, len(expressions))
+	for _, expression := range expressions {
+		keys[expression.SourceKey] = struct{}{}
+	}
+	return keys
+}
+
+func materializationProjectionExpressionExists(expressions []qsbridge.QuantaProjectionExpression, outputKey string) bool {
+	for _, expression := range expressions {
+		if materializationProjectionFieldStorageKey(expression.Output) == outputKey {
+			return true
+		}
+	}
+	return false
+}
+
+func physicalGroupProjectionExpressionForExpr(defaultIndex string, expr qsbridge.Expr) (physicalGroupProjectionExpression, bool) {
+	call, ok := directBitmapCallExpr(expr)
+	if !ok || !physicalGroupProjectionFunctionIsYear(call.Name) || len(call.Args) != 1 {
+		return physicalGroupProjectionExpression{}, false
+	}
+	field, ok := directBitmapExprField(call.Args[0])
+	if !ok || field.Type != qsbridge.DataTypeTime {
+		return physicalGroupProjectionExpression{}, false
+	}
+	index := field.Table.Table
+	if index == "" {
+		index = defaultIndex
+	}
+	if defaultIndex != "" && index != "" && !strings.EqualFold(index, defaultIndex) {
+		return physicalGroupProjectionExpression{}, false
+	}
+	physical := directBitmapFieldPhysicalName(field)
+	if physical == "" {
+		return physicalGroupProjectionExpression{}, false
+	}
+	role := materializationFieldRole(defaultIndex, field)
+	output := qsbridge.QuantaProjectionField{
+		Index:        index,
+		Role:         qsbridge.TableInstanceID(role),
+		Field:        "year_" + physical,
+		Type:         qsbridge.DataTypeInt,
+		PhysicalName: "year_" + physical,
+		Visible:      false,
+	}
+	sourceKey := materializationFieldRefStorageKey(defaultIndex, field)
+	return physicalGroupProjectionExpression{
+		Expression: qsbridge.QuantaProjectionExpression{
+			Expr:   expr,
+			Output: output,
+		},
+		SourceKey: sourceKey,
+		OutputKey: materializationProjectionFieldStorageKey(output),
+	}, true
+}
+
+func physicalGroupProjectionFunctionIsYear(name string) bool {
+	return strings.EqualFold(name, "year") || strings.EqualFold(name, "yy")
+}
+
+func materializationRequiredSourceKeysOutsidePhysicalGroupExpressions(request ExecutionRequest, defaultIndex string, expressions []physicalGroupProjectionExpression) map[string]struct{} {
+	required := make(map[string]struct{})
+	for _, predicate := range request.Predicates {
+		switch predicate.Placement {
+		case qsbridge.PredicateResidualScan, qsbridge.PredicateResidualJoin:
+			materializationAddExprFieldKeys(required, defaultIndex, predicate.Expr, nil)
+		}
+	}
+	for _, projection := range request.Projection {
+		materializationAddExprFieldKeys(required, defaultIndex, projection.Expr, expressions)
+	}
+	for _, expr := range request.GroupBy {
+		materializationAddExprFieldKeys(required, defaultIndex, expr, expressions)
+	}
+	for _, aggregate := range request.SQLAggregates {
+		materializationAddExprFieldKeys(required, defaultIndex, aggregate.Input, nil)
+		materializationAddExprFieldKeys(required, defaultIndex, aggregate.Filter, nil)
+	}
+	for _, predicate := range request.Having {
+		materializationAddExprFieldKeys(required, defaultIndex, predicate.Expr, expressions)
+	}
+	for _, sort := range request.OrderBy {
+		materializationAddExprFieldKeys(required, defaultIndex, sort.Expr, expressions)
+	}
+	for _, hidden := range request.Result.Hidden {
+		required[materializationFieldRefStorageKey(defaultIndex, hidden)] = struct{}{}
+	}
+	for _, predicate := range request.NativePredicates.CorrelatedAggregate {
+		required[materializationFieldRefStorageKey(defaultIndex, predicate.KeyField)] = struct{}{}
+		required[materializationFieldRefStorageKey(defaultIndex, predicate.ValueField)] = struct{}{}
+	}
+	return required
+}
+
+func materializationAddExprFieldKeys(required map[string]struct{}, defaultIndex string, expr qsbridge.Expr, satisfiedExpressions []physicalGroupProjectionExpression) {
+	if expr == nil {
+		return
+	}
+	for _, expression := range satisfiedExpressions {
+		if directBitmapGroupExpressionsEqual(expr, expression.Expression.Expr) {
+			return
+		}
+	}
+	for _, ref := range qsbridge.FieldRefs(expr) {
+		required[materializationFieldRefStorageKey(defaultIndex, ref)] = struct{}{}
+	}
+}
+
+func materializationFieldRefStorageKey(defaultIndex string, ref qsbridge.FieldRef) string {
+	index := ref.Table.Table
+	if index == "" {
+		index = defaultIndex
+	}
+	role := materializationFieldRole(defaultIndex, ref)
+	name := directBitmapFieldPhysicalName(ref)
+	return materializationStorageKey(index, role, name)
+}
+
+func materializationProjectionFieldStorageKey(field qsbridge.QuantaProjectionField) string {
+	role := string(field.Role)
+	if role == "" {
+		role = field.Index
+	}
+	name := field.Field
+	if name == "" {
+		name = field.PhysicalName
+	}
+	return materializationStorageKey(field.Index, role, name)
+}
+
+func materializationStorageKey(index string, role string, name string) string {
+	return strings.ToLower(index) + "\x00" + strings.ToLower(role) + "\x00" + strings.ToLower(name)
+}
+
 func materializationRootProjectionFields(rootIndex string, fields []qsbridge.QuantaProjectionField) []qsbridge.QuantaProjectionField {
 	rootFields := make([]qsbridge.QuantaProjectionField, 0, len(fields))
 	for _, field := range fields {

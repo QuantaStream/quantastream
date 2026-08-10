@@ -300,7 +300,11 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
 		return directBitmapCountAggregateResult(request, result)
 	}
-	if r.projectionMaterializationKernel() == nil {
+	if bucketResult, ok := r.directBitmapYearBucketCountAggregateResult(ctx, request, result); ok {
+		return bucketResult
+	}
+	materializationKernel := r.projectionMaterializationKernel()
+	if materializationKernel == nil {
 		result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
 			qsbridge.DiagnosticInternalInvariant,
 			qsbridge.PhaseExecute,
@@ -313,8 +317,11 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	if result.Diagnostics.BlocksNative() {
 		return result
 	}
+	if projectionMaterializationKernelSupportsExpressions(materializationKernel) {
+		materializationRequest = materializationRequestWithPhysicalGroupExpressions(request, materializationRequest)
+	}
 	materializationStart := time.Now()
-	rowSet, materializationDiagnostics, materializationProbes, materializationErr := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), materializationRequest)
+	rowSet, materializationDiagnostics, materializationProbes, materializationErr := directBitmapMaterializeWithKernel(ctx, materializationKernel, materializationRequest)
 	materializationElapsed := time.Since(materializationStart)
 	result.Probes = append(result.Probes, materializationProbes...)
 	recordExecutionProbes(ctx, materializationProbes)
@@ -895,6 +902,12 @@ func directBitmapEvaluateMaterializedExpr(expr qsbridge.Expr, materialized qsbri
 }
 
 func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if values, ok := directBitmapProjectedExpressionValues(materialized, call); ok {
+		if index >= len(values) {
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics("derived expression projection has fewer values than materialized candidates")
+		}
+		return values[index], nil
+	}
 	switch strings.ToLower(call.Name) {
 	case "year", "yy":
 		return directBitmapEvaluateMaterializedTimePartCall(call, materialized, index)
@@ -1314,6 +1327,21 @@ func directBitmapTimeCellValue(cell qsbridge.ResultCell) (time.Time, bool) {
 func directBitmapProjectedValues(rowSet qsbridge.QuantaProjectedRowSet, field qsbridge.FieldRef) ([]qsbridge.ResultCell, bool) {
 	for _, vector := range rowSet.ProjectionVectors {
 		if !directBitmapProjectionVectorMatchesField(vector, field) {
+			continue
+		}
+		return vector.Values, true
+	}
+	return nil, false
+}
+
+func directBitmapProjectedExpressionValues(rowSet qsbridge.QuantaProjectedRowSet, expr qsbridge.Expr) ([]qsbridge.ResultCell, bool) {
+	groupExpression, ok := physicalGroupProjectionExpressionForExpr(rowSet.Index, expr)
+	if !ok {
+		return nil, false
+	}
+	outputKey := groupExpression.OutputKey
+	for _, vector := range rowSet.ProjectionVectors {
+		if materializationProjectionFieldStorageKey(vector.Field) != outputKey {
 			continue
 		}
 		return vector.Values, true
