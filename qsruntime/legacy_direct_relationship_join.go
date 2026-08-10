@@ -90,8 +90,11 @@ type legacyDirectRelationshipReduceTiming struct {
 	reverseArtifactNarrowElapsed   time.Duration
 	reverseArtifactParentElapsed   time.Duration
 	reverseArtifactProjectElapsed  time.Duration
+	reverseArtifactProjectMode     string
 	reverseArtifactCacheSetElapsed time.Duration
 	matchedRows                    int
+	childRetainCovered             bool
+	childRetainMode                string
 	batchEqualElapsed              time.Duration
 	singleKeyFoundSetElapsed       time.Duration
 	singleKeyEqualElapsed          time.Duration
@@ -732,6 +735,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrow_elapsed", reduceTiming.reverseArtifactNarrowElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_parent_map_elapsed", reduceTiming.reverseArtifactParentElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_projection_intersect_elapsed", reduceTiming.reverseArtifactProjectElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_projection_intersect_mode", reduceTiming.reverseArtifactProjectMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_domain_cache_store_elapsed", reduceTiming.reverseArtifactCacheSetElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"matched_rows", strconv.Itoa(reduceTiming.matchedRows)),
 				legacyDirectRelationshipProbe(probePrefix+"batch_equal_elapsed", reduceTiming.batchEqualElapsed.String()),
@@ -743,12 +747,19 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"pair_elapsed", reduceTiming.pairElapsed.String()),
 			)
 			result.Probes = append(result.Probes, legacyDirectRelationshipProjectionPolicyProbes(probePrefix, projectionPolicy)...)
+			childRetainMode := reduceTiming.childRetainMode
 			childRetainStart := time.Now()
-			nextChildRows := legacyDirectRelationshipIntersectRownums(childRows, joined)
+			nextChildRows := joined
+			if !reduceTiming.childRetainCovered {
+				childRetainMode = "intersect"
+				nextChildRows = legacyDirectRelationshipIntersectRownums(childRows, joined)
+			}
 			childRetainElapsed := time.Since(childRetainStart)
 			result.Probes = append(result.Probes,
 				legacyDirectRelationshipProbe(probePrefix+"child_retain_elapsed", childRetainElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"child_retain_rows", strconv.Itoa(len(nextChildRows))),
+				legacyDirectRelationshipProbe(probePrefix+"child_retain_mode", childRetainMode),
+				legacyDirectRelationshipProbe(probePrefix+"child_retain_covered", strconv.FormatBool(reduceTiming.childRetainCovered)),
 			)
 			if len(nextChildRows) != len(childRows) {
 				changed = true
@@ -3358,6 +3369,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			timing.parentKeyRows = len(legacyDirectRelationshipUniqueRownums(parentRows))
 			timing.matchedRows = len(joined)
 			timing.fkProjectionScope = "domain_mapping_cache"
+			timing.childRetainCovered = true
+			timing.childRetainMode = "domain_mapping_cache"
 			return joined, pairs, timing, nil, nil
 		}
 		recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", domainCacheDetail)
@@ -3389,12 +3402,6 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			return nil, nil, timing, artifactDiagnostics, artifactErr
 		}
 		effectiveChildRows = narrowedRows
-		projectionIntersectStart := time.Now()
-		effectiveProjectionRows = legacyDirectRelationshipIntersectRownums(projectionRows, narrowedRows)
-		timing.reverseArtifactProjectElapsed = time.Since(projectionIntersectStart)
-		if len(effectiveProjectionRows) == 0 && len(narrowedRows) > 0 {
-			effectiveProjectionRows = narrowedRows
-		}
 		timing.fkProjectionScope = "reverse_artifact_narrowed"
 		if len(effectiveChildRows) == 0 {
 			if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
@@ -3403,6 +3410,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 				timing.reverseArtifactCacheSetElapsed = time.Since(cacheSetStart)
 				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
 			}
+			timing.reverseArtifactProjectMode = "skipped_empty"
+			timing.childRetainCovered = true
+			timing.childRetainMode = "empty_reverse_artifact"
 			return nil, nil, timing, nil, nil
 		}
 		if len(artifactParentByChild) > 0 {
@@ -3412,6 +3422,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			timing.matchedRows = len(joined)
 			timing.fkProjectionScope = "reverse_artifact_parent_map"
 			timing.projectionRows = 0
+			timing.reverseArtifactProjectMode = "skipped_parent_map"
+			timing.childRetainCovered = true
+			timing.childRetainMode = "reverse_artifact_parent_map"
 			if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
 				cacheSetStart := time.Now()
 				domainCache.Set(domainCacheKey, parentRows, childRows, artifactParentByChild)
@@ -3419,6 +3432,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
 			}
 			return joined, pairs, timing, nil, nil
+		}
+		projectionIntersectStart := time.Now()
+		effectiveProjectionRows = legacyDirectRelationshipIntersectRownums(projectionRows, narrowedRows)
+		timing.reverseArtifactProjectElapsed = time.Since(projectionIntersectStart)
+		timing.reverseArtifactProjectMode = "intersect"
+		if len(effectiveProjectionRows) == 0 && len(narrowedRows) > 0 {
+			effectiveProjectionRows = narrowedRows
 		}
 	}
 	childFoundSet := legacyDirectRelationshipBitmap(effectiveChildRows)

@@ -956,6 +956,12 @@ func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *t
 	if timing.fkProjectionScope != "reverse_artifact_parent_map" {
 		t.Fatalf("fkProjectionScope = %q, want reverse_artifact_parent_map", timing.fkProjectionScope)
 	}
+	if timing.reverseArtifactProjectMode != "skipped_parent_map" || timing.reverseArtifactProjectElapsed != 0 {
+		t.Fatalf("reverse artifact projection intersection = %q/%v, want skipped_parent_map/0", timing.reverseArtifactProjectMode, timing.reverseArtifactProjectElapsed)
+	}
+	if !timing.childRetainCovered || timing.childRetainMode != "reverse_artifact_parent_map" {
+		t.Fatalf("child retain coverage = %t/%q, want reverse_artifact_parent_map", timing.childRetainCovered, timing.childRetainMode)
+	}
 	wantJoined := []qsbridge.QuantaRownum{25, 10}
 	if len(joined) != len(wantJoined) {
 		t.Fatalf("joined = %#v, want %#v", joined, wantJoined)
