@@ -1103,6 +1103,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if lateResult, handled, err := e.legacyDirectRelationshipQ18LargeOrderProjectionResult(ctx, request, sink, rownums, edges, fields, alignedRows, alignmentElapsed, result); handled || err != nil {
 		return lateResult, err
 	}
+	if preAggResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, alignmentElapsed, result); handled || err != nil {
+		return preAggResult, err
+	}
 	tupleExpansionStart := time.Now()
 	tupleRows, diagnostics := NewRelationshipTupleRowSetFromAlignedRownums(alignedRows)
 	tupleExpansionElapsed := time.Since(tupleExpansionStart)

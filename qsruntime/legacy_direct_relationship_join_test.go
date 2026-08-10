@@ -3822,6 +3822,117 @@ func TestLegacyDirectRelationshipQ18LargeOrderProjectionLateMaterializesSurvivor
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_post_having_groups", "2")
 }
 
+func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T) {
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	lOrderkey := qsbridge.FieldRef{Table: lineitem, Name: "l_orderkey", Type: qsbridge.DataTypeInt}
+	lExtendedprice := qsbridge.FieldRef{Table: lineitem, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
+	oOrderdate := qsbridge.FieldRef{Table: orders, Name: "o_orderdate", Type: qsbridge.DataTypeTime}
+	oShippriority := qsbridge.FieldRef{Table: orders, Name: "o_shippriority", Type: qsbridge.DataTypeInt}
+	fields := []qsbridge.QuantaProjectionField{
+		{Index: "lineitem", Role: "l", Field: "l_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+		{Index: "lineitem", Role: "l", Field: "l_extendedprice", Type: qsbridge.DataTypeFloat},
+		{Index: "orders", Role: "o", Field: "o_orderdate", Type: qsbridge.DataTypeTime, Visible: true},
+		{Index: "orders", Role: "o", Field: "o_shippriority", Type: qsbridge.DataTypeInt, Visible: true},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{ProjectionFields: fields})
+	request.GroupBy = []qsbridge.Expr{
+		qsbridge.Field(lOrderkey),
+		qsbridge.Field(oOrderdate),
+		qsbridge.Field(oShippriority),
+	}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: qsbridge.Field(lOrderkey), Type: qsbridge.DataTypeInt},
+		{Expr: qsbridge.AggregateRef("revenue", 0), Alias: "revenue", Type: qsbridge.DataTypeFloat},
+		{Expr: qsbridge.Field(oOrderdate), Type: qsbridge.DataTypeTime},
+		{Expr: qsbridge.Field(oShippriority), Type: qsbridge.DataTypeInt},
+	}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "sum", Input: qsbridge.Field(lExtendedprice), Alias: "revenue", Type: qsbridge.DataTypeFloat}}
+	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("revenue", 0), Direction: qsbridge.SortDescending}}
+	request.Result = qsbridge.ResultShape{Kind: qsbridge.ResultQuery, Limit: 10}
+	var materializations []qsbridge.QuantaMaterializationRequest
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materializations = append(materializations, request)
+			rowSet := qsbridge.QuantaProjectedRowSet{Index: request.Index, Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...)}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "l_extendedprice":
+						values := map[qsbridge.QuantaRownum]float64{101: 100, 102: 250, 103: 99, 104: 400, 105: 50}
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: values[rownum]})
+					case "o_orderdate":
+						values := map[qsbridge.QuantaRownum]string{1: "1995-01-01", 2: "1995-01-02", 3: "1995-01-03"}
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: values[rownum]})
+					case "o_shippriority":
+						values := map[qsbridge.QuantaRownum]int64{1: 0, 2: 1, 3: 2}
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: values[rownum]})
+					default:
+						t.Fatalf("unexpected materialized field %s.%s", field.Index, field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	alignedRows := map[string][]qsbridge.QuantaRownum{
+		"l": []qsbridge.QuantaRownum{101, 102, 103, 104, 105},
+		"o": []qsbridge.QuantaRownum{1, 1, 2, 3, 3},
+		"c": []qsbridge.QuantaRownum{10, 10, 20, 30, 30},
+	}
+	result, handled, err := executor.legacyDirectRelationshipQ3OrderRevenueResult(
+		context.Background(),
+		request,
+		"lineitem",
+		[]qsbridge.QuantaRownum{101, 102, 103, 104, 105},
+		[]legacyDirectRelationshipEdge{
+			{childRole: "l", childTable: "lineitem", childField: "l_orderkey", parentRole: "o", parentTable: "orders", parentField: "o_orderkey"},
+			{childRole: "o", childTable: "orders", childField: "o_custkey", parentRole: "c", parentTable: "customer", parentField: "c_custkey"},
+		},
+		fields,
+		alignedRows,
+		0,
+		ExecutionResult{},
+	)
+	if err != nil {
+		t.Fatalf("late q3 result: %v", err)
+	}
+	if !handled {
+		t.Fatalf("handled = false, want Q3 pre-aggregate fast path")
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(materializations) != 2 {
+		t.Fatalf("materializations = %d, want price plus final order fields", len(materializations))
+	}
+	if got := materializations[0].Rownums; len(got) != 5 || got[0] != 101 || got[4] != 105 {
+		t.Fatalf("price rownums = %#v, want all lineitem rows", got)
+	}
+	if got := materializations[1].Rownums; len(got) != 3 || got[0] != 1 || got[2] != 3 {
+		t.Fatalf("final order rownums = %#v, want reduced order rows", got)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 3 {
+		t.Fatalf("rows = %#v, want three grouped orders", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != int64(3) || chunk.Rows[0][1].Value != float64(450) || chunk.Rows[0][2].Value != "1995-01-03" || chunk.Rows[0][3].Value != int64(2) {
+		t.Fatalf("first row = %#v, want order 3/revenue 450/date/priority", chunk.Rows[0])
+	}
+	if chunk.Rows[1][0].Value != int64(1) || chunk.Rows[1][1].Value != float64(350) {
+		t.Fatalf("second row = %#v, want order 1/revenue 350", chunk.Rows[1])
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_late_materialization", "q3_order_revenue_projection")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_rows", "5")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "relationship_preaggregate")
+}
+
 func TestLegacyDirectRelationshipSiblingRootMaterializedValuesHydratesTupleRoles(t *testing.T) {
 	tupleRows := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
 		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"l": 12, "ps": 101}},
