@@ -3328,7 +3328,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	}
 	effectiveChildRows := childRows
 	effectiveProjectionRows := projectionRows
-	if narrowedRows, artifactResult, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
+	if narrowedRows, artifactResult, artifactParentByChild, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
 		timing.reverseArtifactUsed = true
 		timing.reverseArtifactMode = artifactResult.CandidateMode
 		timing.reverseArtifactCacheHit = artifactResult.CandidateCacheHit
@@ -3352,6 +3352,19 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
 			}
 			return nil, nil, timing, nil, nil
+		}
+		if len(artifactParentByChild) > 0 {
+			pairStart := time.Now()
+			_, joined, pairs := legacyDirectRelationshipRowsFromParentMap(effectiveChildRows, artifactParentByChild)
+			timing.pairElapsed = time.Since(pairStart)
+			timing.matchedRows = len(joined)
+			timing.fkProjectionScope = "reverse_artifact_parent_map"
+			timing.projectionRows = 0
+			if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+				domainCache.Set(domainCacheKey, parentRows, childRows, artifactParentByChild)
+				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
+			}
+			return joined, pairs, timing, nil, nil
 		}
 	}
 	childFoundSet := legacyDirectRelationshipBitmap(effectiveChildRows)
@@ -3489,13 +3502,32 @@ func legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows map[int64]qsbri
 	return rows
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, bool, qsbridge.DiagnosticSet, error) {
+func legacyDirectRelationshipParentMapFromArtifactValues(childRows []qsbridge.QuantaRownum, parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) map[qsbridge.QuantaRownum]qsbridge.QuantaRownum {
+	if len(childRows) == 0 || len(parentValueByChild) == 0 || len(parentKeyRows) == 0 {
+		return nil
+	}
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(childRows))
+	for _, child := range childRows {
+		parentValue, ok := parentValueByChild[child]
+		if !ok {
+			return nil
+		}
+		parentRow, ok := parentKeyRows[parentValue]
+		if !ok {
+			return nil
+		}
+		parentByChild[child] = parentRow
+	}
+	return parentByChild
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, bool, qsbridge.DiagnosticSet, error) {
 	if e.ReverseArtifactCandidateReader == nil || len(childRows) == 0 || len(parentKeyRows) == 0 {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, nil, nil
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, false, nil, nil
 	}
 	sourceValues := legacyDirectRelationshipParentKeyValues(parentKeyRows)
 	if len(sourceValues) == 0 {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, nil, nil
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, false, nil, nil
 	}
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
 		TableCache:                     e.TableCache,
@@ -3504,10 +3536,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
 	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
 	start := time.Now()
-	candidates, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
+	candidates, parentValueByChild, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
 	elapsed := time.Since(start)
 	if !ok {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, diagnostics, err
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, false, diagnostics, err
 	}
 	result := qsbridge.FilterDomainRelationshipVectorResult{
 		TargetCandidates:     candidates,
@@ -3522,9 +3554,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		CandidateScanElapsed: artifactTiming.LookupElapsed,
 	}
 	if err != nil || diagnostics.BlocksNative() {
-		return nil, result, true, diagnostics, err
+		return nil, result, nil, true, diagnostics, err
 	}
-	return legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums), result, true, diagnostics, nil
+	narrowedRows := legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums)
+	return narrowedRows, result, legacyDirectRelationshipParentMapFromArtifactValues(narrowedRows, parentValueByChild, parentKeyRows), true, diagnostics, nil
 }
 
 func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, qsbridge.DiagnosticSet) {

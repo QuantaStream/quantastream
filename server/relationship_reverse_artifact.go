@@ -55,23 +55,31 @@ type relationshipReverseArtifact struct {
 // RelationshipReverseArtifactCandidates returns child-domain rownums for the
 // supplied parent-domain values when a schema-declared reverse artifact exists.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string, sourceValues []int64) ([]uint64, RelationshipReverseArtifactStats, bool, error) {
+	rownums, _, stats, ok, err := m.RelationshipReverseArtifactCandidateValues(index, field, sourceValues)
+	return rownums, stats, ok, err
+}
+
+// RelationshipReverseArtifactCandidateValues returns child-domain rownums plus
+// the parent-domain value encoded for each returned child row.
+func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	start := time.Now()
 	if !m.relationshipReverseArtifactEnabled(index, field) {
-		return nil, RelationshipReverseArtifactStats{}, false, nil
+		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
 	m.reverseArtifactLock.RLock()
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
 		m.reverseArtifactLock.RUnlock()
-		return nil, RelationshipReverseArtifactStats{}, false, nil
+		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
 	artifact := fields[field]
 	if artifact == nil {
 		m.reverseArtifactLock.RUnlock()
-		return nil, RelationshipReverseArtifactStats{}, false, nil
+		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
 	unique := make(map[int64]struct{}, len(sourceValues))
 	candidates := roaring64.NewBitmap()
+	parentValueByChild := make(map[uint64]int64)
 	for _, value := range sourceValues {
 		if _, ok := unique[value]; ok {
 			continue
@@ -79,6 +87,10 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 		unique[value] = struct{}{}
 		if bitmap := artifact.byValue[value]; bitmap != nil {
 			candidates.Or(bitmap)
+			it := bitmap.Iterator()
+			for it.HasNext() {
+				parentValueByChild[it.Next()] = value
+			}
 		}
 	}
 	stats := RelationshipReverseArtifactStats{
@@ -95,7 +107,7 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string,
 	for it.HasNext() {
 		rownums = append(rownums, it.Next())
 	}
-	return rownums, stats, true, nil
+	return rownums, parentValueByChild, stats, true, nil
 }
 
 // RelationshipReverseArtifactSum groups child-domain BSI values by the

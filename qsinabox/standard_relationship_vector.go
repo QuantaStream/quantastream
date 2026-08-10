@@ -62,7 +62,7 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVect
 	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, false, nil
 	}
-	rownums, stats, ok, err := r.Direct.RelationshipReverseArtifactCandidates(read.VectorIndex, read.VectorField, sourceValues)
+	rownums, parentValues, stats, ok, err := r.Direct.RelationshipReverseArtifactCandidateValues(read.VectorIndex, read.VectorField, sourceValues)
 	if err != nil || !ok {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, ok, err
 	}
@@ -70,18 +70,23 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVect
 	for _, rownum := range rownums {
 		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
 	}
+	parentValueByChild := make(map[qsbridge.QuantaRownum]int64, len(parentValues))
+	for child, parentValue := range parentValues {
+		parentValueByChild[qsbridge.QuantaRownum(child)] = parentValue
+	}
 	return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
 		Candidates: qsbridge.QuantaCandidateSet{
 			Index:   read.TargetDomain,
 			Rownums: candidateRows,
 		},
-		Mode:          "reverse_artifact_server",
-		CacheHit:      true,
-		Rows:          stats.Rows,
-		Values:        stats.Values,
-		SourceValues:  stats.SourceValues,
-		TargetRows:    stats.TargetRows,
-		LookupElapsed: stats.LookupElapsed,
+		ParentValueByChild: parentValueByChild,
+		Mode:               "reverse_artifact_server",
+		CacheHit:           true,
+		Rows:               stats.Rows,
+		Values:             stats.Values,
+		SourceValues:       stats.SourceValues,
+		TargetRows:         stats.TargetRows,
+		LookupElapsed:      stats.LookupElapsed,
 	}, nil, true, nil
 }
 

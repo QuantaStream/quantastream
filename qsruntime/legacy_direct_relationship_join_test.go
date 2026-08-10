@@ -897,12 +897,16 @@ func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *t
 			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
 				Candidates: qsbridge.QuantaCandidateSet{
 					Index:   "lineitem",
-					Rownums: []qsbridge.QuantaRownum{10, 25, 100, 1200},
+					Rownums: []qsbridge.QuantaRownum{10, 25},
+				},
+				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
+					10: 7,
+					25: 9,
 				},
 				Mode:         "reverse_artifact_server",
 				CacheHit:     true,
 				SourceValues: 2,
-				TargetRows:   4,
+				TargetRows:   2,
 			},
 		},
 	}
@@ -937,17 +941,20 @@ func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *t
 	if timing.reverseArtifactMode != "reverse_artifact_server" || !timing.reverseArtifactCacheHit {
 		t.Fatalf("reverse artifact mode/cache = %q/%t, want server/true", timing.reverseArtifactMode, timing.reverseArtifactCacheHit)
 	}
-	if timing.reverseArtifactCandidateRows != 4 || timing.reverseArtifactNarrowedRows != 4 {
-		t.Fatalf("reverse artifact rows = %d/%d, want 4/4", timing.reverseArtifactCandidateRows, timing.reverseArtifactNarrowedRows)
+	if timing.reverseArtifactCandidateRows != 2 || timing.reverseArtifactNarrowedRows != 2 {
+		t.Fatalf("reverse artifact rows = %d/%d, want 2/2", timing.reverseArtifactCandidateRows, timing.reverseArtifactNarrowedRows)
 	}
-	if timing.projectionRows != 4 {
-		t.Fatalf("projectionRows = %d, want narrowed projection of 4 rows", timing.projectionRows)
+	if timing.projectionRows != 0 {
+		t.Fatalf("projectionRows = %d, want no FK projection when artifact supplies child-parent values", timing.projectionRows)
 	}
 	if timing.valueVectorElapsed != 0 {
 		t.Fatalf("valueVectorElapsed = %v, want no full value-vector read after artifact narrowing", timing.valueVectorElapsed)
 	}
-	if projectionCalls != 1 {
-		t.Fatalf("projection calls = %d, want 1", projectionCalls)
+	if projectionCalls != 0 {
+		t.Fatalf("projection calls = %d, want no FK projection when artifact supplies child-parent values", projectionCalls)
+	}
+	if timing.fkProjectionScope != "reverse_artifact_parent_map" {
+		t.Fatalf("fkProjectionScope = %q, want reverse_artifact_parent_map", timing.fkProjectionScope)
 	}
 	wantJoined := []qsbridge.QuantaRownum{25, 10}
 	if len(joined) != len(wantJoined) {

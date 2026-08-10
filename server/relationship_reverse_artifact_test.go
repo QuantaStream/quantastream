@@ -88,6 +88,34 @@ func TestRelationshipReverseArtifactRequiresSchemaFlag(t *testing.T) {
 	}
 }
 
+func TestRelationshipReverseArtifactCandidateValues(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		2: 7,
+		4: 8,
+		6: 8,
+	}, false))
+
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_orderkey", []int64{8, 7})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{2, 4, 6}) {
+		t.Fatalf("rownums = %#v, want [2 4 6]", rownums)
+	}
+	if !reflect.DeepEqual(parentValues, map[uint64]int64{2: 7, 4: 8, 6: 8}) {
+		t.Fatalf("parentValues = %#v, want child to parent values", parentValues)
+	}
+	if stats.TargetRows != 3 || stats.SourceValues != 2 {
+		t.Fatalf("stats = %#v, want targetRows=3 sourceValues=2", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
