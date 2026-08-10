@@ -962,6 +962,12 @@ func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *t
 	if !timing.childRetainCovered || timing.childRetainMode != "reverse_artifact_parent_map" {
 		t.Fatalf("child retain coverage = %t/%q, want reverse_artifact_parent_map", timing.childRetainCovered, timing.childRetainMode)
 	}
+	if timing.reverseArtifactLocalMode != "parent_value_single_pass" {
+		t.Fatalf("reverseArtifactLocalMode = %q, want parent_value_single_pass", timing.reverseArtifactLocalMode)
+	}
+	if timing.reverseArtifactParentElapsed != 0 || timing.pairElapsed != 0 {
+		t.Fatalf("reverse artifact local phases parent/pair = %v/%v, want fused into narrow phase", timing.reverseArtifactParentElapsed, timing.pairElapsed)
+	}
 	wantJoined := []qsbridge.QuantaRownum{25, 10}
 	if len(joined) != len(wantJoined) {
 		t.Fatalf("joined = %#v, want %#v", joined, wantJoined)

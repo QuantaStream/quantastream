@@ -85,6 +85,7 @@ type legacyDirectRelationshipReduceTiming struct {
 	reverseArtifactNarrowedRows    int
 	reverseArtifactElapsed         time.Duration
 	reverseArtifactLookupElapsed   time.Duration
+	reverseArtifactLocalMode       string
 	reverseArtifactSourceElapsed   time.Duration
 	reverseArtifactReadElapsed     time.Duration
 	reverseArtifactNarrowElapsed   time.Duration
@@ -105,6 +106,7 @@ type legacyDirectRelationshipReduceTiming struct {
 }
 
 type legacyDirectRelationshipReverseArtifactLocalTiming struct {
+	mode          string
 	sourceElapsed time.Duration
 	readElapsed   time.Duration
 	narrowElapsed time.Duration
@@ -730,6 +732,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrowed_rows", strconv.Itoa(reduceTiming.reverseArtifactNarrowedRows)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_elapsed", reduceTiming.reverseArtifactElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_lookup_elapsed", reduceTiming.reverseArtifactLookupElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_local_mode", reduceTiming.reverseArtifactLocalMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_elapsed", reduceTiming.reverseArtifactSourceElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_read_request_elapsed", reduceTiming.reverseArtifactReadElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrow_elapsed", reduceTiming.reverseArtifactNarrowElapsed.String()),
@@ -3385,7 +3388,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	}
 	effectiveChildRows := childRows
 	effectiveProjectionRows := projectionRows
-	if narrowedRows, artifactResult, artifactParentByChild, artifactTiming, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
+	if narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
 		timing.reverseArtifactUsed = true
 		timing.reverseArtifactMode = artifactResult.CandidateMode
 		timing.reverseArtifactCacheHit = artifactResult.CandidateCacheHit
@@ -3394,6 +3397,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactNarrowedRows = len(narrowedRows)
 		timing.reverseArtifactElapsed = artifactResult.CandidateElapsed
 		timing.reverseArtifactLookupElapsed = artifactResult.CandidateScanElapsed
+		timing.reverseArtifactLocalMode = artifactTiming.mode
 		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
 		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
 		timing.reverseArtifactNarrowElapsed = artifactTiming.narrowElapsed
@@ -3416,9 +3420,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			return nil, nil, timing, nil, nil
 		}
 		if len(artifactParentByChild) > 0 {
-			pairStart := time.Now()
-			_, joined, pairs := legacyDirectRelationshipRowsFromParentMap(effectiveChildRows, artifactParentByChild)
-			timing.pairElapsed = time.Since(pairStart)
+			joined := effectiveChildRows
+			pairs := artifactPairs
+			if len(pairs) == 0 {
+				pairStart := time.Now()
+				_, joined, pairs = legacyDirectRelationshipRowsFromParentMap(effectiveChildRows, artifactParentByChild)
+				timing.pairElapsed = time.Since(pairStart)
+			}
 			timing.matchedRows = len(joined)
 			timing.fkProjectionScope = "reverse_artifact_parent_map"
 			timing.projectionRows = 0
@@ -3595,16 +3603,39 @@ func legacyDirectRelationshipParentMapFromArtifactValues(childRows []qsbridge.Qu
 	return parentByChild
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
+func legacyDirectRelationshipRowsFromArtifactParentValues(childRows []qsbridge.QuantaRownum, parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
+	if len(childRows) == 0 || len(parentValueByChild) == 0 || len(parentKeyRows) == 0 {
+		return nil, nil, nil, false
+	}
+	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(parentValueByChild))
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(parentValueByChild))
+	pairs := make([]legacyDirectRelationshipPair, 0, len(parentValueByChild))
+	for _, child := range childRows {
+		parentValue, ok := parentValueByChild[child]
+		if !ok {
+			continue
+		}
+		parentRow, ok := parentKeyRows[parentValue]
+		if !ok {
+			return nil, nil, nil, false
+		}
+		narrowedRows = append(narrowedRows, child)
+		parentByChild[child] = parentRow
+		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
+	}
+	return narrowedRows, parentByChild, pairs, true
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
 	var localTiming legacyDirectRelationshipReverseArtifactLocalTiming
 	if e.ReverseArtifactCandidateReader == nil || len(childRows) == 0 || len(parentKeyRows) == 0 {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, localTiming, false, nil, nil
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
 	}
 	sourceStart := time.Now()
 	sourceValues := legacyDirectRelationshipParentKeyValues(parentKeyRows)
 	localTiming.sourceElapsed = time.Since(sourceStart)
 	if len(sourceValues) == 0 {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, localTiming, false, nil, nil
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
 	}
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
 		TableCache:                     e.TableCache,
@@ -3618,7 +3649,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	candidates, parentValueByChild, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
 	elapsed := time.Since(start)
 	if !ok {
-		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, localTiming, false, diagnostics, err
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, diagnostics, err
 	}
 	result := qsbridge.FilterDomainRelationshipVectorResult{
 		TargetCandidates:     candidates,
@@ -3633,15 +3664,24 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		CandidateScanElapsed: artifactTiming.LookupElapsed,
 	}
 	if err != nil || diagnostics.BlocksNative() {
-		return nil, result, nil, localTiming, true, diagnostics, err
+		return nil, result, nil, nil, localTiming, true, diagnostics, err
 	}
 	narrowStart := time.Now()
+	if len(parentValueByChild) >= len(candidates.Rownums) {
+		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromArtifactParentValues(childRows, parentValueByChild, parentKeyRows)
+		localTiming.narrowElapsed = time.Since(narrowStart)
+		if ok {
+			localTiming.mode = "parent_value_single_pass"
+			return narrowedRows, result, parentByChild, pairs, localTiming, true, diagnostics, nil
+		}
+	}
 	narrowedRows := legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums)
 	localTiming.narrowElapsed = time.Since(narrowStart)
 	parentStart := time.Now()
 	parentByChild := legacyDirectRelationshipParentMapFromArtifactValues(narrowedRows, parentValueByChild, parentKeyRows)
 	localTiming.parentElapsed = time.Since(parentStart)
-	return narrowedRows, result, parentByChild, localTiming, true, diagnostics, nil
+	localTiming.mode = "candidate_intersect_parent_map"
+	return narrowedRows, result, parentByChild, nil, localTiming, true, diagnostics, nil
 }
 
 func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, qsbridge.DiagnosticSet) {
