@@ -62,7 +62,7 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVect
 	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, false, nil
 	}
-	rownums, parentValues, stats, ok, err := r.Direct.RelationshipReverseArtifactCandidateValuesUnordered(read.VectorIndex, read.VectorField, sourceValues)
+	rownums, parentValues, stats, ok, err := r.Direct.RelationshipReverseArtifactCandidateValues(read.VectorIndex, read.VectorField, sourceValues)
 	if err != nil || !ok {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, ok, err
 	}

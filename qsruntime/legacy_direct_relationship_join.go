@@ -3626,6 +3626,53 @@ func legacyDirectRelationshipRowsFromArtifactParentValues(childRows []qsbridge.Q
 	return narrowedRows, parentByChild, pairs, true
 }
 
+func legacyDirectRelationshipRowsFromSortedArtifactCandidates(childRows []qsbridge.QuantaRownum, candidateRows []qsbridge.QuantaRownum, parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
+	if len(childRows) == 0 || len(candidateRows) == 0 || len(parentValueByChild) == 0 || len(parentKeyRows) == 0 {
+		return nil, nil, nil, false
+	}
+	if len(candidateRows) >= len(childRows) ||
+		!legacyDirectRelationshipRownumsAscending(childRows) ||
+		!legacyDirectRelationshipRownumsAscending(candidateRows) {
+		return nil, nil, nil, false
+	}
+	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(candidateRows))
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(candidateRows))
+	pairs := make([]legacyDirectRelationshipPair, 0, len(candidateRows))
+	childIndex := 0
+	for _, candidate := range candidateRows {
+		for childIndex < len(childRows) && childRows[childIndex] < candidate {
+			childIndex++
+		}
+		if childIndex >= len(childRows) {
+			break
+		}
+		if childRows[childIndex] != candidate {
+			continue
+		}
+		parentValue, ok := parentValueByChild[candidate]
+		if !ok {
+			return nil, nil, nil, false
+		}
+		parentRow, ok := parentKeyRows[parentValue]
+		if !ok {
+			return nil, nil, nil, false
+		}
+		narrowedRows = append(narrowedRows, candidate)
+		parentByChild[candidate] = parentRow
+		pairs = append(pairs, legacyDirectRelationshipPair{child: candidate, parent: parentRow})
+	}
+	return narrowedRows, parentByChild, pairs, true
+}
+
+func legacyDirectRelationshipRownumsAscending(rownums []qsbridge.QuantaRownum) bool {
+	for i := 1; i < len(rownums); i++ {
+		if rownums[i] < rownums[i-1] {
+			return false
+		}
+	}
+	return true
+}
+
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
 	var localTiming legacyDirectRelationshipReverseArtifactLocalTiming
 	if e.ReverseArtifactCandidateReader == nil || len(childRows) == 0 || len(parentKeyRows) == 0 {
@@ -3667,6 +3714,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		return nil, result, nil, nil, localTiming, true, diagnostics, err
 	}
 	narrowStart := time.Now()
+	if len(parentValueByChild) >= len(candidates.Rownums) {
+		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromSortedArtifactCandidates(childRows, candidates.Rownums, parentValueByChild, parentKeyRows)
+		localTiming.narrowElapsed = time.Since(narrowStart)
+		if ok {
+			localTiming.mode = "sorted_candidate_single_pass"
+			return narrowedRows, result, parentByChild, pairs, localTiming, true, diagnostics, nil
+		}
+	}
 	if len(parentValueByChild) >= len(candidates.Rownums) {
 		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromArtifactParentValues(childRows, parentValueByChild, parentKeyRows)
 		localTiming.narrowElapsed = time.Since(narrowStart)

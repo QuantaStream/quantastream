@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"math/big"
+	"reflect"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -985,6 +986,68 @@ func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *t
 		if pairs[i] != wantPairs[i] {
 			t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
 		}
+	}
+}
+
+func TestLegacyDirectRelationshipReduceUsesSortedReverseArtifactCandidates(t *testing.T) {
+	childRows := make([]qsbridge.QuantaRownum, 0, 1500)
+	for row := 1; row <= 1500; row++ {
+		childRows = append(childRows, qsbridge.QuantaRownum(row))
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			OK: true,
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{10, 25},
+				},
+				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
+					10: 7,
+					25: 9,
+				},
+				Mode:         "reverse_artifact_server",
+				CacheHit:     true,
+				SourceValues: 2,
+				TargetRows:   2,
+			},
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:   "o",
+		parentTable:  "orders",
+		parentField:  "o_orderkey",
+		childRole:    "l",
+		childTable:   "lineitem",
+		childField:   "l_orderkey",
+		capabilities: qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion},
+	}
+
+	joined, pairs, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRows(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		edge,
+		[]qsbridge.QuantaRownum{7, 9},
+		childRows,
+		childRows,
+	)
+
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if timing.reverseArtifactLocalMode != "sorted_candidate_single_pass" {
+		t.Fatalf("reverseArtifactLocalMode = %q, want sorted_candidate_single_pass", timing.reverseArtifactLocalMode)
+	}
+	wantJoined := []qsbridge.QuantaRownum{10, 25}
+	if !reflect.DeepEqual(joined, wantJoined) {
+		t.Fatalf("joined = %#v, want %#v", joined, wantJoined)
+	}
+	wantPairs := []legacyDirectRelationshipPair{{child: 10, parent: 7}, {child: 25, parent: 9}}
+	if !reflect.DeepEqual(pairs, wantPairs) {
+		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
 	}
 }
 
