@@ -2,7 +2,7 @@ version: 1
 name: "tpch_benchmark_readonly_sf1_scale_safe"
 
 tests:
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.001.lineitem_seed_count"
+  - id: "tpch_benchmark_readonly.001.lineitem_seed_count"
     status: supported
     kind: query
     capabilities: [tpch, benchmark, read-only, seed, count, sf1]
@@ -11,7 +11,7 @@ tests:
       rows:
         - [6001215]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.010.q1_grouped_lineitem_shape"
+  - id: "tpch_benchmark_readonly.010.q1_grouped_lineitem_shape"
     status: supported
     kind: query
     order: rowsort
@@ -23,7 +23,7 @@ tests:
     expect:
       row_count: 4
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.020.q3_grouped_revenue_limit"
+  - id: "tpch_benchmark_readonly.020.q3_grouped_revenue_limit"
     status: supported
     kind: query
     timeout: 60s
@@ -39,7 +39,7 @@ tests:
     expect:
       row_count: 10
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.030.q5_combined_graph_regional_count"
+  - id: "tpch_benchmark_readonly.030.q5_combined_graph_regional_count"
     status: supported
     kind: query
     order: rowsort
@@ -58,7 +58,7 @@ tests:
     expect:
       row_count: 5
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.040.q6_discounted_revenue"
+  - id: "tpch_benchmark_readonly.040.q6_discounted_revenue"
     status: supported
     kind: query
     capabilities: [tpch-q6, benchmark, read-only, single-table, filter, date-predicate, aggregate-expression, sf1]
@@ -75,7 +75,7 @@ tests:
       rows:
         - ["123141078.22829871"]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.050.q12_same_row_date_comparison"
+  - id: "tpch_benchmark_readonly.050.q12_same_row_date_comparison"
     status: supported
     kind: query
     capabilities: [tpch-q12, benchmark, read-only, field-comparison, date-predicate, count, sf1]
@@ -91,7 +91,7 @@ tests:
       rows:
         - [30988]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.060.q16_part_filter_count"
+  - id: "tpch_benchmark_readonly.060.q16_part_filter_count"
     status: supported
     kind: query
     capabilities: [tpch-q16, benchmark, read-only, not-like, string-enum, numeric-predicate, sf1]
@@ -105,7 +105,7 @@ tests:
       rows:
         - [29581]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.070.q19_formal_discounted_revenue"
+  - id: "tpch_benchmark_readonly.070.q19_formal_discounted_revenue"
     status: supported
     kind: query
     timeout: 60s
@@ -153,7 +153,7 @@ tests:
       rows:
         - ["3083843.0577999987"]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.080.q21_sibling_exists_count"
+  - id: "tpch_benchmark_readonly.080.q21_sibling_exists_count"
     status: supported
     kind: query
     order: exact
@@ -173,7 +173,7 @@ tests:
       rows:
         - [3657708]
 
-  - id: "tpch_benchmark_readonly_sf1_scale_safe.090.shipdate_year_group_count"
+  - id: "tpch_benchmark_readonly.090.shipdate_year_group_count"
     status: supported
     kind: query
     order: rowsort

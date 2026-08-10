@@ -306,7 +306,8 @@ For SF1 benchmark comparisons, use
 `../tpc-h-benchmark/sqltests/tpch_benchmark_readonly_sf1_scale_safe.yaml`. It
 keeps the same compact read-only query mix but uses SF1-safe expectations and a
 distinct suite name so benchmark reports can be compared against SF1 MySQL
-reference runs.
+reference runs. The case IDs intentionally keep the `tpch_benchmark_readonly`
+prefix to match the captured SF1 MySQL baseline reports.
 
 Generated benchmark artifacts should stay under ignored local paths unless a
 specific report is intentionally promoted. Render a human-readable summary with:
