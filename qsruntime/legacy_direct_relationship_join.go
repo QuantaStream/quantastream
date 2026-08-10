@@ -36,6 +36,8 @@ type LegacyDirectRelationshipVectorJoinExecutor struct {
 	ReverseArtifacts *RelationshipVectorReverseArtifactManager
 	// ReverseArtifactCandidateReader exposes physical-tier maintained reverse artifacts.
 	ReverseArtifactCandidateReader LegacyDirectRelationshipVectorReverseArtifactCandidateReader
+	// RelationshipAggregateReader exposes physical-tier relationship-vector aggregate primitives.
+	RelationshipAggregateReader LegacyDirectRelationshipVectorAggregateReader
 	// ApplyRecommendedEdgeOrder enables dependency-ordered graph reduction.
 	ApplyRecommendedEdgeOrder bool
 }

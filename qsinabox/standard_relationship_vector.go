@@ -3,6 +3,7 @@ package qsinabox
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -23,6 +24,13 @@ type StandardRelationshipVectorProjectionReader struct {
 // parent-to-child artifacts from the in-process bitmap tier.
 type StandardRelationshipReverseArtifactCandidateReader struct {
 	Direct *server.BitmapIndex
+}
+
+// StandardRelationshipVectorAggregateReader performs storage-side relationship
+// aggregates through the in-process bitmap tier.
+type StandardRelationshipVectorAggregateReader struct {
+	TableCache *core.TableCacheStruct
+	Direct     *server.BitmapIndex
 }
 
 // RelationshipVectorReverseArtifactStats returns artifact cardinality without
@@ -75,6 +83,70 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVect
 		TargetRows:    stats.TargetRows,
 		LookupElapsed: stats.LookupElapsed,
 	}, nil, true, nil
+}
+
+// ReadRelationshipVectorAggregate returns raw BSI aggregate state grouped by a
+// schema-declared relationship vector.
+func (r StandardRelationshipVectorAggregateReader) ReadRelationshipVectorAggregate(
+	_ context.Context,
+	read qsruntime.LegacyDirectRelationshipVectorAggregateRequest,
+) (qsruntime.LegacyDirectRelationshipVectorAggregateResult, qsbridge.DiagnosticSet, bool, error) {
+	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" || read.ValueField == "" {
+		return qsruntime.LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
+	}
+	if read.ValueIndex != "" && !strings.EqualFold(read.ValueIndex, read.VectorIndex) {
+		return qsruntime.LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
+	}
+	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.VectorIndex, read.FromEpochMillis, read.ToEpochMillis)
+	if len(read.ChildRows) > 0 && len(read.ChildRows) == len(read.ParentRows) {
+		groups, stats, ok, err := r.Direct.RelationshipAlignedValueSum(
+			read.VectorIndex,
+			read.ValueField,
+			fromTime,
+			toTime,
+			standardRelationshipAggregateRows(read.ChildRows),
+			standardRelationshipAggregateRows(read.ParentRows),
+		)
+		if err != nil || ok {
+			return standardRelationshipAggregateResult(groups, stats, "aligned_relationship_sum"), nil, ok, err
+		}
+	}
+	groups, stats, ok, err := r.Direct.RelationshipReverseArtifactSum(
+		read.VectorIndex,
+		read.VectorField,
+		read.ValueField,
+		fromTime,
+		toTime,
+		standardRelationshipAggregateRows(read.ChildRows),
+		standardRelationshipAggregateRows(read.ParentRows),
+	)
+	if err != nil || !ok {
+		return qsruntime.LegacyDirectRelationshipVectorAggregateResult{}, nil, ok, err
+	}
+	return standardRelationshipAggregateResult(groups, stats, "reverse_artifact_sum"), nil, true, nil
+}
+
+func standardRelationshipAggregateResult(groups []server.RelationshipReverseArtifactSumGroup, stats server.RelationshipReverseArtifactSumStats, mode string) qsruntime.LegacyDirectRelationshipVectorAggregateResult {
+	resultGroups := make([]qsruntime.LegacyDirectRelationshipVectorAggregateGroup, 0, len(groups))
+	for _, group := range groups {
+		resultGroups = append(resultGroups, qsruntime.LegacyDirectRelationshipVectorAggregateGroup{
+			ParentRow:              qsbridge.QuantaRownum(group.ParentValue),
+			RepresentativeChildRow: qsbridge.QuantaRownum(group.RepresentativeRow),
+			Count:                  group.Count,
+			Sum:                    group.Sum,
+		})
+	}
+	return qsruntime.LegacyDirectRelationshipVectorAggregateResult{
+		Groups:            resultGroups,
+		Mode:              mode,
+		Rows:              stats.Rows,
+		Values:            stats.Values,
+		SourceValues:      stats.SourceValues,
+		TargetRows:        stats.TargetRows,
+		LookupElapsed:     stats.LookupElapsed,
+		ProjectionElapsed: stats.ProjectionElapsed,
+		AggregateElapsed:  stats.AggregateElapsed,
+	}
 }
 
 // ReadRelationshipVectorProjection returns the requested relationship-vector BSI.
@@ -143,4 +215,12 @@ func standardRelationshipVectorProjectionFoundSet(read qsruntime.LegacyDirectRel
 		foundSet.Add(uint64(rownum))
 	}
 	return foundSet
+}
+
+func standardRelationshipAggregateRows(rownums []qsbridge.QuantaRownum) []uint64 {
+	rows := make([]uint64, 0, len(rownums))
+	for _, rownum := range rownums {
+		rows = append(rows, uint64(rownum))
+	}
+	return rows
 }

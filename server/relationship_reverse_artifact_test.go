@@ -88,6 +88,78 @@ func TestRelationshipReverseArtifactRequiresSchemaFlag(t *testing.T) {
 	}
 }
 
+func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		2:  7,
+		4:  8,
+		6:  8,
+		10: 9,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_extendedprice", shardTime, map[uint64]int64{
+		2:  1000,
+		4:  2500,
+		6:  500,
+		10: 999,
+	}, false))
+
+	groups, stats, ok, err := index.RelationshipReverseArtifactSum("lineitem", "l_orderkey", "l_extendedprice", 0, 0, []uint64{2, 4, 6}, []uint64{8, 7})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactSum error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactSum ok = false, want true")
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups = %#v, want two parent groups", groups)
+	}
+	if groups[0].ParentValue != 7 || groups[0].RepresentativeRow != 2 || groups[0].Count != 1 || groups[0].Sum.Int64() != 1000 {
+		t.Fatalf("group[0] = %#v, want parent 7 sum 1000", groups[0])
+	}
+	if groups[1].ParentValue != 8 || groups[1].RepresentativeRow != 4 || groups[1].Count != 2 || groups[1].Sum.Int64() != 3000 {
+		t.Fatalf("group[1] = %#v, want parent 8 sum 3000", groups[1])
+	}
+	if stats.Rows != 4 || stats.Values != 3 || stats.SourceValues != 2 || stats.TargetRows != 3 || stats.Groups != 2 {
+		t.Fatalf("stats = %#v, want rows=4 values=3 sourceValues=2 targetRows=3 groups=2", stats)
+	}
+}
+
+func TestRelationshipAlignedValueSumGroupsProjectedValues(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, false)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_extendedprice", shardTime, map[uint64]int64{
+		2: 1000,
+		4: 2500,
+		6: 500,
+	}, false))
+
+	groups, stats, ok, err := index.RelationshipAlignedValueSum("lineitem", "l_extendedprice", 0, 0, []uint64{2, 4, 6, 4}, []uint64{7, 8, 8, 9})
+	if err != nil {
+		t.Fatalf("RelationshipAlignedValueSum error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipAlignedValueSum ok = false, want true")
+	}
+	if len(groups) != 3 {
+		t.Fatalf("groups = %#v, want three parent groups", groups)
+	}
+	if groups[0].ParentValue != 7 || groups[0].RepresentativeRow != 2 || groups[0].Count != 1 || groups[0].Sum.Int64() != 1000 {
+		t.Fatalf("group[0] = %#v, want parent 7 sum 1000", groups[0])
+	}
+	if groups[1].ParentValue != 8 || groups[1].RepresentativeRow != 4 || groups[1].Count != 2 || groups[1].Sum.Int64() != 3000 {
+		t.Fatalf("group[1] = %#v, want parent 8 sum 3000", groups[1])
+	}
+	if groups[2].ParentValue != 9 || groups[2].RepresentativeRow != 4 || groups[2].Count != 1 || groups[2].Sum.Int64() != 2500 {
+		t.Fatalf("group[2] = %#v, want duplicate child row counted for parent 9", groups[2])
+	}
+	if stats.Rows != 4 || stats.Values != 3 || stats.SourceValues != 3 || stats.TargetRows != 4 || stats.Groups != 3 {
+		t.Fatalf("stats = %#v, want rows=4 values=3 sourceValues=3 targetRows=4 groups=3", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactRebuiltFromPersistedBSIStartup(t *testing.T) {
 	hot := newRelationshipReverseArtifactPersistenceTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
@@ -193,6 +265,11 @@ attributes:
       parentToChild: true
 `
 	}
+	schema += `  - fieldName: l_extendedprice
+    type: Float
+    mappingStrategy: FloatScaleBSI
+    scale: 2
+`
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0o644); err != nil {
 		t.Fatalf("WriteFile schema error = %v", err)
 	}
@@ -204,6 +281,10 @@ attributes:
 }
 
 func testRelationshipReverseArtifactBSIFragment(t *testing.T, shardTime time.Time, values map[uint64]int64, update bool) *BitmapFragment {
+	return testRelationshipReverseArtifactBSIFragmentForField(t, "l_orderkey", shardTime, values, update)
+}
+
+func testRelationshipReverseArtifactBSIFragmentForField(t *testing.T, field string, shardTime time.Time, values map[uint64]int64, update bool) *BitmapFragment {
 	t.Helper()
 	bsi := roaring64.NewDefaultBSI()
 	for rownum, value := range values {
@@ -213,7 +294,7 @@ func testRelationshipReverseArtifactBSIFragment(t *testing.T, shardTime time.Tim
 	if err != nil {
 		t.Fatalf("MarshalBinary BSI error = %v", err)
 	}
-	return newBitmapFragment("lineitem", "l_orderkey", 0, shardTime, data, true, false, update)
+	return newBitmapFragment("lineitem", field, 0, shardTime, data, true, false, update)
 }
 
 func testRelationshipReverseArtifactClearFragment(t *testing.T, shardTime time.Time, rownums ...uint64) *BitmapFragment {

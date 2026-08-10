@@ -185,6 +185,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"native_proxy_runtime.go",
 		"native_proxy_server.go",
 		"query_scratchpad.go",
+		"relationship_vector_aggregate.go",
 		"relationship_join_plan.go",
 		"route.go",
 		"runtime_environment.go",

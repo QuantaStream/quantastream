@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,41 +39,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		return result, false, nil
 	}
 
-	preAggregateMaterializationStart := time.Now()
-	priceRowSet, priceProbes, diagnostics, err := e.legacyDirectRelationshipGraphMaterializedRowSet(ctx, request, sink, lineRows, []qsbridge.QuantaProjectionField{plan.extendedPriceField}, alignedRows, edges, "graph_grouped_aggregate_preagg_materialization_")
-	preAggregateMaterializationElapsed := time.Since(preAggregateMaterializationStart)
+	groupsByOrder, priceProbes, preAggregateMaterializationElapsed, preAggregateElapsed, diagnostics, err := e.legacyDirectRelationshipQ3OrderRevenuePreAggregate(ctx, request, sink, lineRows, orderRows, alignedRows, edges, plan)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, true, err
 	}
-	priceRef, _ := directBitmapAggregateInputField(request.SQLAggregates[0])
-	priceValues, ok := directBitmapProjectedValues(priceRowSet, priceRef)
-	if !ok || len(priceValues) != len(lineRows) {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("Q3 order-revenue fast path could not read materialized lineitem extended price values")...)
+	if len(groupsByOrder) == 0 {
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("Q3 order-revenue fast path produced no pre-aggregate groups")...)
 		return result, true, nil
 	}
-
-	preAggregateStart := time.Now()
-	groupsByOrder := make(map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup)
-	for i, priceCell := range priceValues {
-		price, numeric := directBitmapNumericCellValue(priceCell)
-		if !numeric {
-			result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("Q3 order-revenue fast path requires numeric lineitem extended price values")...)
-			return result, true, nil
-		}
-		orderRow := orderRows[i]
-		group := groupsByOrder[orderRow]
-		if group == nil {
-			group = &legacyDirectRelationshipQ3OrderRevenueGroup{
-				orderRow: orderRow,
-				lineRow:  lineRows[i],
-			}
-			groupsByOrder[orderRow] = group
-		}
-		group.revenue += price
-	}
 	groupRows := legacyDirectRelationshipQ3OrderRevenueGroups(groupsByOrder)
-	preAggregateElapsed := time.Since(preAggregateStart)
 
 	finalAligned := map[string][]qsbridge.QuantaRownum{
 		plan.lineitemRole: make([]qsbridge.QuantaRownum, 0, len(groupRows)),
@@ -175,6 +151,99 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	return result, true, nil
 }
 
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenuePreAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error) {
+	if groups, probes, projectionElapsed, aggregateElapsed, diagnostics, err, ok := e.legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx, sink, lineRows, orderRows, plan); ok {
+		return groups, probes, projectionElapsed, aggregateElapsed, diagnostics, err
+	}
+	return e.legacyDirectRelationshipQ3OrderRevenueMaterializedAggregate(ctx, request, sink, lineRows, orderRows, alignedRows, edges, plan)
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx context.Context, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error, bool) {
+	if e.RelationshipAggregateReader == nil || !strings.EqualFold(sink, "lineitem") {
+		return nil, nil, 0, 0, nil, nil, false
+	}
+	valueField := legacyDirectRelationshipQ3ProjectionPhysicalField(plan.extendedPriceField)
+	if valueField == "" {
+		return nil, nil, 0, 0, nil, nil, false
+	}
+	start := time.Now()
+	aggregate, diagnostics, ok, err := e.RelationshipAggregateReader.ReadRelationshipVectorAggregate(ctx, LegacyDirectRelationshipVectorAggregateRequest{
+		VectorIndex: "lineitem",
+		VectorField: "l_orderkey",
+		ValueIndex:  "lineitem",
+		ValueField:  valueField,
+		ChildRows:   lineRows,
+		ParentRows:  orderRows,
+	})
+	elapsed := time.Since(start)
+	if err != nil || diagnostics.BlocksNative() || !ok {
+		return nil, nil, 0, 0, diagnostics, err, ok
+	}
+	scale := e.legacyDirectRelationshipQ3FieldScale("lineitem", plan.extendedPriceField)
+	groupsByOrder := make(map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, len(aggregate.Groups))
+	for _, aggregateGroup := range aggregate.Groups {
+		if aggregateGroup.Sum == nil {
+			continue
+		}
+		groupsByOrder[aggregateGroup.ParentRow] = &legacyDirectRelationshipQ3OrderRevenueGroup{
+			orderRow: aggregateGroup.ParentRow,
+			lineRow:  aggregateGroup.RepresentativeChildRow,
+			revenue:  float64(aggregateGroup.Sum.Int64()) / math.Pow10(scale),
+		}
+	}
+	return groupsByOrder, []ExecutionProbe{
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_mode", "storage_relationship_sum"),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_mode", aggregate.Mode),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_rows", strconv.FormatUint(aggregate.Rows, 10)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_values", strconv.FormatUint(aggregate.Values, 10)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_source_values", strconv.Itoa(aggregate.SourceValues)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_target_rows", strconv.FormatUint(aggregate.TargetRows, 10)),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_elapsed", elapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed", aggregate.LookupElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_elapsed", aggregate.ProjectionElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_aggregate_elapsed", aggregate.AggregateElapsed.String()),
+	}, aggregate.ProjectionElapsed, aggregate.AggregateElapsed, diagnostics, nil, true
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueMaterializedAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error) {
+	preAggregateMaterializationStart := time.Now()
+	priceRowSet, priceProbes, diagnostics, err := e.legacyDirectRelationshipGraphMaterializedRowSet(ctx, request, sink, lineRows, []qsbridge.QuantaProjectionField{plan.extendedPriceField}, alignedRows, edges, "graph_grouped_aggregate_preagg_materialization_")
+	preAggregateMaterializationElapsed := time.Since(preAggregateMaterializationStart)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, priceProbes, preAggregateMaterializationElapsed, 0, diagnostics, err
+	}
+	priceRef, _ := directBitmapAggregateInputField(request.SQLAggregates[0])
+	priceValues, ok := directBitmapProjectedValues(priceRowSet, priceRef)
+	if !ok || len(priceValues) != len(lineRows) {
+		diagnostics = append(diagnostics, legacyDirectRelationshipDiagnostic("Q3 order-revenue fast path could not read materialized lineitem extended price values")...)
+		return nil, priceProbes, preAggregateMaterializationElapsed, 0, diagnostics, nil
+	}
+
+	preAggregateStart := time.Now()
+	groupsByOrder := make(map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup)
+	for i, priceCell := range priceValues {
+		price, numeric := directBitmapNumericCellValue(priceCell)
+		if !numeric {
+			diagnostics = append(diagnostics, legacyDirectRelationshipDiagnostic("Q3 order-revenue fast path requires numeric lineitem extended price values")...)
+			return nil, priceProbes, preAggregateMaterializationElapsed, 0, diagnostics, nil
+		}
+		orderRow := orderRows[i]
+		group := groupsByOrder[orderRow]
+		if group == nil {
+			group = &legacyDirectRelationshipQ3OrderRevenueGroup{
+				orderRow: orderRow,
+				lineRow:  lineRows[i],
+			}
+			groupsByOrder[orderRow] = group
+		}
+		group.revenue += price
+	}
+	priceProbes = append([]ExecutionProbe{
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_mode", "materialized_value_vector"),
+	}, priceProbes...)
+	return groupsByOrder, priceProbes, preAggregateMaterializationElapsed, time.Since(preAggregateStart), diagnostics, nil
+}
+
 func legacyDirectRelationshipQ3OrderRevenuePlanFor(request ExecutionRequest, edges []legacyDirectRelationshipEdge, fields []qsbridge.QuantaProjectionField) (legacyDirectRelationshipQ3OrderRevenuePlan, bool) {
 	if len(request.SQLAggregates) != 1 || !strings.EqualFold(request.SQLAggregates[0].Function, "sum") || request.SQLAggregates[0].Filter != nil || request.SQLAggregates[0].Mode == qsbridge.AggregateDistinct || len(request.GroupBy) == 0 {
 		return legacyDirectRelationshipQ3OrderRevenuePlan{}, false
@@ -251,6 +320,29 @@ func legacyDirectRelationshipQ3HasGroupField(fields []qsbridge.FieldRef, table s
 		}
 	}
 	return false
+}
+
+func legacyDirectRelationshipQ3ProjectionPhysicalField(field qsbridge.QuantaProjectionField) string {
+	if field.PhysicalName != "" {
+		return field.PhysicalName
+	}
+	return field.Field
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3FieldScale(tableName string, field qsbridge.QuantaProjectionField) int {
+	table := e.legacyDirectCachedTable(tableName)
+	if table == nil {
+		return 0
+	}
+	fieldName := legacyDirectRelationshipQ3ProjectionPhysicalField(field)
+	if fieldName == "" {
+		return 0
+	}
+	attr, err := table.GetAttribute(fieldName)
+	if err != nil || attr == nil || attr.Scale < 0 {
+		return 0
+	}
+	return attr.Scale
 }
 
 func legacyDirectRelationshipQ3OrderRevenueGroups(groupsByOrder map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup) []legacyDirectRelationshipQ3OrderRevenueGroup {
