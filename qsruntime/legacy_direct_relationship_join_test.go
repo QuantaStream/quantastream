@@ -870,6 +870,105 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesValueVectorForManyParen
 	}
 }
 
+func TestLegacyDirectRelationshipReduceUsesReverseArtifactToNarrowChildRows(t *testing.T) {
+	fkBSI := roaring64.NewDefaultBSI()
+	fkBSI.SetValue(10, 7)
+	fkBSI.SetValue(25, 9)
+	fkBSI.SetValue(100, 99)
+	fkBSI.SetValue(1200, 1200)
+	for row := uint64(1); row <= 1500; row++ {
+		if _, ok := fkBSI.GetValue(row); ok {
+			continue
+		}
+		fkBSI.SetValue(row, 5000+int64(row))
+	}
+	childRows := make([]qsbridge.QuantaRownum, 0, 1500)
+	for row := 1500; row >= 1; row-- {
+		childRows = append(childRows, qsbridge.QuantaRownum(row))
+	}
+	projectionCalls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   fkBSI,
+			Calls: &projectionCalls,
+		},
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			OK: true,
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{10, 25, 100, 1200},
+				},
+				Mode:         "reverse_artifact_server",
+				CacheHit:     true,
+				SourceValues: 2,
+				TargetRows:   4,
+			},
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:   "o",
+		parentTable:  "orders",
+		parentField:  "o_orderkey",
+		childRole:    "l",
+		childTable:   "lineitem",
+		childField:   "l_orderkey",
+		capabilities: qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion},
+	}
+
+	joined, pairs, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRows(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		edge,
+		[]qsbridge.QuantaRownum{7, 9},
+		childRows,
+		childRows,
+	)
+
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if !timing.reverseArtifactUsed {
+		t.Fatal("reverseArtifactUsed = false, want true")
+	}
+	if timing.reverseArtifactMode != "reverse_artifact_server" || !timing.reverseArtifactCacheHit {
+		t.Fatalf("reverse artifact mode/cache = %q/%t, want server/true", timing.reverseArtifactMode, timing.reverseArtifactCacheHit)
+	}
+	if timing.reverseArtifactCandidateRows != 4 || timing.reverseArtifactNarrowedRows != 4 {
+		t.Fatalf("reverse artifact rows = %d/%d, want 4/4", timing.reverseArtifactCandidateRows, timing.reverseArtifactNarrowedRows)
+	}
+	if timing.projectionRows != 4 {
+		t.Fatalf("projectionRows = %d, want narrowed projection of 4 rows", timing.projectionRows)
+	}
+	if timing.valueVectorElapsed != 0 {
+		t.Fatalf("valueVectorElapsed = %v, want no full value-vector read after artifact narrowing", timing.valueVectorElapsed)
+	}
+	if projectionCalls != 1 {
+		t.Fatalf("projection calls = %d, want 1", projectionCalls)
+	}
+	wantJoined := []qsbridge.QuantaRownum{25, 10}
+	if len(joined) != len(wantJoined) {
+		t.Fatalf("joined = %#v, want %#v", joined, wantJoined)
+	}
+	for i := range wantJoined {
+		if joined[i] != wantJoined[i] {
+			t.Fatalf("joined = %#v, want %#v", joined, wantJoined)
+		}
+	}
+	wantPairs := []legacyDirectRelationshipPair{{child: 25, parent: 9}, {child: 10, parent: 7}}
+	if len(pairs) != len(wantPairs) {
+		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
+	}
+	for i := range wantPairs {
+		if pairs[i] != wantPairs[i] {
+			t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
+		}
+	}
+}
+
 func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesSingleKeyEqualForLargeChildSets(t *testing.T) {
 	fkBSI := roaring64.NewDefaultBSI()
 	childRows := make([]qsbridge.QuantaRownum, 0, 1200)

@@ -47,6 +47,7 @@ type legacyDirectRelationshipEdge struct {
 	parentRole               string
 	parentTable              string
 	parentField              string
+	capabilities             qsbridge.RelationshipCapabilities
 	sqlKind                  qsbridge.JoinKind
 	leftOuterPreservesParent bool
 	projectionScope          qsbridge.RelationshipVectorProjectionScope
@@ -58,30 +59,38 @@ type legacyDirectRelationshipPair struct {
 }
 
 type legacyDirectRelationshipReduceTiming struct {
-	domainMappingCacheHit       bool
-	domainMappingCacheMode      string
-	projectionElapsed           time.Duration
-	projectionCacheHit          bool
-	projectionRows              int
-	fkProjectionRows            int
-	fkChildOverlapRows          int
-	fkProjectionInitialCoverage qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionCoverage        qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionScope           string
-	fkProjectionRetryRows       int
-	fkProjectionRetryOverlap    int
-	fkProjectionRetryCoverage   qsbridge.RelationshipVectorProjectionCoverage
-	parentKeyElapsed            time.Duration
-	parentKeyMaterialization    bool
-	parentKeyRows               int
-	matchedRows                 int
-	batchEqualElapsed           time.Duration
-	singleKeyFoundSetElapsed    time.Duration
-	singleKeyEqualElapsed       time.Duration
-	valueVectorElapsed          time.Duration
-	intersectElapsed            time.Duration
-	rownumElapsed               time.Duration
-	pairElapsed                 time.Duration
+	domainMappingCacheHit        bool
+	domainMappingCacheMode       string
+	projectionElapsed            time.Duration
+	projectionCacheHit           bool
+	projectionRows               int
+	fkProjectionRows             int
+	fkChildOverlapRows           int
+	fkProjectionInitialCoverage  qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionCoverage         qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionScope            string
+	fkProjectionRetryRows        int
+	fkProjectionRetryOverlap     int
+	fkProjectionRetryCoverage    qsbridge.RelationshipVectorProjectionCoverage
+	parentKeyElapsed             time.Duration
+	parentKeyMaterialization     bool
+	parentKeyRows                int
+	reverseArtifactUsed          bool
+	reverseArtifactMode          string
+	reverseArtifactCacheHit      bool
+	reverseArtifactSourceValues  int
+	reverseArtifactCandidateRows int
+	reverseArtifactNarrowedRows  int
+	reverseArtifactElapsed       time.Duration
+	reverseArtifactLookupElapsed time.Duration
+	matchedRows                  int
+	batchEqualElapsed            time.Duration
+	singleKeyFoundSetElapsed     time.Duration
+	singleKeyEqualElapsed        time.Duration
+	valueVectorElapsed           time.Duration
+	intersectElapsed             time.Duration
+	rownumElapsed                time.Duration
+	pairElapsed                  time.Duration
 }
 
 type legacyDirectRelationshipProjectedFKReduceTiming struct {
@@ -685,6 +694,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"parent_key_rows", strconv.Itoa(reduceTiming.parentKeyRows)),
 				legacyDirectRelationshipProbe(probePrefix+"parent_key_elapsed", reduceTiming.parentKeyElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"parent_key_materialization", strconv.FormatBool(reduceTiming.parentKeyMaterialization)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_used", strconv.FormatBool(reduceTiming.reverseArtifactUsed)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_mode", reduceTiming.reverseArtifactMode),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_cache_hit", strconv.FormatBool(reduceTiming.reverseArtifactCacheHit)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_values", strconv.Itoa(reduceTiming.reverseArtifactSourceValues)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_candidate_rows", strconv.Itoa(reduceTiming.reverseArtifactCandidateRows)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrowed_rows", strconv.Itoa(reduceTiming.reverseArtifactNarrowedRows)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_elapsed", reduceTiming.reverseArtifactElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_lookup_elapsed", reduceTiming.reverseArtifactLookupElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"matched_rows", strconv.Itoa(reduceTiming.matchedRows)),
 				legacyDirectRelationshipProbe(probePrefix+"batch_equal_elapsed", reduceTiming.batchEqualElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"single_key_foundset_elapsed", reduceTiming.singleKeyFoundSetElapsed.String()),
@@ -1466,6 +1483,7 @@ func legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge legacy
 			Right:           parent,
 			RightRole:       qsbridge.TableInstanceID(edge.parentRole),
 			SQLKind:         edge.sqlKind,
+			Capabilities:    appendRelationshipCapabilityOnce(edge.capabilities, qsbridge.RelationshipCapabilityChildExpansion),
 			ProjectionScope: edge.projectionScope,
 		},
 		Direction:              qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
@@ -2942,6 +2960,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectEndpointRelation
 		parentRole:               legacyDirectRelationshipTableRoleKey(other.Table),
 		parentTable:              parentTable,
 		parentField:              parentField,
+		capabilities:             planned.Capabilities,
 		sqlKind:                  planned.SQLKind,
 		leftOuterPreservesParent: planned.SQLKind == qsbridge.JoinKindLeftOuter && legacyDirectRelationshipSameTableInstance(planned.Left.Table, other.Table),
 		projectionScope:          planned.ProjectionScope,
@@ -3265,17 +3284,56 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		}
 		recordQueryScratchpadCacheLookup(ctx, "domain_mapping_cache", false, "miss", domainCacheDetail)
 	}
-	childFoundSet := legacyDirectRelationshipBitmap(childRows)
+	parentKeyStart := time.Now()
+	parentKeyRows, parentKeyMaterialized, diagnostics, err := e.legacyDirectRelationshipParentKeyRows(ctx, request, edge, parentRows)
+	timing.parentKeyElapsed = time.Since(parentKeyStart)
+	timing.parentKeyMaterialization = parentKeyMaterialized
+	timing.parentKeyRows = len(parentKeyRows)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, nil, timing, diagnostics, err
+	}
+	effectiveChildRows := childRows
+	effectiveProjectionRows := projectionRows
+	if narrowedRows, artifactResult, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
+		timing.reverseArtifactUsed = true
+		timing.reverseArtifactMode = artifactResult.CandidateMode
+		timing.reverseArtifactCacheHit = artifactResult.CandidateCacheHit
+		timing.reverseArtifactSourceValues = artifactResult.SourceValueCount
+		timing.reverseArtifactCandidateRows = len(artifactResult.TargetCandidates.Rownums)
+		timing.reverseArtifactNarrowedRows = len(narrowedRows)
+		timing.reverseArtifactElapsed = artifactResult.CandidateElapsed
+		timing.reverseArtifactLookupElapsed = artifactResult.CandidateScanElapsed
+		if artifactErr != nil || artifactDiagnostics.BlocksNative() {
+			return nil, nil, timing, artifactDiagnostics, artifactErr
+		}
+		effectiveChildRows = narrowedRows
+		effectiveProjectionRows = legacyDirectRelationshipIntersectRownums(projectionRows, narrowedRows)
+		if len(effectiveProjectionRows) == 0 && len(narrowedRows) > 0 {
+			effectiveProjectionRows = narrowedRows
+		}
+		timing.fkProjectionScope = "reverse_artifact_narrowed"
+		if len(effectiveChildRows) == 0 {
+			if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+				domainCache.Set(domainCacheKey, parentRows, childRows, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum{})
+				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
+			}
+			return nil, nil, timing, nil, nil
+		}
+	}
+	childFoundSet := legacyDirectRelationshipBitmap(effectiveChildRows)
 	projectionStart := time.Now()
-	fkBSI, projectionCacheHit, diagnostics, err := e.legacyDirectRelationshipProjectedFKBSI(ctx, request, edge, projectionRows)
+	fkBSI, projectionCacheHit, diagnostics, err := e.legacyDirectRelationshipProjectedFKBSI(ctx, request, edge, effectiveProjectionRows)
 	timing.projectionElapsed = time.Since(projectionStart)
 	timing.projectionCacheHit = projectionCacheHit
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, nil, timing, diagnostics, err
 	}
-	timing.fkProjectionScope = "foundset"
+	if timing.fkProjectionScope == "" {
+		timing.fkProjectionScope = "foundset"
+	}
+	timing.projectionRows = len(effectiveProjectionRows)
 	timing.fkProjectionRows, timing.fkChildOverlapRows = legacyDirectRelationshipFKProjectionStats(fkBSI, childFoundSet)
-	timing.fkProjectionCoverage = qsbridge.NewRelationshipVectorProjectionCoverage(len(childRows), timing.fkProjectionRows, timing.fkChildOverlapRows)
+	timing.fkProjectionCoverage = qsbridge.NewRelationshipVectorProjectionCoverage(len(effectiveChildRows), timing.fkProjectionRows, timing.fkChildOverlapRows)
 	timing.fkProjectionInitialCoverage = timing.fkProjectionCoverage
 	if timing.fkProjectionCoverage.NeedsRecovery() {
 		fullFKBSI, fullCacheHit, fullDiagnostics, fullErr := e.legacyDirectRelationshipProjectedFullFKBSI(ctx, request, edge)
@@ -3285,7 +3343,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		fullRows, fullOverlap := legacyDirectRelationshipFKProjectionStats(fullFKBSI, childFoundSet)
 		timing.fkProjectionRetryRows = fullRows
 		timing.fkProjectionRetryOverlap = fullOverlap
-		timing.fkProjectionRetryCoverage = qsbridge.NewRelationshipVectorProjectionCoverage(len(childRows), fullRows, fullOverlap).WithRecoveryPolicy(qsbridge.RelationshipVectorProjectionRecoveryBroadenAndIntersect)
+		timing.fkProjectionRetryCoverage = qsbridge.NewRelationshipVectorProjectionCoverage(len(effectiveChildRows), fullRows, fullOverlap).WithRecoveryPolicy(qsbridge.RelationshipVectorProjectionRecoveryBroadenAndIntersect)
 		if fullFKBSI != nil && fullOverlap > timing.fkChildOverlapRows {
 			fkBSI = fullFKBSI
 			projectionCacheHit = fullCacheHit
@@ -3296,16 +3354,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			timing.fkProjectionScope = "full_retry"
 		}
 	}
-	parentKeyStart := time.Now()
-	parentKeyRows, parentKeyMaterialized, diagnostics, err := e.legacyDirectRelationshipParentKeyRows(ctx, request, edge, parentRows)
-	timing.parentKeyElapsed = time.Since(parentKeyStart)
-	timing.parentKeyMaterialization = parentKeyMaterialized
-	timing.parentKeyRows = len(parentKeyRows)
-	if err != nil || diagnostics.BlocksNative() {
-		return nil, nil, timing, diagnostics, err
-	}
 	matchStart := time.Now()
-	joined, pairs, projectedTiming, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, childRows, parentKeyRows)
+	joined, pairs, projectedTiming, diagnostics := legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI, effectiveChildRows, parentKeyRows)
 	timing.matchedRows = len(joined)
 	if projectedTiming.batchEqualElapsed == 0 &&
 		projectedTiming.singleKeyFoundSetElapsed == 0 &&
@@ -3394,6 +3444,53 @@ func legacyDirectRelationshipParentKeyValues(parentKeyRows map[int64]qsbridge.Qu
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 	return values
+}
+
+func legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows map[int64]qsbridge.QuantaRownum) []qsbridge.QuantaRownum {
+	rows := make([]qsbridge.QuantaRownum, 0, len(parentKeyRows))
+	for _, row := range parentKeyRows {
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i] < rows[j] })
+	return rows
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, bool, qsbridge.DiagnosticSet, error) {
+	if e.ReverseArtifactCandidateReader == nil || len(childRows) == 0 || len(parentKeyRows) == 0 {
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, nil, nil
+	}
+	sourceValues := legacyDirectRelationshipParentKeyValues(parentKeyRows)
+	if len(sourceValues) == 0 {
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, nil, nil
+	}
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		TableCache:                     e.TableCache,
+		ReverseArtifactCandidateReader: e.ReverseArtifactCandidateReader,
+	}
+	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
+	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
+	start := time.Now()
+	candidates, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
+	elapsed := time.Since(start)
+	if !ok {
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, false, diagnostics, err
+	}
+	result := qsbridge.FilterDomainRelationshipVectorResult{
+		TargetCandidates:     candidates,
+		VectorIndex:          read.VectorIndex,
+		VectorField:          read.VectorField,
+		Direction:            read.Direction,
+		SourceValueCount:     artifactTiming.SourceValues,
+		CandidateCacheHit:    artifactTiming.CacheHit,
+		CandidateCacheMode:   "reverse_artifact",
+		CandidateMode:        artifactTiming.Mode,
+		CandidateElapsed:     elapsed,
+		CandidateScanElapsed: artifactTiming.LookupElapsed,
+	}
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, result, true, diagnostics, err
+	}
+	return legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums), result, true, diagnostics, nil
 }
 
 func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, qsbridge.DiagnosticSet) {
