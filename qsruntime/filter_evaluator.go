@@ -168,8 +168,32 @@ func (e QuantaFilterTreeEvaluator) evaluateFilterIntersectChild(ctx context.Cont
 }
 
 func quantaFilterIntersectCandidateSets(left qsbridge.QuantaCandidateSet, right qsbridge.QuantaCandidateSet) qsbridge.QuantaCandidateSet {
+	if len(left.Rownums) <= len(right.Rownums) {
+		leftPositions := make(map[qsbridge.QuantaRownum][]int, len(left.Rownums))
+		for i, rownum := range left.Rownums {
+			leftPositions[rownum] = append(leftPositions[rownum], i)
+		}
+		matched := make([]bool, len(left.Rownums))
+		for _, rownum := range right.Rownums {
+			for _, position := range leftPositions[rownum] {
+				matched[position] = true
+			}
+		}
+		rownums := make([]qsbridge.QuantaRownum, 0, len(left.Rownums))
+		for i, rownum := range left.Rownums {
+			if matched[i] {
+				rownums = append(rownums, rownum)
+			}
+		}
+		left.Rownums = rownums
+		if left.Index == "" {
+			left.Index = right.Index
+		}
+		return left
+	}
+
 	rightRows := quantaFilterRownumSet(right.Rownums)
-	rownums := make([]qsbridge.QuantaRownum, 0, len(left.Rownums))
+	rownums := make([]qsbridge.QuantaRownum, 0, len(right.Rownums))
 	for _, rownum := range left.Rownums {
 		if rightRows[rownum] {
 			rownums = append(rownums, rownum)

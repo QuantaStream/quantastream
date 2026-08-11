@@ -131,6 +131,28 @@ func TestQuantaFilterTreeEvaluatorMergesCandidateSetLeaves(t *testing.T) {
 	}
 }
 
+func TestQuantaFilterIntersectCandidateSetsPreservesLeftOrderWhenLeftIsSmaller(t *testing.T) {
+	left := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: []qsbridge.QuantaRownum{5, 2, 9}}
+	right := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6, 7, 8, 9}}
+
+	set := quantaFilterIntersectCandidateSets(left, right)
+	want := []qsbridge.QuantaRownum{5, 2, 9}
+	if !reflect.DeepEqual(set.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+}
+
+func TestQuantaFilterIntersectCandidateSetsPreservesLeftOrderWhenRightIsSmaller(t *testing.T) {
+	left := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: []qsbridge.QuantaRownum{5, 2, 9, 10}}
+	right := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: []qsbridge.QuantaRownum{9, 5}}
+
+	set := quantaFilterIntersectCandidateSets(left, right)
+	want := []qsbridge.QuantaRownum{5, 9}
+	if !reflect.DeepEqual(set.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+}
+
 func TestQuantaFilterTreeEvaluatorEvaluatesCandidateSetFirstForIntersect(t *testing.T) {
 	leaves := &testConstrainedFilterLeafEvaluator{
 		broadSets: map[string]qsbridge.QuantaCandidateSet{

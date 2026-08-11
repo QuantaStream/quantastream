@@ -548,6 +548,19 @@ TPC-H-specific rule; it is normal boolean algebra applied to the physical
 filter tree after mixed-domain predicates have been normalized into the target
 rownum domain.
 
+The third retained optimization is StringEnum-aware filter-leaf execution.
+After Q19 factoring, the common `l_shipmode` and `l_shipinstruct` leaves were
+still being evaluated through the constrained materialization path, which is
+good for selective numeric BSI range checks but too expensive for compact
+StringEnum predicates. The runtime now consults schema metadata and keeps BSI
+numeric leaves on constrained materialization while forcing StringEnum leaves
+through bitmap evaluation. Candidate-set intersection was also adjusted to hash
+the smaller side while preserving left-side row order, so broad StringEnum
+bitmaps can intersect a narrow branch candidate set without allocating a large
+membership map. On the local SF0.05 Q19 profile, the median formal discounted
+revenue case moved from 118ms at commit `982f5a1` to 68ms with this change
+under `/tmp/local-q19-stringenum-bitmap.json`.
+
 TPC-H Q9 has focused inabox-direct coverage for the green-part filter over the
 `part -> lineitem` join and for the `part -> lineitem -> orders` count shape.
 This locks in backing-store `p_name LIKE '%green%'` inside joined count and
@@ -819,7 +832,10 @@ artifact cost. Q3 is roughly parity and slightly ahead in the warmed run. The
 Q19 common-conjunct factoring pass narrowed the small selective mixed-table gap
 from about 3.37x MySQL time to about 2.55x, and the StringEnum prefix
 `NOT LIKE` pushdown moved Q16 from about 4.06x MySQL time to about 0.43x. The
-remaining gaps are concentrated in Q19 and, to a lesser extent, Q12.
+remaining gaps are concentrated in Q19 and, to a lesser extent, Q12. A later
+local Q19 pass added StringEnum bitmap leaf selection and moved the local SF0.05
+Q19 median from 118ms to 68ms; rerun that path on AWS SF1 before replacing the
+checkpoint table.
 
 Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` as the historical
 slow-path regression suite. It keeps Q1 grouping, shipdate year bucketing, and

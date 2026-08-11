@@ -46,6 +46,38 @@ func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_mode", "batch_equal", "source=part")
 }
 
+func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Name: "lineitem",
+		Fields: []qsbridge.FieldDefinition{
+			{Name: "l_shipmode", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum},
+			{Name: "l_quantity", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI},
+		},
+	}}, nil, nil)
+
+	stringEnumFragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l_shipmode",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+	}
+	if directBitmapFilterFragmentShouldEvaluateMaterialized(request, stringEnumFragment) {
+		t.Fatalf("StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
+	}
+
+	bsiFragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l_quantity",
+		BSIOp:      qsbridge.QuantaBSIOpGE,
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueInt, int64(10)),
+	}
+	if !directBitmapFilterFragmentShouldEvaluateMaterialized(request, bsiFragment) {
+		t.Fatalf("BSI filter leaf should keep materialized constrained evaluation")
+	}
+}
+
 func assertFilterDomainExpansionProbe(t *testing.T, probes []ExecutionProbe, name, value, detailPart string) {
 	t.Helper()
 	for _, probe := range probes {

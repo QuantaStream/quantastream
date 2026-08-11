@@ -537,7 +537,7 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 	if index == "" || (candidates.Index != "" && candidates.Index != index) {
 		return e.EvaluateFilterLeaf(ctx, fragment)
 	}
-	if !directBitmapFilterFragmentCanEvaluateMaterialized(fragment) {
+	if !directBitmapFilterFragmentShouldEvaluateMaterialized(e.Request, fragment) {
 		return e.EvaluateFilterLeaf(ctx, fragment)
 	}
 	materialization := candidates.MaterializationRequest([]qsbridge.QuantaProjectionField{{
@@ -567,6 +567,25 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 		}
 	}
 	return qsbridge.QuantaCandidateSet{Index: index, Rownums: rownums}, nil, nil
+}
+
+func directBitmapFilterFragmentShouldEvaluateMaterialized(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
+	if directBitmapFilterFragmentFieldUsesStringEnum(request, fragment) {
+		return false
+	}
+	return directBitmapFilterFragmentCanEvaluateMaterialized(fragment)
+}
+
+func directBitmapFilterFragmentFieldUsesStringEnum(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
+	index := fragment.Index
+	if index == "" {
+		index, _ = request.RootIndex()
+	}
+	field := fragment.Field
+	if definition, ok := projectionMaterializationFieldDefinition(request.QueryCatalog, index, field); ok {
+		return definition.Index == qsbridge.IndexStringEnum || definition.Encoding.Kind == qsbridge.EncodingStringEnum
+	}
+	return false
 }
 
 func directBitmapFilterFragmentCanEvaluateMaterialized(fragment qsbridge.QuantaQueryFragment) bool {
