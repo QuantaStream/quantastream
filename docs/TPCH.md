@@ -522,13 +522,11 @@ should only expand once those reducers are implemented explicitly.
 TPC-H Q19 is supported as a formal `lineitem -> part` discounted revenue
 query with mixed-table top-level `OR` branches. Profiling initially suggested
 that repeated branch-local found-set construction was the dominant cost, but a
-follow-up common-predicate factoring experiment showed that the repeated
-`lineitem` predicates (`l_shipmode IN ('AIR', 'AIR REG')` and
-`l_shipinstruct = 'DELIVER IN PERSON'`) were cheap to evaluate. The expensive
-piece was the branch-specific `l_quantity >= ... AND l_quantity <= ...` numeric
-BSI range.
+follow-up pass split the problem into two reusable pieces: branch-specific
+numeric range predicates and common child-domain predicates repeated under each
+`OR` branch.
 
-The retained optimization is therefore same-field inclusive BSI range
+The first retained optimization is same-field inclusive BSI range
 coalescing in `SQLToQuanta`: predicates of the form `field >= low AND field <=
 high` now plan as a single bitmap `RANGE` fragment instead of two independent
 BSI comparisons. On the SF 0.01 Q19 profile, the formal OR count/revenue cases
@@ -536,6 +534,19 @@ improved from roughly 18-19 seconds to about 9-10 seconds after cleanup, while
 preserving expected results. Deeper `RANGE` kernel performance remains a future
 optimization target because the coalesced `l_quantity` predicates are still the
 largest remaining local predicate cost.
+
+The second retained optimization is a generic boolean rewrite after
+relationship-vector domain normalization: if a `UNION` of conjunctive branches
+contains identical target-domain predicates in every branch, those common
+conjuncts are factored above the `UNION`. For Q19 this runs
+`l_shipmode IN ('AIR', 'AIR REG')` and
+`l_shipinstruct = 'DELIVER IN PERSON'` once instead of once per branch, while
+leaving the branch-specific `part` candidates and `l_quantity` ranges inside
+their original branches. On AWS SF1 this dropped the Q19 readonly median from
+about 387ms to 293ms at commit `d7ad4da`. This is intentionally not a
+TPC-H-specific rule; it is normal boolean algebra applied to the physical
+filter tree after mixed-domain predicates have been normalized into the target
+rownum domain.
 
 TPC-H Q9 has focused inabox-direct coverage for the green-part filter over the
 `part -> lineitem` join and for the `part -> lineitem -> orders` count shape.
@@ -775,29 +786,33 @@ An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware
 using `tpch_benchmark_readonly_sf1_scale_safe`. The MySQL reference report is
 preserved at
 `sqlrunner/expected/local/mysql-benchmarks/20260809T015549Z/mysql-reference.json`.
-The latest QuantaStream run was captured at commit `516449c` as
-`/tmp/aws-qs-readonly-sf1-dependency-aware-edge-order.json` on the benchmark
-runner.
+The latest QuantaStream run was captured at commit `d7ad4da` as
+`/tmp/aws-qs-readonly-sf1-factored-filter-warm.json` on the benchmark runner
+and archived under `benchmarks/aws/2026-08-11/`. The QuantaStream server used
+`QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=true`; SQLRunner used one
+warmup run so Q21 reports the warmed sibling-diversity artifact path rather
+than the first-query lazy-build cost.
 
 | Case | MySQL Median | QuantaStream Median | Ratio | Read |
 | --- | ---: | ---: | ---: | --- |
-| lineitem seed count | 518ms | 47ms | 0.09x | QS seed bitmap win |
-| Q1 grouped lineitem shape | 2368ms | 218ms | 0.09x | bitmap group aggregate win |
-| Q5 combined graph regional count | 8872ms | 1875ms | 0.21x | dependency-aware relationship-vector win |
-| shipdate year group count | 1448ms | 346ms | 0.24x | storage-side year bucketing win |
-| Q6 discounted revenue | 1406ms | 460ms | 0.33x | QS selective bitmap/date-filter win |
-| Q21 sibling exists count | 7060ms | 4009ms | 0.57x | cached sibling-diversity path after first run |
-| Q3 grouped revenue limit | 6150ms | 6076ms | 0.99x | effectively tied |
-| Q12 same-row date comparison | 1674ms | 2112ms | 1.26x | close, still same-row/date-path work |
-| Q19 formal discounted revenue | 115ms | 387ms | 3.37x | MySQL small-selective join win |
-| Q16 part filter count | 69ms | 284ms | 4.12x | MySQL small-dimension filter win |
+| lineitem seed count | 518ms | 140ms | 0.27x | QS seed bitmap win, noisy mixed-suite run |
+| Q1 grouped lineitem shape | 2368ms | 517ms | 0.22x | bitmap group aggregate win, noisy mixed-suite run |
+| Q5 combined graph regional count | 8872ms | 1837ms | 0.21x | dependency-aware relationship-vector win |
+| shipdate year group count | 1448ms | 620ms | 0.43x | storage-side year bucketing win, noisy mixed-suite run |
+| Q6 discounted revenue | 1406ms | 442ms | 0.31x | QS selective bitmap/date-filter win |
+| Q21 sibling exists count | 7060ms | 3967ms | 0.56x | warmed cached sibling-diversity path |
+| Q3 grouped revenue limit | 6150ms | 6691ms | 1.09x | close/parity, still graph aggregation work |
+| Q12 same-row date comparison | 1674ms | 2097ms | 1.25x | close, still same-row/date-path work |
+| Q19 formal discounted revenue | 115ms | 293ms | 2.55x | improved by common OR-conjunct factoring |
+| Q16 part filter count | 69ms | 280ms | 4.06x | MySQL small-dimension filter win |
 
 This checkpoint is a stronger viability signal than the first SF1 pass.
 QuantaStream is now ahead of MySQL on broad bitmap grouping, selective
 fact-table filtering, regional relationship-vector reduction, year bucketing,
 and the Q21 sibling semi-join after the first-run artifact cost. Q3 is roughly
-tied. The remaining gaps are concentrated in small/selective dimension or
-mixed-table filter shapes: Q19, Q16, and to a lesser extent Q12.
+parity. The Q19 common-conjunct factoring pass narrowed the small selective
+mixed-table gap from about 3.37x MySQL time to about 2.55x. The remaining gaps
+are concentrated in Q16, Q19, and to a lesser extent Q12.
 
 Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` as the historical
 slow-path regression suite. It keeps Q1 grouping, shipdate year bucketing, and
