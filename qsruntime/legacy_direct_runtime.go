@@ -350,6 +350,26 @@ func (h LegacyQuantaSessionHandle) QueryBitmap(ctx context.Context, request Exec
 	return h.Result.ToBitmapQueryResult(response), nil, err
 }
 
+// QueryBitmapCountOnly executes a bitmap query when the caller has already
+// proven only cardinality is required.
+func (h LegacyQuantaSessionHandle) QueryBitmapCountOnly(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"legacy quanta session has no bitmap index",
+			),
+		}, nil
+	}
+	request = h.withShardWindow(request)
+	if diagnostics := h.Query.ValidateExecutionRequest(request); diagnostics.BlocksNative() {
+		return BitmapQueryResult{}, diagnostics, nil
+	}
+	response, err := h.Session.BitIndex.Query(h.Query.ToBitmapQueryFromRequest(request))
+	return h.Result.ToCountOnlyBitmapQueryResult(response), nil, err
+}
+
 func (h LegacyQuantaSessionHandle) withShardWindow(request ExecutionRequest) ExecutionRequest {
 	table := h.cachedRootTable(request)
 	request = legacyDirectExecutionWithShardWindow(request, table)

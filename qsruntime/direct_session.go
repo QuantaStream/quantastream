@@ -14,6 +14,12 @@ type DirectSessionHandle interface {
 	Release(ctx context.Context) qsbridge.DiagnosticSet
 }
 
+// DirectCountOnlyBitmapSessionHandle optionally serves bitmap cardinality
+// without expanding the result bitmap into rownums.
+type DirectCountOnlyBitmapSessionHandle interface {
+	QueryBitmapCountOnly(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error)
+}
+
 // DirectSessionProvider borrows table-scoped direct execution handles.
 type DirectSessionProvider interface {
 	BorrowDirectSession(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error)

@@ -43,3 +43,22 @@ func TestLegacyBitmapQueryResultAdapterConvertsBitmapResponse(t *testing.T) {
 		t.Fatalf("rownums = %#v, want 10,12", result.Rownums)
 	}
 }
+
+func TestLegacyBitmapQueryResultAdapterCountOnlySkipsRownums(t *testing.T) {
+	response := &legacy.BitmapQueryResponse{
+		Success: true,
+		Results: roaring64.BitmapOf(10, 11, 12),
+	}
+
+	result := LegacyBitmapQueryResultAdapter{}.ToCountOnlyBitmapQueryResult(response)
+
+	if !result.Success {
+		t.Fatalf("success = false, want true")
+	}
+	if result.Count != 3 {
+		t.Fatalf("count = %d, want 3", result.Count)
+	}
+	if len(result.Rownums) != 0 {
+		t.Fatalf("rownums = %#v, want none for count-only result", result.Rownums)
+	}
+}

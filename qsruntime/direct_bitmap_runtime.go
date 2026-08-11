@@ -117,7 +117,15 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	queryElapsed := time.Since(queryStart)
 	releaseDiagnostics := qsbridge.DiagnosticSet(nil)
 	if !request.HasCandidateSet {
-		bitmapResult, queryDiagnostics, err = session.QueryBitmap(ctx, request)
+		if directBitmapCountOnlyBitmapResultRequest(request) {
+			if countOnlySession, ok := session.(DirectCountOnlyBitmapSessionHandle); ok {
+				bitmapResult, queryDiagnostics, err = countOnlySession.QueryBitmapCountOnly(ctx, request)
+			} else {
+				bitmapResult, queryDiagnostics, err = session.QueryBitmap(ctx, request)
+			}
+		} else {
+			bitmapResult, queryDiagnostics, err = session.QueryBitmap(ctx, request)
+		}
 		queryElapsed = time.Since(queryStart)
 		releaseDiagnostics = session.Release(ctx)
 	}
@@ -255,6 +263,18 @@ func directBitmapCandidateSetResult(request ExecutionRequest) (BitmapQueryResult
 	}
 	rownums := append([]qsbridge.QuantaRownum(nil), request.CandidateSet.Rownums...)
 	return BitmapQueryResult{Success: true, Count: uint64(len(rownums)), Rownums: rownums}, nil, nil
+}
+
+func directBitmapCountOnlyBitmapResultRequest(request ExecutionRequest) bool {
+	return request.Mutation.Kind == qsbridge.MutationUnknown &&
+		len(request.Joins) == 0 &&
+		len(request.Memberships) == 0 &&
+		len(request.GroupBy) == 0 &&
+		len(request.Having) == 0 &&
+		len(request.SQLAggregates) > 0 &&
+		directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) &&
+		!directBitmapHasResidualScanPredicates(request) &&
+		request.NativePredicates.Empty()
 }
 
 func (r DirectBitmapRuntime) relationshipVectorJoinExecutor() RelationshipVectorJoinExecutor {

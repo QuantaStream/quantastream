@@ -70,6 +70,36 @@ func TestLegacyQuantaSessionHandleReportsMissingBitmapIndex(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapCountOnlyBitmapResultRequestRequiresPlainCount(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index:     "lineitem",
+		Field:     "l_returnflag",
+		Operation: qsbridge.QuantaOperationIntersect,
+	}}})
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count"}}
+	if !directBitmapCountOnlyBitmapResultRequest(request) {
+		t.Fatalf("plain count(*) request was not count-only eligible")
+	}
+
+	grouped := request
+	grouped.GroupBy = []qsbridge.Expr{qsbridge.FieldExpr{Ref: qsbridge.FieldRef{Name: "l_returnflag"}}}
+	if directBitmapCountOnlyBitmapResultRequest(grouped) {
+		t.Fatalf("grouped count request should still keep rownums")
+	}
+
+	residual := request
+	residual.Predicates = []qsbridge.Predicate{{Placement: qsbridge.PredicateResidualScan}}
+	if directBitmapCountOnlyBitmapResultRequest(residual) {
+		t.Fatalf("residual count request should still keep rownums")
+	}
+
+	membership := request
+	membership.Memberships = []qsbridge.MembershipEdge{{}}
+	if directBitmapCountOnlyBitmapResultRequest(membership) {
+		t.Fatalf("membership count request should still keep rownums")
+	}
+}
+
 func TestLegacyQuantaSessionHandleReportsMissingReleaseState(t *testing.T) {
 	diagnostics := LegacyQuantaSessionHandle{}.Release(context.Background())
 	if !diagnostics.BlocksNative() {

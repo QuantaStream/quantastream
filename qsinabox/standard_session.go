@@ -291,6 +291,12 @@ func (h StandardDirectSessionHandle) QueryBitmap(ctx context.Context, request qs
 	return h.legacyHandle().QueryBitmap(ctx, request)
 }
 
+// QueryBitmapCountOnly executes a lowered bitmap request while preserving only
+// cardinality for callers that do not need row identities.
+func (h StandardDirectSessionHandle) QueryBitmapCountOnly(ctx context.Context, request qsruntime.ExecutionRequest) (qsruntime.BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	return h.legacyHandle().QueryBitmapCountOnly(ctx, request)
+}
+
 // ExecuteMutation dispatches in-process SQL mutations through the local session.
 func (h StandardDirectSessionHandle) ExecuteMutation(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	return h.legacyHandle().ExecuteMutation(ctx, request)
