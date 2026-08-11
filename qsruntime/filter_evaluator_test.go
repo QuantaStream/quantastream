@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"errors"
+	"math/big"
 	"reflect"
 	"testing"
 
@@ -150,6 +151,53 @@ func TestQuantaFilterIntersectCandidateSetsPreservesLeftOrderWhenRightIsSmaller(
 	want := []qsbridge.QuantaRownum{5, 9}
 	if !reflect.DeepEqual(set.Rownums, want) {
 		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+}
+
+func TestQuantaFilterTreeEvaluatorCoalescesIntersectRangeLeaves(t *testing.T) {
+	leaves := &testConstrainedFilterLeafEvaluator{
+		constrainedSets: map[string]qsbridge.QuantaCandidateSet{
+			"l_quantity": {Index: "lineitem", Rownums: []qsbridge.QuantaRownum{2, 4}},
+		},
+	}
+	evaluator := QuantaFilterTreeEvaluator{Leaves: leaves}
+	filter := qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			testFilterCandidateSet("lineitem", 2, 4, 8),
+			testFilterRangeLeaf("lineitem", "l", "l_quantity", qsbridge.QuantaBSIOpGE, 10),
+			testFilterRangeLeaf("lineitem", "l", "l_quantity", qsbridge.QuantaBSIOpLE, 20),
+		},
+	}
+
+	set, diagnostics, err := evaluator.EvaluateFilter(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("EvaluateFilter error: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("EvaluateFilter diagnostics: %v", diagnostics)
+	}
+	if len(leaves.constrainedCalls) != 1 {
+		t.Fatalf("constrainedCalls = %#v, want one coalesced range call", leaves.constrainedCalls)
+	}
+	if !reflect.DeepEqual(leaves.constrainedCalls[0].rownums, []qsbridge.QuantaRownum{2, 4, 8}) {
+		t.Fatalf("constrained rownums = %#v, want candidate set", leaves.constrainedCalls[0].rownums)
+	}
+	want := []qsbridge.QuantaRownum{2, 4}
+	if !reflect.DeepEqual(set.Rownums, want) {
+		t.Fatalf("rownums = %#v, want %#v", set.Rownums, want)
+	}
+
+	ordered := quantaFilterIntersectEvaluationOrder(filter.Children)
+	if len(ordered) != 2 {
+		t.Fatalf("ordered children = %d, want candidate set plus range leaf", len(ordered))
+	}
+	fragment := ordered[1].Fragment
+	if fragment.BSIOp != qsbridge.QuantaBSIOpRange {
+		t.Fatalf("BSIOp = %q, want RANGE", fragment.BSIOp)
+	}
+	if fragment.Begin.Int64() != 10 || fragment.End.Int64() != 20 {
+		t.Fatalf("range = [%v,%v], want [10,20]", fragment.Begin, fragment.End)
 	}
 }
 
@@ -379,5 +427,20 @@ func testFilterCandidateSet(index string, rownums ...qsbridge.QuantaRownum) qsbr
 	return qsbridge.QuantaFilterExpression{
 		Operation:    qsbridge.QuantaFilterCandidateSet,
 		CandidateSet: qsbridge.QuantaCandidateSet{Index: index, Rownums: append([]qsbridge.QuantaRownum(nil), rownums...)},
+	}
+}
+
+func testFilterRangeLeaf(index string, role qsbridge.TableInstanceID, field string, op qsbridge.QuantaBSIOp, value int64) qsbridge.QuantaFilterExpression {
+	return qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment: qsbridge.QuantaQueryFragment{
+			Index:                index,
+			Role:                 role,
+			Field:                field,
+			Operation:            qsbridge.QuantaOperationIntersect,
+			BSIOp:                op,
+			Value:                big.NewInt(value),
+			RangeCoalesceAllowed: true,
+		},
 	}
 }

@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
@@ -111,6 +112,7 @@ func quantaFilterIntersectEvaluationOrder(children []qsbridge.QuantaFilterExpres
 		return children
 	}
 	flattened := quantaFilterFlattenIntersectChildren(children)
+	flattened = quantaFilterCoalesceIntersectRanges(flattened)
 	ordered := make([]qsbridge.QuantaFilterExpression, 0, len(flattened))
 	for _, child := range flattened {
 		if child.CandidateSetLeaf() {
@@ -156,6 +158,106 @@ func quantaFilterFlattenIntersectChildren(children []qsbridge.QuantaFilterExpres
 		flattened = append(flattened, child)
 	}
 	return flattened
+}
+
+func quantaFilterCoalesceIntersectRanges(children []qsbridge.QuantaFilterExpression) []qsbridge.QuantaFilterExpression {
+	if len(children) < 2 {
+		return children
+	}
+	used := make([]bool, len(children))
+	coalesced := make([]qsbridge.QuantaFilterExpression, 0, len(children))
+	for i, child := range children {
+		if used[i] {
+			continue
+		}
+		match := -1
+		for j := i + 1; j < len(children); j++ {
+			if used[j] || !quantaFilterRangePair(child, children[j]) {
+				continue
+			}
+			match = j
+			break
+		}
+		if match == -1 {
+			coalesced = append(coalesced, child)
+			continue
+		}
+		used[i] = true
+		used[match] = true
+		coalesced = append(coalesced, quantaFilterRangeExpression(child, children[match]))
+	}
+	return coalesced
+}
+
+func quantaFilterRangePair(left qsbridge.QuantaFilterExpression, right qsbridge.QuantaFilterExpression) bool {
+	if left.Operation != qsbridge.QuantaFilterLeaf || right.Operation != qsbridge.QuantaFilterLeaf {
+		return false
+	}
+	leftFragment := left.Fragment
+	rightFragment := right.Fragment
+	if !quantaFilterSameRangeField(leftFragment, rightFragment) {
+		return false
+	}
+	return (quantaFilterLowerBoundOp(leftFragment.BSIOp) && quantaFilterUpperBoundOp(rightFragment.BSIOp)) ||
+		(quantaFilterUpperBoundOp(leftFragment.BSIOp) && quantaFilterLowerBoundOp(rightFragment.BSIOp))
+}
+
+func quantaFilterSameRangeField(left qsbridge.QuantaQueryFragment, right qsbridge.QuantaQueryFragment) bool {
+	return left.Index == right.Index &&
+		left.Role == right.Role &&
+		left.Field == right.Field &&
+		left.Operation == qsbridge.QuantaOperationIntersect &&
+		right.Operation == qsbridge.QuantaOperationIntersect &&
+		!left.Negate &&
+		!right.Negate &&
+		!left.NullCheck &&
+		!right.NullCheck &&
+		left.Value != nil &&
+		right.Value != nil &&
+		left.RangeCoalesceAllowed &&
+		right.RangeCoalesceAllowed
+}
+
+func quantaFilterRangeExpression(left qsbridge.QuantaFilterExpression, right qsbridge.QuantaFilterExpression) qsbridge.QuantaFilterExpression {
+	rangeFragment := left.Fragment
+	rangeFragment.BSIOp = qsbridge.QuantaBSIOpRange
+	rangeFragment.Value = nil
+	if quantaFilterLowerBoundOp(left.Fragment.BSIOp) {
+		rangeFragment.Begin = quantaFilterInclusiveLowerBound(left.Fragment.BSIOp, left.Fragment.Value)
+		rangeFragment.End = quantaFilterInclusiveUpperBound(right.Fragment.BSIOp, right.Fragment.Value)
+	} else {
+		rangeFragment.Begin = quantaFilterInclusiveLowerBound(right.Fragment.BSIOp, right.Fragment.Value)
+		rangeFragment.End = quantaFilterInclusiveUpperBound(left.Fragment.BSIOp, left.Fragment.Value)
+	}
+	rangeFragment.HasLiteral = false
+	return qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterLeaf,
+		Fragment:  rangeFragment,
+	}
+}
+
+func quantaFilterLowerBoundOp(op qsbridge.QuantaBSIOp) bool {
+	return op == qsbridge.QuantaBSIOpGE || op == qsbridge.QuantaBSIOpGT
+}
+
+func quantaFilterUpperBoundOp(op qsbridge.QuantaBSIOp) bool {
+	return op == qsbridge.QuantaBSIOpLE || op == qsbridge.QuantaBSIOpLT
+}
+
+func quantaFilterInclusiveLowerBound(op qsbridge.QuantaBSIOp, value *big.Int) *big.Int {
+	bound := new(big.Int).Set(value)
+	if op == qsbridge.QuantaBSIOpGT {
+		bound.Add(bound, big.NewInt(1))
+	}
+	return bound
+}
+
+func quantaFilterInclusiveUpperBound(op qsbridge.QuantaBSIOp, value *big.Int) *big.Int {
+	bound := new(big.Int).Set(value)
+	if op == qsbridge.QuantaBSIOpLT {
+		bound.Sub(bound, big.NewInt(1))
+	}
+	return bound
 }
 
 func (e QuantaFilterTreeEvaluator) evaluateFilterIntersectChild(ctx context.Context, child qsbridge.QuantaFilterExpression, current qsbridge.QuantaCandidateSet) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
