@@ -119,7 +119,8 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		Reader: bsiReader,
 	}
 	relationshipReverseArtifactReader := StandardRelationshipReverseArtifactCandidateReader{
-		Direct: b.Adapter.BitmapIndex,
+		TableCache: tableCache,
+		Direct:     b.Adapter.BitmapIndex,
 	}
 	relationshipAggregateReader := StandardRelationshipVectorAggregateReader{
 		TableCache: tableCache,
@@ -143,6 +144,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		Materialization:     materialization,
 		ProjectionBSIReader: bsiReader,
 		SameRowComparison:   sameRowComparison,
+		SiblingDiversity:    relationshipReverseArtifactReader,
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
 			Sessions:                       sessions,

@@ -19,6 +19,21 @@ type RelationshipReverseArtifactStats struct {
 	LookupElapsed time.Duration
 }
 
+// RelationshipSiblingDiversityStats summarizes a same-parent/different-value
+// sibling lookup served by a maintained reverse relationship artifact.
+type RelationshipSiblingDiversityStats struct {
+	Rows              uint64
+	Values            uint64
+	CandidateRows     uint64
+	TargetRows        uint64
+	Groups            uint64
+	DiverseGroups     uint64
+	LookupElapsed     time.Duration
+	ProjectionElapsed time.Duration
+	EvaluationElapsed time.Duration
+	ProjectionStats   ProjectBSIStats
+}
+
 // RelationshipReverseArtifactSumGroup carries one mergeable grouped aggregate
 // keyed by a relationship-vector value.
 type RelationshipReverseArtifactSumGroup struct {
@@ -70,6 +85,128 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 // child-domain order from their own candidate row set.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesUnordered(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, false)
+}
+
+type relationshipSiblingDiversityGroup struct {
+	rows          []uint64
+	candidateRows []uint64
+}
+
+// RelationshipSiblingDiversityCandidates returns candidate rows whose
+// relationship-vector parent bucket contains at least one sibling row with a
+// different value in valueField.
+func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField, valueField string, fromTime, toTime int64, candidateRows []uint64) ([]uint64, RelationshipSiblingDiversityStats, bool, error) {
+	start := time.Now()
+	if strings.TrimSpace(valueField) == "" {
+		return nil, RelationshipSiblingDiversityStats{}, false, fmt.Errorf("relationship sibling diversity requires value field")
+	}
+	if !m.relationshipReverseArtifactEnabled(index, parentField) {
+		return nil, RelationshipSiblingDiversityStats{}, false, nil
+	}
+	candidateSet := relationshipReverseArtifactBitmap(candidateRows)
+
+	m.reverseArtifactLock.RLock()
+	fields := m.reverseArtifactCache[index]
+	if fields == nil {
+		m.reverseArtifactLock.RUnlock()
+		return nil, RelationshipSiblingDiversityStats{}, false, nil
+	}
+	artifact := fields[parentField]
+	if artifact == nil {
+		m.reverseArtifactLock.RUnlock()
+		return nil, RelationshipSiblingDiversityStats{}, false, nil
+	}
+	groups := make([]relationshipSiblingDiversityGroup, 0)
+	allRows := make([]uint64, 0)
+	for _, bitmap := range artifact.byValue {
+		if bitmap == nil || bitmap.IsEmpty() {
+			continue
+		}
+		var retained *roaring64.Bitmap
+		if candidateSet != nil {
+			if !bitmap.Intersects(candidateSet) {
+				continue
+			}
+			retained = roaring64.And(bitmap, candidateSet)
+			if retained == nil || retained.IsEmpty() {
+				continue
+			}
+		}
+		rows := bitmap.ToArray()
+		candidates := rows
+		if retained != nil {
+			candidates = retained.ToArray()
+		}
+		groups = append(groups, relationshipSiblingDiversityGroup{
+			rows:          rows,
+			candidateRows: candidates,
+		})
+		allRows = append(allRows, rows...)
+	}
+	stats := RelationshipSiblingDiversityStats{
+		Rows:          artifact.rows,
+		Values:        uint64(len(artifact.byValue)),
+		CandidateRows: uint64(len(candidateRows)),
+		Groups:        uint64(len(groups)),
+		LookupElapsed: time.Since(start),
+	}
+	m.reverseArtifactLock.RUnlock()
+	if len(groups) == 0 || len(allRows) == 0 {
+		return []uint64{}, stats, true, nil
+	}
+
+	projectionStart := time.Now()
+	valuesByField, statsByField, err := m.ProjectBSIInt64ValuesWithStats(index, []string{valueField}, fromTime, toTime, allRows, relationshipReverseArtifactBitmap(allRows), false)
+	if err != nil {
+		return nil, stats, true, err
+	}
+	stats.ProjectionElapsed = time.Since(projectionStart)
+	stats.ProjectionStats = statsByField[valueField]
+	values := valuesByField[valueField]
+	valueByRow := make(map[uint64]int64, len(allRows))
+	for i, rownum := range allRows {
+		if i >= len(values.Exists) || !values.Exists[i] {
+			continue
+		}
+		valueByRow[rownum] = values.Values[i]
+	}
+
+	evaluationStart := time.Now()
+	rowSet := make(map[uint64]struct{}, len(candidateRows))
+	result := make([]uint64, 0, len(candidateRows))
+	for _, group := range groups {
+		distinct := make(map[int64]struct{}, 2)
+		for _, rownum := range group.rows {
+			value, ok := valueByRow[rownum]
+			if !ok {
+				continue
+			}
+			distinct[value] = struct{}{}
+			if len(distinct) > 1 {
+				break
+			}
+		}
+		if len(distinct) <= 1 {
+			continue
+		}
+		stats.DiverseGroups++
+		for _, rownum := range group.candidateRows {
+			if _, ok := valueByRow[rownum]; !ok {
+				continue
+			}
+			if _, seen := rowSet[rownum]; seen {
+				continue
+			}
+			rowSet[rownum] = struct{}{}
+			result = append(result, rownum)
+		}
+	}
+	if len(result) > 1 {
+		sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	}
+	stats.EvaluationElapsed = time.Since(evaluationStart)
+	stats.TargetRows = uint64(len(result))
+	return result, stats, true, nil
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {

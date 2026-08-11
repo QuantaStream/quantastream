@@ -99,6 +99,98 @@ func TestDirectBitmapRuntimeAppliesCorrelatedSiblingMembershipWithRawBSIVectors(
 	}
 }
 
+func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+
+	for _, test := range []struct {
+		name string
+		kind qsbridge.MembershipKind
+		want int64
+	}{
+		{name: "semi", kind: qsbridge.MembershipSemi, want: 2},
+		{name: "anti", kind: qsbridge.MembershipAnti, want: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := &fakeMembershipProjectionBSIValueReader{Values: map[string]map[uint64]int64{}}
+			diversityReader := &fakeRelationshipSiblingDiversityReader{
+				Result: RelationshipSiblingDiversityReadResult{
+					Candidates: qsbridge.QuantaCandidateSet{
+						Index:   "lineitem",
+						Rownums: []qsbridge.QuantaRownum{1, 2},
+					},
+					Mode:          "test_diversity",
+					Rows:          4,
+					Values:        2,
+					CandidateRows: 4,
+					TargetRows:    2,
+					Groups:        3,
+					DiverseGroups: 1,
+				},
+			}
+			runtime := DirectBitmapRuntime{
+				Adapter:             BitmapQueryResultAdapter{},
+				ProjectionBSIReader: reader,
+				SiblingDiversity:    diversityReader,
+				Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+					t.Fatalf("sibling diversity artifact path should not materialize rows for %s", request.Index)
+					return qsbridge.QuantaProjectedRowSet{}, nil, nil
+				}),
+				Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+					return DirectSessionHandleFunc{
+						QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+							return BitmapQueryResult{Success: true, Count: 4, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4}}, nil, nil
+						},
+					}, nil, nil
+				}),
+			}
+			request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+				Fragments: []qsbridge.QuantaQueryFragment{{
+					Index:     "lineitem",
+					Field:     "l_orderkey",
+					Operation: qsbridge.QuantaOperationIntersect,
+					NullCheck: true,
+					Negate:    true,
+				}},
+			})
+			request.Memberships = []qsbridge.MembershipEdge{{
+				Left:  l1OrderKey,
+				Right: l2OrderKey,
+				Kind:  test.kind,
+				Legal: true,
+				Predicates: []qsbridge.Predicate{
+					{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+					{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+				},
+			}}
+			request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "qualified_rows", Type: qsbridge.DataTypeInt}}
+
+			result, err := runtime.ExecuteDirect(context.Background(), request)
+			if err != nil {
+				t.Fatalf("execute direct: %v", err)
+			}
+			if result.Diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+			}
+			if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != test.want {
+				t.Fatalf("count aggregate = %#v, want %d", got, test.want)
+			}
+			if diversityReader.Calls != 1 {
+				t.Fatalf("sibling diversity reader calls = %d, want 1", diversityReader.Calls)
+			}
+			if reader.RawReads != 0 || reader.ValueReads != 0 {
+				t.Fatalf("projection BSI reads = raw %d value %d, want zero", reader.RawReads, reader.ValueReads)
+			}
+			assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied")
+			assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_mode", "test_diversity")
+		})
+	}
+}
+
 func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testing.T) {
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
@@ -627,6 +719,18 @@ func TestDirectBitmapRuntimeReusesMaterializedSiblingRightCandidateSuperset(t *t
 
 type fakeMembershipProjectionBSIReader struct {
 	Values map[string]map[uint64]int64
+}
+
+type fakeRelationshipSiblingDiversityReader struct {
+	Result RelationshipSiblingDiversityReadResult
+	Calls  int
+	Last   RelationshipSiblingDiversityReadRequest
+}
+
+func (r *fakeRelationshipSiblingDiversityReader) ReadRelationshipSiblingDiversityCandidates(ctx context.Context, request RelationshipSiblingDiversityReadRequest) (RelationshipSiblingDiversityReadResult, qsbridge.DiagnosticSet, bool, error) {
+	r.Calls++
+	r.Last = request
+	return r.Result, nil, true, nil
 }
 
 func (r fakeMembershipProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {

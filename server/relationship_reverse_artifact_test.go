@@ -148,6 +148,42 @@ func TestRelationshipReverseArtifactCandidateValuesUnordered(t *testing.T) {
 	}
 }
 
+func TestRelationshipSiblingDiversityCandidates(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		1: 10,
+		2: 10,
+		3: 10,
+		4: 20,
+		5: 20,
+		6: 30,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_suppkey", shardTime, map[uint64]int64{
+		1: 1,
+		2: 1,
+		3: 2,
+		4: 5,
+		5: 5,
+		6: 8,
+	}, false))
+
+	rownums, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 4, 6})
+	if err != nil {
+		t.Fatalf("RelationshipSiblingDiversityCandidates error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipSiblingDiversityCandidates ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{1, 2}) {
+		t.Fatalf("rownums = %#v, want [1 2]", rownums)
+	}
+	if stats.Rows != 6 || stats.Values != 3 || stats.CandidateRows != 4 || stats.TargetRows != 2 || stats.Groups != 3 || stats.DiverseGroups != 1 {
+		t.Fatalf("stats = %#v, want rows=6 values=3 candidateRows=4 targetRows=2 groups=3 diverseGroups=1", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
@@ -325,7 +361,11 @@ attributes:
       parentToChild: true
 `
 	}
-	schema += `  - fieldName: l_extendedprice
+	schema += `  - fieldName: l_suppkey
+    type: Integer
+    mappingStrategy: ParentRelation
+    foreignKey: supplier.s_suppkey
+  - fieldName: l_extendedprice
     type: Float
     mappingStrategy: FloatScaleBSI
     scale: 2

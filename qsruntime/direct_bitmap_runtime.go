@@ -51,6 +51,7 @@ type DirectBitmapRuntime struct {
 	RelationshipJoins                       RelationshipVectorJoinExecutor
 	RelationshipReader                      RelationshipVectorReader
 	FilterAdapter                           DirectBitmapFilterAdapter
+	SiblingDiversity                        RelationshipSiblingDiversityReader
 	CorrelatedSiblingRightCandidateSeed     *BitmapQueryResult
 	CorrelatedSiblingRightCandidateSeedMode string
 }

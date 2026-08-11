@@ -23,7 +23,8 @@ type StandardRelationshipVectorProjectionReader struct {
 // StandardRelationshipReverseArtifactCandidateReader reads maintained
 // parent-to-child artifacts from the in-process bitmap tier.
 type StandardRelationshipReverseArtifactCandidateReader struct {
-	Direct *server.BitmapIndex
+	TableCache *core.TableCacheStruct
+	Direct     *server.BitmapIndex
 }
 
 // StandardRelationshipVectorAggregateReader performs storage-side relationship
@@ -87,6 +88,49 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipVect
 		SourceValues:       stats.SourceValues,
 		TargetRows:         stats.TargetRows,
 		LookupElapsed:      stats.LookupElapsed,
+	}, nil, true, nil
+}
+
+// ReadRelationshipSiblingDiversityCandidates returns child rows whose parent
+// bucket has at least one sibling with a different value.
+func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipSiblingDiversityCandidates(
+	_ context.Context,
+	read qsruntime.RelationshipSiblingDiversityReadRequest,
+) (qsruntime.RelationshipSiblingDiversityReadResult, qsbridge.DiagnosticSet, bool, error) {
+	if r.Direct == nil || read.Index == "" || read.ParentField == "" || read.ValueField == "" {
+		return qsruntime.RelationshipSiblingDiversityReadResult{}, nil, false, nil
+	}
+	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.Index, read.FromEpochMillis, read.ToEpochMillis)
+	rownums, stats, ok, err := r.Direct.RelationshipSiblingDiversityCandidates(
+		read.Index,
+		read.ParentField,
+		read.ValueField,
+		fromTime,
+		toTime,
+		standardRelationshipAggregateRows(read.CandidateRows),
+	)
+	if err != nil || !ok {
+		return qsruntime.RelationshipSiblingDiversityReadResult{}, nil, ok, err
+	}
+	candidateRows := make([]qsbridge.QuantaRownum, 0, len(rownums))
+	for _, rownum := range rownums {
+		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
+	}
+	return qsruntime.RelationshipSiblingDiversityReadResult{
+		Candidates: qsbridge.QuantaCandidateSet{
+			Index:   read.Index,
+			Rownums: candidateRows,
+		},
+		Mode:              "reverse_artifact_sibling_diversity",
+		Rows:              stats.Rows,
+		Values:            stats.Values,
+		CandidateRows:     stats.CandidateRows,
+		TargetRows:        stats.TargetRows,
+		Groups:            stats.Groups,
+		DiverseGroups:     stats.DiverseGroups,
+		LookupElapsed:     stats.LookupElapsed,
+		ProjectionElapsed: stats.ProjectionElapsed,
+		EvaluationElapsed: stats.EvaluationElapsed,
 	}, nil, true, nil
 }
 
