@@ -1166,45 +1166,56 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if preAggResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, graphReductionElapsed, alignmentElapsed, result); handled || err != nil {
 		return preAggResult, err
 	}
-	tupleExpansionStart := time.Now()
-	tupleRows, diagnostics := NewRelationshipTupleRowSetFromAlignedRownums(alignedRows)
-	tupleExpansionElapsed := time.Since(tupleExpansionStart)
-	result.Diagnostics = append(result.Diagnostics, diagnostics...)
-	if result.Diagnostics.BlocksNative() {
-		return result, nil
-	}
-	sameRowStart := time.Now()
-	var sameRowProbes []ExecutionProbe
-	tupleRows, alignedRows, request, sameRowProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleSameRowResiduals(ctx, request, tupleRows, alignedRows)
-	sameRowElapsed := time.Since(sameRowStart)
-	result.Probes = append(result.Probes, sameRowProbes...)
-	result.Diagnostics = append(result.Diagnostics, diagnostics...)
-	if err != nil || result.Diagnostics.BlocksNative() {
-		return result, err
-	}
-	if rows, ok := alignedRows[sink]; ok {
-		rownums = rows
-	} else if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
-		if rows, ok := alignedRows[role]; ok {
+	residuals := directBitmapResidualScanPredicates(request)
+	tupleWorkNeeded := legacyDirectRelationshipGraphGroupedAggregateNeedsTupleRows(request, residuals)
+	var tupleRows RelationshipTupleRowSet
+	var filteredTupleRows RelationshipTupleRowSet
+	var tupleExpansionElapsed time.Duration
+	var sameRowElapsed time.Duration
+	var membershipElapsed time.Duration
+	var residualElapsed time.Duration
+	if tupleWorkNeeded {
+		tupleExpansionStart := time.Now()
+		tupleRows, diagnostics = NewRelationshipTupleRowSetFromAlignedRownums(alignedRows)
+		tupleExpansionElapsed = time.Since(tupleExpansionStart)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if result.Diagnostics.BlocksNative() {
+			return result, nil
+		}
+		sameRowStart := time.Now()
+		var sameRowProbes []ExecutionProbe
+		tupleRows, alignedRows, request, sameRowProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleSameRowResiduals(ctx, request, tupleRows, alignedRows)
+		sameRowElapsed = time.Since(sameRowStart)
+		result.Probes = append(result.Probes, sameRowProbes...)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, err
+		}
+		if rows, ok := alignedRows[sink]; ok {
 			rownums = rows
+		} else if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
+			if rows, ok := alignedRows[role]; ok {
+				rownums = rows
+			}
+		}
+		membershipStart := time.Now()
+		var membershipProbes []ExecutionProbe
+		tupleRows, alignedRows, membershipProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleMemberships(ctx, request, tupleRows, alignedRows, edges)
+		membershipElapsed = time.Since(membershipStart)
+		result.Probes = append(result.Probes, membershipProbes...)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, err
+		}
+		if rows, ok := alignedRows[sink]; ok {
+			rownums = rows
+		} else if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
+			if rows, ok := alignedRows[role]; ok {
+				rownums = rows
+			}
 		}
 	}
-	membershipStart := time.Now()
-	var membershipProbes []ExecutionProbe
-	tupleRows, alignedRows, membershipProbes, diagnostics, err = e.legacyDirectRelationshipApplyTupleMemberships(ctx, request, tupleRows, alignedRows, edges)
-	membershipElapsed := time.Since(membershipStart)
-	result.Probes = append(result.Probes, membershipProbes...)
-	result.Diagnostics = append(result.Diagnostics, diagnostics...)
-	if err != nil || result.Diagnostics.BlocksNative() {
-		return result, err
-	}
-	if rows, ok := alignedRows[sink]; ok {
-		rownums = rows
-	} else if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
-		if rows, ok := alignedRows[role]; ok {
-			rownums = rows
-		}
-	}
+	residuals = directBitmapResidualScanPredicates(request)
 	fields = legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
 	if len(fields) == 0 {
 		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("relationship-vector graph grouped aggregate requires materialized group or aggregate fields")...)
@@ -1217,13 +1228,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, err
 	}
-	residuals := directBitmapResidualScanPredicates(request)
-	residualStart := time.Now()
-	filtered, filteredTupleRows, diagnostics := FilterRelationshipTupleProjectedResiduals(tupleRows, request, materialized)
-	residualElapsed := time.Since(residualStart)
-	result.Diagnostics = append(result.Diagnostics, diagnostics...)
-	if result.Diagnostics.BlocksNative() {
-		return result, nil
+	filtered := materialized
+	if tupleWorkNeeded {
+		residualStart := time.Now()
+		filtered, filteredTupleRows, diagnostics = FilterRelationshipTupleProjectedResiduals(tupleRows, request, materialized)
+		residualElapsed = time.Since(residualStart)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if result.Diagnostics.BlocksNative() {
+			return result, nil
+		}
 	}
 	rowsBeforeResidual := materialized.CandidateCount()
 	rowsAfterResidual := filtered.CandidateCount()
@@ -1241,17 +1254,20 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_fields", strconv.Itoa(len(fields))),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_materialization_elapsed", materializationElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_tuple_expansion_elapsed", tupleExpansionElapsed.String()),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_tuple_expansion_skipped", strconv.FormatBool(!tupleWorkNeeded)),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_same_row_elapsed", sameRowElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_membership_elapsed", membershipElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_residual_filter_elapsed", residualElapsed.String()),
 	)
 	result.Probes = append(result.Probes, materializationProbes...)
-	result.Probes = append(result.Probes, RelationshipTupleProbes(RelationshipTupleProbeSnapshot{
-		Expanded:           tupleRows,
-		Filtered:           filteredTupleRows,
-		MaterializedFields: fields,
-		AggregateAlias:     relationshipTupleAggregateAlias(request),
-	})...)
+	if tupleWorkNeeded {
+		result.Probes = append(result.Probes, RelationshipTupleProbes(RelationshipTupleProbeSnapshot{
+			Expanded:           tupleRows,
+			Filtered:           filteredTupleRows,
+			MaterializedFields: fields,
+			AggregateAlias:     relationshipTupleAggregateAlias(request),
+		})...)
+	}
 	result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
 	aggregateStart := time.Now()
 	aggregateResult := directBitmapMaterializedGroupedAggregateResult(request, filtered, result)
@@ -1918,6 +1934,10 @@ func legacyDirectRelationshipCanPruneEdgesForResult(request ExecutionRequest, ed
 		return ok
 	}
 	return true
+}
+
+func legacyDirectRelationshipGraphGroupedAggregateNeedsTupleRows(request ExecutionRequest, residuals []qsbridge.Predicate) bool {
+	return len(residuals) > 0 || len(request.Memberships) > 0 || !request.NativePredicates.Empty()
 }
 
 func legacyDirectRelationshipRequiredSinkRoleForCountGraph(request ExecutionRequest, edges []legacyDirectRelationshipEdge) (string, bool) {

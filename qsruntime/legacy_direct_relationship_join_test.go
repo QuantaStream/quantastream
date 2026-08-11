@@ -5139,6 +5139,7 @@ func TestLegacyDirectRelationshipGraphGroupedAggregateProbesResidualFiltering(t 
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_residual_rows_before", "3")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_residual_rows_after", "2")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_residual_rows_removed", "1")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_tuple_expansion_skipped", "false")
 	assertExecutionProbe(t, result.Probes, "relationship_tuple", "roles", "lineitem")
 	assertExecutionProbe(t, result.Probes, "relationship_tuple", "expanded_rows", "3")
 	assertExecutionProbe(t, result.Probes, "relationship_tuple", "filtered_rows", "2")
@@ -5156,6 +5157,79 @@ func TestLegacyDirectRelationshipGraphGroupedAggregateProbesResidualFiltering(t 
 	}
 	if len(chunk.Rows) != 2 {
 		t.Fatalf("rows = %#v, want two groups after residual filter", chunk.Rows)
+	}
+}
+
+func TestLegacyDirectRelationshipGraphGroupedAggregateSkipsTupleExpansionWithoutTupleWork(t *testing.T) {
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	group := qsbridge.FieldRef{Table: lineitem, Name: "l_returnflag", Type: qsbridge.DataTypeString}
+	price := qsbridge.FieldRef{Table: lineitem, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{
+			{Index: "lineitem", Field: "l_returnflag", Type: qsbridge.DataTypeString},
+			{Index: "lineitem", Field: "l_extendedprice", Type: qsbridge.DataTypeFloat},
+		},
+	})
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(group)}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "sum",
+		Input:    qsbridge.Field(price),
+		Alias:    "total_revenue",
+		Type:     qsbridge.DataTypeFloat,
+	}}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					switch field.Field {
+					case "l_returnflag":
+						value := "A"
+						if rownum == 3 {
+							value = "B"
+						}
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value})
+					case "l_extendedprice":
+						vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: float64(rownum * 10)})
+					default:
+						t.Fatalf("unexpected materialized field %s.%s", field.Index, field.Field)
+					}
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+
+	result, err := executor.legacyDirectRelationshipGraphGroupedAggregateResult(
+		context.Background(),
+		request,
+		"lineitem",
+		[]qsbridge.QuantaRownum{1, 2, 3},
+		nil,
+		legacyDirectRelationshipGraphScratchpad{},
+		ExecutionResult{Count: 3},
+	)
+	if err != nil {
+		t.Fatalf("graph grouped aggregate: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_tuple_expansion_skipped", "true")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "phase_graph_grouped_aggregate_tuple_expansion_elapsed", "0s")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_residual_predicates", "0")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "groups", "2")
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two groups", chunk.Rows)
 	}
 }
 
