@@ -359,9 +359,11 @@ type directBitmapMembershipBSIComparison struct {
 }
 
 type directBitmapMembershipBSIVector struct {
-	Field   qsbridge.FieldRef
-	Rownums []qsbridge.QuantaRownum
-	Values  []*big.Int
+	Field       qsbridge.FieldRef
+	Rownums     []qsbridge.QuantaRownum
+	Values      []*big.Int
+	Int64Values []int64
+	Int64Exists []bool
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFastPath(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, correlatedPredicates []qsbridge.Predicate, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
@@ -414,7 +416,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 
 	rightMembership := membership
 	rightMembership.Predicates = rightOnlyPredicates
-	narrowValues := directBitmapMembershipBSIUniqueValues(leftKey.Values)
+	narrowValues := directBitmapMembershipBSIUniqueValuesFromVector(leftKey)
 	narrowFragment, narrowPlanProbes, foldedNarrow := directBitmapCorrelatedMembershipRightKeyNarrowFragmentValues(membership, narrowValues)
 	probes = append(probes, narrowPlanProbes...)
 	rightCandidateStart := time.Now()
@@ -462,17 +464,20 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 }
 
 func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, detail string, probes []ExecutionProbe, comparisons []directBitmapMembershipBSIComparison, leftVectors map[string]directBitmapMembershipBSIVector, leftKey directBitmapMembershipBSIVector, rightVectors map[string]directBitmapMembershipBSIVector, rightKey directBitmapMembershipBSIVector) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet) {
-	useInt64Key := directBitmapMembershipBSIVectorValuesFitInt64(leftKey.Values) && directBitmapMembershipBSIVectorValuesFitInt64(rightKey.Values)
+	useInt64Key := directBitmapMembershipBSIVectorUsesInt64(leftKey) && directBitmapMembershipBSIVectorUsesInt64(rightKey)
+	if !useInt64Key {
+		useInt64Key = directBitmapMembershipBSIVectorValuesFitInt64(leftKey.Values) && directBitmapMembershipBSIVectorValuesFitInt64(rightKey.Values)
+	}
 	keyMode := "string"
 	if useInt64Key {
 		keyMode = "int64"
 	}
 	indexStart := time.Now()
-	rightRowsByKey := make(map[directBitmapMembershipBSIJoinKey][]int, len(rightKey.Values))
+	rightRowsByKey := make(map[directBitmapMembershipBSIJoinKey][]int, len(rightKey.Rownums))
 	rightIndexedRows := 0
 	rightNullKeyRows := 0
-	for i, value := range rightKey.Values {
-		key, ok := directBitmapMembershipBSIJoinKeyForValue(value, useInt64Key)
+	for i := range rightKey.Rownums {
+		key, ok := directBitmapMembershipBSIJoinKeyForVectorIndex(rightKey, i, useInt64Key)
 		if !ok {
 			rightNullKeyRows++
 			continue
@@ -508,8 +513,7 @@ func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result Bi
 	firstCandidateMatches := 0
 	laterCandidateMatches := 0
 	for i, rownum := range leftKey.Rownums {
-		value := leftKey.Values[i]
-		key, ok := directBitmapMembershipBSIJoinKeyForValue(value, useInt64Key)
+		key, ok := directBitmapMembershipBSIJoinKeyForVectorIndex(leftKey, i, useInt64Key)
 		var candidates []int
 		if !ok {
 			leftNullKeyRows++
@@ -593,9 +597,29 @@ func directBitmapMembershipBSIVectorValuesFitInt64(values []*big.Int) bool {
 	return true
 }
 
+func directBitmapMembershipBSIVectorUsesInt64(vector directBitmapMembershipBSIVector) bool {
+	return len(vector.Int64Values) == len(vector.Rownums) && len(vector.Int64Exists) == len(vector.Rownums)
+}
+
 type directBitmapMembershipBSIJoinKey struct {
 	int64Value  int64
 	stringValue string
+}
+
+func directBitmapMembershipBSIJoinKeyForVectorIndex(vector directBitmapMembershipBSIVector, index int, useInt64 bool) (directBitmapMembershipBSIJoinKey, bool) {
+	if index < 0 || index >= len(vector.Rownums) {
+		return directBitmapMembershipBSIJoinKey{}, false
+	}
+	if useInt64 && directBitmapMembershipBSIVectorUsesInt64(vector) {
+		if !vector.Int64Exists[index] {
+			return directBitmapMembershipBSIJoinKey{}, false
+		}
+		return directBitmapMembershipBSIJoinKey{int64Value: vector.Int64Values[index]}, true
+	}
+	if index >= len(vector.Values) {
+		return directBitmapMembershipBSIJoinKey{}, false
+	}
+	return directBitmapMembershipBSIJoinKeyForValue(vector.Values[index], useInt64)
 }
 
 func directBitmapMembershipBSIJoinKeyForValue(value *big.Int, useInt64 bool) (directBitmapMembershipBSIJoinKey, bool) {
@@ -754,15 +778,7 @@ func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.
 				rightPositions[rownum] = i
 			}
 		}
-		values := make([]*big.Int, len(leftRownums))
-		for i, rownum := range leftRownums {
-			rightIndex, ok := rightPositions[rownum]
-			if !ok || rightIndex >= len(rightVector.Values) || rightVector.Values[rightIndex] == nil {
-				continue
-			}
-			values[i] = rightVector.Values[rightIndex]
-		}
-		derived[directBitmapMembershipBSIProjectionKey(leftField)] = directBitmapMembershipBSIVector{
+		derivedVector := directBitmapMembershipBSIVector{
 			Field: qsbridge.FieldRef{
 				Table:        qsbridge.TableInstance{Table: leftField.Index, Alias: string(leftField.Role)},
 				Name:         leftField.Field,
@@ -770,8 +786,30 @@ func directBitmapDeriveLeftMembershipBSIVectorsFromRight(leftRownums []qsbridge.
 				Type:         leftField.Type,
 			},
 			Rownums: append([]qsbridge.QuantaRownum(nil), leftRownums...),
-			Values:  values,
 		}
+		if directBitmapMembershipBSIVectorUsesInt64(rightVector) {
+			derivedVector.Int64Values = make([]int64, len(leftRownums))
+			derivedVector.Int64Exists = make([]bool, len(leftRownums))
+			for i, rownum := range leftRownums {
+				rightIndex, ok := rightPositions[rownum]
+				if !ok || rightIndex >= len(rightVector.Int64Exists) || !rightVector.Int64Exists[rightIndex] {
+					continue
+				}
+				derivedVector.Int64Values[i] = rightVector.Int64Values[rightIndex]
+				derivedVector.Int64Exists[i] = true
+			}
+		} else {
+			values := make([]*big.Int, len(leftRownums))
+			for i, rownum := range leftRownums {
+				rightIndex, ok := rightPositions[rownum]
+				if !ok || rightIndex >= len(rightVector.Values) || rightVector.Values[rightIndex] == nil {
+					continue
+				}
+				values[i] = rightVector.Values[rightIndex]
+			}
+			derivedVector.Values = values
+		}
+		derived[directBitmapMembershipBSIProjectionKey(leftField)] = derivedVector
 	}
 	return derived, true
 }
@@ -877,6 +915,9 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 	if len(rownums) == 0 || len(requests) == 0 {
 		return vectors, nil, nil, nil
 	}
+	if int64Reader, ok := r.ProjectionBSIReader.(NativeProjectionBSIInt64ValueBatchReader); ok && nativeProjectionTypedBSIValuesEnabled(int64Reader) {
+		return directBitmapReadMembershipBSIInt64ValueVectors(ctx, int64Reader, requests, positions, vectors)
+	}
 	if valueReader, ok := r.ProjectionBSIReader.(NativeProjectionBSIValueBatchReader); ok {
 		return directBitmapReadMembershipBSIValueVectors(ctx, valueReader, requests, positions, vectors)
 	}
@@ -927,6 +968,53 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_rows", strconv.Itoa(hydratedRows), hydrationDetail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_missing_rows", strconv.Itoa(missingRows), hydrationDetail),
+		)
+		vectors[positions[i]] = vector
+	}
+	return vectors, probes, nil, nil
+}
+
+func directBitmapReadMembershipBSIInt64ValueVectors(ctx context.Context, valueReader NativeProjectionBSIInt64ValueBatchReader, requests []NativeProjectionBSIReadRequest, positions []string, vectors map[string]directBitmapMembershipBSIVector) (map[string]directBitmapMembershipBSIVector, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	readResults, diagnostics, err := valueReader.ReadProjectionBSIInt64Values(ctx, requests)
+	if err != nil || diagnostics.BlocksNative() {
+		return vectors, nil, diagnostics, err
+	}
+	if len(readResults) != len(requests) {
+		return vectors, nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "correlated sibling BSI int64 value reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(requests))+" requests"),
+		}, nil
+	}
+	probes := make([]ExecutionProbe, 0, len(readResults))
+	for i, readResult := range readResults {
+		probes = append(probes, readResult.Probes...)
+		if len(readResult.Values) != len(requests[i].Rownums) || len(readResult.Exists) != len(requests[i].Rownums) {
+			return vectors, probes, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "correlated sibling BSI int64 value reader returned "+strconv.Itoa(len(readResult.Values))+" values and "+strconv.Itoa(len(readResult.Exists))+" existence flags for "+strconv.Itoa(len(requests[i].Rownums))+" rownums"),
+			}, nil
+		}
+		vector := vectors[positions[i]]
+		hydrationStart := time.Now()
+		hydratedRows := 0
+		missingRows := 0
+		for _, ok := range readResult.Exists {
+			if !ok {
+				missingRows++
+				continue
+			}
+			hydratedRows++
+		}
+		vector.Int64Values = readResult.Values
+		vector.Int64Exists = readResult.Exists
+		hydrationDetail := requests[i].Index + "." + requests[i].PhysicalField
+		mode := "direct_int64_values"
+		if !readResult.Fast {
+			mode = "direct_int64_values_big_fallback"
+		}
+		probes = append(probes,
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_elapsed", time.Since(hydrationStart).String(), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_rows", strconv.Itoa(hydratedRows), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_hydration_missing_rows", strconv.Itoa(missingRows), hydrationDetail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_value_read_mode", mode, hydrationDetail),
 		)
 		vectors[positions[i]] = vector
 	}
@@ -991,6 +1079,25 @@ func directBitmapMembershipBSIProjectionKey(field qsbridge.QuantaProjectionField
 	return string(field.Role) + "\x00" + field.Field
 }
 
+func directBitmapMembershipBSIUniqueValuesFromVector(vector directBitmapMembershipBSIVector) []*big.Int {
+	if directBitmapMembershipBSIVectorUsesInt64(vector) {
+		seen := make(map[int64]struct{}, len(vector.Int64Values))
+		unique := make([]*big.Int, 0, len(vector.Int64Values))
+		for i, value := range vector.Int64Values {
+			if !vector.Int64Exists[i] {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			unique = append(unique, big.NewInt(value))
+		}
+		return unique
+	}
+	return directBitmapMembershipBSIUniqueValues(vector.Values)
+}
+
 func directBitmapMembershipBSIUniqueValues(values []*big.Int) []*big.Int {
 	seen := make(map[string]struct{}, len(values))
 	unique := make([]*big.Int, 0, len(values))
@@ -1010,22 +1117,66 @@ func directBitmapMembershipBSIUniqueValues(values []*big.Int) []*big.Int {
 
 func directBitmapEvaluateCorrelatedMembershipBSIComparisons(comparisons []directBitmapMembershipBSIComparison, leftVectors map[string]directBitmapMembershipBSIVector, leftIndex int, rightVectors map[string]directBitmapMembershipBSIVector, rightIndex int) (bool, qsbridge.DiagnosticSet) {
 	for _, comparison := range comparisons {
-		leftValue, ok := directBitmapCorrelatedMembershipBSIOperandValue(comparison.Left, leftVectors, leftIndex, rightVectors, rightIndex)
+		leftValue, ok := directBitmapCorrelatedMembershipBSIOperandScalar(comparison.Left, leftVectors, leftIndex, rightVectors, rightIndex)
 		if !ok {
 			return false, directBitmapMembershipDiagnostics("correlated sibling BSI fast path left operand vector is missing")
 		}
-		rightValue, ok := directBitmapCorrelatedMembershipBSIOperandValue(comparison.Right, leftVectors, leftIndex, rightVectors, rightIndex)
+		rightValue, ok := directBitmapCorrelatedMembershipBSIOperandScalar(comparison.Right, leftVectors, leftIndex, rightVectors, rightIndex)
 		if !ok {
 			return false, directBitmapMembershipDiagnostics("correlated sibling BSI fast path right operand vector is missing")
 		}
-		if leftValue == nil || rightValue == nil {
+		if !leftValue.Exists || !rightValue.Exists {
 			return false, nil
 		}
-		if !directBitmapCompareBigIntValues(comparison.Op, leftValue, rightValue) {
+		if leftValue.Int64OK && rightValue.Int64OK {
+			if !directBitmapCompareInt64Values(comparison.Op, leftValue.Int64Value, rightValue.Int64Value) {
+				return false, nil
+			}
+			continue
+		}
+		if leftValue.BigValue == nil || rightValue.BigValue == nil {
+			return false, nil
+		}
+		if !directBitmapCompareBigIntValues(comparison.Op, leftValue.BigValue, rightValue.BigValue) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+type directBitmapMembershipBSIScalarValue struct {
+	Exists     bool
+	Int64OK    bool
+	Int64Value int64
+	BigValue   *big.Int
+}
+
+func directBitmapCorrelatedMembershipBSIOperandScalar(operand directBitmapMembershipBSIOperand, leftVectors map[string]directBitmapMembershipBSIVector, leftIndex int, rightVectors map[string]directBitmapMembershipBSIVector, rightIndex int) (directBitmapMembershipBSIScalarValue, bool) {
+	switch operand.Side {
+	case directBitmapMembershipBSIOperandLeft:
+		return directBitmapMembershipBSIVectorScalarValue(leftVectors, operand.Field, leftIndex)
+	case directBitmapMembershipBSIOperandRight:
+		return directBitmapMembershipBSIVectorScalarValue(rightVectors, operand.Field, rightIndex)
+	default:
+		return directBitmapMembershipBSIScalarValue{}, false
+	}
+}
+
+func directBitmapMembershipBSIVectorScalarValue(vectors map[string]directBitmapMembershipBSIVector, field qsbridge.FieldRef, index int) (directBitmapMembershipBSIScalarValue, bool) {
+	vector, ok := vectors[directBitmapMembershipBSIFieldKey(field)]
+	if !ok || index < 0 || index >= len(vector.Rownums) {
+		return directBitmapMembershipBSIScalarValue{}, false
+	}
+	if directBitmapMembershipBSIVectorUsesInt64(vector) {
+		if !vector.Int64Exists[index] {
+			return directBitmapMembershipBSIScalarValue{}, true
+		}
+		return directBitmapMembershipBSIScalarValue{Exists: true, Int64OK: true, Int64Value: vector.Int64Values[index]}, true
+	}
+	if index >= len(vector.Values) || vector.Values[index] == nil {
+		return directBitmapMembershipBSIScalarValue{}, true
+	}
+	return directBitmapMembershipBSIScalarValue{Exists: true, BigValue: vector.Values[index]}, true
 }
 
 func directBitmapCorrelatedMembershipBSIOperandValue(operand directBitmapMembershipBSIOperand, leftVectors map[string]directBitmapMembershipBSIVector, leftIndex int, rightVectors map[string]directBitmapMembershipBSIVector, rightIndex int) (*big.Int, bool) {
@@ -1062,6 +1213,25 @@ func directBitmapCompareBigIntValues(op qsbridge.BinaryOp, left *big.Int, right 
 		return cmp > 0
 	case qsbridge.BinaryOpGreaterEqual:
 		return cmp >= 0
+	default:
+		return false
+	}
+}
+
+func directBitmapCompareInt64Values(op qsbridge.BinaryOp, left int64, right int64) bool {
+	switch op {
+	case qsbridge.BinaryOpEqual:
+		return left == right
+	case qsbridge.BinaryOpNotEqual:
+		return left != right
+	case qsbridge.BinaryOpLess:
+		return left < right
+	case qsbridge.BinaryOpLessEqual:
+		return left <= right
+	case qsbridge.BinaryOpGreater:
+		return left > right
+	case qsbridge.BinaryOpGreaterEqual:
+		return left >= right
 	default:
 		return false
 	}
@@ -1465,7 +1635,7 @@ func directBitmapMembershipRightCandidateCacheStore(ctx context.Context, members
 	if !ok {
 		return nil
 	}
-	keyValues := directBitmapMembershipBSIVectorValueKeys(rightKey.Values)
+	keyValues := directBitmapMembershipBSIVectorValueKeys(rightKey)
 	if len(keyValues) != len(rightKey.Rownums) {
 		return nil
 	}
@@ -1567,9 +1737,20 @@ func directBitmapMembershipBSIValueKeyStrings(values []*big.Int) []string {
 	return keys
 }
 
-func directBitmapMembershipBSIVectorValueKeys(values []*big.Int) []string {
-	keys := make([]string, len(values))
-	for i, value := range values {
+func directBitmapMembershipBSIVectorValueKeys(vector directBitmapMembershipBSIVector) []string {
+	if directBitmapMembershipBSIVectorUsesInt64(vector) {
+		keys := make([]string, len(vector.Int64Values))
+		for i, exists := range vector.Int64Exists {
+			if !exists {
+				keys[i] = "<nil>"
+				continue
+			}
+			keys[i] = strconv.FormatInt(vector.Int64Values[i], 10)
+		}
+		return keys
+	}
+	keys := make([]string, len(vector.Values))
+	for i, value := range vector.Values {
 		keys[i] = directBitmapMembershipBigIntKey(value)
 	}
 	return keys

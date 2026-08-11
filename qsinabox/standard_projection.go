@@ -29,6 +29,12 @@ type StandardProjectionBSIReader struct {
 	Direct     *server.BitmapIndex
 }
 
+// SupportsProjectionBSIInt64Values reports whether this reader can serve typed
+// scalar BSI values from storage without falling back through big.Int vectors.
+func (r StandardProjectionBSIReader) SupportsProjectionBSIInt64Values() bool {
+	return r.Direct != nil && server.SupportsBSIInt64Values()
+}
+
 // ReadProjectionBSI projects one BSI-backed field through the local BitmapIndex.
 func (r StandardProjectionBSIReader) ReadProjectionBSI(ctx context.Context, request qsruntime.NativeProjectionBSIReadRequest) (qsruntime.NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
 	results, diagnostics, err := r.ReadProjectionBSIs(ctx, []qsruntime.NativeProjectionBSIReadRequest{request})
@@ -184,6 +190,122 @@ func (r StandardProjectionBSIReader) ReadProjectionBSIValues(ctx context.Context
 		}
 	}
 	return results, nil, nil
+}
+
+// ReadProjectionBSIInt64Values projects scalar BSI-backed values directly
+// through the local BitmapIndex.
+func (r StandardProjectionBSIReader) ReadProjectionBSIInt64Values(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIInt64ValueReadResult, qsbridge.DiagnosticSet, error) {
+	results := make([]qsruntime.NativeProjectionBSIInt64ValueReadResult, len(requests))
+	if len(requests) == 0 {
+		return results, nil, nil
+	}
+	if r.Direct == nil {
+		return r.readProjectionBSIInt64ValuesViaValues(ctx, requests)
+	}
+
+	works := make([]standardProjectionBSIReadWork, 0, len(requests))
+	for i, request := range requests {
+		foundSet := standardProjectionBitmap(request.Rownums)
+		fromTime, toTime := standardProjectionWindowNanos(r.TableCache, request.Index, request.FromEpochMillis, request.ToEpochMillis)
+		works = append(works, standardProjectionBSIReadWork{
+			Position:     i,
+			Request:      request,
+			FromTime:     fromTime,
+			ToTime:       toTime,
+			FoundSet:     foundSet,
+			FetchSet:     foundSet,
+			FetchRownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+		})
+	}
+	for _, group := range standardProjectionBSIReadWorkGroups(works) {
+		groupStart := time.Now()
+		fields := make([]string, 0, len(group))
+		for _, work := range group {
+			fields = append(fields, work.Request.PhysicalField)
+		}
+		valuesByField, statsByField, err := r.Direct.ProjectBSIInt64ValuesWithStats(
+			group[0].Request.Index,
+			fields,
+			group[0].FromTime,
+			group[0].ToTime,
+			standardProjectionUint64Rownums(group[0].FetchRownums),
+			group[0].FetchSet,
+			false,
+		)
+		projectionElapsed := time.Since(groupStart)
+		if err != nil {
+			return results, nil, err
+		}
+		for _, work := range group {
+			values := valuesByField[work.Request.PhysicalField]
+			if values.Values == nil {
+				values.Values = make([]int64, len(work.Request.Rownums))
+				values.Exists = make([]bool, len(work.Request.Rownums))
+			}
+			transport := "local_direct_int64_values"
+			if !values.Fast {
+				transport = "local_direct_int64_values_big_fallback"
+			}
+			probes := []qsruntime.ExecutionProbe{
+				standardProjectionBSIRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.Request.Rownums)),
+				standardProjectionBSIFetchRowsProbe(work.Request.Index, work.Request.PhysicalField, len(work.FetchRownums)),
+				standardProjectionBSICacheProbe(work.Request.Index, work.Request.PhysicalField, false),
+				standardProjectionBSICacheModeProbe(work.Request.Index, work.Request.PhysicalField, "int64_value_direct"),
+				standardProjectionBSIBatchFieldsProbe(work.Request.Index, work.Request.PhysicalField, len(group)),
+				standardProjectionBSIBatchElapsedProbe(work.Request.Index, work.Request.PhysicalField, projectionElapsed),
+				{
+					Section: "native_projection_materialization",
+					Name:    "standard_bsi_projection_transport",
+					Value:   transport,
+					Detail:  work.Request.Index + "." + work.Request.PhysicalField,
+				},
+			}
+			probes = append(probes, standardProjectionBSIStatsProbes(work.Request.Index, work.Request.PhysicalField, statsByField[work.Request.PhysicalField])...)
+			results[work.Position] = qsruntime.NativeProjectionBSIInt64ValueReadResult{
+				Values: values.Values,
+				Exists: values.Exists,
+				Fast:   values.Fast,
+				Probes: probes,
+			}
+		}
+	}
+	return results, nil, nil
+}
+
+func (r StandardProjectionBSIReader) readProjectionBSIInt64ValuesViaValues(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIInt64ValueReadResult, qsbridge.DiagnosticSet, error) {
+	readResults, diagnostics, err := r.ReadProjectionBSIValues(ctx, requests)
+	results := make([]qsruntime.NativeProjectionBSIInt64ValueReadResult, len(requests))
+	if err != nil || diagnostics.BlocksNative() {
+		return results, diagnostics, err
+	}
+	if len(readResults) != len(requests) {
+		return results, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "standard BSI int64 value fallback returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(requests))+" requests"),
+		}, nil
+	}
+	for i, readResult := range readResults {
+		values := make([]int64, len(readResult.Values))
+		exists := make([]bool, len(readResult.Values))
+		for j, value := range readResult.Values {
+			if value == nil {
+				continue
+			}
+			if !value.IsInt64() {
+				return results, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "standard BSI int64 fallback encountered non-int64 value for "+requests[i].Index+"."+requests[i].PhysicalField),
+				}, nil
+			}
+			values[j] = value.Int64()
+			exists[j] = true
+		}
+		results[i] = qsruntime.NativeProjectionBSIInt64ValueReadResult{
+			Values: values,
+			Exists: exists,
+			Fast:   false,
+			Probes: readResult.Probes,
+		}
+	}
+	return results, diagnostics, nil
 }
 
 func (r StandardProjectionBSIReader) readProjectionBSIValuesViaBSI(ctx context.Context, requests []qsruntime.NativeProjectionBSIReadRequest) ([]qsruntime.NativeProjectionBSIValueReadResult, qsbridge.DiagnosticSet, error) {
