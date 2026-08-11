@@ -800,21 +800,26 @@ The Q21 sibling-diversity reverse-artifact path is intentionally opt-in with
 `QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=1`. The first POC proved
 that the planner can recognize the shape and delegate to a relationship
 artifact, but the SF1 AWS run showed that query-time value projection and group
-evaluation still cost roughly the same as the original BSI path. The likely
-winning design is a maintained per-parent diversity artifact, such as
-`orderkey -> has_more_than_one_suppkey`, so Q21 can filter candidate rows with a
-cheap lookup instead of reconstructing sibling diversity during the query.
+evaluation still cost roughly the same as the original BSI path. A follow-up
+POC now builds a lazy per-parent diversity summary, effectively
+`orderkey -> has_more_than_one_suppkey`, and caches the resulting child-domain
+row bitmap so repeated Q21-style filters can use a cheap candidate intersection
+instead of reconstructing sibling diversity during every query. The remaining
+go-forward step is to make this summary persistable and maintainable during
+load/streaming mutation rather than first-query lazy work. Runtime runs emit
+`optimizer.correlated_sibling_diversity_*` probes for the chosen path and core
+cost signals so this can feed the future planner cost model.
 
 Technical debt: the current opt-in implementation also carries a physical-tier
-projection-row cost gate so the artifact is used only when the runtime shortcut
-is actually bounded. This is a useful guardrail for experimentation, not the
-go-forward contract. At the appropriate optimizer milestone, sibling-diversity
-artifact use should become a costed optimizer decision. The optimizer should
-estimate candidate rows, projected sibling rows, parent-bucket count, and
-expected diversity selectivity, then choose between the maintained artifact,
-the regular correlated BSI membership path, or a future per-parent diversity
-summary. That will let the environment flag and fixed projection cap disappear
-once we have planner-visible cost signals.
+projection-row cost gate for the old query-time projection fallback. This is a
+useful guardrail for experimentation, not the go-forward contract. At the
+appropriate optimizer milestone, sibling-diversity artifact use should become a
+costed optimizer decision. The optimizer should estimate candidate rows,
+projected sibling rows, parent-bucket count, cache/persistence availability,
+and expected diversity selectivity, then choose between the cached summary,
+the regular correlated BSI membership path, or a future persisted per-parent
+diversity summary. That will let the environment flag and fixed projection cap
+disappear once we have planner-visible cost signals.
 
 ## Time-Quantized Shard Planning
 

@@ -117,8 +117,10 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipSibl
 		TargetRows:        stats.TargetRows,
 		Groups:            stats.Groups,
 		DiverseGroups:     stats.DiverseGroups,
+		CacheHit:          stats.CacheHit,
 		Reason:            stats.SkipReason,
 		LookupElapsed:     stats.LookupElapsed,
+		BuildElapsed:      stats.BuildElapsed,
 		ProjectionElapsed: stats.ProjectionElapsed,
 		EvaluationElapsed: stats.EvaluationElapsed,
 	}
@@ -133,7 +135,10 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipSibl
 		Index:   read.Index,
 		Rownums: candidateRows,
 	}
-	result.Mode = "reverse_artifact_sibling_diversity"
+	result.Mode = stats.Mode
+	if result.Mode == "" {
+		result.Mode = "reverse_artifact_sibling_diversity"
+	}
 	return result, nil, true, nil
 }
 

@@ -189,6 +189,9 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
 			}
 			assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied")
 			assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_mode", "test_diversity")
+			assertExecutionProbe(t, result.Probes, "optimizer", "correlated_sibling_diversity_choice", "test_diversity")
+			assertExecutionProbe(t, result.Probes, "optimizer", "correlated_sibling_diversity_candidate_rows", "4")
+			assertExecutionProbe(t, result.Probes, "optimizer", "correlated_sibling_diversity_target_rows", "2")
 		})
 	}
 }
@@ -271,6 +274,7 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifactWithQualifiedNames(t *te
 		t.Fatalf("projection BSI reads = raw %d value %d, want zero", reader.RawReads, reader.ValueReads)
 	}
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "true")
+	assertExecutionProbe(t, result.Probes, "optimizer", "correlated_sibling_diversity_choice", "test_diversity")
 }
 
 func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *testing.T) {
@@ -351,6 +355,8 @@ func TestDirectBitmapRuntimeReportsSiblingDiversityArtifactSkipReason(t *testing
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "false")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_reason", "projection_rows_exceeds_limit")
 	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_projection_rows", "300000")
+	assertExecutionProbe(t, probes, "optimizer", "correlated_sibling_diversity_choice", "projection_rows_exceeds_limit")
+	assertExecutionProbe(t, probes, "optimizer", "correlated_sibling_diversity_projection_rows", "300000")
 }
 
 func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testing.T) {

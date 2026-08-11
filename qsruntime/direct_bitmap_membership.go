@@ -384,8 +384,10 @@ type RelationshipSiblingDiversityReadResult struct {
 	TargetRows        uint64
 	Groups            uint64
 	DiverseGroups     uint64
+	CacheHit          bool
 	Reason            string
 	LookupElapsed     time.Duration
+	BuildElapsed      time.Duration
 	ProjectionElapsed time.Duration
 	EvaluationElapsed time.Duration
 }
@@ -510,18 +512,21 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath(ctx context.Context, request ExecutionRequest, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, detail string) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
 	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
 		return result, []ExecutionProbe{
+			directBitmapSiblingDiversityOptimizerChoiceProbe("disabled", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "disabled", detail),
 		}, false, nil, nil
 	}
 	if r.SiblingDiversity == nil {
 		return result, []ExecutionProbe{
+			directBitmapSiblingDiversityOptimizerChoiceProbe("no_reader", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "no_reader", detail),
 		}, false, nil, nil
 	}
 	if len(rightOnlyPredicates) != 0 {
 		return result, []ExecutionProbe{
+			directBitmapSiblingDiversityOptimizerChoiceProbe("right_only_predicates", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "right_only_predicates", detail),
 		}, false, nil, nil
@@ -529,6 +534,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 	parentField, valueField, ok := directBitmapCorrelatedSiblingDiversityFields(membership, comparisons)
 	if !ok {
 		return result, []ExecutionProbe{
+			directBitmapSiblingDiversityOptimizerChoiceProbe("shape_mismatch", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "shape_mismatch", detail),
 		}, false, nil, nil
@@ -552,7 +558,8 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 		if reason == "" {
 			reason = "physical_unavailable"
 		}
-		return result, []ExecutionProbe{
+		probes := []ExecutionProbe{
+			directBitmapSiblingDiversityOptimizerChoiceProbe(reason, detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", reason, detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_parent_field", read.ParentField, detail),
@@ -562,11 +569,16 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_candidate_rows", strconv.FormatUint(diversity.CandidateRows, 10), detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_projection_rows", strconv.FormatUint(diversity.ProjectionRows, 10), detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_groups", strconv.FormatUint(diversity.Groups, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_cache_hit", strconv.FormatBool(diversity.CacheHit), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_build_elapsed", diversity.BuildElapsed.String(), detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_read_elapsed", readElapsed.String(), detail),
-		}, false, nil, nil
+		}
+		probes = append(probes, directBitmapSiblingDiversityOptimizerCostProbes(diversity, readElapsed, detail)...)
+		return result, probes, false, nil, nil
 	}
 	filtered := directBitmapFilterMembershipRowsByCandidates(result, diversity.Candidates.Rownums, membership.Kind)
 	probes := []ExecutionProbe{
+		directBitmapSiblingDiversityOptimizerChoiceProbe(diversity.Mode, detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "true", detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_mode", diversity.Mode, detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_parent_field", read.ParentField, detail),
@@ -578,14 +590,71 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_target_rows", strconv.FormatUint(diversity.TargetRows, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_groups", strconv.FormatUint(diversity.Groups, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_diverse_groups", strconv.FormatUint(diversity.DiverseGroups, 10), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_cache_hit", strconv.FormatBool(diversity.CacheHit), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_lookup_elapsed", diversity.LookupElapsed.String(), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_build_elapsed", diversity.BuildElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_projection_elapsed", diversity.ProjectionElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_evaluation_elapsed", diversity.EvaluationElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_read_elapsed", readElapsed.String(), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_left_candidates_after", strconv.Itoa(len(filtered.Rownums)), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_elapsed", time.Since(start).String(), detail),
 	}
+	probes = append(probes, directBitmapSiblingDiversityOptimizerCostProbes(diversity, readElapsed, detail)...)
 	return filtered, probes, true, nil, nil
+}
+
+func directBitmapSiblingDiversityOptimizerChoiceProbe(choice string, detail string) ExecutionProbe {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		choice = "unknown"
+	}
+	return ExecutionProbe{
+		Section: "optimizer",
+		Name:    "correlated_sibling_diversity_choice",
+		Value:   choice,
+		Detail:  detail,
+	}
+}
+
+func directBitmapSiblingDiversityOptimizerCostProbes(diversity RelationshipSiblingDiversityReadResult, readElapsed time.Duration, detail string) []ExecutionProbe {
+	return []ExecutionProbe{
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_candidate_rows",
+			Value:   strconv.FormatUint(diversity.CandidateRows, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_projection_rows",
+			Value:   strconv.FormatUint(diversity.ProjectionRows, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_target_rows",
+			Value:   strconv.FormatUint(diversity.TargetRows, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_groups",
+			Value:   strconv.FormatUint(diversity.Groups, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_diverse_groups",
+			Value:   strconv.FormatUint(diversity.DiverseGroups, 10),
+			Detail:  detail,
+		},
+		{
+			Section: "optimizer",
+			Name:    "correlated_sibling_diversity_read_elapsed",
+			Value:   readElapsed.String(),
+			Detail:  detail,
+		},
+	}
 }
 
 func directBitmapCorrelatedSiblingDiversityArtifactEnabled() bool {

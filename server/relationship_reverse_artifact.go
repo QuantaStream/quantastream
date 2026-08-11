@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 const relationshipSiblingDiversitySkipProjectionRowsExceedsLimit = "projection_rows_exceeds_limit"
 
 var relationshipSiblingDiversityMaxProjectionRows uint64 = 100000
+var relationshipSiblingDiversitySummaryCacheEnabled = true
 
 // RelationshipReverseArtifactStats summarizes one reverse-artifact lookup.
 type RelationshipReverseArtifactStats struct {
@@ -33,8 +35,11 @@ type RelationshipSiblingDiversityStats struct {
 	TargetRows        uint64
 	Groups            uint64
 	DiverseGroups     uint64
+	CacheHit          bool
+	Mode              string
 	SkipReason        string
 	LookupElapsed     time.Duration
+	BuildElapsed      time.Duration
 	ProjectionElapsed time.Duration
 	EvaluationElapsed time.Duration
 	ProjectionStats   ProjectBSIStats
@@ -71,6 +76,19 @@ type relationshipReverseArtifactSnapshot struct {
 type relationshipReverseArtifact struct {
 	byValue map[int64]*roaring64.Bitmap
 	rows    uint64
+}
+
+type relationshipSiblingDiversityArtifact struct {
+	diverseRows    *roaring64.Bitmap
+	rows           uint64
+	values         uint64
+	projectionRows uint64
+	groups         uint64
+	diverseGroups  uint64
+}
+
+type relationshipSiblingDiversityBuildGroup struct {
+	rows []uint64
 }
 
 // RelationshipReverseArtifactCandidates returns child-domain rownums for the
@@ -110,6 +128,16 @@ func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField,
 		return nil, RelationshipSiblingDiversityStats{}, false, nil
 	}
 	candidateSet := relationshipReverseArtifactBitmap(candidateRows)
+	if summary, stats, ok, err := m.relationshipSiblingDiversitySummary(index, parentField, valueField, fromTime, toTime, start); err != nil || ok {
+		if err != nil {
+			return nil, stats, true, err
+		}
+		rownums := relationshipSiblingDiversityCandidateRows(summary.diverseRows, candidateSet)
+		stats.CandidateRows = uint64(len(candidateRows))
+		stats.TargetRows = uint64(len(rownums))
+		stats.LookupElapsed = time.Since(start)
+		return rownums, stats, true, nil
+	}
 
 	m.reverseArtifactLock.RLock()
 	fields := m.reverseArtifactCache[index]
@@ -218,6 +246,178 @@ func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField,
 	stats.EvaluationElapsed = time.Since(evaluationStart)
 	stats.TargetRows = uint64(len(result))
 	return result, stats, true, nil
+}
+
+func (m *BitmapIndex) relationshipSiblingDiversitySummary(index, parentField, valueField string, fromTime, toTime int64, start time.Time) (*relationshipSiblingDiversityArtifact, RelationshipSiblingDiversityStats, bool, error) {
+	if !relationshipSiblingDiversitySummaryCacheEnabled {
+		return nil, RelationshipSiblingDiversityStats{}, false, nil
+	}
+	key := relationshipSiblingDiversityCacheKey(valueField, fromTime, toTime)
+	if summary, ok := m.relationshipSiblingDiversityCachedSummary(index, parentField, key); ok {
+		return summary, relationshipSiblingDiversityStatsFromSummary(summary, true, "sibling_diversity_summary_cache_hit", start), true, nil
+	}
+	summary, stats, generation, ok, err := m.buildRelationshipSiblingDiversitySummary(index, parentField, valueField, fromTime, toTime, start)
+	if err != nil || !ok {
+		return nil, stats, ok, err
+	}
+	m.reverseArtifactLock.Lock()
+	if existing, ok := m.relationshipSiblingDiversityCachedSummaryLocked(index, parentField, key); ok {
+		m.reverseArtifactLock.Unlock()
+		return existing, relationshipSiblingDiversityStatsFromSummary(existing, true, "sibling_diversity_summary_cache_hit", start), true, nil
+	}
+	if generation == m.relationshipSiblingDiversityGenerationLocked(index) {
+		m.relationshipSiblingDiversityCache(index, parentField)[key] = summary
+	} else {
+		stats.Mode = "sibling_diversity_summary_cache_build_uncached"
+	}
+	m.reverseArtifactLock.Unlock()
+	return summary, stats, true, nil
+}
+
+func (m *BitmapIndex) relationshipSiblingDiversityCachedSummary(index, parentField, key string) (*relationshipSiblingDiversityArtifact, bool) {
+	m.reverseArtifactLock.RLock()
+	defer m.reverseArtifactLock.RUnlock()
+	return m.relationshipSiblingDiversityCachedSummaryLocked(index, parentField, key)
+}
+
+func (m *BitmapIndex) relationshipSiblingDiversityCachedSummaryLocked(index, parentField, key string) (*relationshipSiblingDiversityArtifact, bool) {
+	if m.siblingDiversityCache == nil {
+		return nil, false
+	}
+	fields := m.siblingDiversityCache[index]
+	if fields == nil {
+		return nil, false
+	}
+	artifacts := fields[parentField]
+	if artifacts == nil {
+		return nil, false
+	}
+	summary := artifacts[key]
+	return summary, summary != nil
+}
+
+func (m *BitmapIndex) buildRelationshipSiblingDiversitySummary(index, parentField, valueField string, fromTime, toTime int64, start time.Time) (*relationshipSiblingDiversityArtifact, RelationshipSiblingDiversityStats, uint64, bool, error) {
+	buildStart := time.Now()
+	m.reverseArtifactLock.RLock()
+	generation := m.relationshipSiblingDiversityGenerationLocked(index)
+	fields := m.reverseArtifactCache[index]
+	if fields == nil {
+		m.reverseArtifactLock.RUnlock()
+		return nil, RelationshipSiblingDiversityStats{}, generation, false, nil
+	}
+	artifact := fields[parentField]
+	if artifact == nil {
+		m.reverseArtifactLock.RUnlock()
+		return nil, RelationshipSiblingDiversityStats{}, generation, false, nil
+	}
+	groups := make([]relationshipSiblingDiversityBuildGroup, 0, len(artifact.byValue))
+	allRows := make([]uint64, 0)
+	for _, bitmap := range artifact.byValue {
+		if bitmap == nil || bitmap.IsEmpty() {
+			continue
+		}
+		rows := bitmap.ToArray()
+		groups = append(groups, relationshipSiblingDiversityBuildGroup{rows: rows})
+		allRows = append(allRows, rows...)
+	}
+	stats := RelationshipSiblingDiversityStats{
+		Rows:           artifact.rows,
+		Values:         uint64(len(artifact.byValue)),
+		ProjectionRows: uint64(len(allRows)),
+		Groups:         uint64(len(groups)),
+		Mode:           "sibling_diversity_summary_cache_build",
+		LookupElapsed:  time.Since(start),
+	}
+	m.reverseArtifactLock.RUnlock()
+	if len(groups) == 0 || len(allRows) == 0 {
+		summary := &relationshipSiblingDiversityArtifact{
+			diverseRows:    roaring64.NewBitmap(),
+			rows:           stats.Rows,
+			values:         stats.Values,
+			groups:         stats.Groups,
+			projectionRows: stats.ProjectionRows,
+		}
+		stats.BuildElapsed = time.Since(buildStart)
+		return summary, stats, generation, true, nil
+	}
+
+	projectionStart := time.Now()
+	valuesByField, statsByField, err := m.ProjectBSIInt64ValuesWithStats(index, []string{valueField}, fromTime, toTime, allRows, relationshipReverseArtifactBitmap(allRows), false)
+	if err != nil {
+		return nil, stats, generation, true, err
+	}
+	stats.ProjectionElapsed = time.Since(projectionStart)
+	stats.ProjectionStats = statsByField[valueField]
+	values := valuesByField[valueField]
+
+	evaluationStart := time.Now()
+	diverseRows := roaring64.NewBitmap()
+	offset := 0
+	for _, group := range groups {
+		distinct := make(map[int64]struct{}, 2)
+		for i := 0; i < len(group.rows); i++ {
+			position := offset + i
+			if position >= len(values.Exists) || !values.Exists[position] {
+				continue
+			}
+			distinct[values.Values[position]] = struct{}{}
+			if len(distinct) > 1 {
+				break
+			}
+		}
+		if len(distinct) > 1 {
+			stats.DiverseGroups++
+			for i, rownum := range group.rows {
+				position := offset + i
+				if position < len(values.Exists) && values.Exists[position] {
+					diverseRows.Add(rownum)
+				}
+			}
+		}
+		offset += len(group.rows)
+	}
+	stats.EvaluationElapsed = time.Since(evaluationStart)
+	summary := &relationshipSiblingDiversityArtifact{
+		diverseRows:    diverseRows,
+		rows:           stats.Rows,
+		values:         stats.Values,
+		projectionRows: stats.ProjectionRows,
+		groups:         stats.Groups,
+		diverseGroups:  stats.DiverseGroups,
+	}
+	stats.BuildElapsed = time.Since(buildStart)
+	return summary, stats, generation, true, nil
+}
+
+func relationshipSiblingDiversityStatsFromSummary(summary *relationshipSiblingDiversityArtifact, cacheHit bool, mode string, start time.Time) RelationshipSiblingDiversityStats {
+	return RelationshipSiblingDiversityStats{
+		Rows:           summary.rows,
+		Values:         summary.values,
+		ProjectionRows: summary.projectionRows,
+		Groups:         summary.groups,
+		DiverseGroups:  summary.diverseGroups,
+		CacheHit:       cacheHit,
+		Mode:           mode,
+		LookupElapsed:  time.Since(start),
+	}
+}
+
+func relationshipSiblingDiversityCandidateRows(diverseRows, candidateSet *roaring64.Bitmap) []uint64 {
+	if diverseRows == nil || diverseRows.IsEmpty() {
+		return []uint64{}
+	}
+	if candidateSet == nil {
+		return diverseRows.ToArray()
+	}
+	matched := roaring64.And(diverseRows, candidateSet)
+	if matched == nil || matched.IsEmpty() {
+		return []uint64{}
+	}
+	return matched.ToArray()
+}
+
+func relationshipSiblingDiversityCacheKey(valueField string, fromTime, toTime int64) string {
+	return valueField + "\x00" + strconv.FormatInt(fromTime, 10) + "\x00" + strconv.FormatInt(toTime, 10)
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
@@ -665,11 +865,14 @@ func (m *BitmapIndex) relationshipReverseArtifactSnapshot() relationshipReverseA
 }
 
 func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, field string, oldBSI *roaring64.BSI, removedRows *roaring64.Bitmap, addedBSI *roaring64.BSI) {
-	if !m.relationshipReverseArtifactEnabled(index, field) {
-		return
-	}
+	reverseArtifactEnabled := m.relationshipReverseArtifactEnabled(index, field)
 	m.reverseArtifactLock.Lock()
 	defer m.reverseArtifactLock.Unlock()
+
+	m.clearRelationshipSiblingDiversityArtifactsForIndexLocked(index)
+	if !reverseArtifactEnabled {
+		return
+	}
 
 	artifact := m.relationshipReverseArtifact(index, field)
 	if removedRows != nil && oldBSI != nil {
@@ -704,6 +907,37 @@ func (m *BitmapIndex) relationshipReverseArtifact(index, field string) *relation
 		m.reverseArtifactCache[index][field] = artifact
 	}
 	return artifact
+}
+
+func (m *BitmapIndex) relationshipSiblingDiversityCache(index, parentField string) map[string]*relationshipSiblingDiversityArtifact {
+	if m.siblingDiversityCache == nil {
+		m.siblingDiversityCache = make(map[string]map[string]map[string]*relationshipSiblingDiversityArtifact)
+	}
+	if _, ok := m.siblingDiversityCache[index]; !ok {
+		m.siblingDiversityCache[index] = make(map[string]map[string]*relationshipSiblingDiversityArtifact)
+	}
+	if _, ok := m.siblingDiversityCache[index][parentField]; !ok {
+		m.siblingDiversityCache[index][parentField] = make(map[string]*relationshipSiblingDiversityArtifact)
+	}
+	return m.siblingDiversityCache[index][parentField]
+}
+
+func (m *BitmapIndex) relationshipSiblingDiversityGenerationLocked(index string) uint64 {
+	if m.siblingDiversityGen == nil {
+		m.siblingDiversityGen = make(map[string]uint64)
+	}
+	return m.siblingDiversityGen[index]
+}
+
+func (m *BitmapIndex) clearRelationshipSiblingDiversityArtifactsForIndexLocked(index string) {
+	if m.siblingDiversityCache == nil {
+		m.siblingDiversityCache = make(map[string]map[string]map[string]*relationshipSiblingDiversityArtifact)
+	}
+	delete(m.siblingDiversityCache, index)
+	if m.siblingDiversityGen == nil {
+		m.siblingDiversityGen = make(map[string]uint64)
+	}
+	m.siblingDiversityGen[index]++
 }
 
 func (m *BitmapIndex) removeRelationshipReverseArtifactRows(artifact *relationshipReverseArtifact, oldBSI *roaring64.BSI, removedRows *roaring64.Bitmap) {
@@ -757,4 +991,5 @@ func (m *BitmapIndex) clearRelationshipReverseArtifactsForIndex(index string) {
 	m.reverseArtifactLock.Lock()
 	defer m.reverseArtifactLock.Unlock()
 	delete(m.reverseArtifactCache, index)
+	m.clearRelationshipSiblingDiversityArtifactsForIndexLocked(index)
 }

@@ -82,6 +82,8 @@ type BitmapIndex struct {
 	seedCache             map[string]*SeedBitmap
 	seedCacheLock         sync.RWMutex
 	reverseArtifactCache  map[string]map[string]*relationshipReverseArtifact
+	siblingDiversityCache map[string]map[string]map[string]*relationshipSiblingDiversityArtifact
+	siblingDiversityGen   map[string]uint64
 	reverseArtifactLock   sync.RWMutex
 	fragQueue             chan *BitmapFragment
 	workersCount          int
@@ -207,6 +209,8 @@ func (m *BitmapIndex) Init() error {
 	m.bsiCache = make(map[string]map[string]map[int64]*BSIBitmap)
 	m.seedCache = make(map[string]*SeedBitmap)
 	m.reverseArtifactCache = make(map[string]map[string]*relationshipReverseArtifact)
+	m.siblingDiversityCache = make(map[string]map[string]map[string]*relationshipSiblingDiversityArtifact)
+	m.siblingDiversityGen = make(map[string]uint64)
 	m.workersCount = 20
 
 	m.workers = make([]*WorkerThread, m.workersCount)

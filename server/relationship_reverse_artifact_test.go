@@ -182,13 +182,99 @@ func TestRelationshipSiblingDiversityCandidates(t *testing.T) {
 	if stats.Rows != 6 || stats.Values != 3 || stats.CandidateRows != 4 || stats.TargetRows != 2 || stats.Groups != 3 || stats.DiverseGroups != 1 {
 		t.Fatalf("stats = %#v, want rows=6 values=3 candidateRows=4 targetRows=2 groups=3 diverseGroups=1", stats)
 	}
+	if stats.Mode != "sibling_diversity_summary_cache_build" || stats.CacheHit {
+		t.Fatalf("summary mode/cache = %q/%t, want build/false", stats.Mode, stats.CacheHit)
+	}
+}
+
+func TestRelationshipSiblingDiversityCandidatesUsesCachedSummary(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		1: 10,
+		2: 10,
+		3: 10,
+		4: 20,
+		5: 20,
+		6: 30,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_suppkey", shardTime, map[uint64]int64{
+		1: 1,
+		2: 1,
+		3: 2,
+		4: 5,
+		5: 5,
+		6: 8,
+	}, false))
+
+	if _, _, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 4, 6}); err != nil || !ok {
+		t.Fatalf("initial RelationshipSiblingDiversityCandidates ok/error = %t/%v, want true/nil", ok, err)
+	}
+	rownums, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 4, 6})
+	if err != nil {
+		t.Fatalf("RelationshipSiblingDiversityCandidates cache hit error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipSiblingDiversityCandidates cache hit ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{1}) {
+		t.Fatalf("rownums = %#v, want [1]", rownums)
+	}
+	if !stats.CacheHit || stats.Mode != "sibling_diversity_summary_cache_hit" {
+		t.Fatalf("summary mode/cache = %q/%t, want hit/true", stats.Mode, stats.CacheHit)
+	}
+	if stats.ProjectionRows != 6 || stats.TargetRows != 1 || stats.DiverseGroups != 1 {
+		t.Fatalf("stats = %#v, want projectionRows=6 targetRows=1 diverseGroups=1", stats)
+	}
+}
+
+func TestRelationshipSiblingDiversitySummaryInvalidatedByBSIUpdate(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		1: 10,
+		2: 10,
+		3: 10,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_suppkey", shardTime, map[uint64]int64{
+		1: 1,
+		2: 1,
+		3: 2,
+	}, false))
+
+	if _, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 3}); err != nil || !ok || stats.CacheHit {
+		t.Fatalf("initial summary ok/error/cache = %t/%v/%t, want true/nil/false", ok, err, stats.CacheHit)
+	}
+	if _, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 3}); err != nil || !ok || !stats.CacheHit {
+		t.Fatalf("cached summary ok/error/cache = %t/%v/%t, want true/nil/true", ok, err, stats.CacheHit)
+	}
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_suppkey", shardTime, map[uint64]int64{3: 1}, true))
+	rownums, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 3})
+	if err != nil {
+		t.Fatalf("RelationshipSiblingDiversityCandidates after update error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipSiblingDiversityCandidates after update ok = false, want true")
+	}
+	if len(rownums) != 0 {
+		t.Fatalf("rownums after update = %#v, want empty after summary rebuild", rownums)
+	}
+	if stats.CacheHit || stats.Mode != "sibling_diversity_summary_cache_build" {
+		t.Fatalf("summary mode/cache after update = %q/%t, want rebuild/false", stats.Mode, stats.CacheHit)
+	}
 }
 
 func TestRelationshipSiblingDiversityCandidatesSkipsLargeProjection(t *testing.T) {
 	previousLimit := relationshipSiblingDiversityMaxProjectionRows
 	relationshipSiblingDiversityMaxProjectionRows = 3
+	previousSummaryEnabled := relationshipSiblingDiversitySummaryCacheEnabled
+	relationshipSiblingDiversitySummaryCacheEnabled = false
 	t.Cleanup(func() {
 		relationshipSiblingDiversityMaxProjectionRows = previousLimit
+		relationshipSiblingDiversitySummaryCacheEnabled = previousSummaryEnabled
 	})
 
 	index := newRelationshipReverseArtifactTestIndex(t, true)
@@ -358,10 +444,12 @@ func newRelationshipReverseArtifactTestIndex(t *testing.T, parentToChild bool) *
 	t.Helper()
 	table := newRelationshipReverseArtifactTestTable(t, parentToChild)
 	return &BitmapIndex{
-		tableCache:           map[string]*shared.BasicTable{"lineitem": table},
-		bsiCache:             make(map[string]map[string]map[int64]*BSIBitmap),
-		seedCache:            make(map[string]*SeedBitmap),
-		reverseArtifactCache: make(map[string]map[string]*relationshipReverseArtifact),
+		tableCache:            map[string]*shared.BasicTable{"lineitem": table},
+		bsiCache:              make(map[string]map[string]map[int64]*BSIBitmap),
+		seedCache:             make(map[string]*SeedBitmap),
+		reverseArtifactCache:  make(map[string]map[string]*relationshipReverseArtifact),
+		siblingDiversityCache: make(map[string]map[string]map[string]*relationshipSiblingDiversityArtifact),
+		siblingDiversityGen:   make(map[string]uint64),
 	}
 }
 
@@ -373,13 +461,15 @@ func newRelationshipReverseArtifactPersistenceTestIndex(t *testing.T, parentToCh
 			Conn:    shared.NewDefaultConnection("reverse-artifact-test"),
 			dataDir: t.TempDir(),
 		},
-		bitmapCache:          make(map[string]map[string]map[uint64]map[int64]*StandardBitmap),
-		bsiCache:             make(map[string]map[string]map[int64]*BSIBitmap),
-		seedCache:            make(map[string]*SeedBitmap),
-		reverseArtifactCache: make(map[string]map[string]*relationshipReverseArtifact),
-		tableCache:           map[string]*shared.BasicTable{"lineitem": table},
-		fragQueue:            make(chan *BitmapFragment, 16),
-		workers:              []*WorkerThread{NewWorkerThread(0)},
+		bitmapCache:           make(map[string]map[string]map[uint64]map[int64]*StandardBitmap),
+		bsiCache:              make(map[string]map[string]map[int64]*BSIBitmap),
+		seedCache:             make(map[string]*SeedBitmap),
+		reverseArtifactCache:  make(map[string]map[string]*relationshipReverseArtifact),
+		siblingDiversityCache: make(map[string]map[string]map[string]*relationshipSiblingDiversityArtifact),
+		siblingDiversityGen:   make(map[string]uint64),
+		tableCache:            map[string]*shared.BasicTable{"lineitem": table},
+		fragQueue:             make(chan *BitmapFragment, 16),
+		workers:               []*WorkerThread{NewWorkerThread(0)},
 	}
 	index.ServicePort = 1
 	go index.batchProcessLoop(index.workers[0])
