@@ -184,6 +184,54 @@ func TestRelationshipSiblingDiversityCandidates(t *testing.T) {
 	}
 }
 
+func TestRelationshipSiblingDiversityCandidatesSkipsLargeProjection(t *testing.T) {
+	previousLimit := relationshipSiblingDiversityMaxProjectionRows
+	relationshipSiblingDiversityMaxProjectionRows = 3
+	t.Cleanup(func() {
+		relationshipSiblingDiversityMaxProjectionRows = previousLimit
+	})
+
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		1: 10,
+		2: 10,
+		3: 10,
+		4: 20,
+		5: 20,
+		6: 30,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_suppkey", shardTime, map[uint64]int64{
+		1: 1,
+		2: 1,
+		3: 2,
+		4: 5,
+		5: 5,
+		6: 8,
+	}, false))
+
+	rownums, stats, ok, err := index.RelationshipSiblingDiversityCandidates("lineitem", "l_orderkey", "l_suppkey", 0, 0, []uint64{1, 2, 4, 6})
+	if err != nil {
+		t.Fatalf("RelationshipSiblingDiversityCandidates error = %v", err)
+	}
+	if ok {
+		t.Fatalf("RelationshipSiblingDiversityCandidates ok = true, want false")
+	}
+	if rownums != nil {
+		t.Fatalf("rownums = %#v, want nil", rownums)
+	}
+	if stats.SkipReason != relationshipSiblingDiversitySkipProjectionRowsExceedsLimit {
+		t.Fatalf("skip reason = %q, want %q", stats.SkipReason, relationshipSiblingDiversitySkipProjectionRowsExceedsLimit)
+	}
+	if stats.Rows != 6 || stats.Values != 3 || stats.CandidateRows != 4 || stats.ProjectionRows != 6 || stats.Groups != 3 {
+		t.Fatalf("stats = %#v, want rows=6 values=3 candidateRows=4 projectionRows=6 groups=3", stats)
+	}
+	if stats.TargetRows != 0 || stats.ProjectionElapsed != 0 || stats.EvaluationElapsed != 0 {
+		t.Fatalf("stats = %#v, want no projected/evaluated rows", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()

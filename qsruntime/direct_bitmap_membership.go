@@ -380,9 +380,11 @@ type RelationshipSiblingDiversityReadResult struct {
 	Rows              uint64
 	Values            uint64
 	CandidateRows     uint64
+	ProjectionRows    uint64
 	TargetRows        uint64
 	Groups            uint64
 	DiverseGroups     uint64
+	Reason            string
 	LookupElapsed     time.Duration
 	ProjectionElapsed time.Duration
 	EvaluationElapsed time.Duration
@@ -546,11 +548,21 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 		return result, nil, true, diagnostics, err
 	}
 	if !ok {
+		reason := strings.TrimSpace(diversity.Reason)
+		if reason == "" {
+			reason = "physical_unavailable"
+		}
 		return result, []ExecutionProbe{
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
-			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "physical_unavailable", detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", reason, detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_parent_field", read.ParentField, detail),
 			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_value_field", read.ValueField, detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_rows", strconv.FormatUint(diversity.Rows, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_values", strconv.FormatUint(diversity.Values, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_candidate_rows", strconv.FormatUint(diversity.CandidateRows, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_projection_rows", strconv.FormatUint(diversity.ProjectionRows, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_groups", strconv.FormatUint(diversity.Groups, 10), detail),
+			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_read_elapsed", readElapsed.String(), detail),
 		}, false, nil, nil
 	}
 	filtered := directBitmapFilterMembershipRowsByCandidates(result, diversity.Candidates.Rownums, membership.Kind)
@@ -562,6 +574,7 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_rows", strconv.FormatUint(diversity.Rows, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_values", strconv.FormatUint(diversity.Values, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_candidate_rows", strconv.FormatUint(diversity.CandidateRows, 10), detail),
+		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_projection_rows", strconv.FormatUint(diversity.ProjectionRows, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_target_rows", strconv.FormatUint(diversity.TargetRows, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_groups", strconv.FormatUint(diversity.Groups, 10), detail),
 		directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_diverse_groups", strconv.FormatUint(diversity.DiverseGroups, 10), detail),

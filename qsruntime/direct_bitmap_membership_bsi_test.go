@@ -285,6 +285,74 @@ func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *test
 	}
 }
 
+func TestDirectBitmapRuntimeReportsSiblingDiversityArtifactSkipReason(t *testing.T) {
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
+
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l_suppkey", PhysicalName: "l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+
+	diversityReader := &fakeRelationshipSiblingDiversityReader{
+		Unavailable: true,
+		Result: RelationshipSiblingDiversityReadResult{
+			Rows:           300000,
+			Values:         75000,
+			CandidateRows:  190000,
+			ProjectionRows: 300000,
+			Groups:         68000,
+			Reason:         "projection_rows_exceeds_limit",
+		},
+	}
+	runtime := DirectBitmapRuntime{SiblingDiversity: diversityReader}
+	membership := qsbridge.MembershipEdge{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+	}
+	comparisons := []directBitmapMembershipBSIComparison{
+		{
+			Op:    qsbridge.BinaryOpEqual,
+			Left:  directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandRight, Field: l2OrderKey},
+			Right: directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandLeft, Field: l1OrderKey},
+		},
+		{
+			Op:    qsbridge.BinaryOpNotEqual,
+			Left:  directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandRight, Field: l2SuppKey},
+			Right: directBitmapMembershipBSIOperand{Side: directBitmapMembershipBSIOperandLeft, Field: l1SuppKey},
+		},
+	}
+
+	result, probes, handled, diagnostics, err := runtime.directBitmapApplyCorrelatedSiblingDiversityFastPath(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		time.Now(),
+		BitmapQueryResult{Success: true, Count: 4, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4}},
+		membership,
+		nil,
+		comparisons,
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("diversity fast path error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if handled {
+		t.Fatalf("diversity fast path handled = true, want false")
+	}
+	if result.Count != 4 {
+		t.Fatalf("result count = %d, want unchanged fallback result", result.Count)
+	}
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "false")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_reason", "projection_rows_exceeds_limit")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_projection_rows", "300000")
+}
+
 func TestDirectBitmapRuntimeReusesRightBSIVectorsForLargeSiblingDomain(t *testing.T) {
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
@@ -816,14 +884,18 @@ type fakeMembershipProjectionBSIReader struct {
 }
 
 type fakeRelationshipSiblingDiversityReader struct {
-	Result RelationshipSiblingDiversityReadResult
-	Calls  int
-	Last   RelationshipSiblingDiversityReadRequest
+	Result      RelationshipSiblingDiversityReadResult
+	Calls       int
+	Last        RelationshipSiblingDiversityReadRequest
+	Unavailable bool
 }
 
 func (r *fakeRelationshipSiblingDiversityReader) ReadRelationshipSiblingDiversityCandidates(ctx context.Context, request RelationshipSiblingDiversityReadRequest) (RelationshipSiblingDiversityReadResult, qsbridge.DiagnosticSet, bool, error) {
 	r.Calls++
 	r.Last = request
+	if r.Unavailable {
+		return r.Result, nil, false, nil
+	}
 	return r.Result, nil, true, nil
 }
 

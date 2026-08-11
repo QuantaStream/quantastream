@@ -10,6 +10,10 @@ import (
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
+const relationshipSiblingDiversitySkipProjectionRowsExceedsLimit = "projection_rows_exceeds_limit"
+
+var relationshipSiblingDiversityMaxProjectionRows uint64 = 100000
+
 // RelationshipReverseArtifactStats summarizes one reverse-artifact lookup.
 type RelationshipReverseArtifactStats struct {
 	Rows          uint64
@@ -25,9 +29,11 @@ type RelationshipSiblingDiversityStats struct {
 	Rows              uint64
 	Values            uint64
 	CandidateRows     uint64
+	ProjectionRows    uint64
 	TargetRows        uint64
 	Groups            uint64
 	DiverseGroups     uint64
+	SkipReason        string
 	LookupElapsed     time.Duration
 	ProjectionElapsed time.Duration
 	EvaluationElapsed time.Duration
@@ -144,15 +150,20 @@ func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField,
 		allRows = append(allRows, rows...)
 	}
 	stats := RelationshipSiblingDiversityStats{
-		Rows:          artifact.rows,
-		Values:        uint64(len(artifact.byValue)),
-		CandidateRows: uint64(len(candidateRows)),
-		Groups:        uint64(len(groups)),
-		LookupElapsed: time.Since(start),
+		Rows:           artifact.rows,
+		Values:         uint64(len(artifact.byValue)),
+		CandidateRows:  uint64(len(candidateRows)),
+		ProjectionRows: uint64(len(allRows)),
+		Groups:         uint64(len(groups)),
+		LookupElapsed:  time.Since(start),
 	}
 	m.reverseArtifactLock.RUnlock()
 	if len(groups) == 0 || len(allRows) == 0 {
 		return []uint64{}, stats, true, nil
+	}
+	if relationshipSiblingDiversityMaxProjectionRows > 0 && stats.ProjectionRows > relationshipSiblingDiversityMaxProjectionRows {
+		stats.SkipReason = relationshipSiblingDiversitySkipProjectionRowsExceedsLimit
+		return nil, stats, false, nil
 	}
 
 	projectionStart := time.Now()

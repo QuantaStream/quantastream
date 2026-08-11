@@ -109,29 +109,32 @@ func (r StandardRelationshipReverseArtifactCandidateReader) ReadRelationshipSibl
 		toTime,
 		standardRelationshipAggregateRows(read.CandidateRows),
 	)
+	result := qsruntime.RelationshipSiblingDiversityReadResult{
+		Rows:              stats.Rows,
+		Values:            stats.Values,
+		CandidateRows:     stats.CandidateRows,
+		ProjectionRows:    stats.ProjectionRows,
+		TargetRows:        stats.TargetRows,
+		Groups:            stats.Groups,
+		DiverseGroups:     stats.DiverseGroups,
+		Reason:            stats.SkipReason,
+		LookupElapsed:     stats.LookupElapsed,
+		ProjectionElapsed: stats.ProjectionElapsed,
+		EvaluationElapsed: stats.EvaluationElapsed,
+	}
 	if err != nil || !ok {
-		return qsruntime.RelationshipSiblingDiversityReadResult{}, nil, ok, err
+		return result, nil, ok, err
 	}
 	candidateRows := make([]qsbridge.QuantaRownum, 0, len(rownums))
 	for _, rownum := range rownums {
 		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
 	}
-	return qsruntime.RelationshipSiblingDiversityReadResult{
-		Candidates: qsbridge.QuantaCandidateSet{
-			Index:   read.Index,
-			Rownums: candidateRows,
-		},
-		Mode:              "reverse_artifact_sibling_diversity",
-		Rows:              stats.Rows,
-		Values:            stats.Values,
-		CandidateRows:     stats.CandidateRows,
-		TargetRows:        stats.TargetRows,
-		Groups:            stats.Groups,
-		DiverseGroups:     stats.DiverseGroups,
-		LookupElapsed:     stats.LookupElapsed,
-		ProjectionElapsed: stats.ProjectionElapsed,
-		EvaluationElapsed: stats.EvaluationElapsed,
-	}, nil, true, nil
+	result.Candidates = qsbridge.QuantaCandidateSet{
+		Index:   read.Index,
+		Rownums: candidateRows,
+	}
+	result.Mode = "reverse_artifact_sibling_diversity"
+	return result, nil, true, nil
 }
 
 // ReadRelationshipVectorAggregate returns raw BSI aggregate state grouped by a
