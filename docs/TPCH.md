@@ -772,34 +772,38 @@ The local SF0.05 profile moved broadly after that planner change:
 ### AWS SF1 MySQL Comparison Checkpoint
 
 An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware
-using `tpch_benchmark_readonly_sf1_scale_safe`. The benchmark artifacts were
-preserved under the local ignored AWS benchmark artifact directory on the
-benchmark runner, including the MySQL reference JSON, QuantaStream target JSON,
-comparison markdown, and `/tmp/aws-sf1-slow-path-probes.log`.
+using `tpch_benchmark_readonly_sf1_scale_safe`. The MySQL reference report is
+preserved at
+`sqlrunner/expected/local/mysql-benchmarks/20260809T015549Z/mysql-reference.json`.
+The latest QuantaStream run was captured at commit `516449c` as
+`/tmp/aws-qs-readonly-sf1-dependency-aware-edge-order.json` on the benchmark
+runner.
 
 | Case | MySQL Median | QuantaStream Median | Ratio | Read |
 | --- | ---: | ---: | ---: | --- |
-| lineitem seed count | 518ms | 56ms | 0.11x | QS seed bitmap win |
-| Q6 discounted revenue | 1406ms | 474ms | 0.34x | QS selective bitmap/date-filter win |
-| Q5 combined graph regional count | 8872ms | 2304ms | 0.26x | QS relationship-vector win |
-| Q3 grouped revenue limit | 6150ms | 6193ms | 1.01x | roughly tied |
-| Q12 same-row date comparison | 1674ms | 2229ms | 1.33x | close, still same-row/date-path work |
-| Q19 formal discounted revenue | 115ms | 393ms | 3.42x | MySQL small-selective join win |
-| Q16 part filter count | 69ms | 295ms | 4.28x | MySQL small-dimension filter win |
-| Q1 grouped lineitem shape | 2368ms | 11536ms | 4.87x | broad grouping/materialization target |
-| shipdate year group count | 1448ms | 12340ms | 8.52x | broad residual function grouping target |
-| Q21 sibling exists count | 7060ms | 20465ms | 2.90x | correlated sibling semi-join target |
+| lineitem seed count | 518ms | 47ms | 0.09x | QS seed bitmap win |
+| Q1 grouped lineitem shape | 2368ms | 218ms | 0.09x | bitmap group aggregate win |
+| Q5 combined graph regional count | 8872ms | 1875ms | 0.21x | dependency-aware relationship-vector win |
+| shipdate year group count | 1448ms | 346ms | 0.24x | storage-side year bucketing win |
+| Q6 discounted revenue | 1406ms | 460ms | 0.33x | QS selective bitmap/date-filter win |
+| Q21 sibling exists count | 7060ms | 4009ms | 0.57x | cached sibling-diversity path after first run |
+| Q3 grouped revenue limit | 6150ms | 6076ms | 0.99x | effectively tied |
+| Q12 same-row date comparison | 1674ms | 2112ms | 1.26x | close, still same-row/date-path work |
+| Q19 formal discounted revenue | 115ms | 387ms | 3.37x | MySQL small-selective join win |
+| Q16 part filter count | 69ms | 284ms | 4.12x | MySQL small-dimension filter win |
 
-The result is encouraging but clarifies the next optimization boundary.
-QuantaStream is already competitive or better when bitmap seeds, selective
-filters, and relationship vectors reduce the candidate domain. The weak spots
-are broad grouping/materialization paths and the repeated-alias Q21 sibling
-membership path.
+This checkpoint is a stronger viability signal than the first SF1 pass.
+QuantaStream is now ahead of MySQL on broad bitmap grouping, selective
+fact-table filtering, regional relationship-vector reduction, year bucketing,
+and the Q21 sibling semi-join after the first-run artifact cost. Q3 is roughly
+tied. The remaining gaps are concentrated in small/selective dimension or
+mixed-table filter shapes: Q19, Q16, and to a lesser extent Q12.
 
-Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` for focused
-follow-up profiling. It keeps the three slow SF1 shapes scale-variable so the
-same suite can run against SF0.01, SF0.05, or SF1 while emitting grouped
-aggregate and relationship probes through `-capture_profile`.
+Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` as the historical
+slow-path regression suite. It keeps Q1 grouping, shipdate year bucketing, and
+Q21 sibling membership scale-variable so the same suite can run against SF0.01,
+SF0.05, or SF1 while emitting grouped aggregate and relationship probes through
+`-capture_profile`.
 
 The local SF0.01 slow-path run is a useful miniature of the same problem. In
 that run, `functions.shipdate_year_group_count` spent about 111ms of a 186ms
@@ -811,9 +815,11 @@ is not the interesting bottleneck until storage can return derived grouping
 values directly.
 
 The same local profile also keeps Q21 visible as the repeated-alias sibling
-membership canary. At SF0.01, the slowest Q21 run spent most of its time in
-`correlated_sibling_bsi_right_read_elapsed`, which matches the SF1 result where
-Q21 remains the largest comparison gap.
+membership canary. At SF0.01, the slowest pre-artifact Q21 run spent most of
+its time in `correlated_sibling_bsi_right_read_elapsed`. The cached
+sibling-diversity summary moved the AWS SF1 median ahead of MySQL, but the
+first measured run can still pay artifact-build cost, so Q21 should remain in
+the focused suite until the summary is persisted or maintained during load.
 
 The Q21 sibling-diversity reverse-artifact path is intentionally opt-in with
 `QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=1`. The first POC proved
