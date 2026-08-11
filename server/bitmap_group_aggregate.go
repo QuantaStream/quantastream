@@ -38,6 +38,8 @@ type BitmapGroupAggregateStats struct {
 	BSIFieldCount     int
 	BSIProjectElapsed time.Duration
 	AggregateElapsed  time.Duration
+	SumElapsed        time.Duration
+	MinMaxElapsed     time.Duration
 }
 
 // BitmapGroupAggregates computes grouped aggregates over low-cardinality
@@ -97,9 +99,10 @@ func (m *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, 
 		if group.Bitmap == nil || group.Bitmap.IsEmpty() {
 			continue
 		}
+		cache := make(map[string]*bitmapGroupAggregateFieldState)
 		values := make([]BitmapGroupAggregateValue, 0, len(aggregates))
 		for _, aggregate := range aggregates {
-			value, ok := bitmapGroupAggregateValue(group.Bitmap, aggregate, bsis)
+			value, ok := bitmapGroupAggregateValue(group.Bitmap, aggregate, bsis, cache, &stats)
 			if !ok {
 				return nil, stats, false, nil
 			}
@@ -115,7 +118,20 @@ func (m *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, 
 	return groups, stats, true, nil
 }
 
-func bitmapGroupAggregateValue(groupRows *roaring64.Bitmap, aggregate BitmapGroupAggregateSpec, bsis map[string]*roaring64.BSI) (BitmapGroupAggregateValue, bool) {
+type bitmapGroupAggregateFieldState struct {
+	Rows     *roaring64.Bitmap
+	Count    uint64
+	Sum      *big.Int
+	SumCount uint64
+	Min      *big.Int
+	Max      *big.Int
+	HaveRows bool
+	HaveSum  bool
+	HaveMin  bool
+	HaveMax  bool
+}
+
+func bitmapGroupAggregateValue(groupRows *roaring64.Bitmap, aggregate BitmapGroupAggregateSpec, bsis map[string]*roaring64.BSI, cache map[string]*bitmapGroupAggregateFieldState, stats *BitmapGroupAggregateStats) (BitmapGroupAggregateValue, bool) {
 	function := strings.ToLower(aggregate.Function)
 	if function == "count" && aggregate.Field == "" {
 		return BitmapGroupAggregateValue{Count: groupRows.GetCardinality()}, true
@@ -124,24 +140,75 @@ func bitmapGroupAggregateValue(groupRows *roaring64.Bitmap, aggregate BitmapGrou
 	if bsi == nil {
 		return BitmapGroupAggregateValue{}, false
 	}
-	rows := groupRows.Clone()
-	rows.And(bsi.GetExistenceBitmap())
-	count := rows.GetCardinality()
-	if count == 0 {
+	state := bitmapGroupAggregateState(groupRows, aggregate.Field, bsi, cache)
+	if state.Count == 0 {
 		return BitmapGroupAggregateValue{}, true
 	}
 	switch function {
 	case "sum":
-		sum, count := bsi.SumBigValues(rows)
-		return BitmapGroupAggregateValue{Count: count, Sum: sum}, true
+		sum, count := bitmapGroupAggregateStateSum(state, bsi, stats)
+		return BitmapGroupAggregateValue{Count: count, Sum: new(big.Int).Set(sum)}, true
 	case "avg":
-		sum, count := bsi.SumBigValues(rows)
-		return BitmapGroupAggregateValue{Count: count, Sum: sum}, true
+		sum, count := bitmapGroupAggregateStateSum(state, bsi, stats)
+		return BitmapGroupAggregateValue{Count: count, Sum: new(big.Int).Set(sum)}, true
 	case "min":
-		return BitmapGroupAggregateValue{Count: count, Min: bsi.MinMaxBig(0, roaring64.MIN, rows)}, true
+		min := bitmapGroupAggregateStateMin(state, bsi, stats)
+		return BitmapGroupAggregateValue{Count: state.Count, Min: new(big.Int).Set(min)}, true
 	case "max":
-		return BitmapGroupAggregateValue{Count: count, Max: bsi.MinMaxBig(0, roaring64.MAX, rows)}, true
+		max := bitmapGroupAggregateStateMax(state, bsi, stats)
+		return BitmapGroupAggregateValue{Count: state.Count, Max: new(big.Int).Set(max)}, true
 	default:
 		return BitmapGroupAggregateValue{}, false
 	}
+}
+
+func bitmapGroupAggregateState(groupRows *roaring64.Bitmap, field string, bsi *roaring64.BSI, cache map[string]*bitmapGroupAggregateFieldState) *bitmapGroupAggregateFieldState {
+	state := cache[field]
+	if state == nil {
+		state = &bitmapGroupAggregateFieldState{}
+		cache[field] = state
+	}
+	if !state.HaveRows {
+		state.Rows = groupRows.Clone()
+		state.Rows.And(bsi.GetExistenceBitmap())
+		state.Count = state.Rows.GetCardinality()
+		state.HaveRows = true
+	}
+	return state
+}
+
+func bitmapGroupAggregateStateSum(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) (*big.Int, uint64) {
+	if !state.HaveSum {
+		start := time.Now()
+		state.Sum, state.SumCount = bsi.SumBigValues(state.Rows)
+		if stats != nil {
+			stats.SumElapsed += time.Since(start)
+		}
+		state.HaveSum = true
+	}
+	return state.Sum, state.SumCount
+}
+
+func bitmapGroupAggregateStateMin(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) *big.Int {
+	if !state.HaveMin {
+		start := time.Now()
+		state.Min = bsi.MinMaxBig(0, roaring64.MIN, state.Rows)
+		if stats != nil {
+			stats.MinMaxElapsed += time.Since(start)
+		}
+		state.HaveMin = true
+	}
+	return state.Min
+}
+
+func bitmapGroupAggregateStateMax(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) *big.Int {
+	if !state.HaveMax {
+		start := time.Now()
+		state.Max = bsi.MinMaxBig(0, roaring64.MAX, state.Rows)
+		if stats != nil {
+			stats.MinMaxElapsed += time.Since(start)
+		}
+		state.HaveMax = true
+	}
+	return state.Max
 }

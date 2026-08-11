@@ -87,6 +87,16 @@ func (r StandardBitmapGroupAggregateReader) ReadBitmapGroupAggregates(ctx contex
 			Name:    "standard_bitmap_group_aggregate_compute_elapsed",
 			Value:   stats.AggregateElapsed.String(),
 			Detail:  read.Index,
+		}, {
+			Section: "grouped_aggregate",
+			Name:    "standard_bitmap_group_aggregate_sum_elapsed",
+			Value:   stats.SumElapsed.String(),
+			Detail:  read.Index,
+		}, {
+			Section: "grouped_aggregate",
+			Name:    "standard_bitmap_group_aggregate_minmax_elapsed",
+			Value:   stats.MinMaxElapsed.String(),
+			Detail:  read.Index,
 		}},
 	}, nil, true, nil
 }
