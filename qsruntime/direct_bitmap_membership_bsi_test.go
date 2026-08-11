@@ -100,8 +100,6 @@ func TestDirectBitmapRuntimeAppliesCorrelatedSiblingMembershipWithRawBSIVectors(
 }
 
 func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
-
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
 	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
@@ -197,8 +195,6 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
 }
 
 func TestDirectBitmapRuntimeUsesSiblingDiversityArtifactWithQualifiedNames(t *testing.T) {
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
-
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
 	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l1.l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
@@ -277,21 +273,36 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifactWithQualifiedNames(t *te
 	assertExecutionProbe(t, result.Probes, "optimizer", "correlated_sibling_diversity_choice", "test_diversity")
 }
 
-func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *testing.T) {
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "")
-
-	if directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		t.Fatalf("sibling diversity artifact enabled by default, want disabled")
+func TestDirectBitmapRuntimeSkipsSiblingDiversityArtifactWithoutReader(t *testing.T) {
+	runtime := DirectBitmapRuntime{}
+	result, probes, handled, diagnostics, err := runtime.directBitmapApplyCorrelatedSiblingDiversityFastPath(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		time.Now(),
+		BitmapQueryResult{Success: true, Count: 2, Rownums: []qsbridge.QuantaRownum{1, 2}},
+		qsbridge.MembershipEdge{},
+		nil,
+		nil,
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("diversity fast path error = %v", err)
 	}
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "enabled")
-	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		t.Fatalf("sibling diversity artifact disabled with explicit opt-in")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
+	if handled {
+		t.Fatalf("diversity fast path handled = true, want false")
+	}
+	if result.Count != 2 {
+		t.Fatalf("result count = %d, want unchanged fallback result", result.Count)
+	}
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "false")
+	assertExecutionProbe(t, probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_reason", "no_reader")
+	assertExecutionProbe(t, probes, "optimizer", "correlated_sibling_diversity_choice", "no_reader")
 }
 
 func TestDirectBitmapRuntimeReportsSiblingDiversityArtifactSkipReason(t *testing.T) {
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
-
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
 	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}

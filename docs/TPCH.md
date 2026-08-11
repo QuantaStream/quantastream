@@ -791,10 +791,12 @@ The latest QuantaStream warmed run was captured after the StringEnum prefix
 `/tmp/aws-qs-readonly-sf1-stringenum-prefix-notlike-warm.json` on the benchmark
 runner. The report metadata marked the runner as `repo_dirty=true`, so this is
 a performance checkpoint to preserve and should be rerun from a clean runner
-before being treated as a release-grade artifact. The QuantaStream server used
-`QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=true`; SQLRunner used one
-warmup run so Q21 reports the warmed sibling-diversity artifact path rather
-than the first-query lazy-build cost.
+before being treated as a release-grade artifact. That captured server still
+used `QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=true`; the
+production-shaped path no longer requires the environment switch when the
+physical tier exposes the sibling-diversity reader. SQLRunner used one warmup
+run so Q21 reports the warmed sibling-diversity artifact path rather than the
+first-query lazy-build cost.
 
 | Case | MySQL Median | QuantaStream Median | Ratio | Read |
 | --- | ---: | ---: | ---: | --- |
@@ -841,30 +843,31 @@ sibling-diversity summary moved the AWS SF1 median ahead of MySQL, but the
 first measured run can still pay artifact-build cost, so Q21 should remain in
 the focused suite until the summary is persisted or maintained during load.
 
-The Q21 sibling-diversity reverse-artifact path is intentionally opt-in with
-`QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=1`. The first POC proved
-that the planner can recognize the shape and delegate to a relationship
-artifact, but the SF1 AWS run showed that query-time value projection and group
-evaluation still cost roughly the same as the original BSI path. A follow-up
-POC now builds a lazy per-parent diversity summary, effectively
-`orderkey -> has_more_than_one_suppkey`, and caches the resulting child-domain
-row bitmap so repeated Q21-style filters can use a cheap candidate intersection
-instead of reconstructing sibling diversity during every query. The remaining
-go-forward step is to make this summary persistable and maintainable during
-load/streaming mutation rather than first-query lazy work. Runtime runs emit
-`optimizer.correlated_sibling_diversity_*` probes for the chosen path and core
-cost signals so this can feed the future planner cost model.
+The Q21 sibling-diversity reverse-artifact path is now production-shaped as a
+physical-tier capability rather than an environment-gated experiment. When the
+runtime sees the repeated-alias correlated sibling shape
+`left.parent = right.parent AND left.value <> right.value`, it asks the
+physical tier for a sibling-diversity candidate set. If the capability is
+missing, the shape does not match, branch-local right-side predicates are
+present, or the physical tier's guardrails reject the request, the runtime
+falls back to the regular correlated BSI membership path and records the reason
+through `optimizer.correlated_sibling_diversity_choice` plus
+`direct_bitmap_membership.correlated_sibling_bsi_diversity_artifact_*` probes.
 
-Technical debt: the current opt-in implementation also carries a physical-tier
-projection-row cost gate for the old query-time projection fallback. This is a
-useful guardrail for experimentation, not the go-forward contract. At the
-appropriate optimizer milestone, sibling-diversity artifact use should become a
-costed optimizer decision. The optimizer should estimate candidate rows,
-projected sibling rows, parent-bucket count, cache/persistence availability,
-and expected diversity selectivity, then choose between the cached summary,
-the regular correlated BSI membership path, or a future persisted per-parent
-diversity summary. That will let the environment flag and fixed projection cap
-disappear once we have planner-visible cost signals.
+The current physical implementation builds a lazy per-parent diversity summary,
+effectively `orderkey -> has_more_than_one_suppkey`, and caches the resulting
+child-domain row bitmap so repeated Q21-style filters can use a cheap candidate
+intersection instead of reconstructing sibling diversity during every query.
+The remaining go-forward step is to make this summary persistable and
+maintainable during load/streaming mutation rather than first-query lazy work.
+
+Technical debt: the capability still carries a physical-tier projection-row
+cost gate for the old query-time projection fallback. This is a useful
+guardrail, not the final optimizer contract. The future cost model should
+estimate candidate rows, projected sibling rows, parent-bucket count,
+cache/persistence availability, and expected diversity selectivity, then choose
+between the cached summary, the regular correlated BSI membership path, or a
+persisted per-parent diversity summary.
 
 ## Time-Quantized Shard Planning
 

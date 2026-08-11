@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,8 +15,6 @@ import (
 // directBitmapMembershipMaxDynamicBatchEQValues caps dynamic sibling-domain
 // narrowing so a large left domain does not turn into an oversized lookup list.
 const directBitmapMembershipMaxDynamicBatchEQValues = 4096
-
-const directBitmapCorrelatedSiblingDiversityArtifactEnv = "QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT"
 
 func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	if len(request.Memberships) == 0 {
@@ -510,13 +507,6 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembershipBSIFast
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath(ctx context.Context, request ExecutionRequest, start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, rightOnlyPredicates []qsbridge.Predicate, comparisons []directBitmapMembershipBSIComparison, detail string) (BitmapQueryResult, []ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
-	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		return result, []ExecutionProbe{
-			directBitmapSiblingDiversityOptimizerChoiceProbe("disabled", detail),
-			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_applied", "false", detail),
-			directBitmapMembershipProbe("correlated_sibling_bsi_diversity_artifact_reason", "disabled", detail),
-		}, false, nil, nil
-	}
 	if r.SiblingDiversity == nil {
 		return result, []ExecutionProbe{
 			directBitmapSiblingDiversityOptimizerChoiceProbe("no_reader", detail),
@@ -654,15 +644,6 @@ func directBitmapSiblingDiversityOptimizerCostProbes(diversity RelationshipSibli
 			Value:   readElapsed.String(),
 			Detail:  detail,
 		},
-	}
-}
-
-func directBitmapCorrelatedSiblingDiversityArtifactEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(directBitmapCorrelatedSiblingDiversityArtifactEnv))) {
-	case "1", "true", "yes", "on", "enable", "enabled":
-		return true
-	default:
-		return false
 	}
 }
 
