@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/Jeffail/tunny v0.0.0-20190930221602-f13eb662a36a
-	github.com/RoaringBitmap/roaring/v2 v2.24.0
+	github.com/RoaringBitmap/roaring/v2 v2.24.1-0.20260811152912-1bb413dff526
 	github.com/akrylysov/pogreb v0.9.1
 	github.com/alecthomas/kong v0.2.17
 	github.com/araddon/dateparse v0.0.0-20210207001429-0eec95c9db7e
