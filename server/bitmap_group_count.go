@@ -28,12 +28,45 @@ type BitmapGroupCountStats struct {
 // bitmap-backed field values. It returns ok=false when any field is not
 // bitmap-backed or the value-domain product is too large for this kernel.
 func (m *BitmapIndex) BitmapGroupCounts(index string, fields []string, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]BitmapGroupCount, BitmapGroupCountStats, bool, error) {
+	groupBitmaps, stats, ok, err := m.bitmapGroupBitmaps(index, fields, fromTime, toTime, foundSet)
+	if err != nil || !ok {
+		return nil, stats, ok, err
+	}
+	groups := make([]BitmapGroupCount, 0, len(groupBitmaps))
+	for _, group := range groupBitmaps {
+		if group.Bitmap == nil {
+			continue
+		}
+		count := group.Bitmap.GetCardinality()
+		if count == 0 {
+			continue
+		}
+		groups = append(groups, BitmapGroupCount{
+			Values: append([]uint64(nil), group.Values...),
+			Count:  count,
+		})
+	}
+	stats.Groups = len(groups)
+	return groups, stats, true, nil
+}
+
+type bitmapGroupCountValue struct {
+	ID     uint64
+	Bitmap *roaring64.Bitmap
+}
+
+type bitmapGroupBitmap struct {
+	Values []uint64
+	Bitmap *roaring64.Bitmap
+}
+
+func (m *BitmapIndex) bitmapGroupBitmaps(index string, fields []string, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]bitmapGroupBitmap, BitmapGroupCountStats, bool, error) {
 	stats := BitmapGroupCountStats{FieldCount: len(fields)}
 	if foundSet != nil {
 		stats.CandidateRows = foundSet.GetCardinality()
 	}
 	if index == "" {
-		return nil, stats, false, fmt.Errorf("index not specified for bitmap group count")
+		return nil, stats, false, fmt.Errorf("index not specified for bitmap group")
 	}
 	if len(fields) == 0 {
 		return nil, stats, false, nil
@@ -44,7 +77,7 @@ func (m *BitmapIndex) BitmapGroupCounts(index string, fields []string, fromTime,
 	to := time.Unix(0, toTime).UTC()
 	for _, field := range fields {
 		if field == "" {
-			return nil, stats, false, fmt.Errorf("field not specified for bitmap group count")
+			return nil, stats, false, fmt.Errorf("field not specified for bitmap group")
 		}
 		if !m.hasBitmapField(index, field) {
 			return nil, stats, false, nil
@@ -72,15 +105,10 @@ func (m *BitmapIndex) BitmapGroupCounts(index string, fields []string, fromTime,
 		}
 		fieldValues = append(fieldValues, values)
 	}
-	groups := make([]BitmapGroupCount, 0)
-	bitmapGroupCountWalk(fieldValues, 0, nil, nil, &groups)
+	groups := make([]bitmapGroupBitmap, 0)
+	bitmapGroupBitmapWalk(fieldValues, 0, nil, nil, &groups)
 	stats.Groups = len(groups)
 	return groups, stats, true, nil
-}
-
-type bitmapGroupCountValue struct {
-	ID     uint64
-	Bitmap *roaring64.Bitmap
 }
 
 func (m *BitmapIndex) hasBitmapField(index, field string) bool {
@@ -94,7 +122,7 @@ func (m *BitmapIndex) hasBitmapField(index, field string) bool {
 	return ok
 }
 
-func bitmapGroupCountWalk(fields [][]bitmapGroupCountValue, depth int, values []uint64, current *roaring64.Bitmap, groups *[]BitmapGroupCount) {
+func bitmapGroupBitmapWalk(fields [][]bitmapGroupCountValue, depth int, values []uint64, current *roaring64.Bitmap, groups *[]bitmapGroupBitmap) {
 	if depth == len(fields) {
 		if current == nil {
 			return
@@ -103,9 +131,9 @@ func bitmapGroupCountWalk(fields [][]bitmapGroupCountValue, depth int, values []
 		if count == 0 {
 			return
 		}
-		*groups = append(*groups, BitmapGroupCount{
+		*groups = append(*groups, bitmapGroupBitmap{
 			Values: append([]uint64(nil), values...),
-			Count:  count,
+			Bitmap: current,
 		})
 		return
 	}
@@ -117,6 +145,6 @@ func bitmapGroupCountWalk(fields [][]bitmapGroupCountValue, depth int, values []
 		if next.GetCardinality() == 0 {
 			continue
 		}
-		bitmapGroupCountWalk(fields, depth+1, append(values, value.ID), next, groups)
+		bitmapGroupBitmapWalk(fields, depth+1, append(values, value.ID), next, groups)
 	}
 }

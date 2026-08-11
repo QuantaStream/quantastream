@@ -16,6 +16,26 @@ tests:
     expect:
       row_count: 4
 
+  - id: "tpch_profile_slow_paths.q1.grouped_lineitem_bsi_summary"
+    status: supported
+    issue: "scale profile - broad lineitem grouping over bitmap dimensions with BSI measures"
+    timeout: 180s
+    kind: query
+    order: rowsort
+    capabilities: [tpch-q1, single-table, group-by, aggregate, bsi-aggregate, profile, scale-variable, slow-path]
+    sql: |-
+      select l_returnflag, l_linestatus,
+             count(*) as count_order,
+             sum(l_quantity) as sum_qty,
+             sum(l_extendedprice) as sum_base_price,
+             avg(l_quantity) as avg_qty,
+             min(l_quantity) as min_qty,
+             max(l_quantity) as max_qty
+      from lineitem
+      group by l_returnflag, l_linestatus
+    expect:
+      row_count: 4
+
   - id: "tpch_profile_slow_paths.functions.shipdate_year_group_count"
     status: supported
     issue: "scale profile - broad residual date-function grouping"

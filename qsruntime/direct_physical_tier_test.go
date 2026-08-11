@@ -11,17 +11,19 @@ func TestDirectPhysicalExecutionTierProjectsRuntimeCapabilities(t *testing.T) {
 	relationshipReader := &LegacyDirectRelationshipVectorReader{}
 	relationshipJoins := LegacyDirectRelationshipVectorJoinExecutor{}
 	bitmapGroupCounts := &fakeBitmapGroupCountReader{}
+	bitmapGroupAggregates := &fakeBitmapGroupAggregateReader{}
 
 	runtime := (DirectPhysicalExecutionTier{
-		Sessions:            sessions,
-		Adapter:             BitmapQueryResultAdapter{},
-		FilterAdapter:       filterAdapter,
-		Materialization:     materialization,
-		ProjectionBSIReader: projectionReader,
-		SameRowComparison:   sameRowComparison,
-		RelationshipReader:  relationshipReader,
-		RelationshipJoins:   relationshipJoins,
-		BitmapGroupCounts:   bitmapGroupCounts,
+		Sessions:              sessions,
+		Adapter:               BitmapQueryResultAdapter{},
+		FilterAdapter:         filterAdapter,
+		Materialization:       materialization,
+		ProjectionBSIReader:   projectionReader,
+		SameRowComparison:     sameRowComparison,
+		RelationshipReader:    relationshipReader,
+		RelationshipJoins:     relationshipJoins,
+		BitmapGroupCounts:     bitmapGroupCounts,
+		BitmapGroupAggregates: bitmapGroupAggregates,
 	}).Runtime()
 
 	if runtime.Sessions == nil {
@@ -47,5 +49,8 @@ func TestDirectPhysicalExecutionTierProjectsRuntimeCapabilities(t *testing.T) {
 	}
 	if runtime.BitmapGroupCounts == nil {
 		t.Fatalf("runtime bitmap group counts = nil")
+	}
+	if runtime.BitmapGroupAggregates == nil {
+		t.Fatalf("runtime bitmap group aggregates = nil")
 	}
 }

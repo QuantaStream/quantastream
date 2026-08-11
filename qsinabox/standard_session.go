@@ -90,6 +90,11 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		Direct:     b.Adapter.BitmapIndex,
 		Database:   config.WithDefaults().Database,
 	}
+	bitmapGroupAggregateReader := StandardBitmapGroupAggregateReader{
+		TableCache: tableCache,
+		Direct:     b.Adapter.BitmapIndex,
+		Database:   config.WithDefaults().Database,
+	}
 	dictionaryResolver := qsruntime.LegacyTableCacheDictionaryResolver{
 		TableCache: tableCache,
 		Schema:     config.WithDefaults().Database,
@@ -143,15 +148,16 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		},
 	}
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
-		Sessions:            sessions,
-		Adapter:             qsruntime.BitmapQueryResultAdapter{},
-		FilterAdapter:       qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
-		Materialization:     materialization,
-		ProjectionBSIReader: bsiReader,
-		SameRowComparison:   sameRowComparison,
-		SiblingDiversity:    relationshipReverseArtifactReader,
-		BitmapGroupCounts:   bitmapGroupCountReader,
-		RelationshipReader:  relationshipReader,
+		Sessions:              sessions,
+		Adapter:               qsruntime.BitmapQueryResultAdapter{},
+		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
+		Materialization:       materialization,
+		ProjectionBSIReader:   bsiReader,
+		SameRowComparison:     sameRowComparison,
+		SiblingDiversity:      relationshipReverseArtifactReader,
+		BitmapGroupCounts:     bitmapGroupCountReader,
+		BitmapGroupAggregates: bitmapGroupAggregateReader,
+		RelationshipReader:    relationshipReader,
 		RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
 			Sessions:                       sessions,
 			TableCache:                     tableCache,
