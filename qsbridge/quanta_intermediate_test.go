@@ -524,6 +524,82 @@ func TestFilterDomainRewriteResultMatchesRepeatedFieldLeavesByPredicatePayload(t
 	}
 }
 
+func TestFilterDomainRewriteResultFactorsCommonUnionConjuncts(t *testing.T) {
+	brand12 := QuantaQueryFragment{Index: "part", Field: "p_brand", HasLiteral: true, Literal: LiteralExpr{Kind: ValueString, Value: "Brand#12"}}
+	brand23 := QuantaQueryFragment{Index: "part", Field: "p_brand", HasLiteral: true, Literal: LiteralExpr{Kind: ValueString, Value: "Brand#23"}}
+	shipmode := QuantaQueryFragment{Index: "lineitem", Field: "l_shipmode", HasLiteral: true, Literal: LiteralExpr{Kind: ValueString, Value: "AIR"}}
+	shipinstruct := QuantaQueryFragment{Index: "lineitem", Field: "l_shipinstruct", HasLiteral: true, Literal: LiteralExpr{Kind: ValueString, Value: "DELIVER IN PERSON"}}
+	quantityLow := QuantaQueryFragment{Index: "lineitem", Field: "l_quantity", BSIOp: QuantaBSIOpLE, HasLiteral: true, Literal: LiteralExpr{Kind: ValueInt, Value: int64(11)}}
+	quantityHigh := QuantaQueryFragment{Index: "lineitem", Field: "l_quantity", BSIOp: QuantaBSIOpLE, HasLiteral: true, Literal: LiteralExpr{Kind: ValueInt, Value: int64(20)}}
+	filter := QuantaFilterExpression{
+		Operation: QuantaFilterUnion,
+		Children: []QuantaFilterExpression{
+			{
+				Operation: QuantaFilterIntersect,
+				Children: []QuantaFilterExpression{
+					{Operation: QuantaFilterLeaf, Fragment: brand12},
+					{Operation: QuantaFilterLeaf, Fragment: quantityLow},
+					{Operation: QuantaFilterLeaf, Fragment: shipmode},
+					{Operation: QuantaFilterLeaf, Fragment: shipinstruct},
+				},
+			},
+			{
+				Operation: QuantaFilterIntersect,
+				Children: []QuantaFilterExpression{
+					{Operation: QuantaFilterLeaf, Fragment: brand23},
+					{Operation: QuantaFilterLeaf, Fragment: quantityHigh},
+					{Operation: QuantaFilterLeaf, Fragment: shipmode},
+					{Operation: QuantaFilterLeaf, Fragment: shipinstruct},
+				},
+			},
+		},
+	}
+	rewrite := FilterDomainRewriteResult{
+		TargetDomain: "lineitem",
+		Leaves: []FilterDomainNormalizedLeaf{
+			{
+				OriginalFragment: brand12,
+				TargetDomain:     "lineitem",
+				CandidateSet:     QuantaCandidateSet{Index: "lineitem", Rownums: []QuantaRownum{12}},
+			},
+			{
+				OriginalFragment: brand23,
+				TargetDomain:     "lineitem",
+				CandidateSet:     QuantaCandidateSet{Index: "lineitem", Rownums: []QuantaRownum{23}},
+			},
+		},
+	}
+
+	rewritten := rewrite.Apply(filter)
+	if rewritten.Operation != QuantaFilterIntersect {
+		t.Fatalf("operation = %s, want intersect: %#v", rewritten.Operation, rewritten)
+	}
+	if len(rewritten.Children) != 3 {
+		t.Fatalf("children = %#v, want two factored leaves plus union", rewritten.Children)
+	}
+	if !filterDomainExpressionMatches(rewritten.Children[0], QuantaFilterExpression{Operation: QuantaFilterLeaf, Fragment: shipmode}) {
+		t.Fatalf("first child = %#v, want shipmode leaf", rewritten.Children[0])
+	}
+	if !filterDomainExpressionMatches(rewritten.Children[1], QuantaFilterExpression{Operation: QuantaFilterLeaf, Fragment: shipinstruct}) {
+		t.Fatalf("second child = %#v, want shipinstruct leaf", rewritten.Children[1])
+	}
+	union := rewritten.Children[2]
+	if union.Operation != QuantaFilterUnion || len(union.Children) != 2 {
+		t.Fatalf("factored child = %#v, want two-branch union", union)
+	}
+	for i, child := range union.Children {
+		if child.Operation != QuantaFilterIntersect || len(child.Children) != 2 {
+			t.Fatalf("union child %d = %#v, want candidate plus branch-specific leaf", i, child)
+		}
+		if !child.Children[0].CandidateSetLeaf() {
+			t.Fatalf("union child %d first expression = %#v, want candidate leaf", i, child.Children[0])
+		}
+		if !child.Children[1].Leaf() || child.Children[1].Fragment.Field != "l_quantity" {
+			t.Fatalf("union child %d second expression = %#v, want quantity leaf", i, child.Children[1])
+		}
+	}
+}
+
 func TestQuantaAggregateRequestsFromPhysicalNodeDerivesTopNProjectorRank(t *testing.T) {
 	planner := Planner{
 		Parser:        SimpleParserBridge{},

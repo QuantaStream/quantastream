@@ -117,15 +117,33 @@ func quantaFilterIntersectEvaluationOrder(children []qsbridge.QuantaFilterExpres
 			ordered = append(ordered, child)
 		}
 	}
+	for _, child := range flattened {
+		if child.CandidateSetLeaf() || !quantaFilterExpressionContainsCandidateSetLeaf(child) {
+			continue
+		}
+		ordered = append(ordered, child)
+	}
 	if len(ordered) == 0 {
 		return children
 	}
 	for _, child := range flattened {
-		if !child.CandidateSetLeaf() {
+		if !child.CandidateSetLeaf() && !quantaFilterExpressionContainsCandidateSetLeaf(child) {
 			ordered = append(ordered, child)
 		}
 	}
 	return ordered
+}
+
+func quantaFilterExpressionContainsCandidateSetLeaf(filter qsbridge.QuantaFilterExpression) bool {
+	if filter.CandidateSetLeaf() {
+		return true
+	}
+	for _, child := range filter.Children {
+		if quantaFilterExpressionContainsCandidateSetLeaf(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func quantaFilterFlattenIntersectChildren(children []qsbridge.QuantaFilterExpression) []qsbridge.QuantaFilterExpression {

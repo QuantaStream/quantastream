@@ -671,7 +671,119 @@ func (r FilterDomainRewriteResult) Apply(filter QuantaFilterExpression) QuantaFi
 		children = append(children, r.Apply(child))
 	}
 	filter.Children = children
-	return filter
+	return filterDomainFactorCommonUnionConjuncts(filter)
+}
+
+func filterDomainFactorCommonUnionConjuncts(filter QuantaFilterExpression) QuantaFilterExpression {
+	if filter.Operation != QuantaFilterUnion || len(filter.Children) < 2 {
+		return filter
+	}
+	branches := make([][]QuantaFilterExpression, 0, len(filter.Children))
+	for _, child := range filter.Children {
+		conjuncts := filterDomainConjunctsForFactoring(child)
+		if len(conjuncts) == 0 {
+			return filter
+		}
+		branches = append(branches, conjuncts)
+	}
+	common := filterDomainCommonConjuncts(branches)
+	if len(common) == 0 {
+		return filter
+	}
+	unionChildren := make([]QuantaFilterExpression, 0, len(branches))
+	for _, branch := range branches {
+		remaining := filterDomainRemoveConjuncts(branch, common)
+		if len(remaining) == 0 {
+			return filter
+		}
+		unionChildren = append(unionChildren, filterDomainConjunctExpression(remaining))
+	}
+	children := make([]QuantaFilterExpression, 0, len(common)+1)
+	children = append(children, common...)
+	children = append(children, QuantaFilterExpression{
+		Operation: QuantaFilterUnion,
+		Children:  unionChildren,
+	})
+	return QuantaFilterExpression{
+		Operation: QuantaFilterIntersect,
+		Children:  children,
+	}
+}
+
+func filterDomainConjunctsForFactoring(filter QuantaFilterExpression) []QuantaFilterExpression {
+	if filter.Empty() {
+		return nil
+	}
+	if filter.Operation != QuantaFilterIntersect {
+		return []QuantaFilterExpression{filter}
+	}
+	var conjuncts []QuantaFilterExpression
+	for _, child := range filter.Children {
+		conjuncts = append(conjuncts, filterDomainConjunctsForFactoring(child)...)
+	}
+	return conjuncts
+}
+
+func filterDomainCommonConjuncts(branches [][]QuantaFilterExpression) []QuantaFilterExpression {
+	if len(branches) == 0 {
+		return nil
+	}
+	common := make([]QuantaFilterExpression, 0, len(branches[0]))
+	for _, candidate := range branches[0] {
+		if filterDomainExpressionMatchesAny(candidate, common) {
+			continue
+		}
+		inAllBranches := true
+		for _, branch := range branches[1:] {
+			if !filterDomainExpressionMatchesAny(candidate, branch) {
+				inAllBranches = false
+				break
+			}
+		}
+		if inAllBranches {
+			common = append(common, candidate)
+		}
+	}
+	return common
+}
+
+func filterDomainRemoveConjuncts(branch, remove []QuantaFilterExpression) []QuantaFilterExpression {
+	remaining := make([]QuantaFilterExpression, 0, len(branch))
+	removed := make([]bool, len(remove))
+	for _, conjunct := range branch {
+		removeIndex := filterDomainFirstUnremovedConjunctMatch(conjunct, remove, removed)
+		if removeIndex >= 0 {
+			removed[removeIndex] = true
+			continue
+		}
+		remaining = append(remaining, conjunct)
+	}
+	return remaining
+}
+
+func filterDomainFirstUnremovedConjunctMatch(conjunct QuantaFilterExpression, candidates []QuantaFilterExpression, removed []bool) int {
+	for i, candidate := range candidates {
+		if removed[i] {
+			continue
+		}
+		if filterDomainExpressionMatches(conjunct, candidate) {
+			return i
+		}
+	}
+	return -1
+}
+
+func filterDomainConjunctExpression(conjuncts []QuantaFilterExpression) QuantaFilterExpression {
+	if len(conjuncts) == 0 {
+		return QuantaFilterExpression{}
+	}
+	if len(conjuncts) == 1 {
+		return conjuncts[0]
+	}
+	return QuantaFilterExpression{
+		Operation: QuantaFilterIntersect,
+		Children:  conjuncts,
+	}
 }
 
 func (r FilterDomainRewriteResult) applyIntersectBranchSubset(filter QuantaFilterExpression) (QuantaFilterExpression, bool) {
