@@ -796,6 +796,15 @@ membership canary. At SF0.01, the slowest Q21 run spent most of its time in
 `correlated_sibling_bsi_right_read_elapsed`, which matches the SF1 result where
 Q21 remains the largest comparison gap.
 
+The Q21 sibling-diversity reverse-artifact path is intentionally opt-in with
+`QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=1`. The first POC proved
+that the planner can recognize the shape and delegate to a relationship
+artifact, but the SF1 AWS run showed that query-time value projection and group
+evaluation still cost roughly the same as the original BSI path. The likely
+winning design is a maintained per-parent diversity artifact, such as
+`orderkey -> has_more_than_one_suppkey`, so Q21 can filter candidate rows with a
+cheap lookup instead of reconstructing sibling diversity during the query.
+
 ## Time-Quantized Shard Planning
 
 TPC-H date fields create many time-quantized shards even at small scale

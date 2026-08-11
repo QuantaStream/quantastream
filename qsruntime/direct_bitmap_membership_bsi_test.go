@@ -100,6 +100,8 @@ func TestDirectBitmapRuntimeAppliesCorrelatedSiblingMembershipWithRawBSIVectors(
 }
 
 func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
+
 	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
 	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
 	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l_orderkey", PhysicalName: "l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
@@ -188,6 +190,18 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
 			assertExecutionProbeName(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied")
 			assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_mode", "test_diversity")
 		})
+	}
+}
+
+func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *testing.T) {
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "")
+
+	if directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
+		t.Fatalf("sibling diversity artifact enabled by default, want disabled")
+	}
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "enabled")
+	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
+		t.Fatalf("sibling diversity artifact disabled with explicit opt-in")
 	}
 }
 
