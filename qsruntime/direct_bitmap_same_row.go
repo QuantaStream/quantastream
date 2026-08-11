@@ -74,7 +74,69 @@ func directBitmapSameRowResidualPlans(request ExecutionRequest) ([]qsbridge.Same
 			PredicateIndex: i,
 		})
 	}
+	plans = directBitmapOrderSameRowResidualPlans(plans)
+	for i := range plans {
+		plans[i].ID = "direct_bitmap_same_row_" + strconv.Itoa(i+1)
+		plans[i].ProbeName = "direct_bitmap_same_row_" + strconv.Itoa(i+1)
+	}
 	return plans, true
+}
+
+func directBitmapOrderSameRowResidualPlans(plans []qsbridge.SameRowComparisonPlan) []qsbridge.SameRowComparisonPlan {
+	ordered := append([]qsbridge.SameRowComparisonPlan(nil), plans...)
+	for {
+		changed := false
+		for i := 0; i < len(ordered)-1; i++ {
+			if directBitmapSameRowPlanShouldPrecede(ordered[i+1], ordered[i]) {
+				ordered[i], ordered[i+1] = ordered[i+1], ordered[i]
+				changed = true
+			}
+		}
+		if !changed {
+			return ordered
+		}
+	}
+}
+
+func directBitmapSameRowPlanShouldPrecede(candidate, current qsbridge.SameRowComparisonPlan) bool {
+	if candidate.Kind != qsbridge.SameRowComparisonBSI || current.Kind != qsbridge.SameRowComparisonBSI {
+		return false
+	}
+	if sameRowComparisonLessOperator(candidate.Operator) && sameRowComparisonLessOperator(current.Operator) {
+		return sameRowComparisonSameField(candidate.Right, current.Left)
+	}
+	if sameRowComparisonGreaterOperator(candidate.Operator) && sameRowComparisonGreaterOperator(current.Operator) {
+		return sameRowComparisonSameField(candidate.Left, current.Right)
+	}
+	return false
+}
+
+func sameRowComparisonLessOperator(op qsbridge.BinaryOp) bool {
+	return op == qsbridge.BinaryOpLess || op == qsbridge.BinaryOpLessEqual
+}
+
+func sameRowComparisonGreaterOperator(op qsbridge.BinaryOp) bool {
+	return op == qsbridge.BinaryOpGreater || op == qsbridge.BinaryOpGreaterEqual
+}
+
+func sameRowComparisonSameField(left, right qsbridge.FieldRef) bool {
+	if sameRowComparisonFieldName(left) != sameRowComparisonFieldName(right) {
+		return false
+	}
+	if left.Table.ID != "" || right.Table.ID != "" {
+		return left.Table.ID == right.Table.ID
+	}
+	return left.Table.Schema == right.Table.Schema &&
+		left.Table.Table == right.Table.Table &&
+		left.Table.Alias == right.Table.Alias &&
+		left.Table.Role == right.Table.Role
+}
+
+func sameRowComparisonFieldName(field qsbridge.FieldRef) string {
+	if field.PhysicalName != "" {
+		return field.PhysicalName
+	}
+	return field.Name
 }
 
 func directBitmapWithoutSameRowResidualPredicates(request ExecutionRequest) ExecutionRequest {

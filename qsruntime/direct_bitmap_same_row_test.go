@@ -68,6 +68,46 @@ func TestDirectBitmapRuntimeAppliesSameRowResidualBeforeCountAggregate(t *testin
 	assertExecutionProbe(t, result.Probes, "same_row_comparison", "direct_bitmap_same_row_1_fake", "called")
 }
 
+func TestDirectBitmapSameRowResidualPlansOrderDependencyChain(t *testing.T) {
+	lineitem := qsbridge.TableInstance{ID: "lineitem_1", Table: "lineitem", Alias: "l"}
+	shipDate := qsbridge.FieldRef{Table: lineitem, Name: "l_shipdate", PhysicalName: "l_shipdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	commitDate := qsbridge.FieldRef{Table: lineitem, Name: "l_commitdate", PhysicalName: "l_commitdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	receiptDate := qsbridge.FieldRef{Table: lineitem, Name: "l_receiptdate", PhysicalName: "l_receiptdate", Type: qsbridge.DataTypeTime, Index: qsbridge.IndexDateTime}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Predicates = []qsbridge.Predicate{
+		{
+			Placement: qsbridge.PredicateResidualScan,
+			Scope:     qsbridge.PredicateScopeWhere,
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpLess, qsbridge.Field(commitDate), qsbridge.Field(receiptDate)),
+		},
+		{
+			Placement: qsbridge.PredicateResidualScan,
+			Scope:     qsbridge.PredicateScopeWhere,
+			Expr:      qsbridge.Binary(qsbridge.BinaryOpLess, qsbridge.Field(shipDate), qsbridge.Field(commitDate)),
+		},
+	}
+
+	plans, ok := directBitmapSameRowResidualPlans(request)
+	if !ok {
+		t.Fatalf("directBitmapSameRowResidualPlans returned ok=false")
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plan count = %d, want 2", len(plans))
+	}
+	if plans[0].Left.Name != "l_shipdate" || plans[0].Right.Name != "l_commitdate" {
+		t.Fatalf("first plan = %s < %s, want l_shipdate < l_commitdate", plans[0].Left.Name, plans[0].Right.Name)
+	}
+	if plans[0].ID != "direct_bitmap_same_row_1" || plans[0].ProbeName != "direct_bitmap_same_row_1" || plans[0].PredicateIndex != 1 {
+		t.Fatalf("first plan identity = id %q probe %q predicate %d, want renumbered predicate 1", plans[0].ID, plans[0].ProbeName, plans[0].PredicateIndex)
+	}
+	if plans[1].Left.Name != "l_commitdate" || plans[1].Right.Name != "l_receiptdate" {
+		t.Fatalf("second plan = %s < %s, want l_commitdate < l_receiptdate", plans[1].Left.Name, plans[1].Right.Name)
+	}
+	if plans[1].ID != "direct_bitmap_same_row_2" || plans[1].ProbeName != "direct_bitmap_same_row_2" || plans[1].PredicateIndex != 0 {
+		t.Fatalf("second plan identity = id %q probe %q predicate %d, want renumbered predicate 0", plans[1].ID, plans[1].ProbeName, plans[1].PredicateIndex)
+	}
+}
+
 func TestDirectBitmapSameRowPruningRefreshesExplicitMaterializationFields(t *testing.T) {
 	lineitem := qsbridge.TableInstance{ID: "lineitem_1", Table: "lineitem", Alias: "l"}
 	shipmode := qsbridge.FieldRef{Table: lineitem, Name: "l_shipmode", PhysicalName: "l_shipmode", Type: qsbridge.DataTypeString}
