@@ -119,6 +119,10 @@ func (c *recordingDictionaryCache) LookupID(qsbridge.DictionaryRef, qsbridge.Str
 	return qsbridge.DictionaryEntry{}, nil
 }
 
+func (c *recordingDictionaryCache) LookupPrefix(qsbridge.DictionaryRef, string) ([]qsbridge.DictionaryEntry, qsbridge.DiagnosticSet) {
+	return nil, nil
+}
+
 func (c *recordingDictionaryCache) InvalidateDictionary(ref qsbridge.DictionaryRef) {
 	c.refs = append(c.refs, ref)
 }

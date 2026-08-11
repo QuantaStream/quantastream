@@ -164,6 +164,7 @@ type DictionaryResolver interface {
 	Dictionary(ref DictionaryRef) (DictionaryDefinition, DiagnosticSet)
 	LookupLabel(ref DictionaryRef, label string) (DictionaryEntry, DiagnosticSet)
 	LookupID(ref DictionaryRef, id StringEnumID) (DictionaryEntry, DiagnosticSet)
+	LookupPrefix(ref DictionaryRef, prefix string) ([]DictionaryEntry, DiagnosticSet)
 }
 
 // MemoryDictionaryResolver is a small in-memory resolver for tests and scaffolding.
@@ -208,6 +209,20 @@ func (r MemoryDictionaryResolver) LookupID(ref DictionaryRef, id StringEnumID) (
 	}
 }
 
+// LookupPrefix resolves all StringEnum labels with a prefix.
+func (r MemoryDictionaryResolver) LookupPrefix(ref DictionaryRef, prefix string) ([]DictionaryEntry, DiagnosticSet) {
+	if _, diagnostics := r.Dictionary(ref); diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	matches := make([]DictionaryEntry, 0)
+	for _, entry := range r.Entries {
+		if dictionaryRefEqual(entry.Ref, ref) && strings.HasPrefix(entry.Label, prefix) {
+			matches = append(matches, entry)
+		}
+	}
+	return matches, nil
+}
+
 // CachedDictionaryResolver wraps another resolver with explicit process-local caching.
 //
 // Dictionary invalidation uses a per-field generation number. Existing entries
@@ -218,6 +233,7 @@ type CachedDictionaryResolver struct {
 	dictionaries *shardedValueCache
 	labels       *shardedValueCache
 	ids          *shardedValueCache
+	prefixes     *shardedValueCache
 	generations  *shardedValueCache
 }
 
@@ -228,6 +244,7 @@ func NewCachedDictionaryResolver(backend DictionaryResolver) *CachedDictionaryRe
 		dictionaries: newShardedValueCache(),
 		labels:       newShardedValueCache(),
 		ids:          newShardedValueCache(),
+		prefixes:     newShardedValueCache(),
 		generations:  newShardedValueCache(),
 	}
 }
@@ -274,6 +291,19 @@ func (r *CachedDictionaryResolver) LookupID(ref DictionaryRef, id StringEnumID) 
 	return entry, cloneDiagnosticSet(diagnostics)
 }
 
+// LookupPrefix resolves StringEnum labels with a prefix through the cache.
+func (r *CachedDictionaryResolver) LookupPrefix(ref DictionaryRef, prefix string) ([]DictionaryEntry, DiagnosticSet) {
+	key := r.prefixCacheKey(ref, prefix)
+	if value, ok := r.prefixes.Get(key); ok {
+		cached := value.(cachedDictionaryEntries)
+		return cloneDictionaryEntries(cached.value), cloneDiagnosticSet(cached.diagnostics)
+	}
+
+	entries, diagnostics := r.backend.LookupPrefix(ref, prefix)
+	r.prefixes.Set(key, cachedDictionaryEntries{value: cloneDictionaryEntries(entries), diagnostics: cloneDiagnosticSet(diagnostics)})
+	return cloneDictionaryEntries(entries), cloneDiagnosticSet(diagnostics)
+}
+
 // InvalidateDictionary makes all cached entries for ref unreachable.
 func (r *CachedDictionaryResolver) InvalidateDictionary(ref DictionaryRef) {
 	key := dictionaryRefCacheKey(ref)
@@ -286,6 +316,7 @@ func (r *CachedDictionaryResolver) Clear() {
 	r.dictionaries.Clear()
 	r.labels.Clear()
 	r.ids.Clear()
+	r.prefixes.Clear()
 	r.generations.Clear()
 }
 
@@ -296,6 +327,11 @@ type cachedDictionaryDefinition struct {
 
 type cachedDictionaryEntry struct {
 	value       DictionaryEntry
+	diagnostics DiagnosticSet
+}
+
+type cachedDictionaryEntries struct {
+	value       []DictionaryEntry
 	diagnostics DiagnosticSet
 }
 
@@ -312,6 +348,11 @@ func (r *CachedDictionaryResolver) labelCacheKey(ref DictionaryRef, label string
 // idCacheKey identifies one encoded-id lookup within a field dictionary generation.
 func (r *CachedDictionaryResolver) idCacheKey(ref DictionaryRef, id StringEnumID) string {
 	return r.dictionaryCacheKey(ref) + "\x00id\x00" + strconv.FormatUint(uint64(id), 10)
+}
+
+// prefixCacheKey identifies one prefix lookup within a field dictionary generation.
+func (r *CachedDictionaryResolver) prefixCacheKey(ref DictionaryRef, prefix string) string {
+	return r.dictionaryCacheKey(ref) + "\x00prefix\x00" + prefix
 }
 
 // dictionaryGeneration returns the current cache generation for one field dictionary.
@@ -340,4 +381,9 @@ func cloneDictionaryDefinition(dictionary DictionaryDefinition) DictionaryDefini
 	cloned := dictionary
 	cloned.Capabilities = append(DictionaryCapabilities(nil), dictionary.Capabilities...)
 	return cloned
+}
+
+// cloneDictionaryEntries returns an independent entry slice for cached resolver results.
+func cloneDictionaryEntries(entries []DictionaryEntry) []DictionaryEntry {
+	return append([]DictionaryEntry(nil), entries...)
 }

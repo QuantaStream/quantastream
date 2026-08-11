@@ -712,3 +712,13 @@ func (r *countingDictionaryResolver) LookupID(ref qsbridge.DictionaryRef, id qsb
 	}
 	return qsbridge.DictionaryEntry{Ref: ref, Label: label, ID: id}, nil
 }
+
+func (r *countingDictionaryResolver) LookupPrefix(ref qsbridge.DictionaryRef, prefix string) ([]qsbridge.DictionaryEntry, qsbridge.DiagnosticSet) {
+	entries := make([]qsbridge.DictionaryEntry, 0)
+	for id, label := range r.entries {
+		if strings.HasPrefix(label, prefix) {
+			entries = append(entries, qsbridge.DictionaryEntry{Ref: ref, Label: label, ID: id})
+		}
+	}
+	return entries, nil
+}

@@ -1265,6 +1265,42 @@ func TestQuantaIntermediateLowererLowersStringEnumInPredicate(t *testing.T) {
 	}
 }
 
+func TestQuantaIntermediateLowererLowersStringEnumNotLikePrefixPredicate(t *testing.T) {
+	service := simpleRunnerPlanningService()
+	_, request := service.PrepareExecutionRequest(
+		PlanRequest{SQL: "select count(*) as line_count from lineitem as l where l.l_shipmode not like 'A%'"},
+		ExecutionOptions{},
+	)
+	if request.Diagnostics.BlocksNative() {
+		t.Fatalf("request diagnostics: %#v", request.Diagnostics)
+	}
+	if len(request.Bound.Prepared.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(request.Bound.Prepared.Query.Predicates))
+	}
+	predicate := request.Bound.Prepared.Query.Predicates[0]
+	if predicate.Placement != PredicatePushdown {
+		t.Fatalf("predicate placement = %s, want pushdown: %#v", predicate.Placement, predicate)
+	}
+	if !predicateHasCapability(predicate, CapabilityStringEnumPrefixLike) || !predicateHasCapability(predicate, CapabilityBitmapDifference) {
+		t.Fatalf("predicate capabilities = %#v, want StringEnumPrefixLike and BitmapDifference", predicate.Capabilities)
+	}
+
+	intermediate, diagnostics := (QuantaIntermediateLowerer{Dictionaries: quantaIntermediateTestDictionaries()}).LowerExecutionRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics: %#v", diagnostics)
+	}
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	}
+	fragment := intermediate.Fragments[0]
+	if fragment.Operation != QuantaOperationDifference {
+		t.Fatalf("operation = %s, want DIFFERENCE", fragment.Operation)
+	}
+	if len(fragment.Values) != 1 || fragment.Values[0].Uint64() != 7 {
+		t.Fatalf("values = %#v, want AIR id 7", fragment.Values)
+	}
+}
+
 func TestQuantaIntermediateLowererKeepsQ16NotLikeResidual(t *testing.T) {
 	partBrandRef := DictionaryRef{Schema: "quanta", Table: "part", Field: "p_brand"}
 	service := NewPlanningService(Planner{
@@ -1717,13 +1753,22 @@ func TestQuantaIntermediateLowererSkipsMissingStringEnumInValues(t *testing.T) {
 	}
 }
 
+func predicateHasCapability(predicate Predicate, capability PlanCapability) bool {
+	for _, existing := range predicate.Capabilities {
+		if existing == capability {
+			return true
+		}
+	}
+	return false
+}
+
 func quantaIntermediateTestDictionaries() MemoryDictionaryResolver {
 	ref := DictionaryRef{Schema: "quanta", Table: "lineitem", Field: "l_shipmode"}
 	return MemoryDictionaryResolver{
 		Dictionaries: []DictionaryDefinition{{
 			Ref:          ref,
 			Version:      "v1",
-			Capabilities: DictionaryCapabilities{DictionaryCapabilityStableIDs},
+			Capabilities: DictionaryCapabilities{DictionaryCapabilityStableIDs, DictionaryCapabilityPrefixMatch},
 		}},
 		Entries: []DictionaryEntry{
 			{Ref: ref, Label: "AIR", ID: 7, Version: "v1"},

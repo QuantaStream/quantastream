@@ -486,6 +486,41 @@ func (r LegacyTableCacheDictionaryResolver) LookupID(ref qsbridge.DictionaryRef,
 	}
 }
 
+// LookupPrefix resolves all StringEnum ids whose labels share a prefix from live legacy metadata.
+func (r LegacyTableCacheDictionaryResolver) LookupPrefix(ref qsbridge.DictionaryRef, prefix string) ([]qsbridge.DictionaryEntry, qsbridge.DiagnosticSet) {
+	attributes := r.attributes(ref)
+	if len(attributes) == 0 {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticDictionaryNotFound, qsbridge.PhaseBind, "dictionary not found: "+ref.QualifiedName()),
+		}
+	}
+	for _, attribute := range attributes {
+		_ = attribute.RefreshStringEnumValues()
+	}
+	matches := make([]qsbridge.DictionaryEntry, 0)
+	seen := make(map[qsbridge.StringEnumID]struct{})
+	for _, attribute := range attributes {
+		for _, value := range attribute.Values {
+			label := fmt.Sprint(value.Value)
+			if !strings.HasPrefix(label, prefix) {
+				continue
+			}
+			id := qsbridge.StringEnumID(value.RowID)
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			matches = append(matches, qsbridge.DictionaryEntry{
+				Ref:     r.normalizedRef(ref),
+				Label:   label,
+				ID:      id,
+				Version: qsbridge.DictionaryVersion("legacy-live-table-cache"),
+			})
+		}
+	}
+	return matches, nil
+}
+
 func (r LegacyTableCacheDictionaryResolver) lookupLabelInAttributes(ref qsbridge.DictionaryRef, attributes []*core.Attribute, label string) (qsbridge.DictionaryEntry, bool) {
 	for _, attribute := range attributes {
 		for _, value := range attribute.Values {

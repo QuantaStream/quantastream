@@ -298,24 +298,35 @@ func TestStringEnumPredicateCapabilityRejectsNonStringMembership(t *testing.T) {
 func TestStringEnumPredicateCapabilityClassifiesLikePatterns(t *testing.T) {
 	tests := []struct {
 		name       string
+		op         BinaryOp
 		pattern    string
 		dictionary DictionaryCapability
 		want       PlanCapability
 	}{
 		{
 			name:       "exact",
+			op:         BinaryOpLike,
 			pattern:    "AIR",
 			dictionary: DictionaryCapabilityStableIDs,
 			want:       CapabilityStringEnumEquality,
 		},
 		{
 			name:       "prefix",
+			op:         BinaryOpLike,
+			pattern:    "PROMO%",
+			dictionary: DictionaryCapabilityPrefixMatch,
+			want:       CapabilityStringEnumPrefixLike,
+		},
+		{
+			name:       "not-prefix",
+			op:         BinaryOpNotLike,
 			pattern:    "PROMO%",
 			dictionary: DictionaryCapabilityPrefixMatch,
 			want:       CapabilityStringEnumPrefixLike,
 		},
 		{
 			name:       "contains",
+			op:         BinaryOpLike,
 			pattern:    "%green%",
 			dictionary: DictionaryCapabilityContainsMatch,
 			want:       CapabilityStringEnumContainsLike,
@@ -326,7 +337,7 @@ func TestStringEnumPredicateCapabilityClassifiesLikePatterns(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			field := testStringEnumField(test.dictionary)
 			predicate := Predicate{
-				Expr:      Binary(BinaryOpLike, Field(field), Literal(ValueString, test.pattern)),
+				Expr:      Binary(test.op, Field(field), Literal(ValueString, test.pattern)),
 				Placement: PredicatePushdown,
 			}
 
@@ -343,6 +354,7 @@ func TestStringEnumPredicateCapabilityRejectsUnsupportedShapes(t *testing.T) {
 	tests := []Predicate{
 		{Expr: Binary(BinaryOpLess, Field(field), Literal(ValueString, "AIR")), Placement: PredicatePushdown},
 		{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "%BRASS")), Placement: PredicatePushdown},
+		{Expr: Binary(BinaryOpNotLike, Field(testStringEnumField(DictionaryCapabilityContainsMatch)), Literal(ValueString, "%BRASS%")), Placement: PredicatePushdown},
 		{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "A_R")), Placement: PredicatePushdown},
 		{Expr: Binary(BinaryOpEqual, Field(FieldRef{Name: "plain", Index: IndexBackingString}), Literal(ValueString, "AIR")), Placement: PredicatePushdown},
 	}

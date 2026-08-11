@@ -1626,6 +1626,9 @@ func (l QuantaIntermediateLowerer) lowerStringEnumPredicate(predicate Predicate,
 	if fragment, diagnostics, ok := l.lowerStringEnumInPredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
 		return fragment, diagnostics, ok
 	}
+	if fragment, diagnostics, ok := l.lowerStringEnumLikePredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
+		return fragment, diagnostics, ok
+	}
 	op, field, valueExpr, ok := quantaIntermediateStringEnumComparisonParts(predicate)
 	if !ok {
 		return QuantaQueryFragment{}, nil, false
@@ -1655,6 +1658,66 @@ func (l QuantaIntermediateLowerer) lowerStringEnumPredicate(predicate Predicate,
 	}
 	fragment := quantaIntermediateStringEnumFragment(field, []*big.Int{id}, []LiteralExpr{value})
 	if op == BinaryOpNotEqual {
+		fragment.Operation = QuantaOperationDifference
+	}
+	return fragment, nil, true
+}
+
+func (l QuantaIntermediateLowerer) lowerStringEnumLikePredicate(predicate Predicate, parameters ParameterBindingSet) (QuantaQueryFragment, DiagnosticSet, bool) {
+	op, field, valueExpr, ok := quantaIntermediateStringEnumLikeParts(predicate)
+	if !ok {
+		return QuantaQueryFragment{}, nil, false
+	}
+	value, diagnostics, ok := quantaIntermediateValue(valueExpr, parameters)
+	if !ok {
+		return QuantaQueryFragment{}, diagnostics, false
+	}
+	label, ok := value.Value.(string)
+	if value.Kind != ValueString || !ok {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringEnum LIKE predicates require string labels"), false
+	}
+
+	var values []*big.Int
+	literals := []LiteralExpr{value}
+	switch simpleLikePattern(label) {
+	case likePatternExact:
+		id, diagnostics, ok := l.stringEnumID(field, value)
+		if !ok {
+			if quantaIntermediateDictionaryLabelNotFound(diagnostics) {
+				fragment := quantaIntermediateMissingStringEnumFragment(field, value)
+				if op == BinaryOpNotLike {
+					fragment.Operation = QuantaOperationDifference
+				}
+				return fragment, nil, true
+			}
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+		values = []*big.Int{id}
+	case likePatternPrefix:
+		prefix := strings.TrimSuffix(label, "%")
+		entries, diagnostics, ok := l.stringEnumPrefixIDs(field, prefix)
+		if !ok {
+			return QuantaQueryFragment{}, diagnostics, false
+		}
+		values = make([]*big.Int, 0, len(entries))
+		literals = make([]LiteralExpr, 0, len(entries))
+		for _, entry := range entries {
+			values = append(values, new(big.Int).SetUint64(uint64(entry.ID)))
+			literals = append(literals, Literal(ValueString, entry.Label))
+		}
+	default:
+		return QuantaQueryFragment{}, nil, false
+	}
+
+	if len(values) == 0 {
+		fragment := quantaIntermediateMissingStringEnumFragment(field, value)
+		if op == BinaryOpNotLike {
+			fragment.Operation = QuantaOperationDifference
+		}
+		return fragment, nil, true
+	}
+	fragment := quantaIntermediateStringEnumFragment(field, values, literals)
+	if op == BinaryOpNotLike {
 		fragment.Operation = QuantaOperationDifference
 	}
 	return fragment, nil, true
@@ -1709,6 +1772,17 @@ func (l QuantaIntermediateLowerer) stringEnumID(field FieldRef, value LiteralExp
 		return nil, diagnostics, false
 	}
 	return new(big.Int).SetUint64(uint64(entry.ID)), nil, true
+}
+
+func (l QuantaIntermediateLowerer) stringEnumPrefixIDs(field FieldRef, prefix string) ([]DictionaryEntry, DiagnosticSet, bool) {
+	if l.Dictionaries == nil {
+		return nil, nil, false
+	}
+	entries, diagnostics := l.Dictionaries.LookupPrefix(quantaIntermediateDictionaryRef(field), prefix)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics, false
+	}
+	return entries, nil, true
 }
 
 func quantaIntermediateStringEnumFragment(field FieldRef, values []*big.Int, literals []LiteralExpr) QuantaQueryFragment {
@@ -1955,6 +2029,18 @@ func quantaIntermediateStringEnumComparisonParts(predicate Predicate) (BinaryOp,
 	default:
 		return "", FieldRef{}, nil, false
 	}
+}
+
+func quantaIntermediateStringEnumLikeParts(predicate Predicate) (BinaryOp, FieldRef, Expr, bool) {
+	binary, ok := quantaIntermediateBinaryExpr(predicate.Expr)
+	if !ok || (binary.Op != BinaryOpLike && binary.Op != BinaryOpNotLike) {
+		return "", FieldRef{}, nil, false
+	}
+	field, ok := quantaIntermediateFieldExpr(binary.Left)
+	if !ok || field.Index != IndexStringEnum || !quantaIntermediateValueExpr(binary.Right) {
+		return "", FieldRef{}, nil, false
+	}
+	return binary.Op, field, binary.Right, true
 }
 
 func quantaIntermediateDictionaryRef(field FieldRef) DictionaryRef {

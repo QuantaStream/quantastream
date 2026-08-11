@@ -80,11 +80,11 @@ func StringEnumPredicateCapability(predicate Predicate) (PlanCapability, bool) {
 	}
 
 	switch binary.Op {
-	case BinaryOpEqual:
+	case BinaryOpEqual, BinaryOpNotEqual:
 		if field.SupportsDictionaryCapability(DictionaryCapabilityStableIDs) {
 			return CapabilityStringEnumEquality, true
 		}
-	case BinaryOpLike:
+	case BinaryOpLike, BinaryOpNotLike:
 		pattern, ok := literal.Value.(string)
 		if !ok {
 			return "", false
@@ -99,7 +99,7 @@ func StringEnumPredicateCapability(predicate Predicate) (PlanCapability, bool) {
 				return CapabilityStringEnumPrefixLike, true
 			}
 		case likePatternContains:
-			if field.SupportsDictionaryCapability(DictionaryCapabilityContainsMatch) {
+			if binary.Op == BinaryOpLike && field.SupportsDictionaryCapability(DictionaryCapabilityContainsMatch) {
 				return CapabilityStringEnumContainsLike, true
 			}
 		}

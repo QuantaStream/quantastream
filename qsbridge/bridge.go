@@ -1255,6 +1255,14 @@ func BindPredicate(context *BindContext, predicate UnboundPredicate, roles Field
 		capabilities = append(capabilities, CapabilityNativeSameRowBSIComparison)
 	}
 	placement := boundPredicatePlacement(predicate.Placement, expr)
+	if placement == PredicatePushdown {
+		if capability, ok := StringEnumPredicateCapability(Predicate{Expr: expr, Placement: placement}); ok {
+			capabilities = appendPlanCapabilityOnce(capabilities, capability)
+			if stringEnumPredicateUsesBitmapDifference(expr) {
+				capabilities = appendPlanCapabilityOnce(capabilities, CapabilityBitmapDifference)
+			}
+		}
+	}
 	return Predicate{
 		Expr:         expr,
 		Placement:    placement,
@@ -1266,6 +1274,9 @@ func BindPredicate(context *BindContext, predicate UnboundPredicate, roles Field
 }
 
 func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicatePlacement {
+	if placement == PredicateResidualScan && stringEnumPredicateCanUseBitmapPushdown(expr) {
+		return PredicatePushdown
+	}
 	if placement != PredicatePushdown {
 		return placement
 	}
@@ -1281,6 +1292,36 @@ func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicateP
 		return placement
 	}
 	return PredicateResidualScan
+}
+
+func stringEnumPredicateCanUseBitmapPushdown(expr Expr) bool {
+	capability, ok := StringEnumPredicateCapability(Predicate{Expr: expr, Placement: PredicatePushdown})
+	return ok && capability != CapabilityStringEnumContainsLike
+}
+
+func stringEnumPredicateUsesBitmapDifference(expr Expr) bool {
+	binary, ok := asBinaryExpr(expr)
+	if !ok {
+		return false
+	}
+	switch binary.Op {
+	case BinaryOpNotEqual, BinaryOpNotIn, BinaryOpNotLike:
+		return stringEnumPredicateCanUseBitmapPushdown(expr)
+	default:
+		return false
+	}
+}
+
+func appendPlanCapabilityOnce(capabilities []PlanCapability, capability PlanCapability) []PlanCapability {
+	if capability == "" {
+		return capabilities
+	}
+	for _, existing := range capabilities {
+		if existing == capability {
+			return capabilities
+		}
+	}
+	return append(capabilities, capability)
 }
 
 func boundPredicateRequiresResidualRange(op BinaryOp) bool {

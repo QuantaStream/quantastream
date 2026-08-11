@@ -258,6 +258,9 @@ type countingDictionaryResolver struct {
 	idEntry               DictionaryEntry
 	idDiagnostics         DiagnosticSet
 	idCalls               int
+	prefixEntries         []DictionaryEntry
+	prefixDiagnostics     DiagnosticSet
+	prefixCalls           int
 }
 
 func (r *countingDictionaryResolver) Dictionary(DictionaryRef) (DictionaryDefinition, DiagnosticSet) {
@@ -273,4 +276,9 @@ func (r *countingDictionaryResolver) LookupLabel(DictionaryRef, string) (Diction
 func (r *countingDictionaryResolver) LookupID(DictionaryRef, StringEnumID) (DictionaryEntry, DiagnosticSet) {
 	r.idCalls++
 	return r.idEntry, r.idDiagnostics
+}
+
+func (r *countingDictionaryResolver) LookupPrefix(DictionaryRef, string) ([]DictionaryEntry, DiagnosticSet) {
+	r.prefixCalls++
+	return r.prefixEntries, r.prefixDiagnostics
 }
