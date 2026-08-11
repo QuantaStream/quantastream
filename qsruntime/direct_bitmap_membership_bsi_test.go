@@ -273,15 +273,11 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifactWithQualifiedNames(t *te
 	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "true")
 }
 
-func TestDirectBitmapCorrelatedSiblingDiversityArtifactEnabledByDefault(t *testing.T) {
+func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *testing.T) {
 	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "")
 
-	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		t.Fatalf("sibling diversity artifact disabled by default")
-	}
-	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "disabled")
 	if directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		t.Fatalf("sibling diversity artifact enabled with explicit opt-out")
+		t.Fatalf("sibling diversity artifact enabled by default, want disabled")
 	}
 	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "enabled")
 	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {

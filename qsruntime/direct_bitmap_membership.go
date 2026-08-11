@@ -577,12 +577,10 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 
 func directBitmapCorrelatedSiblingDiversityArtifactEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(directBitmapCorrelatedSiblingDiversityArtifactEnv))) {
-	case "0", "false", "no", "off", "disable", "disabled":
-		return false
 	case "1", "true", "yes", "on", "enable", "enabled":
 		return true
 	default:
-		return true
+		return false
 	}
 }
 
