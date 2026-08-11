@@ -38,6 +38,7 @@ type BitmapGroupAggregateStats struct {
 	BSIFieldCount     int
 	BSIProjectElapsed time.Duration
 	AggregateElapsed  time.Duration
+	ValueSetElapsed   time.Duration
 	SumElapsed        time.Duration
 	MinMaxElapsed     time.Duration
 }
@@ -125,10 +126,13 @@ type bitmapGroupAggregateFieldState struct {
 	SumCount uint64
 	Min      *big.Int
 	Max      *big.Int
+	Values   *roaring64.Bitmap
 	HaveRows bool
 	HaveSum  bool
 	HaveMin  bool
 	HaveMax  bool
+	HaveVals bool
+	CanVals  bool
 }
 
 func bitmapGroupAggregateValue(groupRows *roaring64.Bitmap, aggregate BitmapGroupAggregateSpec, bsis map[string]*roaring64.BSI, cache map[string]*bitmapGroupAggregateFieldState, stats *BitmapGroupAggregateStats) (BitmapGroupAggregateValue, bool) {
@@ -191,6 +195,13 @@ func bitmapGroupAggregateStateSum(state *bitmapGroupAggregateFieldState, bsi *ro
 
 func bitmapGroupAggregateStateMin(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) *big.Int {
 	if !state.HaveMin {
+		if values, ok := bitmapGroupAggregateStateValues(state, bsi, stats); ok && !values.IsEmpty() {
+			state.Min = new(big.Int).SetUint64(values.Minimum())
+			state.Max = new(big.Int).SetUint64(values.Maximum())
+			state.HaveMin = true
+			state.HaveMax = true
+			return state.Min
+		}
 		start := time.Now()
 		state.Min = bsi.MinMaxBig(0, roaring64.MIN, state.Rows)
 		if stats != nil {
@@ -203,6 +214,13 @@ func bitmapGroupAggregateStateMin(state *bitmapGroupAggregateFieldState, bsi *ro
 
 func bitmapGroupAggregateStateMax(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) *big.Int {
 	if !state.HaveMax {
+		if values, ok := bitmapGroupAggregateStateValues(state, bsi, stats); ok && !values.IsEmpty() {
+			state.Min = new(big.Int).SetUint64(values.Minimum())
+			state.Max = new(big.Int).SetUint64(values.Maximum())
+			state.HaveMin = true
+			state.HaveMax = true
+			return state.Max
+		}
 		start := time.Now()
 		state.Max = bsi.MinMaxBig(0, roaring64.MAX, state.Rows)
 		if stats != nil {
@@ -211,4 +229,29 @@ func bitmapGroupAggregateStateMax(state *bitmapGroupAggregateFieldState, bsi *ro
 		state.HaveMax = true
 	}
 	return state.Max
+}
+
+func bitmapGroupAggregateStateValues(state *bitmapGroupAggregateFieldState, bsi *roaring64.BSI, stats *BitmapGroupAggregateStats) (*roaring64.Bitmap, bool) {
+	if state.HaveVals {
+		return state.Values, state.CanVals
+	}
+	state.HaveVals = true
+	if bsi.BitCount() > 63 {
+		return nil, false
+	}
+	start := time.Now()
+	zero := big.NewInt(0)
+	negativeRows := bsi.CompareBigValue(0, roaring64.LT, zero, zero, state.Rows)
+	if negativeRows == nil || !negativeRows.IsEmpty() {
+		if stats != nil {
+			stats.ValueSetElapsed += time.Since(start)
+		}
+		return nil, false
+	}
+	state.Values = bsi.IntersectAndTranspose(0, state.Rows)
+	state.CanVals = true
+	if stats != nil {
+		stats.ValueSetElapsed += time.Since(start)
+	}
+	return state.Values, true
 }

@@ -165,6 +165,61 @@ func TestBitmapGroupAggregatesComputesBSIValuesByBitmapGroup(t *testing.T) {
 	}
 }
 
+func TestBitmapGroupAggregatesMinMaxFallsBackForNegativeValues(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "lineitem", nil)
+	if err != nil {
+		t.Fatalf("load lineitem schema: %v", err)
+	}
+	quantity := roaring64.NewDefaultBSI()
+	quantity.SetValue(1, -10)
+	quantity.SetValue(2, 20)
+	quantity.SetValue(3, -30)
+	index := &BitmapIndex{
+		Node: &Node{
+			Conn: &shared.Conn{
+				HashTable: rendezvous.New([]string{"this-node"}),
+			},
+			consul:  &api.Client{},
+			hashKey: "this-node",
+		},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"lineitem": {
+				"l_returnflag": {
+					1: {0: {Bits: roaring64.BitmapOf(1, 2, 3)}},
+				},
+			},
+		},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"lineitem": {
+				"l_quantity": {
+					0: {BSI: quantity},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{"lineitem": table},
+	}
+
+	groups, _, ok, err := index.BitmapGroupAggregates("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{
+		{Function: "min", Field: "l_quantity"},
+		{Function: "max", Field: "l_quantity"},
+	}, 0, 0, roaring64.BitmapOf(1, 2, 3))
+	if err != nil {
+		t.Fatalf("BitmapGroupAggregates error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("BitmapGroupAggregates ok = false, want true")
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups = %#v, want 1", groups)
+	}
+	if got := groups[0].Aggs[0].Min; got == nil || got.Cmp(big.NewInt(-30)) != 0 {
+		t.Fatalf("min = %v, want -30", got)
+	}
+	if got := groups[0].Aggs[1].Max; got == nil || got.Cmp(big.NewInt(20)) != 0 {
+		t.Fatalf("max = %v, want 20", got)
+	}
+}
+
 func assertBitmapGroupAggregate(t *testing.T, group BitmapGroupAggregate, values []uint64, raw []uint64) {
 	t.Helper()
 	if !reflect.DeepEqual(group.Values, values) {
