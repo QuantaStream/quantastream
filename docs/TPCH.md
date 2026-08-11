@@ -786,33 +786,38 @@ An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware
 using `tpch_benchmark_readonly_sf1_scale_safe`. The MySQL reference report is
 preserved at
 `sqlrunner/expected/local/mysql-benchmarks/20260809T015549Z/mysql-reference.json`.
-The latest QuantaStream run was captured at commit `d7ad4da` as
-`/tmp/aws-qs-readonly-sf1-factored-filter-warm.json` on the benchmark runner
-and archived under `benchmarks/aws/2026-08-11/`. The QuantaStream server used
+The latest QuantaStream warmed run was captured after the StringEnum prefix
+`NOT LIKE` bitmap-difference work at commit `fed74a8` as
+`/tmp/aws-qs-readonly-sf1-stringenum-prefix-notlike-warm.json` on the benchmark
+runner. The report metadata marked the runner as `repo_dirty=true`, so this is
+a performance checkpoint to preserve and should be rerun from a clean runner
+before being treated as a release-grade artifact. The QuantaStream server used
 `QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=true`; SQLRunner used one
 warmup run so Q21 reports the warmed sibling-diversity artifact path rather
 than the first-query lazy-build cost.
 
 | Case | MySQL Median | QuantaStream Median | Ratio | Read |
 | --- | ---: | ---: | ---: | --- |
-| lineitem seed count | 518ms | 140ms | 0.27x | QS seed bitmap win, noisy mixed-suite run |
-| Q1 grouped lineitem shape | 2368ms | 517ms | 0.22x | bitmap group aggregate win, noisy mixed-suite run |
-| Q5 combined graph regional count | 8872ms | 1837ms | 0.21x | dependency-aware relationship-vector win |
-| shipdate year group count | 1448ms | 620ms | 0.43x | storage-side year bucketing win, noisy mixed-suite run |
-| Q6 discounted revenue | 1406ms | 442ms | 0.31x | QS selective bitmap/date-filter win |
-| Q21 sibling exists count | 7060ms | 3967ms | 0.56x | warmed cached sibling-diversity path |
-| Q3 grouped revenue limit | 6150ms | 6691ms | 1.09x | close/parity, still graph aggregation work |
-| Q12 same-row date comparison | 1674ms | 2097ms | 1.25x | close, still same-row/date-path work |
-| Q19 formal discounted revenue | 115ms | 293ms | 2.55x | improved by common OR-conjunct factoring |
-| Q16 part filter count | 69ms | 280ms | 4.06x | MySQL small-dimension filter win |
+| lineitem seed count | 518ms | 102ms | 0.20x | QS seed bitmap win, noisy mixed-suite run |
+| Q1 grouped lineitem shape | 2368ms | 599ms | 0.25x | bitmap group aggregate win, noisy mixed-suite run |
+| Q5 combined graph regional count | 8872ms | 1804ms | 0.20x | dependency-aware relationship-vector win |
+| shipdate year group count | 1448ms | 355ms | 0.25x | storage-side year bucketing win |
+| Q6 discounted revenue | 1406ms | 457ms | 0.33x | QS selective bitmap/date-filter win |
+| Q21 sibling exists count | 7060ms | 3887ms | 0.55x | warmed cached sibling-diversity path |
+| Q3 grouped revenue limit | 6150ms | 5502ms | 0.89x | close/parity, still graph aggregation work |
+| Q12 same-row date comparison | 1674ms | 2135ms | 1.28x | close, still same-row/date-path work |
+| Q19 formal discounted revenue | 115ms | 294ms | 2.56x | improved by common OR-conjunct factoring |
+| Q16 part filter count | 69ms | 30ms | 0.43x | StringEnum prefix `NOT LIKE` bitmap-difference win |
 
 This checkpoint is a stronger viability signal than the first SF1 pass.
 QuantaStream is now ahead of MySQL on broad bitmap grouping, selective
 fact-table filtering, regional relationship-vector reduction, year bucketing,
-and the Q21 sibling semi-join after the first-run artifact cost. Q3 is roughly
-parity. The Q19 common-conjunct factoring pass narrowed the small selective
-mixed-table gap from about 3.37x MySQL time to about 2.55x. The remaining gaps
-are concentrated in Q16, Q19, and to a lesser extent Q12.
+StringEnum prefix exclusion, and the Q21 sibling semi-join after the first-run
+artifact cost. Q3 is roughly parity and slightly ahead in the warmed run. The
+Q19 common-conjunct factoring pass narrowed the small selective mixed-table gap
+from about 3.37x MySQL time to about 2.55x, and the StringEnum prefix
+`NOT LIKE` pushdown moved Q16 from about 4.06x MySQL time to about 0.43x. The
+remaining gaps are concentrated in Q19 and, to a lesser extent, Q12.
 
 Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` as the historical
 slow-path regression suite. It keeps Q1 grouping, shipdate year bucketing, and
