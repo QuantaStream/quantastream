@@ -85,6 +85,11 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		Pool:       pool,
 		TableCache: tableCache,
 	}
+	bitmapGroupCountReader := StandardBitmapGroupCountReader{
+		TableCache: tableCache,
+		Direct:     b.Adapter.BitmapIndex,
+		Database:   config.WithDefaults().Database,
+	}
 	dictionaryResolver := qsruntime.LegacyTableCacheDictionaryResolver{
 		TableCache: tableCache,
 		Schema:     config.WithDefaults().Database,
@@ -145,6 +150,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		ProjectionBSIReader: bsiReader,
 		SameRowComparison:   sameRowComparison,
 		SiblingDiversity:    relationshipReverseArtifactReader,
+		BitmapGroupCounts:   bitmapGroupCountReader,
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins: qsruntime.LegacyDirectRelationshipVectorJoinExecutor{
 			Sessions:                       sessions,

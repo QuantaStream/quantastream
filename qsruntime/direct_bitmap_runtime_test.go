@@ -27,6 +27,18 @@ func (p yearBucketBoundsTestProvider) TimeBucketYearBounds(ctx context.Context, 
 	return p.minYear, p.maxYear, true
 }
 
+type fakeBitmapGroupCountReader struct {
+	Result BitmapGroupCountReadResult
+	Calls  int
+	Last   BitmapGroupCountReadRequest
+}
+
+func (r *fakeBitmapGroupCountReader) ReadBitmapGroupCounts(ctx context.Context, request BitmapGroupCountReadRequest) (BitmapGroupCountReadResult, qsbridge.DiagnosticSet, bool, error) {
+	r.Calls++
+	r.Last = request
+	return r.Result, nil, true, nil
+}
+
 func TestDirectBitmapSeedMembershipOnlyRequestUsesLeftFieldExistence(t *testing.T) {
 	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}
 	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
@@ -2766,6 +2778,77 @@ func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T)
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_order_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_output_elapsed")
 	assertExecutionProbeName(t, result.Probes, "grouped_aggregate", "phase_limit_elapsed")
+}
+
+func TestDirectBitmapRuntimeUsesBitmapGroupCountReader(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
+	returnFlag := qsbridge.FieldRef{Table: table, Name: "l_returnflag", PhysicalName: "l_returnflag", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum}
+	lineStatus := qsbridge.FieldRef{Table: table, Name: "l_linestatus", PhysicalName: "l_linestatus", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum}
+	reader := &fakeBitmapGroupCountReader{
+		Result: BitmapGroupCountReadResult{
+			Mode:          "test_bitmap_group_count",
+			CandidateRows: 6,
+			FieldCount:    2,
+			ValueCount:    4,
+			Groups: []BitmapGroupCountReadGroup{
+				{Key: "A\x00F", Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "A"}, {Kind: qsbridge.ValueString, Value: "F"}}, Count: 3},
+				{Key: "N\x00O", Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "N"}, {Kind: qsbridge.ValueString, Value: "O"}}, Count: 2},
+			},
+		},
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 6, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		BitmapGroupCounts: reader,
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("bitmap group count path should not materialize %d rows", len(request.Rownums))
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.SourceIndexes = []string{"lineitem"}
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(returnFlag), qsbridge.Field(lineStatus)}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "count_order", Type: qsbridge.DataTypeInt}}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if reader.Calls != 1 {
+		t.Fatalf("bitmap group count calls = %d, want 1", reader.Calls)
+	}
+	if len(reader.Last.CandidateRows) != 6 || len(reader.Last.Fields) != 2 {
+		t.Fatalf("read request = %#v, want 6 rows and 2 fields", reader.Last)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want 2", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != "A" || chunk.Rows[0][1].Value != "F" || chunk.Rows[0][2].Value != int64(3) {
+		t.Fatalf("first row = %#v, want A/F/3", chunk.Rows[0])
+	}
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "bitmap_group_count")
+	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "bitmap_group_count_mode", "test_bitmap_group_count")
 }
 
 func TestDirectBitmapGroupedAggregateStreamingCandidateRequiresLargeSimpleShape(t *testing.T) {

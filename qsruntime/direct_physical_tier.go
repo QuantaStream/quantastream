@@ -18,6 +18,7 @@ type DirectPhysicalExecutionTier struct {
 	RelationshipReader  RelationshipVectorReader
 	FilterAdapter       DirectBitmapFilterAdapter
 	SiblingDiversity    RelationshipSiblingDiversityReader
+	BitmapGroupCounts   BitmapGroupCountReader
 }
 
 // Runtime projects the physical capability bundle into the executable runtime.
@@ -33,5 +34,6 @@ func (t DirectPhysicalExecutionTier) Runtime() DirectBitmapRuntime {
 		RelationshipReader:  t.RelationshipReader,
 		FilterAdapter:       t.FilterAdapter,
 		SiblingDiversity:    t.SiblingDiversity,
+		BitmapGroupCounts:   t.BitmapGroupCounts,
 	}
 }

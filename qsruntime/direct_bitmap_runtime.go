@@ -52,6 +52,7 @@ type DirectBitmapRuntime struct {
 	RelationshipReader                      RelationshipVectorReader
 	FilterAdapter                           DirectBitmapFilterAdapter
 	SiblingDiversity                        RelationshipSiblingDiversityReader
+	BitmapGroupCounts                       BitmapGroupCountReader
 	CorrelatedSiblingRightCandidateSeed     *BitmapQueryResult
 	CorrelatedSiblingRightCandidateSeedMode string
 }
@@ -303,6 +304,9 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	}
 	if bucketResult, ok := r.directBitmapYearBucketCountAggregateResult(ctx, request, result); ok {
 		return bucketResult
+	}
+	if groupCountResult, ok := r.directBitmapBitmapGroupCountAggregateResult(ctx, request, bitmapResult, result); ok {
+		return groupCountResult
 	}
 	materializationKernel := r.projectionMaterializationKernel()
 	if materializationKernel == nil {

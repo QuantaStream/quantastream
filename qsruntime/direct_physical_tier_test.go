@@ -10,6 +10,7 @@ func TestDirectPhysicalExecutionTierProjectsRuntimeCapabilities(t *testing.T) {
 	sameRowComparison := LegacyDirectSameRowBSIComparisonKernel{}
 	relationshipReader := &LegacyDirectRelationshipVectorReader{}
 	relationshipJoins := LegacyDirectRelationshipVectorJoinExecutor{}
+	bitmapGroupCounts := &fakeBitmapGroupCountReader{}
 
 	runtime := (DirectPhysicalExecutionTier{
 		Sessions:            sessions,
@@ -20,6 +21,7 @@ func TestDirectPhysicalExecutionTierProjectsRuntimeCapabilities(t *testing.T) {
 		SameRowComparison:   sameRowComparison,
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins:   relationshipJoins,
+		BitmapGroupCounts:   bitmapGroupCounts,
 	}).Runtime()
 
 	if runtime.Sessions == nil {
@@ -42,5 +44,8 @@ func TestDirectPhysicalExecutionTierProjectsRuntimeCapabilities(t *testing.T) {
 	}
 	if runtime.RelationshipJoins == nil {
 		t.Fatalf("runtime relationship joins = nil")
+	}
+	if runtime.BitmapGroupCounts == nil {
+		t.Fatalf("runtime bitmap group counts = nil")
 	}
 }
