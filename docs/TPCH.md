@@ -799,43 +799,39 @@ An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware
 using `tpch_benchmark_readonly_sf1_scale_safe`. The MySQL reference report is
 preserved at
 `sqlrunner/expected/local/mysql-benchmarks/20260809T015549Z/mysql-reference.json`.
-The latest QuantaStream warmed run was captured after the StringEnum prefix
-`NOT LIKE` bitmap-difference work at commit `fed74a8` as
-`/tmp/aws-qs-readonly-sf1-stringenum-prefix-notlike-warm.json` on the benchmark
-runner. The report metadata marked the runner as `repo_dirty=true`, so this is
-a performance checkpoint to preserve and should be rerun from a clean runner
-before being treated as a release-grade artifact. That captured server still
-used `QUANTASTREAM_CORRELATED_SIBLING_DIVERSITY_ARTIFACT=true`; the
-production-shaped path no longer requires the environment switch when the
-physical tier exposes the sibling-diversity reader. SQLRunner used one warmup
-run so Q21 reports the warmed sibling-diversity artifact path rather than the
+The latest QuantaStream warmed run was captured after StringEnum bitmap
+filter-leaf selection at commit `b3eaa35` as
+`/tmp/aws-qs-readonly-sf1-stringenum-bitmap-warm.json` on the benchmark runner.
+The report metadata marked the runner as `repo_dirty=true`, so this is a
+performance checkpoint to preserve and should be rerun from a clean runner
+before being treated as a release-grade artifact. SQLRunner used one warmup run
+so Q21 reports the warmed sibling-diversity artifact path rather than the
 first-query lazy-build cost.
 
 | Case | MySQL Median | QuantaStream Median | Ratio | Read |
 | --- | ---: | ---: | ---: | --- |
-| lineitem seed count | 518ms | 102ms | 0.20x | QS seed bitmap win, noisy mixed-suite run |
-| Q1 grouped lineitem shape | 2368ms | 599ms | 0.25x | bitmap group aggregate win, noisy mixed-suite run |
-| Q5 combined graph regional count | 8872ms | 1804ms | 0.20x | dependency-aware relationship-vector win |
-| shipdate year group count | 1448ms | 355ms | 0.25x | storage-side year bucketing win |
-| Q6 discounted revenue | 1406ms | 457ms | 0.33x | QS selective bitmap/date-filter win |
-| Q21 sibling exists count | 7060ms | 3887ms | 0.55x | warmed cached sibling-diversity path |
-| Q3 grouped revenue limit | 6150ms | 5502ms | 0.89x | close/parity, still graph aggregation work |
-| Q12 same-row date comparison | 1674ms | 2135ms | 1.28x | close, still same-row/date-path work |
-| Q19 formal discounted revenue | 115ms | 294ms | 2.56x | improved by common OR-conjunct factoring |
-| Q16 part filter count | 69ms | 30ms | 0.43x | StringEnum prefix `NOT LIKE` bitmap-difference win |
+| lineitem seed count | 518ms | 50ms | 0.10x | QS seed bitmap win |
+| Q1 grouped lineitem shape | 2368ms | 220ms | 0.09x | bitmap group aggregate win |
+| Q5 combined graph regional count | 8872ms | 2372ms | 0.27x | dependency-aware relationship-vector win, noisy mixed-suite run |
+| shipdate year group count | 1448ms | 363ms | 0.25x | storage-side year bucketing win |
+| Q6 discounted revenue | 1406ms | 702ms | 0.50x | QS selective bitmap/date-filter win, noisy mixed-suite run |
+| Q21 sibling exists count | 7060ms | 4872ms | 0.69x | warmed cached sibling-diversity path, still variable |
+| Q3 grouped revenue limit | 6150ms | 5626ms | 0.91x | close/parity, still graph aggregation work |
+| Q12 same-row date comparison | 1674ms | 2325ms | 1.39x | remaining same-row/date-path gap |
+| Q19 formal discounted revenue | 115ms | 299ms | 2.60x | improved locally by StringEnum bitmap leaves; SF1 still dominated by source filters and small-row materialization |
+| Q16 part filter count | 69ms | 38ms | 0.55x | StringEnum prefix `NOT LIKE` bitmap-difference win |
 
 This checkpoint is a stronger viability signal than the first SF1 pass.
 QuantaStream is now ahead of MySQL on broad bitmap grouping, selective
 fact-table filtering, regional relationship-vector reduction, year bucketing,
 StringEnum prefix exclusion, and the Q21 sibling semi-join after the first-run
 artifact cost. Q3 is roughly parity and slightly ahead in the warmed run. The
-Q19 common-conjunct factoring pass narrowed the small selective mixed-table gap
-from about 3.37x MySQL time to about 2.55x, and the StringEnum prefix
-`NOT LIKE` pushdown moved Q16 from about 4.06x MySQL time to about 0.43x. The
-remaining gaps are concentrated in Q19 and, to a lesser extent, Q12. A later
-local Q19 pass added StringEnum bitmap leaf selection and moved the local SF0.05
-Q19 median from 118ms to 68ms; rerun that path on AWS SF1 before replacing the
-checkpoint table.
+Q19 common-conjunct factoring narrowed the small selective mixed-table gap from
+about 3.37x MySQL time to roughly the 2.5-2.6x range, and StringEnum bitmap
+leaf selection moved the local SF0.05 Q19 median from 118ms to 68ms. On AWS
+SF1, Q19 remains dominated by source-side `part` branch filters, first-pass
+`l_quantity` range leaves, and small-row child materialization. The remaining
+gaps are concentrated in Q19 and Q12.
 
 Use `tpc-h-benchmark/sqltests/tpch_profile_slow_paths.yaml` as the historical
 slow-path regression suite. It keeps Q1 grouping, shipdate year bucketing, and
