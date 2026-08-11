@@ -750,6 +750,25 @@ cluster topology changes, and eventually multiple proxies. Cache fragments
 should be tagged with table, shard, schema, and data-version metadata rather
 than simple TTL alone.
 
+Dependency-aware relationship graph ordering is now the preferred Q3/Q5 graph
+reduction policy. The earlier frontier-cardinality policy could choose a
+selective child edge before the edge that produces that edge's parent domain,
+forcing a second graph-reduction pass. The revised policy keeps the selective
+frontier bias but pulls parent dependencies forward, so the Q5-style graph can
+run in topological parent-to-child order. A local SF0.05 profile captured the
+expected Q5 order as `5,4,3,1,2`, with `graph_single_pass_applied=true`.
+
+The local SF0.05 profile moved broadly after that planner change:
+
+| Query | Before Median | After Median | Ratio |
+| --- | ---: | ---: | ---: |
+| Q3 grouped revenue with order fields | 576ms | 244ms | 0.42x |
+| Q5 formal discounted revenue | 251ms | 107ms | 0.43x |
+| Q5 same-nation combined graph count | 598ms | 153ms | 0.26x |
+| Q5 combined graph regional count | 196ms | 51ms | 0.26x |
+| Q5 simple regional revenue | 193ms | 73ms | 0.38x |
+| Q5 regional revenue ordering | 177ms | 72ms | 0.41x |
+
 ### AWS SF1 MySQL Comparison Checkpoint
 
 An AWS SF1 comparison was captured on `m7i.2xlarge`-class benchmark hardware

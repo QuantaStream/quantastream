@@ -145,6 +145,38 @@ func TestLegacyDirectRelationshipEdgeOrderExecutionCandidatesCanApplyRecommendat
 	}
 }
 
+func TestLegacyDirectRelationshipEdgeOrderPolicyPullsParentDependenciesForward(t *testing.T) {
+	edges := []legacyDirectRelationshipEdge{
+		{parentRole: "c", parentTable: "customer", childRole: "o", childTable: "orders", sqlKind: qsbridge.JoinKindInner},
+		{parentRole: "o", parentTable: "orders", childRole: "l", childTable: "lineitem", sqlKind: qsbridge.JoinKindInner},
+		{parentRole: "s", parentTable: "supplier", childRole: "l", childTable: "lineitem", sqlKind: qsbridge.JoinKindInner},
+		{parentRole: "n", parentTable: "nation", childRole: "s", childTable: "supplier", sqlKind: qsbridge.JoinKindInner},
+		{parentRole: "r", parentTable: "region", childRole: "n", childTable: "nation", sqlKind: qsbridge.JoinKindInner},
+	}
+	rowsByRole := map[string][]qsbridge.QuantaRownum{
+		"c": legacyDirectRelationshipTestRows(7500),
+		"o": legacyDirectRelationshipTestRows(75000),
+		"l": legacyDirectRelationshipTestRows(300000),
+		"s": legacyDirectRelationshipTestRows(500),
+		"n": legacyDirectRelationshipTestRows(25),
+		"r": legacyDirectRelationshipTestRows(1),
+	}
+
+	policy := legacyDirectRelationshipEdgeOrderPolicy(edges, rowsByRole, true)
+	candidates := legacyDirectRelationshipEdgeOrderExecutionCandidates(edges, policy)
+	singlePass := legacyDirectRelationshipSinglePassParentToChildPolicy(candidates)
+
+	if got := legacyDirectRelationshipEdgeOrderSequence(policy.RecommendedSequence); got != "5,4,3,1,2" {
+		t.Fatalf("recommended order = %q, want dependency-aware order 5,4,3,1,2", got)
+	}
+	if len(candidates) != 5 || candidates[3].InputOrdinal != 1 || candidates[4].InputOrdinal != 2 {
+		t.Fatalf("candidate order = %#v, want customer->orders before orders->lineitem", candidates)
+	}
+	if !singlePass.Eligible {
+		t.Fatalf("single pass eligible = false, reason %q", singlePass.Reason)
+	}
+}
+
 func TestLegacyDirectRelationshipEdgeOrderExecutionCandidatesKeepInputForLateOnlyRecommendation(t *testing.T) {
 	edges := []legacyDirectRelationshipEdge{
 		{parentRole: "a", parentTable: "a", childRole: "b", childTable: "b"},

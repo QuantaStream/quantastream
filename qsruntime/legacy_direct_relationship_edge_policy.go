@@ -186,6 +186,7 @@ func legacyDirectRelationshipEdgeOrderFrontierRecommendation(candidates []legacy
 	frontier := make(map[string]struct{}, len(candidates)*2)
 	for len(remaining) > 0 {
 		bestIndex := legacyDirectRelationshipEdgeOrderBestCandidateIndex(remaining, frontier)
+		bestIndex = legacyDirectRelationshipEdgeOrderDependencyRootIndex(remaining, bestIndex)
 		best := remaining[bestIndex]
 		best.FrontierConnected = legacyDirectRelationshipEdgeOrderCandidateTouchesFrontier(best, frontier)
 		ordered = append(ordered, best)
@@ -194,6 +195,44 @@ func legacyDirectRelationshipEdgeOrderFrontierRecommendation(candidates []legacy
 		remaining = append(remaining[:bestIndex], remaining[bestIndex+1:]...)
 	}
 	return ordered
+}
+
+func legacyDirectRelationshipEdgeOrderDependencyRootIndex(candidates []legacyDirectRelationshipEdgeOrderCandidate, candidateIndex int) int {
+	if candidateIndex < 0 || candidateIndex >= len(candidates) {
+		return candidateIndex
+	}
+	seen := make(map[int]struct{}, len(candidates))
+	for {
+		if _, ok := seen[candidateIndex]; ok {
+			return candidateIndex
+		}
+		seen[candidateIndex] = struct{}{}
+		dependencyIndex := legacyDirectRelationshipEdgeOrderParentDependencyIndex(candidates, candidateIndex)
+		if dependencyIndex == -1 {
+			return candidateIndex
+		}
+		candidateIndex = dependencyIndex
+	}
+}
+
+func legacyDirectRelationshipEdgeOrderParentDependencyIndex(candidates []legacyDirectRelationshipEdgeOrderCandidate, candidateIndex int) int {
+	if candidateIndex < 0 || candidateIndex >= len(candidates) {
+		return -1
+	}
+	parentKey := candidates[candidateIndex].Edge.parentKey()
+	if parentKey == "" {
+		return -1
+	}
+	bestIndex := -1
+	for i, candidate := range candidates {
+		if i == candidateIndex || candidate.Edge.childKey() != parentKey {
+			continue
+		}
+		if bestIndex == -1 || legacyDirectRelationshipEdgeOrderCandidateLess(candidate, candidates[bestIndex]) {
+			bestIndex = i
+		}
+	}
+	return bestIndex
 }
 
 func legacyDirectRelationshipEdgeOrderBestCandidateIndex(candidates []legacyDirectRelationshipEdgeOrderCandidate, frontier map[string]struct{}) int {
