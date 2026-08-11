@@ -193,11 +193,95 @@ func TestDirectBitmapRuntimeUsesSiblingDiversityArtifact(t *testing.T) {
 	}
 }
 
-func TestDirectBitmapCorrelatedSiblingDiversityArtifactDisabledByDefault(t *testing.T) {
+func TestDirectBitmapRuntimeUsesSiblingDiversityArtifactWithQualifiedNames(t *testing.T) {
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "1")
+
+	l1 := qsbridge.TableInstance{Table: "lineitem", Alias: "l1"}
+	l2 := qsbridge.TableInstance{Table: "lineitem", Alias: "l2"}
+	l1OrderKey := qsbridge.FieldRef{Table: l1, Name: "l1.l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2OrderKey := qsbridge.FieldRef{Table: l2, Name: "l2.l_orderkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l1SuppKey := qsbridge.FieldRef{Table: l1, Name: "l1.l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+	l2SuppKey := qsbridge.FieldRef{Table: l2, Name: "l2.l_suppkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI}
+
+	reader := &fakeMembershipProjectionBSIValueReader{Values: map[string]map[uint64]int64{}}
+	diversityReader := &fakeRelationshipSiblingDiversityReader{
+		Result: RelationshipSiblingDiversityReadResult{
+			Candidates: qsbridge.QuantaCandidateSet{
+				Index:   "lineitem",
+				Rownums: []qsbridge.QuantaRownum{1, 2},
+			},
+			Mode:       "test_diversity",
+			TargetRows: 2,
+		},
+	}
+	runtime := DirectBitmapRuntime{
+		Adapter:             BitmapQueryResultAdapter{},
+		ProjectionBSIReader: reader,
+		SiblingDiversity:    diversityReader,
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("sibling diversity artifact path should not materialize rows for %s", request.Index)
+			return qsbridge.QuantaProjectedRowSet{}, nil, nil
+		}),
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 4, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4}}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_orderkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+	})
+	request.Memberships = []qsbridge.MembershipEdge{{
+		Left:  l1OrderKey,
+		Right: l2OrderKey,
+		Kind:  qsbridge.MembershipSemi,
+		Legal: true,
+		Predicates: []qsbridge.Predicate{
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(l2OrderKey), qsbridge.Field(l1OrderKey))},
+			{Expr: qsbridge.Binary(qsbridge.BinaryOpNotEqual, qsbridge.Field(l2SuppKey), qsbridge.Field(l1SuppKey))},
+		},
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "count", Alias: "qualified_rows", Type: qsbridge.DataTypeInt}}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if got := result.RowSet.ProjectionVectors[0].Values[0].Value; got != int64(2) {
+		t.Fatalf("count aggregate = %#v, want 2", got)
+	}
+	if diversityReader.Calls != 1 {
+		t.Fatalf("sibling diversity reader calls = %d, want 1", diversityReader.Calls)
+	}
+	if diversityReader.Last.ParentField != "l_orderkey" || diversityReader.Last.ValueField != "l_suppkey" {
+		t.Fatalf("diversity read fields = %s/%s, want l_orderkey/l_suppkey", diversityReader.Last.ParentField, diversityReader.Last.ValueField)
+	}
+	if reader.RawReads != 0 || reader.ValueReads != 0 {
+		t.Fatalf("projection BSI reads = raw %d value %d, want zero", reader.RawReads, reader.ValueReads)
+	}
+	assertExecutionProbe(t, result.Probes, "direct_bitmap_membership", "correlated_sibling_bsi_diversity_artifact_applied", "true")
+}
+
+func TestDirectBitmapCorrelatedSiblingDiversityArtifactEnabledByDefault(t *testing.T) {
 	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "")
 
+	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
+		t.Fatalf("sibling diversity artifact disabled by default")
+	}
+	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "disabled")
 	if directBitmapCorrelatedSiblingDiversityArtifactEnabled() {
-		t.Fatalf("sibling diversity artifact enabled by default, want disabled")
+		t.Fatalf("sibling diversity artifact enabled with explicit opt-out")
 	}
 	t.Setenv(directBitmapCorrelatedSiblingDiversityArtifactEnv, "enabled")
 	if !directBitmapCorrelatedSiblingDiversityArtifactEnabled() {

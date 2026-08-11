@@ -533,8 +533,8 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 	}
 	read := RelationshipSiblingDiversityReadRequest{
 		Index:           membership.Left.Table.Table,
-		ParentField:     directBitmapFieldPhysicalName(parentField),
-		ValueField:      directBitmapFieldPhysicalName(valueField),
+		ParentField:     directBitmapFieldStorageName(parentField),
+		ValueField:      directBitmapFieldStorageName(valueField),
 		FromEpochMillis: request.Materialization.FromEpochMillis,
 		ToEpochMillis:   request.Materialization.ToEpochMillis,
 		CandidateRows:   append([]qsbridge.QuantaRownum(nil), result.Rownums...),
@@ -577,10 +577,12 @@ func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingDiversityFastPath
 
 func directBitmapCorrelatedSiblingDiversityArtifactEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(directBitmapCorrelatedSiblingDiversityArtifactEnv))) {
+	case "0", "false", "no", "off", "disable", "disabled":
+		return false
 	case "1", "true", "yes", "on", "enable", "enabled":
 		return true
 	default:
-		return false
+		return true
 	}
 }
 
@@ -647,9 +649,17 @@ func directBitmapCorrelatedSiblingComparisonFields(comparison directBitmapMember
 }
 
 func directBitmapSamePhysicalField(left, right qsbridge.FieldRef) bool {
-	leftName := directBitmapFieldPhysicalName(left)
-	rightName := directBitmapFieldPhysicalName(right)
+	leftName := directBitmapFieldStorageName(left)
+	rightName := directBitmapFieldStorageName(right)
 	return leftName != "" && strings.EqualFold(leftName, rightName)
+}
+
+func directBitmapFieldStorageName(field qsbridge.FieldRef) string {
+	name := directBitmapFieldPhysicalName(field)
+	if i := strings.LastIndex(name, "."); i >= 0 && i+1 < len(name) {
+		return name[i+1:]
+	}
+	return name
 }
 
 func directBitmapFinishCorrelatedSiblingMembershipBSI(start time.Time, result BitmapQueryResult, membership qsbridge.MembershipEdge, detail string, probes []ExecutionProbe, comparisons []directBitmapMembershipBSIComparison, leftVectors map[string]directBitmapMembershipBSIVector, leftKey directBitmapMembershipBSIVector, rightVectors map[string]directBitmapMembershipBSIVector, rightKey directBitmapMembershipBSIVector) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet) {
