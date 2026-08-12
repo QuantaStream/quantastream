@@ -1,11 +1,15 @@
 package server
 
 import (
+	"context"
 	"math/big"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	"github.com/hashicorp/consul/api"
@@ -68,6 +72,113 @@ func TestTimeRangeBSIReadsLocalNonTimeShardRegardlessOfCurrentOwner(t *testing.T
 	}
 	if got := result.GetExistenceBitmap().GetCardinality(); got != 1 {
 		t.Fatalf("existence cardinality = %d, want 1", got)
+	}
+}
+
+func TestQueryRetainsBSIRangeWithPriorIntersectSeed(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config", "lineitem")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	schema := []byte(`
+tableName: lineitem
+primaryKey: l_receiptdate
+timeQuantumType: YMD
+timeQuantumField: l_receiptdate
+attributes:
+- fieldName: l_receiptdate
+  sourceName: /data/l_receiptdate
+  mappingStrategy: SysMillisBSI
+  type: DateTime
+- fieldName: l_shipmode
+  sourceName: /data/l_shipmode
+  mappingStrategy: StringEnum
+  type: String
+`)
+	if err := os.WriteFile(filepath.Join(configDir, "schema.yaml"), schema, 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+	table, err := shared.LoadSchema(filepath.Join(root, "config"), "lineitem", nil)
+	if err != nil {
+		t.Fatalf("load schema: %v", err)
+	}
+	day := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	receipt := roaring64.NewDefaultBSI()
+	receipt.SetBigValue(1, big.NewInt(day.UnixMilli()))
+	receipt.SetBigValue(2, big.NewInt(day.UnixMilli()))
+	receipt.SetBigValue(3, big.NewInt(day.UnixMilli()))
+	shipmode := roaring64.BitmapOf(1, 3)
+	index := &BitmapIndex{
+		Node: &Node{Conn: shared.NewDefaultConnection("query-retain-bsi-test")},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"lineitem": {
+				"l_shipmode": {
+					7: {
+						day.UnixNano(): {Bits: shipmode},
+					},
+				},
+			},
+		},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"lineitem": {
+				"l_receiptdate": {
+					day.UnixNano(): {BSI: receipt},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{
+			"lineitem": table,
+		},
+	}
+	query := &pb.BitmapQuery{
+		FromTime: day.UnixNano(),
+		ToTime:   day.UnixNano(),
+		Query: []*pb.QueryFragment{
+			{
+				Id:          "shipmode",
+				Index:       "lineitem",
+				Field:       "l_shipmode",
+				RowID:       7,
+				Operation:   pb.QueryFragment_INTERSECT,
+				ChildrenIds: []string{"receipt"},
+			},
+			{
+				Id:        "receipt",
+				Index:     "lineitem",
+				Field:     "l_receiptdate",
+				Operation: pb.QueryFragment_INTERSECT,
+				BsiOp:     pb.QueryFragment_RANGE,
+				Begin:     big.NewInt(day.UnixMilli()).Bytes(),
+				End:       big.NewInt(day.UnixMilli()).Bytes(),
+			},
+		},
+	}
+
+	result, err := index.Query(context.Background(), query)
+	if err != nil {
+		t.Fatalf("Query returned error: %v", err)
+	}
+	if got := len(result.GetIntersects()); got != 2 {
+		t.Fatalf("intersect count = %d, want 2", got)
+	}
+	receiptBitmap := roaring64.New()
+	if err := receiptBitmap.UnmarshalBinary(result.GetIntersects()[1]); err != nil {
+		t.Fatalf("unmarshal receipt intersect: %v", err)
+	}
+	if got, want := receiptBitmap.ToArray(), []uint64{1, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("retained receipt rows = %#v, want %#v", got, want)
+	}
+	if got, want := receipt.GetExistenceBitmap().ToArray(), []uint64{1, 2, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fixture receipt rows = %#v, want %#v", got, want)
+	}
+	shipmodeBitmap := roaring64.New()
+	if err := shipmodeBitmap.UnmarshalBinary(result.GetIntersects()[0]); err != nil {
+		t.Fatalf("unmarshal shipmode intersect: %v", err)
+	}
+	shipmodeBitmap.And(receiptBitmap)
+	if got, want := shipmodeBitmap.ToArray(), []uint64{1, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("final rows = %#v, want %#v", got, want)
 	}
 }
 
