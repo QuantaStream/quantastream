@@ -672,6 +672,13 @@ func directBitmapFilterFragmentFieldUsesStringEnum(request ExecutionRequest, fra
 		index, _ = request.RootIndex()
 	}
 	field := fragment.Field
+	if _, ok := nativeProjectionDictionaryRefFromCatalog(request.QueryCatalog, index, qsbridge.QuantaProjectionField{
+		Index: index,
+		Field: field,
+		Type:  qsbridge.DataTypeString,
+	}); ok {
+		return true
+	}
 	if definition, ok := projectionMaterializationFieldDefinition(request.QueryCatalog, index, field); ok {
 		return definition.Index == qsbridge.IndexStringEnum || definition.Encoding.Kind == qsbridge.EncodingStringEnum
 	}
