@@ -498,6 +498,27 @@ func (r *directBitmapFilterTreeEvaluationRecorder) RecordInnerProbes(fragment qs
 	}
 }
 
+// RecordLeafMode records which execution path was selected for one filter-tree
+// leaf before lower-level probes are available.
+func (r *directBitmapFilterTreeEvaluationRecorder) RecordLeafMode(fragment qsbridge.QuantaQueryFragment, source string, inputRows int, reason string) {
+	if r == nil || source == "" {
+		return
+	}
+	parts := []string{"leaf=" + filterDomainFragmentKey(fragment), "source=" + source}
+	if inputRows >= 0 {
+		parts = append(parts, "input_rows="+strconv.Itoa(inputRows))
+	}
+	if reason != "" {
+		parts = append(parts, "reason="+reason)
+	}
+	r.innerProbes = append(r.innerProbes, ExecutionProbe{
+		Section: "filter_tree",
+		Name:    "leaf_evaluation_mode",
+		Value:   source,
+		Detail:  strings.Join(parts, " "),
+	})
+}
+
 // Probes returns execution probes for the recorded filter-tree leaves.
 func (r *directBitmapFilterTreeEvaluationRecorder) Probes() []ExecutionProbe {
 	if r == nil || (len(r.leaves) == 0 && len(r.innerProbes) == 0) {
@@ -531,6 +552,11 @@ func directBitmapFilterTreeInnerProbeDetail(fragment qsbridge.QuantaQueryFragmen
 
 // EvaluateFilterLeaf executes one grouped-filter leaf as a normal bitmap query fragment.
 func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeaf(ctx context.Context, fragment qsbridge.QuantaQueryFragment) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	return e.evaluateFilterLeafBitmap(ctx, fragment, -1, "")
+}
+
+func (e directBitmapFilterTreeLeafEvaluator) evaluateFilterLeafBitmap(ctx context.Context, fragment qsbridge.QuantaQueryFragment, inputRows int, reason string) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	e.recordLeafMode(fragment, "bitmap_query", inputRows, reason)
 	leafRequest := e.Request
 	leafRequest.Query = cloneIntermediateQuery(e.Request.Query)
 	leafRequest.Query.Filter = qsbridge.QuantaFilterExpression{}
@@ -563,19 +589,24 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeaf(ctx context.Cont
 
 // EvaluateFilterLeafWithinCandidateSet evaluates one leaf against already-narrowed candidates through late materialization.
 func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSet(ctx context.Context, fragment qsbridge.QuantaQueryFragment, candidates qsbridge.QuantaCandidateSet) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
-	if e.Materialization == nil || len(candidates.Rownums) == 0 {
-		return e.EvaluateFilterLeaf(ctx, fragment)
+	if e.Materialization == nil {
+		return e.evaluateFilterLeafBitmap(ctx, fragment, len(candidates.Rownums), "materialization_unavailable")
+	}
+	if len(candidates.Rownums) == 0 {
+		return e.evaluateFilterLeafBitmap(ctx, fragment, 0, "empty_candidate_set")
 	}
 	index := fragment.Index
 	if index == "" {
 		index = candidates.Index
 	}
 	if index == "" || (candidates.Index != "" && candidates.Index != index) {
-		return e.EvaluateFilterLeaf(ctx, fragment)
+		return e.evaluateFilterLeafBitmap(ctx, fragment, len(candidates.Rownums), "candidate_index_mismatch")
 	}
-	if !directBitmapFilterFragmentShouldEvaluateMaterialized(e.Request, fragment) {
-		return e.EvaluateFilterLeaf(ctx, fragment)
+	materialize, reason := directBitmapFilterFragmentMaterializationDecision(e.Request, fragment)
+	if !materialize {
+		return e.evaluateFilterLeafBitmap(ctx, fragment, len(candidates.Rownums), reason)
 	}
+	e.recordLeafMode(fragment, "constrained_materialization", len(candidates.Rownums), reason)
 	materialization := candidates.MaterializationRequest([]qsbridge.QuantaProjectionField{{
 		Index: index,
 		Field: fragment.Field,
@@ -613,11 +644,26 @@ func (e directBitmapFilterTreeLeafEvaluator) recordInnerProbes(fragment qsbridge
 	e.Recorder.RecordInnerProbes(fragment, source, probes)
 }
 
-func directBitmapFilterFragmentShouldEvaluateMaterialized(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
-	if directBitmapFilterFragmentFieldUsesStringEnum(request, fragment) {
-		return false
+func (e directBitmapFilterTreeLeafEvaluator) recordLeafMode(fragment qsbridge.QuantaQueryFragment, source string, inputRows int, reason string) {
+	if e.Recorder == nil {
+		return
 	}
-	return directBitmapFilterFragmentCanEvaluateMaterialized(fragment)
+	e.Recorder.RecordLeafMode(fragment, source, inputRows, reason)
+}
+
+func directBitmapFilterFragmentShouldEvaluateMaterialized(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
+	materialize, _ := directBitmapFilterFragmentMaterializationDecision(request, fragment)
+	return materialize
+}
+
+func directBitmapFilterFragmentMaterializationDecision(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) (bool, string) {
+	if directBitmapFilterFragmentFieldUsesStringEnum(request, fragment) {
+		return false, "string_enum_prefers_bitmap"
+	}
+	if !directBitmapFilterFragmentCanEvaluateMaterialized(fragment) {
+		return false, "unsupported_leaf"
+	}
+	return true, "materializable_leaf"
 }
 
 func directBitmapFilterFragmentFieldUsesStringEnum(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {

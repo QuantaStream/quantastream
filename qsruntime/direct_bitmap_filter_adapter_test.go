@@ -112,6 +112,36 @@ func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapFilterTreeRecorderRecordsLeafMode(t *testing.T) {
+	recorder := &directBitmapFilterTreeEvaluationRecorder{}
+	fragment := qsbridge.QuantaQueryFragment{
+		Index: "lineitem",
+		Role:  "l",
+		Field: "l_quantity",
+	}
+
+	recorder.RecordLeafMode(fragment, "constrained_materialization", 2622, "materializable_leaf")
+
+	probes := recorder.Probes()
+	if len(probes) != 1 {
+		t.Fatalf("probes = %d, want one mode probe", len(probes))
+	}
+	probe := probes[0]
+	if probe.Section != "filter_tree" || probe.Name != "leaf_evaluation_mode" || probe.Value != "constrained_materialization" {
+		t.Fatalf("probe = %#v, want leaf evaluation mode", probe)
+	}
+	for _, want := range []string{
+		"leaf=lineitem.l.l_quantity",
+		"source=constrained_materialization",
+		"input_rows=2622",
+		"reason=materializable_leaf",
+	} {
+		if !strings.Contains(probe.Detail, want) {
+			t.Fatalf("probe detail = %q, want %q", probe.Detail, want)
+		}
+	}
+}
+
 func assertFilterDomainExpansionProbe(t *testing.T, probes []ExecutionProbe, name, value, detailPart string) {
 	t.Helper()
 	for _, probe := range probes {
