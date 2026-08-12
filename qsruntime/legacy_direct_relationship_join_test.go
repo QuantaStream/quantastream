@@ -4148,6 +4148,56 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 	assertExecutionProbeName(t, result.Probes, "relationship_join", "q3_attribution_preagg_storage_elapsed")
 }
 
+func TestLegacyDirectRelationshipQ3OrderRevenueFinalMaterializationPrunesUnorderedLimit(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Result = qsbridge.ResultShape{Kind: qsbridge.ResultQuery, Limit: 2}
+	groups := []legacyDirectRelationshipQ3OrderRevenueGroup{
+		{orderRow: 1, lineRow: 101, revenue: 100},
+		{orderRow: 2, lineRow: 102, revenue: 200},
+		{orderRow: 3, lineRow: 103, revenue: 300},
+		{orderRow: 4, lineRow: 104, revenue: 400},
+	}
+
+	pruned, probe := legacyDirectRelationshipQ3OrderRevenueFinalMaterializationGroups(request, groups)
+
+	if !probe.applied || probe.mode != "unordered_limit" {
+		t.Fatalf("prune = %#v, want unordered limit applied", probe)
+	}
+	if len(pruned) != 2 || pruned[0].orderRow != 1 || pruned[1].orderRow != 2 {
+		t.Fatalf("pruned groups = %#v, want first two groups", pruned)
+	}
+}
+
+func TestLegacyDirectRelationshipQ3OrderRevenueFinalMaterializationKeepsRevenueCutoffTies(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("revenue", 0), Direction: qsbridge.SortDescending}}
+	request.Result = qsbridge.ResultShape{Kind: qsbridge.ResultQuery, Limit: 2}
+	groups := []legacyDirectRelationshipQ3OrderRevenueGroup{
+		{orderRow: 1, lineRow: 101, revenue: 100},
+		{orderRow: 2, lineRow: 102, revenue: 300},
+		{orderRow: 3, lineRow: 103, revenue: 300},
+		{orderRow: 4, lineRow: 104, revenue: 500},
+	}
+
+	pruned, probe := legacyDirectRelationshipQ3OrderRevenueFinalMaterializationGroups(request, groups)
+
+	if !probe.applied || probe.mode != "revenue_cutoff" {
+		t.Fatalf("prune = %#v, want revenue cutoff applied", probe)
+	}
+	if len(pruned) != 3 {
+		t.Fatalf("pruned groups = %#v, want top group plus cutoff tie", pruned)
+	}
+	got := map[qsbridge.QuantaRownum]bool{}
+	for _, group := range pruned {
+		got[group.orderRow] = true
+	}
+	for _, want := range []qsbridge.QuantaRownum{2, 3, 4} {
+		if !got[want] {
+			t.Fatalf("pruned groups = %#v, missing order row %d", pruned, want)
+		}
+	}
+}
+
 func TestLegacyDirectRelationshipSiblingRootMaterializedValuesHydratesTupleRoles(t *testing.T) {
 	tupleRows := RelationshipTupleRowSet{Rows: []RelationshipTupleRow{
 		{Rownums: map[qsbridge.TableInstanceID]qsbridge.QuantaRownum{"l": 12, "ps": 101}},
