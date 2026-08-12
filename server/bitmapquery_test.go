@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"math/big"
 	"reflect"
 	"testing"
@@ -99,6 +100,52 @@ func TestQueryPriorIntersectCandidatesSeedBSICompare(t *testing.T) {
 	found = seed.FoundSetFor(second)
 	if got, want := found.ToArray(), []uint64{2, 4}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("updated found set = %#v, want %#v", got, want)
+	}
+}
+
+func TestBitmapIndexQueryWithFoundSetConstrainsStandardValueFragments(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "lineitem", nil)
+	if err != nil {
+		t.Fatalf("load lineitem schema: %v", err)
+	}
+	index := &BitmapIndex{
+		Node: &Node{},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"lineitem": {
+				"l_shipmode": {
+					7: {
+						0: {Bits: roaring64.BitmapOf(1, 2, 3, 4)},
+					},
+					8: {
+						0: {Bits: roaring64.BitmapOf(3, 4, 5)},
+					},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{
+			"lineitem": table,
+		},
+	}
+	query := &pb.BitmapQuery{Query: []*pb.QueryFragment{{
+		Index:     "lineitem",
+		Field:     "l_shipmode",
+		Operation: pb.QueryFragment_UNION,
+		Values: [][]byte{
+			big.NewInt(7).Bytes(),
+			big.NewInt(8).Bytes(),
+		},
+	}}}
+
+	result, err := index.QueryWithFoundSet(context.Background(), query, "lineitem", []uint64{3, 5, 9})
+	if err != nil {
+		t.Fatalf("QueryWithFoundSet() error = %v", err)
+	}
+	union := roaring64.NewBitmap()
+	if err := union.UnmarshalBinary(result.GetUnions()); err != nil {
+		t.Fatalf("unmarshal union: %v", err)
+	}
+	if got, want := union.ToArray(), []uint64{3, 5}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("union rownums = %#v, want %#v", got, want)
 	}
 }
 

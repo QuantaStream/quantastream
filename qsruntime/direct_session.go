@@ -14,6 +14,12 @@ type DirectSessionHandle interface {
 	Release(ctx context.Context) qsbridge.DiagnosticSet
 }
 
+// DirectCandidateBitmapSessionHandle optionally evaluates a bitmap query against
+// an already-narrowed candidate set without expanding the full bitmap first.
+type DirectCandidateBitmapSessionHandle interface {
+	QueryBitmapWithCandidateSet(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error)
+}
+
 // DirectCountOnlyBitmapSessionHandle optionally serves bitmap cardinality
 // without expanding the result bitmap into rownums.
 type DirectCountOnlyBitmapSessionHandle interface {
@@ -42,10 +48,11 @@ func (f DirectSessionProviderFunc) BorrowDirectSession(ctx context.Context, requ
 
 // DirectSessionHandleFunc adapts functions to DirectSessionHandle for tests and simple adapters.
 type DirectSessionHandleFunc struct {
-	QueryFunc    func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error)
-	MutationFunc func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
-	InsertFunc   func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
-	ReleaseFunc  func(ctx context.Context) qsbridge.DiagnosticSet
+	QueryFunc          func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error)
+	CandidateQueryFunc func(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error)
+	MutationFunc       func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
+	InsertFunc         func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
+	ReleaseFunc        func(ctx context.Context) qsbridge.DiagnosticSet
 }
 
 // QueryBitmap calls h.QueryFunc when present.
@@ -60,6 +67,14 @@ func (h DirectSessionHandleFunc) QueryBitmap(ctx context.Context, request Execut
 		}, nil
 	}
 	return h.QueryFunc(ctx, request)
+}
+
+// QueryBitmapWithCandidateSet calls h.CandidateQueryFunc when present.
+func (h DirectSessionHandleFunc) QueryBitmapWithCandidateSet(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error) {
+	if h.CandidateQueryFunc == nil {
+		return BitmapQueryResult{}, nil, false, nil
+	}
+	return h.CandidateQueryFunc(ctx, request, candidates)
 }
 
 // ExecuteMutation calls h.MutationFunc when present and falls back to INSERT compatibility.

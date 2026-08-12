@@ -56,6 +56,12 @@ type LocalBitmapIndexService interface {
 	Commit(context.Context, *empty.Empty) (*empty.Empty, error)
 }
 
+// LocalBitmapIndexFoundSetQueryService is an optional local-only extension for
+// evaluating bitmap queries within an already-known set of row numbers.
+type LocalBitmapIndexFoundSetQueryService interface {
+	QueryWithFoundSet(context.Context, *pb.BitmapQuery, string, []uint64) (*pb.QueryResult, error)
+}
+
 // LocalBitmapIndexBatchService is the in-process equivalent of the current
 // BitmapIndex streaming write path. It remains optional so read-only local
 // adapters can still satisfy LocalBitmapIndexService.

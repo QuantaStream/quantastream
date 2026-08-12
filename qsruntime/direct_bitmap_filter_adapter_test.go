@@ -402,6 +402,84 @@ func TestDirectBitmapFilterDictionaryBitmapCandidateMaterializationLimit(t *test
 	}
 }
 
+func TestDirectBitmapFilterTreeLeafEvaluatorUsesCandidateBitmapQueryForLargeDictionaryCandidateSet(t *testing.T) {
+	ref := qsbridge.DictionaryRef{Schema: "quanta", Table: "lineitem", Field: "l_shipmode"}
+	catalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Schema: "quanta",
+		Name:   "lineitem",
+		Fields: []qsbridge.FieldDefinition{{
+			Name:       "l_shipmode",
+			Type:       qsbridge.DataTypeString,
+			Index:      qsbridge.IndexStringEnum,
+			Dictionary: qsbridge.DictionaryDefinition{Ref: ref},
+		}},
+	}}, nil, nil)
+	resolver := qsbridge.MemoryDictionaryResolver{
+		Dictionaries: []qsbridge.DictionaryDefinition{{Ref: ref}},
+		Entries:      []qsbridge.DictionaryEntry{{Ref: ref, Label: "AIR", ID: 7}},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.QueryCatalog = catalog
+	candidates := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: make([]qsbridge.QuantaRownum, 1025)}
+	for i := range candidates.Rownums {
+		candidates.Rownums[i] = qsbridge.QuantaRownum(i + 1)
+	}
+	var fallbackCalled bool
+	var capturedCandidates qsbridge.QuantaCandidateSet
+	var capturedFragment qsbridge.QuantaQueryFragment
+	recorder := &directBitmapFilterTreeEvaluationRecorder{}
+	evaluator := directBitmapFilterTreeLeafEvaluator{
+		Request:            request,
+		DictionaryResolver: resolver,
+		Recorder:           recorder,
+		Sessions: DirectSessionProviderFunc(func(context.Context, ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(context.Context, ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					fallbackCalled = true
+					return BitmapQueryResult{}, nil, nil
+				},
+				CandidateQueryFunc: func(_ context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error) {
+					capturedCandidates = candidates
+					capturedFragment = request.Query.Fragments[0]
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{12, 14}}, nil, true, nil
+				},
+			}, nil, nil
+		}),
+		Materialization: qsruntimeMaterializationKernelFunc(func(context.Context, qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			t.Fatalf("large dictionary bitmap candidate set should not materialize")
+			return qsbridge.ProjectionMaterializationKernelResult{}, nil
+		}),
+	}
+	fragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l.l_shipmode",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+	}
+
+	filtered, diagnostics, err := evaluator.EvaluateFilterLeafWithinCandidateSet(context.Background(), fragment, candidates)
+
+	if err != nil {
+		t.Fatalf("evaluate leaf: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if fallbackCalled {
+		t.Fatalf("candidate-aware bitmap query should handle large dictionary candidate set")
+	}
+	if capturedCandidates.CandidateCount() != candidates.CandidateCount() {
+		t.Fatalf("captured candidates = %d, want %d", capturedCandidates.CandidateCount(), candidates.CandidateCount())
+	}
+	if capturedFragment.Field != "l_shipmode" || len(capturedFragment.Values) != 1 || capturedFragment.Values[0].Cmp(big.NewInt(7)) != 0 {
+		t.Fatalf("captured fragment = %#v, want physical dictionary bitmap fragment", capturedFragment)
+	}
+	if len(filtered.Rownums) != 2 || filtered.Rownums[0] != 12 || filtered.Rownums[1] != 14 {
+		t.Fatalf("filtered rownums = %#v, want [12 14]", filtered.Rownums)
+	}
+	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "leaf_evaluation_mode", "bitmap_query", "reason=string_enum_dictionary_bitmap")
+}
+
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	fragment := qsbridge.QuantaQueryFragment{

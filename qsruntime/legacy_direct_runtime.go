@@ -350,6 +350,33 @@ func (h LegacyQuantaSessionHandle) QueryBitmap(ctx context.Context, request Exec
 	return h.Result.ToBitmapQueryResult(response), nil, err
 }
 
+// QueryBitmapWithCandidateSet evaluates a bitmap query against a precomputed
+// row set when the local bitmap boundary can honor found-set pushdown.
+func (h LegacyQuantaSessionHandle) QueryBitmapWithCandidateSet(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"legacy quanta session has no bitmap index",
+			),
+		}, true, nil
+	}
+	request = h.withShardWindow(request)
+	if diagnostics := h.Query.ValidateExecutionRequest(request); diagnostics.BlocksNative() {
+		return BitmapQueryResult{}, diagnostics, true, nil
+	}
+	rows := make([]uint64, len(candidates.Rownums))
+	for i, rownum := range candidates.Rownums {
+		rows[i] = uint64(rownum)
+	}
+	response, handled, err := h.Session.BitIndex.QueryWithFoundSet(ctx, h.Query.ToBitmapQueryFromRequest(request), candidates.Index, rows)
+	if !handled {
+		return BitmapQueryResult{}, nil, false, nil
+	}
+	return h.Result.ToBitmapQueryResult(response), nil, true, err
+}
+
 // QueryBitmapCountOnly executes a bitmap query when the caller has already
 // proven only cardinality is required.
 func (h LegacyQuantaSessionHandle) QueryBitmapCountOnly(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {

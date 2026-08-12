@@ -71,6 +71,17 @@ func (a LocalBitmapIndexAdapter) Query(ctx context.Context, req *pb.BitmapQuery)
 	return result, err
 }
 
+// QueryWithFoundSet forwards a bitmap query with an in-process prior found set.
+func (a LocalBitmapIndexAdapter) QueryWithFoundSet(ctx context.Context, req *pb.BitmapQuery, index string, rownums []uint64) (*pb.QueryResult, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.QueryWithFoundSet(ctx, req, index, rownums)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "QueryWithFoundSet", start, err)
+	return result, err
+}
+
 // SyncStatus forwards a sync-status request without a gRPC client hop.
 func (a LocalBitmapIndexAdapter) SyncStatus(ctx context.Context, req *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error) {
 	if a.Index == nil {

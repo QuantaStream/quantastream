@@ -613,6 +613,10 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeaf(ctx context.Cont
 }
 
 func (e directBitmapFilterTreeLeafEvaluator) evaluateFilterLeafBitmap(ctx context.Context, fragment qsbridge.QuantaQueryFragment, inputRows int, reason string) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	return e.evaluateFilterLeafBitmapWithCandidateSet(ctx, fragment, nil, inputRows, reason)
+}
+
+func (e directBitmapFilterTreeLeafEvaluator) evaluateFilterLeafBitmapWithCandidateSet(ctx context.Context, fragment qsbridge.QuantaQueryFragment, candidates *qsbridge.QuantaCandidateSet, inputRows int, reason string) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
 	e.recordLeafMode(fragment, "bitmap_query", inputRows, reason)
 	leafRequest := e.Request
 	leafRequest.Query = cloneIntermediateQuery(e.Request.Query)
@@ -629,7 +633,18 @@ func (e directBitmapFilterTreeLeafEvaluator) evaluateFilterLeafBitmap(ctx contex
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "direct bitmap filter adapter received nil session"),
 		}, nil
 	}
-	result, queryDiagnostics, queryErr := session.QueryBitmap(ctx, leafRequest)
+	var result BitmapQueryResult
+	var queryDiagnostics qsbridge.DiagnosticSet
+	var queryErr error
+	handled := false
+	if candidates != nil {
+		if candidateSession, ok := session.(DirectCandidateBitmapSessionHandle); ok {
+			result, queryDiagnostics, handled, queryErr = candidateSession.QueryBitmapWithCandidateSet(ctx, leafRequest, *candidates)
+		}
+	}
+	if !handled && queryErr == nil && !queryDiagnostics.BlocksNative() {
+		result, queryDiagnostics, queryErr = session.QueryBitmap(ctx, leafRequest)
+	}
 	releaseDiagnostics := session.Release(ctx)
 	e.recordInnerProbes(fragment, "bitmap_query", result.Probes)
 	diagnostics = append(diagnostics, queryDiagnostics...)
@@ -670,7 +685,11 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 			if decision.HasBitmapFragment {
 				bitmapFragment = decision.BitmapFragment
 			}
-			return e.evaluateFilterLeafBitmap(ctx, bitmapFragment, len(candidates.Rownums), decision.Reason)
+			leafCandidates := candidates
+			if leafCandidates.Index == "" {
+				leafCandidates.Index = index
+			}
+			return e.evaluateFilterLeafBitmapWithCandidateSet(ctx, bitmapFragment, &leafCandidates, len(candidates.Rownums), decision.Reason)
 		}
 	}
 	if decision.Materialize {

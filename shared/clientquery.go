@@ -27,27 +27,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, [
 		return nil, 0, nil, fmt.Errorf("query must have at least 1 predicate")
 	}
 
-	// Query should have at least 1 union predicate.  If not, make the first intersect a union.
-	// An exception to the rule is null checks
-	foundUnion := false
-	for _, v := range query.Query {
-		if v.Operation == pb.QueryFragment_UNION {
-			foundUnion = true
-			break
-		}
-		if v.NullCheck {
-			foundUnion = true
-			break
-		}
-	}
-	if !foundUnion {
-		for i, v := range query.Query {
-			if v.Operation == pb.QueryFragment_INTERSECT {
-				query.Query[i].Operation = pb.QueryFragment_UNION
-				break
-			}
-		}
-	}
+	ensureBitmapQueryHasUnion(query)
 
 	resultChan := make(chan *IntermediateResult, 100)
 	resultsMap := make(map[string]*IntermediateResult)
@@ -507,6 +487,65 @@ func (c *BitmapIndex) Query(query *BitmapQuery) (*BitmapQueryResponse, error) {
 	}
 
 	return response, err
+}
+
+// QueryWithFoundSet evaluates query against a local node service with a prior
+// row-number set when that in-process service supports found-set pushdown.
+func (c *BitmapIndex) QueryWithFoundSet(ctx context.Context, query *BitmapQuery, index string, rownums []uint64) (*BitmapQueryResponse, bool, error) {
+	if c == nil || c.local == nil {
+		return nil, false, nil
+	}
+	local, ok := c.local.(LocalBitmapIndexFoundSetQueryService)
+	if !ok {
+		return nil, false, nil
+	}
+	protoQuery := query.ToProto()
+	ensureBitmapQueryHasUnion(protoQuery)
+	result, err := local.QueryWithFoundSet(ctx, protoQuery, index, append([]uint64(nil), rownums...))
+	response := &BitmapQueryResponse{}
+	if err != nil {
+		response.ErrorMessage = fmt.Sprintf("%v", err)
+		return response, true, err
+	}
+	response.Probes = queryResultProbes(result)
+	intermediate := NewIntermediateResult(index)
+	if err := intermediate.UnmarshalAndAdd(result); err != nil {
+		response.ErrorMessage = fmt.Sprintf("%v", err)
+		return response, true, err
+	}
+	intermediate.Collapse()
+	response.Results = intermediateResultFinalBitmap(intermediate)
+	response.Count = response.Results.GetCardinality()
+	response.Success = true
+	return response, true, nil
+}
+
+func ensureBitmapQueryHasUnion(query *pb.BitmapQuery) {
+	if query == nil {
+		return
+	}
+	// Query should have at least 1 union predicate. If not, make the first
+	// intersect a union. An exception to the rule is null checks.
+	foundUnion := false
+	for _, v := range query.Query {
+		if v.Operation == pb.QueryFragment_UNION {
+			foundUnion = true
+			break
+		}
+		if v.NullCheck {
+			foundUnion = true
+			break
+		}
+	}
+	if foundUnion {
+		return
+	}
+	for i, v := range query.Query {
+		if v.Operation == pb.QueryFragment_INTERSECT {
+			query.Query[i].Operation = pb.QueryFragment_UNION
+			return
+		}
+	}
 }
 
 // ResultsQuery - Entrypoint for queries where result is returned as a list of column IDs
