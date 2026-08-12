@@ -150,7 +150,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
 		Sessions:              sessions,
 		Adapter:               qsruntime.BitmapQueryResultAdapter{},
-		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader, Materialization: materialization}},
+		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
 		Materialization:       materialization,
 		ProjectionBSIReader:   bsiReader,
 		SameRowComparison:     sameRowComparison,
