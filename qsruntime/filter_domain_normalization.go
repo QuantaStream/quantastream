@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -39,6 +40,10 @@ func (e DirectBitmapFilterDomainNormalizationExecutor) NormalizeFilterDomains(ct
 		directBitmapFilterTreeLeafEvaluator{Sessions: e.Sessions, Request: request},
 		relationshipVectorReaderWithRequestProjectionCache(e.Reader),
 	)
+	if kernel, ok := normalizer.(KernelFilterDomainNormalizationExecutor); ok {
+		kernel.ParallelBranches = true
+		normalizer = kernel
+	}
 	return normalizer.NormalizeFilterDomains(ctx, request, plan)
 }
 
@@ -244,7 +249,8 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterExpres
 
 // KernelFilterDomainNormalizationExecutor expands a plan into leaf-level kernel calls.
 type KernelFilterDomainNormalizationExecutor struct {
-	Kernel FilterDomainNormalizationKernel
+	Kernel           FilterDomainNormalizationKernel
+	ParallelBranches bool
 }
 
 // NormalizeFilterDomains collects source-domain leaves and delegates each leaf to the kernel.
@@ -258,12 +264,12 @@ func (e KernelFilterDomainNormalizationExecutor) NormalizeFilterDomains(ctx cont
 	for _, normalization := range plan.Requests {
 		branches := filterDomainBranchesForSource(request.Query.Filter, normalization.SourceDomain)
 		if expressionKernel, ok := kernel.(filterDomainExpressionNormalizationKernel); ok {
-			for _, branch := range branches {
-				normalized, branchDiagnostics, err := expressionKernel.NormalizeFilterExpression(ctx, request, normalization, branch)
-				diagnostics = append(diagnostics, branchDiagnostics...)
-				if err != nil || branchDiagnostics.BlocksNative() {
-					return result, diagnostics, err
-				}
+			normalizedBranches, branchDiagnostics, err := e.normalizeBranches(ctx, request, normalization, branches, expressionKernel)
+			diagnostics = append(diagnostics, branchDiagnostics...)
+			if err != nil || branchDiagnostics.BlocksNative() {
+				return result, diagnostics, err
+			}
+			for _, normalized := range normalizedBranches {
 				if normalized.TargetDomain == "" {
 					normalized.TargetDomain = normalization.TargetDomain
 				}
@@ -293,6 +299,63 @@ func (e KernelFilterDomainNormalizationExecutor) NormalizeFilterDomains(ctx cont
 		}
 	}
 	return result, diagnostics, nil
+}
+
+func (e KernelFilterDomainNormalizationExecutor) normalizeBranches(
+	ctx context.Context,
+	request ExecutionRequest,
+	normalization FilterDomainNormalizationRequest,
+	branches []qsbridge.QuantaFilterExpression,
+	kernel filterDomainExpressionNormalizationKernel,
+) ([]qsbridge.FilterDomainNormalizedBranch, qsbridge.DiagnosticSet, error) {
+	if len(branches) == 0 {
+		return nil, nil, nil
+	}
+	if !e.ParallelBranches || len(branches) == 1 {
+		normalized := make([]qsbridge.FilterDomainNormalizedBranch, 0, len(branches))
+		var diagnostics qsbridge.DiagnosticSet
+		for _, branch := range branches {
+			current, branchDiagnostics, err := kernel.NormalizeFilterExpression(ctx, request, normalization, branch)
+			diagnostics = append(diagnostics, branchDiagnostics...)
+			if err != nil || branchDiagnostics.BlocksNative() {
+				return normalized, diagnostics, err
+			}
+			normalized = append(normalized, current)
+		}
+		return normalized, diagnostics, nil
+	}
+
+	type branchResult struct {
+		normalized  qsbridge.FilterDomainNormalizedBranch
+		diagnostics qsbridge.DiagnosticSet
+		err         error
+	}
+	results := make([]branchResult, len(branches))
+	var wg sync.WaitGroup
+	wg.Add(len(branches))
+	for i, branch := range branches {
+		i, branch := i, branch
+		go func() {
+			defer wg.Done()
+			if err := ctx.Err(); err != nil {
+				results[i].err = err
+				return
+			}
+			results[i].normalized, results[i].diagnostics, results[i].err = kernel.NormalizeFilterExpression(ctx, request, normalization, branch)
+		}()
+	}
+	wg.Wait()
+
+	normalized := make([]qsbridge.FilterDomainNormalizedBranch, 0, len(branches))
+	var diagnostics qsbridge.DiagnosticSet
+	for _, result := range results {
+		diagnostics = append(diagnostics, result.diagnostics...)
+		if result.err != nil || result.diagnostics.BlocksNative() {
+			return normalized, diagnostics, result.err
+		}
+		normalized = append(normalized, result.normalized)
+	}
+	return normalized, diagnostics, nil
 }
 
 // UnsupportedFilterDomainNormalizationKernel preserves the explicit normalization boundary.
