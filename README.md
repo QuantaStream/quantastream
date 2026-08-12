@@ -161,6 +161,7 @@ Useful starting points:
 - [Supported SQL](docs/SUPPORTED_SQL.md)
 - [Unsupported SQL](docs/UNSUPPORTED_SQL.md)
 - [TPC-H Roadmap](docs/TPCH.md)
+- [TPC-H Benchmark Notes](docs/TPCH_BENCHMARK_NOTES.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [MySQL Compatibility](docs/MYSQL-COMPATIBILITY.md)
 - [Glossary](docs/GLOSSARY.md)

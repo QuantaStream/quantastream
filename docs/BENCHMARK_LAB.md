@@ -215,6 +215,14 @@ Future benchmark tooling can add richer report formats and deployment metadata
 collection. Those additions should preserve the boundary between correctness and
 performance.
 
+## Checkpoint Notes
+
+Detailed dated benchmark checkpoints live in
+[`TPCH_BENCHMARK_NOTES.md`](TPCH_BENCHMARK_NOTES.md). These notes capture
+engineering evidence, interpretation, and follow-up work for specific reference
+runs. Keep durable methodology here in the Benchmark Lab document, and keep
+run-specific conclusions in the checkpoint notes.
+
 ## Native Ingest Micro-Benchmarks
 
 The standard-native loader path has a focused Go benchmark that mounts an
