@@ -78,6 +78,9 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		Source:     quantaSource,
 		TableCache: tableCache,
 	}
+	relationshipAggregateReader := LegacyDirectSharedRelationshipVectorAggregateReader{
+		Source: bsiReader,
+	}
 	dictionaryIDReader := LegacyDirectProjectionDictionaryIDReader{
 		Source:     quantaSource,
 		TableCache: tableCache,
@@ -135,14 +138,15 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		SameRowComparison:   sameRowComparison,
 		RelationshipReader:  relationshipReader,
 		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
-			Source:                    quantaSource,
-			Sessions:                  sessions,
-			TableCache:                tableCache,
-			Materialization:           materialization,
-			ProjectionBSIReader:       bsiReader,
-			SameRowComparison:         sameRowComparison,
-			ReverseArtifacts:          reverseArtifacts,
-			ApplyRecommendedEdgeOrder: DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
+			Source:                      quantaSource,
+			Sessions:                    sessions,
+			TableCache:                  tableCache,
+			Materialization:             materialization,
+			ProjectionBSIReader:         bsiReader,
+			SameRowComparison:           sameRowComparison,
+			ReverseArtifacts:            reverseArtifacts,
+			RelationshipAggregateReader: relationshipAggregateReader,
+			ApplyRecommendedEdgeOrder:   DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},
 	}
 	return physicalTier.Runtime(), nil

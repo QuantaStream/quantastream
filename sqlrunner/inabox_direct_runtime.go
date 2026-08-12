@@ -30,7 +30,7 @@ func buildInaboxDirectHarness(suite *roadmap.Suite, cfg runnerConfig) (runnerHar
 		return runnerHarness{}, err
 	}
 	tables := inaboxDirectSuiteTables(suite)
-	config := qsruntime.NewDirectRuntimeConfig("", cfg.Consul, servicePort, 1)
+	config := qsruntime.NewDirectRuntimeConfig("", cfg.Consul, servicePort, 0)
 	if err := inaboxDirectEnsureConfigBackedTables(context.Background(), tables, config, inaboxDirectDefaultSchema(cfg.Database)); err != nil {
 		return runnerHarness{}, err
 	}

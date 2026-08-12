@@ -164,14 +164,19 @@ Cluster-mode tests need to cover:
 - Server-side found-set application for BSI and standard bitmap queries.
 - Single-value `RowID` dictionary bitmap found sets.
 - Same-row BSI comparison with found sets.
+- Q3 relationship aggregate parity through the shared projection path.
 - Relationship reverse artifacts and graph candidate expansion.
 - Bitmap grouped count and bitmap grouped aggregate kernels.
 - Candidate-aware direct session dispatch across remote node boundaries.
 - Probe parity so distributed runs can be debugged without in-process access.
 
-The server-side set operations used by found-set pushdown are associative enough
-to distribute, but ownership, shard boundaries, marshaling cost, and partial
-result reduction still need explicit coverage.
+The first cluster-parity slice wires the Q3 relationship aggregate hook in the
+shared runtime using cluster projection plus query-process reduction. That is
+correct for local-cluster and distributed execution and avoids pretending the
+in-process standard bitmap index exists in cluster mode. It is still not the
+final node-local pushdown story: grouped bitmap aggregates, reverse-artifact
+summaries, and relationship aggregate pushdown/reduction need explicit RPC and
+probe coverage before they can match the standard-mode physical tier.
 
 ### Benchmark Reproducibility
 
