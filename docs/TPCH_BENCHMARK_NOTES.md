@@ -97,6 +97,13 @@ described as execution-model advantages, not as isolated TPC-H hacks.
    faster than the MySQL baseline at SF1, but still consumes about 4.5 seconds.
    Local SF0.05 is adequate for finding shape-level wins; AWS SF1 should be
    used to validate material changes.
+   The latest local probe pass showed the remaining Q3 aggregate cost is mostly
+   broad time-shard fan-out while reading `lineitem.l_extendedprice`: an SF0.05
+   readonly Q3 run touched 2518 `YMD` BSI shards and retained 2487 of them for
+   only 14908 lineitem rows. A sparse-shard value-read shortcut reduced internal
+   value-read time but did not improve wall-clock median, so this should be
+   treated as future storage/optimizer work rather than a near-term hot-loop
+   tweak.
 2. Q21 is now a strong win versus MySQL but remains a multi-second query. Future
    work should focus on general sibling membership, repeated-alias planning, and
    candidate reuse rather than one TPC-H query.
@@ -121,10 +128,32 @@ evidence:
 - Relationship edge ordering and graph pruning.
 - Correlated sibling membership strategy selection.
 - Same-row BSI compare versus projection/materialization fallback.
+- Partitioned BSI projection strategy when candidate rows are spread across many
+  time shards.
 
 The goal is a small optimizer vocabulary that can explain choices using
 candidate cardinality, expected bitmap cost, materialization field count, graph
 shape, and available local or cluster capabilities.
+
+### Partitioned BSI Projection Fan-Out
+
+Q3 exposed a useful storage-layout ceiling. Because `lineitem` is partitioned by
+`l_shipdate`, projected measure fields such as `l_extendedprice` inherit the
+same `YMD` shard layout. When a graph aggregate has a broad child-row candidate
+set and no predicate on the table's shard key, the storage aggregate must discover
+row locations by probing many shard existence bitmaps before reading values.
+
+Possible future directions:
+
+- row-to-shard routing metadata for partitioned tables,
+- shard-grouped projection requests after graph reduction,
+- optimizer estimates for shard fan-out versus late materialization, and
+- schema guidance when a table's query shapes do not benefit from fine-grained
+  time partitioning.
+
+This is not currently worth adding as query-specific Q3 complexity. The existing
+runtime probes are sufficient to identify the issue, and the feature belongs in a
+general partitioned-projection strategy.
 
 ### Cluster Mode Parity
 
