@@ -671,18 +671,33 @@ func directBitmapFilterFragmentFieldUsesStringEnum(request ExecutionRequest, fra
 	if index == "" {
 		index, _ = request.RootIndex()
 	}
-	field := fragment.Field
-	if _, ok := nativeProjectionDictionaryRefFromCatalog(request.QueryCatalog, index, qsbridge.QuantaProjectionField{
-		Index: index,
-		Field: field,
-		Type:  qsbridge.DataTypeString,
-	}); ok {
-		return true
-	}
-	if definition, ok := projectionMaterializationFieldDefinition(request.QueryCatalog, index, field); ok {
-		return definition.Index == qsbridge.IndexStringEnum || definition.Encoding.Kind == qsbridge.EncodingStringEnum
+	for _, field := range directBitmapFilterFragmentFieldLookupNames(fragment.Field) {
+		if _, ok := nativeProjectionDictionaryRefFromCatalog(request.QueryCatalog, index, qsbridge.QuantaProjectionField{
+			Index: index,
+			Field: field,
+			Type:  qsbridge.DataTypeString,
+		}); ok {
+			return true
+		}
+		if definition, ok := projectionMaterializationFieldDefinition(request.QueryCatalog, index, field); ok {
+			return definition.Index == qsbridge.IndexStringEnum || definition.Encoding.Kind == qsbridge.EncodingStringEnum
+		}
 	}
 	return false
+}
+
+func directBitmapFilterFragmentFieldLookupNames(field string) []string {
+	if field == "" {
+		return nil
+	}
+	names := []string{field}
+	if dot := strings.LastIndex(field, "."); dot >= 0 && dot+1 < len(field) {
+		unqualified := field[dot+1:]
+		if !strings.EqualFold(unqualified, field) {
+			names = append(names, unqualified)
+		}
+	}
+	return names
 }
 
 func directBitmapFilterFragmentCanEvaluateMaterialized(fragment qsbridge.QuantaQueryFragment) bool {

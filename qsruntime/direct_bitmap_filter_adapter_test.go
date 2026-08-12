@@ -83,6 +83,16 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 		t.Fatalf("dictionary-backed StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
 	}
 
+	qualifiedDictionaryFragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l.l_shipmode",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+	}
+	if directBitmapFilterFragmentShouldEvaluateMaterialized(request, qualifiedDictionaryFragment) {
+		t.Fatalf("qualified dictionary-backed StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
+	}
+
 	bsiFragment := qsbridge.QuantaQueryFragment{
 		Index:      "lineitem",
 		Field:      "l_quantity",
