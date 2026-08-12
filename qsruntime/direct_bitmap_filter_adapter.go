@@ -25,11 +25,12 @@ func (f DirectBitmapFilterAdapterFunc) AdaptFilterExpression(ctx context.Context
 
 // DirectBitmapFilterTreeAdapter evaluates grouped filter trees into candidate rownums.
 type DirectBitmapFilterTreeAdapter struct {
-	Sessions        DirectSessionProvider
-	Materializer    ProjectionMaterializer
-	Materialization ProjectionMaterializationKernel
-	Normalizer      FilterDomainNormalizationExecutor
-	QueryCatalog    qsbridge.QueryCatalogView
+	Sessions             DirectSessionProvider
+	Materializer         ProjectionMaterializer
+	Materialization      ProjectionMaterializationKernel
+	Normalizer           FilterDomainNormalizationExecutor
+	QueryCatalog         qsbridge.QueryCatalogView
+	QueryCatalogProvider func() qsbridge.QueryCatalogView
 }
 
 // AdaptFilterExpression evaluates grouped filters and stores the resulting candidate set on the request.
@@ -124,8 +125,15 @@ func (a DirectBitmapFilterTreeAdapter) filterDomainNormalizer() FilterDomainNorm
 }
 
 func (a DirectBitmapFilterTreeAdapter) requestWithFallbackQueryCatalog(request ExecutionRequest) ExecutionRequest {
-	if len(request.QueryCatalog.Tables) == 0 && len(a.QueryCatalog.Tables) > 0 {
-		request.QueryCatalog = a.QueryCatalog
+	if len(request.QueryCatalog.Tables) != 0 {
+		return request
+	}
+	queryCatalog := a.QueryCatalog
+	if len(queryCatalog.Tables) == 0 && a.QueryCatalogProvider != nil {
+		queryCatalog = a.QueryCatalogProvider()
+	}
+	if len(queryCatalog.Tables) > 0 {
+		request.QueryCatalog = queryCatalog
 	}
 	return request
 }

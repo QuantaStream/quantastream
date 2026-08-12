@@ -159,7 +159,9 @@ func TestDirectBitmapFilterTreeAdapterFallbackQueryCatalogFeedsStringEnumDecisio
 			{Name: "p_container", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum},
 		},
 	}}, nil, nil)
-	adapter := DirectBitmapFilterTreeAdapter{QueryCatalog: queryCatalog}
+	adapter := DirectBitmapFilterTreeAdapter{QueryCatalogProvider: func() qsbridge.QueryCatalogView {
+		return queryCatalog
+	}}
 	request := adapter.requestWithFallbackQueryCatalog(NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
 	fragment := qsbridge.QuantaQueryFragment{
 		Index:      "part",

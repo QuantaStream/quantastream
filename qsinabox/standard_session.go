@@ -99,15 +99,10 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		TableCache: tableCache,
 		Schema:     config.WithDefaults().Database,
 	}
-	queryCatalog, queryCatalogDiagnostics := qsruntime.LegacyCatalogViewAdapter{
-		Catalog: qsruntime.LegacyTableCacheCatalog{
-			TableCache: tableCache,
-			Functions:  qsbridge.BuiltinSQLFunctionDefinitions(),
-		},
-	}.QueryCatalogViewForCachedTables(config.WithDefaults().Database)
-	if queryCatalogDiagnostics.BlocksNative() {
-		queryCatalog = qsbridge.QueryCatalogView{}
+	queryCatalogProvider := func() qsbridge.QueryCatalogView {
+		return standardQueryCatalogViewForCachedTables(config, tableCache)
 	}
+	queryCatalog := queryCatalogProvider()
 	materialization := qsruntime.FallbackProjectionMaterializationKernel{
 		Preferred: qsruntime.NativeProjectionMaterializationKernel{
 			Reader: qsruntime.NativeProjectionBSIFieldReader{
@@ -159,7 +154,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
 		Sessions:              sessions,
 		Adapter:               qsruntime.BitmapQueryResultAdapter{},
-		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}, QueryCatalog: queryCatalog},
+		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}, QueryCatalog: queryCatalog, QueryCatalogProvider: queryCatalogProvider},
 		Materialization:       materialization,
 		ProjectionBSIReader:   bsiReader,
 		SameRowComparison:     sameRowComparison,
@@ -351,4 +346,17 @@ func (h StandardDirectSessionHandle) legacyHandle() qsruntime.LegacyQuantaSessio
 		Result:    h.Result,
 		Synthetic: h.Synthetic,
 	}
+}
+
+func standardQueryCatalogViewForCachedTables(config StandardConfig, tableCache *core.TableCacheStruct) qsbridge.QueryCatalogView {
+	queryCatalog, diagnostics := qsruntime.LegacyCatalogViewAdapter{
+		Catalog: qsruntime.LegacyTableCacheCatalog{
+			TableCache: tableCache,
+			Functions:  qsbridge.BuiltinSQLFunctionDefinitions(),
+		},
+	}.QueryCatalogViewForCachedTables(config.WithDefaults().Database)
+	if diagnostics.BlocksNative() {
+		return qsbridge.QueryCatalogView{}
+	}
+	return queryCatalog
 }
