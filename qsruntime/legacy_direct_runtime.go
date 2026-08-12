@@ -86,6 +86,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		TableCache: tableCache,
 		Projection: bsiReader,
 	}
+	bitmapGroupCountReader := LegacyDirectBitmapGroupCountReader{
+		Sessions:   sessions,
+		TableCache: tableCache,
+	}
 	dictionaryIDReader := LegacyDirectProjectionDictionaryIDReader{
 		Source:     quantaSource,
 		TableCache: tableCache,
@@ -140,6 +144,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		FilterAdapter:         LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization, reverseArtifacts, resolver),
 		Materialization:       materialization,
 		ProjectionBSIReader:   bsiReader,
+		BitmapGroupCounts:     bitmapGroupCountReader,
 		BitmapGroupAggregates: bitmapGroupAggregateReader,
 		SameRowComparison:     sameRowComparison,
 		RelationshipReader:    relationshipReader,

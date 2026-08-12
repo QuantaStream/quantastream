@@ -59,7 +59,7 @@ func (r LegacyDirectBitmapGroupAggregateReader) ReadBitmapGroupAggregates(ctx co
 	if table == nil {
 		return BitmapGroupAggregateReadResult{}, nil, false, nil
 	}
-	groups, groupFields, valueCount, ok := legacyDirectBitmapGroupAggregateEnums(table, read)
+	groups, groupFields, valueCount, ok := legacyDirectBitmapGroupEnums(table, read.GroupFields)
 	if !ok {
 		return BitmapGroupAggregateReadResult{}, nil, false, nil
 	}
@@ -194,15 +194,7 @@ func (r LegacyDirectBitmapGroupAggregateReader) groupResults(ctx context.Context
 }
 
 func (r LegacyDirectBitmapGroupAggregateReader) queryGroupRows(ctx context.Context, read BitmapGroupAggregateReadRequest, groups []legacyDirectBitmapGroupAggregateEnum, combination []legacyDirectBitmapGroupAggregateEnumValue) (*roaring64.Bitmap, qsbridge.DiagnosticSet, error) {
-	fragments := make([]qsbridge.QuantaQueryFragment, 0, len(groups))
-	for i, group := range groups {
-		fragments = append(fragments, qsbridge.QuantaQueryFragment{
-			Index:     read.Index,
-			Field:     group.Name,
-			Operation: qsbridge.QuantaOperationIntersect,
-			Values:    []*big.Int{new(big.Int).SetUint64(combination[i].ID)},
-		})
-	}
+	fragments := legacyDirectBitmapGroupFragments(read.Index, groups, combination)
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: fragments})
 	session, diagnostics, err := r.Sessions.BorrowDirectSession(ctx, request)
 	if err != nil || diagnostics.BlocksNative() {
@@ -236,11 +228,11 @@ func (r LegacyDirectBitmapGroupAggregateReader) queryGroupRows(ctx context.Conte
 	return rows, diagnostics, nil
 }
 
-func legacyDirectBitmapGroupAggregateEnums(table *core.Table, read BitmapGroupAggregateReadRequest) ([]legacyDirectBitmapGroupAggregateEnum, []string, int, bool) {
-	groups := make([]legacyDirectBitmapGroupAggregateEnum, 0, len(read.GroupFields))
-	fieldNames := make([]string, 0, len(read.GroupFields))
+func legacyDirectBitmapGroupEnums(table *core.Table, fields []qsbridge.FieldRef) ([]legacyDirectBitmapGroupAggregateEnum, []string, int, bool) {
+	groups := make([]legacyDirectBitmapGroupAggregateEnum, 0, len(fields))
+	fieldNames := make([]string, 0, len(fields))
 	valueCount := 1
-	for _, field := range read.GroupFields {
+	for _, field := range fields {
 		name := legacyDirectBitmapGroupAggregateFieldName(field)
 		if name == "" || field.Index != qsbridge.IndexStringEnum {
 			return nil, nil, 0, false
@@ -266,6 +258,19 @@ func legacyDirectBitmapGroupAggregateEnums(table *core.Table, read BitmapGroupAg
 		fieldNames = append(fieldNames, name)
 	}
 	return groups, fieldNames, valueCount, true
+}
+
+func legacyDirectBitmapGroupFragments(index string, groups []legacyDirectBitmapGroupAggregateEnum, combination []legacyDirectBitmapGroupAggregateEnumValue) []qsbridge.QuantaQueryFragment {
+	fragments := make([]qsbridge.QuantaQueryFragment, 0, len(groups))
+	for i, group := range groups {
+		fragments = append(fragments, qsbridge.QuantaQueryFragment{
+			Index:     index,
+			Field:     group.Name,
+			Operation: qsbridge.QuantaOperationIntersect,
+			Values:    []*big.Int{new(big.Int).SetUint64(combination[i].ID)},
+		})
+	}
+	return fragments
 }
 
 func legacyDirectBitmapGroupAggregateMeasureFields(table *core.Table, read BitmapGroupAggregateReadRequest) ([]qsbridge.FieldRef, []string, bool) {

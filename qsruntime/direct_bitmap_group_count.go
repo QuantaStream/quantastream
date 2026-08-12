@@ -14,6 +14,7 @@ import (
 type BitmapGroupCountReadRequest struct {
 	Index           string
 	Fields          []qsbridge.FieldRef
+	BaseQuery       qsbridge.QuantaIntermediateQuery
 	FromEpochMillis int64
 	ToEpochMillis   int64
 	CandidateRows   []qsbridge.QuantaRownum
@@ -68,6 +69,7 @@ func (r DirectBitmapRuntime) directBitmapBitmapGroupCountAggregateResult(ctx con
 	read := BitmapGroupCountReadRequest{
 		Index:           rootIndex,
 		Fields:          fields,
+		BaseQuery:       cloneIntermediateQuery(request.Query),
 		FromEpochMillis: request.Materialization.FromEpochMillis,
 		ToEpochMillis:   request.Materialization.ToEpochMillis,
 		CandidateRows:   append([]qsbridge.QuantaRownum(nil), bitmapResult.Rownums...),
@@ -146,6 +148,9 @@ func (r DirectBitmapRuntime) directBitmapBitmapGroupCountAggregateResult(ctx con
 
 func directBitmapBitmapGroupCountCandidate(request ExecutionRequest) bool {
 	if len(request.GroupBy) == 0 || len(request.SQLAggregates) == 0 {
+		return false
+	}
+	if request.HasCandidateSet {
 		return false
 	}
 	if directBitmapHasResidualScanPredicates(request) || !request.NativePredicates.Empty() {
