@@ -46,7 +46,7 @@ func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_mode", "batch_equal", "source=part")
 }
 
-func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T) {
+func TestDirectBitmapFilterFragmentShouldMaterializeStringEnumUntilBitmapKernelIsAvailable(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
 	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
 		Name: "lineitem",
@@ -69,8 +69,8 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 		HasLiteral: true,
 		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
 	}
-	if directBitmapFilterFragmentShouldEvaluateMaterialized(request, stringEnumFragment) {
-		t.Fatalf("StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
+	if !directBitmapFilterFragmentShouldEvaluateMaterialized(request, stringEnumFragment) {
+		t.Fatalf("StringEnum filter leaf should stay on constrained materialization until dictionary bitmap evaluation is available")
 	}
 
 	dictionaryFragment := qsbridge.QuantaQueryFragment{
@@ -79,8 +79,8 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 		HasLiteral: true,
 		Literal:    qsbridge.Literal(qsbridge.ValueString, "DELIVER IN PERSON"),
 	}
-	if directBitmapFilterFragmentShouldEvaluateMaterialized(request, dictionaryFragment) {
-		t.Fatalf("dictionary-backed StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
+	if !directBitmapFilterFragmentShouldEvaluateMaterialized(request, dictionaryFragment) {
+		t.Fatalf("dictionary-backed StringEnum filter leaf should stay on constrained materialization until dictionary bitmap evaluation is available")
 	}
 
 	qualifiedDictionaryFragment := qsbridge.QuantaQueryFragment{
@@ -89,8 +89,8 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 		HasLiteral: true,
 		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
 	}
-	if directBitmapFilterFragmentShouldEvaluateMaterialized(request, qualifiedDictionaryFragment) {
-		t.Fatalf("qualified dictionary-backed StringEnum filter leaf should prefer bitmap evaluation over candidate materialization")
+	if !directBitmapFilterFragmentShouldEvaluateMaterialized(request, qualifiedDictionaryFragment) {
+		t.Fatalf("qualified dictionary-backed StringEnum filter leaf should stay on constrained materialization until dictionary bitmap evaluation is available")
 	}
 
 	bsiFragment := qsbridge.QuantaQueryFragment{
@@ -144,8 +144,8 @@ func TestDirectBitmapFilterFragmentDecisionDetailsExposeStringEnumLookup(t *test
 		},
 	}}, nil, nil)
 	decision = directBitmapFilterFragmentMaterializationDecisionDetails(request, fragment)
-	if decision.Materialize || decision.Reason != "string_enum_prefers_bitmap" {
-		t.Fatalf("decision = %#v, want StringEnum bitmap preference", decision)
+	if !decision.Materialize || decision.Reason != "string_enum_materialization_preferred" {
+		t.Fatalf("decision = %#v, want StringEnum constrained materialization", decision)
 	}
 	if !strings.Contains(decision.ProbeDetail, "uses_string_enum=true") {
 		t.Fatalf("probe detail = %q, want StringEnum evidence", decision.ProbeDetail)
@@ -172,8 +172,8 @@ func TestDirectBitmapFilterTreeAdapterFallbackQueryCatalogFeedsStringEnumDecisio
 
 	decision := directBitmapFilterFragmentMaterializationDecisionDetails(request, fragment)
 
-	if decision.Materialize || decision.Reason != "string_enum_prefers_bitmap" {
-		t.Fatalf("decision = %#v, want fallback catalog to prefer bitmap", decision)
+	if !decision.Materialize || decision.Reason != "string_enum_materialization_preferred" {
+		t.Fatalf("decision = %#v, want fallback catalog to prefer constrained materialization", decision)
 	}
 	if !strings.Contains(decision.ProbeDetail, "matched_table=part") ||
 		!strings.Contains(decision.ProbeDetail, "uses_string_enum=true") {

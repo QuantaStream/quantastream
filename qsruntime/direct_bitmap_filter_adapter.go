@@ -719,9 +719,11 @@ func directBitmapFilterFragmentMaterializationDecisionDetails(request ExecutionR
 		probeDetail = detection.detail
 	}
 	if detection.usesStringEnum {
+		// The legacy bitmap backend currently lowers these leaves into BSI compares;
+		// keep the constrained path until dictionary bitmap evaluation is available.
 		return directBitmapFilterFragmentMaterializationDecisionResult{
-			Materialize: false,
-			Reason:      "string_enum_prefers_bitmap",
+			Materialize: true,
+			Reason:      "string_enum_materialization_preferred",
 			ProbeDetail: probeDetail,
 		}
 	}
