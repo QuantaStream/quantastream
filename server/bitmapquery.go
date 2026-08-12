@@ -120,7 +120,6 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	}
 
 	countsByFragment := make(map[string]uint64)
-	priorIntersectSeed := queryPriorIntersectSeed(query)
 	// Main query flow loop
 	for _, v := range query.Query {
 		var bm *roaring64.Bitmap
@@ -151,22 +150,13 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			end := new(big.Int).SetBytes(v.End)
 
 			cacheKey := fmt.Sprintf("%s/%s/%d/%d", v.Index, v.Field, fromTime.UnixNano(), toTime.UnixNano())
-			var foundSet *roaring64.Bitmap
-			if seed := priorIntersectSeed.FoundSetFor(v); seed != nil {
-				foundSet = seed
-			}
 			bsi, bsiCacheHit := bsiQueryCache[cacheKey]
-			if foundSet != nil {
-				bsiCacheHit = false
-			}
 			if !bsiCacheHit {
-				bsi, err = m.timeRangeBSI(v.Index, v.Field, fromTime, toTime, foundSet, false, true)
+				bsi, err = m.timeRangeBSI(v.Index, v.Field, fromTime, toTime, nil, false, true)
 				if err != nil {
 					return nil, err
 				}
-				if foundSet == nil {
-					bsiQueryCache[cacheKey] = bsi
-				}
+				bsiQueryCache[cacheKey] = bsi
 			}
 			// Evaluate BSI operation resulting in roaring bitmap
 			switch v.BsiOp {
@@ -234,7 +224,6 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		} else {
 			dataMap[v.Id] = roaring64.NewBitmap()
 		}
-		priorIntersectSeed.Observe(v, dataMap[v.Id])
 	}
 
 	ir := shared.FromProto(query, dataMap).Reduce()
@@ -250,69 +239,6 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		ir.AddExistence(ge)
 	}
 	return ir.MarshalQueryResult()
-}
-
-type queryIntersectSeed struct {
-	index  string
-	bitmap *roaring64.Bitmap
-}
-
-func queryPriorIntersectSeed(query *pb.BitmapQuery) *queryIntersectSeed {
-	if query == nil || len(query.Query) < 2 {
-		return nil
-	}
-	index := ""
-	for _, fragment := range query.Query {
-		if fragment == nil ||
-			fragment.Operation != pb.QueryFragment_INTERSECT ||
-			fragment.OrContext ||
-			fragment.Negate ||
-			fragment.SamplePct > 0 ||
-			fragment.NullCheck {
-			return nil
-		}
-		if index == "" {
-			index = fragment.Index
-			continue
-		}
-		if index != fragment.Index {
-			return nil
-		}
-	}
-	return &queryIntersectSeed{}
-}
-
-func (s *queryIntersectSeed) FoundSetFor(fragment *pb.QueryFragment) *roaring64.Bitmap {
-	if s == nil || fragment == nil || s.bitmap == nil {
-		return nil
-	}
-	if fragment.Operation != pb.QueryFragment_INTERSECT || fragment.OrContext || fragment.Negate || fragment.SamplePct > 0 {
-		return nil
-	}
-	if s.index != fragment.Index || s.bitmap.GetCardinality() == 0 {
-		return nil
-	}
-	return s.bitmap
-}
-
-func (s *queryIntersectSeed) Observe(fragment *pb.QueryFragment, bitmap *roaring64.Bitmap) {
-	if s == nil || fragment == nil || bitmap == nil {
-		return
-	}
-	if fragment.Operation != pb.QueryFragment_INTERSECT || fragment.OrContext || fragment.Negate || fragment.SamplePct > 0 {
-		return
-	}
-	if s.bitmap == nil {
-		s.index = fragment.Index
-		s.bitmap = bitmap.Clone()
-		return
-	}
-	if s.index != fragment.Index {
-		s.bitmap = nil
-		s.index = ""
-		return
-	}
-	s.bitmap.And(bitmap)
 }
 
 func isExistenceSeedFragment(fragment *pb.QueryFragment) bool {
