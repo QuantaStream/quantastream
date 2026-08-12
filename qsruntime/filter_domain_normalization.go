@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -18,6 +19,8 @@ const (
 
 // FilterDomainNormalizationPlan aliases the qsbridge normalization plan.
 type FilterDomainNormalizationPlan = qsbridge.FilterDomainNormalizationPlan
+
+const filterDomainBranchNormalizationMaxParallelism = 8
 
 // FilterDomainNormalizationRequest aliases one source-to-target normalization request.
 type FilterDomainNormalizationRequest = qsbridge.FilterDomainNormalizationRequest
@@ -258,12 +261,12 @@ func (e KernelFilterDomainNormalizationExecutor) NormalizeFilterDomains(ctx cont
 	for _, normalization := range plan.Requests {
 		branches := filterDomainBranchesForSource(request.Query.Filter, normalization.SourceDomain)
 		if expressionKernel, ok := kernel.(filterDomainExpressionNormalizationKernel); ok {
-			for _, branch := range branches {
-				normalized, branchDiagnostics, err := expressionKernel.NormalizeFilterExpression(ctx, request, normalization, branch)
-				diagnostics = append(diagnostics, branchDiagnostics...)
-				if err != nil || branchDiagnostics.BlocksNative() {
-					return result, diagnostics, err
-				}
+			normalizedBranches, branchDiagnostics, err := normalizeFilterDomainBranches(ctx, expressionKernel, request, normalization, branches)
+			diagnostics = append(diagnostics, branchDiagnostics...)
+			if err != nil || branchDiagnostics.BlocksNative() {
+				return result, diagnostics, err
+			}
+			for _, normalized := range normalizedBranches {
 				if normalized.TargetDomain == "" {
 					normalized.TargetDomain = normalization.TargetDomain
 				}
@@ -293,6 +296,59 @@ func (e KernelFilterDomainNormalizationExecutor) NormalizeFilterDomains(ctx cont
 		}
 	}
 	return result, diagnostics, nil
+}
+
+func normalizeFilterDomainBranches(ctx context.Context, kernel filterDomainExpressionNormalizationKernel, request ExecutionRequest, normalization FilterDomainNormalizationRequest, branches []qsbridge.QuantaFilterExpression) ([]qsbridge.FilterDomainNormalizedBranch, qsbridge.DiagnosticSet, error) {
+	if len(branches) == 0 {
+		return nil, nil, nil
+	}
+	if len(branches) == 1 {
+		normalized, diagnostics, err := kernel.NormalizeFilterExpression(ctx, request, normalization, branches[0])
+		if err != nil || diagnostics.BlocksNative() {
+			return nil, diagnostics, err
+		}
+		return []qsbridge.FilterDomainNormalizedBranch{normalized}, diagnostics, nil
+	}
+
+	type branchResult struct {
+		normalized  qsbridge.FilterDomainNormalizedBranch
+		diagnostics qsbridge.DiagnosticSet
+		err         error
+	}
+	results := make([]branchResult, len(branches))
+	parallelism := filterDomainBranchNormalizationMaxParallelism
+	if parallelism > len(branches) {
+		parallelism = len(branches)
+	}
+	sem := make(chan struct{}, parallelism)
+	var wg sync.WaitGroup
+	for i, branch := range branches {
+		i, branch := i, branch
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[i].err = ctx.Err()
+				return
+			}
+			results[i].normalized, results[i].diagnostics, results[i].err = kernel.NormalizeFilterExpression(ctx, request, normalization, branch)
+		}()
+	}
+	wg.Wait()
+
+	normalized := make([]qsbridge.FilterDomainNormalizedBranch, 0, len(branches))
+	var diagnostics qsbridge.DiagnosticSet
+	for _, result := range results {
+		diagnostics = append(diagnostics, result.diagnostics...)
+		if result.err != nil || result.diagnostics.BlocksNative() {
+			return normalized, diagnostics, result.err
+		}
+		normalized = append(normalized, result.normalized)
+	}
+	return normalized, diagnostics, nil
 }
 
 // UnsupportedFilterDomainNormalizationKernel preserves the explicit normalization boundary.
