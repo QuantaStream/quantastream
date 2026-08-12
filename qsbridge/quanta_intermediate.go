@@ -1376,7 +1376,7 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		Value:                bigValue,
 		Literal:              literalValue,
 		HasLiteral:           true,
-		RangeCoalesceAllowed: field.Index != IndexDateTime,
+		RangeCoalesceAllowed: true,
 	}
 	if op == BinaryOpNotEqual {
 		fragment.BSIOp = QuantaBSIOpEQ

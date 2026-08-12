@@ -212,7 +212,7 @@ func TestQuantaIntermediateLowererCarriesProjectionFields(t *testing.T) {
 	}
 }
 
-func TestQuantaIntermediateLowererKeepsExclusiveDateWindowBoundsSeparate(t *testing.T) {
+func TestQuantaIntermediateLowererCoalescesExclusiveDateWindowBounds(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
 		PlanRequest{SQL: "select o_orderkey from orders where o_orderdate >= '1996-01-01' and o_orderdate < '1996-04-01'"},
@@ -223,16 +223,20 @@ func TestQuantaIntermediateLowererKeepsExclusiveDateWindowBoundsSeparate(t *test
 	if diagnostics.BlocksNative() {
 		t.Fatalf("lower diagnostics: %#v", diagnostics)
 	}
-	if len(intermediate.Fragments) != 2 {
-		t.Fatalf("fragments = %d, want separate GE/LT datetime bounds: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want one coalesced datetime range: %#v", len(intermediate.Fragments), intermediate.Fragments)
 	}
 	wantBegin := big.NewInt(time.Date(1996, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	wantEnd := big.NewInt(time.Date(1996, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	if intermediate.Fragments[0].BSIOp != QuantaBSIOpGE || intermediate.Fragments[0].Value.Cmp(wantBegin) != 0 {
-		t.Fatalf("lower bound = %#v, want GE %s", intermediate.Fragments[0], wantBegin)
+	wantEnd := big.NewInt(time.Date(1996, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1)
+	fragment := intermediate.Fragments[0]
+	if fragment.BSIOp != QuantaBSIOpRange {
+		t.Fatalf("bsi op = %s, want RANGE", fragment.BSIOp)
 	}
-	if intermediate.Fragments[1].BSIOp != QuantaBSIOpLT || intermediate.Fragments[1].Value.Cmp(wantEnd) != 0 {
-		t.Fatalf("upper bound = %#v, want LT %s", intermediate.Fragments[1], wantEnd)
+	if fragment.Begin.Cmp(wantBegin) != 0 {
+		t.Fatalf("range begin = %#v, want %s", fragment.Begin, wantBegin)
+	}
+	if fragment.End.Cmp(wantEnd) != 0 {
+		t.Fatalf("range end = %#v, want inclusive end %s", fragment.End, wantEnd)
 	}
 }
 
@@ -959,7 +963,7 @@ func TestQuantaIntermediateNormalizeDiscreteTimeComparisonUsesNextBoundary(t *te
 	}
 }
 
-func TestQuantaIntermediateLowererKeepsDatetimeBoundsSeparate(t *testing.T) {
+func TestQuantaIntermediateLowererCoalescesDatetimeBoundsAfterNormalization(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
 		PlanRequest{SQL: "select o.o_orderkey as order_id from orders as o where o.o_orderdate >= '1995-01-01' and o.o_orderdate <= '1996-12-31'"},
@@ -970,20 +974,20 @@ func TestQuantaIntermediateLowererKeepsDatetimeBoundsSeparate(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("lower diagnostics: %#v", diagnostics)
 	}
-	if len(intermediate.Fragments) != 2 {
-		t.Fatalf("fragments = %d, want separate GE/LT datetime bounds: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want one coalesced datetime range: %#v", len(intermediate.Fragments), intermediate.Fragments)
 	}
-	if intermediate.Fragments[0].BSIOp != QuantaBSIOpGE || intermediate.Fragments[1].BSIOp != QuantaBSIOpLT {
-		t.Fatalf("bsi ops = %s/%s, want GE/LT normalized datetime bounds", intermediate.Fragments[0].BSIOp, intermediate.Fragments[1].BSIOp)
+	fragment := intermediate.Fragments[0]
+	if fragment.BSIOp != QuantaBSIOpRange {
+		t.Fatalf("bsi op = %s, want RANGE", fragment.BSIOp)
+	}
+	wantBegin := time.Date(1995, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := fragment.Begin.Int64(); got != wantBegin {
+		t.Fatalf("begin = %d, want %d", got, wantBegin)
 	}
 	wantUpper := time.Date(1997, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
-	if got := intermediate.Fragments[1].Value.Int64(); got != wantUpper {
-		t.Fatalf("upper value = %d, want next encoded tick %d", got, wantUpper)
-	}
-	for _, fragment := range intermediate.Fragments {
-		if fragment.RangeCoalesceAllowed {
-			t.Fatalf("datetime fragment allows range coalescing: %#v", fragment)
-		}
+	if got := fragment.End.Int64(); got != wantUpper-1 {
+		t.Fatalf("end = %d, want inclusive upper bound %d", got, wantUpper-1)
 	}
 }
 
