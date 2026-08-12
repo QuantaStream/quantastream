@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
@@ -557,6 +558,40 @@ func (r *directBitmapFilterTreeEvaluationRecorder) RecordLeafMode(fragment qsbri
 	})
 }
 
+// RecordCandidateBitmapQuery records whether a constrained bitmap leaf used the
+// candidate-aware session hook or fell back to an unconstrained bitmap query.
+func (r *directBitmapFilterTreeEvaluationRecorder) RecordCandidateBitmapQuery(fragment qsbridge.QuantaQueryFragment, candidates qsbridge.QuantaCandidateSet, supported bool, handled bool, sessionType string, reason string) {
+	if r == nil {
+		return
+	}
+	parts := []string{
+		"leaf=" + filterDomainFragmentKey(fragment),
+		"candidate_rows=" + strconv.Itoa(candidates.CandidateCount()),
+		"candidate_index=" + candidates.Index,
+	}
+	if sessionType != "" {
+		parts = append(parts, "session_type="+sessionType)
+	}
+	if reason != "" {
+		parts = append(parts, "reason="+reason)
+	}
+	detail := strings.Join(parts, " ")
+	r.innerProbes = append(r.innerProbes,
+		ExecutionProbe{
+			Section: "filter_tree",
+			Name:    "candidate_bitmap_query_supported",
+			Value:   strconv.FormatBool(supported),
+			Detail:  detail,
+		},
+		ExecutionProbe{
+			Section: "filter_tree",
+			Name:    "candidate_bitmap_query_handled",
+			Value:   strconv.FormatBool(handled),
+			Detail:  detail,
+		},
+	)
+}
+
 // RecordLeafMaterializationDecision records the catalog evidence behind the
 // bitmap-vs-materialization choice for string literal leaves.
 func (r *directBitmapFilterTreeEvaluationRecorder) RecordLeafMaterializationDecision(fragment qsbridge.QuantaQueryFragment, decision directBitmapFilterFragmentMaterializationDecisionResult) {
@@ -638,9 +673,24 @@ func (e directBitmapFilterTreeLeafEvaluator) evaluateFilterLeafBitmapWithCandida
 	var queryErr error
 	handled := false
 	if candidates != nil {
+		candidateSupported := false
+		candidateReason := "unsupported_session"
+		sessionType := fmt.Sprintf("%T", session)
 		if candidateSession, ok := session.(DirectCandidateBitmapSessionHandle); ok {
+			candidateSupported = true
 			result, queryDiagnostics, handled, queryErr = candidateSession.QueryBitmapWithCandidateSet(ctx, leafRequest, *candidates)
+			switch {
+			case queryErr != nil:
+				candidateReason = "error"
+			case queryDiagnostics.BlocksNative():
+				candidateReason = "diagnostic"
+			case handled:
+				candidateReason = "handled"
+			default:
+				candidateReason = "session_unhandled"
+			}
 		}
+		e.recordCandidateBitmapQuery(fragment, *candidates, candidateSupported, handled, sessionType, candidateReason)
 	}
 	if !handled && queryErr == nil && !queryDiagnostics.BlocksNative() {
 		result, queryDiagnostics, queryErr = session.QueryBitmap(ctx, leafRequest)
@@ -754,6 +804,13 @@ func (e directBitmapFilterTreeLeafEvaluator) recordLeafMaterializationDecision(f
 		return
 	}
 	e.Recorder.RecordLeafMaterializationDecision(fragment, decision)
+}
+
+func (e directBitmapFilterTreeLeafEvaluator) recordCandidateBitmapQuery(fragment qsbridge.QuantaQueryFragment, candidates qsbridge.QuantaCandidateSet, supported bool, handled bool, sessionType string, reason string) {
+	if e.Recorder == nil {
+		return
+	}
+	e.Recorder.RecordCandidateBitmapQuery(fragment, candidates, supported, handled, sessionType, reason)
 }
 
 func directBitmapFilterFragmentShouldEvaluateMaterialized(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {

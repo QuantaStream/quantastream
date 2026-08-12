@@ -478,6 +478,8 @@ func TestDirectBitmapFilterTreeLeafEvaluatorUsesCandidateBitmapQueryForLargeDict
 		t.Fatalf("filtered rownums = %#v, want [12 14]", filtered.Rownums)
 	}
 	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "leaf_evaluation_mode", "bitmap_query", "reason=string_enum_dictionary_bitmap")
+	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "candidate_bitmap_query_supported", "true", "candidate_rows=1025")
+	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "candidate_bitmap_query_handled", "true", "reason=handled")
 }
 
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
