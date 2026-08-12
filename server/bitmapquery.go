@@ -257,8 +257,13 @@ func (m *BitmapIndex) queryWithPriorIntersect(ctx context.Context, query *pb.Bit
 				}
 			} else {
 				queryStats.standardFragments++
+				foundSet := priorIntersect.FoundSetFor(v)
+				if foundSet != nil {
+					queryStats.standardFoundSetUses++
+					queryStats.standardFoundSetRows += foundSet.GetCardinality()
+				}
 				standardStart := time.Now()
-				if bm, err = m.timeRange(v.Index, v.Field, v.RowID, fromTime, toTime, nil, false); err != nil {
+				if bm, err = m.timeRange(v.Index, v.Field, v.RowID, fromTime, toTime, foundSet, false); err != nil {
 					queryStats.standardElapsed += time.Since(standardStart)
 					return nil, err
 				}

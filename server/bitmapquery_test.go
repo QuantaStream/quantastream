@@ -149,6 +149,46 @@ func TestBitmapIndexQueryWithFoundSetConstrainsStandardValueFragments(t *testing
 	}
 }
 
+func TestBitmapIndexQueryWithFoundSetConstrainsSingleStandardRowIDFragments(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "lineitem", nil)
+	if err != nil {
+		t.Fatalf("load lineitem schema: %v", err)
+	}
+	index := &BitmapIndex{
+		Node: &Node{},
+		bitmapCache: map[string]map[string]map[uint64]map[int64]*StandardBitmap{
+			"lineitem": {
+				"l_shipmode": {
+					7: {
+						0: {Bits: roaring64.BitmapOf(1, 2, 3, 4)},
+					},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{
+			"lineitem": table,
+		},
+	}
+	query := &pb.BitmapQuery{Query: []*pb.QueryFragment{{
+		Index:     "lineitem",
+		Field:     "l_shipmode",
+		Operation: pb.QueryFragment_UNION,
+		RowID:     7,
+	}}}
+
+	result, err := index.QueryWithFoundSet(context.Background(), query, "lineitem", []uint64{3, 5, 9})
+	if err != nil {
+		t.Fatalf("QueryWithFoundSet() error = %v", err)
+	}
+	union := roaring64.NewBitmap()
+	if err := union.UnmarshalBinary(result.GetUnions()); err != nil {
+		t.Fatalf("unmarshal union: %v", err)
+	}
+	if got, want := union.ToArray(), []uint64{3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("union rownums = %#v, want %#v", got, want)
+	}
+}
+
 func TestQueryPriorIntersectCandidatesIgnoreUnsafeFragments(t *testing.T) {
 	tests := []struct {
 		name     string
