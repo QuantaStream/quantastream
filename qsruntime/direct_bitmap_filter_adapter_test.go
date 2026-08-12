@@ -389,6 +389,19 @@ func TestDirectBitmapFilterTreeLeafEvaluatorMaterializesDictionaryBitmapWithinSm
 	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "leaf_evaluation_mode", "constrained_materialization", "reason=string_enum_dictionary_bitmap_candidate_materialization")
 }
 
+func TestDirectBitmapFilterDictionaryBitmapCandidateMaterializationLimit(t *testing.T) {
+	decision := directBitmapFilterFragmentMaterializationDecisionResult{
+		Reason:            "string_enum_dictionary_bitmap",
+		HasBitmapFragment: true,
+	}
+	if !directBitmapFilterShouldMaterializeDictionaryBitmapWithinCandidates(decision, 437) {
+		t.Fatalf("437 candidate rows should use constrained materialization")
+	}
+	if directBitmapFilterShouldMaterializeDictionaryBitmapWithinCandidates(decision, 3204) {
+		t.Fatalf("3204 candidate rows should stay on dictionary bitmap")
+	}
+}
+
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	fragment := qsbridge.QuantaQueryFragment{

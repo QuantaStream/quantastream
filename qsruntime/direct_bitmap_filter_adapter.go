@@ -10,7 +10,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-const directBitmapFilterDictionaryBitmapCandidateMaterializationLimit = 16384
+const directBitmapFilterDictionaryBitmapCandidateMaterializationLimit = 1024
 
 // DirectBitmapFilterAdapter adapts grouped filter trees before direct bitmap execution.
 type DirectBitmapFilterAdapter interface {
