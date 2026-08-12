@@ -48,8 +48,9 @@ func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *sourc
 		Materializer:    materializer,
 		Materialization: materialization,
 		Normalizer: DirectBitmapFilterDomainNormalizationExecutor{
-			Sessions: sessions,
-			Reader:   reader,
+			Sessions:        sessions,
+			Reader:          reader,
+			Materialization: materialization,
 		},
 	}
 }

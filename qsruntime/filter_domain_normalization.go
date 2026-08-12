@@ -29,14 +29,15 @@ type FilterDomainNormalizationExecutor interface {
 
 // DirectBitmapFilterDomainNormalizationExecutor builds request-scoped leaf evaluation for normalization.
 type DirectBitmapFilterDomainNormalizationExecutor struct {
-	Sessions DirectSessionProvider
-	Reader   RelationshipVectorReader
+	Sessions        DirectSessionProvider
+	Reader          RelationshipVectorReader
+	Materialization ProjectionMaterializationKernel
 }
 
 // NormalizeFilterDomains evaluates source leaves with the current request and translates them through the reader.
 func (e DirectBitmapFilterDomainNormalizationExecutor) NormalizeFilterDomains(ctx context.Context, request ExecutionRequest, plan FilterDomainNormalizationPlan) (qsbridge.FilterDomainRewriteResult, qsbridge.DiagnosticSet, error) {
 	normalizer := NewReaderBackedFilterDomainNormalizer(
-		directBitmapFilterTreeLeafEvaluator{Sessions: e.Sessions, Request: request},
+		directBitmapFilterTreeLeafEvaluator{Sessions: e.Sessions, Materialization: e.Materialization, Request: request},
 		relationshipVectorReaderWithRequestProjectionCache(e.Reader),
 	)
 	return normalizer.NormalizeFilterDomains(ctx, request, plan)
