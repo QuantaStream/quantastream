@@ -105,6 +105,53 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 	}
 }
 
+func TestDirectBitmapFilterFragmentDecisionDetailsExposeStringEnumLookup(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Name: "lineitem",
+		Fields: []qsbridge.FieldDefinition{
+			{Name: "l_shipmode", Type: qsbridge.DataTypeString},
+		},
+	}}, nil, nil)
+	fragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l.l_shipmode",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+	}
+
+	decision := directBitmapFilterFragmentMaterializationDecisionDetails(request, fragment)
+	if !decision.Materialize || decision.Reason != "materializable_leaf" {
+		t.Fatalf("decision = %#v, want materializable string leaf", decision)
+	}
+	for _, want := range []string{
+		"index=lineitem",
+		"lookup_fields=l.l_shipmode,l_shipmode",
+		"matched_table=lineitem",
+		"matched_field=l_shipmode",
+		"definition_type=string",
+		"uses_string_enum=false",
+	} {
+		if !strings.Contains(decision.ProbeDetail, want) {
+			t.Fatalf("probe detail = %q, want substring %q", decision.ProbeDetail, want)
+		}
+	}
+
+	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Name: "lineitem",
+		Fields: []qsbridge.FieldDefinition{
+			{Name: "l_shipmode", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum},
+		},
+	}}, nil, nil)
+	decision = directBitmapFilterFragmentMaterializationDecisionDetails(request, fragment)
+	if decision.Materialize || decision.Reason != "string_enum_prefers_bitmap" {
+		t.Fatalf("decision = %#v, want StringEnum bitmap preference", decision)
+	}
+	if !strings.Contains(decision.ProbeDetail, "uses_string_enum=true") {
+		t.Fatalf("probe detail = %q, want StringEnum evidence", decision.ProbeDetail)
+	}
+}
+
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	fragment := qsbridge.QuantaQueryFragment{
