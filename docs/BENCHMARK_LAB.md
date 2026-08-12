@@ -184,6 +184,62 @@ provide it. Explicit `-benchmark_metadata key=value` entries override
 auto-detected values so reference runs can still record curated cloud/provider
 metadata.
 
+## Reference Proof Package
+
+A reference proof package should include the raw SQLRunner JSON report, a rendered
+summary, a MySQL comparison, the exact server startup line, and the environment
+inventory used for the run. Do not rely on shell history or chat transcripts as
+the source of truth.
+
+For the current SF1 readonly shape, capture the QuantaStream report from the
+benchmark runner with:
+
+```bash
+cd ~/quantastream/sqlrunner
+
+REPORT=/tmp/aws-qs-readonly-sf1-final-warm.json
+PROFILE=aws-qs-readonly-sf1-final-warm
+
+git status --short
+git rev-parse HEAD
+go version
+uname -a
+df -h /
+
+go run . \
+  -engine inabox-standard \
+  -suite_file ../tpc-h-benchmark/sqltests/tpch_benchmark_readonly_sf1_scale_safe.yaml \
+  -host 172.31.7.21 \
+  -port 4000 \
+  -precise_timing \
+  -capture_profile \
+  -benchmark_report "$REPORT" \
+  -benchmark_warmup 1 \
+  -benchmark_runs 3 \
+  -benchmark_profile "$PROFILE"
+```
+
+Then render and compare:
+
+```bash
+MYSQL_BASELINE=~/quantastream/sqlrunner/expected/local/mysql-benchmarks/20260809T015549Z/mysql-reference.json
+
+go run . \
+  -benchmark_summary "$REPORT" \
+  > /tmp/aws-qs-readonly-sf1-final-warm-summary.txt
+
+go run . \
+  -benchmark_compare "$MYSQL_BASELINE","$REPORT" \
+  -benchmark_limit 0 \
+  > /tmp/aws-qs-readonly-sf1-final-warm-comparison.txt
+```
+
+Before treating the result as publication-grade evidence, copy the JSON reports,
+summary, comparison, server log excerpt, startup command, commit IDs, and instance
+inventory into one dated benchmark artifact directory. The target report should
+show `repo_dirty=false`; dirty reports are useful engineering evidence but should
+not become the public reference artifact.
+
 ## Relationship To SQLRunner
 
 SQLRunner can support benchmark collection, but the compatibility lab should
