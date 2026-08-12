@@ -29,10 +29,12 @@ type DirectBitmapFilterTreeAdapter struct {
 	Materializer    ProjectionMaterializer
 	Materialization ProjectionMaterializationKernel
 	Normalizer      FilterDomainNormalizationExecutor
+	QueryCatalog    qsbridge.QueryCatalogView
 }
 
 // AdaptFilterExpression evaluates grouped filters and stores the resulting candidate set on the request.
 func (a DirectBitmapFilterTreeAdapter) AdaptFilterExpression(ctx context.Context, request ExecutionRequest) (ExecutionRequest, qsbridge.DiagnosticSet, error) {
+	request = a.requestWithFallbackQueryCatalog(request)
 	if request.Query.Filter.Empty() {
 		return request, nil, nil
 	}
@@ -119,6 +121,13 @@ func (a DirectBitmapFilterTreeAdapter) filterDomainNormalizer() FilterDomainNorm
 		return a.Normalizer
 	}
 	return UnsupportedFilterDomainNormalizationExecutor{}
+}
+
+func (a DirectBitmapFilterTreeAdapter) requestWithFallbackQueryCatalog(request ExecutionRequest) ExecutionRequest {
+	if len(request.QueryCatalog.Tables) == 0 && len(a.QueryCatalog.Tables) > 0 {
+		request.QueryCatalog = a.QueryCatalog
+	}
+	return request
 }
 
 func directBitmapFilterDomainTranslation(request ExecutionRequest) qsbridge.QuantaFilterDomainTranslation {

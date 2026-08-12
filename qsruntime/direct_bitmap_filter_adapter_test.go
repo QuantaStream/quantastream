@@ -152,6 +152,33 @@ func TestDirectBitmapFilterFragmentDecisionDetailsExposeStringEnumLookup(t *test
 	}
 }
 
+func TestDirectBitmapFilterTreeAdapterFallbackQueryCatalogFeedsStringEnumDecision(t *testing.T) {
+	queryCatalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Name: "part",
+		Fields: []qsbridge.FieldDefinition{
+			{Name: "p_container", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum},
+		},
+	}}, nil, nil)
+	adapter := DirectBitmapFilterTreeAdapter{QueryCatalog: queryCatalog}
+	request := adapter.requestWithFallbackQueryCatalog(NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}))
+	fragment := qsbridge.QuantaQueryFragment{
+		Index:      "part",
+		Field:      "p_container",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "MED BOX"),
+	}
+
+	decision := directBitmapFilterFragmentMaterializationDecisionDetails(request, fragment)
+
+	if decision.Materialize || decision.Reason != "string_enum_prefers_bitmap" {
+		t.Fatalf("decision = %#v, want fallback catalog to prefer bitmap", decision)
+	}
+	if !strings.Contains(decision.ProbeDetail, "matched_table=part") ||
+		!strings.Contains(decision.ProbeDetail, "uses_string_enum=true") {
+		t.Fatalf("probe detail = %q, want fallback catalog evidence", decision.ProbeDetail)
+	}
+}
+
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	fragment := qsbridge.QuantaQueryFragment{

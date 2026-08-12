@@ -62,6 +62,35 @@ func TestLegacyCatalogViewAdapterBuildsQueryViewWithDictionaryMetadata(t *testin
 	}
 }
 
+func TestLegacyCatalogViewAdapterBuildsQueryViewForCachedTables(t *testing.T) {
+	adapter := LegacyCatalogViewAdapter{
+		Catalog: LegacyTableCacheCatalog{TableCache: legacyCatalogTestCache()},
+	}
+
+	view, diagnostics := adapter.QueryCatalogViewForCachedTables("quanta")
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(view.Tables) != 4 {
+		t.Fatalf("tables = %#v, want all cached tables", view.Tables)
+	}
+	part, ok := legacyCatalogQueryViewTable(view, "part")
+	if !ok {
+		t.Fatalf("tables = %#v, want part table", view.Tables)
+	}
+	container, ok := legacyCatalogQueryViewField(part, "p_container")
+	if !ok {
+		t.Fatal("missing part.p_container")
+	}
+	if container.Dictionary.Ref.Table != "part" || container.Dictionary.Ref.Field != "p_container" {
+		t.Fatalf("p_container dictionary = %#v, want cached StringEnum metadata", container.Dictionary)
+	}
+	if len(view.Functions) == 0 {
+		t.Fatalf("functions = %#v, want builtin function metadata", view.Functions)
+	}
+}
+
 func TestLegacyCatalogViewAdapterReportsMissingTables(t *testing.T) {
 	adapter := LegacyCatalogViewAdapter{
 		Catalog: LegacyTableCacheCatalog{TableCache: legacyCatalogTestCache()},
@@ -70,6 +99,24 @@ func TestLegacyCatalogViewAdapterReportsMissingTables(t *testing.T) {
 	_, diagnostics := adapter.NodeCatalogView("quanta", "missing")
 
 	assertRuntimeDiagnosticCode(t, diagnostics, qsbridge.DiagnosticCatalogTableNotFound)
+}
+
+func legacyCatalogQueryViewTable(view qsbridge.QueryCatalogView, name string) (qsbridge.QueryTableView, bool) {
+	for _, table := range view.Tables {
+		if table.Name == name {
+			return table, true
+		}
+	}
+	return qsbridge.QueryTableView{}, false
+}
+
+func legacyCatalogQueryViewField(table qsbridge.QueryTableView, name string) (qsbridge.FieldDefinition, bool) {
+	for _, field := range table.Fields {
+		if field.Name == name {
+			return field, true
+		}
+	}
+	return qsbridge.FieldDefinition{}, false
 }
 
 func legacyCatalogNodeViewHasRelationship(view qsbridge.NodeCatalogView, fromTable string, fromField string, toTable string, toField string) bool {

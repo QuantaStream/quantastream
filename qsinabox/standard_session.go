@@ -99,6 +99,15 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		TableCache: tableCache,
 		Schema:     config.WithDefaults().Database,
 	}
+	queryCatalog, queryCatalogDiagnostics := qsruntime.LegacyCatalogViewAdapter{
+		Catalog: qsruntime.LegacyTableCacheCatalog{
+			TableCache: tableCache,
+			Functions:  qsbridge.BuiltinSQLFunctionDefinitions(),
+		},
+	}.QueryCatalogViewForCachedTables(config.WithDefaults().Database)
+	if queryCatalogDiagnostics.BlocksNative() {
+		queryCatalog = qsbridge.QueryCatalogView{}
+	}
 	materialization := qsruntime.FallbackProjectionMaterializationKernel{
 		Preferred: qsruntime.NativeProjectionMaterializationKernel{
 			Reader: qsruntime.NativeProjectionBSIFieldReader{
@@ -107,7 +116,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 				DictionaryReader: dictionaryIDReader,
 			},
 			Rehydrator: qsruntime.NativeProjectionCompositeRehydrator{
-				Dictionary:     qsruntime.NewNativeProjectionDictionaryLabelRehydrator(qsbridge.QueryCatalogView{}, dictionaryResolver),
+				Dictionary:     qsruntime.NewNativeProjectionDictionaryLabelRehydrator(queryCatalog, dictionaryResolver),
 				BackingStrings: backingStringReader,
 			},
 		},
@@ -150,7 +159,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
 		Sessions:              sessions,
 		Adapter:               qsruntime.BitmapQueryResultAdapter{},
-		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}},
+		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}, QueryCatalog: queryCatalog},
 		Materialization:       materialization,
 		ProjectionBSIReader:   bsiReader,
 		SameRowComparison:     sameRowComparison,

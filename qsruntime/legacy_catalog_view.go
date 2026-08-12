@@ -26,7 +26,18 @@ func (a LegacyCatalogViewAdapter) QueryCatalogView(schema string, tableNames ...
 	if diagnostics.BlocksNative() {
 		return qsbridge.QueryCatalogView{}, diagnostics
 	}
-	return qsbridge.NewQueryCatalogView(tables, nil, append([]qsbridge.FunctionDefinition(nil), a.Catalog.Functions...)), nil
+	return qsbridge.NewQueryCatalogView(tables, nil, legacyCatalogViewFunctions(a.Catalog.Functions)), nil
+}
+
+// QueryCatalogViewForCachedTables returns a query-facing semantic catalog for
+// every table currently resident in the legacy table cache.
+func (a LegacyCatalogViewAdapter) QueryCatalogViewForCachedTables(schema string) (qsbridge.QueryCatalogView, qsbridge.DiagnosticSet) {
+	cachedTables := a.Catalog.cachedTables()
+	tables := make([]qsbridge.TableDefinition, 0, len(cachedTables))
+	for _, table := range cachedTables {
+		tables = append(tables, a.Catalog.tableDefinition(schema, table))
+	}
+	return qsbridge.NewQueryCatalogView(tables, nil, legacyCatalogViewFunctions(a.Catalog.Functions)), nil
 }
 
 func (a LegacyCatalogViewAdapter) tableDefinitions(schema string, tableNames ...string) ([]qsbridge.TableDefinition, qsbridge.DiagnosticSet) {
@@ -41,4 +52,11 @@ func (a LegacyCatalogViewAdapter) tableDefinitions(schema string, tableNames ...
 		tables = append(tables, table)
 	}
 	return tables, diagnostics
+}
+
+func legacyCatalogViewFunctions(functions []qsbridge.FunctionDefinition) []qsbridge.FunctionDefinition {
+	if len(functions) == 0 {
+		return qsbridge.BuiltinSQLFunctionDefinitions()
+	}
+	return append([]qsbridge.FunctionDefinition(nil), functions...)
 }
