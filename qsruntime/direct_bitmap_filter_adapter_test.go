@@ -78,6 +78,40 @@ func TestDirectBitmapFilterFragmentShouldPreferBitmapForStringEnum(t *testing.T)
 	}
 }
 
+func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
+	recorder := &directBitmapFilterTreeEvaluationRecorder{}
+	fragment := qsbridge.QuantaQueryFragment{
+		Index: "lineitem",
+		Role:  "l",
+		Field: "l_shipmode",
+	}
+
+	recorder.RecordInnerProbes(fragment, "bitmap_query", []ExecutionProbe{{
+		Section: "direct_bitmap_server",
+		Name:    "standard_bitmap_elapsed",
+		Value:   "12ms",
+		Detail:  "standard_fragment_count=1",
+	}})
+
+	probes := recorder.Probes()
+	if len(probes) != 1 {
+		t.Fatalf("probes = %d, want one inner probe", len(probes))
+	}
+	probe := probes[0]
+	if probe.Section != "direct_bitmap_server" || probe.Name != "standard_bitmap_elapsed" || probe.Value != "12ms" {
+		t.Fatalf("probe = %#v, want tagged direct bitmap server timing", probe)
+	}
+	for _, want := range []string{
+		"leaf=lineitem.l.l_shipmode",
+		"source=bitmap_query",
+		"standard_fragment_count=1",
+	} {
+		if !strings.Contains(probe.Detail, want) {
+			t.Fatalf("probe detail = %q, want %q", probe.Detail, want)
+		}
+	}
+}
+
 func assertFilterDomainExpansionProbe(t *testing.T, probes []ExecutionProbe, name, value, detailPart string) {
 	t.Helper()
 	for _, probe := range probes {

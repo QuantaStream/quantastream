@@ -67,8 +67,14 @@ func (a DirectBitmapFilterTreeAdapter) AdaptFilterExpression(ctx context.Context
 		}, nil
 	}
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
+	leafEvaluator := directBitmapFilterTreeLeafEvaluator{
+		Sessions:        a.Sessions,
+		Materialization: a.projectionMaterializationKernel(),
+		Request:         request,
+		Recorder:        recorder,
+	}
 	evaluator := QuantaFilterTreeEvaluator{Leaves: timedQuantaFilterLeafEvaluator{
-		Inner:    directBitmapFilterTreeLeafEvaluator{Sessions: a.Sessions, Materialization: a.projectionMaterializationKernel(), Request: request},
+		Inner:    leafEvaluator,
 		Recorder: recorder,
 	}}
 	evaluateStart := time.Now()
@@ -418,6 +424,7 @@ type directBitmapFilterTreeLeafEvaluator struct {
 	Sessions        DirectSessionProvider
 	Materialization ProjectionMaterializationKernel
 	Request         ExecutionRequest
+	Recorder        *directBitmapFilterTreeEvaluationRecorder
 }
 
 type timedQuantaFilterLeafEvaluator struct {
@@ -452,7 +459,8 @@ func (e timedQuantaFilterLeafEvaluator) EvaluateFilterLeafWithinCandidateSet(ctx
 }
 
 type directBitmapFilterTreeEvaluationRecorder struct {
-	leaves []directBitmapFilterTreeLeafProbe
+	leaves      []directBitmapFilterTreeLeafProbe
+	innerProbes []ExecutionProbe
 }
 
 type directBitmapFilterTreeLeafProbe struct {
@@ -475,12 +483,27 @@ func (r *directBitmapFilterTreeEvaluationRecorder) Record(fragment qsbridge.Quan
 	})
 }
 
+// RecordInnerProbes keeps lower-level bitmap/materialization timings attached
+// to the grouped-filter leaf that caused them.
+func (r *directBitmapFilterTreeEvaluationRecorder) RecordInnerProbes(fragment qsbridge.QuantaQueryFragment, source string, probes []ExecutionProbe) {
+	if r == nil || len(probes) == 0 {
+		return
+	}
+	for _, probe := range probes {
+		if probe.Section == "" || probe.Name == "" {
+			continue
+		}
+		probe.Detail = directBitmapFilterTreeInnerProbeDetail(fragment, source, probe.Detail)
+		r.innerProbes = append(r.innerProbes, probe)
+	}
+}
+
 // Probes returns execution probes for the recorded filter-tree leaves.
 func (r *directBitmapFilterTreeEvaluationRecorder) Probes() []ExecutionProbe {
-	if r == nil || len(r.leaves) == 0 {
+	if r == nil || (len(r.leaves) == 0 && len(r.innerProbes) == 0) {
 		return nil
 	}
-	probes := make([]ExecutionProbe, 0, len(r.leaves))
+	probes := make([]ExecutionProbe, 0, len(r.leaves)+len(r.innerProbes))
 	for _, leaf := range r.leaves {
 		probes = append(probes, ExecutionProbe{
 			Section: "filter_tree",
@@ -491,7 +514,19 @@ func (r *directBitmapFilterTreeEvaluationRecorder) Probes() []ExecutionProbe {
 				" elapsed=" + leaf.Duration.String(),
 		})
 	}
+	probes = append(probes, r.innerProbes...)
 	return probes
+}
+
+func directBitmapFilterTreeInnerProbeDetail(fragment qsbridge.QuantaQueryFragment, source string, detail string) string {
+	parts := []string{"leaf=" + filterDomainFragmentKey(fragment)}
+	if source != "" {
+		parts = append(parts, "source="+source)
+	}
+	if detail != "" {
+		parts = append(parts, detail)
+	}
+	return strings.Join(parts, " ")
 }
 
 // EvaluateFilterLeaf executes one grouped-filter leaf as a normal bitmap query fragment.
@@ -513,6 +548,7 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeaf(ctx context.Cont
 	}
 	result, queryDiagnostics, queryErr := session.QueryBitmap(ctx, leafRequest)
 	releaseDiagnostics := session.Release(ctx)
+	e.recordInnerProbes(fragment, "bitmap_query", result.Probes)
 	diagnostics = append(diagnostics, queryDiagnostics...)
 	diagnostics = append(diagnostics, releaseDiagnostics...)
 	if queryErr != nil || diagnostics.BlocksNative() {
@@ -545,7 +581,8 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 		Field: fragment.Field,
 		Type:  directBitmapFilterFragmentDataType(fragment),
 	}})
-	rowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, e.Materialization, materialization)
+	rowSet, diagnostics, materializationProbes, err := directBitmapMaterializeWithKernel(ctx, e.Materialization, materialization)
+	e.recordInnerProbes(fragment, "constrained_materialization", materializationProbes)
 	if err != nil || diagnostics.BlocksNative() {
 		return qsbridge.QuantaCandidateSet{}, diagnostics, err
 	}
@@ -567,6 +604,13 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 		}
 	}
 	return qsbridge.QuantaCandidateSet{Index: index, Rownums: rownums}, nil, nil
+}
+
+func (e directBitmapFilterTreeLeafEvaluator) recordInnerProbes(fragment qsbridge.QuantaQueryFragment, source string, probes []ExecutionProbe) {
+	if e.Recorder == nil {
+		return
+	}
+	e.Recorder.RecordInnerProbes(fragment, source, probes)
 }
 
 func directBitmapFilterFragmentShouldEvaluateMaterialized(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
