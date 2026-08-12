@@ -499,6 +499,10 @@ func legacyDirectExecutionWithShardWindow(request ExecutionRequest, table *core.
 		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 		return request
 	}
+	if legacyDirectRequestHasShardWindowSeed(request, index, timeField) {
+		request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
+		return request
+	}
 	needsSyntheticShardWindow := legacyDirectRequestNeedsSyntheticShardWindow(request, timeField)
 	if !needsSyntheticShardWindow && len(request.Query.Fragments) > 0 {
 		needsSyntheticShardWindow = true
@@ -507,18 +511,31 @@ func legacyDirectExecutionWithShardWindow(request ExecutionRequest, table *core.
 		return request
 	}
 
-	shardRange := qsbridge.QuantaQueryFragment{
+	request.Query.Seeds = append([]qsbridge.QuantaSeed{{
 		Index:       index,
 		Field:       timeField,
-		Operation:   qsbridge.QuantaOperationIntersect,
-		BSIOp:       qsbridge.QuantaBSIOpRange,
+		Kind:        qsbridge.QuantaSeedTableExistence,
 		Begin:       big.NewInt(legacyDirectRelationshipFullTimeRangeBeginMillis),
 		End:         big.NewInt(legacyDirectRelationshipFullTimeRangeEndMillis),
 		ShardWindow: true,
-	}
-	request.Query.Fragments = append([]qsbridge.QuantaQueryFragment{shardRange}, request.Query.Fragments...)
+	}}, request.Query.Seeds...)
 	request.Query.ProjectionFields = legacyDirectEnsureShardProjectionField(request.Query.ProjectionFields, index, timeField)
 	return request
+}
+
+func legacyDirectRequestHasShardWindowSeed(request ExecutionRequest, index, timeField string) bool {
+	for _, seed := range request.Query.Seeds {
+		if seed.Kind != qsbridge.QuantaSeedTableExistence || !seed.ShardWindow || seed.Begin == nil || seed.End == nil {
+			continue
+		}
+		if !strings.EqualFold(seed.Field, timeField) {
+			continue
+		}
+		if seed.Index == "" || index == "" || strings.EqualFold(seed.Index, index) {
+			return true
+		}
+	}
+	return false
 }
 
 func legacyDirectRequestNeedsSyntheticShardWindow(request ExecutionRequest, timeField string) bool {

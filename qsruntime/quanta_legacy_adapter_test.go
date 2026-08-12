@@ -133,6 +133,49 @@ func TestLegacyBitmapQueryAdapterAppliesSeedShardWindow(t *testing.T) {
 	}
 }
 
+func TestLegacyBitmapQueryAdapterKeepsShardWindowSeedOutOfBSICompare(t *testing.T) {
+	query := qsbridge.QuantaIntermediateQuery{
+		Seeds: []qsbridge.QuantaSeed{{
+			Index:       "lineitem",
+			Field:       "l_shipdate",
+			Kind:        qsbridge.QuantaSeedTableExistence,
+			Begin:       big.NewInt(1685577600000),
+			End:         big.NewInt(1685664000000),
+			ShardWindow: true,
+		}},
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_shipmode",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpNone,
+			Values:    []*big.Int{big.NewInt(7)},
+		}},
+	}
+
+	proto := LegacyBitmapQueryAdapter{}.ToProtoFromRequest(NewExecutionRequest(query))
+	if len(proto.Query) != 2 {
+		t.Fatalf("fragments = %d, want shard seed plus dictionary bitmap", len(proto.Query))
+	}
+	var seed, leaf *pb.QueryFragment
+	for _, fragment := range proto.Query {
+		switch fragment.Field {
+		case "l_shipdate":
+			seed = fragment
+		case "l_shipmode":
+			leaf = fragment
+		}
+	}
+	if seed == nil || leaf == nil {
+		t.Fatalf("fragments = %#v, want shard seed and dictionary bitmap", proto.Query)
+	}
+	if seed.Field != "l_shipdate" || seed.Operation != pb.QueryFragment_UNION || !seed.NullCheck || !seed.Negate || seed.BsiOp != pb.QueryFragment_NA {
+		t.Fatalf("seed fragment = %#v, want non-BSI shard-window existence", seed)
+	}
+	if leaf.Field != "l_shipmode" || leaf.RowID != 7 || leaf.BsiOp != pb.QueryFragment_NA || len(leaf.Values) != 0 {
+		t.Fatalf("leaf fragment = %#v, want non-BSI dictionary bitmap row ID", leaf)
+	}
+}
+
 func TestLegacyBitmapQueryAdapterPassesThroughDifferenceFragment(t *testing.T) {
 	query := qsbridge.QuantaIntermediateQuery{
 		Fragments: []qsbridge.QuantaQueryFragment{{
@@ -409,7 +452,7 @@ func TestLegacyBitmapQueryAdapterConvertsLoweredStringEnumExecutionRequest(t *te
 	}
 }
 
-func TestLegacyDirectExecutionWithShardWindowAddsFullRangeForCandidateStringEnumPredicate(t *testing.T) {
+func TestLegacyDirectExecutionWithShardWindowAddsSeedForCandidateStringEnumPredicate(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem"},
 		Attributes: []core.Attribute{
@@ -430,25 +473,25 @@ func TestLegacyDirectExecutionWithShardWindowAddsFullRangeForCandidateStringEnum
 
 	adapted := legacyDirectExecutionWithShardWindow(request, table)
 
-	if len(adapted.Query.Fragments) != 2 {
-		t.Fatalf("fragments = %#v, want synthetic shard range plus string predicate", adapted.Query.Fragments)
+	if len(adapted.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want synthetic shard-window seed", adapted.Query.Seeds)
 	}
-	shard := adapted.Query.Fragments[0]
-	if shard.Index != "lineitem" || shard.Field != "l_shipdate" || shard.BSIOp != qsbridge.QuantaBSIOpRange {
-		t.Fatalf("synthetic fragment = %#v, want lineitem.l_shipdate range", shard)
+	shard := adapted.Query.Seeds[0]
+	if shard.Index != "lineitem" || shard.Field != "l_shipdate" || shard.Kind != qsbridge.QuantaSeedTableExistence || !shard.ShardWindow {
+		t.Fatalf("synthetic seed = %#v, want lineitem.l_shipdate shard-window existence", shard)
 	}
 	if shard.Begin.Int64() != legacyDirectRelationshipFullTimeRangeBeginMillis || shard.End.Int64() != legacyDirectRelationshipFullTimeRangeEndMillis {
 		t.Fatalf("synthetic range = %d..%d, want full shard window", shard.Begin.Int64(), shard.End.Int64())
 	}
-	if adapted.Query.Fragments[1].Field != "l_shipmode" {
-		t.Fatalf("predicate fragment = %#v, want original l_shipmode predicate preserved", adapted.Query.Fragments[1])
+	if len(adapted.Query.Fragments) != 1 || adapted.Query.Fragments[0].Field != "l_shipmode" {
+		t.Fatalf("fragments = %#v, want original l_shipmode predicate preserved without synthetic BSI range", adapted.Query.Fragments)
 	}
 	if len(adapted.Query.ProjectionFields) == 0 || adapted.Query.ProjectionFields[0].Field != "l_shipdate" || adapted.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
 		t.Fatalf("projection fields = %#v, want shard time metadata", adapted.Query.ProjectionFields)
 	}
 }
 
-func TestLegacyDirectExecutionWithShardWindowAddsFullRangeForPlainPredicateOnPhysicalTimeShard(t *testing.T) {
+func TestLegacyDirectExecutionWithShardWindowAddsSeedForPlainPredicateOnPhysicalTimeShard(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem"},
 		Attributes: []core.Attribute{
@@ -468,15 +511,15 @@ func TestLegacyDirectExecutionWithShardWindowAddsFullRangeForPlainPredicateOnPhy
 
 	adapted := legacyDirectExecutionWithShardWindow(request, table)
 
-	if len(adapted.Query.Fragments) != 2 {
-		t.Fatalf("fragments = %#v, want synthetic shard range plus string predicate", adapted.Query.Fragments)
+	if len(adapted.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want synthetic shard-window seed", adapted.Query.Seeds)
 	}
-	shard := adapted.Query.Fragments[0]
-	if shard.Index != "lineitem" || shard.Field != "l_shipdate" || shard.BSIOp != qsbridge.QuantaBSIOpRange {
-		t.Fatalf("synthetic fragment = %#v, want lineitem.l_shipdate range", shard)
+	shard := adapted.Query.Seeds[0]
+	if shard.Index != "lineitem" || shard.Field != "l_shipdate" || shard.Kind != qsbridge.QuantaSeedTableExistence || !shard.ShardWindow {
+		t.Fatalf("synthetic seed = %#v, want lineitem.l_shipdate shard-window existence", shard)
 	}
-	if adapted.Query.Fragments[1].Field != "l_shipmode" {
-		t.Fatalf("predicate fragment = %#v, want original l_shipmode predicate preserved", adapted.Query.Fragments[1])
+	if len(adapted.Query.Fragments) != 1 || adapted.Query.Fragments[0].Field != "l_shipmode" {
+		t.Fatalf("fragments = %#v, want original l_shipmode predicate preserved without synthetic BSI range", adapted.Query.Fragments)
 	}
 	if len(adapted.Query.ProjectionFields) == 0 || adapted.Query.ProjectionFields[0].Field != "l_shipdate" || adapted.Query.ProjectionFields[0].Type != qsbridge.DataTypeTime {
 		t.Fatalf("projection fields = %#v, want shard time metadata", adapted.Query.ProjectionFields)
@@ -556,7 +599,7 @@ func TestLegacyDirectExecutionWithShardWindowSkipsPlainSingleTablePredicate(t *t
 		t.Fatalf("fragment = %#v, want age predicate", adapted.Query.Fragments[0])
 	}
 }
-func TestLegacyDirectExecutionWithShardWindowPrependsShardRangeForNonShardTimePredicate(t *testing.T) {
+func TestLegacyDirectExecutionWithShardWindowAddsSeedForNonShardTimePredicate(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{Name: "lineitem"},
 		Attributes: []core.Attribute{
@@ -584,14 +627,14 @@ func TestLegacyDirectExecutionWithShardWindowPrependsShardRangeForNonShardTimePr
 
 	adapted := legacyDirectExecutionWithShardWindow(request, table)
 
-	if len(adapted.Query.Fragments) != 2 {
-		t.Fatalf("fragments = %#v, want shard range plus receiptdate predicate", adapted.Query.Fragments)
+	if len(adapted.Query.Seeds) != 1 {
+		t.Fatalf("seeds = %#v, want synthetic shard-window seed", adapted.Query.Seeds)
 	}
-	if adapted.Query.Fragments[0].Field != "l_shipdate" {
-		t.Fatalf("first fragment = %#v, want shard key l_shipdate before receiptdate", adapted.Query.Fragments[0])
+	if adapted.Query.Seeds[0].Index != "lineitem" || adapted.Query.Seeds[0].Field != "l_shipdate" || !adapted.Query.Seeds[0].ShardWindow {
+		t.Fatalf("synthetic seed = %#v, want lineitem.l_shipdate shard-window seed", adapted.Query.Seeds[0])
 	}
-	if adapted.Query.Fragments[1].Field != "l_receiptdate" {
-		t.Fatalf("second fragment = %#v, want original receiptdate predicate preserved", adapted.Query.Fragments[1])
+	if len(adapted.Query.Fragments) != 1 || adapted.Query.Fragments[0].Field != "l_receiptdate" {
+		t.Fatalf("fragments = %#v, want original receiptdate predicate preserved without synthetic BSI range", adapted.Query.Fragments)
 	}
 	if len(adapted.Query.ProjectionFields) < 2 || adapted.Query.ProjectionFields[0].Field != "l_shipdate" || adapted.Query.ProjectionFields[1].Field != "l_receiptdate" {
 		t.Fatalf("projection fields = %#v, want shard metadata before receiptdate metadata", adapted.Query.ProjectionFields)
