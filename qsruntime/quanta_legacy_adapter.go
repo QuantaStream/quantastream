@@ -74,6 +74,10 @@ func (a LegacyBitmapQueryAdapter) toQueryFragment(bitmap *legacy.BitmapQuery, fr
 	legacyFragment.Values = cloneBigIntSlice(fragment.Values)
 	legacyFragment.Begin = cloneBigInt(fragment.Begin)
 	legacyFragment.End = cloneBigInt(fragment.End)
+	if fragment.BSIOp == qsbridge.QuantaBSIOpNone && fragment.Value == nil && fragment.Begin == nil && fragment.End == nil && len(fragment.Values) == 1 && fragment.Values[0] != nil {
+		legacyFragment.RowID = fragment.Values[0].Uint64()
+		legacyFragment.Values = nil
+	}
 	legacyFragment.Negate = fragment.Negate
 	legacyFragment.NullCheck = fragment.NullCheck
 	return legacyFragment

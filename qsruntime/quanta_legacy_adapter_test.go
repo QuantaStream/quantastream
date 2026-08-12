@@ -63,6 +63,33 @@ func TestLegacyBitmapQueryAdapterConvertsBSIFragmentToProto(t *testing.T) {
 	}
 }
 
+func TestLegacyBitmapQueryAdapterConvertsStandardDictionaryBitmapFragmentToProto(t *testing.T) {
+	query := qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "lineitem",
+			Field:     "l_shipmode",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpNone,
+			Values:    []*big.Int{big.NewInt(7)},
+		}},
+	}
+
+	proto := LegacyBitmapQueryAdapter{}.ToProto(query)
+	if len(proto.Query) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(proto.Query))
+	}
+	fragment := proto.Query[0]
+	if fragment.Field != "l_shipmode" || fragment.RowID != 7 {
+		t.Fatalf("fragment = %#v, want l_shipmode row ID 7", fragment)
+	}
+	if fragment.BsiOp != pb.QueryFragment_NA {
+		t.Fatalf("bsi op = %v, want NA", fragment.BsiOp)
+	}
+	if len(fragment.Values) != 0 {
+		t.Fatalf("values = %#v, want none for single dictionary bitmap", fragment.Values)
+	}
+}
+
 func TestLegacyBitmapQueryAdapterConvertsSeedToExistenceFragment(t *testing.T) {
 	query := qsbridge.QuantaIntermediateQuery{
 		Seeds: []qsbridge.QuantaSeed{{
