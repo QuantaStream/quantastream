@@ -31,15 +31,24 @@ type LegacyDirectRelationshipVectorAggregateGroup struct {
 
 // LegacyDirectRelationshipVectorAggregateResult is the physical-tier response.
 type LegacyDirectRelationshipVectorAggregateResult struct {
-	Groups            []LegacyDirectRelationshipVectorAggregateGroup
-	Mode              string
-	Rows              uint64
-	Values            uint64
-	SourceValues      int
-	TargetRows        uint64
-	LookupElapsed     time.Duration
-	ProjectionElapsed time.Duration
-	AggregateElapsed  time.Duration
+	Groups                     []LegacyDirectRelationshipVectorAggregateGroup
+	Mode                       string
+	Rows                       uint64
+	Values                     uint64
+	SourceValues               int
+	TargetRows                 uint64
+	LookupElapsed              time.Duration
+	ProjectionElapsed          time.Duration
+	AggregateElapsed           time.Duration
+	ProjectionShardsVisited    int
+	ProjectionShardsInWindow   int
+	ProjectionShardsLocal      int
+	ProjectionShardsRetained   int
+	ProjectionRetainedRows     uint64
+	ProjectionRetainBypassRows uint64
+	ProjectionRetainElapsed    time.Duration
+	ProjectionValueElapsed     time.Duration
+	ProjectionMergeElapsed     time.Duration
 }
 
 // LegacyDirectRelationshipVectorAggregateReader exposes storage-side

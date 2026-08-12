@@ -194,15 +194,24 @@ func standardRelationshipAggregateResult(groups []server.RelationshipReverseArti
 		})
 	}
 	return qsruntime.LegacyDirectRelationshipVectorAggregateResult{
-		Groups:            resultGroups,
-		Mode:              mode,
-		Rows:              stats.Rows,
-		Values:            stats.Values,
-		SourceValues:      stats.SourceValues,
-		TargetRows:        stats.TargetRows,
-		LookupElapsed:     stats.LookupElapsed,
-		ProjectionElapsed: stats.ProjectionElapsed,
-		AggregateElapsed:  stats.AggregateElapsed,
+		Groups:                     resultGroups,
+		Mode:                       mode,
+		Rows:                       stats.Rows,
+		Values:                     stats.Values,
+		SourceValues:               stats.SourceValues,
+		TargetRows:                 stats.TargetRows,
+		LookupElapsed:              stats.LookupElapsed,
+		ProjectionElapsed:          stats.ProjectionElapsed,
+		AggregateElapsed:           stats.AggregateElapsed,
+		ProjectionShardsVisited:    stats.ProjectionStats.ShardsVisited,
+		ProjectionShardsInWindow:   stats.ProjectionStats.ShardsInWindow,
+		ProjectionShardsLocal:      stats.ProjectionStats.ShardsLocal,
+		ProjectionShardsRetained:   stats.ProjectionStats.ShardsRetained,
+		ProjectionRetainedRows:     stats.ProjectionStats.RetainedRows,
+		ProjectionRetainBypassRows: stats.ProjectionStats.RetainBypassRows,
+		ProjectionRetainElapsed:    stats.ProjectionStats.RetainElapsed,
+		ProjectionValueElapsed:     stats.ProjectionStats.ValueElapsed,
+		ProjectionMergeElapsed:     stats.ProjectionStats.MergeElapsed,
 	}
 }
 

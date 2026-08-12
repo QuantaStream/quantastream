@@ -4050,11 +4050,16 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 
 	aggregateReader := &fakeRelationshipVectorAggregateReader{
 		Result: LegacyDirectRelationshipVectorAggregateResult{
-			Mode:         "reverse_artifact_sum",
-			Rows:         5,
-			Values:       3,
-			SourceValues: 3,
-			TargetRows:   5,
+			Mode:                       "reverse_artifact_sum",
+			Rows:                       5,
+			Values:                     3,
+			SourceValues:               3,
+			TargetRows:                 5,
+			ProjectionShardsVisited:    4,
+			ProjectionShardsInWindow:   3,
+			ProjectionShardsRetained:   2,
+			ProjectionRetainedRows:     5,
+			ProjectionRetainBypassRows: 1,
 			Groups: []LegacyDirectRelationshipVectorAggregateGroup{
 				{ParentRow: 1, RepresentativeChildRow: 101, Count: 2, Sum: big.NewInt(350)},
 				{ParentRow: 2, RepresentativeChildRow: 103, Count: 1, Sum: big.NewInt(99)},
@@ -4145,7 +4150,13 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_mode", "reverse_artifact_sum")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_preagg_groups", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_projection_shards_visited", "4")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_projection_shards_in_window", "3")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_projection_shards_retained", "2")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_projection_rows_retained", "5")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_projection_retain_bypass_rows", "1")
 	assertExecutionProbeName(t, result.Probes, "relationship_join", "q3_attribution_preagg_storage_elapsed")
+	assertExecutionProbeName(t, result.Probes, "relationship_join", "phase_graph_grouped_aggregate_preagg_storage_projection_value_elapsed")
 }
 
 func TestLegacyDirectRelationshipQ3OrderRevenueFinalMaterializationPrunesUnorderedLimit(t *testing.T) {

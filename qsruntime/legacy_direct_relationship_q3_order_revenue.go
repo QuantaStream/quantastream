@@ -317,6 +317,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed", aggregate.LookupElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_elapsed", aggregate.ProjectionElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_aggregate_elapsed", aggregate.AggregateElapsed.String()),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_shards_visited", strconv.Itoa(aggregate.ProjectionShardsVisited)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_shards_in_window", strconv.Itoa(aggregate.ProjectionShardsInWindow)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_shards_local", strconv.Itoa(aggregate.ProjectionShardsLocal)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_shards_retained", strconv.Itoa(aggregate.ProjectionShardsRetained)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_rows_retained", strconv.FormatUint(aggregate.ProjectionRetainedRows, 10)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_projection_retain_bypass_rows", strconv.FormatUint(aggregate.ProjectionRetainBypassRows, 10)),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_retain_elapsed", aggregate.ProjectionRetainElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_value_elapsed", aggregate.ProjectionValueElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_merge_elapsed", aggregate.ProjectionMergeElapsed.String()),
 	}, aggregate.ProjectionElapsed, aggregate.AggregateElapsed, diagnostics, nil, true
 }
 
