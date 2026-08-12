@@ -1,6 +1,8 @@
 package qsruntime
 
 import (
+	"context"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +107,65 @@ func TestDirectBitmapFilterFragmentShouldMaterializeStringEnumUntilBitmapKernelI
 	}
 }
 
+func TestDirectBitmapFilterFragmentUsesDictionaryBitmapForResolvedStringEnum(t *testing.T) {
+	ref := qsbridge.DictionaryRef{Schema: "quanta", Table: "lineitem", Field: "l_shipmode"}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Schema: "quanta",
+		Name:   "lineitem",
+		Fields: []qsbridge.FieldDefinition{{
+			Name:       "l_shipmode",
+			Type:       qsbridge.DataTypeString,
+			Index:      qsbridge.IndexStringEnum,
+			Dictionary: qsbridge.DictionaryDefinition{Ref: ref},
+		}},
+	}}, nil, nil)
+	resolver := qsbridge.MemoryDictionaryResolver{
+		Dictionaries: []qsbridge.DictionaryDefinition{{Ref: ref}},
+		Entries: []qsbridge.DictionaryEntry{
+			{Ref: ref, Label: "AIR", ID: 7},
+			{Ref: ref, Label: "MAIL", ID: 8},
+		},
+	}
+	fragment := qsbridge.QuantaQueryFragment{
+		Index: "lineitem",
+		Field: "l.l_shipmode",
+		Literals: []qsbridge.LiteralExpr{
+			qsbridge.Literal(qsbridge.ValueString, "AIR"),
+			qsbridge.Literal(qsbridge.ValueString, "MAIL"),
+		},
+	}
+
+	decision := directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(request, fragment, resolver)
+
+	if decision.Materialize || decision.Reason != "string_enum_dictionary_bitmap" || !decision.HasBitmapFragment {
+		t.Fatalf("decision = %#v, want dictionary bitmap decision", decision)
+	}
+	if decision.BitmapFragment.BSIOp != qsbridge.QuantaBSIOpNone {
+		t.Fatalf("bitmap BSI op = %q, want none", decision.BitmapFragment.BSIOp)
+	}
+	if decision.BitmapFragment.Field != "l_shipmode" {
+		t.Fatalf("bitmap field = %q, want physical field", decision.BitmapFragment.Field)
+	}
+	if len(decision.BitmapFragment.Values) != 2 {
+		t.Fatalf("bitmap values = %#v, want two ids", decision.BitmapFragment.Values)
+	}
+	if got := decision.BitmapFragment.Values[0].Uint64(); got != 7 {
+		t.Fatalf("first dictionary id = %d, want 7", got)
+	}
+	if got := decision.BitmapFragment.Values[1].Uint64(); got != 8 {
+		t.Fatalf("second dictionary id = %d, want 8", got)
+	}
+	for _, want := range []string{
+		"uses_string_enum=true",
+		"dictionary_bitmap_values=2",
+	} {
+		if !strings.Contains(decision.ProbeDetail, want) {
+			t.Fatalf("probe detail = %q, want substring %q", decision.ProbeDetail, want)
+		}
+	}
+}
+
 func TestDirectBitmapFilterFragmentDecisionDetailsExposeStringEnumLookup(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
 	request.QueryCatalog = qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
@@ -179,6 +240,72 @@ func TestDirectBitmapFilterTreeAdapterFallbackQueryCatalogFeedsStringEnumDecisio
 		!strings.Contains(decision.ProbeDetail, "uses_string_enum=true") {
 		t.Fatalf("probe detail = %q, want fallback catalog evidence", decision.ProbeDetail)
 	}
+}
+
+func TestDirectBitmapFilterTreeAdapterSendsResolvedStringEnumBitmapFragment(t *testing.T) {
+	ref := qsbridge.DictionaryRef{Schema: "quanta", Table: "lineitem", Field: "l_shipmode"}
+	catalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Schema: "quanta",
+		Name:   "lineitem",
+		Fields: []qsbridge.FieldDefinition{{
+			Name:       "l_shipmode",
+			Type:       qsbridge.DataTypeString,
+			Index:      qsbridge.IndexStringEnum,
+			Dictionary: qsbridge.DictionaryDefinition{Ref: ref},
+		}},
+	}}, nil, nil)
+	resolver := qsbridge.MemoryDictionaryResolver{
+		Dictionaries: []qsbridge.DictionaryDefinition{{Ref: ref}},
+		Entries:      []qsbridge.DictionaryEntry{{Ref: ref, Label: "AIR", ID: 7}},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "lineitem", Field: "l_orderkey", Visible: true}},
+		Filter: qsbridge.QuantaFilterExpression{
+			Operation: qsbridge.QuantaFilterLeaf,
+			Fragment: qsbridge.QuantaQueryFragment{
+				Index:      "lineitem",
+				Field:      "l.l_shipmode",
+				HasLiteral: true,
+				Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+			},
+		},
+	})
+	request.QueryCatalog = catalog
+	var captured qsbridge.QuantaQueryFragment
+	adapter := DirectBitmapFilterTreeAdapter{
+		DictionaryResolver: resolver,
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					captured = request.Query.Fragments[0]
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{11, 12}}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+
+	adapted, diagnostics, err := adapter.AdaptFilterExpression(context.Background(), request)
+
+	if err != nil {
+		t.Fatalf("adapt filter: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !adapted.HasCandidateSet {
+		t.Fatalf("expected candidate set")
+	}
+	if captured.BSIOp != qsbridge.QuantaBSIOpNone {
+		t.Fatalf("captured BSI op = %q, want none", captured.BSIOp)
+	}
+	if captured.Field != "l_shipmode" {
+		t.Fatalf("captured field = %q, want physical field", captured.Field)
+	}
+	if len(captured.Values) != 1 || captured.Values[0].Cmp(big.NewInt(7)) != 0 {
+		t.Fatalf("captured values = %#v, want dictionary id 7", captured.Values)
+	}
+	assertFilterAdapterExecutionProbe(t, adapted.Probes, "filter_tree", "leaf_materialization_decision", "string_enum_dictionary_bitmap", "dictionary_bitmap_values=1")
+	assertFilterAdapterExecutionProbe(t, adapted.Probes, "filter_tree", "leaf_evaluation_mode", "bitmap_query", "reason=string_enum_dictionary_bitmap")
 }
 
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
@@ -260,4 +387,18 @@ func assertFilterDomainExpansionProbe(t *testing.T, probes []ExecutionProbe, nam
 		return
 	}
 	t.Fatalf("probe %s not found in %#v", name, probes)
+}
+
+func assertFilterAdapterExecutionProbe(t *testing.T, probes []ExecutionProbe, section string, name string, value string, detailPart string) {
+	t.Helper()
+	for _, probe := range probes {
+		if probe.Section != section || probe.Name != name || probe.Value != value {
+			continue
+		}
+		if detailPart != "" && !strings.Contains(probe.Detail, detailPart) {
+			t.Fatalf("probe detail = %q, want substring %q", probe.Detail, detailPart)
+		}
+		return
+	}
+	t.Fatalf("probe %s/%s=%s not found in %#v", section, name, value, probes)
 }

@@ -31,6 +31,7 @@ type DirectBitmapFilterTreeAdapter struct {
 	Normalizer           FilterDomainNormalizationExecutor
 	QueryCatalog         qsbridge.QueryCatalogView
 	QueryCatalogProvider func() qsbridge.QueryCatalogView
+	DictionaryResolver   qsbridge.DictionaryResolver
 }
 
 // AdaptFilterExpression evaluates grouped filters and stores the resulting candidate set on the request.
@@ -71,10 +72,11 @@ func (a DirectBitmapFilterTreeAdapter) AdaptFilterExpression(ctx context.Context
 	}
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	leafEvaluator := directBitmapFilterTreeLeafEvaluator{
-		Sessions:        a.Sessions,
-		Materialization: a.projectionMaterializationKernel(),
-		Request:         request,
-		Recorder:        recorder,
+		Sessions:           a.Sessions,
+		Materialization:    a.projectionMaterializationKernel(),
+		DictionaryResolver: a.DictionaryResolver,
+		Request:            request,
+		Recorder:           recorder,
 	}
 	evaluator := QuantaFilterTreeEvaluator{Leaves: timedQuantaFilterLeafEvaluator{
 		Inner:    leafEvaluator,
@@ -438,10 +440,11 @@ func directBitmapFilterDomainLeafProbeDetail(leaf qsbridge.FilterDomainNormalize
 }
 
 type directBitmapFilterTreeLeafEvaluator struct {
-	Sessions        DirectSessionProvider
-	Materialization ProjectionMaterializationKernel
-	Request         ExecutionRequest
-	Recorder        *directBitmapFilterTreeEvaluationRecorder
+	Sessions           DirectSessionProvider
+	Materialization    ProjectionMaterializationKernel
+	DictionaryResolver qsbridge.DictionaryResolver
+	Request            ExecutionRequest
+	Recorder           *directBitmapFilterTreeEvaluationRecorder
 }
 
 type timedQuantaFilterLeafEvaluator struct {
@@ -488,15 +491,19 @@ type directBitmapFilterTreeLeafProbe struct {
 }
 
 type directBitmapFilterFragmentMaterializationDecisionResult struct {
-	Materialize bool
-	Reason      string
-	ProbeDetail string
+	Materialize       bool
+	Reason            string
+	ProbeDetail       string
+	HasBitmapFragment bool
+	BitmapFragment    qsbridge.QuantaQueryFragment
 }
 
 type directBitmapFilterFragmentStringEnumDetection struct {
 	usesStringEnum bool
 	shouldProbe    bool
 	detail         string
+	table          qsbridge.QueryTableView
+	definition     qsbridge.FieldDefinition
 }
 
 // Record captures timing and output cardinality for one filter-tree leaf.
@@ -595,6 +602,11 @@ func directBitmapFilterTreeInnerProbeDetail(fragment qsbridge.QuantaQueryFragmen
 
 // EvaluateFilterLeaf executes one grouped-filter leaf as a normal bitmap query fragment.
 func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeaf(ctx context.Context, fragment qsbridge.QuantaQueryFragment) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error) {
+	decision := directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(e.Request, fragment, e.DictionaryResolver)
+	e.recordLeafMaterializationDecision(fragment, decision)
+	if decision.HasBitmapFragment {
+		return e.evaluateFilterLeafBitmap(ctx, decision.BitmapFragment, -1, decision.Reason)
+	}
 	return e.evaluateFilterLeafBitmap(ctx, fragment, -1, "")
 }
 
@@ -645,10 +657,14 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 	if index == "" || (candidates.Index != "" && candidates.Index != index) {
 		return e.evaluateFilterLeafBitmap(ctx, fragment, len(candidates.Rownums), "candidate_index_mismatch")
 	}
-	decision := directBitmapFilterFragmentMaterializationDecisionDetails(e.Request, fragment)
+	decision := directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(e.Request, fragment, e.DictionaryResolver)
 	e.recordLeafMaterializationDecision(fragment, decision)
 	if !decision.Materialize {
-		return e.evaluateFilterLeafBitmap(ctx, fragment, len(candidates.Rownums), decision.Reason)
+		bitmapFragment := fragment
+		if decision.HasBitmapFragment {
+			bitmapFragment = decision.BitmapFragment
+		}
+		return e.evaluateFilterLeafBitmap(ctx, bitmapFragment, len(candidates.Rownums), decision.Reason)
 	}
 	e.recordLeafMode(fragment, "constrained_materialization", len(candidates.Rownums), decision.Reason)
 	materialization := candidates.MaterializationRequest([]qsbridge.QuantaProjectionField{{
@@ -713,12 +729,26 @@ func directBitmapFilterFragmentMaterializationDecision(request ExecutionRequest,
 }
 
 func directBitmapFilterFragmentMaterializationDecisionDetails(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) directBitmapFilterFragmentMaterializationDecisionResult {
+	return directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(request, fragment, nil)
+}
+
+func directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment, resolver qsbridge.DictionaryResolver) directBitmapFilterFragmentMaterializationDecisionResult {
 	detection := directBitmapFilterFragmentStringEnumDecision(request, fragment)
 	probeDetail := ""
 	if detection.shouldProbe {
 		probeDetail = detection.detail
 	}
 	if detection.usesStringEnum {
+		if bitmapFragment, ok := directBitmapFilterFragmentStringEnumBitmapFragment(fragment, detection, resolver); ok {
+			probeDetail = directBitmapFilterProbeDetailAppend(probeDetail, "dictionary_bitmap_values="+strconv.Itoa(len(bitmapFragment.Values)))
+			return directBitmapFilterFragmentMaterializationDecisionResult{
+				Materialize:       false,
+				Reason:            "string_enum_dictionary_bitmap",
+				ProbeDetail:       probeDetail,
+				HasBitmapFragment: true,
+				BitmapFragment:    bitmapFragment,
+			}
+		}
 		// The legacy bitmap backend currently lowers these leaves into BSI compares;
 		// keep the constrained path until dictionary bitmap evaluation is available.
 		return directBitmapFilterFragmentMaterializationDecisionResult{
@@ -743,6 +773,119 @@ func directBitmapFilterFragmentMaterializationDecisionDetails(request ExecutionR
 
 func directBitmapFilterFragmentFieldUsesStringEnum(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) bool {
 	return directBitmapFilterFragmentStringEnumDecision(request, fragment).usesStringEnum
+}
+
+func directBitmapFilterFragmentStringEnumBitmapFragment(fragment qsbridge.QuantaQueryFragment, detection directBitmapFilterFragmentStringEnumDetection, resolver qsbridge.DictionaryResolver) (qsbridge.QuantaQueryFragment, bool) {
+	if resolver == nil || !detection.usesStringEnum || !directBitmapFilterFragmentStringEnumBitmapEligible(fragment) {
+		return qsbridge.QuantaQueryFragment{}, false
+	}
+	literals, ok := directBitmapFilterFragmentStringEnumExactLiterals(fragment)
+	if !ok || len(literals) == 0 {
+		return qsbridge.QuantaQueryFragment{}, false
+	}
+	ref := directBitmapFilterFragmentStringEnumDictionaryRef(detection)
+	if !ref.Valid() {
+		return qsbridge.QuantaQueryFragment{}, false
+	}
+	values := make([]*big.Int, 0, len(literals))
+	seen := make(map[uint64]bool, len(literals))
+	for _, literal := range literals {
+		label, ok := literal.Value.(string)
+		if literal.Kind != qsbridge.ValueString || !ok {
+			return qsbridge.QuantaQueryFragment{}, false
+		}
+		entry, diagnostics := resolver.LookupLabel(ref, label)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaQueryFragment{}, false
+		}
+		id := uint64(entry.ID)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		values = append(values, new(big.Int).SetUint64(id))
+	}
+	if len(values) == 0 {
+		return qsbridge.QuantaQueryFragment{}, false
+	}
+	bitmapFragment := fragment
+	bitmapFragment.BSIOp = qsbridge.QuantaBSIOpNone
+	bitmapFragment.Value = nil
+	bitmapFragment.Begin = nil
+	bitmapFragment.End = nil
+	bitmapFragment.Values = values
+	bitmapFragment.HasLiteralRange = false
+	if physicalField := directBitmapFilterFragmentStringEnumPhysicalField(detection); physicalField != "" {
+		bitmapFragment.Field = physicalField
+	}
+	return bitmapFragment, true
+}
+
+func directBitmapFilterFragmentStringEnumBitmapEligible(fragment qsbridge.QuantaQueryFragment) bool {
+	if fragment.NullCheck || fragment.Negate || fragment.HasLiteralRange {
+		return false
+	}
+	if fragment.Operation == qsbridge.QuantaOperationDifference {
+		return false
+	}
+	switch fragment.BSIOp {
+	case qsbridge.QuantaBSIOpNone, qsbridge.QuantaBSIOpEQ:
+		return true
+	default:
+		return false
+	}
+}
+
+func directBitmapFilterFragmentStringEnumExactLiterals(fragment qsbridge.QuantaQueryFragment) ([]qsbridge.LiteralExpr, bool) {
+	literals := make([]qsbridge.LiteralExpr, 0, 1+len(fragment.Literals))
+	if fragment.HasLiteral {
+		literals = append(literals, fragment.Literal)
+	}
+	literals = append(literals, fragment.Literals...)
+	if len(literals) == 0 {
+		return nil, false
+	}
+	for _, literal := range literals {
+		if literal.Kind != qsbridge.ValueString {
+			return nil, false
+		}
+		if _, ok := literal.Value.(string); !ok {
+			return nil, false
+		}
+	}
+	return literals, true
+}
+
+func directBitmapFilterFragmentStringEnumDictionaryRef(detection directBitmapFilterFragmentStringEnumDetection) qsbridge.DictionaryRef {
+	if detection.definition.Dictionary.Ref.Valid() {
+		return detection.definition.Dictionary.Ref
+	}
+	return qsbridge.DictionaryRef{
+		Schema: detection.table.Schema,
+		Table:  detection.table.Name,
+		Field:  directBitmapFilterFragmentStringEnumPhysicalField(detection),
+	}
+}
+
+func directBitmapFilterFragmentStringEnumPhysicalField(detection directBitmapFilterFragmentStringEnumDetection) string {
+	if detection.definition.PhysicalName != "" {
+		return detection.definition.PhysicalName
+	}
+	return detection.definition.Name
+}
+
+func directBitmapFilterProbeDetailAppend(detail string, parts ...string) string {
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if detail == "" {
+			detail = part
+			continue
+		}
+		detail += " " + part
+	}
+	return detail
 }
 
 func directBitmapFilterFragmentStringEnumDecision(request ExecutionRequest, fragment qsbridge.QuantaQueryFragment) directBitmapFilterFragmentStringEnumDetection {
@@ -777,6 +920,8 @@ func directBitmapFilterFragmentStringEnumDecision(request ExecutionRequest, frag
 				usesStringEnum: usesStringEnum,
 				shouldProbe:    shouldProbe,
 				detail:         detail,
+				table:          table,
+				definition:     definition,
 			}
 		}
 		detail := baseDetail + " matched_table=" + table.Name + " matched_field=none uses_string_enum=false"

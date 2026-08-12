@@ -34,7 +34,7 @@ type LegacyDirectBitIndexRelationshipVectorBackend struct {
 }
 
 // LegacyDirectFilterTreeAdapter wires grouped-filter evaluation to relationship-vector normalization.
-func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *source.QuantaSource, tableCache *core.TableCacheStruct, materializer ProjectionMaterializer, materialization ProjectionMaterializationKernel, reverseArtifacts *RelationshipVectorReverseArtifactManager) DirectBitmapFilterTreeAdapter {
+func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *source.QuantaSource, tableCache *core.TableCacheStruct, materializer ProjectionMaterializer, materialization ProjectionMaterializationKernel, reverseArtifacts *RelationshipVectorReverseArtifactManager, resolver qsbridge.DictionaryResolver) DirectBitmapFilterTreeAdapter {
 	reader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
 			Source:           source,
@@ -44,9 +44,10 @@ func LegacyDirectFilterTreeAdapter(sessions DirectSessionProvider, source *sourc
 		},
 	}
 	return DirectBitmapFilterTreeAdapter{
-		Sessions:        sessions,
-		Materializer:    materializer,
-		Materialization: materialization,
+		Sessions:           sessions,
+		Materializer:       materializer,
+		Materialization:    materialization,
+		DictionaryResolver: resolver,
 		Normalizer: DirectBitmapFilterDomainNormalizationExecutor{
 			Sessions: sessions,
 			Reader:   reader,

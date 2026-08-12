@@ -129,7 +129,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	physicalTier := DirectPhysicalExecutionTier{
 		Sessions:            sessions,
 		Adapter:             BitmapQueryResultAdapter{},
-		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization, reverseArtifacts),
+		FilterAdapter:       LegacyDirectFilterTreeAdapter(sessions, quantaSource, tableCache, nil, materialization, reverseArtifacts, resolver),
 		Materialization:     materialization,
 		ProjectionBSIReader: bsiReader,
 		SameRowComparison:   sameRowComparison,
