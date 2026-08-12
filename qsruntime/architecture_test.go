@@ -95,6 +95,9 @@ func TestQSRuntimeLegacyImportsStayInAdapterIslands(t *testing.T) {
 			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
 			"github.com/QuantaStream/quantastream/source": "github.com/QuantaStream/quantastream/source",
 		},
+		"legacy_direct_bitmap_group_aggregate.go": {
+			"github.com/QuantaStream/quantastream/core": "github.com/QuantaStream/quantastream/core",
+		},
 		"legacy_direct_backing_string_lookup.go": {
 			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
 			"github.com/QuantaStream/quantastream/source": "github.com/QuantaStream/quantastream/source",
