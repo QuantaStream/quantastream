@@ -15,6 +15,7 @@ import (
 // cluster projection path and reducing the aligned rows in the query process.
 type LegacyDirectSharedRelationshipVectorAggregateReader struct {
 	Source legacyDirectRelationshipAggregateProjectionSource
+	Remote LegacyDirectRelationshipVectorAggregateReader
 }
 
 type legacyDirectRelationshipAggregateProjectionSource interface {
@@ -38,6 +39,15 @@ func (r LegacyDirectSharedRelationshipVectorAggregateReader) ReadRelationshipVec
 	}
 	if len(read.ChildRows) != len(read.ParentRows) {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, true, fmt.Errorf("relationship aggregate requires aligned child and parent rows")
+	}
+	if r.Remote != nil {
+		result, diagnostics, ok, err := r.Remote.ReadRelationshipVectorAggregate(ctx, read)
+		if ok && err == nil && !diagnostics.BlocksNative() && len(read.ChildRows) > 0 && len(result.Groups) == 0 {
+			ok = false
+		}
+		if err != nil || diagnostics.BlocksNative() || ok {
+			return result, diagnostics, ok, err
+		}
 	}
 	projectionSource := r.Source
 	if projectionSource == nil {

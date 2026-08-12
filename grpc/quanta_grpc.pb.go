@@ -810,20 +810,21 @@ var StringSearch_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	BitmapIndex_BatchMutate_FullMethodName       = "/shared.BitmapIndex/BatchMutate"
-	BitmapIndex_BatchMutateItems_FullMethodName  = "/shared.BitmapIndex/BatchMutateItems"
-	BitmapIndex_BulkClear_FullMethodName         = "/shared.BitmapIndex/BulkClear"
-	BitmapIndex_Query_FullMethodName             = "/shared.BitmapIndex/Query"
-	BitmapIndex_Join_FullMethodName              = "/shared.BitmapIndex/Join"
-	BitmapIndex_Projection_FullMethodName        = "/shared.BitmapIndex/Projection"
-	BitmapIndex_CompareBSIFields_FullMethodName  = "/shared.BitmapIndex/CompareBSIFields"
-	BitmapIndex_CheckoutSequence_FullMethodName  = "/shared.BitmapIndex/CheckoutSequence"
-	BitmapIndex_TableOperation_FullMethodName    = "/shared.BitmapIndex/TableOperation"
-	BitmapIndex_Synchronize_FullMethodName       = "/shared.BitmapIndex/Synchronize"
-	BitmapIndex_SyncStatus_FullMethodName        = "/shared.BitmapIndex/SyncStatus"
-	BitmapIndex_Commit_FullMethodName            = "/shared.BitmapIndex/Commit"
-	BitmapIndex_PartitionInfo_FullMethodName     = "/shared.BitmapIndex/PartitionInfo"
-	BitmapIndex_OfflinePartitions_FullMethodName = "/shared.BitmapIndex/OfflinePartitions"
+	BitmapIndex_BatchMutate_FullMethodName                 = "/shared.BitmapIndex/BatchMutate"
+	BitmapIndex_BatchMutateItems_FullMethodName            = "/shared.BitmapIndex/BatchMutateItems"
+	BitmapIndex_BulkClear_FullMethodName                   = "/shared.BitmapIndex/BulkClear"
+	BitmapIndex_Query_FullMethodName                       = "/shared.BitmapIndex/Query"
+	BitmapIndex_Join_FullMethodName                        = "/shared.BitmapIndex/Join"
+	BitmapIndex_Projection_FullMethodName                  = "/shared.BitmapIndex/Projection"
+	BitmapIndex_CompareBSIFields_FullMethodName            = "/shared.BitmapIndex/CompareBSIFields"
+	BitmapIndex_RelationshipAlignedValueSum_FullMethodName = "/shared.BitmapIndex/RelationshipAlignedValueSum"
+	BitmapIndex_CheckoutSequence_FullMethodName            = "/shared.BitmapIndex/CheckoutSequence"
+	BitmapIndex_TableOperation_FullMethodName              = "/shared.BitmapIndex/TableOperation"
+	BitmapIndex_Synchronize_FullMethodName                 = "/shared.BitmapIndex/Synchronize"
+	BitmapIndex_SyncStatus_FullMethodName                  = "/shared.BitmapIndex/SyncStatus"
+	BitmapIndex_Commit_FullMethodName                      = "/shared.BitmapIndex/Commit"
+	BitmapIndex_PartitionInfo_FullMethodName               = "/shared.BitmapIndex/PartitionInfo"
+	BitmapIndex_OfflinePartitions_FullMethodName           = "/shared.BitmapIndex/OfflinePartitions"
 )
 
 // BitmapIndexClient is the client API for BitmapIndex service.
@@ -837,6 +838,7 @@ type BitmapIndexClient interface {
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 	Projection(ctx context.Context, in *ProjectionRequest, opts ...grpc.CallOption) (*ProjectionResponse, error)
 	CompareBSIFields(ctx context.Context, in *CompareBSIFieldsRequest, opts ...grpc.CallOption) (*CompareBSIFieldsResponse, error)
+	RelationshipAlignedValueSum(ctx context.Context, in *RelationshipAlignedValueSumRequest, opts ...grpc.CallOption) (*RelationshipAlignedValueSumResponse, error)
 	CheckoutSequence(ctx context.Context, in *CheckoutSequenceRequest, opts ...grpc.CallOption) (*CheckoutSequenceResponse, error)
 	TableOperation(ctx context.Context, in *TableOperationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Synchronize(ctx context.Context, in *wrapperspb.StringValue, opts ...grpc.CallOption) (*wrapperspb.Int64Value, error)
@@ -942,6 +944,15 @@ func (c *bitmapIndexClient) CompareBSIFields(ctx context.Context, in *CompareBSI
 	return out, nil
 }
 
+func (c *bitmapIndexClient) RelationshipAlignedValueSum(ctx context.Context, in *RelationshipAlignedValueSumRequest, opts ...grpc.CallOption) (*RelationshipAlignedValueSumResponse, error) {
+	out := new(RelationshipAlignedValueSumResponse)
+	err := c.cc.Invoke(ctx, BitmapIndex_RelationshipAlignedValueSum_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bitmapIndexClient) CheckoutSequence(ctx context.Context, in *CheckoutSequenceRequest, opts ...grpc.CallOption) (*CheckoutSequenceResponse, error) {
 	out := new(CheckoutSequenceResponse)
 	err := c.cc.Invoke(ctx, BitmapIndex_CheckoutSequence_FullMethodName, in, out, opts...)
@@ -1016,6 +1027,7 @@ type BitmapIndexServer interface {
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
 	Projection(context.Context, *ProjectionRequest) (*ProjectionResponse, error)
 	CompareBSIFields(context.Context, *CompareBSIFieldsRequest) (*CompareBSIFieldsResponse, error)
+	RelationshipAlignedValueSum(context.Context, *RelationshipAlignedValueSumRequest) (*RelationshipAlignedValueSumResponse, error)
 	CheckoutSequence(context.Context, *CheckoutSequenceRequest) (*CheckoutSequenceResponse, error)
 	TableOperation(context.Context, *TableOperationRequest) (*emptypb.Empty, error)
 	Synchronize(context.Context, *wrapperspb.StringValue) (*wrapperspb.Int64Value, error)
@@ -1049,6 +1061,9 @@ func (UnimplementedBitmapIndexServer) Projection(context.Context, *ProjectionReq
 }
 func (UnimplementedBitmapIndexServer) CompareBSIFields(context.Context, *CompareBSIFieldsRequest) (*CompareBSIFieldsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CompareBSIFields not implemented")
+}
+func (UnimplementedBitmapIndexServer) RelationshipAlignedValueSum(context.Context, *RelationshipAlignedValueSumRequest) (*RelationshipAlignedValueSumResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RelationshipAlignedValueSum not implemented")
 }
 func (UnimplementedBitmapIndexServer) CheckoutSequence(context.Context, *CheckoutSequenceRequest) (*CheckoutSequenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckoutSequence not implemented")
@@ -1217,6 +1232,24 @@ func _BitmapIndex_CompareBSIFields_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BitmapIndex_RelationshipAlignedValueSum_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RelationshipAlignedValueSumRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BitmapIndexServer).RelationshipAlignedValueSum(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BitmapIndex_RelationshipAlignedValueSum_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BitmapIndexServer).RelationshipAlignedValueSum(ctx, req.(*RelationshipAlignedValueSumRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BitmapIndex_CheckoutSequence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckoutSequenceRequest)
 	if err := dec(in); err != nil {
@@ -1373,6 +1406,10 @@ var BitmapIndex_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CompareBSIFields",
 			Handler:    _BitmapIndex_CompareBSIFields_Handler,
+		},
+		{
+			MethodName: "RelationshipAlignedValueSum",
+			Handler:    _BitmapIndex_RelationshipAlignedValueSum_Handler,
 		},
 		{
 			MethodName: "CheckoutSequence",

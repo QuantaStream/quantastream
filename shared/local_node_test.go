@@ -161,6 +161,33 @@ func TestBitmapIndexCompareBSIFieldsUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexRelationshipAlignedValueSumUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	_, _, ok, err := index.RelationshipAlignedValueSum("lineitem", "l_extendedprice", 10, 20, []uint64{101, 102}, []uint64{7, 7})
+	if err != nil {
+		t.Fatalf("RelationshipAlignedValueSum() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipAlignedValueSum() ok = false, want true")
+	}
+	if local.relationshipSumCalls != 1 {
+		t.Fatalf("relationship sum calls = %d, want 1", local.relationshipSumCalls)
+	}
+	if local.relationshipSumRequest == nil {
+		t.Fatal("relationship sum request was not captured")
+	}
+	if local.relationshipSumRequest.Index != "lineitem" || local.relationshipSumRequest.ValueField != "l_extendedprice" {
+		t.Fatalf("relationship sum request = %#v", local.relationshipSumRequest)
+	}
+	if got, want := local.relationshipSumRequest.ChildRows, []uint64{101, 102}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("child rows = %#v, want %#v", got, want)
+	}
+	if got, want := local.relationshipSumRequest.ParentRows, []uint64{7, 7}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parent rows = %#v, want %#v", got, want)
+	}
+}
+
 func TestKVStoreLookupUsesLocalService(t *testing.T) {
 	local := &recordingLocalKVStoreService{}
 	store := NewKVStore(&Conn{LocalNodeServices: LocalNodeServices{KVStore: local}})
@@ -223,6 +250,8 @@ type recordingLocalBitmapIndexService struct {
 	syncStatusCardinality   uint64
 	compareBSIFieldsCalls   int
 	compareBSIFieldsRequest *pb.CompareBSIFieldsRequest
+	relationshipSumCalls    int
+	relationshipSumRequest  *pb.RelationshipAlignedValueSumRequest
 	bulkClearCalls          int
 	bulkClearRequest        *pb.BulkClearRequest
 	batchMutateCalls        int
@@ -264,6 +293,12 @@ func (s *recordingLocalBitmapIndexService) CompareBSIFields(_ context.Context, r
 		return nil, err
 	}
 	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) RelationshipAlignedValueSum(_ context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {
+	s.relationshipSumCalls++
+	s.relationshipSumRequest = req
+	return &pb.RelationshipAlignedValueSumResponse{Ok: true}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error) {

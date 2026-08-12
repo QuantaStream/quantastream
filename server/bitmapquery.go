@@ -946,6 +946,58 @@ func (m *BitmapIndex) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFi
 	}, nil
 }
 
+// RelationshipAlignedValueSum computes a node-local partial aggregate for an
+// already-aligned relationship vector. Cluster callers merge partial groups by
+// parent value.
+func (m *BitmapIndex) RelationshipAlignedValueSum(ctx context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	groups, stats, ok, err := m.RelationshipAlignedValueSumStorage(
+		req.GetIndex(),
+		req.GetValueField(),
+		req.GetFromTime(),
+		req.GetToTime(),
+		req.GetChildRows(),
+		req.GetParentRows(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	protoGroups := make([]*pb.RelationshipAlignedValueSumGroup, 0, len(groups))
+	for _, group := range groups {
+		sum := ""
+		if group.Sum != nil {
+			sum = group.Sum.String()
+		}
+		protoGroups = append(protoGroups, &pb.RelationshipAlignedValueSumGroup{
+			ParentValue:       group.ParentValue,
+			RepresentativeRow: group.RepresentativeRow,
+			Count:             group.Count,
+			Sum:               sum,
+		})
+	}
+	return &pb.RelationshipAlignedValueSumResponse{
+		Groups: protoGroups,
+		Stats:  relationshipAlignedValueSumStatsToProto(stats),
+		Ok:     ok,
+	}, nil
+}
+
+func relationshipAlignedValueSumStatsToProto(stats RelationshipReverseArtifactSumStats) *pb.RelationshipAlignedValueSumStats {
+	return &pb.RelationshipAlignedValueSumStats{
+		Rows:                   stats.Rows,
+		Values:                 stats.Values,
+		SourceValues:           uint64(stats.SourceValues),
+		TargetRows:             stats.TargetRows,
+		Groups:                 uint64(stats.Groups),
+		LookupElapsedNanos:     stats.LookupElapsed.Nanoseconds(),
+		ProjectionElapsedNanos: stats.ProjectionElapsed.Nanoseconds(),
+		AggregateElapsedNanos:  stats.AggregateElapsed.Nanoseconds(),
+		Projection:             projectBSIStatsToProto(stats.ProjectionStats),
+	}
+}
+
 func compareBSIFieldsStatsToProto(stats CompareBSIFieldsStats) *pb.CompareBSIFieldsStats {
 	return &pb.CompareBSIFieldsStats{
 		Left:                projectBSIStatsToProto(stats.Left),
@@ -963,6 +1015,8 @@ func projectBSIStatsToProto(stats ProjectBSIStats) *pb.BSIProjectionStats {
 		ShardsRetained:     uint64(stats.ShardsRetained),
 		RetainedRows:       stats.RetainedRows,
 		RetainElapsedNanos: stats.RetainElapsed.Nanoseconds(),
+		RetainBypassRows:   stats.RetainBypassRows,
+		ValueElapsedNanos:  stats.ValueElapsed.Nanoseconds(),
 		MergeElapsedNanos:  stats.MergeElapsed.Nanoseconds(),
 	}
 }

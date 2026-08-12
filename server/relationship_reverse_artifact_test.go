@@ -356,7 +356,7 @@ func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
 	}
 }
 
-func TestRelationshipAlignedValueSumGroupsProjectedValues(t *testing.T) {
+func TestRelationshipAlignedValueSumStorageGroupsProjectedValues(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, false)
 	shardTime := time.Unix(0, 0).UTC()
 
@@ -366,12 +366,12 @@ func TestRelationshipAlignedValueSumGroupsProjectedValues(t *testing.T) {
 		6: 500,
 	}, false))
 
-	groups, stats, ok, err := index.RelationshipAlignedValueSum("lineitem", "l_extendedprice", 0, 0, []uint64{2, 4, 6, 4}, []uint64{7, 8, 8, 9})
+	groups, stats, ok, err := index.RelationshipAlignedValueSumStorage("lineitem", "l_extendedprice", 0, 0, []uint64{2, 4, 6, 4}, []uint64{7, 8, 8, 9})
 	if err != nil {
-		t.Fatalf("RelationshipAlignedValueSum error = %v", err)
+		t.Fatalf("RelationshipAlignedValueSumStorage error = %v", err)
 	}
 	if !ok {
-		t.Fatalf("RelationshipAlignedValueSum ok = false, want true")
+		t.Fatalf("RelationshipAlignedValueSumStorage ok = false, want true")
 	}
 	if len(groups) != 3 {
 		t.Fatalf("groups = %#v, want three parent groups", groups)

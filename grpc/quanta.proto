@@ -39,6 +39,7 @@ service BitmapIndex {
   rpc Join(JoinRequest) returns (JoinResponse) {}
   rpc Projection(ProjectionRequest) returns (ProjectionResponse) {}
   rpc CompareBSIFields(CompareBSIFieldsRequest) returns (CompareBSIFieldsResponse) {}
+  rpc RelationshipAlignedValueSum(RelationshipAlignedValueSumRequest) returns (RelationshipAlignedValueSumResponse) {}
   rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
   rpc TableOperation(TableOperationRequest) returns (google.protobuf.Empty) {}
   rpc Synchronize(google.protobuf.StringValue) returns (google.protobuf.Int64Value) {}
@@ -261,6 +262,8 @@ message BSIProjectionStats {
   uint64   retainedRows = 5;
   int64    retainElapsedNanos = 6;
   int64    mergeElapsedNanos = 7;
+  uint64   retainBypassRows = 8;
+  int64    valueElapsedNanos = 9;
 }
 
 message CompareBSIFieldsStats {
@@ -273,6 +276,40 @@ message CompareBSIFieldsStats {
 message CompareBSIFieldsResponse {
   bytes    rownums = 1;
   CompareBSIFieldsStats stats = 2;
+}
+
+message RelationshipAlignedValueSumRequest {
+  string   index = 1;
+  string   valueField = 2;
+  int64    fromTime = 3;
+  int64    toTime = 4;
+  repeated uint64 childRows = 5;
+  repeated uint64 parentRows = 6;
+}
+
+message RelationshipAlignedValueSumGroup {
+  uint64   parentValue = 1;
+  uint64   representativeRow = 2;
+  uint64   count = 3;
+  string   sum = 4;
+}
+
+message RelationshipAlignedValueSumStats {
+  uint64   rows = 1;
+  uint64   values = 2;
+  uint64   sourceValues = 3;
+  uint64   targetRows = 4;
+  uint64   groups = 5;
+  int64    lookupElapsedNanos = 6;
+  int64    projectionElapsedNanos = 7;
+  int64    aggregateElapsedNanos = 8;
+  BSIProjectionStats projection = 9;
+}
+
+message RelationshipAlignedValueSumResponse {
+  repeated RelationshipAlignedValueSumGroup groups = 1;
+  RelationshipAlignedValueSumStats stats = 2;
+  bool ok = 3;
 }
 
 message CheckoutSequenceRequest {

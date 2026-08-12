@@ -533,11 +533,11 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 	return groups, stats, true, nil
 }
 
-// RelationshipAlignedValueSum groups child-domain BSI values by caller-supplied
+// RelationshipAlignedValueSumStorage groups child-domain BSI values by caller-supplied
 // parent rows that are already aligned with childRows. This is the storage-side
 // aggregate path for graph reducers that have already performed relationship
 // vector alignment and only need mergeable grouped measure state.
-func (m *BitmapIndex) RelationshipAlignedValueSum(index, valueField string, fromTime, toTime int64, childRows []uint64, parentRows []uint64) ([]RelationshipReverseArtifactSumGroup, RelationshipReverseArtifactSumStats, bool, error) {
+func (m *BitmapIndex) RelationshipAlignedValueSumStorage(index, valueField string, fromTime, toTime int64, childRows []uint64, parentRows []uint64) ([]RelationshipReverseArtifactSumGroup, RelationshipReverseArtifactSumStats, bool, error) {
 	if strings.TrimSpace(valueField) == "" {
 		return nil, RelationshipReverseArtifactSumStats{}, false, fmt.Errorf("relationship aligned value sum requires value field")
 	}

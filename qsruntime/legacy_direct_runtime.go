@@ -80,6 +80,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	}
 	relationshipAggregateReader := LegacyDirectSharedRelationshipVectorAggregateReader{
 		Source: bsiReader,
+		Remote: sessions,
 	}
 	siblingDiversityReader := &LegacyDirectSharedRelationshipSiblingDiversityReader{
 		Sessions:   sessions,
@@ -338,6 +339,120 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		Session:               session,
 		DictionaryInvalidator: p.DictionaryInvalidator,
 	}, nil, nil
+}
+
+// ReadRelationshipVectorAggregate asks the shared direct bitmap boundary for a
+// node-local aligned relationship aggregate and converts the mergeable response
+// into the runtime aggregate contract.
+func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx context.Context, read LegacyDirectRelationshipVectorAggregateRequest) (LegacyDirectRelationshipVectorAggregateResult, qsbridge.DiagnosticSet, bool, error) {
+	if read.VectorIndex == "" || read.ValueField == "" {
+		return LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
+	}
+	valueIndex := read.ValueIndex
+	if valueIndex == "" {
+		valueIndex = read.VectorIndex
+	}
+	if valueIndex != read.VectorIndex {
+		return LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
+	}
+	if len(read.ChildRows) != len(read.ParentRows) {
+		return LegacyDirectRelationshipVectorAggregateResult{}, nil, true, fmt.Errorf("relationship aggregate requires aligned child and parent rows")
+	}
+	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index:     valueIndex,
+		Field:     read.ValueField,
+		Operation: qsbridge.QuantaOperationIntersect,
+		NullCheck: true,
+		Negate:    true,
+	}}})
+	session, diagnostics, err := p.BorrowDirectSession(ctx, executionRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return LegacyDirectRelationshipVectorAggregateResult{}, diagnostics, true, err
+	}
+	if session == nil {
+		return LegacyDirectRelationshipVectorAggregateResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship aggregate reader received nil session"),
+		}, true, nil
+	}
+	defer session.Release(ctx)
+	legacySession, ok := session.(LegacyQuantaSessionHandle)
+	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
+		return LegacyDirectRelationshipVectorAggregateResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship aggregate reader has no bitmap index"),
+		}, true, nil
+	}
+	childRows := legacyDirectRelationshipAggregateUint64Rows(read.ChildRows)
+	parentRows := legacyDirectRelationshipAggregateUint64Rows(read.ParentRows)
+	fromTime, toTime := legacyDirectRelationshipAggregateWindowNanos(p.Source, valueIndex, read)
+	groups, stats, ok, err := legacySession.Session.BitIndex.RelationshipAlignedValueSum(
+		valueIndex,
+		read.ValueField,
+		fromTime,
+		toTime,
+		childRows,
+		parentRows,
+	)
+	if err != nil || !ok {
+		return LegacyDirectRelationshipVectorAggregateResult{}, nil, ok, err
+	}
+	result := LegacyDirectRelationshipVectorAggregateResult{
+		Mode:                       "shared_remote_aligned_sum",
+		Rows:                       stats.Rows,
+		Values:                     stats.Values,
+		SourceValues:               stats.SourceValues,
+		TargetRows:                 stats.TargetRows,
+		LookupElapsed:              stats.LookupElapsed,
+		ProjectionElapsed:          stats.ProjectionElapsed,
+		AggregateElapsed:           stats.AggregateElapsed,
+		ProjectionShardsVisited:    int(stats.Projection.ShardsVisited),
+		ProjectionShardsInWindow:   int(stats.Projection.ShardsInWindow),
+		ProjectionShardsLocal:      int(stats.Projection.ShardsLocal),
+		ProjectionShardsRetained:   int(stats.Projection.ShardsRetained),
+		ProjectionRetainedRows:     stats.Projection.RetainedRows,
+		ProjectionRetainBypassRows: stats.Projection.RetainBypassRows,
+		ProjectionRetainElapsed:    stats.Projection.RetainElapsed,
+		ProjectionValueElapsed:     stats.Projection.ValueElapsed,
+		ProjectionMergeElapsed:     stats.Projection.MergeElapsed,
+	}
+	result.Groups = make([]LegacyDirectRelationshipVectorAggregateGroup, 0, len(groups))
+	for _, group := range groups {
+		sum := big.NewInt(0)
+		if group.Sum != nil {
+			sum.Set(group.Sum)
+		}
+		result.Groups = append(result.Groups, LegacyDirectRelationshipVectorAggregateGroup{
+			ParentRow:              qsbridge.QuantaRownum(group.ParentValue),
+			RepresentativeChildRow: qsbridge.QuantaRownum(group.RepresentativeRow),
+			Count:                  group.Count,
+			Sum:                    sum,
+		})
+	}
+	return result, nil, true, nil
+}
+
+func legacyDirectRelationshipAggregateWindowNanos(source *source.QuantaSource, index string, read LegacyDirectRelationshipVectorAggregateRequest) (int64, int64) {
+	if read.FromEpochMillis != 0 || read.ToEpochMillis != 0 {
+		return nativeProjectionTimeWindowNanos(read.FromEpochMillis, read.ToEpochMillis)
+	}
+	if source == nil || source.GetSessionPool() == nil {
+		return 0, 0
+	}
+	return nativeProjectionWindowNanos(source.GetSessionPool().TableCache, NativeProjectionBSIReadRequest{
+		Index:           index,
+		FromEpochMillis: read.FromEpochMillis,
+		ToEpochMillis:   read.ToEpochMillis,
+	})
+}
+
+func legacyDirectRelationshipAggregateUint64Rows(rows []qsbridge.QuantaRownum) []uint64 {
+	if len(rows) == 0 {
+		return nil
+	}
+	converted := make([]uint64, len(rows))
+	for i, row := range rows {
+		converted[i] = uint64(row)
+	}
+	return converted
 }
 
 // LegacyQuantaSessionHandle adapts a borrowed core.Session to DirectSessionHandle.

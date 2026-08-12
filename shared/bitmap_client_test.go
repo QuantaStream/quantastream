@@ -236,6 +236,82 @@ func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
 	}
 }
 
+func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.T) {
+	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{
+		{
+			Ok: true,
+			Groups: []*pb.RelationshipAlignedValueSumGroup{{
+				ParentValue:       7,
+				RepresentativeRow: 101,
+				Count:             1,
+				Sum:               "10",
+			}},
+			Stats: &pb.RelationshipAlignedValueSumStats{
+				ProjectionElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+			},
+		},
+		{
+			Ok: true,
+			Groups: []*pb.RelationshipAlignedValueSumGroup{{
+				ParentValue:       7,
+				RepresentativeRow: 102,
+				Count:             2,
+				Sum:               "20",
+			}, {
+				ParentValue:       8,
+				RepresentativeRow: 103,
+				Count:             1,
+				Sum:               "5",
+			}},
+			Stats: &pb.RelationshipAlignedValueSumStats{
+				ProjectionElapsedNanos: (3 * time.Millisecond).Nanoseconds(),
+			},
+		},
+	}, []uint64{101, 102, 103}, []uint64{7, 7, 8})
+	if err != nil {
+		t.Fatalf("aggregateRelationshipAlignedValueSumResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("aggregateRelationshipAlignedValueSumResponses() ok = false, want true")
+	}
+	if stats.Rows != 3 || stats.SourceValues != 2 || stats.TargetRows != 4 || stats.Groups != 2 || stats.Values != 2 {
+		t.Fatalf("stats = %+v, want rows/source/target/groups/values 3/2/4/2/2", stats)
+	}
+	if stats.Nodes != 2 || stats.ProjectionElapsed != 5*time.Millisecond {
+		t.Fatalf("stats nodes/projection elapsed = %d/%s, want 2/5ms", stats.Nodes, stats.ProjectionElapsed)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups len = %d, want 2", len(groups))
+	}
+	if groups[0].ParentValue != 7 || groups[0].RepresentativeRow != 101 || groups[0].Count != 3 || groups[0].Sum.Cmp(big.NewInt(30)) != 0 {
+		t.Fatalf("groups[0] = %+v, want parent 7 count 3 sum 30", groups[0])
+	}
+	if groups[1].ParentValue != 8 || groups[1].RepresentativeRow != 103 || groups[1].Count != 1 || groups[1].Sum.Cmp(big.NewInt(5)) != 0 {
+		t.Fatalf("groups[1] = %+v, want parent 8 count 1 sum 5", groups[1])
+	}
+}
+
+func TestAggregateRelationshipAlignedValueSumResponsesRequiresAllNodesOK(t *testing.T) {
+	_, _, ok, err := aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{
+		{
+			Ok: true,
+			Groups: []*pb.RelationshipAlignedValueSumGroup{{
+				ParentValue:       7,
+				RepresentativeRow: 101,
+				Count:             1,
+				Sum:               "10",
+			}},
+		},
+		{Ok: false},
+	}, []uint64{101}, []uint64{7})
+	if err != nil {
+		t.Fatalf("aggregateRelationshipAlignedValueSumResponses() error = %v", err)
+	}
+	if ok {
+		t.Fatal("aggregateRelationshipAlignedValueSumResponses() ok = true with one non-ok node, want false")
+	}
+}
+
 type batchMutateItemsBitmapIndexServer struct {
 	pb.UnimplementedBitmapIndexServer
 	mu             sync.Mutex

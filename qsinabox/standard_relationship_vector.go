@@ -156,7 +156,7 @@ func (r StandardRelationshipVectorAggregateReader) ReadRelationshipVectorAggrega
 	}
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.VectorIndex, read.FromEpochMillis, read.ToEpochMillis)
 	if len(read.ChildRows) > 0 && len(read.ChildRows) == len(read.ParentRows) {
-		groups, stats, ok, err := r.Direct.RelationshipAlignedValueSum(
+		groups, stats, ok, err := r.Direct.RelationshipAlignedValueSumStorage(
 			read.VectorIndex,
 			read.ValueField,
 			fromTime,

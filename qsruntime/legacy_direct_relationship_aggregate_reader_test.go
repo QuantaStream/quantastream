@@ -58,6 +58,84 @@ func TestLegacyDirectSharedRelationshipVectorAggregateReaderAlignedSum(t *testin
 	assertRelationshipAggregateGroup(t, result.Groups, 3, 104, 1, 200)
 }
 
+func TestLegacyDirectSharedRelationshipVectorAggregateReaderUsesRemoteAlignedSum(t *testing.T) {
+	projection := &fakeRelationshipAggregateProjectionSource{}
+	remote := &fakeRelationshipAggregateRemoteSource{
+		Result: LegacyDirectRelationshipVectorAggregateResult{
+			Mode:       "shared_remote_aligned_sum",
+			Rows:       2,
+			TargetRows: 2,
+			Groups: []LegacyDirectRelationshipVectorAggregateGroup{{
+				ParentRow:              7,
+				RepresentativeChildRow: 101,
+				Count:                  2,
+				Sum:                    big.NewInt(300),
+			}},
+		},
+		OK: true,
+	}
+	reader := LegacyDirectSharedRelationshipVectorAggregateReader{
+		Source: projection,
+		Remote: remote,
+	}
+	result, diagnostics, ok, err := reader.ReadRelationshipVectorAggregate(context.Background(), LegacyDirectRelationshipVectorAggregateRequest{
+		VectorIndex: "lineitem",
+		ValueIndex:  "lineitem",
+		ValueField:  "l_extendedprice",
+		ChildRows:   []qsbridge.QuantaRownum{101, 102},
+		ParentRows:  []qsbridge.QuantaRownum{7, 7},
+	})
+	if err != nil || diagnostics.BlocksNative() || !ok {
+		t.Fatalf("ReadRelationshipVectorAggregate ok/error/diagnostics = %t/%v/%v, want true/nil/none", ok, err, diagnostics)
+	}
+	if got, want := len(remote.Requests), 1; got != want {
+		t.Fatalf("remote requests = %d, want %d", got, want)
+	}
+	if got, want := len(projection.Requests), 0; got != want {
+		t.Fatalf("projection requests = %d, want %d", got, want)
+	}
+	if got, want := result.Mode, "shared_remote_aligned_sum"; got != want {
+		t.Fatalf("mode = %q, want %q", got, want)
+	}
+	assertRelationshipAggregateGroup(t, result.Groups, 7, 101, 2, 300)
+}
+
+func TestLegacyDirectSharedRelationshipVectorAggregateReaderFallsBackWhenRemoteEmpty(t *testing.T) {
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(101, 100)
+	bsi.SetValue(102, 200)
+	projection := &fakeRelationshipAggregateProjectionSource{
+		Result: NativeProjectionBSIReadResult{BSI: bsi},
+	}
+	reader := LegacyDirectSharedRelationshipVectorAggregateReader{
+		Source: projection,
+		Remote: &fakeRelationshipAggregateRemoteSource{
+			Result: LegacyDirectRelationshipVectorAggregateResult{
+				Mode: "shared_remote_aligned_sum",
+				Rows: 2,
+			},
+			OK: true,
+		},
+	}
+	result, diagnostics, ok, err := reader.ReadRelationshipVectorAggregate(context.Background(), LegacyDirectRelationshipVectorAggregateRequest{
+		VectorIndex: "lineitem",
+		ValueIndex:  "lineitem",
+		ValueField:  "l_extendedprice",
+		ChildRows:   []qsbridge.QuantaRownum{101, 102},
+		ParentRows:  []qsbridge.QuantaRownum{7, 7},
+	})
+	if err != nil || diagnostics.BlocksNative() || !ok {
+		t.Fatalf("ReadRelationshipVectorAggregate ok/error/diagnostics = %t/%v/%v, want true/nil/none", ok, err, diagnostics)
+	}
+	if got, want := len(projection.Requests), 1; got != want {
+		t.Fatalf("projection requests = %d, want %d", got, want)
+	}
+	if got, want := result.Mode, "shared_projection_aligned_sum"; got != want {
+		t.Fatalf("mode = %q, want %q", got, want)
+	}
+	assertRelationshipAggregateGroup(t, result.Groups, 7, 101, 2, 300)
+}
+
 func TestLegacyDirectSharedRelationshipVectorAggregateReaderDeclinesCrossIndex(t *testing.T) {
 	reader := LegacyDirectSharedRelationshipVectorAggregateReader{Source: &fakeRelationshipAggregateProjectionSource{}}
 	_, diagnostics, ok, err := reader.ReadRelationshipVectorAggregate(context.Background(), LegacyDirectRelationshipVectorAggregateRequest{
@@ -94,4 +172,15 @@ type fakeRelationshipAggregateProjectionSource struct {
 func (s *fakeRelationshipAggregateProjectionSource) ReadProjectionBSI(_ context.Context, request NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
 	s.Requests = append(s.Requests, request)
 	return s.Result, nil, nil
+}
+
+type fakeRelationshipAggregateRemoteSource struct {
+	Result   LegacyDirectRelationshipVectorAggregateResult
+	OK       bool
+	Requests []LegacyDirectRelationshipVectorAggregateRequest
+}
+
+func (s *fakeRelationshipAggregateRemoteSource) ReadRelationshipVectorAggregate(_ context.Context, request LegacyDirectRelationshipVectorAggregateRequest) (LegacyDirectRelationshipVectorAggregateResult, qsbridge.DiagnosticSet, bool, error) {
+	s.Requests = append(s.Requests, request)
+	return s.Result, nil, s.OK, nil
 }

@@ -8,6 +8,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"sort"
 	"sync"
@@ -77,13 +78,15 @@ type bitmapBatchMutateItemsNodeProfile struct {
 // CompareBSIFieldsProjectionStats summarizes projection work reported by
 // readable nodes during a same-row BSI comparison.
 type CompareBSIFieldsProjectionStats struct {
-	ShardsVisited  uint64
-	ShardsInWindow uint64
-	ShardsLocal    uint64
-	ShardsRetained uint64
-	RetainedRows   uint64
-	RetainElapsed  time.Duration
-	MergeElapsed   time.Duration
+	ShardsVisited    uint64
+	ShardsInWindow   uint64
+	ShardsLocal      uint64
+	ShardsRetained   uint64
+	RetainedRows     uint64
+	RetainBypassRows uint64
+	RetainElapsed    time.Duration
+	ValueElapsed     time.Duration
+	MergeElapsed     time.Duration
 }
 
 // CompareBSIFieldsStats summarizes client-visible same-row BSI comparison work
@@ -94,6 +97,31 @@ type CompareBSIFieldsStats struct {
 	Right          CompareBSIFieldsProjectionStats
 	CompareElapsed time.Duration
 	OutputRows     uint64
+}
+
+// RelationshipAlignedValueSumGroup carries one mergeable parent-keyed aggregate
+// returned by node-local relationship aggregate pushdown.
+type RelationshipAlignedValueSumGroup struct {
+	ParentValue       uint64
+	RepresentativeRow uint64
+	Count             uint64
+	Sum               *big.Int
+}
+
+// RelationshipAlignedValueSumStats summarizes cluster-visible aligned aggregate
+// work. Input cardinalities describe the original request; projection/timing
+// fields are accumulated from node-local partials.
+type RelationshipAlignedValueSumStats struct {
+	Rows              uint64
+	Values            uint64
+	SourceValues      int
+	TargetRows        uint64
+	Groups            int
+	LookupElapsed     time.Duration
+	ProjectionElapsed time.Duration
+	AggregateElapsed  time.Duration
+	Projection        CompareBSIFieldsProjectionStats
+	Nodes             uint64
 }
 
 // NewBitmapIndex - Initializer for client side API wrappers.
@@ -1054,6 +1082,167 @@ func (c *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField str
 	return aggregateCompareBSIFieldsResponsesWithStats(responses)
 }
 
+// RelationshipAlignedValueSum asks readable nodes to aggregate child-domain BSI
+// values by caller-supplied parent row IDs. The input row slices are already
+// relationship-aligned; node partials are associative by parent value.
+func (c *BitmapIndex) RelationshipAlignedValueSum(index, valueField string, fromTime, toTime int64, childRows, parentRows []uint64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
+	if index == "" {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: index not specified")
+	}
+	if valueField == "" {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: value field not specified")
+	}
+	if len(childRows) != len(parentRows) {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: childRows and parentRows have different lengths")
+	}
+	req := &pb.RelationshipAlignedValueSumRequest{
+		Index:      index,
+		ValueField: valueField,
+		FromTime:   fromTime,
+		ToTime:     toTime,
+		ChildRows:  append([]uint64(nil), childRows...),
+		ParentRows: append([]uint64(nil), parentRows...),
+	}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.RelationshipAlignedValueSum(ctx, req)
+		if err != nil {
+			return nil, RelationshipAlignedValueSumStats{}, false, err
+		}
+		return aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{response}, childRows, parentRows)
+	}
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: no active bitmap nodes")
+	}
+	resultChan := make(chan *pb.RelationshipAlignedValueSumResponse, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			response, err := c.relationshipAlignedValueSumClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- response
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, RelationshipAlignedValueSumStats{}, false, err
+	}
+	close(resultChan)
+
+	responses := make([]*pb.RelationshipAlignedValueSumResponse, 0, len(clients))
+	for response := range resultChan {
+		responses = append(responses, response)
+	}
+	return aggregateRelationshipAlignedValueSumResponses(responses, childRows, parentRows)
+}
+
+func aggregateRelationshipAlignedValueSumResponses(responses []*pb.RelationshipAlignedValueSumResponse, childRows, parentRows []uint64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
+	stats := RelationshipAlignedValueSumStats{
+		Rows:         uint64(len(childRows)),
+		SourceValues: relationshipAlignedValueSumUniqueCount(parentRows),
+	}
+	groupsByParent := make(map[uint64]*RelationshipAlignedValueSumGroup)
+	ok := len(responses) > 0
+	for _, response := range responses {
+		if response == nil {
+			ok = false
+			continue
+		}
+		if !response.GetOk() {
+			ok = false
+		}
+		stats.addProto(response.GetStats())
+		for _, protoGroup := range response.GetGroups() {
+			if protoGroup == nil || protoGroup.GetCount() == 0 {
+				continue
+			}
+			sum := new(big.Int)
+			if protoGroup.GetSum() == "" {
+				sum.SetInt64(0)
+			} else if _, parsed := sum.SetString(protoGroup.GetSum(), 10); !parsed {
+				return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: could not parse sum %q", protoGroup.GetSum())
+			}
+			parent := protoGroup.GetParentValue()
+			group := groupsByParent[parent]
+			if group == nil {
+				group = &RelationshipAlignedValueSumGroup{
+					ParentValue:       parent,
+					RepresentativeRow: protoGroup.GetRepresentativeRow(),
+					Sum:               big.NewInt(0),
+				}
+				groupsByParent[parent] = group
+			}
+			if group.RepresentativeRow == 0 {
+				group.RepresentativeRow = protoGroup.GetRepresentativeRow()
+			}
+			group.Count += protoGroup.GetCount()
+			group.Sum.Add(group.Sum, sum)
+		}
+	}
+	groups := relationshipAlignedValueSumSortedGroups(groupsByParent)
+	stats.Groups = len(groups)
+	stats.Values = uint64(len(groups))
+	stats.TargetRows = 0
+	for _, group := range groups {
+		stats.TargetRows += group.Count
+	}
+	return groups, stats, ok, nil
+}
+
+func relationshipAlignedValueSumSortedGroups(groupsByParent map[uint64]*RelationshipAlignedValueSumGroup) []RelationshipAlignedValueSumGroup {
+	if len(groupsByParent) == 0 {
+		return nil
+	}
+	keys := make([]uint64, 0, len(groupsByParent))
+	for key := range groupsByParent {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	groups := make([]RelationshipAlignedValueSumGroup, 0, len(keys))
+	for _, key := range keys {
+		group := groupsByParent[key]
+		if group == nil || group.Count == 0 {
+			continue
+		}
+		groups = append(groups, RelationshipAlignedValueSumGroup{
+			ParentValue:       group.ParentValue,
+			RepresentativeRow: group.RepresentativeRow,
+			Count:             group.Count,
+			Sum:               new(big.Int).Set(group.Sum),
+		})
+	}
+	return groups
+}
+
+func relationshipAlignedValueSumUniqueCount(values []uint64) int {
+	if len(values) == 0 {
+		return 0
+	}
+	seen := make(map[uint64]struct{}, len(values))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	return len(seen)
+}
+
+func (s *RelationshipAlignedValueSumStats) addProto(stats *pb.RelationshipAlignedValueSumStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.Nodes++
+	s.LookupElapsed += time.Duration(stats.GetLookupElapsedNanos())
+	s.ProjectionElapsed += time.Duration(stats.GetProjectionElapsedNanos())
+	s.AggregateElapsed += time.Duration(stats.GetAggregateElapsedNanos())
+	s.Projection.addProto(stats.GetProjection())
+}
+
 func aggregateCompareBSIFieldsResponses(responses []*pb.CompareBSIFieldsResponse) (*roaring64.Bitmap, error) {
 	result, _, err := aggregateCompareBSIFieldsResponsesWithStats(responses)
 	return result, err
@@ -1098,7 +1287,9 @@ func (s *CompareBSIFieldsProjectionStats) addProto(stats *pb.BSIProjectionStats)
 	s.ShardsLocal += stats.GetShardsLocal()
 	s.ShardsRetained += stats.GetShardsRetained()
 	s.RetainedRows += stats.GetRetainedRows()
+	s.RetainBypassRows += stats.GetRetainBypassRows()
 	s.RetainElapsed += time.Duration(stats.GetRetainElapsedNanos())
+	s.ValueElapsed += time.Duration(stats.GetValueElapsedNanos())
 	s.MergeElapsed += time.Duration(stats.GetMergeElapsedNanos())
 }
 
@@ -1190,6 +1381,20 @@ func (c *BitmapIndex) compareBSIFieldsClient(client pb.BitmapIndexClient, req *p
 	result, err := client.CompareBSIFields(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.CompareBSIFields(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+func (c *BitmapIndex) relationshipAlignedValueSumClient(client pb.BitmapIndexClient, req *pb.RelationshipAlignedValueSumRequest,
+	clientIndex int) (*pb.RelationshipAlignedValueSumResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	result, err := client.RelationshipAlignedValueSum(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.RelationshipAlignedValueSum(_) = _, %v, node = %s", client, err,
 			c.ClientConnections()[clientIndex].Target())
 	}
 	return result, nil
