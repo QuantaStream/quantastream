@@ -99,6 +99,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 		TableCache: tableCache,
 		Schema:     config.WithDefaults().Database,
 	}
+	cachedDictionaryResolver := qsbridge.NewCachedDictionaryResolver(dictionaryResolver)
 	queryCatalogProvider := func() qsbridge.QueryCatalogView {
 		return standardQueryCatalogViewForCachedTables(config, tableCache)
 	}
@@ -111,7 +112,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 				DictionaryReader: dictionaryIDReader,
 			},
 			Rehydrator: qsruntime.NativeProjectionCompositeRehydrator{
-				Dictionary:     qsruntime.NewNativeProjectionDictionaryLabelRehydrator(queryCatalog, dictionaryResolver),
+				Dictionary:     qsruntime.NewNativeProjectionDictionaryLabelRehydrator(queryCatalog, cachedDictionaryResolver),
 				BackingStrings: backingStringReader,
 			},
 		},
@@ -154,7 +155,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	physicalTier := qsruntime.DirectPhysicalExecutionTier{
 		Sessions:              sessions,
 		Adapter:               qsruntime.BitmapQueryResultAdapter{},
-		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}, QueryCatalog: queryCatalog, QueryCatalogProvider: queryCatalogProvider},
+		FilterAdapter:         qsruntime.DirectBitmapFilterTreeAdapter{Sessions: sessions, Materialization: materialization, Normalizer: qsruntime.DirectBitmapFilterDomainNormalizationExecutor{Sessions: sessions, Reader: relationshipReader}, QueryCatalog: queryCatalog, QueryCatalogProvider: queryCatalogProvider, DictionaryResolver: cachedDictionaryResolver},
 		Materialization:       materialization,
 		ProjectionBSIReader:   bsiReader,
 		SameRowComparison:     sameRowComparison,

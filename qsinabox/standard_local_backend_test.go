@@ -102,6 +102,32 @@ func TestStandardLocalBackendBuildsLocalSessionPool(t *testing.T) {
 	pool.Shutdown()
 }
 
+func TestStandardLocalBackendDirectRuntimeWiresFilterDictionaryResolver(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	backend, err := MountStandardLocalBackend(config, nil)
+	if err != nil {
+		t.Fatalf("MountStandardLocalBackend() error = %v", err)
+	}
+	defer backend.Close()
+	mount := backend.NewDirectRuntime(config, nil, 1)
+	defer mount.Close()
+
+	adapter, ok := mount.Runtime.FilterAdapter.(qsruntime.DirectBitmapFilterTreeAdapter)
+	if !ok {
+		t.Fatalf("FilterAdapter = %T, want DirectBitmapFilterTreeAdapter", mount.Runtime.FilterAdapter)
+	}
+	if adapter.DictionaryResolver == nil {
+		t.Fatalf("DictionaryResolver = nil, want inabox-standard string-enum filter dictionary lookup")
+	}
+}
+
 func TestStandardDirectSessionProviderQueriesLocalBitmapIndex(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
