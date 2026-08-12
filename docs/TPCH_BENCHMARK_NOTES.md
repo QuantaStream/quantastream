@@ -125,6 +125,7 @@ evidence:
 - Found-set bitmap pushdown versus late materialization.
 - Count-only bitmap execution.
 - Bitmap group count and bitmap group aggregate selection.
+- Cluster relationship aggregate pushdown versus query-process reduction.
 - Relationship edge ordering and graph pruning.
 - Correlated sibling membership strategy selection.
 - Same-row BSI compare versus projection/materialization fallback.
@@ -178,18 +179,23 @@ final node-local pushdown story: grouped bitmap aggregates, reverse-artifact
 summaries, and relationship aggregate pushdown/reduction need explicit RPC and
 probe coverage before they can match the standard-mode physical tier.
 
-Local-cluster SF0.05 checkpoint at `906c926`:
+Local-cluster SF0.05 checkpoint through `f1758b0`:
 
 - Fresh cluster direct load completed in 33s using `TPCH_LOAD_MODE=cluster`.
 - `tpch_profile_scale` passed on `inabox-direct` with median timings: Q3 720ms,
   Q5 same-nation graph count 500ms, Q5 formal revenue 472ms, Q12 119ms,
   Q19 233ms, Q10 207ms, Q6 62ms, and Q11 18ms.
 - `tpch_profile_slow_paths` passed on `inabox-direct` with median timings:
-  Q1 grouped lineitem shape 512ms, Q1 BSI summary 1.219s, shipdate-year group
+  Q1 grouped lineitem shape about 150ms after count-only bitmap pushdown, Q1 BSI
+  summary about 469ms after direct grouped BSI aggregates, shipdate-year group
   193ms, and Q21 sibling exists 671ms.
-- The most visible remaining cluster costs are Q1 BSI grouped materialization
-  (`phase_materialization_elapsed` around 822-846ms) and Q3 relationship-vector
-  attribution (`q3_attribution_known_elapsed` around 634-647ms).
+- Q3 profile on SF0.05 remains a cluster-parity target: the full-group profile
+  shape measured around 856ms median, with warm runs split across graph
+  reduction (~283-304ms), shared projection aggregate (~225-250ms), and final
+  order-field materialization (~166-177ms). The readonly `LIMIT 10` shape already
+  uses unordered final-materialization pruning; the remaining full Q3 gap needs
+  a mergeable relationship aggregate/value-vector RPC rather than another local
+  threshold or feature flag.
 
 ### Benchmark Reproducibility
 
