@@ -19,6 +19,8 @@ import (
 const legacyDirectRelationshipVectorValueSetScanMaxRowsPerSourceValue = 512
 const legacyDirectRelationshipReverseArtifactMaxSourceCoverageNumerator = 1
 const legacyDirectRelationshipReverseArtifactMaxSourceCoverageDenominator = 2
+const legacyDirectRelationshipReverseArtifactMaxTargetCoverageNumerator = 1
+const legacyDirectRelationshipReverseArtifactMaxTargetCoverageDenominator = 1
 
 // LegacyDirectBitIndexRelationshipVectorBackend reads relationship-vector BSIs through the legacy BitIndex.
 type LegacyDirectBitIndexRelationshipVectorBackend struct {
@@ -244,14 +246,33 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorReverseArtifactCandidates(ctx context.Context, projectionKey string, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, map[qsbridge.QuantaRownum]int64, relationshipVectorReverseArtifactTiming, qsbridge.DiagnosticSet, error, bool) {
-	if b.ReverseArtifactCandidateReader == nil || !read.Edge.Capabilities.Has(qsbridge.RelationshipCapabilityChildExpansion) {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{}, nil, nil, false
+	if b.ReverseArtifactCandidateReader == nil {
+		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_nil_reader"}, nil, nil, false
+	}
+	if !read.Edge.Capabilities.Has(qsbridge.RelationshipCapabilityChildExpansion) {
+		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_no_child_expansion"}, nil, nil, false
+	}
+	if len(sourceValues) == 0 {
+		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
 	}
 	sourceValueCount := len(legacyDirectRelationshipUniqueInt64s(sourceValues))
+	if sourceValueCount == 0 {
+		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
+	}
 	if stats, ok, err := b.relationshipVectorReverseArtifactStats(ctx, read); err == nil && ok &&
 		legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount, stats.Values) {
 		timing := relationshipVectorReverseArtifactTiming{
 			Mode:         "reverse_artifact_skip_unselective_source",
+			CacheHit:     true,
+			Rows:         stats.Rows,
+			Values:       stats.Values,
+			SourceValues: sourceValueCount,
+		}
+		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
+		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
+	} else if err == nil && ok && legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount, stats.Values, stats.Rows, read.MaxEstimatedTargetRows) {
+		timing := relationshipVectorReverseArtifactTiming{
+			Mode:         "reverse_artifact_skip_unselective_target",
 			CacheHit:     true,
 			Rows:         stats.Rows,
 			Values:       stats.Values,
@@ -273,7 +294,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		}, diagnostics, err, true
 	}
 	if !ok {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{}, diagnostics, err, false
+		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_no_artifact"}, diagnostics, err, false
 	}
 	timing := relationshipVectorReverseArtifactTiming{
 		Mode:          result.Mode,
@@ -302,6 +323,15 @@ func legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount int,
 	}
 	return uint64(sourceValueCount)*legacyDirectRelationshipReverseArtifactMaxSourceCoverageDenominator >
 		artifactValues*legacyDirectRelationshipReverseArtifactMaxSourceCoverageNumerator
+}
+
+func legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount int, artifactValues, artifactRows uint64, maxEstimatedTargetRows int) bool {
+	if sourceValueCount <= 0 || artifactValues == 0 || artifactRows == 0 || maxEstimatedTargetRows <= 0 {
+		return false
+	}
+	estimatedTargetRows := uint64(sourceValueCount) * artifactRows
+	return estimatedTargetRows*legacyDirectRelationshipReverseArtifactMaxTargetCoverageDenominator >=
+		uint64(maxEstimatedTargetRows)*artifactValues*legacyDirectRelationshipReverseArtifactMaxTargetCoverageNumerator
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) shouldReadRelationshipVectorParentToChildCandidatesDirect(sourceValues []int64) bool {

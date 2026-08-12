@@ -161,6 +161,36 @@ func TestBitmapIndexCompareBSIFieldsUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexRelationshipReverseArtifactUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_suppkey", []int64{7})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues() ok = false, want true")
+	}
+	if local.relationshipReverseArtifactCalls != 1 {
+		t.Fatalf("reverse artifact calls = %d, want 1", local.relationshipReverseArtifactCalls)
+	}
+	if local.relationshipReverseArtifactRequest == nil {
+		t.Fatal("reverse artifact request was not captured")
+	}
+	if local.relationshipReverseArtifactRequest.Index != "lineitem" || local.relationshipReverseArtifactRequest.Field != "l_suppkey" {
+		t.Fatalf("reverse artifact request = %#v", local.relationshipReverseArtifactRequest)
+	}
+	if got, want := rownums, []uint64{20}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rownums = %#v, want %#v", got, want)
+	}
+	if parentValues[20] != 7 {
+		t.Fatalf("parent value for row 20 = %d, want 7", parentValues[20])
+	}
+	if stats.SourceValues != 1 || stats.TargetRows != 1 {
+		t.Fatalf("stats = %+v, want one source and target row", stats)
+	}
+}
+
 func TestBitmapIndexBitmapGroupAggregatesUsesLocalService(t *testing.T) {
 	local := &recordingLocalBitmapIndexService{}
 	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
@@ -271,20 +301,24 @@ func TestKVStoreItemsUsesLocalService(t *testing.T) {
 }
 
 type recordingLocalBitmapIndexService struct {
-	queryCalls                  int
-	syncStatusCalls             int
-	syncStatusRequest           *pb.SyncStatusRequest
-	syncStatusCardinality       uint64
-	compareBSIFieldsCalls       int
-	compareBSIFieldsRequest     *pb.CompareBSIFieldsRequest
-	bitmapGroupAggregateCalls   int
-	bitmapGroupAggregateRequest *pb.BitmapGroupAggregatesRequest
-	relationshipSumCalls        int
-	relationshipSumRequest      *pb.RelationshipAlignedValueSumRequest
-	bulkClearCalls              int
-	bulkClearRequest            *pb.BulkClearRequest
-	batchMutateCalls            int
-	batchMutateItems            []*pb.IndexKVPair
+	queryCalls                              int
+	syncStatusCalls                         int
+	syncStatusRequest                       *pb.SyncStatusRequest
+	syncStatusCardinality                   uint64
+	compareBSIFieldsCalls                   int
+	compareBSIFieldsRequest                 *pb.CompareBSIFieldsRequest
+	bitmapGroupAggregateCalls               int
+	bitmapGroupAggregateRequest             *pb.BitmapGroupAggregatesRequest
+	relationshipReverseArtifactCalls        int
+	relationshipReverseArtifactRequest      *pb.RelationshipReverseArtifactCandidatesRequest
+	relationshipReverseArtifactStatsCalls   int
+	relationshipReverseArtifactStatsRequest *pb.RelationshipReverseArtifactStatsRequest
+	relationshipSumCalls                    int
+	relationshipSumRequest                  *pb.RelationshipAlignedValueSumRequest
+	bulkClearCalls                          int
+	bulkClearRequest                        *pb.BulkClearRequest
+	batchMutateCalls                        int
+	batchMutateItems                        []*pb.IndexKVPair
 }
 
 func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error) {
@@ -328,6 +362,37 @@ func (s *recordingLocalBitmapIndexService) BitmapGroupAggregates(_ context.Conte
 	s.bitmapGroupAggregateCalls++
 	s.bitmapGroupAggregateRequest = req
 	return &pb.BitmapGroupAggregatesResponse{Ok: true}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) RelationshipReverseArtifactCandidates(_ context.Context, req *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	s.relationshipReverseArtifactCalls++
+	s.relationshipReverseArtifactRequest = req
+	return &pb.RelationshipReverseArtifactCandidatesResponse{
+		Rownums: []uint64{20},
+		ParentValues: []*pb.RelationshipReverseArtifactParentValue{{
+			Rownum:      20,
+			ParentValue: 7,
+		}},
+		Stats: &pb.RelationshipReverseArtifactStats{
+			Rows:         1,
+			Values:       1,
+			SourceValues: 1,
+			TargetRows:   1,
+		},
+		Ok: true,
+	}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) RelationshipReverseArtifactStats(_ context.Context, req *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+	s.relationshipReverseArtifactStatsCalls++
+	s.relationshipReverseArtifactStatsRequest = req
+	return &pb.RelationshipReverseArtifactStatsResponse{
+		Stats: &pb.RelationshipReverseArtifactStats{
+			Rows:   1,
+			Values: 1,
+		},
+		Ok: true,
+	}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) RelationshipAlignedValueSum(_ context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {

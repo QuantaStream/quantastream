@@ -1851,10 +1851,11 @@ func (m *BitmapIndex) TableOperation(ctx context.Context, req *pb.TableOperation
 			return &empty.Empty{}, err
 		} else {
 			m.tableCacheLock.Lock()
-			defer m.tableCacheLock.Unlock()
 			m.tableCache[req.Table] = table
+			m.tableCacheLock.Unlock()
 			u.Infof("%s schema for table re-loaded and initialized %s", m.hashKey, req.Table)
 		}
+		m.rebuildRelationshipReverseArtifactsForIndex(req.Table)
 	case pb.TableOperationRequest_DROP:
 		m.tableCacheLock.Lock()
 		defer m.tableCacheLock.Unlock()

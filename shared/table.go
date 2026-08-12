@@ -502,6 +502,10 @@ func (a *BasicAttribute) Compare(other *BasicAttribute) (equal bool, warnings []
 	}
 
 	// Warning level comparisons for alters that are allowed.
+	if a.RelationshipArtifacts.ParentToChild != other.RelationshipArtifacts.ParentToChild {
+		warnings = append(warnings, fmt.Sprintf("attribute '%s' relationship parent-to-child artifact changed existing = '%v', new = '%v'",
+			a.FieldName, a.RelationshipArtifacts.ParentToChild, other.RelationshipArtifacts.ParentToChild))
+	}
 	if a.SourceName != other.SourceName {
 		warnings = append(warnings, fmt.Sprintf("attribute '%s' source name changed existing = '%v', new = '%v'",
 			a.FieldName, a.SourceName, other.SourceName))

@@ -41,6 +41,7 @@ type LegacyDirectRelationshipVectorReadRequest struct {
 	// target candidate set because the correlated membership evaluator rechecks
 	// the relationship key before accepting rows.
 	AllowCandidateSuperset bool
+	MaxEstimatedTargetRows int
 }
 
 // LegacyDirectRelationshipVectorReader is the future bridge into relationship-vector reads.

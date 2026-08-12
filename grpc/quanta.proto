@@ -39,6 +39,8 @@ service BitmapIndex {
   rpc Join(JoinRequest) returns (JoinResponse) {}
   rpc Projection(ProjectionRequest) returns (ProjectionResponse) {}
   rpc CompareBSIFields(CompareBSIFieldsRequest) returns (CompareBSIFieldsResponse) {}
+  rpc RelationshipReverseArtifactCandidates(RelationshipReverseArtifactCandidatesRequest) returns (RelationshipReverseArtifactCandidatesResponse) {}
+  rpc RelationshipReverseArtifactStats(RelationshipReverseArtifactStatsRequest) returns (RelationshipReverseArtifactStatsResponse) {}
   rpc RelationshipAlignedValueSum(RelationshipAlignedValueSumRequest) returns (RelationshipAlignedValueSumResponse) {}
   rpc BitmapGroupAggregates(BitmapGroupAggregatesRequest) returns (BitmapGroupAggregatesResponse) {}
   rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
@@ -277,6 +279,42 @@ message CompareBSIFieldsStats {
 message CompareBSIFieldsResponse {
   bytes    rownums = 1;
   CompareBSIFieldsStats stats = 2;
+}
+
+message RelationshipReverseArtifactCandidatesRequest {
+  string   index = 1;
+  string   field = 2;
+  repeated int64 sourceValues = 3;
+}
+
+message RelationshipReverseArtifactParentValue {
+  uint64   rownum = 1;
+  int64    parentValue = 2;
+}
+
+message RelationshipReverseArtifactStats {
+  uint64   rows = 1;
+  uint64   values = 2;
+  uint64   sourceValues = 3;
+  uint64   targetRows = 4;
+  int64    lookupElapsedNanos = 5;
+}
+
+message RelationshipReverseArtifactCandidatesResponse {
+  repeated uint64 rownums = 1;
+  repeated RelationshipReverseArtifactParentValue parentValues = 2;
+  RelationshipReverseArtifactStats stats = 3;
+  bool ok = 4;
+}
+
+message RelationshipReverseArtifactStatsRequest {
+  string   index = 1;
+  string   field = 2;
+}
+
+message RelationshipReverseArtifactStatsResponse {
+  RelationshipReverseArtifactStats stats = 1;
+  bool ok = 2;
 }
 
 message RelationshipAlignedValueSumRequest {

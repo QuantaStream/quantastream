@@ -82,6 +82,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		Source: bsiReader,
 		Remote: sessions,
 	}
+	relationshipReverseArtifactReader := sessions
 	siblingDiversityReader := &LegacyDirectSharedRelationshipSiblingDiversityReader{
 		Sessions:   sessions,
 		Projection: bsiReader,
@@ -138,10 +139,11 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	reverseArtifacts := NewRelationshipVectorReverseArtifactManager(RelationshipVectorReverseArtifactConfigFromEnv())
 	relationshipReader := &LegacyDirectRelationshipVectorReader{
 		Backend: LegacyDirectBitIndexRelationshipVectorBackend{
-			Source:           quantaSource,
-			Sessions:         sessions,
-			TableCache:       tableCache,
-			ReverseArtifacts: reverseArtifacts,
+			Source:                         quantaSource,
+			Sessions:                       sessions,
+			TableCache:                     tableCache,
+			ReverseArtifacts:               reverseArtifacts,
+			ReverseArtifactCandidateReader: relationshipReverseArtifactReader,
 		},
 	}
 	physicalTier := DirectPhysicalExecutionTier{
@@ -156,15 +158,16 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		RelationshipReader:    relationshipReader,
 		SiblingDiversity:      siblingDiversityReader,
 		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
-			Source:                      quantaSource,
-			Sessions:                    sessions,
-			TableCache:                  tableCache,
-			Materialization:             materialization,
-			ProjectionBSIReader:         bsiReader,
-			SameRowComparison:           sameRowComparison,
-			ReverseArtifacts:            reverseArtifacts,
-			RelationshipAggregateReader: relationshipAggregateReader,
-			ApplyRecommendedEdgeOrder:   DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
+			Source:                         quantaSource,
+			Sessions:                       sessions,
+			TableCache:                     tableCache,
+			Materialization:                materialization,
+			ProjectionBSIReader:            bsiReader,
+			SameRowComparison:              sameRowComparison,
+			ReverseArtifacts:               reverseArtifacts,
+			ReverseArtifactCandidateReader: relationshipReverseArtifactReader,
+			RelationshipAggregateReader:    relationshipAggregateReader,
+			ApplyRecommendedEdgeOrder:      DefaultApplyRecommendedEdgeOrder && !options.DisableRecommendedEdgeOrder,
 		},
 	}
 	return physicalTier.Runtime(), nil
@@ -340,6 +343,112 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		Session:               session,
 		DictionaryInvalidator: p.DictionaryInvalidator,
 	}, nil, nil
+}
+
+// ReadRelationshipVectorReverseArtifactCandidates asks direct bitmap nodes for
+// child rows from a maintained parent-to-child relationship artifact.
+func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifactCandidates(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error) {
+	if read.VectorIndex == "" || read.VectorField == "" {
+		return LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, nil, false, nil
+	}
+	if p.Source == nil || p.Source.GetSessionPool() == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship reverse artifact reader has no source session pool"),
+		}, true, nil
+	}
+	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index:     read.VectorIndex,
+		Field:     read.VectorField,
+		Operation: qsbridge.QuantaOperationIntersect,
+	}}})
+	session, diagnostics, err := p.BorrowDirectSession(ctx, executionRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, diagnostics, true, err
+	}
+	if session == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship reverse artifact reader received nil session"),
+		}, true, nil
+	}
+	defer session.Release(ctx)
+	legacySession, ok := session.(LegacyQuantaSessionHandle)
+	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactCandidateResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship reverse artifact reader has no bitmap index"),
+		}, true, nil
+	}
+
+	start := time.Now()
+	rownums, parentValueByChild, stats, sourceValueCount, lookupElapsed, ok, err := legacyDirectRelationshipReverseArtifactCandidateValues(
+		legacySession.Session.BitIndex,
+		read.VectorIndex,
+		read.VectorField,
+		sourceValues,
+	)
+	elapsed := time.Since(start)
+	result := LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+		Mode:          "reverse_artifact_cluster",
+		CacheHit:      true,
+		Rows:          stats.Rows,
+		Values:        stats.Values,
+		SourceValues:  sourceValueCount,
+		TargetRows:    uint64(len(rownums)),
+		LookupElapsed: lookupElapsed,
+	}
+	if sourceValueCount == 0 {
+		result.SourceValues = len(legacyDirectRelationshipUniqueInt64s(sourceValues))
+	}
+	if err != nil || !ok {
+		return result, nil, ok, err
+	}
+	candidateRows := make([]qsbridge.QuantaRownum, 0, len(rownums))
+	for _, rownum := range rownums {
+		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
+	}
+	result.Candidates = qsbridge.QuantaCandidateSet{
+		Index:   read.TargetDomain,
+		Rownums: candidateRows,
+	}
+	result.ParentValueByChild = make(map[qsbridge.QuantaRownum]int64, len(parentValueByChild))
+	for child, parentValue := range parentValueByChild {
+		result.ParentValueByChild[qsbridge.QuantaRownum(child)] = parentValue
+	}
+	if result.LookupElapsed == 0 {
+		result.LookupElapsed = elapsed
+	}
+	return result, nil, true, nil
+}
+
+// RelationshipVectorReverseArtifactStats asks direct bitmap nodes for reverse
+// artifact cardinality without materializing candidate rows.
+func (p LegacyQuantaSourceSessionProvider) RelationshipVectorReverseArtifactStats(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (LegacyDirectRelationshipVectorReverseArtifactStats, bool, error) {
+	if read.VectorIndex == "" || read.VectorField == "" {
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, false, nil
+	}
+	if p.Source == nil || p.Source.GetSessionPool() == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, true, fmt.Errorf("relationship reverse artifact stats reader has no source session pool")
+	}
+	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index:     read.VectorIndex,
+		Field:     read.VectorField,
+		Operation: qsbridge.QuantaOperationIntersect,
+	}}})
+	session, diagnostics, err := p.BorrowDirectSession(ctx, executionRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		if err != nil {
+			return LegacyDirectRelationshipVectorReverseArtifactStats{}, true, err
+		}
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, true, fmt.Errorf("relationship reverse artifact stats reader blocked by diagnostics")
+	}
+	if session == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, true, fmt.Errorf("relationship reverse artifact stats reader received nil session")
+	}
+	defer session.Release(ctx)
+	legacySession, ok := session.(LegacyQuantaSessionHandle)
+	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
+		return LegacyDirectRelationshipVectorReverseArtifactStats{}, true, fmt.Errorf("relationship reverse artifact stats reader has no bitmap index")
+	}
+	return legacyDirectRelationshipReverseArtifactStats(legacySession.Session.BitIndex, read.VectorIndex, read.VectorField)
 }
 
 // ReadBitmapGroupAggregates asks direct bitmap nodes for grouped aggregate

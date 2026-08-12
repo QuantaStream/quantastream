@@ -148,6 +148,12 @@ func putRecursive(typ reflect.Type, value reflect.Value, consul *api.Client, roo
 			}
 			continue
 		}
+		if field.Type.Kind() == reflect.Struct {
+			if err := putRecursive(field.Type, value.Field(i), consul, root+"/"+tagName); err != nil {
+				return err
+			}
+			continue
+		}
 		if value.Field(i).Kind() == reflect.Bool {
 			if fv.(bool) {
 				fv = "true"
@@ -248,6 +254,20 @@ func getRecursive(typ reflect.Type, value reflect.Value, consul *api.Client, roo
 					configMap.SetMapIndex(reflect.ValueOf(filepath.Base(v.Key)), reflect.ValueOf(string(v.Value)))
 				}
 				value.Field(i).Set(configMap)
+			}
+			continue
+		}
+		if field.Type.Kind() == reflect.Struct {
+			path := root + "/" + tagName
+			keys, _, err := consul.KV().Keys(path, "", nil)
+			if err != nil {
+				return err
+			}
+			if len(keys) == 0 {
+				continue
+			}
+			if err := getRecursive(field.Type, value.Field(i), consul, path); err != nil {
+				return err
 			}
 			continue
 		}

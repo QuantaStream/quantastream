@@ -127,6 +127,30 @@ func (a LocalBitmapIndexAdapter) BitmapGroupAggregates(ctx context.Context, req 
 	return result, err
 }
 
+// RelationshipReverseArtifactCandidates forwards a reverse-artifact lookup
+// without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) RelationshipReverseArtifactCandidates(ctx context.Context, req *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.RelationshipReverseArtifactCandidates(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "RelationshipReverseArtifactCandidates", start, err)
+	return result, err
+}
+
+// RelationshipReverseArtifactStats forwards a reverse-artifact stats lookup
+// without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) RelationshipReverseArtifactStats(ctx context.Context, req *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.RelationshipReverseArtifactStats(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "RelationshipReverseArtifactStats", start, err)
+	return result, err
+}
+
 // RelationshipAlignedValueSum forwards a relationship aggregate request without
 // a gRPC client hop.
 func (a LocalBitmapIndexAdapter) RelationshipAlignedValueSum(ctx context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {

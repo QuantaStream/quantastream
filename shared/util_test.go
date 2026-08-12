@@ -60,6 +60,39 @@ func notTestConsul(t *testing.T) {
 	}
 }
 
+func TestMarshalConsulRoundTripsRelationshipArtifacts(t *testing.T) {
+	srv, err := testutil.NewTestServerConfigT(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	conf := api.DefaultConfig()
+	conf.Address = srv.HTTPAddr
+	consulClient, err := api.NewClient(conf)
+	assert.Nil(t, err)
+
+	table, err := LoadSchema("../tpc-h-benchmark/config", "lineitem", consulClient)
+	assert.Nil(t, err)
+	if !assert.NotNil(t, table) {
+		return
+	}
+	err = MarshalConsul(table, consulClient)
+	assert.Nil(t, err)
+
+	loaded, err := LoadSchema("", "lineitem", consulClient)
+	assert.Nil(t, err)
+	if !assert.NotNil(t, loaded) {
+		return
+	}
+	attr, err := loaded.GetAttribute("l_suppkey")
+	assert.Nil(t, err)
+	if assert.NotNil(t, attr) {
+		assert.True(t, attr.RelationshipArtifacts.ParentToChild)
+		assert.Equal(t, "supplier", attr.ForeignKey)
+	}
+}
+
 // FIXME: (atw) this creates a test consul which conflicts with the real one.
 func notTestConstraints(t *testing.T) {
 

@@ -1033,6 +1033,61 @@ func bitmapGroupAggregateStatsToProto(stats BitmapGroupAggregateStats) *pb.Bitma
 	}
 }
 
+// RelationshipReverseArtifactCandidates returns node-local child rows for a
+// maintained parent-to-child reverse relationship artifact.
+func (m *BitmapIndex) RelationshipReverseArtifactCandidates(ctx context.Context, req *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rownums, parentValues, stats, ok, err := m.RelationshipReverseArtifactCandidateValues(
+		req.GetIndex(),
+		req.GetField(),
+		req.GetSourceValues(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]*pb.RelationshipReverseArtifactParentValue, 0, len(parentValues))
+	for rownum, parentValue := range parentValues {
+		values = append(values, &pb.RelationshipReverseArtifactParentValue{
+			Rownum:      rownum,
+			ParentValue: parentValue,
+		})
+	}
+	return &pb.RelationshipReverseArtifactCandidatesResponse{
+		Rownums:      append([]uint64(nil), rownums...),
+		ParentValues: values,
+		Stats:        relationshipReverseArtifactStatsToProto(stats),
+		Ok:           ok,
+	}, nil
+}
+
+// RelationshipReverseArtifactStats returns node-local cardinality for a
+// maintained parent-to-child reverse relationship artifact.
+func (m *BitmapIndex) RelationshipReverseArtifactStats(ctx context.Context, req *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	stats, ok, err := m.RelationshipReverseArtifactStatsStorage(req.GetIndex(), req.GetField())
+	if err != nil {
+		return nil, err
+	}
+	return &pb.RelationshipReverseArtifactStatsResponse{
+		Stats: relationshipReverseArtifactStatsToProto(stats),
+		Ok:    ok,
+	}, nil
+}
+
+func relationshipReverseArtifactStatsToProto(stats RelationshipReverseArtifactStats) *pb.RelationshipReverseArtifactStats {
+	return &pb.RelationshipReverseArtifactStats{
+		Rows:               stats.Rows,
+		Values:             stats.Values,
+		SourceValues:       uint64(stats.SourceValues),
+		TargetRows:         stats.TargetRows,
+		LookupElapsedNanos: stats.LookupElapsed.Nanoseconds(),
+	}
+}
+
 // RelationshipAlignedValueSum computes a node-local partial aggregate for an
 // already-aligned relationship vector. Cluster callers merge partial groups by
 // parent value.

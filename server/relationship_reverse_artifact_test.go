@@ -21,7 +21,7 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 		6: 8,
 	}, false))
 
-	rownums, stats, ok, err := index.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{8, 7})
+	rownums, stats, ok, err := index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8, 7})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates error = %v", err)
 	}
@@ -37,7 +37,7 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 
 	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{4: 9}, true))
 
-	rownums, _, ok, err = index.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{8})
+	rownums, _, ok, err = index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates after update error = %v", err)
 	}
@@ -47,7 +47,7 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	if !reflect.DeepEqual(rownums, []uint64{6}) {
 		t.Fatalf("rownums for value 8 after update = %#v, want [6]", rownums)
 	}
-	rownums, _, ok, err = index.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{9})
+	rownums, _, ok, err = index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{9})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates for value 9 error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	}
 
 	index.updateBSICache(testRelationshipReverseArtifactClearFragment(t, shardTime, 6))
-	rownums, stats, ok, err = index.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{8})
+	rownums, stats, ok, err = index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates after clear error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestRelationshipReverseArtifactRequiresSchemaFlag(t *testing.T) {
 	shardTime := time.Unix(0, 0).UTC()
 
 	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{2: 7}, false))
-	_, _, ok, err := index.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{7})
+	_, _, ok, err := index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{7})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates error = %v", err)
 	}
@@ -421,7 +421,7 @@ func TestRelationshipReverseArtifactRebuiltFromPersistedBSIStartup(t *testing.T)
 		t.Fatalf("cold readBitmapFiles returned error: %v", err)
 	}
 
-	rownums, stats, ok, err := cold.RelationshipReverseArtifactCandidates("lineitem", "l_orderkey", []int64{8})
+	rownums, stats, ok, err := cold.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates returned error: %v", err)
 	}
@@ -437,6 +437,47 @@ func TestRelationshipReverseArtifactRebuiltFromPersistedBSIStartup(t *testing.T)
 	snapshot := cold.relationshipReverseArtifactSnapshot()
 	if snapshot.Fields != 1 || snapshot.Values != 2 || snapshot.Rows != 3 {
 		t.Fatalf("cold startup snapshot = %#v, want fields=1 values=2 rows=3", snapshot)
+	}
+}
+
+func TestRelationshipReverseArtifactRebuiltAfterSchemaDeploy(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, false)
+	shardTime := time.Unix(0, 0).UTC()
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetValue(4, 7)
+	bsi.SetValue(6, 8)
+	bsi.SetValue(9, 8)
+	index.bsiCache["lineitem"] = map[string]map[int64]*BSIBitmap{
+		"l_orderkey": {
+			shardTime.UnixNano(): {
+				BSI: bsi,
+			},
+		},
+	}
+
+	_, _, _, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues before deploy returned error: %v", err)
+	}
+	if ok {
+		t.Fatal("artifact lookup ok before deploy = true, want false")
+	}
+
+	index.tableCache["lineitem"] = newRelationshipReverseArtifactTestTable(t, true)
+	index.rebuildRelationshipReverseArtifactsForIndex("lineitem")
+
+	rownums, _, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues after deploy returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("artifact lookup ok after deploy = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{6, 9}) {
+		t.Fatalf("rownums after deploy = %#v, want [6 9]", rownums)
+	}
+	if stats.Rows != 3 || stats.Values != 2 || stats.TargetRows != 2 {
+		t.Fatalf("stats after deploy = %#v, want rows=3 values=2 targetRows=2", stats)
 	}
 }
 

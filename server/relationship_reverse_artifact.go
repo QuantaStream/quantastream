@@ -91,9 +91,9 @@ type relationshipSiblingDiversityBuildGroup struct {
 	rows []uint64
 }
 
-// RelationshipReverseArtifactCandidates returns child-domain rownums for the
+// RelationshipReverseArtifactCandidatesStorage returns child-domain rownums for the
 // supplied parent-domain values when a schema-declared reverse artifact exists.
-func (m *BitmapIndex) RelationshipReverseArtifactCandidates(index, field string, sourceValues []int64) ([]uint64, RelationshipReverseArtifactStats, bool, error) {
+func (m *BitmapIndex) RelationshipReverseArtifactCandidatesStorage(index, field string, sourceValues []int64) ([]uint64, RelationshipReverseArtifactStats, bool, error) {
 	rownums, _, stats, ok, err := m.RelationshipReverseArtifactCandidateValues(index, field, sourceValues)
 	return rownums, stats, ok, err
 }
@@ -569,9 +569,9 @@ func (m *BitmapIndex) RelationshipAlignedValueSumStorage(index, valueField strin
 	return groups, stats, true, nil
 }
 
-// RelationshipReverseArtifactStats returns maintained artifact cardinality
+// RelationshipReverseArtifactStatsStorage returns maintained artifact cardinality
 // without scanning source values or materializing candidates.
-func (m *BitmapIndex) RelationshipReverseArtifactStats(index, field string) (RelationshipReverseArtifactStats, bool, error) {
+func (m *BitmapIndex) RelationshipReverseArtifactStatsStorage(index, field string) (RelationshipReverseArtifactStats, bool, error) {
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return RelationshipReverseArtifactStats{}, false, nil
 	}
@@ -881,6 +881,60 @@ func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, fie
 	if addedBSI != nil {
 		m.addRelationshipReverseArtifactRows(artifact, addedBSI)
 	}
+}
+
+func (m *BitmapIndex) rebuildRelationshipReverseArtifactsForIndex(index string) {
+	enabled := make(map[string]struct{})
+	m.tableCacheLock.RLock()
+	table := m.tableCache[index]
+	if table != nil {
+		for _, attr := range table.Attributes {
+			field := strings.TrimSpace(attr.FieldName)
+			if field == "" {
+				field = strings.TrimSpace(attr.SourceName)
+			}
+			if field == "" || !attr.RelationshipArtifacts.ParentToChild || strings.TrimSpace(attr.ForeignKey) == "" {
+				continue
+			}
+			enabled[field] = struct{}{}
+		}
+	}
+	m.tableCacheLock.RUnlock()
+
+	rebuilt := make(map[string]*relationshipReverseArtifact)
+	m.bsiCacheLock.RLock()
+	if fields := m.bsiCache[index]; fields != nil {
+		for field := range enabled {
+			shards := fields[field]
+			if len(shards) == 0 {
+				continue
+			}
+			artifact := &relationshipReverseArtifact{byValue: make(map[int64]*roaring64.Bitmap)}
+			for _, bsi := range shards {
+				if bsi == nil || bsi.BSI == nil {
+					continue
+				}
+				bsi.Lock.RLock()
+				m.addRelationshipReverseArtifactRows(artifact, bsi.BSI)
+				bsi.Lock.RUnlock()
+			}
+			if artifact.rows > 0 {
+				rebuilt[field] = artifact
+			}
+		}
+	}
+	m.bsiCacheLock.RUnlock()
+
+	m.reverseArtifactLock.Lock()
+	defer m.reverseArtifactLock.Unlock()
+	if m.reverseArtifactCache == nil {
+		m.reverseArtifactCache = make(map[string]map[string]*relationshipReverseArtifact)
+	}
+	delete(m.reverseArtifactCache, index)
+	if len(rebuilt) > 0 {
+		m.reverseArtifactCache[index] = rebuilt
+	}
+	m.clearRelationshipSiblingDiversityArtifactsForIndexLocked(index)
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactEnabled(index, field string) bool {

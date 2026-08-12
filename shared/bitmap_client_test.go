@@ -236,6 +236,80 @@ func TestBitmapIndexCompareBSIFieldsFansOutToActiveClients(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexRelationshipReverseArtifactFansOutToActiveClients(t *testing.T) {
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	fake := &reverseArtifactFanoutBitmapIndexServer{}
+	pb.RegisterBitmapIndexServer(server, fake)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	dialer := func(context.Context, string) (net.Conn, error) {
+		return listener.Dial()
+	}
+	conns := make([]*grpc.ClientConn, 3)
+	for i := range conns {
+		conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(dialer), grpc.WithInsecure())
+		if err != nil {
+			t.Fatalf("dial bufnet: %v", err)
+		}
+		conns[i] = conn
+		t.Cleanup(func() {
+			_ = conn.Close()
+		})
+	}
+
+	conn := NewDefaultConnection("reverse-artifact-fanout")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = conns
+	for _, id := range conn.ids {
+		conn.nodeStatusMap.Store(id, &pb.StatusMessage{NodeState: "Active"})
+	}
+
+	index := NewBitmapIndex(conn)
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_suppkey", []int64{7})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues() ok = false, want true")
+	}
+	if got, want := fake.candidateCallCount(), 3; got != want {
+		t.Fatalf("candidate fanout calls = %d, want %d", got, want)
+	}
+	if got, want := rownums, []uint64{10, 20, 30}; !equalUint64Slices(got, want) {
+		t.Fatalf("rownums = %v, want %v", got, want)
+	}
+	for _, rownum := range rownums {
+		if parentValues[rownum] != 7 {
+			t.Fatalf("parent value for row %d = %d, want 7", rownum, parentValues[rownum])
+		}
+	}
+	if stats.Nodes != 3 || stats.SourceValues != 1 || stats.TargetRows != 3 || stats.LookupElapsed != 6*time.Millisecond {
+		t.Fatalf("stats = %+v, want merged node stats", stats)
+	}
+
+	artifactStats, ok, err := index.RelationshipReverseArtifactStats("lineitem", "l_suppkey")
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactStats() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactStats() ok = false, want true")
+	}
+	if got, want := fake.statsCallCount(), 3; got != want {
+		t.Fatalf("stats fanout calls = %d, want %d", got, want)
+	}
+	if artifactStats.Nodes != 3 || artifactStats.Rows != 300 || artifactStats.Values != 30 {
+		t.Fatalf("artifact stats = %+v, want merged stats", artifactStats)
+	}
+}
+
 func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.T) {
 	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{
 		{
@@ -477,6 +551,63 @@ func (s *compareFanoutBitmapIndexServer) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+type reverseArtifactFanoutBitmapIndexServer struct {
+	pb.UnimplementedBitmapIndexServer
+	mu             sync.Mutex
+	candidateCalls int
+	statsCalls     int
+}
+
+func (s *reverseArtifactFanoutBitmapIndexServer) RelationshipReverseArtifactCandidates(context.Context, *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	s.mu.Lock()
+	s.candidateCalls++
+	call := s.candidateCalls
+	s.mu.Unlock()
+
+	rownum := uint64(call * 10)
+	return &pb.RelationshipReverseArtifactCandidatesResponse{
+		Rownums: []uint64{rownum},
+		ParentValues: []*pb.RelationshipReverseArtifactParentValue{{
+			Rownum:      rownum,
+			ParentValue: 7,
+		}},
+		Stats: &pb.RelationshipReverseArtifactStats{
+			Rows:               100,
+			Values:             10,
+			SourceValues:       1,
+			TargetRows:         1,
+			LookupElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+		},
+		Ok: true,
+	}, nil
+}
+
+func (s *reverseArtifactFanoutBitmapIndexServer) RelationshipReverseArtifactStats(context.Context, *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+	s.mu.Lock()
+	s.statsCalls++
+	s.mu.Unlock()
+
+	return &pb.RelationshipReverseArtifactStatsResponse{
+		Stats: &pb.RelationshipReverseArtifactStats{
+			Rows:   100,
+			Values: 10,
+		},
+		Ok: true,
+	}, nil
+}
+
+func (s *reverseArtifactFanoutBitmapIndexServer) candidateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.candidateCalls
+}
+
+func (s *reverseArtifactFanoutBitmapIndexServer) statsCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.statsCalls
 }
 
 func equalIntSlices(left, right []int) bool {

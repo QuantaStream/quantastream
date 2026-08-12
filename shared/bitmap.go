@@ -101,6 +101,18 @@ type CompareBSIFieldsStats struct {
 	OutputRows     uint64
 }
 
+// RelationshipReverseArtifactStats summarizes cluster-visible reverse-artifact
+// candidate lookup work. Row/value counts are accumulated across node-local
+// maintained artifacts.
+type RelationshipReverseArtifactStats struct {
+	Rows          uint64
+	Values        uint64
+	SourceValues  int
+	TargetRows    uint64
+	LookupElapsed time.Duration
+	Nodes         uint64
+}
+
 // RelationshipAlignedValueSumGroup carries one mergeable parent-keyed aggregate
 // returned by node-local relationship aggregate pushdown.
 type RelationshipAlignedValueSumGroup struct {
@@ -1200,6 +1212,110 @@ func (c *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, 
 	return aggregateBitmapGroupAggregateResponses(responses, candidateRows, len(groupFields), len(aggregates))
 }
 
+// RelationshipReverseArtifactCandidateValues asks readable nodes for child rows
+// keyed by a maintained parent-to-child reverse relationship artifact.
+func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	if index == "" {
+		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
+	}
+	if field == "" {
+		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: field not specified")
+	}
+	req := &pb.RelationshipReverseArtifactCandidatesRequest{
+		Index:        index,
+		Field:        field,
+		SourceValues: append([]int64(nil), sourceValues...),
+	}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.RelationshipReverseArtifactCandidates(ctx, req)
+		if err != nil {
+			return nil, nil, RelationshipReverseArtifactStats{}, false, err
+		}
+		return aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues)
+	}
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: no active bitmap nodes")
+	}
+	resultChan := make(chan *pb.RelationshipReverseArtifactCandidatesResponse, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			response, err := c.relationshipReverseArtifactCandidatesClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- response
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, nil, RelationshipReverseArtifactStats{}, false, err
+	}
+	close(resultChan)
+
+	responses := make([]*pb.RelationshipReverseArtifactCandidatesResponse, 0, len(clients))
+	for response := range resultChan {
+		responses = append(responses, response)
+	}
+	return aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues)
+}
+
+// RelationshipReverseArtifactStats asks readable nodes for reverse-artifact
+// cardinality without materializing candidate rows.
+func (c *BitmapIndex) RelationshipReverseArtifactStats(index, field string) (RelationshipReverseArtifactStats, bool, error) {
+	if index == "" {
+		return RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactStats: index not specified")
+	}
+	if field == "" {
+		return RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactStats: field not specified")
+	}
+	req := &pb.RelationshipReverseArtifactStatsRequest{Index: index, Field: field}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.RelationshipReverseArtifactStats(ctx, req)
+		if err != nil {
+			return RelationshipReverseArtifactStats{}, false, err
+		}
+		return aggregateRelationshipReverseArtifactStatsResponses([]*pb.RelationshipReverseArtifactStatsResponse{response})
+	}
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactStats: no active bitmap nodes")
+	}
+	resultChan := make(chan *pb.RelationshipReverseArtifactStatsResponse, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			response, err := c.relationshipReverseArtifactStatsClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- response
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return RelationshipReverseArtifactStats{}, false, err
+	}
+	close(resultChan)
+
+	responses := make([]*pb.RelationshipReverseArtifactStatsResponse, 0, len(clients))
+	for response := range resultChan {
+		responses = append(responses, response)
+	}
+	return aggregateRelationshipReverseArtifactStatsResponses(responses)
+}
+
 // RelationshipAlignedValueSum asks readable nodes to aggregate child-domain BSI
 // values by caller-supplied parent row IDs. The input row slices are already
 // relationship-aligned; node partials are associative by parent value.
@@ -1259,6 +1375,58 @@ func (c *BitmapIndex) RelationshipAlignedValueSum(index, valueField string, from
 		responses = append(responses, response)
 	}
 	return aggregateRelationshipAlignedValueSumResponses(responses, childRows, parentRows)
+}
+
+func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.RelationshipReverseArtifactCandidatesResponse, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	stats := RelationshipReverseArtifactStats{
+		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
+	}
+	parentValueByChild := make(map[uint64]int64)
+	seenRows := make(map[uint64]struct{})
+	rownums := make([]uint64, 0)
+	ok := len(responses) > 0
+	for _, response := range responses {
+		if response == nil {
+			ok = false
+			continue
+		}
+		if !response.GetOk() {
+			ok = false
+		}
+		stats.addProto(response.GetStats())
+		for _, rownum := range response.GetRownums() {
+			if _, seen := seenRows[rownum]; seen {
+				continue
+			}
+			seenRows[rownum] = struct{}{}
+			rownums = append(rownums, rownum)
+		}
+		for _, value := range response.GetParentValues() {
+			if value == nil {
+				continue
+			}
+			parentValueByChild[value.GetRownum()] = value.GetParentValue()
+		}
+	}
+	sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
+	stats.TargetRows = uint64(len(rownums))
+	return rownums, parentValueByChild, stats, ok, nil
+}
+
+func aggregateRelationshipReverseArtifactStatsResponses(responses []*pb.RelationshipReverseArtifactStatsResponse) (RelationshipReverseArtifactStats, bool, error) {
+	var stats RelationshipReverseArtifactStats
+	ok := len(responses) > 0
+	for _, response := range responses {
+		if response == nil {
+			ok = false
+			continue
+		}
+		if !response.GetOk() {
+			ok = false
+		}
+		stats.addProto(response.GetStats())
+	}
+	return stats, ok, nil
 }
 
 func aggregateRelationshipAlignedValueSumResponses(responses []*pb.RelationshipAlignedValueSumResponse, childRows, parentRows []uint64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
@@ -1512,6 +1680,28 @@ func relationshipAlignedValueSumUniqueCount(values []uint64) int {
 	return len(seen)
 }
 
+func relationshipReverseArtifactUniqueInt64Count(values []int64) int {
+	if len(values) == 0 {
+		return 0
+	}
+	seen := make(map[int64]struct{}, len(values))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	return len(seen)
+}
+
+func (s *RelationshipReverseArtifactStats) addProto(stats *pb.RelationshipReverseArtifactStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.Nodes++
+	s.Rows += stats.GetRows()
+	s.Values += stats.GetValues()
+	s.TargetRows += stats.GetTargetRows()
+	s.LookupElapsed += time.Duration(stats.GetLookupElapsedNanos())
+}
+
 func (s *RelationshipAlignedValueSumStats) addProto(stats *pb.RelationshipAlignedValueSumStats) {
 	if s == nil || stats == nil {
 		return
@@ -1677,6 +1867,34 @@ func (c *BitmapIndex) compareBSIFieldsClient(client pb.BitmapIndexClient, req *p
 	result, err := client.CompareBSIFields(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.CompareBSIFields(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+func (c *BitmapIndex) relationshipReverseArtifactCandidatesClient(client pb.BitmapIndexClient, req *pb.RelationshipReverseArtifactCandidatesRequest,
+	clientIndex int) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	result, err := client.RelationshipReverseArtifactCandidates(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.RelationshipReverseArtifactCandidates(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+func (c *BitmapIndex) relationshipReverseArtifactStatsClient(client pb.BitmapIndexClient, req *pb.RelationshipReverseArtifactStatsRequest,
+	clientIndex int) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	result, err := client.RelationshipReverseArtifactStats(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.RelationshipReverseArtifactStats(_) = _, %v, node = %s", client, err,
 			c.ClientConnections()[clientIndex].Target())
 	}
 	return result, nil

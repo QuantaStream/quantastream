@@ -43,7 +43,7 @@ func (r StandardRelationshipReverseArtifactCandidateReader) RelationshipVectorRe
 	if r.Direct == nil || read.VectorIndex == "" || read.VectorField == "" {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats{}, false, nil
 	}
-	stats, ok, err := r.Direct.RelationshipReverseArtifactStats(read.VectorIndex, read.VectorField)
+	stats, ok, err := r.Direct.RelationshipReverseArtifactStatsStorage(read.VectorIndex, read.VectorField)
 	if err != nil || !ok {
 		return qsruntime.LegacyDirectRelationshipVectorReverseArtifactStats{}, ok, err
 	}

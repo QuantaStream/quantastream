@@ -99,3 +99,21 @@ func TestSchemaCompare(t *testing.T) {
 			"attribute 'state_name' description changed existing = '', new = 'State name.'")
 	}
 }
+
+func TestAttributeCompareDetectsRelationshipArtifactChange(t *testing.T) {
+	current := &BasicAttribute{
+		FieldName:       "child_id",
+		Type:            "Integer",
+		ForeignKey:      "parent",
+		MappingStrategy: "IntBSI",
+	}
+	next := *current
+	next.RelationshipArtifacts.ParentToChild = true
+
+	ok, warnings, err := current.Compare(&next)
+	assert.Nil(t, err)
+	assert.False(t, ok)
+	if assert.Equal(t, 1, len(warnings)) {
+		assert.Contains(t, warnings[0], "relationship parent-to-child artifact changed")
+	}
+}

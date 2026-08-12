@@ -78,6 +78,7 @@ type legacyDirectRelationshipReduceTiming struct {
 	parentKeyMaterialization       bool
 	parentKeyRows                  int
 	reverseArtifactUsed            bool
+	reverseArtifactSkipReason      string
 	reverseArtifactMode            string
 	reverseArtifactCacheHit        bool
 	reverseArtifactSourceValues    int
@@ -725,6 +726,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"parent_key_elapsed", reduceTiming.parentKeyElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"parent_key_materialization", strconv.FormatBool(reduceTiming.parentKeyMaterialization)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_used", strconv.FormatBool(reduceTiming.reverseArtifactUsed)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_skip_reason", reduceTiming.reverseArtifactSkipReason),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_mode", reduceTiming.reverseArtifactMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_cache_hit", strconv.FormatBool(reduceTiming.reverseArtifactCacheHit)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_values", strconv.Itoa(reduceTiming.reverseArtifactSourceValues)),
@@ -3408,7 +3410,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	}
 	effectiveChildRows := childRows
 	effectiveProjectionRows := projectionRows
-	if narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, ok, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows); ok {
+	narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, artifactOK, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows)
+	if !artifactOK {
+		timing.reverseArtifactSkipReason = artifactTiming.mode
+	} else {
 		timing.reverseArtifactUsed = true
 		timing.reverseArtifactMode = artifactResult.CandidateMode
 		timing.reverseArtifactCacheHit = artifactResult.CandidateCacheHit
@@ -3695,13 +3700,23 @@ func legacyDirectRelationshipRownumsAscending(rownums []qsbridge.QuantaRownum) b
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
 	var localTiming legacyDirectRelationshipReverseArtifactLocalTiming
-	if e.ReverseArtifactCandidateReader == nil || len(childRows) == 0 || len(parentKeyRows) == 0 {
+	if e.ReverseArtifactCandidateReader == nil {
+		localTiming.mode = "skip_nil_reader"
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
+	}
+	if len(childRows) == 0 {
+		localTiming.mode = "skip_empty_child_rows"
+		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
+	}
+	if len(parentKeyRows) == 0 {
+		localTiming.mode = "skip_empty_parent_keys"
 		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
 	}
 	sourceStart := time.Now()
 	sourceValues := legacyDirectRelationshipParentKeyValues(parentKeyRows)
 	localTiming.sourceElapsed = time.Since(sourceStart)
 	if len(sourceValues) == 0 {
+		localTiming.mode = "skip_empty_source_values"
 		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, nil, nil
 	}
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{
@@ -3710,12 +3725,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	}
 	readStart := time.Now()
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
+	read.MaxEstimatedTargetRows = len(childRows)
 	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
 	localTiming.readElapsed = time.Since(readStart)
 	start := time.Now()
 	candidates, parentValueByChild, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
 	elapsed := time.Since(start)
 	if !ok {
+		localTiming.mode = artifactTiming.Mode
+		if localTiming.mode == "" {
+			localTiming.mode = "skip_no_artifact"
+		}
 		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, diagnostics, err
 	}
 	result := qsbridge.FilterDomainRelationshipVectorResult{
