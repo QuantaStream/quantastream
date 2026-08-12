@@ -25,5 +25,6 @@ func (a BitmapQueryResultAdapter) ToExecutionResult(result BitmapQueryResult) Ex
 		},
 		Diagnostics: diagnostics,
 		Count:       result.Count,
+		Probes:      append([]qsbridge.ProjectionProbe(nil), result.Probes...),
 	}
 }

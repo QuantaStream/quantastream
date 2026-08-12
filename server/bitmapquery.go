@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -90,6 +91,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 
 	}
 	globalExistence := make(map[string]*roaring64.Bitmap)
+	queryStats := bitmapQueryStats{startedAt: time.Now()}
 	for _, v := range query.Query {
 		if v.Index == "" {
 			return nil, fmt.Errorf("Index not specified for query fragment %#v", v)
@@ -111,7 +113,9 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 				return nil, fmt.Errorf("timeRangeExistence GetPK info failed for %s - %v", v.Index, err)
 			}
 			var errx error
+			existenceStart := time.Now()
 			ei, _, errx = m.timeRangeExistenceWithCount(v.Index, pka[0].FieldName, fromTime, toTime)
+			queryStats.existenceElapsed += time.Since(existenceStart)
 			if errx != nil {
 				return nil, fmt.Errorf("timeRangeExistence failed for %s - %v", v.Index, errx)
 			}
@@ -122,6 +126,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	countsByFragment := make(map[string]uint64)
 	// Main query flow loop
 	for _, v := range query.Query {
+		fragmentStart := time.Now()
 		var bm *roaring64.Bitmap
 		var err error
 		if v.NullCheck {
@@ -135,12 +140,15 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		}
 		if v.NullCheck && m.isBSI(v.Index, v.Field) {
 			var count uint64
+			bsiLoadStart := time.Now()
 			bm, count, err = m.timeRangeExistenceWithCount(v.Index, v.Field, fromTime, toTime)
+			queryStats.bsiLoadElapsed += time.Since(bsiLoadStart)
 			if err != nil {
 				return nil, fmt.Errorf("timeRangeExistence failed for %s - %v", v.Index, err)
 			}
 			countsByFragment[v.Id] = count
 		} else if v.BsiOp > 0 {
+			queryStats.bsiFragments++
 			values := make([]*big.Int, len(v.Values))
 			for i, v := range v.Values {
 				values[i] = new(big.Int).SetBytes(v)
@@ -152,13 +160,16 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			cacheKey := fmt.Sprintf("%s/%s/%d/%d", v.Index, v.Field, fromTime.UnixNano(), toTime.UnixNano())
 			bsi, bsiCacheHit := bsiQueryCache[cacheKey]
 			if !bsiCacheHit {
+				bsiLoadStart := time.Now()
 				bsi, err = m.timeRangeBSI(v.Index, v.Field, fromTime, toTime, nil, false, true)
+				queryStats.bsiLoadElapsed += time.Since(bsiLoadStart)
 				if err != nil {
 					return nil, err
 				}
 				bsiQueryCache[cacheKey] = bsi
 			}
 			// Evaluate BSI operation resulting in roaring bitmap
+			bsiCompareStart := time.Now()
 			switch v.BsiOp {
 			case pb.QueryFragment_LT:
 				bm = bsi.CompareBigValue(0, roaring64.LT, value, nil, nil)
@@ -175,11 +186,15 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			case pb.QueryFragment_BATCH_EQ:
 				bm = bsi.BatchEqualBig(0, values)
 			}
+			queryStats.bsiCompareElapsed += time.Since(bsiCompareStart)
 		} else if len(v.Values) > 0 {
+			queryStats.standardFragments++
 			bitmaps := make([]*roaring64.Bitmap, 0, len(v.Values))
 			for _, raw := range v.Values {
 				rowID := new(big.Int).SetBytes(raw).Uint64()
+				standardStart := time.Now()
 				x, err := m.timeRange(v.Index, v.Field, rowID, fromTime, toTime, nil, false)
+				queryStats.standardElapsed += time.Since(standardStart)
 				if err != nil {
 					return nil, err
 				}
@@ -194,12 +209,16 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			}
 		} else {
 			if v.SamplePct > 0 || v.NullCheck {
+				queryStats.scanFragments++
 				var x *roaring64.Bitmap
 				exist := make([]*roaring64.Bitmap, 0)
 				for _, row := range m.listAllRowIDs(v.Index, v.Field) {
+					scanStart := time.Now()
 					if x, err = m.timeRange(v.Index, v.Field, row, fromTime, toTime, nil, false); err != nil {
+						queryStats.scanElapsed += time.Since(scanStart)
 						return nil, err
 					}
+					queryStats.scanElapsed += time.Since(scanStart)
 					if x.GetCardinality() == 0 {
 						continue
 					}
@@ -213,9 +232,13 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 					bm = roaring64.ParOr(0, exist...)
 				}
 			} else {
+				queryStats.standardFragments++
+				standardStart := time.Now()
 				if bm, err = m.timeRange(v.Index, v.Field, v.RowID, fromTime, toTime, nil, false); err != nil {
+					queryStats.standardElapsed += time.Since(standardStart)
 					return nil, err
 				}
+				queryStats.standardElapsed += time.Since(standardStart)
 			}
 		}
 
@@ -224,9 +247,12 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		} else {
 			dataMap[v.Id] = roaring64.NewBitmap()
 		}
+		queryStats.fragmentElapsed += time.Since(fragmentStart)
 	}
 
+	reduceStart := time.Now()
 	ir := shared.FromProto(query, dataMap).Reduce()
+	queryStats.reduceElapsed = time.Since(reduceStart)
 	if len(countsByFragment) == 1 && len(query.Query) == 1 {
 		if count, ok := countsByFragment[query.Query[0].Id]; ok {
 			ir.SetCount(count)
@@ -238,7 +264,48 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	if ge, ok := globalExistence[ir.Index]; ok {
 		ir.AddExistence(ge)
 	}
-	return ir.MarshalQueryResult()
+	marshalStart := time.Now()
+	result, err := ir.MarshalQueryResult()
+	queryStats.marshalElapsed = time.Since(marshalStart)
+	if err != nil {
+		return nil, err
+	}
+	result.Samples = append(result.Samples, queryStats.probeSamples()...)
+	return result, nil
+}
+
+type bitmapQueryStats struct {
+	startedAt         time.Time
+	existenceElapsed  time.Duration
+	standardElapsed   time.Duration
+	bsiLoadElapsed    time.Duration
+	bsiCompareElapsed time.Duration
+	scanElapsed       time.Duration
+	fragmentElapsed   time.Duration
+	reduceElapsed     time.Duration
+	marshalElapsed    time.Duration
+	standardFragments int
+	bsiFragments      int
+	scanFragments     int
+}
+
+func (s bitmapQueryStats) probeSamples() []*pb.BitmapResult {
+	total := time.Since(s.startedAt)
+	const section = "direct_bitmap_server"
+	return []*pb.BitmapResult{
+		shared.NewQueryResultProbeSample(section, "query_elapsed", total.String(), ""),
+		shared.NewQueryResultProbeSample(section, "existence_elapsed", s.existenceElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "standard_bitmap_elapsed", s.standardElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "bsi_load_elapsed", s.bsiLoadElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "bsi_compare_elapsed", s.bsiCompareElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "scan_bitmap_elapsed", s.scanElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "fragment_loop_elapsed", s.fragmentElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "reduce_elapsed", s.reduceElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "marshal_elapsed", s.marshalElapsed.String(), ""),
+		shared.NewQueryResultProbeSample(section, "standard_fragment_count", strconv.Itoa(s.standardFragments), ""),
+		shared.NewQueryResultProbeSample(section, "bsi_fragment_count", strconv.Itoa(s.bsiFragments), ""),
+		shared.NewQueryResultProbeSample(section, "scan_fragment_count", strconv.Itoa(s.scanFragments), ""),
+	}
 }
 
 func isExistenceSeedFragment(fragment *pb.QueryFragment) bool {

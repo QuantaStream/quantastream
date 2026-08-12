@@ -46,7 +46,7 @@ func TestDefaultLocalNodeStreamingRisksNamesRemainingSearchGate(t *testing.T) {
 func TestBitmapIndexQueryGroupUsesLocalService(t *testing.T) {
 	local := &recordingLocalBitmapIndexService{}
 	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
-	result, err := index.queryGroup("sample", &pb.BitmapQuery{Query: []*pb.QueryFragment{{Index: "sample"}}})
+	result, _, err := index.queryGroup("sample", &pb.BitmapQuery{Query: []*pb.QueryFragment{{Index: "sample"}}})
 	if err != nil {
 		t.Fatalf("queryGroup() error = %v", err)
 	}

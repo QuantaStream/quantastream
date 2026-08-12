@@ -22,6 +22,7 @@ func (a LegacyBitmapQueryResultAdapter) ToBitmapQueryResult(response *legacy.Bit
 		ErrorMessage: response.ErrorMessage,
 		Count:        response.Count,
 		Rownums:      bitmapRownums(response.Results),
+		Probes:       legacyBitmapQueryResultProbes(response.Probes),
 	}
 }
 
@@ -42,7 +43,24 @@ func (a LegacyBitmapQueryResultAdapter) ToCountOnlyBitmapQueryResult(response *l
 		Success:      response.Success,
 		ErrorMessage: response.ErrorMessage,
 		Count:        count,
+		Probes:       legacyBitmapQueryResultProbes(response.Probes),
 	}
+}
+
+func legacyBitmapQueryResultProbes(probes []legacy.QueryResultProbe) []ExecutionProbe {
+	if len(probes) == 0 {
+		return nil
+	}
+	result := make([]ExecutionProbe, 0, len(probes))
+	for _, probe := range probes {
+		result = append(result, ExecutionProbe{
+			Section: probe.Section,
+			Name:    probe.Name,
+			Value:   probe.Value,
+			Detail:  probe.Detail,
+		})
+	}
+	return result
 }
 
 func bitmapRownums(bitmap *roaring64.Bitmap) []qsbridge.QuantaRownum {

@@ -69,6 +69,7 @@ type BitmapQueryResponse struct {
 	Value        int64
 	Count        uint64
 	Results      *roaring64.Bitmap
+	Probes       []QueryResultProbe
 }
 
 const QueryResultCountField = "__quantastream_query_count"
@@ -91,6 +92,7 @@ type IntermediateResult struct {
 	existence      *roaring64.Bitmap
 	count          uint64
 	countSet       bool
+	probes         []QueryResultProbe
 }
 
 // FK - Foreign key container.
@@ -360,6 +362,9 @@ func (r *IntermediateResult) UnmarshalAndAdd(rs *pb.QueryResult) error {
 	for _, b := range rs.GetSamples() {
 		if b.Field == QueryResultCountField && len(b.Bitmap) == 0 {
 			r.SetCount(b.RowId)
+			continue
+		}
+		if _, ok := QueryResultProbeFromSample(b); ok {
 			continue
 		}
 		bm = roaring64.NewBitmap()

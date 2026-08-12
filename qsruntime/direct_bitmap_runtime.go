@@ -140,6 +140,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	}
 	bitmapResult, membershipProbes, membershipDiagnostics, membershipErr := r.directBitmapApplyMemberships(ctx, request, bitmapResult, rootSeedResult)
 	directBitmapRecordCoreInstrumentation(ctx, request, bitmapResult, queryElapsed)
+	recordExecutionProbes(ctx, bitmapResult.Probes)
 	recordExecutionProbes(ctx, sameRowProbes)
 	recordExecutionProbes(ctx, membershipProbes)
 	result := r.Adapter.ToExecutionResult(bitmapResult)

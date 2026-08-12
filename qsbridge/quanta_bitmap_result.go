@@ -10,6 +10,7 @@ type QuantaBitmapQueryResult struct {
 	ErrorMessage string
 	Count        uint64
 	Rownums      []QuantaRownum
+	Probes       []ProjectionProbe
 }
 
 // CandidateCount reports how many row candidates are materialized in the result.
@@ -20,5 +21,6 @@ func (r QuantaBitmapQueryResult) CandidateCount() int {
 // Clone returns a copy that does not alias rownum slices.
 func (r QuantaBitmapQueryResult) Clone() QuantaBitmapQueryResult {
 	r.Rownums = append([]QuantaRownum(nil), r.Rownums...)
+	r.Probes = append([]ProjectionProbe(nil), r.Probes...)
 	return r
 }
