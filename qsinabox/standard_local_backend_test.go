@@ -161,6 +161,9 @@ func TestStandardDirectSessionProviderQueriesLocalBitmapIndex(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("BorrowDirectSession() diagnostics = %#v, want non-blocking", diagnostics)
 	}
+	if _, ok := handle.(qsruntime.DirectCandidateBitmapSessionHandle); !ok {
+		t.Fatalf("BorrowDirectSession() handle = %T, want candidate-aware bitmap query handle", handle)
+	}
 	result, queryDiagnostics, err := handle.QueryBitmap(context.Background(), request)
 	if err != nil {
 		t.Fatalf("QueryBitmap() error = %v", err)

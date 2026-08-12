@@ -296,6 +296,12 @@ func (h StandardDirectSessionHandle) QueryBitmap(ctx context.Context, request qs
 	return h.legacyHandle().QueryBitmap(ctx, request)
 }
 
+// QueryBitmapWithCandidateSet evaluates a lowered bitmap request against a
+// candidate set when the local bitmap boundary supports found-set pushdown.
+func (h StandardDirectSessionHandle) QueryBitmapWithCandidateSet(ctx context.Context, request qsruntime.ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (qsruntime.BitmapQueryResult, qsbridge.DiagnosticSet, bool, error) {
+	return h.legacyHandle().QueryBitmapWithCandidateSet(ctx, request, candidates)
+}
+
 // QueryBitmapCountOnly executes a lowered bitmap request while preserving only
 // cardinality for callers that do not need row identities.
 func (h StandardDirectSessionHandle) QueryBitmapCountOnly(ctx context.Context, request qsruntime.ExecutionRequest) (qsruntime.BitmapQueryResult, qsbridge.DiagnosticSet, error) {
