@@ -1251,6 +1251,7 @@ func (l QuantaIntermediateLowerer) LowerQuery(query QueryIR, parameters Paramete
 	if !ok {
 		return QuantaIntermediateQuery{}, diagnostics
 	}
+	filter = quantaIntermediateCoalesceFilterRanges(filter)
 	return QuantaIntermediateQuery{
 		Fragments:        fragments,
 		Filter:           filter,
@@ -2466,6 +2467,54 @@ func quantaIntermediateCoalesceRanges(fragments []QuantaQueryFragment) []QuantaQ
 		coalesced = append(coalesced, quantaIntermediateRangeFragment(fragment, fragments[match]))
 	}
 	return coalesced
+}
+
+func quantaIntermediateCoalesceFilterRanges(filter QuantaFilterExpression) QuantaFilterExpression {
+	if filter.Empty() || len(filter.Children) == 0 {
+		return filter
+	}
+	children := make([]QuantaFilterExpression, 0, len(filter.Children))
+	for _, child := range filter.Children {
+		children = append(children, quantaIntermediateCoalesceFilterRanges(child))
+	}
+	filter.Children = children
+	if filter.Operation != QuantaFilterIntersect {
+		return filter
+	}
+	conjuncts := filterDomainConjunctsForFactoring(filter)
+	if len(conjuncts) < 2 {
+		return filter
+	}
+	used := make([]bool, len(conjuncts))
+	coalesced := make([]QuantaFilterExpression, 0, len(conjuncts))
+	for i, conjunct := range conjuncts {
+		if used[i] {
+			continue
+		}
+		if !conjunct.Leaf() {
+			coalesced = append(coalesced, conjunct)
+			continue
+		}
+		match := -1
+		for j := i + 1; j < len(conjuncts); j++ {
+			if used[j] || !conjuncts[j].Leaf() || !quantaIntermediateRangePair(conjunct.Fragment, conjuncts[j].Fragment) {
+				continue
+			}
+			match = j
+			break
+		}
+		if match == -1 {
+			coalesced = append(coalesced, conjunct)
+			continue
+		}
+		used[i] = true
+		used[match] = true
+		coalesced = append(coalesced, QuantaFilterExpression{
+			Operation: QuantaFilterLeaf,
+			Fragment:  quantaIntermediateRangeFragment(conjunct.Fragment, conjuncts[match].Fragment),
+		})
+	}
+	return filterDomainConjunctExpression(coalesced)
 }
 
 func quantaIntermediateRangePair(left QuantaQueryFragment, right QuantaQueryFragment) bool {

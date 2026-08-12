@@ -290,6 +290,74 @@ func TestQuantaIntermediateLowererBuildsNestedFilterForMixedBooleanWhere(t *test
 	}
 }
 
+func TestQuantaIntermediateLowererCoalescesGroupedFilterRangePairs(t *testing.T) {
+	filter := quantaIntermediateCoalesceFilterRanges(QuantaFilterExpression{
+		Operation: QuantaFilterUnion,
+		Children: []QuantaFilterExpression{
+			{
+				Operation: QuantaFilterIntersect,
+				Children: []QuantaFilterExpression{
+					testQuantaRangeBoundLeaf("part", "p_size", QuantaBSIOpGE, 1),
+					testQuantaRangeBoundLeaf("lineitem", "l_quantity", QuantaBSIOpGE, 1),
+					testQuantaRangeBoundLeaf("lineitem", "l_quantity", QuantaBSIOpLE, 11),
+					testQuantaRangeBoundLeaf("part", "p_size", QuantaBSIOpLE, 5),
+				},
+			},
+			{
+				Operation: QuantaFilterIntersect,
+				Children: []QuantaFilterExpression{
+					testQuantaRangeBoundLeaf("part", "p_size", QuantaBSIOpGE, 1),
+					testQuantaRangeBoundLeaf("lineitem", "l_quantity", QuantaBSIOpGE, 10),
+					testQuantaRangeBoundLeaf("lineitem", "l_quantity", QuantaBSIOpLE, 20),
+					testQuantaRangeBoundLeaf("part", "p_size", QuantaBSIOpLE, 10),
+				},
+			},
+		},
+	})
+	if filter.Operation != QuantaFilterUnion || len(filter.Children) != 2 {
+		t.Fatalf("filter = %#v, want two-branch union", filter)
+	}
+	for i, branch := range filter.Children {
+		conjuncts := filterDomainConjunctsForFactoring(branch)
+		rangeFields := map[string]bool{}
+		for _, conjunct := range conjuncts {
+			if conjunct.Leaf() && conjunct.Fragment.BSIOp == QuantaBSIOpRange {
+				rangeFields[conjunct.Fragment.Index+"."+conjunct.Fragment.Field] = true
+			}
+		}
+		if !rangeFields["lineitem.l_quantity"] {
+			t.Fatalf("branch %d missing coalesced l_quantity range: %#v", i, branch)
+		}
+		if !rangeFields["part.p_size"] {
+			t.Fatalf("branch %d missing coalesced p_size range: %#v", i, branch)
+		}
+		for _, conjunct := range conjuncts {
+			if !conjunct.Leaf() {
+				continue
+			}
+			if (conjunct.Fragment.Field == "l_quantity" || conjunct.Fragment.Field == "p_size") && conjunct.Fragment.BSIOp != QuantaBSIOpRange {
+				t.Fatalf("branch %d has uncoalesced range bound: %#v", i, conjunct.Fragment)
+			}
+		}
+	}
+}
+
+func testQuantaRangeBoundLeaf(index, field string, op QuantaBSIOp, value int64) QuantaFilterExpression {
+	return QuantaFilterExpression{
+		Operation: QuantaFilterLeaf,
+		Fragment: QuantaQueryFragment{
+			Index:                index,
+			Field:                field,
+			Operation:            QuantaOperationIntersect,
+			BSIOp:                op,
+			Value:                big.NewInt(value),
+			HasLiteral:           true,
+			Literal:              Literal(ValueInt, value),
+			RangeCoalesceAllowed: true,
+		},
+	}
+}
+
 func TestQuantaFilterExpressionDomainSummary(t *testing.T) {
 	filter := QuantaFilterExpression{
 		Operation: QuantaFilterUnion,
