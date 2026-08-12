@@ -10,6 +10,8 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+const directBitmapFilterDictionaryBitmapCandidateMaterializationLimit = 16384
+
 // DirectBitmapFilterAdapter adapts grouped filter trees before direct bitmap execution.
 type DirectBitmapFilterAdapter interface {
 	AdaptFilterExpression(context.Context, ExecutionRequest) (ExecutionRequest, qsbridge.DiagnosticSet, error)
@@ -660,41 +662,58 @@ func (e directBitmapFilterTreeLeafEvaluator) EvaluateFilterLeafWithinCandidateSe
 	decision := directBitmapFilterFragmentMaterializationDecisionDetailsWithResolver(e.Request, fragment, e.DictionaryResolver)
 	e.recordLeafMaterializationDecision(fragment, decision)
 	if !decision.Materialize {
-		bitmapFragment := fragment
-		if decision.HasBitmapFragment {
-			bitmapFragment = decision.BitmapFragment
+		if directBitmapFilterShouldMaterializeDictionaryBitmapWithinCandidates(decision, candidates.CandidateCount()) {
+			decision.Materialize = true
+			decision.Reason = "string_enum_dictionary_bitmap_candidate_materialization"
+		} else {
+			bitmapFragment := fragment
+			if decision.HasBitmapFragment {
+				bitmapFragment = decision.BitmapFragment
+			}
+			return e.evaluateFilterLeafBitmap(ctx, bitmapFragment, len(candidates.Rownums), decision.Reason)
 		}
-		return e.evaluateFilterLeafBitmap(ctx, bitmapFragment, len(candidates.Rownums), decision.Reason)
 	}
-	e.recordLeafMode(fragment, "constrained_materialization", len(candidates.Rownums), decision.Reason)
-	materialization := candidates.MaterializationRequest([]qsbridge.QuantaProjectionField{{
-		Index: index,
-		Field: fragment.Field,
-		Type:  directBitmapFilterFragmentDataType(fragment),
-	}})
-	rowSet, diagnostics, materializationProbes, err := directBitmapMaterializeWithKernel(ctx, e.Materialization, materialization)
-	e.recordInnerProbes(fragment, "constrained_materialization", materializationProbes)
-	if err != nil || diagnostics.BlocksNative() {
-		return qsbridge.QuantaCandidateSet{}, diagnostics, err
-	}
-	if len(rowSet.ProjectionVectors) != 1 {
-		return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "constrained filter leaf materialization returned an unexpected projection shape"),
-		}, nil
-	}
-	values := rowSet.ProjectionVectors[0].Values
-	rownums := make([]qsbridge.QuantaRownum, 0, len(rowSet.Rownums))
-	for i, rownum := range rowSet.Rownums {
-		if i >= len(values) {
+	if decision.Materialize {
+		e.recordLeafMode(fragment, "constrained_materialization", len(candidates.Rownums), decision.Reason)
+		materialization := candidates.MaterializationRequest([]qsbridge.QuantaProjectionField{{
+			Index: index,
+			Field: fragment.Field,
+			Type:  directBitmapFilterFragmentDataType(fragment),
+		}})
+		rowSet, diagnostics, materializationProbes, err := directBitmapMaterializeWithKernel(ctx, e.Materialization, materialization)
+		e.recordInnerProbes(fragment, "constrained_materialization", materializationProbes)
+		if err != nil || diagnostics.BlocksNative() {
+			return qsbridge.QuantaCandidateSet{}, diagnostics, err
+		}
+		if len(rowSet.ProjectionVectors) != 1 {
 			return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "constrained filter leaf materialization returned fewer values than rownums"),
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "constrained filter leaf materialization returned an unexpected projection shape"),
 			}, nil
 		}
-		if directBitmapFilterFragmentMatchesCell(fragment, values[i]) {
-			rownums = append(rownums, rownum)
+		values := rowSet.ProjectionVectors[0].Values
+		rownums := make([]qsbridge.QuantaRownum, 0, len(rowSet.Rownums))
+		for i, rownum := range rowSet.Rownums {
+			if i >= len(values) {
+				return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "constrained filter leaf materialization returned fewer values than rownums"),
+				}, nil
+			}
+			if directBitmapFilterFragmentMatchesCell(fragment, values[i]) {
+				rownums = append(rownums, rownum)
+			}
 		}
+		return qsbridge.QuantaCandidateSet{Index: index, Rownums: rownums}, nil, nil
 	}
-	return qsbridge.QuantaCandidateSet{Index: index, Rownums: rownums}, nil, nil
+	return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "filter leaf did not select a bitmap or materialized evaluation path"),
+	}, nil
+}
+
+func directBitmapFilterShouldMaterializeDictionaryBitmapWithinCandidates(decision directBitmapFilterFragmentMaterializationDecisionResult, candidateRows int) bool {
+	return candidateRows > 0 &&
+		candidateRows <= directBitmapFilterDictionaryBitmapCandidateMaterializationLimit &&
+		decision.HasBitmapFragment &&
+		decision.Reason == "string_enum_dictionary_bitmap"
 }
 
 func (e directBitmapFilterTreeLeafEvaluator) recordInnerProbes(fragment qsbridge.QuantaQueryFragment, source string, probes []ExecutionProbe) {

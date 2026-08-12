@@ -308,6 +308,87 @@ func TestDirectBitmapFilterTreeAdapterSendsResolvedStringEnumBitmapFragment(t *t
 	assertFilterAdapterExecutionProbe(t, adapted.Probes, "filter_tree", "leaf_evaluation_mode", "bitmap_query", "reason=string_enum_dictionary_bitmap")
 }
 
+func TestDirectBitmapFilterTreeLeafEvaluatorMaterializesDictionaryBitmapWithinSmallCandidateSet(t *testing.T) {
+	ref := qsbridge.DictionaryRef{Schema: "quanta", Table: "lineitem", Field: "l_shipmode"}
+	catalog := qsbridge.NewQueryCatalogView([]qsbridge.TableDefinition{{
+		Schema: "quanta",
+		Name:   "lineitem",
+		Fields: []qsbridge.FieldDefinition{{
+			Name:       "l_shipmode",
+			Type:       qsbridge.DataTypeString,
+			Index:      qsbridge.IndexStringEnum,
+			Dictionary: qsbridge.DictionaryDefinition{Ref: ref},
+		}},
+	}}, nil, nil)
+	resolver := qsbridge.MemoryDictionaryResolver{
+		Dictionaries: []qsbridge.DictionaryDefinition{{Ref: ref}},
+		Entries:      []qsbridge.DictionaryEntry{{Ref: ref, Label: "AIR", ID: 7}},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.QueryCatalog = catalog
+	var bitmapCalled bool
+	var materialized qsbridge.ProjectionMaterializationKernelRequest
+	recorder := &directBitmapFilterTreeEvaluationRecorder{}
+	evaluator := directBitmapFilterTreeLeafEvaluator{
+		Request:            request,
+		DictionaryResolver: resolver,
+		Recorder:           recorder,
+		Sessions: DirectSessionProviderFunc(func(context.Context, ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			bitmapCalled = true
+			return DirectSessionHandleFunc{
+				QueryFunc: func(context.Context, ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{}, nil, nil
+				},
+			}, nil, nil
+		}),
+		Materialization: qsruntimeMaterializationKernelFunc(func(_ context.Context, request qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			materialized = request
+			rownums := []qsbridge.QuantaRownum{11, 12, 13}
+			return qsbridge.ProjectionMaterializationKernelResult{
+				Results: []qsbridge.ProjectionMaterializationResult{{
+					RowSet: qsbridge.QuantaProjectedRowSet{
+						Index:   "lineitem",
+						Rownums: rownums,
+						ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+							Values: []qsbridge.ResultCell{
+								{Kind: qsbridge.ValueString, Value: "AIR"},
+								{Kind: qsbridge.ValueString, Value: "RAIL"},
+								{Kind: qsbridge.ValueString, Value: "AIR"},
+							},
+						}},
+					},
+				}},
+			}, nil
+		}),
+	}
+	fragment := qsbridge.QuantaQueryFragment{
+		Index:      "lineitem",
+		Field:      "l.l_shipmode",
+		HasLiteral: true,
+		Literal:    qsbridge.Literal(qsbridge.ValueString, "AIR"),
+	}
+	candidates := qsbridge.QuantaCandidateSet{Index: "lineitem", Rownums: []qsbridge.QuantaRownum{11, 12, 13}}
+
+	filtered, diagnostics, err := evaluator.EvaluateFilterLeafWithinCandidateSet(context.Background(), fragment, candidates)
+
+	if err != nil {
+		t.Fatalf("evaluate leaf: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if bitmapCalled {
+		t.Fatalf("dictionary bitmap leaf with small candidate set should use materialization, not bitmap session")
+	}
+	if len(materialized.Requests) != 1 || len(materialized.Requests[0].Rownums) != 3 {
+		t.Fatalf("materialization request = %#v, want three candidate rownums", materialized)
+	}
+	if len(filtered.Rownums) != 2 || filtered.Rownums[0] != 11 || filtered.Rownums[1] != 13 {
+		t.Fatalf("filtered rownums = %#v, want [11 13]", filtered.Rownums)
+	}
+	assertFilterAdapterExecutionProbe(t, recorder.Probes(), "filter_tree", "leaf_evaluation_mode", "constrained_materialization", "reason=string_enum_dictionary_bitmap_candidate_materialization")
+}
+
 func TestDirectBitmapFilterTreeRecorderTagsInnerLeafProbes(t *testing.T) {
 	recorder := &directBitmapFilterTreeEvaluationRecorder{}
 	fragment := qsbridge.QuantaQueryFragment{
