@@ -40,6 +40,7 @@ service BitmapIndex {
   rpc Projection(ProjectionRequest) returns (ProjectionResponse) {}
   rpc CompareBSIFields(CompareBSIFieldsRequest) returns (CompareBSIFieldsResponse) {}
   rpc RelationshipAlignedValueSum(RelationshipAlignedValueSumRequest) returns (RelationshipAlignedValueSumResponse) {}
+  rpc BitmapGroupAggregates(BitmapGroupAggregatesRequest) returns (BitmapGroupAggregatesResponse) {}
   rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
   rpc TableOperation(TableOperationRequest) returns (google.protobuf.Empty) {}
   rpc Synchronize(google.protobuf.StringValue) returns (google.protobuf.Int64Value) {}
@@ -309,6 +310,52 @@ message RelationshipAlignedValueSumStats {
 message RelationshipAlignedValueSumResponse {
   repeated RelationshipAlignedValueSumGroup groups = 1;
   RelationshipAlignedValueSumStats stats = 2;
+  bool ok = 3;
+}
+
+message BitmapGroupAggregateSpec {
+  string function = 1;
+  string field = 2;
+}
+
+message BitmapGroupAggregatesRequest {
+  string index = 1;
+  repeated string groupFields = 2;
+  repeated BitmapGroupAggregateSpec aggregates = 3;
+  int64 fromTime = 4;
+  int64 toTime = 5;
+  bytes foundSet = 6;
+}
+
+message BitmapGroupAggregateValue {
+  uint64 count = 1;
+  string sum = 2;
+  string min = 3;
+  string max = 4;
+}
+
+message BitmapGroupAggregateGroup {
+  repeated uint64 values = 1;
+  repeated BitmapGroupAggregateValue aggs = 2;
+}
+
+message BitmapGroupAggregateStats {
+  uint64 candidateRows = 1;
+  uint64 fieldCount = 2;
+  uint64 valueCount = 3;
+  uint64 groups = 4;
+  uint64 aggregateCount = 5;
+  uint64 bsiFieldCount = 6;
+  int64 bsiProjectElapsedNanos = 7;
+  int64 aggregateElapsedNanos = 8;
+  int64 valueSetElapsedNanos = 9;
+  int64 sumElapsedNanos = 10;
+  int64 minMaxElapsedNanos = 11;
+}
+
+message BitmapGroupAggregatesResponse {
+  repeated BitmapGroupAggregateGroup groups = 1;
+  BitmapGroupAggregateStats stats = 2;
   bool ok = 3;
 }
 

@@ -43,9 +43,9 @@ type BitmapGroupAggregateStats struct {
 	MinMaxElapsed     time.Duration
 }
 
-// BitmapGroupAggregates computes grouped aggregates over low-cardinality
+// BitmapGroupAggregatesStorage computes grouped aggregates over low-cardinality
 // bitmap-backed group fields and BSI-backed measure fields.
-func (m *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, aggregates []BitmapGroupAggregateSpec, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]BitmapGroupAggregate, BitmapGroupAggregateStats, bool, error) {
+func (m *BitmapIndex) BitmapGroupAggregatesStorage(index string, groupFields []string, aggregates []BitmapGroupAggregateSpec, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]BitmapGroupAggregate, BitmapGroupAggregateStats, bool, error) {
 	groupBitmaps, groupStats, ok, err := m.bitmapGroupBitmaps(index, groupFields, fromTime, toTime, foundSet)
 	stats := BitmapGroupAggregateStats{
 		BitmapGroupCountStats: groupStats,

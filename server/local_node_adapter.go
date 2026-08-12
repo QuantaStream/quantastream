@@ -115,6 +115,18 @@ func (a LocalBitmapIndexAdapter) CompareBSIFields(ctx context.Context, req *pb.C
 	return result, err
 }
 
+// BitmapGroupAggregates forwards a grouped aggregate request without a gRPC
+// client hop.
+func (a LocalBitmapIndexAdapter) BitmapGroupAggregates(ctx context.Context, req *pb.BitmapGroupAggregatesRequest) (*pb.BitmapGroupAggregatesResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.BitmapGroupAggregates(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "BitmapGroupAggregates", start, err)
+	return result, err
+}
+
 // RelationshipAlignedValueSum forwards a relationship aggregate request without
 // a gRPC client hop.
 func (a LocalBitmapIndexAdapter) RelationshipAlignedValueSum(ctx context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {

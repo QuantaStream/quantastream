@@ -67,6 +67,67 @@ func TestLegacyDirectBitmapGroupAggregateReaderStringEnumBSI(t *testing.T) {
 	assertBitmapGroupAggregateGroup(t, result.Groups, "A\x00F", []any{"A", "F", int64(1), int64(7), float64(7), int64(7), int64(7)})
 }
 
+func TestLegacyDirectBitmapGroupAggregateReaderUsesRemoteAggregate(t *testing.T) {
+	tableCache := testBitmapGroupAggregateTableCache()
+	projection := &fakeBitmapGroupAggregateProjection{BSIs: map[string]*roaring64.BSI{}}
+	sessions := &fakeBitmapGroupAggregateSessions{}
+	remote := &fakeBitmapGroupAggregateRemote{
+		Result: BitmapGroupAggregateReadResult{
+			Mode:          "legacy_direct_remote_bitmap_group_aggregate",
+			CandidateRows: 3,
+			FieldCount:    2,
+			ValueCount:    4,
+			Groups: []BitmapGroupAggregateReadGroup{{
+				Key: "R\x00F",
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "R"},
+					{Kind: qsbridge.ValueString, Value: "F"},
+				},
+				Aggs: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(2)},
+					{Kind: qsbridge.ValueInt, Value: int64(30)},
+				},
+			}},
+		},
+		OK: true,
+	}
+	reader := LegacyDirectBitmapGroupAggregateReader{
+		Sessions:   sessions,
+		TableCache: tableCache,
+		Projection: projection,
+		Remote:     remote,
+	}
+
+	result, diagnostics, ok, err := reader.ReadBitmapGroupAggregates(context.Background(), BitmapGroupAggregateReadRequest{
+		Index: "lineitem",
+		GroupFields: []qsbridge.FieldRef{
+			testBitmapGroupAggregateStringEnumField("l_returnflag"),
+			testBitmapGroupAggregateStringEnumField("l_linestatus"),
+		},
+		Aggregates: []BitmapGroupAggregateReadSpec{
+			{Function: "count", Type: qsbridge.DataTypeInt},
+			{Function: "sum", Field: testBitmapGroupAggregateQuantityField(), Type: qsbridge.DataTypeInt},
+		},
+		CandidateRows: []qsbridge.QuantaRownum{101, 102, 201},
+	})
+	if err != nil || diagnostics.BlocksNative() || !ok {
+		t.Fatalf("ReadBitmapGroupAggregates ok/error/diagnostics = %t/%v/%v, want true/nil/none", ok, err, diagnostics)
+	}
+	if got, want := len(remote.Requests), 1; got != want {
+		t.Fatalf("remote requests = %d, want %d", got, want)
+	}
+	if got, want := len(projection.Requests), 0; got != want {
+		t.Fatalf("projection requests = %d, want %d", got, want)
+	}
+	if got, want := len(sessions.CandidateSets), 0; got != want {
+		t.Fatalf("candidate group queries = %d, want %d", got, want)
+	}
+	if got, want := result.Mode, "legacy_direct_remote_bitmap_group_aggregate"; got != want {
+		t.Fatalf("mode = %q, want %q", got, want)
+	}
+	assertBitmapGroupAggregateGroup(t, result.Groups, "R\x00F", []any{"R", "F", int64(2), int64(30)})
+}
+
 func TestLegacyDirectBitmapGroupAggregateReaderDeclinesNonStringEnumGroup(t *testing.T) {
 	reader := LegacyDirectBitmapGroupAggregateReader{
 		Sessions:   &fakeBitmapGroupAggregateSessions{},
@@ -201,6 +262,17 @@ func fakeBitmapGroupAggregateKey(request ExecutionRequest) string {
 		parts = append(parts, fragment.Values[0].String())
 	}
 	return strings.Join(parts, "/")
+}
+
+type fakeBitmapGroupAggregateRemote struct {
+	Result   BitmapGroupAggregateReadResult
+	OK       bool
+	Requests []BitmapGroupAggregateReadRequest
+}
+
+func (r *fakeBitmapGroupAggregateRemote) ReadBitmapGroupAggregates(_ context.Context, request BitmapGroupAggregateReadRequest) (BitmapGroupAggregateReadResult, qsbridge.DiagnosticSet, bool, error) {
+	r.Requests = append(r.Requests, request)
+	return r.Result, nil, r.OK, nil
 }
 
 func assertBitmapGroupAggregateGroup(t *testing.T, groups []BitmapGroupAggregateReadGroup, key string, want []any) {

@@ -90,6 +90,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		Sessions:   sessions,
 		TableCache: tableCache,
 		Projection: bsiReader,
+		Remote:     sessions,
 	}
 	bitmapGroupCountReader := LegacyDirectBitmapGroupCountReader{
 		Sessions:   sessions,
@@ -339,6 +340,196 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		Session:               session,
 		DictionaryInvalidator: p.DictionaryInvalidator,
 	}, nil, nil
+}
+
+// ReadBitmapGroupAggregates asks direct bitmap nodes for grouped aggregate
+// partials and converts the merged raw state into the runtime result contract.
+func (p LegacyQuantaSourceSessionProvider) ReadBitmapGroupAggregates(ctx context.Context, read BitmapGroupAggregateReadRequest) (BitmapGroupAggregateReadResult, qsbridge.DiagnosticSet, bool, error) {
+	if read.Index == "" || len(read.GroupFields) == 0 || len(read.Aggregates) == 0 {
+		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	if p.Source == nil || p.Source.GetSessionPool() == nil {
+		return BitmapGroupAggregateReadResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "bitmap group aggregate reader has no source session pool"),
+		}, true, nil
+	}
+	table := legacyDirectRelationshipCachedTable(p.Source.GetSessionPool().TableCache, read.Index)
+	if table == nil {
+		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	groupEnums, groupFields, valueCount, ok := legacyDirectBitmapGroupEnums(table, read.GroupFields)
+	if !ok {
+		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	measureFields, measureNames, ok := legacyDirectBitmapGroupAggregateMeasureFields(table, read)
+	if !ok {
+		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	if len(measureFields) == 0 {
+		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	aggregates := make([]legacyDirectBitmapGroupAggregateRemoteSpec, 0, len(read.Aggregates))
+	for _, aggregate := range read.Aggregates {
+		aggregates = append(aggregates, legacyDirectBitmapGroupAggregateRemoteSpec{
+			Function: aggregate.Function,
+			Field:    legacyDirectBitmapGroupAggregateFieldName(aggregate.Field),
+		})
+	}
+
+	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index:     read.Index,
+		Field:     groupFields[0],
+		Operation: qsbridge.QuantaOperationIntersect,
+	}}})
+	session, diagnostics, err := p.BorrowDirectSession(ctx, executionRequest)
+	if err != nil || diagnostics.BlocksNative() {
+		return BitmapGroupAggregateReadResult{}, diagnostics, true, err
+	}
+	if session == nil {
+		return BitmapGroupAggregateReadResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "bitmap group aggregate reader received nil session"),
+		}, true, nil
+	}
+	defer session.Release(ctx)
+	legacySession, ok := session.(LegacyQuantaSessionHandle)
+	if !ok || legacySession.Session == nil || legacySession.Session.BitIndex == nil {
+		return BitmapGroupAggregateReadResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "bitmap group aggregate reader has no bitmap index"),
+		}, true, nil
+	}
+	foundSet := legacyDirectRelationshipBitmap(read.CandidateRows)
+	fromTime, toTime := legacyDirectBitmapGroupAggregateWindowNanos(p.Source, read.Index, read)
+	start := time.Now()
+	groups, stats, ok, err := legacyDirectBitmapGroupAggregates(
+		legacySession.Session.BitIndex,
+		read.Index,
+		groupFields,
+		aggregates,
+		fromTime,
+		toTime,
+		foundSet,
+	)
+	elapsed := time.Since(start)
+	if err != nil || !ok {
+		return BitmapGroupAggregateReadResult{}, nil, ok, err
+	}
+	resultGroups, diagnostics := legacyDirectBitmapGroupAggregateResultGroupsFromRaw(read, groupEnums, groups)
+	if diagnostics.BlocksNative() {
+		return BitmapGroupAggregateReadResult{}, diagnostics, true, nil
+	}
+	probes := []ExecutionProbe{{
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_elapsed",
+		Value:   elapsed.String(),
+		Detail:  read.Index + "." + strings.Join(groupFields, ","),
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_nodes",
+		Value:   fmt.Sprint(stats.Nodes),
+		Detail:  read.Index,
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_groups",
+		Value:   fmt.Sprint(len(resultGroups)),
+		Detail:  read.Index,
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_bsi_project_elapsed",
+		Value:   stats.BSIProjectElapsed.String(),
+		Detail:  strings.Join(measureNames, ","),
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_compute_elapsed",
+		Value:   stats.AggregateElapsed.String(),
+		Detail:  read.Index,
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_sum_elapsed",
+		Value:   stats.SumElapsed.String(),
+		Detail:  read.Index,
+	}, {
+		Section: "grouped_aggregate",
+		Name:    "legacy_direct_bitmap_group_aggregate_remote_minmax_elapsed",
+		Value:   stats.MinMaxElapsed.String(),
+		Detail:  read.Index,
+	}}
+	return BitmapGroupAggregateReadResult{
+		Groups:         resultGroups,
+		Mode:           "legacy_direct_remote_bitmap_group_aggregate",
+		CandidateRows:  stats.CandidateRows,
+		FieldCount:     stats.FieldCount,
+		ValueCount:     valueCount,
+		AggregateCount: stats.AggregateCount,
+		Elapsed:        elapsed,
+		Probes:         probes,
+	}, nil, true, nil
+}
+
+func legacyDirectBitmapGroupAggregateWindowNanos(source *source.QuantaSource, index string, read BitmapGroupAggregateReadRequest) (int64, int64) {
+	if read.FromEpochMillis != 0 || read.ToEpochMillis != 0 {
+		return nativeProjectionTimeWindowNanos(read.FromEpochMillis, read.ToEpochMillis)
+	}
+	if source == nil || source.GetSessionPool() == nil {
+		return 0, 0
+	}
+	return nativeProjectionWindowNanos(source.GetSessionPool().TableCache, NativeProjectionBSIReadRequest{
+		Index:           index,
+		FromEpochMillis: read.FromEpochMillis,
+		ToEpochMillis:   read.ToEpochMillis,
+	})
+}
+
+func legacyDirectBitmapGroupAggregateResultGroupsFromRaw(read BitmapGroupAggregateReadRequest, groupEnums []legacyDirectBitmapGroupAggregateEnum, groups []legacyDirectBitmapGroupAggregateRemoteGroup) ([]BitmapGroupAggregateReadGroup, qsbridge.DiagnosticSet) {
+	result := make([]BitmapGroupAggregateReadGroup, 0, len(groups))
+	for _, group := range groups {
+		if len(group.Values) != len(groupEnums) {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "bitmap group aggregate returned mismatched group value width"),
+			}
+		}
+		if len(group.Aggs) != len(read.Aggregates) {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "bitmap group aggregate returned mismatched aggregate width"),
+			}
+		}
+		cells := make([]qsbridge.ResultCell, 0, len(group.Values))
+		keyParts := make([]string, 0, len(group.Values))
+		for i, id := range group.Values {
+			cell, ok := legacyDirectBitmapGroupAggregateCellForID(groupEnums[i], id)
+			if !ok {
+				return nil, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, fmt.Sprintf("bitmap group aggregate returned unknown group value %d for %s", id, groupEnums[i].Name)),
+				}
+			}
+			cells = append(cells, cell)
+			keyParts = append(keyParts, fmt.Sprint(cell.Value))
+		}
+		aggs := make([]qsbridge.ResultCell, 0, len(group.Aggs))
+		for i, aggregate := range read.Aggregates {
+			value := legacyDirectBitmapGroupAggregateValue{
+				Count: group.Aggs[i].Count,
+				Sum:   cloneBigInt(group.Aggs[i].Sum),
+				Min:   cloneBigInt(group.Aggs[i].Min),
+				Max:   cloneBigInt(group.Aggs[i].Max),
+			}
+			aggs = append(aggs, legacyDirectBitmapGroupAggregateCell(aggregate, value))
+		}
+		result = append(result, BitmapGroupAggregateReadGroup{
+			Key:    strings.Join(keyParts, "\x00"),
+			Values: cells,
+			Aggs:   aggs,
+		})
+	}
+	return result, nil
+}
+
+func legacyDirectBitmapGroupAggregateCellForID(group legacyDirectBitmapGroupAggregateEnum, id uint64) (qsbridge.ResultCell, bool) {
+	for _, item := range group.Items {
+		if item.ID == id {
+			return item.Cell, true
+		}
+	}
+	return qsbridge.ResultCell{}, false
 }
 
 // ReadRelationshipVectorAggregate asks the shared direct bitmap boundary for a

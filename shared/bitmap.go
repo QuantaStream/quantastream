@@ -11,6 +11,8 @@ import (
 	"math/big"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,6 +124,45 @@ type RelationshipAlignedValueSumStats struct {
 	AggregateElapsed  time.Duration
 	Projection        CompareBSIFieldsProjectionStats
 	Nodes             uint64
+}
+
+// BitmapGroupAggregateSpec describes one grouped aggregate over bitmap group
+// fields. Field is empty for COUNT(*).
+type BitmapGroupAggregateSpec struct {
+	Function string
+	Field    string
+}
+
+// BitmapGroupAggregateValue carries mergeable raw aggregate state for one
+// aggregate slot.
+type BitmapGroupAggregateValue struct {
+	Count uint64
+	Sum   *big.Int
+	Min   *big.Int
+	Max   *big.Int
+}
+
+// BitmapGroupAggregateGroup is one raw grouped aggregate partial/result keyed
+// by bitmap row IDs for each group field.
+type BitmapGroupAggregateGroup struct {
+	Values []uint64
+	Aggs   []BitmapGroupAggregateValue
+}
+
+// BitmapGroupAggregateStats summarizes cluster-visible grouped aggregate work.
+type BitmapGroupAggregateStats struct {
+	Nodes             uint64
+	CandidateRows     uint64
+	FieldCount        int
+	ValueCount        int
+	Groups            int
+	AggregateCount    int
+	BSIFieldCount     int
+	BSIProjectElapsed time.Duration
+	AggregateElapsed  time.Duration
+	ValueSetElapsed   time.Duration
+	SumElapsed        time.Duration
+	MinMaxElapsed     time.Duration
 }
 
 // NewBitmapIndex - Initializer for client side API wrappers.
@@ -1082,6 +1123,83 @@ func (c *BitmapIndex) CompareBSIFieldsWithStats(index, leftField, rightField str
 	return aggregateCompareBSIFieldsResponsesWithStats(responses)
 }
 
+// BitmapGroupAggregates asks readable nodes to compute node-local grouped
+// aggregate partials and merges them by raw group value IDs.
+func (c *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, aggregates []BitmapGroupAggregateSpec, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]BitmapGroupAggregateGroup, BitmapGroupAggregateStats, bool, error) {
+	if index == "" {
+		return nil, BitmapGroupAggregateStats{}, false, fmt.Errorf("BitmapGroupAggregates: index not specified")
+	}
+	if len(groupFields) == 0 {
+		return nil, BitmapGroupAggregateStats{}, false, fmt.Errorf("BitmapGroupAggregates: group fields not specified")
+	}
+	if len(aggregates) == 0 {
+		return nil, BitmapGroupAggregateStats{}, false, fmt.Errorf("BitmapGroupAggregates: aggregates not specified")
+	}
+	var foundSetData []byte
+	candidateRows := uint64(0)
+	if foundSet != nil {
+		candidateRows = foundSet.GetCardinality()
+		var err error
+		foundSetData, err = foundSet.MarshalBinary()
+		if err != nil {
+			return nil, BitmapGroupAggregateStats{}, false, err
+		}
+	}
+	protoAggregates := make([]*pb.BitmapGroupAggregateSpec, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		protoAggregates = append(protoAggregates, &pb.BitmapGroupAggregateSpec{
+			Function: aggregate.Function,
+			Field:    aggregate.Field,
+		})
+	}
+	req := &pb.BitmapGroupAggregatesRequest{
+		Index:       index,
+		GroupFields: append([]string(nil), groupFields...),
+		Aggregates:  protoAggregates,
+		FromTime:    fromTime,
+		ToTime:      toTime,
+		FoundSet:    foundSetData,
+	}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		response, err := c.local.BitmapGroupAggregates(ctx, req)
+		if err != nil {
+			return nil, BitmapGroupAggregateStats{}, false, err
+		}
+		return aggregateBitmapGroupAggregateResponses([]*pb.BitmapGroupAggregatesResponse{response}, candidateRows, len(groupFields), len(aggregates))
+	}
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return nil, BitmapGroupAggregateStats{}, false, fmt.Errorf("BitmapGroupAggregates: no active bitmap nodes")
+	}
+	resultChan := make(chan *pb.BitmapGroupAggregatesResponse, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			response, err := c.bitmapGroupAggregatesClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- response
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, BitmapGroupAggregateStats{}, false, err
+	}
+	close(resultChan)
+
+	responses := make([]*pb.BitmapGroupAggregatesResponse, 0, len(clients))
+	for response := range resultChan {
+		responses = append(responses, response)
+	}
+	return aggregateBitmapGroupAggregateResponses(responses, candidateRows, len(groupFields), len(aggregates))
+}
+
 // RelationshipAlignedValueSum asks readable nodes to aggregate child-domain BSI
 // values by caller-supplied parent row IDs. The input row slices are already
 // relationship-aligned; node partials are associative by parent value.
@@ -1196,6 +1314,168 @@ func aggregateRelationshipAlignedValueSumResponses(responses []*pb.RelationshipA
 	return groups, stats, ok, nil
 }
 
+func aggregateBitmapGroupAggregateResponses(responses []*pb.BitmapGroupAggregatesResponse, candidateRows uint64, fieldCount, aggregateCount int) ([]BitmapGroupAggregateGroup, BitmapGroupAggregateStats, bool, error) {
+	stats := BitmapGroupAggregateStats{
+		CandidateRows:  candidateRows,
+		FieldCount:     fieldCount,
+		AggregateCount: aggregateCount,
+	}
+	groupsByKey := make(map[string]*BitmapGroupAggregateGroup)
+	ok := len(responses) > 0
+	for _, response := range responses {
+		if response == nil {
+			ok = false
+			continue
+		}
+		if !response.GetOk() {
+			ok = false
+		}
+		stats.addProto(response.GetStats())
+		for _, protoGroup := range response.GetGroups() {
+			if protoGroup == nil {
+				continue
+			}
+			if len(protoGroup.GetValues()) != fieldCount || len(protoGroup.GetAggs()) != aggregateCount {
+				return nil, BitmapGroupAggregateStats{}, false, fmt.Errorf("BitmapGroupAggregates: mismatched group width values=%d aggs=%d want %d/%d", len(protoGroup.GetValues()), len(protoGroup.GetAggs()), fieldCount, aggregateCount)
+			}
+			key := bitmapGroupAggregateKey(protoGroup.GetValues())
+			group := groupsByKey[key]
+			if group == nil {
+				group = &BitmapGroupAggregateGroup{
+					Values: append([]uint64(nil), protoGroup.GetValues()...),
+					Aggs:   make([]BitmapGroupAggregateValue, aggregateCount),
+				}
+				groupsByKey[key] = group
+			}
+			for i, protoValue := range protoGroup.GetAggs() {
+				value, err := bitmapGroupAggregateValueFromProto(protoValue)
+				if err != nil {
+					return nil, BitmapGroupAggregateStats{}, false, err
+				}
+				bitmapGroupAggregateMergeValue(&group.Aggs[i], value)
+			}
+		}
+	}
+	groups := bitmapGroupAggregateSortedGroups(groupsByKey)
+	stats.Groups = len(groups)
+	return groups, stats, ok, nil
+}
+
+func bitmapGroupAggregateKey(values []uint64) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, len(values))
+	for i, value := range values {
+		parts[i] = strconv.FormatUint(value, 10)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func bitmapGroupAggregateValueFromProto(value *pb.BitmapGroupAggregateValue) (BitmapGroupAggregateValue, error) {
+	if value == nil {
+		return BitmapGroupAggregateValue{}, nil
+	}
+	result := BitmapGroupAggregateValue{Count: value.GetCount()}
+	var err error
+	if result.Sum, err = bitmapGroupAggregateParseBigInt(value.GetSum(), "sum"); err != nil {
+		return BitmapGroupAggregateValue{}, err
+	}
+	if result.Min, err = bitmapGroupAggregateParseBigInt(value.GetMin(), "min"); err != nil {
+		return BitmapGroupAggregateValue{}, err
+	}
+	if result.Max, err = bitmapGroupAggregateParseBigInt(value.GetMax(), "max"); err != nil {
+		return BitmapGroupAggregateValue{}, err
+	}
+	return result, nil
+}
+
+func bitmapGroupAggregateParseBigInt(raw, label string) (*big.Int, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	value := new(big.Int)
+	if _, ok := value.SetString(raw, 10); !ok {
+		return nil, fmt.Errorf("BitmapGroupAggregates: could not parse %s value %q", label, raw)
+	}
+	return value, nil
+}
+
+func bitmapGroupAggregateMergeValue(target *BitmapGroupAggregateValue, partial BitmapGroupAggregateValue) {
+	if target == nil {
+		return
+	}
+	target.Count += partial.Count
+	if partial.Sum != nil {
+		if target.Sum == nil {
+			target.Sum = big.NewInt(0)
+		}
+		target.Sum.Add(target.Sum, partial.Sum)
+	}
+	if partial.Min != nil && (target.Min == nil || partial.Min.Cmp(target.Min) < 0) {
+		target.Min = new(big.Int).Set(partial.Min)
+	}
+	if partial.Max != nil && (target.Max == nil || partial.Max.Cmp(target.Max) > 0) {
+		target.Max = new(big.Int).Set(partial.Max)
+	}
+}
+
+func bitmapGroupAggregateSortedGroups(groupsByKey map[string]*BitmapGroupAggregateGroup) []BitmapGroupAggregateGroup {
+	if len(groupsByKey) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(groupsByKey))
+	for key := range groupsByKey {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left := groupsByKey[keys[i]]
+		right := groupsByKey[keys[j]]
+		if left == nil || right == nil {
+			return keys[i] < keys[j]
+		}
+		return bitmapGroupAggregateValuesLess(left.Values, right.Values)
+	})
+	groups := make([]BitmapGroupAggregateGroup, 0, len(keys))
+	for _, key := range keys {
+		group := groupsByKey[key]
+		if group == nil {
+			continue
+		}
+		cloned := BitmapGroupAggregateGroup{
+			Values: append([]uint64(nil), group.Values...),
+			Aggs:   make([]BitmapGroupAggregateValue, len(group.Aggs)),
+		}
+		for i, value := range group.Aggs {
+			cloned.Aggs[i] = BitmapGroupAggregateValue{
+				Count: value.Count,
+				Sum:   cloneBigIntShared(value.Sum),
+				Min:   cloneBigIntShared(value.Min),
+				Max:   cloneBigIntShared(value.Max),
+			}
+		}
+		groups = append(groups, cloned)
+	}
+	return groups
+}
+
+func bitmapGroupAggregateValuesLess(left, right []uint64) bool {
+	for i := 0; i < len(left) && i < len(right); i++ {
+		if left[i] == right[i] {
+			continue
+		}
+		return left[i] < right[i]
+	}
+	return len(left) < len(right)
+}
+
+func cloneBigIntShared(value *big.Int) *big.Int {
+	if value == nil {
+		return nil
+	}
+	return new(big.Int).Set(value)
+}
+
 func relationshipAlignedValueSumSortedGroups(groupsByParent map[uint64]*RelationshipAlignedValueSumGroup) []RelationshipAlignedValueSumGroup {
 	if len(groupsByParent) == 0 {
 		return nil
@@ -1241,6 +1521,22 @@ func (s *RelationshipAlignedValueSumStats) addProto(stats *pb.RelationshipAligne
 	s.ProjectionElapsed += time.Duration(stats.GetProjectionElapsedNanos())
 	s.AggregateElapsed += time.Duration(stats.GetAggregateElapsedNanos())
 	s.Projection.addProto(stats.GetProjection())
+}
+
+func (s *BitmapGroupAggregateStats) addProto(stats *pb.BitmapGroupAggregateStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.Nodes++
+	if valueCount := int(stats.GetValueCount()); valueCount > s.ValueCount {
+		s.ValueCount = valueCount
+	}
+	s.BSIFieldCount += int(stats.GetBsiFieldCount())
+	s.BSIProjectElapsed += time.Duration(stats.GetBsiProjectElapsedNanos())
+	s.AggregateElapsed += time.Duration(stats.GetAggregateElapsedNanos())
+	s.ValueSetElapsed += time.Duration(stats.GetValueSetElapsedNanos())
+	s.SumElapsed += time.Duration(stats.GetSumElapsedNanos())
+	s.MinMaxElapsed += time.Duration(stats.GetMinMaxElapsedNanos())
 }
 
 func aggregateCompareBSIFieldsResponses(responses []*pb.CompareBSIFieldsResponse) (*roaring64.Bitmap, error) {
@@ -1395,6 +1691,20 @@ func (c *BitmapIndex) relationshipAlignedValueSumClient(client pb.BitmapIndexCli
 	result, err := client.RelationshipAlignedValueSum(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.RelationshipAlignedValueSum(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, nil
+}
+
+func (c *BitmapIndex) bitmapGroupAggregatesClient(client pb.BitmapIndexClient, req *pb.BitmapGroupAggregatesRequest,
+	clientIndex int) (*pb.BitmapGroupAggregatesResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	result, err := client.BitmapGroupAggregates(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%v.BitmapGroupAggregates(_) = _, %v, node = %s", client, err,
 			c.ClientConnections()[clientIndex].Target())
 	}
 	return result, nil

@@ -23,6 +23,7 @@ type LegacyDirectBitmapGroupAggregateReader struct {
 	Sessions   DirectSessionProvider
 	TableCache *core.TableCacheStruct
 	Projection NativeProjectionBSIReader
+	Remote     BitmapGroupAggregateReader
 }
 
 type legacyDirectBitmapGroupAggregateValue struct {
@@ -30,6 +31,38 @@ type legacyDirectBitmapGroupAggregateValue struct {
 	Sum   *big.Int
 	Min   *big.Int
 	Max   *big.Int
+}
+
+type legacyDirectBitmapGroupAggregateRemoteSpec struct {
+	Function string
+	Field    string
+}
+
+type legacyDirectBitmapGroupAggregateRemoteValue struct {
+	Count uint64
+	Sum   *big.Int
+	Min   *big.Int
+	Max   *big.Int
+}
+
+type legacyDirectBitmapGroupAggregateRemoteGroup struct {
+	Values []uint64
+	Aggs   []legacyDirectBitmapGroupAggregateRemoteValue
+}
+
+type legacyDirectBitmapGroupAggregateRemoteStats struct {
+	Nodes             uint64
+	CandidateRows     uint64
+	FieldCount        int
+	ValueCount        int
+	Groups            int
+	AggregateCount    int
+	BSIFieldCount     int
+	BSIProjectElapsed time.Duration
+	AggregateElapsed  time.Duration
+	ValueSetElapsed   time.Duration
+	SumElapsed        time.Duration
+	MinMaxElapsed     time.Duration
 }
 
 type legacyDirectBitmapGroupAggregateEnum struct {
@@ -69,6 +102,15 @@ func (r LegacyDirectBitmapGroupAggregateReader) ReadBitmapGroupAggregates(ctx co
 	}
 	if len(measureFields) == 0 {
 		return BitmapGroupAggregateReadResult{}, nil, false, nil
+	}
+	if r.Remote != nil {
+		result, diagnostics, ok, err := r.Remote.ReadBitmapGroupAggregates(ctx, read)
+		if ok && err == nil && !diagnostics.BlocksNative() && len(read.CandidateRows) > 0 && len(result.Groups) == 0 {
+			ok = false
+		}
+		if err != nil || diagnostics.BlocksNative() || ok {
+			return result, diagnostics, ok, err
+		}
 	}
 
 	start := time.Now()

@@ -49,6 +49,7 @@ type LocalBitmapIndexService interface {
 	SyncStatus(context.Context, *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error)
 	Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error)
 	CompareBSIFields(context.Context, *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error)
+	BitmapGroupAggregates(context.Context, *pb.BitmapGroupAggregatesRequest) (*pb.BitmapGroupAggregatesResponse, error)
 	RelationshipAlignedValueSum(context.Context, *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error)
 	Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error)
 	CheckoutSequence(context.Context, *pb.CheckoutSequenceRequest) (*pb.CheckoutSequenceResponse, error)

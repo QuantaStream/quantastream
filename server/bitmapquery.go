@@ -946,6 +946,93 @@ func (m *BitmapIndex) CompareBSIFields(ctx context.Context, req *pb.CompareBSIFi
 	}, nil
 }
 
+// BitmapGroupAggregates computes node-local grouped aggregate partials over
+// bitmap-backed group fields and BSI-backed measure fields. Cluster callers
+// merge partial aggregate state by raw group value IDs.
+func (m *BitmapIndex) BitmapGroupAggregates(ctx context.Context, req *pb.BitmapGroupAggregatesRequest) (*pb.BitmapGroupAggregatesResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var foundSet *roaring64.Bitmap
+	if len(req.GetFoundSet()) > 0 {
+		foundSet = roaring64.NewBitmap()
+		if err := foundSet.UnmarshalBinary(req.GetFoundSet()); err != nil {
+			return nil, err
+		}
+	}
+	aggregates := make([]BitmapGroupAggregateSpec, 0, len(req.GetAggregates()))
+	for _, aggregate := range req.GetAggregates() {
+		if aggregate == nil {
+			continue
+		}
+		aggregates = append(aggregates, BitmapGroupAggregateSpec{
+			Function: aggregate.GetFunction(),
+			Field:    aggregate.GetField(),
+		})
+	}
+	groups, stats, ok, err := m.BitmapGroupAggregatesStorage(
+		req.GetIndex(),
+		req.GetGroupFields(),
+		aggregates,
+		req.GetFromTime(),
+		req.GetToTime(),
+		foundSet,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.BitmapGroupAggregatesResponse{
+		Groups: bitmapGroupAggregatesToProto(groups),
+		Stats:  bitmapGroupAggregateStatsToProto(stats),
+		Ok:     ok,
+	}, nil
+}
+
+func bitmapGroupAggregatesToProto(groups []BitmapGroupAggregate) []*pb.BitmapGroupAggregateGroup {
+	protoGroups := make([]*pb.BitmapGroupAggregateGroup, 0, len(groups))
+	for _, group := range groups {
+		protoAggs := make([]*pb.BitmapGroupAggregateValue, 0, len(group.Aggs))
+		for _, aggregate := range group.Aggs {
+			protoAggs = append(protoAggs, bitmapGroupAggregateValueToProto(aggregate))
+		}
+		protoGroups = append(protoGroups, &pb.BitmapGroupAggregateGroup{
+			Values: append([]uint64(nil), group.Values...),
+			Aggs:   protoAggs,
+		})
+	}
+	return protoGroups
+}
+
+func bitmapGroupAggregateValueToProto(value BitmapGroupAggregateValue) *pb.BitmapGroupAggregateValue {
+	result := &pb.BitmapGroupAggregateValue{Count: value.Count}
+	if value.Sum != nil {
+		result.Sum = value.Sum.String()
+	}
+	if value.Min != nil {
+		result.Min = value.Min.String()
+	}
+	if value.Max != nil {
+		result.Max = value.Max.String()
+	}
+	return result
+}
+
+func bitmapGroupAggregateStatsToProto(stats BitmapGroupAggregateStats) *pb.BitmapGroupAggregateStats {
+	return &pb.BitmapGroupAggregateStats{
+		CandidateRows:          stats.CandidateRows,
+		FieldCount:             uint64(stats.FieldCount),
+		ValueCount:             uint64(stats.ValueCount),
+		Groups:                 uint64(stats.Groups),
+		AggregateCount:         uint64(stats.AggregateCount),
+		BsiFieldCount:          uint64(stats.BSIFieldCount),
+		BsiProjectElapsedNanos: stats.BSIProjectElapsed.Nanoseconds(),
+		AggregateElapsedNanos:  stats.AggregateElapsed.Nanoseconds(),
+		ValueSetElapsedNanos:   stats.ValueSetElapsed.Nanoseconds(),
+		SumElapsedNanos:        stats.SumElapsed.Nanoseconds(),
+		MinMaxElapsedNanos:     stats.MinMaxElapsed.Nanoseconds(),
+	}
+}
+
 // RelationshipAlignedValueSum computes a node-local partial aggregate for an
 // already-aligned relationship vector. Cluster callers merge partial groups by
 // parent value.

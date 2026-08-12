@@ -50,7 +50,7 @@ func (r StandardBitmapGroupAggregateReader) ReadBitmapGroupAggregates(ctx contex
 	fromTime, toTime := standardProjectionWindowNanos(r.TableCache, read.Index, read.FromEpochMillis, read.ToEpochMillis)
 	foundSet := standardProjectionBitmap(read.CandidateRows)
 	start := time.Now()
-	groups, stats, ok, err := r.Direct.BitmapGroupAggregates(read.Index, groupFields, aggregates, fromTime, toTime, foundSet)
+	groups, stats, ok, err := r.Direct.BitmapGroupAggregatesStorage(read.Index, groupFields, aggregates, fromTime, toTime, foundSet)
 	elapsed := time.Since(start)
 	if err != nil || !ok {
 		return qsruntime.BitmapGroupAggregateReadResult{}, nil, ok, err

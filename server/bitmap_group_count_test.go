@@ -142,7 +142,7 @@ func TestBitmapGroupAggregatesComputesBSIValuesByBitmapGroup(t *testing.T) {
 		tableCache: map[string]*shared.BasicTable{"lineitem": table},
 	}
 
-	groups, stats, ok, err := index.BitmapGroupAggregates("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{
+	groups, stats, ok, err := index.BitmapGroupAggregatesStorage("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{
 		{Function: "count"},
 		{Function: "sum", Field: "l_quantity"},
 		{Function: "avg", Field: "l_quantity"},
@@ -199,7 +199,7 @@ func TestBitmapGroupAggregatesMinMaxFallsBackForNegativeValues(t *testing.T) {
 		tableCache: map[string]*shared.BasicTable{"lineitem": table},
 	}
 
-	groups, _, ok, err := index.BitmapGroupAggregates("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{
+	groups, _, ok, err := index.BitmapGroupAggregatesStorage("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{
 		{Function: "min", Field: "l_quantity"},
 		{Function: "max", Field: "l_quantity"},
 	}, 0, 0, roaring64.BitmapOf(1, 2, 3))

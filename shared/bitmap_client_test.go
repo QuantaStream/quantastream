@@ -312,6 +312,102 @@ func TestAggregateRelationshipAlignedValueSumResponsesRequiresAllNodesOK(t *test
 	}
 }
 
+func TestAggregateBitmapGroupAggregateResponsesMergesPartials(t *testing.T) {
+	groups, stats, ok, err := aggregateBitmapGroupAggregateResponses([]*pb.BitmapGroupAggregatesResponse{
+		{
+			Ok: true,
+			Groups: []*pb.BitmapGroupAggregateGroup{{
+				Values: []uint64{1, 10},
+				Aggs: []*pb.BitmapGroupAggregateValue{{
+					Count: 2,
+				}, {
+					Count: 2,
+					Sum:   "30",
+					Min:   "10",
+					Max:   "20",
+				}},
+			}},
+			Stats: &pb.BitmapGroupAggregateStats{
+				ValueCount:             4,
+				BsiProjectElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+				SumElapsedNanos:        (1 * time.Millisecond).Nanoseconds(),
+			},
+		},
+		{
+			Ok: true,
+			Groups: []*pb.BitmapGroupAggregateGroup{{
+				Values: []uint64{1, 10},
+				Aggs: []*pb.BitmapGroupAggregateValue{{
+					Count: 1,
+				}, {
+					Count: 1,
+					Sum:   "7",
+					Min:   "7",
+					Max:   "7",
+				}},
+			}, {
+				Values: []uint64{2, 10},
+				Aggs: []*pb.BitmapGroupAggregateValue{{
+					Count: 1,
+				}, {
+					Count: 1,
+					Sum:   "5",
+					Min:   "5",
+					Max:   "5",
+				}},
+			}},
+			Stats: &pb.BitmapGroupAggregateStats{
+				ValueCount:             3,
+				BsiProjectElapsedNanos: (3 * time.Millisecond).Nanoseconds(),
+				SumElapsedNanos:        (2 * time.Millisecond).Nanoseconds(),
+			},
+		},
+	}, 4, 2, 2)
+	if err != nil {
+		t.Fatalf("aggregateBitmapGroupAggregateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("aggregateBitmapGroupAggregateResponses() ok = false, want true")
+	}
+	if stats.Nodes != 2 || stats.CandidateRows != 4 || stats.FieldCount != 2 || stats.AggregateCount != 2 || stats.ValueCount != 4 || stats.Groups != 2 {
+		t.Fatalf("stats = %+v, want nodes/candidates/fields/aggs/values/groups 2/4/2/2/4/2", stats)
+	}
+	if stats.BSIProjectElapsed != 5*time.Millisecond || stats.SumElapsed != 3*time.Millisecond {
+		t.Fatalf("stats elapsed = %s/%s, want 5ms/3ms", stats.BSIProjectElapsed, stats.SumElapsed)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups len = %d, want 2", len(groups))
+	}
+	if got, want := groups[0].Values, []uint64{1, 10}; !equalUint64Slices(got, want) {
+		t.Fatalf("groups[0] values = %#v, want %#v", got, want)
+	}
+	if groups[0].Aggs[0].Count != 3 || groups[0].Aggs[1].Count != 3 || groups[0].Aggs[1].Sum.Cmp(big.NewInt(37)) != 0 || groups[0].Aggs[1].Min.Cmp(big.NewInt(7)) != 0 || groups[0].Aggs[1].Max.Cmp(big.NewInt(20)) != 0 {
+		t.Fatalf("groups[0] aggregates = %+v, want merged count 3 sum 37 min 7 max 20", groups[0].Aggs)
+	}
+	if got, want := groups[1].Values, []uint64{2, 10}; !equalUint64Slices(got, want) {
+		t.Fatalf("groups[1] values = %#v, want %#v", got, want)
+	}
+}
+
+func TestAggregateBitmapGroupAggregateResponsesRequiresAllNodesOK(t *testing.T) {
+	_, _, ok, err := aggregateBitmapGroupAggregateResponses([]*pb.BitmapGroupAggregatesResponse{
+		{
+			Ok: true,
+			Groups: []*pb.BitmapGroupAggregateGroup{{
+				Values: []uint64{1},
+				Aggs:   []*pb.BitmapGroupAggregateValue{{Count: 1}},
+			}},
+		},
+		{Ok: false},
+	}, 1, 1, 1)
+	if err != nil {
+		t.Fatalf("aggregateBitmapGroupAggregateResponses() error = %v", err)
+	}
+	if ok {
+		t.Fatal("aggregateBitmapGroupAggregateResponses() ok = true with one non-ok node, want false")
+	}
+}
+
 type batchMutateItemsBitmapIndexServer struct {
 	pb.UnimplementedBitmapIndexServer
 	mu             sync.Mutex
@@ -384,6 +480,18 @@ func (s *compareFanoutBitmapIndexServer) callCount() int {
 }
 
 func equalIntSlices(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalUint64Slices(left, right []uint64) bool {
 	if len(left) != len(right) {
 		return false
 	}

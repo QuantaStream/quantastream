@@ -8,6 +8,7 @@ import (
 	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	legacy "github.com/QuantaStream/quantastream/shared"
+	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
 // LegacyBitmapQueryAdapter converts qsbridge's neutral Quanta dialect to legacy runtime payloads.
@@ -315,6 +316,53 @@ func legacyBitmapBSIOpSupported(op qsbridge.QuantaBSIOp) bool {
 	default:
 		return false
 	}
+}
+
+func legacyDirectBitmapGroupAggregates(bitIndex *legacy.BitmapIndex, index string, groupFields []string, aggregates []legacyDirectBitmapGroupAggregateRemoteSpec, fromTime, toTime int64, foundSet *roaring64.Bitmap) ([]legacyDirectBitmapGroupAggregateRemoteGroup, legacyDirectBitmapGroupAggregateRemoteStats, bool, error) {
+	if bitIndex == nil {
+		return nil, legacyDirectBitmapGroupAggregateRemoteStats{}, false, fmt.Errorf("bitmap group aggregate adapter received nil bitmap index")
+	}
+	legacyAggregates := make([]legacy.BitmapGroupAggregateSpec, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		legacyAggregates = append(legacyAggregates, legacy.BitmapGroupAggregateSpec{
+			Function: aggregate.Function,
+			Field:    aggregate.Field,
+		})
+	}
+	groups, stats, ok, err := bitIndex.BitmapGroupAggregates(index, groupFields, legacyAggregates, fromTime, toTime, foundSet)
+	if err != nil || !ok {
+		return nil, legacyDirectBitmapGroupAggregateRemoteStats{}, ok, err
+	}
+	converted := make([]legacyDirectBitmapGroupAggregateRemoteGroup, 0, len(groups))
+	for _, group := range groups {
+		aggs := make([]legacyDirectBitmapGroupAggregateRemoteValue, 0, len(group.Aggs))
+		for _, value := range group.Aggs {
+			aggs = append(aggs, legacyDirectBitmapGroupAggregateRemoteValue{
+				Count: value.Count,
+				Sum:   cloneBigInt(value.Sum),
+				Min:   cloneBigInt(value.Min),
+				Max:   cloneBigInt(value.Max),
+			})
+		}
+		converted = append(converted, legacyDirectBitmapGroupAggregateRemoteGroup{
+			Values: append([]uint64(nil), group.Values...),
+			Aggs:   aggs,
+		})
+	}
+	return converted, legacyDirectBitmapGroupAggregateRemoteStats{
+		Nodes:             stats.Nodes,
+		CandidateRows:     stats.CandidateRows,
+		FieldCount:        stats.FieldCount,
+		ValueCount:        stats.ValueCount,
+		Groups:            stats.Groups,
+		AggregateCount:    stats.AggregateCount,
+		BSIFieldCount:     stats.BSIFieldCount,
+		BSIProjectElapsed: stats.BSIProjectElapsed,
+		AggregateElapsed:  stats.AggregateElapsed,
+		ValueSetElapsed:   stats.ValueSetElapsed,
+		SumElapsed:        stats.SumElapsed,
+		MinMaxElapsed:     stats.MinMaxElapsed,
+	}, true, nil
 }
 
 func cloneBigInt(value *big.Int) *big.Int {

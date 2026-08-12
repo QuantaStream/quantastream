@@ -161,6 +161,33 @@ func TestBitmapIndexCompareBSIFieldsUsesLocalService(t *testing.T) {
 	}
 }
 
+func TestBitmapIndexBitmapGroupAggregatesUsesLocalService(t *testing.T) {
+	local := &recordingLocalBitmapIndexService{}
+	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
+	_, _, ok, err := index.BitmapGroupAggregates("lineitem", []string{"l_returnflag"}, []BitmapGroupAggregateSpec{{Function: "count"}}, 10, 20, roaring64.BitmapOf(101, 102))
+	if err != nil {
+		t.Fatalf("BitmapGroupAggregates() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("BitmapGroupAggregates() ok = false, want true")
+	}
+	if local.bitmapGroupAggregateCalls != 1 {
+		t.Fatalf("bitmap group aggregate calls = %d, want 1", local.bitmapGroupAggregateCalls)
+	}
+	if local.bitmapGroupAggregateRequest == nil {
+		t.Fatal("bitmap group aggregate request was not captured")
+	}
+	if local.bitmapGroupAggregateRequest.Index != "lineitem" {
+		t.Fatalf("bitmap group aggregate request = %#v", local.bitmapGroupAggregateRequest)
+	}
+	if got, want := local.bitmapGroupAggregateRequest.GroupFields, []string{"l_returnflag"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("group fields = %#v, want %#v", got, want)
+	}
+	if len(local.bitmapGroupAggregateRequest.FoundSet) == 0 {
+		t.Fatal("bitmap group aggregate request found set was empty")
+	}
+}
+
 func TestBitmapIndexRelationshipAlignedValueSumUsesLocalService(t *testing.T) {
 	local := &recordingLocalBitmapIndexService{}
 	index := NewBitmapIndex(&Conn{LocalNodeServices: LocalNodeServices{BitmapIndex: local}})
@@ -244,18 +271,20 @@ func TestKVStoreItemsUsesLocalService(t *testing.T) {
 }
 
 type recordingLocalBitmapIndexService struct {
-	queryCalls              int
-	syncStatusCalls         int
-	syncStatusRequest       *pb.SyncStatusRequest
-	syncStatusCardinality   uint64
-	compareBSIFieldsCalls   int
-	compareBSIFieldsRequest *pb.CompareBSIFieldsRequest
-	relationshipSumCalls    int
-	relationshipSumRequest  *pb.RelationshipAlignedValueSumRequest
-	bulkClearCalls          int
-	bulkClearRequest        *pb.BulkClearRequest
-	batchMutateCalls        int
-	batchMutateItems        []*pb.IndexKVPair
+	queryCalls                  int
+	syncStatusCalls             int
+	syncStatusRequest           *pb.SyncStatusRequest
+	syncStatusCardinality       uint64
+	compareBSIFieldsCalls       int
+	compareBSIFieldsRequest     *pb.CompareBSIFieldsRequest
+	bitmapGroupAggregateCalls   int
+	bitmapGroupAggregateRequest *pb.BitmapGroupAggregatesRequest
+	relationshipSumCalls        int
+	relationshipSumRequest      *pb.RelationshipAlignedValueSumRequest
+	bulkClearCalls              int
+	bulkClearRequest            *pb.BulkClearRequest
+	batchMutateCalls            int
+	batchMutateItems            []*pb.IndexKVPair
 }
 
 func (s *recordingLocalBitmapIndexService) Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error) {
@@ -293,6 +322,12 @@ func (s *recordingLocalBitmapIndexService) CompareBSIFields(_ context.Context, r
 		return nil, err
 	}
 	return &pb.CompareBSIFieldsResponse{Rownums: data}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) BitmapGroupAggregates(_ context.Context, req *pb.BitmapGroupAggregatesRequest) (*pb.BitmapGroupAggregatesResponse, error) {
+	s.bitmapGroupAggregateCalls++
+	s.bitmapGroupAggregateRequest = req
+	return &pb.BitmapGroupAggregatesResponse{Ok: true}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) RelationshipAlignedValueSum(_ context.Context, req *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {
