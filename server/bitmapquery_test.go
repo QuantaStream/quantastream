@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 	"github.com/hashicorp/consul/api"
@@ -68,6 +69,92 @@ func TestTimeRangeBSIReadsLocalNonTimeShardRegardlessOfCurrentOwner(t *testing.T
 	}
 	if got := result.GetExistenceBitmap().GetCardinality(); got != 1 {
 		t.Fatalf("existence cardinality = %d, want 1", got)
+	}
+}
+
+func TestQueryPriorIntersectCandidatesSeedBSICompare(t *testing.T) {
+	seed := queryPriorIntersectCandidates{}
+	first := &pb.QueryFragment{
+		Index:     "lineitem",
+		Field:     "l_shipmode",
+		Operation: pb.QueryFragment_INTERSECT,
+	}
+	second := &pb.QueryFragment{
+		Index:     "lineitem",
+		Field:     "l_receiptdate",
+		Operation: pb.QueryFragment_INTERSECT,
+		BsiOp:     pb.QueryFragment_RANGE,
+	}
+
+	seed.Observe(first, roaring64.BitmapOf(1, 2, 3, 4))
+	found := seed.FoundSetFor(second)
+	if found == nil {
+		t.Fatal("found set = nil, want prior intersect candidates")
+	}
+	if got, want := found.ToArray(), []uint64{1, 2, 3, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("found set = %#v, want %#v", got, want)
+	}
+
+	seed.Observe(second, roaring64.BitmapOf(2, 4, 6))
+	found = seed.FoundSetFor(second)
+	if got, want := found.ToArray(), []uint64{2, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("updated found set = %#v, want %#v", got, want)
+	}
+}
+
+func TestQueryPriorIntersectCandidatesIgnoreUnsafeFragments(t *testing.T) {
+	tests := []struct {
+		name     string
+		fragment *pb.QueryFragment
+	}{
+		{
+			name: "union",
+			fragment: &pb.QueryFragment{
+				Index:     "lineitem",
+				Operation: pb.QueryFragment_UNION,
+			},
+		},
+		{
+			name: "or-context",
+			fragment: &pb.QueryFragment{
+				Index:     "lineitem",
+				Operation: pb.QueryFragment_INTERSECT,
+				OrContext: true,
+			},
+		},
+		{
+			name: "negated",
+			fragment: &pb.QueryFragment{
+				Index:     "lineitem",
+				Operation: pb.QueryFragment_INTERSECT,
+				Negate:    true,
+			},
+		},
+		{
+			name: "null-check",
+			fragment: &pb.QueryFragment{
+				Index:     "lineitem",
+				Operation: pb.QueryFragment_INTERSECT,
+				NullCheck: true,
+			},
+		},
+		{
+			name: "sample",
+			fragment: &pb.QueryFragment{
+				Index:     "lineitem",
+				Operation: pb.QueryFragment_INTERSECT,
+				SamplePct: 1,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			seed := queryPriorIntersectCandidates{}
+			seed.Observe(test.fragment, roaring64.BitmapOf(1, 2))
+			if got := seed.FoundSetFor(&pb.QueryFragment{Index: "lineitem", Operation: pb.QueryFragment_INTERSECT}); got != nil {
+				t.Fatalf("found set = %#v, want nil", got)
+			}
+		})
 	}
 }
 

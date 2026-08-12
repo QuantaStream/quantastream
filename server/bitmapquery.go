@@ -92,6 +92,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 	}
 	globalExistence := make(map[string]*roaring64.Bitmap)
 	queryStats := bitmapQueryStats{startedAt: time.Now()}
+	priorIntersect := queryPriorIntersectCandidates{}
 	for _, v := range query.Query {
 		if v.Index == "" {
 			return nil, fmt.Errorf("Index not specified for query fragment %#v", v)
@@ -149,6 +150,11 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			countsByFragment[v.Id] = count
 		} else if v.BsiOp > 0 {
 			queryStats.bsiFragments++
+			foundSet := priorIntersect.FoundSetFor(v)
+			if foundSet != nil {
+				queryStats.bsiFoundSetUses++
+				queryStats.bsiFoundSetRows += foundSet.GetCardinality()
+			}
 			values := make([]*big.Int, len(v.Values))
 			for i, v := range v.Values {
 				values[i] = new(big.Int).SetBytes(v)
@@ -172,17 +178,17 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 			bsiCompareStart := time.Now()
 			switch v.BsiOp {
 			case pb.QueryFragment_LT:
-				bm = bsi.CompareBigValue(0, roaring64.LT, value, nil, nil)
+				bm = bsi.CompareBigValue(0, roaring64.LT, value, nil, foundSet)
 			case pb.QueryFragment_LE:
-				bm = bsi.CompareBigValue(0, roaring64.LE, value, nil, nil)
+				bm = bsi.CompareBigValue(0, roaring64.LE, value, nil, foundSet)
 			case pb.QueryFragment_EQ:
-				bm = bsi.CompareBigValue(0, roaring64.EQ, value, nil, nil)
+				bm = bsi.CompareBigValue(0, roaring64.EQ, value, nil, foundSet)
 			case pb.QueryFragment_GE:
-				bm = bsi.CompareBigValue(0, roaring64.GE, value, nil, nil)
+				bm = bsi.CompareBigValue(0, roaring64.GE, value, nil, foundSet)
 			case pb.QueryFragment_GT:
-				bm = bsi.CompareBigValue(0, roaring64.GT, value, nil, nil)
+				bm = bsi.CompareBigValue(0, roaring64.GT, value, nil, foundSet)
 			case pb.QueryFragment_RANGE:
-				bm = bsi.CompareBigValue(0, roaring64.RANGE, begin, end, nil)
+				bm = bsi.CompareBigValue(0, roaring64.RANGE, begin, end, foundSet)
 			case pb.QueryFragment_BATCH_EQ:
 				bm = bsi.BatchEqualBig(0, values)
 			}
@@ -247,6 +253,7 @@ func (m *BitmapIndex) Query(ctx context.Context, query *pb.BitmapQuery) (*pb.Que
 		} else {
 			dataMap[v.Id] = roaring64.NewBitmap()
 		}
+		priorIntersect.Observe(v, dataMap[v.Id])
 		queryStats.fragmentElapsed += time.Since(fragmentStart)
 	}
 
@@ -287,6 +294,8 @@ type bitmapQueryStats struct {
 	standardFragments int
 	bsiFragments      int
 	scanFragments     int
+	bsiFoundSetUses   int
+	bsiFoundSetRows   uint64
 }
 
 func (s bitmapQueryStats) probeSamples() []*pb.BitmapResult {
@@ -305,7 +314,50 @@ func (s bitmapQueryStats) probeSamples() []*pb.BitmapResult {
 		shared.NewQueryResultProbeSample(section, "standard_fragment_count", strconv.Itoa(s.standardFragments), ""),
 		shared.NewQueryResultProbeSample(section, "bsi_fragment_count", strconv.Itoa(s.bsiFragments), ""),
 		shared.NewQueryResultProbeSample(section, "scan_fragment_count", strconv.Itoa(s.scanFragments), ""),
+		shared.NewQueryResultProbeSample(section, "bsi_found_set_count", strconv.Itoa(s.bsiFoundSetUses), ""),
+		shared.NewQueryResultProbeSample(section, "bsi_found_set_rows", strconv.FormatUint(s.bsiFoundSetRows, 10), ""),
 	}
+}
+
+type queryPriorIntersectCandidates struct {
+	index string
+	rows  *roaring64.Bitmap
+}
+
+func (s *queryPriorIntersectCandidates) FoundSetFor(fragment *pb.QueryFragment) *roaring64.Bitmap {
+	if s == nil || s.rows == nil || fragment == nil {
+		return nil
+	}
+	if !queryFragmentCanUsePriorIntersect(fragment) || s.index != fragment.Index || s.rows.GetCardinality() == 0 {
+		return nil
+	}
+	return s.rows
+}
+
+func (s *queryPriorIntersectCandidates) Observe(fragment *pb.QueryFragment, bitmap *roaring64.Bitmap) {
+	if s == nil || fragment == nil || bitmap == nil || !queryFragmentCanUsePriorIntersect(fragment) {
+		return
+	}
+	if s.rows == nil {
+		s.index = fragment.Index
+		s.rows = bitmap.Clone()
+		return
+	}
+	if s.index != fragment.Index {
+		s.index = ""
+		s.rows = nil
+		return
+	}
+	s.rows.And(bitmap)
+}
+
+func queryFragmentCanUsePriorIntersect(fragment *pb.QueryFragment) bool {
+	return fragment != nil &&
+		fragment.Operation == pb.QueryFragment_INTERSECT &&
+		!fragment.OrContext &&
+		!fragment.Negate &&
+		!fragment.NullCheck &&
+		fragment.SamplePct == 0
 }
 
 func isExistenceSeedFragment(fragment *pb.QueryFragment) bool {
