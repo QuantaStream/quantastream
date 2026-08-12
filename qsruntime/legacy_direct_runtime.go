@@ -81,6 +81,10 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 	relationshipAggregateReader := LegacyDirectSharedRelationshipVectorAggregateReader{
 		Source: bsiReader,
 	}
+	siblingDiversityReader := &LegacyDirectSharedRelationshipSiblingDiversityReader{
+		Sessions:   sessions,
+		Projection: bsiReader,
+	}
 	bitmapGroupAggregateReader := LegacyDirectBitmapGroupAggregateReader{
 		Sessions:   sessions,
 		TableCache: tableCache,
@@ -148,6 +152,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 		BitmapGroupAggregates: bitmapGroupAggregateReader,
 		SameRowComparison:     sameRowComparison,
 		RelationshipReader:    relationshipReader,
+		SiblingDiversity:      siblingDiversityReader,
 		RelationshipJoins: LegacyDirectRelationshipVectorJoinExecutor{
 			Source:                      quantaSource,
 			Sessions:                    sessions,
