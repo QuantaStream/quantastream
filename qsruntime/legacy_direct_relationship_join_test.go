@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -31,6 +32,44 @@ func TestLegacyDirectRelationshipRownumsAllowsNilBitmap(t *testing.T) {
 	if rownums := legacyDirectRelationshipRownums(nil); len(rownums) != 0 {
 		t.Fatalf("rownums = %#v, want empty for nil bitmap", rownums)
 	}
+}
+
+func TestLegacyDirectRelationshipGraphReductionSummaryProbes(t *testing.T) {
+	summary := legacyDirectRelationshipGraphReductionSummary{}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:  "o",
+		parentTable: "orders",
+		childRole:   "l",
+		childTable:  "lineitem",
+	}
+	summary.record(2, 1, 1, edge, 3, 5, 2, 7*time.Millisecond, legacyDirectRelationshipReduceTiming{
+		projectionElapsed:                  time.Millisecond,
+		parentKeyElapsed:                   2 * time.Millisecond,
+		reverseArtifactElapsed:             3 * time.Millisecond,
+		reverseArtifactClientRPCElapsed:    4 * time.Millisecond,
+		reverseArtifactClientRPCMaxElapsed: 5 * time.Millisecond,
+		valueVectorElapsed:                 6 * time.Millisecond,
+		batchEqualElapsed:                  8 * time.Millisecond,
+		intersectElapsed:                   9 * time.Millisecond,
+		pairElapsed:                        10 * time.Millisecond,
+		projectionRows:                     11,
+		reverseArtifactSourceValues:        12,
+		reverseArtifactCandidateRows:       13,
+		reverseArtifactNarrowedRows:        14,
+		matchedRows:                        15,
+	}, 16*time.Millisecond, 2)
+
+	probes := summary.probes()
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_edges_evaluated", "1")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_parent_rows_seen", "3")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_child_rows_seen", "5")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_joined_rows_seen", "2")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_projection_rows", "11")
+	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_edge_reduce_total_elapsed", "7ms")
+	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_reverse_artifact_rpc_total_elapsed", "4ms")
+	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_max_child_retain_elapsed", "16ms")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_max_edge_reduce", "iter=1 edge=1 input=2 o:orders[3] -> l:lineitem[5]")
+	assertExecutionProbeName(t, probes, "relationship_join", "graph_reduction_edge_summary_1")
 }
 
 func TestLegacyDirectRelationshipAggregateResultMaterializesJoinedRows(t *testing.T) {

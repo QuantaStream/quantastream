@@ -132,6 +132,38 @@ type legacyDirectRelationshipReduceOptions struct {
 	omitFullDomainTargetCandidates bool
 }
 
+type legacyDirectRelationshipGraphReductionSummary struct {
+	edges                         int
+	totalReduceElapsed            time.Duration
+	totalProjectionElapsed        time.Duration
+	totalParentKeyElapsed         time.Duration
+	totalReverseArtifactElapsed   time.Duration
+	totalReverseArtifactRPC       time.Duration
+	totalReverseArtifactRPCMax    time.Duration
+	totalValueVectorElapsed       time.Duration
+	totalBatchEqualElapsed        time.Duration
+	totalIntersectElapsed         time.Duration
+	totalPairElapsed              time.Duration
+	totalChildRetainElapsed       time.Duration
+	totalProjectionRows           int
+	totalParentRows               int
+	totalChildRows                int
+	totalJoinedRows               int
+	totalReverseArtifactSource    int
+	totalReverseArtifactCandidate int
+	totalReverseArtifactNarrowed  int
+	totalMatchedRows              int
+	maxReduceElapsed              time.Duration
+	maxReduceLabel                string
+	maxProjectionElapsed          time.Duration
+	maxProjectionLabel            string
+	maxReverseArtifactElapsed     time.Duration
+	maxReverseArtifactLabel       string
+	maxChildRetainElapsed         time.Duration
+	maxChildRetainLabel           string
+	edgeSummaries                 []string
+}
+
 type legacyDirectRelationshipProjectedFKReduceTiming struct {
 	batchEqualUsed           bool
 	singleKeyEqualUsed       bool
@@ -732,6 +764,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	iterations := 0
 	singlePassApplied := false
 	singlePassReason := "not_evaluated"
+	reductionSummary := legacyDirectRelationshipGraphReductionSummary{}
 	reductionStart := time.Now()
 	for {
 		iterations++
@@ -836,6 +869,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				nextChildRows = legacyDirectRelationshipIntersectRownums(childRows, joined)
 			}
 			childRetainElapsed := time.Since(childRetainStart)
+			reductionSummary.record(candidate.InputOrdinal, iterations, edgeIndex+1, edge, len(parentRows), len(childRows), len(joined), edgeReduceElapsed, reduceTiming, childRetainElapsed, len(nextChildRows))
 			result.Probes = append(result.Probes,
 				legacyDirectRelationshipProbe(probePrefix+"child_retain_elapsed", childRetainElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"child_retain_rows", strconv.Itoa(len(nextChildRows))),
@@ -896,6 +930,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 		legacyDirectRelationshipProbe("graph_sink_rows", strconv.Itoa(len(finalRows))),
 		legacyDirectRelationshipProbe("graph_reduced_roles", legacyDirectRelationshipAlignedRoleDebug(rowsByTable)),
 	)
+	result.Probes = append(result.Probes, reductionSummary.probes()...)
 	result.Probes = append(result.Probes, legacyDirectRelationshipResidualPlacementPolicyProbes(prefilterProbes, rowsByTable)...)
 	if len(request.SQLAggregates) == 0 {
 		return e.legacyDirectRelationshipGraphProjectionResult(ctx, request, sink, finalRows, edges, scratchpad, result)
@@ -4358,6 +4393,123 @@ func relationshipTupleAggregateAlias(request ExecutionRequest) string {
 
 func legacyDirectRelationshipProbe(name string, value string) ExecutionProbe {
 	return ExecutionProbe{Section: "relationship_join", Name: name, Value: value}
+}
+
+func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, iteration, edgeOrdinal int, edge legacyDirectRelationshipEdge, parentRows, childRows, joinedRows int, reduceElapsed time.Duration, timing legacyDirectRelationshipReduceTiming, childRetainElapsed time.Duration, childRetainRows int) {
+	if s == nil {
+		return
+	}
+	label := legacyDirectRelationshipGraphReductionEdgeLabel(inputOrdinal, iteration, edgeOrdinal, edge, parentRows, childRows)
+	s.edges++
+	s.totalReduceElapsed += reduceElapsed
+	s.totalProjectionElapsed += timing.projectionElapsed
+	s.totalParentKeyElapsed += timing.parentKeyElapsed
+	s.totalReverseArtifactElapsed += timing.reverseArtifactElapsed
+	s.totalReverseArtifactRPC += timing.reverseArtifactClientRPCElapsed
+	s.totalReverseArtifactRPCMax += timing.reverseArtifactClientRPCMaxElapsed
+	s.totalValueVectorElapsed += timing.valueVectorElapsed
+	s.totalBatchEqualElapsed += timing.batchEqualElapsed
+	s.totalIntersectElapsed += timing.intersectElapsed
+	s.totalPairElapsed += timing.pairElapsed
+	s.totalChildRetainElapsed += childRetainElapsed
+	s.totalProjectionRows += timing.projectionRows
+	s.totalParentRows += parentRows
+	s.totalChildRows += childRows
+	s.totalJoinedRows += joinedRows
+	s.totalReverseArtifactSource += timing.reverseArtifactSourceValues
+	s.totalReverseArtifactCandidate += timing.reverseArtifactCandidateRows
+	s.totalReverseArtifactNarrowed += timing.reverseArtifactNarrowedRows
+	s.totalMatchedRows += timing.matchedRows
+	if reduceElapsed > s.maxReduceElapsed {
+		s.maxReduceElapsed = reduceElapsed
+		s.maxReduceLabel = label
+	}
+	if timing.projectionElapsed > s.maxProjectionElapsed {
+		s.maxProjectionElapsed = timing.projectionElapsed
+		s.maxProjectionLabel = label
+	}
+	if timing.reverseArtifactElapsed > s.maxReverseArtifactElapsed {
+		s.maxReverseArtifactElapsed = timing.reverseArtifactElapsed
+		s.maxReverseArtifactLabel = label
+	}
+	if childRetainElapsed > s.maxChildRetainElapsed {
+		s.maxChildRetainElapsed = childRetainElapsed
+		s.maxChildRetainLabel = label
+	}
+	s.edgeSummaries = append(s.edgeSummaries, fmt.Sprintf(
+		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
+		label,
+		joinedRows,
+		childRetainRows,
+		reduceElapsed,
+		timing.projectionElapsed,
+		timing.parentKeyElapsed,
+		timing.reverseArtifactElapsed,
+		timing.reverseArtifactClientRPCElapsed,
+		timing.reverseArtifactClientRPCMaxElapsed,
+		timing.valueVectorElapsed,
+		timing.intersectElapsed,
+		timing.pairElapsed,
+		childRetainElapsed,
+		timing.matchedRows,
+		timing.reverseArtifactSourceValues,
+		timing.reverseArtifactCandidateRows,
+		timing.reverseArtifactNarrowedRows,
+	))
+}
+
+func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe {
+	if s.edges == 0 {
+		return nil
+	}
+	probes := []ExecutionProbe{
+		legacyDirectRelationshipProbe("graph_reduction_edges_evaluated", strconv.Itoa(s.edges)),
+		legacyDirectRelationshipProbe("graph_reduction_parent_rows_seen", strconv.Itoa(s.totalParentRows)),
+		legacyDirectRelationshipProbe("graph_reduction_child_rows_seen", strconv.Itoa(s.totalChildRows)),
+		legacyDirectRelationshipProbe("graph_reduction_joined_rows_seen", strconv.Itoa(s.totalJoinedRows)),
+		legacyDirectRelationshipProbe("graph_reduction_projection_rows", strconv.Itoa(s.totalProjectionRows)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_source_values", strconv.Itoa(s.totalReverseArtifactSource)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_candidate_rows", strconv.Itoa(s.totalReverseArtifactCandidate)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_narrowed_rows", strconv.Itoa(s.totalReverseArtifactNarrowed)),
+		legacyDirectRelationshipProbe("graph_reduction_matched_rows", strconv.Itoa(s.totalMatchedRows)),
+		legacyDirectRelationshipProbe("phase_graph_reduction_edge_reduce_total_elapsed", s.totalReduceElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_edge_projection_total_elapsed", s.totalProjectionElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_parent_key_total_elapsed", s.totalParentKeyElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_reverse_artifact_total_elapsed", s.totalReverseArtifactElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_reverse_artifact_rpc_total_elapsed", s.totalReverseArtifactRPC.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_reverse_artifact_rpc_max_sum_elapsed", s.totalReverseArtifactRPCMax.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_value_vector_total_elapsed", s.totalValueVectorElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_batch_equal_total_elapsed", s.totalBatchEqualElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_intersect_total_elapsed", s.totalIntersectElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_pair_total_elapsed", s.totalPairElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_child_retain_total_elapsed", s.totalChildRetainElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_max_edge_reduce_elapsed", s.maxReduceElapsed.String()),
+		legacyDirectRelationshipProbe("graph_reduction_max_edge_reduce", s.maxReduceLabel),
+		legacyDirectRelationshipProbe("phase_graph_reduction_max_edge_projection_elapsed", s.maxProjectionElapsed.String()),
+		legacyDirectRelationshipProbe("graph_reduction_max_edge_projection", s.maxProjectionLabel),
+		legacyDirectRelationshipProbe("phase_graph_reduction_max_reverse_artifact_elapsed", s.maxReverseArtifactElapsed.String()),
+		legacyDirectRelationshipProbe("graph_reduction_max_reverse_artifact", s.maxReverseArtifactLabel),
+		legacyDirectRelationshipProbe("phase_graph_reduction_max_child_retain_elapsed", s.maxChildRetainElapsed.String()),
+		legacyDirectRelationshipProbe("graph_reduction_max_child_retain", s.maxChildRetainLabel),
+	}
+	for i, summary := range s.edgeSummaries {
+		probes = append(probes, legacyDirectRelationshipProbe(fmt.Sprintf("graph_reduction_edge_summary_%d", i+1), summary))
+	}
+	return probes
+}
+
+func legacyDirectRelationshipGraphReductionEdgeLabel(inputOrdinal, iteration, edgeOrdinal int, edge legacyDirectRelationshipEdge, parentRows, childRows int) string {
+	return fmt.Sprintf("iter=%d edge=%d input=%d %s:%s[%d] -> %s:%s[%d]",
+		iteration,
+		edgeOrdinal,
+		inputOrdinal,
+		edge.parentKey(),
+		edge.parentTable,
+		parentRows,
+		edge.childKey(),
+		edge.childTable,
+		childRows,
+	)
 }
 
 func legacyDirectRelationshipProbeDuration(probes []ExecutionProbe, name string) time.Duration {
