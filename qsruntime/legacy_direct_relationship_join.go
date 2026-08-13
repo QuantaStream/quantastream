@@ -191,8 +191,9 @@ type legacyDirectRelationshipGraphScratchpad struct {
 }
 
 type legacyDirectRelationshipAlignedParentRows struct {
-	childRows  []qsbridge.QuantaRownum
-	parentRows []qsbridge.QuantaRownum
+	childRows     []qsbridge.QuantaRownum
+	parentRows    []qsbridge.QuantaRownum
+	parentByChild map[qsbridge.QuantaRownum]qsbridge.QuantaRownum
 }
 
 func newLegacyDirectRelationshipGraphScratchpad(rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fullDomainRowsByRole ...map[string]bool) legacyDirectRelationshipGraphScratchpad {
@@ -313,10 +314,33 @@ func (s legacyDirectRelationshipGraphScratchpad) alignedParentRows(edge legacyDi
 		return nil, false
 	}
 	aligned, ok := s.alignedParentRowsByEdge[legacyDirectRelationshipEdgeAlignmentKey(edge)]
-	if !ok || !legacyDirectRelationshipRownumsEqual(aligned.childRows, childRows) {
+	if !ok {
 		return nil, false
 	}
-	return append([]qsbridge.QuantaRownum(nil), aligned.parentRows...), true
+	if legacyDirectRelationshipRownumsEqual(aligned.childRows, childRows) {
+		return append([]qsbridge.QuantaRownum(nil), aligned.parentRows...), true
+	}
+	if len(aligned.childRows) != len(aligned.parentRows) {
+		return nil, false
+	}
+	parentByChild := aligned.parentByChild
+	if parentByChild == nil {
+		parentByChild = make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(aligned.childRows))
+		for i, child := range aligned.childRows {
+			parentByChild[child] = aligned.parentRows[i]
+		}
+		aligned.parentByChild = parentByChild
+		s.alignedParentRowsByEdge[legacyDirectRelationshipEdgeAlignmentKey(edge)] = aligned
+	}
+	parentRows := make([]qsbridge.QuantaRownum, len(childRows))
+	for i, child := range childRows {
+		parent, ok := parentByChild[child]
+		if !ok {
+			return nil, false
+		}
+		parentRows[i] = parent
+	}
+	return parentRows, true
 }
 
 func legacyDirectRelationshipEdgeAlignmentKey(edge legacyDirectRelationshipEdge) string {

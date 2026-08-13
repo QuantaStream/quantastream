@@ -97,8 +97,15 @@ func TestLegacyDirectRelationshipGraphScratchpadReusesAlignedParentRows(t *testi
 	if !reflect.DeepEqual(parentRows, []qsbridge.QuantaRownum{11, 12}) {
 		t.Fatalf("parentRows = %#v, want [11 12]", parentRows)
 	}
-	if _, ok := scratchpad.alignedParentRows(edge, []qsbridge.QuantaRownum{102, 101}); ok {
-		t.Fatal("alignedParentRows hit = true for different child order, want false")
+	reorderedParentRows, ok := scratchpad.alignedParentRows(edge, []qsbridge.QuantaRownum{102, 101, 102})
+	if !ok {
+		t.Fatal("alignedParentRows hit = false for reordered child rows, want true")
+	}
+	if !reflect.DeepEqual(reorderedParentRows, []qsbridge.QuantaRownum{12, 11, 12}) {
+		t.Fatalf("reordered parentRows = %#v, want [12 11 12]", reorderedParentRows)
+	}
+	if _, ok := scratchpad.alignedParentRows(edge, []qsbridge.QuantaRownum{103}); ok {
+		t.Fatal("alignedParentRows hit = true for unknown child row, want false")
 	}
 }
 
@@ -131,7 +138,7 @@ func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReductionScratchpad(t *t
 		context.Background(),
 		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
 		"lineitem",
-		[]qsbridge.QuantaRownum{101, 102},
+		[]qsbridge.QuantaRownum{102, 101, 102},
 		[]legacyDirectRelationshipEdge{edge},
 		scratchpad,
 	)
@@ -144,12 +151,12 @@ func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReductionScratchpad(t *t
 	if calls != 0 {
 		t.Fatalf("projection calls = %d, want 0", calls)
 	}
-	if !reflect.DeepEqual(aligned["o"], []qsbridge.QuantaRownum{11, 12}) {
-		t.Fatalf("aligned parent rows = %#v, want [11 12]", aligned["o"])
+	if !reflect.DeepEqual(aligned["o"], []qsbridge.QuantaRownum{12, 11, 12}) {
+		t.Fatalf("aligned parent rows = %#v, want [12 11 12]", aligned["o"])
 	}
 	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_source", "reduction_scratchpad")
-	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_child_rows", "2")
-	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_parent_rows", "2")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_child_rows", "3")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_parent_rows", "3")
 	assertExecutionProbeName(t, probes, "relationship_join", "phase_graph_alignment_edge_1_elapsed")
 }
 
