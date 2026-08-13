@@ -110,6 +110,11 @@ described as execution-model advantages, not as isolated TPC-H hacks.
 3. Q5 remains a large absolute query even though it is much faster than MySQL.
    Graph pruning, edge ordering, and unnecessary edge elimination are likely the
    next general-purpose wins.
+   Local cluster SF0.05 follow-up showed the current supplier-first graph order
+   is important: forcing the customer/orders branch before the supplier/nation
+   branch regressed `tpch_profile_scale.q5.formal_revenue` from about 240ms to
+   about 632ms median. The domain-mapping cache bridge from graph reduction into
+   alignment is also important; attempts to skip or duplicate it regressed Q5.
 4. Q19 is now mostly polish. Its remaining gap is small in absolute terms and
    should be addressed through broader filter-domain normalization improvements.
 
