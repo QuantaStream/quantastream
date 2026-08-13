@@ -278,21 +278,29 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 	if stats, ok, err := b.relationshipVectorReverseArtifactStats(ctx, read); err == nil && ok &&
 		legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount, stats.Values) {
 		timing := relationshipVectorReverseArtifactTiming{
-			Mode:         "reverse_artifact_skip_unselective_source",
-			CacheHit:     true,
-			Rows:         stats.Rows,
-			Values:       stats.Values,
-			SourceValues: sourceValueCount,
+			Mode:                 "reverse_artifact_skip_unselective_source",
+			CacheHit:             true,
+			Rows:                 stats.Rows,
+			Values:               stats.Values,
+			SourceValues:         sourceValueCount,
+			FanoutElapsed:        stats.FanoutElapsed,
+			ClientRPCElapsed:     stats.ClientRPCElapsed,
+			MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
+			ResponseMergeElapsed: stats.ResponseMergeElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
 	} else if err == nil && ok && legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount, stats.Values, stats.Rows, read.MaxEstimatedTargetRows) {
 		timing := relationshipVectorReverseArtifactTiming{
-			Mode:         "reverse_artifact_skip_unselective_target",
-			CacheHit:     true,
-			Rows:         stats.Rows,
-			Values:       stats.Values,
-			SourceValues: sourceValueCount,
+			Mode:                 "reverse_artifact_skip_unselective_target",
+			CacheHit:             true,
+			Rows:                 stats.Rows,
+			Values:               stats.Values,
+			SourceValues:         sourceValueCount,
+			FanoutElapsed:        stats.FanoutElapsed,
+			ClientRPCElapsed:     stats.ClientRPCElapsed,
+			MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
+			ResponseMergeElapsed: stats.ResponseMergeElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false

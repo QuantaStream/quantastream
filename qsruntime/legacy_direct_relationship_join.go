@@ -112,12 +112,20 @@ type legacyDirectRelationshipReduceTiming struct {
 }
 
 type legacyDirectRelationshipReverseArtifactLocalTiming struct {
-	mode                string
-	targetCandidateMode string
-	sourceElapsed       time.Duration
-	readElapsed         time.Duration
-	narrowElapsed       time.Duration
-	parentElapsed       time.Duration
+	mode                 string
+	targetCandidateMode  string
+	sourceValues         int
+	candidateRows        int
+	elapsed              time.Duration
+	lookupElapsed        time.Duration
+	fanoutElapsed        time.Duration
+	clientRPCElapsed     time.Duration
+	maxClientRPCElapsed  time.Duration
+	responseMergeElapsed time.Duration
+	sourceElapsed        time.Duration
+	readElapsed          time.Duration
+	narrowElapsed        time.Duration
+	parentElapsed        time.Duration
 }
 
 type legacyDirectRelationshipReduceOptions struct {
@@ -3501,6 +3509,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, artifactOK, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, options)
 	if !artifactOK {
 		timing.reverseArtifactSkipReason = artifactTiming.mode
+		timing.reverseArtifactSourceValues = artifactTiming.sourceValues
+		timing.reverseArtifactCandidateRows = artifactTiming.candidateRows
+		timing.reverseArtifactElapsed = artifactTiming.elapsed
+		timing.reverseArtifactLookupElapsed = artifactTiming.lookupElapsed
+		timing.reverseArtifactFanoutElapsed = artifactTiming.fanoutElapsed
+		timing.reverseArtifactClientRPCElapsed = artifactTiming.clientRPCElapsed
+		timing.reverseArtifactClientRPCMaxElapsed = artifactTiming.maxClientRPCElapsed
+		timing.reverseArtifactResponseMergeElapsed = artifactTiming.responseMergeElapsed
+		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
+		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
 	} else {
 		timing.reverseArtifactUsed = true
 		timing.reverseArtifactMode = artifactResult.CandidateMode
@@ -3830,6 +3848,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	start := time.Now()
 	candidates, parentValueByChild, artifactTiming, diagnostics, err, ok := backend.readRelationshipVectorReverseArtifactCandidates(ctx, projectionKey, read, sourceValues)
 	elapsed := time.Since(start)
+	localTiming.sourceValues = artifactTiming.SourceValues
+	localTiming.candidateRows = artifactTiming.TargetRows
+	localTiming.elapsed = elapsed
+	localTiming.lookupElapsed = artifactTiming.LookupElapsed
+	localTiming.fanoutElapsed = artifactTiming.FanoutElapsed
+	localTiming.clientRPCElapsed = artifactTiming.ClientRPCElapsed
+	localTiming.maxClientRPCElapsed = artifactTiming.MaxClientRPCElapsed
+	localTiming.responseMergeElapsed = artifactTiming.ResponseMergeElapsed
 	if !ok {
 		localTiming.mode = artifactTiming.Mode
 		if localTiming.mode == "" {

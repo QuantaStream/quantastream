@@ -392,8 +392,12 @@ func legacyDirectRelationshipReverseArtifactStats(bitIndex *legacy.BitmapIndex, 
 		return LegacyDirectRelationshipVectorReverseArtifactStats{}, ok, err
 	}
 	return LegacyDirectRelationshipVectorReverseArtifactStats{
-		Rows:   stats.Rows,
-		Values: stats.Values,
+		Rows:                 stats.Rows,
+		Values:               stats.Values,
+		FanoutElapsed:        stats.FanoutElapsed,
+		ClientRPCElapsed:     stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed: stats.ResponseMergeElapsed,
 	}, true, nil
 }
 
