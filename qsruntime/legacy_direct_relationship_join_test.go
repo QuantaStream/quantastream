@@ -160,6 +160,83 @@ func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReductionScratchpad(t *t
 	assertExecutionProbeName(t, probes, "relationship_join", "phase_graph_alignment_edge_1_elapsed")
 }
 
+func TestLegacyDirectRelationshipGraphAlignedRownumsStopsAtRequiredRoles(t *testing.T) {
+	calls := 0
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   testRelationshipVectorBSI(map[uint64]int64{}),
+			Calls: &calls,
+		},
+	}
+	orderLine := legacyDirectRelationshipEdge{
+		parentRole:  "o",
+		parentTable: "orders",
+		parentField: "o_orderkey",
+		childRole:   "l",
+		childTable:  "lineitem",
+		childField:  "l_orderkey",
+	}
+	customerOrder := legacyDirectRelationshipEdge{
+		parentRole:  "c",
+		parentTable: "customer",
+		parentField: "c_custkey",
+		childRole:   "o",
+		childTable:  "orders",
+		childField:  "o_custkey",
+	}
+	scratchpad := newLegacyDirectRelationshipGraphScratchpad(map[string][]qsbridge.QuantaRownum{
+		"c": {31},
+		"o": {11, 12},
+		"l": {101, 102},
+	}, []legacyDirectRelationshipEdge{orderLine, customerOrder})
+	scratchpad.storeAlignedParentRows(orderLine, []qsbridge.QuantaRownum{101, 102}, []legacyDirectRelationshipPair{
+		{child: 101, parent: 11},
+		{child: 102, parent: 12},
+	})
+
+	aligned, probes, diagnostics, err := executor.legacyDirectRelationshipGraphAlignedRownumsForRoles(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		"lineitem",
+		[]qsbridge.QuantaRownum{101, 102},
+		[]legacyDirectRelationshipEdge{orderLine, customerOrder},
+		scratchpad,
+		map[string]struct{}{"l": {}, "o": {}},
+	)
+	if err != nil {
+		t.Fatalf("aligned rownums error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if calls != 0 {
+		t.Fatalf("projection calls = %d, want 0", calls)
+	}
+	if _, ok := aligned["c"]; ok {
+		t.Fatalf("aligned customer role present, want skipped; aligned=%#v", aligned)
+	}
+	if !reflect.DeepEqual(aligned["o"], []qsbridge.QuantaRownum{11, 12}) {
+		t.Fatalf("aligned order rows = %#v, want [11 12]", aligned["o"])
+	}
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_required_roles", "l,o")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_source", "reduction_scratchpad")
+}
+
+func TestLegacyDirectRelationshipExpandRequiredAlignmentRolesIncludesPathConnectors(t *testing.T) {
+	expanded := legacyDirectRelationshipExpandRequiredAlignmentRoles(
+		map[string]struct{}{"n": {}},
+		"l",
+		[]legacyDirectRelationshipEdge{
+			{parentRole: "o", childRole: "l"},
+			{parentRole: "c", childRole: "o"},
+			{parentRole: "n", childRole: "c"},
+		},
+	)
+	if got := legacyDirectRelationshipRoleSetDebug(expanded); got != "c,l,n,o" {
+		t.Fatalf("expanded roles = %q, want c,l,n,o", got)
+	}
+}
+
 func TestLegacyDirectRelationshipAggregateResultMaterializesJoinedRows(t *testing.T) {
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
 	orderID := qsbridge.FieldRef{Table: orders, Name: "order_id", Type: qsbridge.DataTypeInt}

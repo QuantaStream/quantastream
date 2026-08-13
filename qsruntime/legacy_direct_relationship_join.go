@@ -416,6 +416,15 @@ func legacyDirectRelationshipAlignedRoleDebug(aligned map[string][]qsbridge.Quan
 	return strings.Join(keys, ",")
 }
 
+func legacyDirectRelationshipRoleSetDebug(roles map[string]struct{}) string {
+	keys := make([]string, 0, len(roles))
+	for role := range roles {
+		keys = append(keys, role)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
 func legacyDirectRelationshipProjectionFieldsDebug(fields []qsbridge.QuantaProjectionField) string {
 	keys := make([]string, 0, len(fields))
 	for _, field := range fields {
@@ -456,6 +465,77 @@ func legacyDirectRelationshipMaterializationFieldProbePrefix(prefix string, ordi
 		role = table
 	}
 	return fmt.Sprintf("%sfield_%d_%s_%s_%s_", prefix, ordinal, strings.ToLower(role), strings.ToLower(table), strings.ToLower(name))
+}
+
+func legacyDirectRelationshipRequiredAlignmentRoles(request ExecutionRequest, sink string, fields []qsbridge.QuantaProjectionField) map[string]struct{} {
+	roles := make(map[string]struct{}, len(fields)+1)
+	if sink != "" {
+		if role := legacyDirectRelationshipUniqueSourceRoleKey(request, sink); role != "" {
+			roles[role] = struct{}{}
+		} else {
+			roles[strings.ToLower(sink)] = struct{}{}
+		}
+	}
+	for _, field := range fields {
+		table := field.Index
+		if table == "" {
+			table = sink
+		}
+		role := strings.ToLower(string(field.Role))
+		if role == "" && table != "" {
+			if sourceRole := legacyDirectRelationshipUniqueSourceRoleKey(request, table); sourceRole != "" {
+				role = sourceRole
+			} else {
+				role = strings.ToLower(table)
+			}
+		}
+		if role != "" {
+			roles[role] = struct{}{}
+		}
+	}
+	return roles
+}
+
+func legacyDirectRelationshipAlignedHasRoles(aligned map[string][]qsbridge.QuantaRownum, requiredRoles map[string]struct{}) bool {
+	for role := range requiredRoles {
+		if _, ok := aligned[role]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func legacyDirectRelationshipExpandRequiredAlignmentRoles(requiredRoles map[string]struct{}, sinkRole string, edges []legacyDirectRelationshipEdge) map[string]struct{} {
+	expanded := make(map[string]struct{}, len(requiredRoles)+len(edges)+1)
+	for role := range requiredRoles {
+		if role != "" {
+			expanded[role] = struct{}{}
+		}
+	}
+	if sinkRole != "" {
+		expanded[sinkRole] = struct{}{}
+	}
+	for {
+		changed := false
+		for _, edge := range edges {
+			if _, ok := expanded[edge.parentKey()]; !ok {
+				continue
+			}
+			childKey := edge.childKey()
+			if childKey == "" {
+				continue
+			}
+			if _, ok := expanded[childKey]; ok {
+				continue
+			}
+			expanded[childKey] = struct{}{}
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return expanded
 }
 
 func legacyDirectRelationshipSyntheticEndpointProjection(field qsbridge.QuantaProjectionField, roleKey string, tableRows []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, alignedRows map[string][]qsbridge.QuantaRownum, probePrefix string) (qsbridge.QuantaProjectionVector, []ExecutionProbe, bool) {
@@ -1372,8 +1452,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		fields = request.Materialization.ProjectionFields
 	}
 	graphReductionElapsed := legacyDirectRelationshipProbeDuration(result.Probes, "phase_graph_reduction_elapsed")
+	residuals := directBitmapResidualScanPredicates(request)
+	tupleWorkNeeded := legacyDirectRelationshipGraphGroupedAggregateNeedsTupleRows(request, residuals)
+	var alignmentRequiredRoles map[string]struct{}
+	if !tupleWorkNeeded {
+		alignmentFields := legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
+		alignmentRequiredRoles = legacyDirectRelationshipRequiredAlignmentRoles(request, sink, alignmentFields)
+	}
 	alignmentStart := time.Now()
-	alignedRows, alignmentProbes, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
+	alignedRows, alignmentProbes, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownumsForRoles(ctx, request, sink, rownums, edges, scratchpad, alignmentRequiredRoles)
 	alignmentElapsed := time.Since(alignmentStart)
 	result.Probes = append(result.Probes, alignmentProbes...)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -1386,8 +1473,6 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if preAggResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, graphReductionElapsed, alignmentElapsed, result); handled || err != nil {
 		return preAggResult, err
 	}
-	residuals := directBitmapResidualScanPredicates(request)
-	tupleWorkNeeded := legacyDirectRelationshipGraphGroupedAggregateNeedsTupleRows(request, residuals)
 	var tupleRows RelationshipTupleRowSet
 	var filteredTupleRows RelationshipTupleRowSet
 	var tupleExpansionElapsed time.Duration
@@ -2402,23 +2487,40 @@ func legacyDirectRelationshipSortedRoleKeys(roles map[string]struct{}) string {
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphAlignedRownums(ctx context.Context, request ExecutionRequest, sink string, sinkRows []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, scratchpad legacyDirectRelationshipGraphScratchpad) (map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	return e.legacyDirectRelationshipGraphAlignedRownumsForRoles(ctx, request, sink, sinkRows, edges, scratchpad, nil)
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphAlignedRownumsForRoles(ctx context.Context, request ExecutionRequest, sink string, sinkRows []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, scratchpad legacyDirectRelationshipGraphScratchpad, requiredRoles map[string]struct{}) (map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	sinkRole := legacyDirectRelationshipGraphRoleForTable(edges, sink)
 	aligned := map[string][]qsbridge.QuantaRownum{
 		sinkRole: append([]qsbridge.QuantaRownum(nil), sinkRows...),
 	}
 	var probes []ExecutionProbe
+	limitedRoles := len(requiredRoles) > 0
+	if limitedRoles {
+		requiredRoles = legacyDirectRelationshipExpandRequiredAlignmentRoles(requiredRoles, sinkRole, edges)
+		probes = append(probes, legacyDirectRelationshipProbe("graph_alignment_required_roles", legacyDirectRelationshipRoleSetDebug(requiredRoles)))
+	}
 	alignmentEdges := 0
 	edgeByChild := make(map[string][]legacyDirectRelationshipEdge, len(edges))
 	for _, edge := range edges {
 		edgeByChild[edge.childKey()] = append(edgeByChild[edge.childKey()], edge)
 	}
 	for {
+		if limitedRoles && legacyDirectRelationshipAlignedHasRoles(aligned, requiredRoles) {
+			break
+		}
 		changed := false
 		for childKey, childRows := range aligned {
 			for _, edge := range edgeByChild[childKey] {
 				parentKey := edge.parentKey()
 				if _, ok := aligned[parentKey]; ok {
 					continue
+				}
+				if limitedRoles {
+					if _, ok := requiredRoles[parentKey]; !ok {
+						continue
+					}
 				}
 				start := time.Now()
 				parentRows, source, diagnostics, err := e.legacyDirectRelationshipGraphAlignedParentRows(ctx, request, edge, childRows, scratchpad)
