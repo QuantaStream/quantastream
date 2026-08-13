@@ -460,28 +460,19 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 	rownums := make([]uint64, 0, targetCapacity)
 	parentValueByChild := make(map[uint64]int64, targetCapacity)
 	for _, value := range uniqueValues {
-		bitmap := artifact.byValue[value]
-		if bitmap == nil || bitmap.IsEmpty() {
-			continue
-		}
-		rows := bitmap
-		if candidateSet != nil {
-			if !bitmap.Intersects(candidateSet) {
-				continue
+		if bitmap := artifact.byValue[value]; bitmap != nil {
+			it := bitmap.Iterator()
+			for it.HasNext() {
+				rownum := it.Next()
+				if candidateSet != nil && !candidateSet.Contains(rownum) {
+					continue
+				}
+				if _, ok := parentValueByChild[rownum]; ok {
+					continue
+				}
+				parentValueByChild[rownum] = value
+				rownums = append(rownums, rownum)
 			}
-			rows = roaring64.And(bitmap, candidateSet)
-			if rows == nil || rows.IsEmpty() {
-				continue
-			}
-		}
-		it := rows.Iterator()
-		for it.HasNext() {
-			rownum := it.Next()
-			if _, ok := parentValueByChild[rownum]; ok {
-				continue
-			}
-			parentValueByChild[rownum] = value
-			rownums = append(rownums, rownum)
 		}
 	}
 	if sortRows && len(rownums) > 1 {
