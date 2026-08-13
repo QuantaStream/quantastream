@@ -4199,7 +4199,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		return nil, result, nil, nil, localTiming, true, diagnostics, err
 	}
 	narrowStart := time.Now()
-	if localTiming.targetCandidateMode == "omitted_full_domain" && len(parentValueByChild) >= len(candidates.Rownums) {
+	if localTiming.targetCandidateMode == "omitted_full_domain" {
 		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromArtifactCandidateRows(candidates.Rownums, parentValueByChild, parentKeyRows)
 		localTiming.narrowElapsed = time.Since(narrowStart)
 		if ok {
@@ -4237,9 +4237,14 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 		return nil, nil, nil, false
 	}
 	rows := candidateRows
-	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(rows))
-	pairs := make([]legacyDirectRelationshipPair, 0, len(rows))
+	seenRows := make(map[qsbridge.QuantaRownum]struct{}, len(parentValueByChild))
+	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(parentValueByChild))
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(parentValueByChild))
+	pairs := make([]legacyDirectRelationshipPair, 0, len(parentValueByChild))
 	for _, child := range rows {
+		if _, seen := seenRows[child]; seen {
+			continue
+		}
 		parentValue, ok := parentValueByChild[child]
 		if !ok {
 			return nil, nil, nil, false
@@ -4248,10 +4253,12 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 		if !ok {
 			return nil, nil, nil, false
 		}
+		seenRows[child] = struct{}{}
+		narrowedRows = append(narrowedRows, child)
 		parentByChild[child] = parentRow
 		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
 	}
-	return rows, parentByChild, pairs, true
+	return narrowedRows, parentByChild, pairs, true
 }
 
 func legacyDirectRelationshipReduceProjectedFKBSI(fkBSI *roaring64.BSI, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, qsbridge.DiagnosticSet) {

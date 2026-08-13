@@ -1270,7 +1270,7 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
 				Candidates: qsbridge.QuantaCandidateSet{
 					Index:   "lineitem",
-					Rownums: []qsbridge.QuantaRownum{4, 2},
+					Rownums: []qsbridge.QuantaRownum{4, 2, 4},
 				},
 				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
 					2: 7,
