@@ -2,6 +2,7 @@
 /data/
 /local/
 /start-local
+/startup-scripts/aws/quantastream-aws.env
 /tpc-h-benchmark/local/logs/
 /tpc-h-benchmark/local/data/
 /tpc-h-benchmark/local/ingest-benchmarks/

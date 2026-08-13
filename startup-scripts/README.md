@@ -60,6 +60,63 @@ Optional: delete the files in `../test/localClusterData` when you want to clear
 local node data. If you also delete `.local/consul/data`, recreate schemas before
 starting a cluster against existing data files.
 
+## How to start distributed mode on hosts
+
+Distributed mode separates the data-node processes from the MySQL-compatible
+front door. Each QS server runs `quantastream-node` against its local Consul
+agent and data directory. The bench runner runs `quantastream-proxy`, which
+discovers the nodes through Consul and listens for MySQL clients.
+
+On each QS server:
+
+```sh
+cd ~/quantastream
+sudo -E ./startup-scripts/install-distributed-node-service.sh
+```
+
+Useful node overrides:
+
+```sh
+QUANTASTREAM_NODE_HASH_KEY=qs-server-1 \
+QUANTASTREAM_DATA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/local/standard-data \
+QUANTASTREAM_NODE_PORT=4400 \
+  sudo -E ./startup-scripts/install-distributed-node-service.sh
+```
+
+On the bench runner:
+
+```sh
+cd ~/quantastream
+sudo -E ./startup-scripts/install-distributed-proxy-service.sh
+```
+
+Useful proxy overrides:
+
+```sh
+QUANTASTREAM_BIND=0.0.0.0 \
+QUANTASTREAM_MYSQL_PORT=4000 \
+QUANTASTREAM_CONSUL_ENDPOINT=127.0.0.1:8500 \
+QUANTASTREAM_NODE_PORT=4400 \
+QUANTASTREAM_SCHEMA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/config \
+  sudo -E ./startup-scripts/install-distributed-proxy-service.sh
+```
+
+The installed services are named `quantastream-node` and `quantastream-proxy`.
+They are enabled through systemd and start after `consul.service`, so stopping
+and starting AWS instances should rejoin the Consul cluster and remount the
+QuantaStream processes automatically.
+
+For correctness benchmarks, do not expose the same fully loaded single-node data
+directory from multiple cloned QS servers unless replication is the explicit test
+case. Until cluster scale-out sync/rebalance is designed and validated, start
+distributed nodes with empty per-node storage, bring the full target cluster
+online, and then load through the distributed path. Online scale-out from an
+already loaded node is a future 2.0-class capability, not a supported benchmark
+setup.
+
+AWS helper scripts for deploys, health checks, schema sync, distributed loads,
+and read-only benchmark runs live in `startup-scripts/aws/`.
+
 ## How to start standard mode locally
 
 `start-standard.sh` starts the standalone QIAB product path: one

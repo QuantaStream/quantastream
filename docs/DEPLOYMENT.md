@@ -607,9 +607,9 @@ Post-1.0 targets:
 - rolling restart and rolling upgrade
 - online scaling and rebalance workflows
 - multiple query-front-door deployment patterns
-- a small standalone launcher command for running the query front door as its
-  own process when deployments want a concise operational entry point, similar
-  to a `proxy` command, without making that name the public engine concept
+- production packaging around the `quantastream-node` and
+  `quantastream-proxy` service entry points beyond the current systemd script
+  shape
 - cross-region active/active or equivalent regional availability strategy
 
 ## Repository Boundary
@@ -642,6 +642,8 @@ understood.
 - `inabox-standard` shares one process and one host lifecycle.
 - `inabox-local` still shares one host but exercises the distributed
   query-front-door-to-node communication path.
+- Distributed service wrappers exist for `quantastream-node` and
+  `quantastream-proxy`, but multi-host lifecycle validation is still young.
 - Current Docker artifacts do not constitute a complete durable deployment.
 - Production storage mapping and node replacement are not formally specified.
 - Backup and restore are not formally validated.

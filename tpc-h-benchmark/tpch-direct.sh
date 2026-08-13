@@ -8,10 +8,13 @@ DATA_DIR=${1:-local/data/sf-0.01}
 WORKERS=${2:-3}
 BATCH_SIZE=${3:-1000}
 ADMIN_BIN=${ADMIN_BIN:-./quanta-admin}
+ADMIN_CONSUL_ADDR=${ADMIN_CONSUL_ADDR:-127.0.0.1:8500}
+ADMIN_PORT=${ADMIN_PORT:-4000}
 WAIT_SECONDS=${WAIT_SECONDS:-120}
 LOG_DIR=${LOG_DIR:-local/logs}
 LOG_FILE=${LOG_FILE:-"${LOG_DIR}/tpch-direct-$(date +%Y%m%d-%H%M%S).log"}
 TPCH_LOAD_MODE=${TPCH_LOAD_MODE:-cluster}
+TPCH_CLUSTER_SIZE=${TPCH_CLUSTER_SIZE:-3}
 TPCH_STANDARD_CONFIG_DIR=${TPCH_STANDARD_CONFIG_DIR:-config}
 TPCH_STANDARD_DATA_DIR=${TPCH_STANDARD_DATA_DIR:-local/standard-data}
 TPCH_STANDARD_DB=${TPCH_STANDARD_DB:-quanta}
@@ -61,8 +64,8 @@ wait_for_cluster() {
   local deadline=$(( $(date +%s) + WAIT_SECONDS ))
   local status
   while true; do
-    status="$("${ADMIN_BIN}" status 2>&1 || true)"
-    if grep -q "Cluster State = GREEN, Active nodes = 3, Target Cluster Size = 3" <<<"${status}"; then
+    status="$("${ADMIN_BIN}" --consul-addr "${ADMIN_CONSUL_ADDR}" --port "${ADMIN_PORT}" status 2>&1 || true)"
+    if grep -q "Cluster State = GREEN, Active nodes = ${TPCH_CLUSTER_SIZE}, Target Cluster Size = ${TPCH_CLUSTER_SIZE}" <<<"${status}"; then
       return
     fi
     if (( $(date +%s) >= deadline )); then

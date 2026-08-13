@@ -56,6 +56,19 @@ The existing cluster direct path remains the default for `tpch-direct.sh`:
 TPCH_LOAD_MODE=cluster ./tpch-direct.sh local/data/sf-0.01 3 1000
 ```
 
+For non-three-node clusters, set the expected active node count explicitly:
+
+```bash
+TPCH_CLUSTER_SIZE=5 TPCH_LOAD_MODE=cluster ./tpch-direct.sh local/data/sf-0.05 3 1000
+```
+
+When cluster data-node services are not on the admin default port, set the
+admin connection explicitly:
+
+```bash
+ADMIN_PORT=4400 TPCH_CLUSTER_SIZE=3 ./tpch-direct.sh local/data/sf-0.05 3 1000
+```
+
 In cluster mode, the loader process does not host storage itself. It connects to
 the running Consul-backed local cluster and writes through the normal session
 path.
