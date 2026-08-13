@@ -27,7 +27,7 @@ tests:
     sql: select count(*) from customer
     expect:
       rows:
-        - [1500]
+        - [7500]
 
   - id: "tpch_smoke.011.orders_table_available"
     status: supported
@@ -36,7 +36,7 @@ tests:
     sql: select count(*) from orders
     expect:
       rows:
-        - [15000]
+        - [75000]
 
   - id: "tpch_smoke.012.lineitem_table_available"
     status: supported
@@ -45,7 +45,7 @@ tests:
     sql: select count(*) from lineitem
     expect:
       rows:
-        - [60175]
+        - [299814]
 
   - id: "tpch_smoke.013.part_table_available"
     status: supported
@@ -54,7 +54,7 @@ tests:
     sql: select count(*) from part
     expect:
       rows:
-        - [2000]
+        - [10000]
 
   - id: "tpch_smoke.014.supplier_table_available"
     status: supported
@@ -63,7 +63,7 @@ tests:
     sql: select count(*) from supplier
     expect:
       rows:
-        - [100]
+        - [500]
 
   - id: "tpch_smoke.015.partsupp_table_available"
     status: supported
@@ -72,7 +72,7 @@ tests:
     sql: select count(*) from partsupp
     expect:
       rows:
-        - [8000]
+        - [40000]
 
   - id: "tpch_smoke.016.region_names"
     status: supported
@@ -169,7 +169,7 @@ tests:
       from customer as c
       inner join orders as o on o.o_custkey = c.c_custkey
     expect:
-      row_count: 15000
+      row_count: 75000
 
   - id: "tpch_smoke.031.customer_orders_lineitem_projection"
     status: supported
@@ -181,7 +181,7 @@ tests:
       inner join orders as o on o.o_custkey = c.c_custkey
       inner join lineitem as l on l.l_orderkey = o.o_orderkey
     expect:
-      row_count: 60175
+      row_count: 299814
 
   - id: "tpch_smoke.040.region_nation_projection"
     status: supported
@@ -231,10 +231,10 @@ tests:
       group by l_returnflag, l_linestatus
     expect:
       rows:
-        - ["A", "F", 14876]
+        - ["A", "F", 24624]
         - ["N", "F", 348]
-        - ["N", "O", 30049]
-        - ["R", "F", 14902]
+        - ["N", "O", 49205]
+        - ["R", "F", 23749]
 
   - id: "tpch_smoke.051.q3_shape"
     status: supported

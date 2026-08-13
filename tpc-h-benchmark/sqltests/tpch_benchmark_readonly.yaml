@@ -1,203 +1,365 @@
 version: 1
-name: "tpch_benchmark_readonly"
-
+name: tpch_benchmark_readonly
 tests:
-  - id: "tpch_benchmark_readonly.001.lineitem_seed_count"
-    status: supported
-    kind: query
-    capabilities: [tpch, benchmark, read-only, seed, count]
-    sql: select count(*) from lineitem
-    expect:
-      rows:
-        - [60175]
-
-  - id: "tpch_benchmark_readonly.010.q1_grouped_lineitem_shape"
-    status: supported
-    kind: query
-    order: rowsort
-    capabilities: [tpch-q1, benchmark, read-only, group-by, multiple-aggregates]
-    sql: |-
-      select l_returnflag, l_linestatus, count(*) as count_order
-      from lineitem
-      group by l_returnflag, l_linestatus
-    expect:
-      rows:
-        - ["A", "F", 14876]
-        - ["N", "F", 348]
-        - ["N", "O", 30049]
-        - ["R", "F", 14902]
-
-  - id: "tpch_benchmark_readonly.020.q3_grouped_revenue_limit"
-    status: supported
-    kind: query
-    timeout: 60s
-    capabilities: [tpch-q3, benchmark, read-only, three-table-join, group-by, aggregate, limit]
-    sql: |-
-      select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
-      from customer as c
-      inner join orders as o on c.c_custkey = o.o_custkey
-      inner join lineitem as l on l.l_orderkey = o.o_orderkey
-      where c.c_mktsegment = 'BUILDING'
-      group by l.l_orderkey, o.o_orderdate, o.o_shippriority
-      limit 10
-    expect:
-      row_count: 10
-
-  - id: "tpch_benchmark_readonly.030.q5_combined_graph_regional_count"
-    status: supported
-    kind: query
-    order: rowsort
-    timeout: 60s
-    capabilities: [tpch-q5, benchmark, read-only, six-table-join, filter, group-by, count]
-    sql: |-
-      select n.n_name, count(*) as line_count
-      from customer as c
-      inner join orders as o on o.o_custkey = c.c_custkey
-      inner join lineitem as l on l.l_orderkey = o.o_orderkey
-      inner join supplier as s on s.s_suppkey = l.l_suppkey
-      inner join nation as n on n.n_nationkey = s.s_nationkey
-      inner join region as r on r.r_regionkey = n.n_regionkey
-      where r.r_name = 'ASIA'
-      group by n.n_name
-    expect:
-      rows:
-        - ["CHINA", 4290]
-        - ["INDIA", 3098]
-        - ["INDONESIA", 2988]
-        - ["JAPAN", 2447]
-        - ["VIETNAM", 3641]
-
-  - id: "tpch_benchmark_readonly.040.q6_discounted_revenue"
-    status: supported
-    kind: query
-    capabilities: [tpch-q6, benchmark, read-only, single-table, filter, date-predicate, aggregate-expression]
-    sql: |-
-      select sum(l.l_extendedprice * l.l_discount) as revenue
-      from lineitem as l
-      where l.l_shipdate >= '1994-01-01'
-        and l.l_shipdate < '1995-01-01'
-        and l.l_discount >= 0.05
-        and l.l_discount <= 0.07
-        and l.l_quantity < 24
-    expect:
-      rows:
-        - ["1.193053225300001e+06"]
-
-  - id: "tpch_benchmark_readonly.050.q12_same_row_date_comparison"
-    status: supported
-    kind: query
-    capabilities: [tpch-q12, benchmark, read-only, field-comparison, date-predicate, count]
-    sql: |-
-      select count(*) as line_count
-      from lineitem as l
-      where l.l_shipmode in ('MAIL', 'SHIP')
-        and l.l_commitdate < l.l_receiptdate
-        and l.l_shipdate < l.l_commitdate
-        and l.l_receiptdate >= '1994-01-01'
-        and l.l_receiptdate < '1995-01-01'
-    expect:
-      rows:
-        - [307]
-
-  - id: "tpch_benchmark_readonly.060.q16_part_filter_count"
-    status: supported
-    kind: query
-    capabilities: [tpch-q16, benchmark, read-only, not-like, string-enum, numeric-predicate]
-    sql: |-
-      select count(*) as q16_part_filter_count
-      from part
-      where p_brand <> 'Brand#45'
-        and p_type not like 'MEDIUM POLISHED%'
-        and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
-    expect:
-      rows:
-        - [299]
-
-  - id: "tpch_benchmark_readonly.070.q19_formal_discounted_revenue"
-    status: supported
-    kind: query
-    timeout: 60s
-    capabilities: [tpch-q19, benchmark, read-only, two-table-join, mixed-table-or, aggregate-expression]
-    sql: |-
-      select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
-      from lineitem as l
-      inner join part as p on p.p_partkey = l.l_partkey
-      where
-        (
-          p.p_brand = 'Brand#12'
-          and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
-          and l.l_quantity >= 1
-          and l.l_quantity <= 11
-          and p.p_size >= 1
-          and p.p_size <= 5
-          and l.l_shipmode in ('AIR', 'AIR REG')
-          and l.l_shipinstruct = 'DELIVER IN PERSON'
-        )
-        or
-        (
-          p.p_brand = 'Brand#23'
-          and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
-          and l.l_quantity >= 10
-          and l.l_quantity <= 20
-          and p.p_size >= 1
-          and p.p_size <= 10
-          and l.l_shipmode in ('AIR', 'AIR REG')
-          and l.l_shipinstruct = 'DELIVER IN PERSON'
-        )
-        or
-        (
-          p.p_brand = 'Brand#34'
-          and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
-          and l.l_quantity >= 20
-          and l.l_quantity <= 30
-          and p.p_size >= 1
-          and p.p_size <= 15
-          and l.l_shipmode in ('AIR', 'AIR REG')
-          and l.l_shipinstruct = 'DELIVER IN PERSON'
-        )
-    expect:
-      columns: [revenue]
-      numeric_tolerance: 0.01
-      rows:
-        - ["22923.03"]
-
-  - id: "tpch_benchmark_readonly.080.q21_sibling_exists_count"
-    status: supported
-    kind: query
-    order: exact
-    timeout: 60s
-    capabilities: [tpch-q21, benchmark, read-only, correlated-exists, repeated-table-alias, sibling-domain, semi-join]
-    sql: |-
-      select count(*) as late_line_with_other_supplier_count
-      from lineitem as l1
-      where l1.l_receiptdate > l1.l_commitdate
-        and exists (
-          select *
-          from lineitem as l2
-          where l2.l_orderkey = l1.l_orderkey
-            and l2.l_suppkey <> l1.l_suppkey
-        )
-    expect:
-      rows:
-        - [36537]
-
-  - id: "tpch_benchmark_readonly.090.shipdate_year_group_count"
-    status: supported
-    kind: query
-    order: rowsort
-    capabilities: [sql-functions, benchmark, read-only, date-function, residual-group-by]
-    sql: |-
-      select year(l_shipdate) as l_year, count(*) as line_count
-      from lineitem
-      where l_shipdate >= '1992-01-01'
-      group by year(l_shipdate)
-      order by l_year
-    expect:
-      rows:
-        - [1992, 7712]
-        - [1993, 9009]
-        - [1994, 9484]
-        - [1995, 8773]
-        - [1996, 9200]
-        - [1997, 9172]
-        - [1998, 6825]
+- id: tpch_benchmark_readonly.001.lineitem_seed_count
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - seed
+  - count
+  sql: select count(*) from lineitem
+  expect:
+    columns:
+    - count
+    rows:
+    - - "299814"
+- id: tpch_benchmark_readonly.010.q1_grouped_lineitem_shape
+  status: supported
+  kind: query
+  order: rowsort
+  capabilities:
+  - tpch-q1
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - group-by
+  - multiple-aggregates
+  sql: |-
+    select l_returnflag, l_linestatus, count(*) as count_order
+    from lineitem
+    group by l_returnflag, l_linestatus
+  expect:
+    columns:
+    - l_returnflag
+    - l_linestatus
+    - count_order
+    rows:
+    - - A
+      - F
+      - "24624"
+    - - "N"
+      - F
+      - "348"
+    - - "N"
+      - O
+      - "49205"
+    - - R
+      - F
+      - "23749"
+- id: tpch_benchmark_readonly.020.q3_grouped_revenue_limit
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q3
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - three-table-join
+  - group-by
+  - aggregate
+  - limit
+  timeout: 60s
+  sql: |-
+    select l.l_orderkey, sum(l.l_extendedprice) as revenue, o.o_orderdate, o.o_shippriority
+    from customer as c
+    inner join orders as o on c.c_custkey = o.o_custkey
+    inner join lineitem as l on l.l_orderkey = o.o_orderkey
+    where c.c_mktsegment = 'BUILDING'
+    group by l.l_orderkey, o.o_orderdate, o.o_shippriority
+    limit 10
+  expect:
+    columns:
+    - l_orderkey
+    - revenue
+    - o_orderdate
+    - o_shippriority
+    rows:
+    - - "124517"
+      - "137062.19"
+      - "1992-01-09T00:00:00Z"
+      - "0"
+    - - "152805"
+      - "115962.39"
+      - "1992-01-02T00:00:00Z"
+      - "0"
+    - - "261251"
+      - "49948.6"
+      - "1992-01-02T00:00:00Z"
+      - "0"
+    - - "263813"
+      - "140269.48"
+      - "1992-01-03T00:00:00Z"
+      - "0"
+    - - "269063"
+      - "189571.42"
+      - "1992-01-04T00:00:00Z"
+      - "0"
+    - - "278788"
+      - "56646.27"
+      - "1992-01-04T00:00:00Z"
+      - "0"
+    - - "31555"
+      - "95291.47"
+      - "1992-01-05T00:00:00Z"
+      - "0"
+    - - "47591"
+      - "159600.49"
+      - "1992-01-03T00:00:00Z"
+      - "0"
+    - - "5601"
+      - "173436.71"
+      - "1992-01-06T00:00:00Z"
+      - "0"
+    - - "57698"
+      - "215848.32"
+      - "1992-01-07T00:00:00Z"
+      - "0"
+- id: tpch_benchmark_readonly.030.q5_combined_graph_regional_count
+  status: supported
+  kind: query
+  order: rowsort
+  capabilities:
+  - tpch-q5
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - six-table-join
+  - filter
+  - group-by
+  - count
+  timeout: 60s
+  sql: |-
+    select n.n_name, count(*) as line_count
+    from customer as c
+    inner join orders as o on o.o_custkey = c.c_custkey
+    inner join lineitem as l on l.l_orderkey = o.o_orderkey
+    inner join supplier as s on s.s_suppkey = l.l_suppkey
+    inner join nation as n on n.n_nationkey = s.s_nationkey
+    inner join region as r on r.r_regionkey = n.n_regionkey
+    where r.r_name = 'ASIA'
+    group by n.n_name
+  expect:
+    columns:
+    - n_name
+    - line_count
+    rows:
+    - - CHINA
+      - "17627"
+    - - INDIA
+      - "13971"
+    - - JAPAN
+      - "12691"
+    - - VIETNAM
+      - "11924"
+    - - INDONESIA
+      - "14344"
+- id: tpch_benchmark_readonly.040.q6_discounted_revenue
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q6
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - single-table
+  - filter
+  - date-predicate
+  - aggregate-expression
+  sql: |-
+    select sum(l.l_extendedprice * l.l_discount) as revenue
+    from lineitem as l
+    where l.l_shipdate >= '1994-01-01'
+      and l.l_shipdate < '1995-01-01'
+      and l.l_discount >= 0.05
+      and l.l_discount <= 0.07
+      and l.l_quantity < 24
+  expect:
+    columns:
+    - revenue
+    rows:
+    - - "2.1287137479000026e+06"
+- id: tpch_benchmark_readonly.050.q12_same_row_date_comparison
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q12
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - field-comparison
+  - date-predicate
+  - count
+  sql: |-
+    select count(*) as line_count
+    from lineitem as l
+    where l.l_shipmode in ('MAIL', 'SHIP')
+      and l.l_commitdate < l.l_receiptdate
+      and l.l_shipdate < l.l_commitdate
+      and l.l_receiptdate >= '1994-01-01'
+      and l.l_receiptdate < '1995-01-01'
+  expect:
+    columns:
+    - line_count
+    rows:
+    - - "543"
+- id: tpch_benchmark_readonly.060.q16_part_filter_count
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q16
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - not-like
+  - string-enum
+  - numeric-predicate
+  sql: |-
+    select count(*) as q16_part_filter_count
+    from part
+    where p_brand <> 'Brand#45'
+      and p_type not like 'MEDIUM POLISHED%'
+      and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+  expect:
+    columns:
+    - q16_part_filter_count
+    rows:
+    - - "1465"
+- id: tpch_benchmark_readonly.070.q19_formal_discounted_revenue
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q19
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - two-table-join
+  - mixed-table-or
+  - aggregate-expression
+  timeout: 60s
+  sql: |-
+    select sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+    from lineitem as l
+    inner join part as p on p.p_partkey = l.l_partkey
+    where
+      (
+        p.p_brand = 'Brand#12'
+        and p.p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+        and l.l_quantity >= 1
+        and l.l_quantity <= 11
+        and p.p_size >= 1
+        and p.p_size <= 5
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+      )
+      or
+      (
+        p.p_brand = 'Brand#23'
+        and p.p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+        and l.l_quantity >= 10
+        and l.l_quantity <= 20
+        and p.p_size >= 1
+        and p.p_size <= 10
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+      )
+      or
+      (
+        p.p_brand = 'Brand#34'
+        and p.p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+        and l.l_quantity >= 20
+        and l.l_quantity <= 30
+        and p.p_size >= 1
+        and p.p_size <= 15
+        and l.l_shipmode in ('AIR', 'AIR REG')
+        and l.l_shipinstruct = 'DELIVER IN PERSON'
+      )
+  expect:
+    columns:
+    - revenue
+    rows:
+    - - "126494.7944"
+- id: tpch_benchmark_readonly.080.q21_sibling_exists_count
+  status: supported
+  kind: query
+  order: exact
+  capabilities:
+  - tpch-q21
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - correlated-exists
+  - repeated-table-alias
+  - sibling-domain
+  - semi-join
+  timeout: 60s
+  sql: |-
+    select count(*) as late_line_with_other_supplier_count
+    from lineitem as l1
+    where l1.l_receiptdate > l1.l_commitdate
+      and exists (
+        select *
+        from lineitem as l2
+        where l2.l_orderkey = l1.l_orderkey
+          and l2.l_suppkey <> l1.l_suppkey
+      )
+  expect:
+    columns:
+    - late_line_with_other_supplier_count
+    rows:
+    - - "182760"
+- id: tpch_benchmark_readonly.090.shipdate_year_group_count
+  status: supported
+  kind: query
+  order: rowsort
+  capabilities:
+  - sql-functions
+  - benchmark
+  - read-only
+  - sf005
+  - local-cluster
+  - date-function
+  - residual-group-by
+  sql: |-
+    select year(l_shipdate) as l_year, count(*) as line_count
+    from lineitem
+    where l_shipdate >= '1992-01-01'
+    group by year(l_shipdate)
+    order by l_year
+  expect:
+    columns:
+    - l_year
+    - line_count
+    rows:
+    - - "1992"
+      - "38387"
+    - - "1993"
+      - "44472"
+    - - "1994"
+      - "46397"
+    - - "1995"
+      - "45446"
+    - - "1996"
+      - "45339"
+    - - "1997"
+      - "45401"
+    - - "1998"
+      - "34372"
