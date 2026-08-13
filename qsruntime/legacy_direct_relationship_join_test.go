@@ -4021,6 +4021,7 @@ func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_scope", "graph_reduction_to_output")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_input_line_rows", "5")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_final_materialization_rows", "3")
+	assertExecutionProbeName(t, result.Probes, "relationship_join", "q3_attribution_preagg_prune_elapsed")
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "group_strategy", "relationship_preaggregate")
 }
 
