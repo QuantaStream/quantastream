@@ -399,6 +399,9 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 		ClientRPCElapsed:     stats.ClientRPCElapsed,
 		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
 		ResponseMergeElapsed: stats.ResponseMergeElapsed,
+		RowMergeElapsed:      stats.RowMergeElapsed,
+		ParentMergeElapsed:   stats.ParentMergeElapsed,
+		SortElapsed:          stats.SortElapsed,
 	}
 	if sourceValueCount == 0 {
 		result.SourceValues = len(legacyDirectRelationshipUniqueInt64s(sourceValues))
