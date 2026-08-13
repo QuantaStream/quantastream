@@ -710,6 +710,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	}
 	legacyDirectRelationshipRetainUnchangedFullDomainRoles(fullDomainInitialRowsByRole, rowsByTableBeforePrefilter, rowsByTable)
 	request = legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, appliedPrefilterPredicates)
+	equalitySeedFields := legacyDirectRelationshipGraphEqualityFields(request)
 	scratchpad := newLegacyDirectRelationshipGraphScratchpad(rowsByTable, edges, fullDomainInitialRowsByRole)
 	result := ExecutionResult{Probes: []ExecutionProbe{
 		legacyDirectRelationshipProbe("graph_edges", strconv.Itoa(len(edges))),
@@ -729,13 +730,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	for {
 		iterations++
 		changed := false
-		equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsWithPrefix(ctx, request, rowsByTable, fullDomainInitialRowsByRole, fmt.Sprintf("graph_iter_%d_pre_", iterations))
-		result.Probes = append(result.Probes, equalitySeedProbes...)
-		result.Diagnostics = append(result.Diagnostics, diagnostics...)
-		if err != nil || result.Diagnostics.BlocksNative() {
-			return result, err
+		if len(equalitySeedFields) > 0 {
+			equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsForFieldsWithPrefix(ctx, request, equalitySeedFields, rowsByTable, fullDomainInitialRowsByRole, fmt.Sprintf("graph_iter_%d_pre_", iterations))
+			result.Probes = append(result.Probes, equalitySeedProbes...)
+			result.Diagnostics = append(result.Diagnostics, diagnostics...)
+			if err != nil || result.Diagnostics.BlocksNative() {
+				return result, err
+			}
+			changed = equalitySeedChanged
 		}
-		changed = equalitySeedChanged
 		edgeOrderPolicy := legacyDirectRelationshipEdgeOrderPolicy(edges, rowsByTable, e.ApplyRecommendedEdgeOrder)
 		result.Probes = append(result.Probes, legacyDirectRelationshipEdgeOrderPolicyProbes(fmt.Sprintf("graph_iter_%d_", iterations), edgeOrderPolicy)...)
 		executionCandidates := legacyDirectRelationshipEdgeOrderExecutionCandidates(edges, edgeOrderPolicy)
@@ -837,14 +840,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				changed = true
 				rowsByTable[edge.childKey()] = nextChildRows
 				fullDomainInitialRowsByRole[edge.childKey()] = false
-				equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsWithPrefix(ctx, request, rowsByTable, fullDomainInitialRowsByRole, probePrefix+"post_")
-				result.Probes = append(result.Probes, equalitySeedProbes...)
-				result.Diagnostics = append(result.Diagnostics, diagnostics...)
-				if err != nil || result.Diagnostics.BlocksNative() {
-					return result, err
-				}
-				if equalitySeedChanged {
-					changed = true
+				if len(equalitySeedFields) > 0 {
+					equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsForFieldsWithPrefix(ctx, request, equalitySeedFields, rowsByTable, fullDomainInitialRowsByRole, probePrefix+"post_")
+					result.Probes = append(result.Probes, equalitySeedProbes...)
+					result.Diagnostics = append(result.Diagnostics, diagnostics...)
+					if err != nil || result.Diagnostics.BlocksNative() {
+						return result, err
+					}
+					if equalitySeedChanged {
+						changed = true
+					}
 				}
 			}
 		}

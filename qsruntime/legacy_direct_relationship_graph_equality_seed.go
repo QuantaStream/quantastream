@@ -26,6 +26,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyGraphEqualityRoleSeedsWithPrefix(ctx context.Context, request ExecutionRequest, rowsByRole map[string][]qsbridge.QuantaRownum, fullDomainRowsByRole map[string]bool, probePrefix string) ([]ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
+	return e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsForFieldsWithPrefix(ctx, request, legacyDirectRelationshipGraphEqualityFields(request), rowsByRole, fullDomainRowsByRole, probePrefix)
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyGraphEqualityRoleSeedsForFieldsWithPrefix(ctx context.Context, request ExecutionRequest, equalities []legacyDirectRelationshipGraphEqualityFieldPair, rowsByRole map[string][]qsbridge.QuantaRownum, fullDomainRowsByRole map[string]bool, probePrefix string) ([]ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {
+	if len(equalities) == 0 {
+		return nil, false, nil, nil
+	}
 	probes := []ExecutionProbe{}
 	changed := false
 	totalCandidates := 0
@@ -33,7 +40,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 	seedOrdinal := 0
 	maxRounds := len(rowsByRole) + 1
 	for round := 1; round <= maxRounds; round++ {
-		candidates := legacyDirectRelationshipGraphEqualityRoleSeedCandidates(request, rowsByRole, fullDomainRowsByRole)
+		candidates := legacyDirectRelationshipGraphEqualityRoleSeedCandidatesFromFields(equalities, rowsByRole, fullDomainRowsByRole)
 		totalCandidates += len(candidates)
 		probes = append(probes, legacyDirectRelationshipProbe(fmt.Sprintf("%sequality_role_seed_round_%d_candidates", probePrefix, round), strconv.Itoa(len(candidates))))
 		if len(candidates) == 0 {
@@ -135,7 +142,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAppl
 }
 
 func legacyDirectRelationshipGraphEqualityRoleSeedCandidates(request ExecutionRequest, rowsByRole map[string][]qsbridge.QuantaRownum, fullDomainRowsByRole map[string]bool) []legacyDirectRelationshipGraphEqualityRoleSeed {
-	equalities := legacyDirectRelationshipGraphEqualityFields(request)
+	return legacyDirectRelationshipGraphEqualityRoleSeedCandidatesFromFields(legacyDirectRelationshipGraphEqualityFields(request), rowsByRole, fullDomainRowsByRole)
+}
+
+func legacyDirectRelationshipGraphEqualityRoleSeedCandidatesFromFields(equalities []legacyDirectRelationshipGraphEqualityFieldPair, rowsByRole map[string][]qsbridge.QuantaRownum, fullDomainRowsByRole map[string]bool) []legacyDirectRelationshipGraphEqualityRoleSeed {
 	candidates := make([]legacyDirectRelationshipGraphEqualityRoleSeed, 0, len(equalities))
 	seen := make(map[string]struct{}, len(equalities)*2)
 	for _, equality := range equalities {

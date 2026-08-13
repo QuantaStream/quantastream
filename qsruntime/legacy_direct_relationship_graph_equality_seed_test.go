@@ -64,6 +64,29 @@ func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesRequireReducedSo
 	}
 }
 
+func TestLegacyDirectRelationshipApplyGraphEqualityRoleSeedsSkipsEmptyFields(t *testing.T) {
+	rowsByRole := map[string][]qsbridge.QuantaRownum{
+		"o": {10, 20},
+		"l": {1, 2, 3, 4},
+	}
+	fullDomain := map[string]bool{
+		"o": false,
+		"l": true,
+	}
+
+	executor := LegacyDirectRelationshipVectorJoinExecutor{}
+	probes, changed, diagnostics, err := executor.legacyDirectRelationshipApplyGraphEqualityRoleSeedsForFieldsWithPrefix(context.Background(), ExecutionRequest{}, nil, rowsByRole, fullDomain, "test_")
+	if err != nil {
+		t.Fatalf("ApplyGraphEqualityRoleSeedsForFieldsWithPrefix error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if changed || len(probes) != 0 {
+		t.Fatalf("changed/probes = %v/%#v, want false/no probes", changed, probes)
+	}
+}
+
 func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesIgnoreJoinEdgeEqualities(t *testing.T) {
 	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
 	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
