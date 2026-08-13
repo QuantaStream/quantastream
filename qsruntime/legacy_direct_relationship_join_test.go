@@ -1276,6 +1276,10 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 					2: 7,
 					4: 9,
 				},
+				RawParentValueByChild: map[uint64]int64{
+					2: 7,
+					4: 9,
+				},
 				Mode:         "reverse_artifact_server",
 				CacheHit:     true,
 				SourceValues: 2,

@@ -76,24 +76,25 @@ type relationshipVectorReverseArtifactTiming struct {
 // LegacyDirectRelationshipVectorReverseArtifactCandidateResult is the
 // physical-tier result for a prebuilt parent-value to child-row artifact.
 type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
-	Candidates           qsbridge.QuantaCandidateSet
-	ParentValueByChild   map[qsbridge.QuantaRownum]int64
-	Mode                 string
-	CacheHit             bool
-	Rows                 uint64
-	Values               uint64
-	SourceValues         int
-	TargetRows           uint64
-	LookupElapsed        time.Duration
-	FanoutElapsed        time.Duration
-	ClientRPCElapsed     time.Duration
-	MaxClientRPCElapsed  time.Duration
-	ResponseMergeElapsed time.Duration
-	RowMergeElapsed      time.Duration
-	ParentMergeElapsed   time.Duration
-	SortElapsed          time.Duration
-	RowConversionElapsed time.Duration
-	MapConversionElapsed time.Duration
+	Candidates            qsbridge.QuantaCandidateSet
+	ParentValueByChild    map[qsbridge.QuantaRownum]int64
+	RawParentValueByChild map[uint64]int64
+	Mode                  string
+	CacheHit              bool
+	Rows                  uint64
+	Values                uint64
+	SourceValues          int
+	TargetRows            uint64
+	LookupElapsed         time.Duration
+	FanoutElapsed         time.Duration
+	ClientRPCElapsed      time.Duration
+	MaxClientRPCElapsed   time.Duration
+	ResponseMergeElapsed  time.Duration
+	RowMergeElapsed       time.Duration
+	ParentMergeElapsed    time.Duration
+	SortElapsed           time.Duration
+	RowConversionElapsed  time.Duration
+	MapConversionElapsed  time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactStats describes a maintained

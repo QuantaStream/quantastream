@@ -389,20 +389,21 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 	)
 	elapsed := time.Since(start)
 	result := LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
-		Mode:                 "reverse_artifact_cluster",
-		CacheHit:             true,
-		Rows:                 stats.Rows,
-		Values:               stats.Values,
-		SourceValues:         sourceValueCount,
-		TargetRows:           uint64(len(rownums)),
-		LookupElapsed:        lookupElapsed,
-		FanoutElapsed:        stats.FanoutElapsed,
-		ClientRPCElapsed:     stats.ClientRPCElapsed,
-		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
-		ResponseMergeElapsed: stats.ResponseMergeElapsed,
-		RowMergeElapsed:      stats.RowMergeElapsed,
-		ParentMergeElapsed:   stats.ParentMergeElapsed,
-		SortElapsed:          stats.SortElapsed,
+		Mode:                  "reverse_artifact_cluster",
+		CacheHit:              true,
+		Rows:                  stats.Rows,
+		Values:                stats.Values,
+		SourceValues:          sourceValueCount,
+		TargetRows:            uint64(len(rownums)),
+		LookupElapsed:         lookupElapsed,
+		FanoutElapsed:         stats.FanoutElapsed,
+		ClientRPCElapsed:      stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:   stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed:  stats.ResponseMergeElapsed,
+		RowMergeElapsed:       stats.RowMergeElapsed,
+		ParentMergeElapsed:    stats.ParentMergeElapsed,
+		SortElapsed:           stats.SortElapsed,
+		RawParentValueByChild: parentValueByChild,
 	}
 	if sourceValueCount == 0 {
 		result.SourceValues = len(legacyDirectRelationshipUniqueInt64s(sourceValues))
@@ -420,12 +421,14 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 		Index:   read.TargetDomain,
 		Rownums: candidateRows,
 	}
-	mapConversionStart := time.Now()
-	result.ParentValueByChild = make(map[qsbridge.QuantaRownum]int64, len(parentValueByChild))
-	for child, parentValue := range parentValueByChild {
-		result.ParentValueByChild[qsbridge.QuantaRownum(child)] = parentValue
+	if !read.PreserveArtifactOrder {
+		mapConversionStart := time.Now()
+		result.ParentValueByChild = make(map[qsbridge.QuantaRownum]int64, len(parentValueByChild))
+		for child, parentValue := range parentValueByChild {
+			result.ParentValueByChild[qsbridge.QuantaRownum(child)] = parentValue
+		}
+		result.MapConversionElapsed = time.Since(mapConversionStart)
 	}
-	result.MapConversionElapsed = time.Since(mapConversionStart)
 	if result.LookupElapsed == 0 {
 		result.LookupElapsed = elapsed
 	}

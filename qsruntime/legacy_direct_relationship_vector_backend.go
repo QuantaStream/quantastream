@@ -95,9 +95,9 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 				CandidateElapsed:           time.Since(candidateStart),
 			}, nil, nil
 		}
-		if candidates, _, artifactTiming, artifactDiagnostics, artifactErr, ok := b.readRelationshipVectorReverseArtifactCandidates(ctx, projectionCacheKey, read, sourceValueResult.Values); ok {
+		if artifactRead, artifactTiming, artifactDiagnostics, artifactErr, ok := b.readRelationshipVectorReverseArtifactCandidates(ctx, projectionCacheKey, read, sourceValueResult.Values); ok {
 			return qsbridge.FilterDomainRelationshipVectorResult{
-				TargetCandidates:              candidates,
+				TargetCandidates:              artifactRead.Candidates,
 				VectorIndex:                   read.VectorIndex,
 				VectorField:                   read.VectorField,
 				Direction:                     read.Direction,
@@ -189,9 +189,9 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 	}
 	candidateStart := time.Now()
 	if parentToChild {
-		if candidates, _, artifactTiming, artifactDiagnostics, artifactErr, ok := b.readRelationshipVectorReverseArtifactCandidates(ctx, projectionCacheKey, read, sourceValueResult.Values); ok {
+		if artifactRead, artifactTiming, artifactDiagnostics, artifactErr, ok := b.readRelationshipVectorReverseArtifactCandidates(ctx, projectionCacheKey, read, sourceValueResult.Values); ok {
 			return qsbridge.FilterDomainRelationshipVectorResult{
-				TargetCandidates:              candidates,
+				TargetCandidates:              artifactRead.Candidates,
 				VectorIndex:                   read.VectorIndex,
 				VectorField:                   read.VectorField,
 				Direction:                     read.Direction,
@@ -261,19 +261,25 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 	}, nil, nil
 }
 
-func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorReverseArtifactCandidates(ctx context.Context, projectionKey string, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, map[qsbridge.QuantaRownum]int64, relationshipVectorReverseArtifactTiming, qsbridge.DiagnosticSet, error, bool) {
+type legacyDirectRelationshipVectorReverseArtifactReadResult struct {
+	Candidates            qsbridge.QuantaCandidateSet
+	ParentValueByChild    map[qsbridge.QuantaRownum]int64
+	RawParentValueByChild map[uint64]int64
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorReverseArtifactCandidates(ctx context.Context, projectionKey string, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (legacyDirectRelationshipVectorReverseArtifactReadResult, relationshipVectorReverseArtifactTiming, qsbridge.DiagnosticSet, error, bool) {
 	if b.ReverseArtifactCandidateReader == nil {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_nil_reader"}, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, relationshipVectorReverseArtifactTiming{Mode: "skip_nil_reader"}, nil, nil, false
 	}
 	if !read.Edge.Capabilities.Has(qsbridge.RelationshipCapabilityChildExpansion) {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_no_child_expansion"}, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, relationshipVectorReverseArtifactTiming{Mode: "skip_no_child_expansion"}, nil, nil, false
 	}
 	if len(sourceValues) == 0 {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
 	}
 	sourceValueCount := len(legacyDirectRelationshipUniqueInt64s(sourceValues))
 	if sourceValueCount == 0 {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, relationshipVectorReverseArtifactTiming{Mode: "skip_empty_source_values"}, nil, nil, false
 	}
 	if stats, ok, err := b.relationshipVectorReverseArtifactStats(ctx, read); err == nil && ok &&
 		legacyDirectRelationshipReverseArtifactSourceTooBroad(sourceValueCount, stats.Values) {
@@ -292,7 +298,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			SortElapsed:          stats.SortElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
-		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, timing, nil, nil, false
 	} else if err == nil && ok && legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount, stats.Values, stats.Rows, read.MaxEstimatedTargetRows) {
 		timing := relationshipVectorReverseArtifactTiming{
 			Mode:                 "reverse_artifact_skip_unselective_target",
@@ -309,11 +315,16 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			SortElapsed:          stats.SortElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
-		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, timing, nil, nil, false
 	}
 	result, diagnostics, ok, err := b.ReverseArtifactCandidateReader.ReadRelationshipVectorReverseArtifactCandidates(ctx, read, sourceValues)
+	readResult := legacyDirectRelationshipVectorReverseArtifactReadResult{
+		Candidates:            result.Candidates,
+		ParentValueByChild:    result.ParentValueByChild,
+		RawParentValueByChild: result.RawParentValueByChild,
+	}
 	if err != nil || diagnostics.BlocksNative() {
-		return result.Candidates, result.ParentValueByChild, relationshipVectorReverseArtifactTiming{
+		return readResult, relationshipVectorReverseArtifactTiming{
 			Mode:                 result.Mode,
 			CacheHit:             result.CacheHit,
 			LookupElapsed:        result.LookupElapsed,
@@ -333,7 +344,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		}, diagnostics, err, true
 	}
 	if !ok {
-		return qsbridge.QuantaCandidateSet{}, nil, relationshipVectorReverseArtifactTiming{Mode: "skip_no_artifact"}, diagnostics, err, false
+		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, relationshipVectorReverseArtifactTiming{Mode: "skip_no_artifact"}, diagnostics, err, false
 	}
 	timing := relationshipVectorReverseArtifactTiming{
 		Mode:                 result.Mode,
@@ -354,7 +365,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		TargetRows:           int(result.TargetRows),
 	}
 	legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
-	return result.Candidates, result.ParentValueByChild, timing, diagnostics, err, true
+	return readResult, timing, diagnostics, err, true
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorReverseArtifactStats(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest) (LegacyDirectRelationshipVectorReverseArtifactStats, bool, error) {
