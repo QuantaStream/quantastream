@@ -710,6 +710,7 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx c
 		LookupElapsed:              stats.LookupElapsed,
 		ProjectionElapsed:          stats.ProjectionElapsed,
 		AggregateElapsed:           stats.AggregateElapsed,
+		Nodes:                      stats.Nodes,
 		ProjectionShardsVisited:    int(stats.Projection.ShardsVisited),
 		ProjectionShardsInWindow:   int(stats.Projection.ShardsInWindow),
 		ProjectionShardsLocal:      int(stats.Projection.ShardsLocal),
@@ -719,6 +720,8 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx c
 		ProjectionRetainElapsed:    stats.Projection.RetainElapsed,
 		ProjectionValueElapsed:     stats.Projection.ValueElapsed,
 		ProjectionMergeElapsed:     stats.Projection.MergeElapsed,
+		ClientRPCElapsed:           stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:        stats.MaxClientRPCElapsed,
 	}
 	result.Groups = make([]LegacyDirectRelationshipVectorAggregateGroup, 0, len(groups))
 	for _, group := range groups {

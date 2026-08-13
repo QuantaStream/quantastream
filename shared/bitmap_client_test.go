@@ -117,6 +117,64 @@ func TestActiveClientsSnapshotKeepsNodesWithMissingCachedStatus(t *testing.T) {
 	}
 }
 
+func TestRelationshipAlignedValueSumClientsRoutesExactValueShard(t *testing.T) {
+	conn := NewDefaultConnection("aligned-sum-route")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = []*grpc.ClientConn{{}, {}, {}}
+	conn.nodeMap = map[string]int{"node-0": 0, "node-1": 1, "node-2": 2}
+	conn.HashTable = rendezvous.New(conn.ids)
+	for _, id := range conn.ids {
+		conn.nodeStatusMap.Store(id, &pb.StatusMessage{NodeState: "Active"})
+	}
+
+	index := NewBitmapIndex(conn)
+	shardTime := time.Date(1995, time.March, 16, 0, 0, 0, 0, time.UTC).UnixNano()
+	clients, err := index.relationshipAlignedValueSumClients("lineitem", "l_extendedprice", shardTime, shardTime)
+	if err != nil {
+		t.Fatalf("relationshipAlignedValueSumClients() error = %v", err)
+	}
+	if got, want := len(clients), 1; got != want {
+		t.Fatalf("client count = %d, want %d", got, want)
+	}
+	routeKey := "lineitem/l_extendedprice/" + formatShardTime(time.Unix(0, shardTime))
+	ownerID := conn.HashTable.GetN(conn.Replicas, routeKey)[0]
+	if got, want := clients[0].index, conn.nodeMap[ownerID]; got != want {
+		t.Fatalf("routed client index = %d, want owner %d for %s", got, want, routeKey)
+	}
+}
+
+func TestRelationshipAlignedValueSumClientsBroadcastsBroadRangesAndExpressions(t *testing.T) {
+	conn := NewDefaultConnection("aligned-sum-broadcast")
+	conn.ServicePort = 4010
+	conn.ids = []string{"node-0", "node-1", "node-2"}
+	conn.clientConn = []*grpc.ClientConn{{}, {}, {}}
+	conn.nodeMap = map[string]int{"node-0": 0, "node-1": 1, "node-2": 2}
+	conn.HashTable = rendezvous.New(conn.ids)
+	for _, id := range conn.ids {
+		conn.nodeStatusMap.Store(id, &pb.StatusMessage{NodeState: "Active"})
+	}
+
+	index := NewBitmapIndex(conn)
+	from := time.Date(1995, time.March, 16, 0, 0, 0, 0, time.UTC).UnixNano()
+	to := time.Date(1995, time.March, 17, 0, 0, 0, 0, time.UTC).UnixNano()
+	clients, err := index.relationshipAlignedValueSumClients("lineitem", "l_extendedprice", from, to)
+	if err != nil {
+		t.Fatalf("relationshipAlignedValueSumClients() broad range error = %v", err)
+	}
+	if got, want := len(clients), 3; got != want {
+		t.Fatalf("broad range client count = %d, want %d", got, want)
+	}
+
+	clients, err = index.relationshipAlignedValueSumClients("lineitem", "discounted_revenue(l_extendedprice,l_discount)", from, from)
+	if err != nil {
+		t.Fatalf("relationshipAlignedValueSumClients() expression error = %v", err)
+	}
+	if got, want := len(clients), 3; got != want {
+		t.Fatalf("expression client count = %d, want %d", got, want)
+	}
+}
+
 func TestBatchMutateItemsNodeUsesUnaryChunks(t *testing.T) {
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
@@ -311,35 +369,41 @@ func TestBitmapIndexRelationshipReverseArtifactFansOutToActiveClients(t *testing
 }
 
 func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.T) {
-	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{
+	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]relationshipAlignedValueSumClientResult{
 		{
-			Ok: true,
-			Groups: []*pb.RelationshipAlignedValueSumGroup{{
-				ParentValue:       7,
-				RepresentativeRow: 101,
-				Count:             1,
-				Sum:               "10",
-			}},
-			Stats: &pb.RelationshipAlignedValueSumStats{
-				ProjectionElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+			response: &pb.RelationshipAlignedValueSumResponse{
+				Ok: true,
+				Groups: []*pb.RelationshipAlignedValueSumGroup{{
+					ParentValue:       7,
+					RepresentativeRow: 101,
+					Count:             1,
+					Sum:               "10",
+				}},
+				Stats: &pb.RelationshipAlignedValueSumStats{
+					ProjectionElapsedNanos: (2 * time.Millisecond).Nanoseconds(),
+				},
 			},
+			elapsed: 7 * time.Millisecond,
 		},
 		{
-			Ok: true,
-			Groups: []*pb.RelationshipAlignedValueSumGroup{{
-				ParentValue:       7,
-				RepresentativeRow: 102,
-				Count:             2,
-				Sum:               "20",
-			}, {
-				ParentValue:       8,
-				RepresentativeRow: 103,
-				Count:             1,
-				Sum:               "5",
-			}},
-			Stats: &pb.RelationshipAlignedValueSumStats{
-				ProjectionElapsedNanos: (3 * time.Millisecond).Nanoseconds(),
+			response: &pb.RelationshipAlignedValueSumResponse{
+				Ok: true,
+				Groups: []*pb.RelationshipAlignedValueSumGroup{{
+					ParentValue:       7,
+					RepresentativeRow: 102,
+					Count:             2,
+					Sum:               "20",
+				}, {
+					ParentValue:       8,
+					RepresentativeRow: 103,
+					Count:             1,
+					Sum:               "5",
+				}},
+				Stats: &pb.RelationshipAlignedValueSumStats{
+					ProjectionElapsedNanos: (3 * time.Millisecond).Nanoseconds(),
+				},
 			},
+			elapsed: 5 * time.Millisecond,
 		},
 	}, []uint64{101, 102, 103}, []uint64{7, 7, 8})
 	if err != nil {
@@ -354,6 +418,9 @@ func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.
 	if stats.Nodes != 2 || stats.ProjectionElapsed != 5*time.Millisecond {
 		t.Fatalf("stats nodes/projection elapsed = %d/%s, want 2/5ms", stats.Nodes, stats.ProjectionElapsed)
 	}
+	if stats.ClientRPCElapsed != 12*time.Millisecond || stats.MaxClientRPCElapsed != 7*time.Millisecond {
+		t.Fatalf("stats rpc elapsed/max = %s/%s, want 12ms/7ms", stats.ClientRPCElapsed, stats.MaxClientRPCElapsed)
+	}
 	if len(groups) != 2 {
 		t.Fatalf("groups len = %d, want 2", len(groups))
 	}
@@ -366,17 +433,19 @@ func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.
 }
 
 func TestAggregateRelationshipAlignedValueSumResponsesRequiresAllNodesOK(t *testing.T) {
-	_, _, ok, err := aggregateRelationshipAlignedValueSumResponses([]*pb.RelationshipAlignedValueSumResponse{
+	_, _, ok, err := aggregateRelationshipAlignedValueSumResponses([]relationshipAlignedValueSumClientResult{
 		{
-			Ok: true,
-			Groups: []*pb.RelationshipAlignedValueSumGroup{{
-				ParentValue:       7,
-				RepresentativeRow: 101,
-				Count:             1,
-				Sum:               "10",
-			}},
+			response: &pb.RelationshipAlignedValueSumResponse{
+				Ok: true,
+				Groups: []*pb.RelationshipAlignedValueSumGroup{{
+					ParentValue:       7,
+					RepresentativeRow: 101,
+					Count:             1,
+					Sum:               "10",
+				}},
+			},
 		},
-		{Ok: false},
+		{response: &pb.RelationshipAlignedValueSumResponse{Ok: false}},
 	}, []uint64{101}, []uint64{7})
 	if err != nil {
 		t.Fatalf("aggregateRelationshipAlignedValueSumResponses() error = %v", err)

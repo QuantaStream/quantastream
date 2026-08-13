@@ -40,6 +40,7 @@ type LegacyDirectRelationshipVectorAggregateResult struct {
 	LookupElapsed              time.Duration
 	ProjectionElapsed          time.Duration
 	AggregateElapsed           time.Duration
+	Nodes                      uint64
 	ProjectionShardsVisited    int
 	ProjectionShardsInWindow   int
 	ProjectionShardsLocal      int
@@ -49,6 +50,8 @@ type LegacyDirectRelationshipVectorAggregateResult struct {
 	ProjectionRetainElapsed    time.Duration
 	ProjectionValueElapsed     time.Duration
 	ProjectionMergeElapsed     time.Duration
+	ClientRPCElapsed           time.Duration
+	MaxClientRPCElapsed        time.Duration
 }
 
 // LegacyDirectRelationshipVectorAggregateReader exposes storage-side

@@ -4132,7 +4132,17 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 		{Index: "orders", Role: "o", Field: "o_orderdate", Type: qsbridge.DataTypeTime, Visible: true},
 		{Index: "orders", Role: "o", Field: "o_shippriority", Type: qsbridge.DataTypeInt, Visible: true},
 	}
-	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{ProjectionFields: fields})
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: fields,
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index: "lineitem",
+			Role:  "l",
+			Field: "l_shipdate",
+			BSIOp: qsbridge.QuantaBSIOpRange,
+			Begin: big.NewInt(820454400000),
+			End:   big.NewInt(828316800000),
+		}},
+	})
 	request.GroupBy = []qsbridge.Expr{
 		qsbridge.Field(lOrderkey),
 		qsbridge.Field(oOrderdate),
@@ -4169,8 +4179,16 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 		OK: true,
 	}
 	var materializations []qsbridge.QuantaMaterializationRequest
+	cache := core.NewTableCacheStruct()
+	cache.TableCache["lineitem"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "lineitem", TimeQuantumField: "l_shipdate"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"l_shipdate": {BasicAttribute: &shared.BasicAttribute{FieldName: "l_shipdate", Type: "DateTime", MappingStrategy: "TimestampBSI", MapperConfig: map[string]string{"granularity": "millisecond"}}},
+		},
+	}
 	executor := LegacyDirectRelationshipVectorJoinExecutor{
 		RelationshipAggregateReader: aggregateReader,
+		TableCache:                  cache,
 		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
 			materializations = append(materializations, request)
 			for _, field := range request.ProjectionFields {
@@ -4232,6 +4250,11 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 	}
 	if got := aggregateReader.Requests[0].ChildRows; len(got) != 5 || got[0] != 101 || got[4] != 105 {
 		t.Fatalf("aggregate child rows = %#v, want lineitem rows", got)
+	}
+	if aggregateReader.Requests[0].FromEpochMillis != 820454400000 || aggregateReader.Requests[0].ToEpochMillis != 828316800000 {
+		t.Fatalf("aggregate window = %d..%d, want lineitem shipdate window",
+			aggregateReader.Requests[0].FromEpochMillis,
+			aggregateReader.Requests[0].ToEpochMillis)
 	}
 	if len(materializations) != 1 {
 		t.Fatalf("materializations = %d, want final order fields only", len(materializations))

@@ -290,13 +290,13 @@ func legacyDirectRelationshipProbeDurationBySuffix(probes []ExecutionProbe, suff
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenuePreAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error) {
-	if groups, probes, projectionElapsed, aggregateElapsed, diagnostics, err, ok := e.legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx, sink, lineRows, orderRows, plan); ok {
+	if groups, probes, projectionElapsed, aggregateElapsed, diagnostics, err, ok := e.legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx, request, sink, lineRows, orderRows, plan); ok {
 		return groups, probes, projectionElapsed, aggregateElapsed, diagnostics, err
 	}
 	return e.legacyDirectRelationshipQ3OrderRevenueMaterializedAggregate(ctx, request, sink, lineRows, orderRows, alignedRows, edges, plan)
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx context.Context, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error, bool) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueStorageAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error, bool) {
 	if e.RelationshipAggregateReader == nil || !strings.EqualFold(sink, "lineitem") {
 		return nil, nil, 0, 0, nil, nil, false
 	}
@@ -304,15 +304,19 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	if valueField == "" {
 		return nil, nil, 0, 0, nil, nil, false
 	}
+	fromEpochMillis, toEpochMillis := legacyDirectRelationshipQ3OrderRevenueStorageWindow(e, request, plan.lineitemRole)
+	aggregateRequest := LegacyDirectRelationshipVectorAggregateRequest{
+		VectorIndex:     "lineitem",
+		VectorField:     "l_orderkey",
+		ValueIndex:      "lineitem",
+		ValueField:      valueField,
+		ChildRows:       lineRows,
+		ParentRows:      orderRows,
+		FromEpochMillis: fromEpochMillis,
+		ToEpochMillis:   toEpochMillis,
+	}
 	start := time.Now()
-	aggregate, diagnostics, ok, err := e.RelationshipAggregateReader.ReadRelationshipVectorAggregate(ctx, LegacyDirectRelationshipVectorAggregateRequest{
-		VectorIndex: "lineitem",
-		VectorField: "l_orderkey",
-		ValueIndex:  "lineitem",
-		ValueField:  valueField,
-		ChildRows:   lineRows,
-		ParentRows:  orderRows,
-	})
+	aggregate, diagnostics, ok, err := e.RelationshipAggregateReader.ReadRelationshipVectorAggregate(ctx, aggregateRequest)
 	elapsed := time.Since(start)
 	if err != nil || diagnostics.BlocksNative() || !ok {
 		return nil, nil, 0, 0, diagnostics, err, ok
@@ -336,6 +340,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_values", strconv.FormatUint(aggregate.Values, 10)),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_source_values", strconv.Itoa(aggregate.SourceValues)),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_target_rows", strconv.FormatUint(aggregate.TargetRows, 10)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_nodes", strconv.FormatUint(aggregate.Nodes, 10)),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_elapsed", elapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed", aggregate.LookupElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_elapsed", aggregate.ProjectionElapsed.String()),
@@ -349,7 +354,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_retain_elapsed", aggregate.ProjectionRetainElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_value_elapsed", aggregate.ProjectionValueElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_merge_elapsed", aggregate.ProjectionMergeElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_rpc_elapsed", aggregate.ClientRPCElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_rpc_max_elapsed", aggregate.MaxClientRPCElapsed.String()),
 	}, aggregate.ProjectionElapsed, aggregate.AggregateElapsed, diagnostics, nil, true
+}
+
+func legacyDirectRelationshipQ3OrderRevenueStorageWindow(e LegacyDirectRelationshipVectorJoinExecutor, request ExecutionRequest, lineitemRole string) (int64, int64) {
+	fromTime, toTime := e.legacyDirectRelationshipVectorProjectionWindowForRole(request, "lineitem", lineitemRole)
+	return fromTime / int64(time.Millisecond), toTime / int64(time.Millisecond)
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueMaterializedAggregate(ctx context.Context, request ExecutionRequest, sink string, lineRows []qsbridge.QuantaRownum, orderRows []qsbridge.QuantaRownum, alignedRows map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, plan legacyDirectRelationshipQ3OrderRevenuePlan) (map[qsbridge.QuantaRownum]*legacyDirectRelationshipQ3OrderRevenueGroup, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error) {
