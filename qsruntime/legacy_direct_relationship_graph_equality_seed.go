@@ -204,17 +204,6 @@ func legacyDirectRelationshipGraphEqualityFields(request ExecutionRequest) []leg
 			pairs = append(pairs, legacyDirectRelationshipGraphEqualityFieldsFromExpr(predicate.Expr)...)
 		}
 	}
-	for _, join := range request.Joins {
-		if !legacyDirectRelationshipGraphEqualityJoinSupportsSemijoinSeed(join) {
-			continue
-		}
-		for _, predicate := range join.On {
-			if !legacyDirectRelationshipGraphEqualityPredicateSupportsSemijoinSeed(predicate) {
-				continue
-			}
-			pairs = append(pairs, legacyDirectRelationshipGraphEqualityFieldsFromExpr(predicate.Expr)...)
-		}
-	}
 	return pairs
 }
 
