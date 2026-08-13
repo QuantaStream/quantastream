@@ -1089,7 +1089,7 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 		capabilities: qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion},
 	}
 
-	joined, _, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRowsOptions(
+	joined, pairs, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRowsOptions(
 		context.Background(),
 		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
 		edge,
@@ -1114,8 +1114,15 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	if timing.reverseArtifactTargetCandidateMode != "omitted_full_domain" {
 		t.Fatalf("reverse artifact target candidate mode = %q, want omitted_full_domain", timing.reverseArtifactTargetCandidateMode)
 	}
+	if timing.reverseArtifactLocalMode != "omitted_target_candidate_rows" {
+		t.Fatalf("reverse artifact local mode = %q, want omitted_target_candidate_rows", timing.reverseArtifactLocalMode)
+	}
 	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{2, 4}) {
 		t.Fatalf("joined = %#v, want [2 4]", joined)
+	}
+	wantPairs := []legacyDirectRelationshipPair{{child: 2, parent: 7}, {child: 4, parent: 9}}
+	if !reflect.DeepEqual(pairs, wantPairs) {
+		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
 	}
 }
 
