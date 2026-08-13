@@ -1056,6 +1056,93 @@ func TestLegacyDirectRelationshipReduceUsesSortedReverseArtifactCandidates(t *te
 	}
 }
 
+func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCandidates(t *testing.T) {
+	childRows := []qsbridge.QuantaRownum{1, 2, 3, 4}
+	var artifactRead LegacyDirectRelationshipVectorReadRequest
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			OK:       true,
+			LastRead: &artifactRead,
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{2, 4},
+				},
+				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
+					2: 7,
+					4: 9,
+				},
+				Mode:         "reverse_artifact_server",
+				CacheHit:     true,
+				SourceValues: 2,
+				TargetRows:   2,
+			},
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:   "o",
+		parentTable:  "orders",
+		parentField:  "o_orderkey",
+		childRole:    "l",
+		childTable:   "lineitem",
+		childField:   "l_orderkey",
+		capabilities: qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion},
+	}
+
+	joined, _, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRowsOptions(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		edge,
+		[]qsbridge.QuantaRownum{7, 9},
+		childRows,
+		childRows,
+		legacyDirectRelationshipReduceOptions{omitFullDomainTargetCandidates: true},
+	)
+
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if len(artifactRead.TargetCandidateRows) != 0 {
+		t.Fatalf("artifact target candidate rows = %#v, want omitted", artifactRead.TargetCandidateRows)
+	}
+	if artifactRead.MaxEstimatedTargetRows != len(childRows) {
+		t.Fatalf("max estimated target rows = %d, want %d", artifactRead.MaxEstimatedTargetRows, len(childRows))
+	}
+	if timing.reverseArtifactTargetCandidateMode != "omitted_full_domain" {
+		t.Fatalf("reverse artifact target candidate mode = %q, want omitted_full_domain", timing.reverseArtifactTargetCandidateMode)
+	}
+	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{2, 4}) {
+		t.Fatalf("joined = %#v, want [2 4]", joined)
+	}
+}
+
+func TestLegacyDirectRelationshipRetainUnchangedFullDomainRolesDisablesChangedRoles(t *testing.T) {
+	fullDomainRowsByRole := map[string]bool{
+		"l": true,
+		"o": true,
+	}
+	before := map[string][]qsbridge.QuantaRownum{
+		"l": []qsbridge.QuantaRownum{1, 2, 3},
+		"o": []qsbridge.QuantaRownum{10, 20},
+	}
+	after := map[string][]qsbridge.QuantaRownum{
+		"l": []qsbridge.QuantaRownum{1, 3},
+		"o": []qsbridge.QuantaRownum{10, 20},
+	}
+
+	legacyDirectRelationshipRetainUnchangedFullDomainRoles(fullDomainRowsByRole, before, after)
+
+	if fullDomainRowsByRole["l"] {
+		t.Fatal("lineitem role kept full-domain marker after rows changed")
+	}
+	if !fullDomainRowsByRole["o"] {
+		t.Fatal("orders role lost full-domain marker despite unchanged rows")
+	}
+}
+
 func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesSingleKeyEqualForLargeChildSets(t *testing.T) {
 	fkBSI := roaring64.NewDefaultBSI()
 	childRows := make([]qsbridge.QuantaRownum, 0, 1200)

@@ -91,6 +91,7 @@ type legacyDirectRelationshipReduceTiming struct {
 	reverseArtifactClientRPCMaxElapsed  time.Duration
 	reverseArtifactResponseMergeElapsed time.Duration
 	reverseArtifactLocalMode            string
+	reverseArtifactTargetCandidateMode  string
 	reverseArtifactSourceElapsed        time.Duration
 	reverseArtifactReadElapsed          time.Duration
 	reverseArtifactNarrowElapsed        time.Duration
@@ -111,11 +112,16 @@ type legacyDirectRelationshipReduceTiming struct {
 }
 
 type legacyDirectRelationshipReverseArtifactLocalTiming struct {
-	mode          string
-	sourceElapsed time.Duration
-	readElapsed   time.Duration
-	narrowElapsed time.Duration
-	parentElapsed time.Duration
+	mode                string
+	targetCandidateMode string
+	sourceElapsed       time.Duration
+	readElapsed         time.Duration
+	narrowElapsed       time.Duration
+	parentElapsed       time.Duration
+}
+
+type legacyDirectRelationshipReduceOptions struct {
+	omitFullDomainTargetCandidates bool
 }
 
 type legacyDirectRelationshipProjectedFKReduceTiming struct {
@@ -138,17 +144,26 @@ type legacyDirectRelationshipRoleFallback struct {
 }
 
 type legacyDirectRelationshipGraphScratchpad struct {
-	initialRowsByRole  map[string][]qsbridge.QuantaRownum
-	initialRowsByTable map[string][]qsbridge.QuantaRownum
+	initialRowsByRole        map[string][]qsbridge.QuantaRownum
+	initialRowsByTable       map[string][]qsbridge.QuantaRownum
+	fullDomainInitialRoleSet map[string]bool
 }
 
-func newLegacyDirectRelationshipGraphScratchpad(rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge) legacyDirectRelationshipGraphScratchpad {
+func newLegacyDirectRelationshipGraphScratchpad(rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fullDomainRowsByRole ...map[string]bool) legacyDirectRelationshipGraphScratchpad {
 	scratchpad := legacyDirectRelationshipGraphScratchpad{
-		initialRowsByRole:  make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
-		initialRowsByTable: make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
+		initialRowsByRole:        make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
+		initialRowsByTable:       make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
+		fullDomainInitialRoleSet: make(map[string]bool, len(rowsByRole)),
 	}
 	for role, rows := range rowsByRole {
 		scratchpad.initialRowsByRole[role] = append([]qsbridge.QuantaRownum(nil), rows...)
+	}
+	if len(fullDomainRowsByRole) > 0 {
+		for role, fullDomain := range fullDomainRowsByRole[0] {
+			if fullDomain {
+				scratchpad.fullDomainInitialRoleSet[role] = true
+			}
+		}
 	}
 	for _, edge := range edges {
 		scratchpad.storeInitialTableRows(edge.parentTable, rowsByRole[edge.parentKey()])
@@ -174,6 +189,29 @@ func (s legacyDirectRelationshipGraphScratchpad) initialRowsForRole(role string)
 		return nil, false
 	}
 	return append([]qsbridge.QuantaRownum(nil), rows...), true
+}
+
+func (s legacyDirectRelationshipGraphScratchpad) fullDomainInitialRowsForRole(role string, rows []qsbridge.QuantaRownum) bool {
+	if !s.fullDomainInitialRoleSet[role] {
+		return false
+	}
+	initialRows, ok := s.initialRowsByRole[role]
+	if !ok {
+		return false
+	}
+	return legacyDirectRelationshipRownumsEqual(initialRows, rows)
+}
+
+func legacyDirectRelationshipRownumsEqual(left []qsbridge.QuantaRownum, right []qsbridge.QuantaRownum) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s legacyDirectRelationshipGraphScratchpad) initialRowsForTable(table string) ([]qsbridge.QuantaRownum, bool) {
@@ -650,19 +688,21 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	}
 	edges, pruneProbes := legacyDirectRelationshipPruneRedundantParentEdges(request, edges)
 	initialRowsStart := time.Now()
-	rowsByTable, initialRowProbes, diagnostics, err := e.legacyDirectRelationshipInitialGraphRows(ctx, request, edges)
+	rowsByTable, initialRowProbes, fullDomainInitialRowsByRole, diagnostics, err := e.legacyDirectRelationshipInitialGraphRows(ctx, request, edges)
 	initialRowsElapsed := time.Since(initialRowsStart)
 	if err != nil || diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, err
 	}
+	rowsByTableBeforePrefilter := legacyDirectRelationshipCloneRowsByRole(rowsByTable)
 	prefilterStart := time.Now()
 	prefilterProbes, appliedPrefilterPredicates, diagnostics, err := e.legacyDirectRelationshipApplyResidualRolePrefilters(ctx, request, rowsByTable, edges)
 	prefilterElapsed := time.Since(prefilterStart)
 	if err != nil || diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, err
 	}
+	legacyDirectRelationshipRetainUnchangedFullDomainRoles(fullDomainInitialRowsByRole, rowsByTableBeforePrefilter, rowsByTable)
 	request = legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, appliedPrefilterPredicates)
-	scratchpad := newLegacyDirectRelationshipGraphScratchpad(rowsByTable, edges)
+	scratchpad := newLegacyDirectRelationshipGraphScratchpad(rowsByTable, edges, fullDomainInitialRowsByRole)
 	result := ExecutionResult{Probes: []ExecutionProbe{
 		legacyDirectRelationshipProbe("graph_edges", strconv.Itoa(len(edges))),
 		legacyDirectRelationshipProbe("graph_tables", strconv.Itoa(len(rowsByTable))),
@@ -705,7 +745,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			)
 			projectionRows, projectionPolicy := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
 			edgeReduceStart := time.Now()
-			joined, _, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRows(ctx, request, edge, parentRows, childRows, projectionRows)
+			reduceOptions := legacyDirectRelationshipReduceOptions{
+				omitFullDomainTargetCandidates: scratchpad.fullDomainInitialRowsForRole(edge.childKey(), childRows),
+			}
+			joined, _, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx, request, edge, parentRows, childRows, projectionRows, reduceOptions)
 			edgeReduceElapsed := time.Since(edgeReduceStart)
 			result.Diagnostics = append(result.Diagnostics, diagnostics...)
 			if err != nil || result.Diagnostics.BlocksNative() {
@@ -743,6 +786,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_client_rpc_max_elapsed", reduceTiming.reverseArtifactClientRPCMaxElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_response_merge_elapsed", reduceTiming.reverseArtifactResponseMergeElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_local_mode", reduceTiming.reverseArtifactLocalMode),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_target_candidate_mode", reduceTiming.reverseArtifactTargetCandidateMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_elapsed", reduceTiming.reverseArtifactSourceElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_read_request_elapsed", reduceTiming.reverseArtifactReadElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrow_elapsed", reduceTiming.reverseArtifactNarrowElapsed.String()),
@@ -1797,9 +1841,10 @@ func legacyDirectRelationshipGraphShapeDiagnostics(request ExecutionRequest, vec
 	return nil
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipInitialGraphRows(ctx context.Context, request ExecutionRequest, edges []legacyDirectRelationshipEdge) (map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipInitialGraphRows(ctx context.Context, request ExecutionRequest, edges []legacyDirectRelationshipEdge) (map[string][]qsbridge.QuantaRownum, []ExecutionProbe, map[string]bool, qsbridge.DiagnosticSet, error) {
 	rowsByRole := make(map[string][]qsbridge.QuantaRownum)
 	fallbackByRole := make(map[string]legacyDirectRelationshipRoleFallback)
+	fullDomainRowsByRole := make(map[string]bool)
 	for _, edge := range edges {
 		if _, ok := fallbackByRole[edge.parentKey()]; !ok {
 			fallbackByRole[edge.parentKey()] = legacyDirectRelationshipRoleFallback{table: edge.parentTable, role: edge.parentRole, field: edge.parentField}
@@ -1820,9 +1865,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipInit
 		rows, seedKind, seedProbes, diagnostics, err := e.legacyDirectRelationshipInitialRownumsForRole(ctx, request, fallback, edges)
 		rowsElapsed := time.Since(rowsStart)
 		if err != nil || diagnostics.BlocksNative() {
-			return nil, probes, diagnostics, err
+			return nil, probes, fullDomainRowsByRole, diagnostics, err
 		}
 		rowsByRole[role] = rows
+		fullDomainRowsByRole[role] = legacyDirectRelationshipInitialSeedIsFullDomain(seedKind)
 		prefix := "graph_initial_rows_" + role + "_"
 		probes = append(probes,
 			legacyDirectRelationshipProbe(prefix+"table", fallback.table),
@@ -1832,7 +1878,30 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipInit
 		)
 		probes = append(probes, legacyDirectRelationshipPrefixedProbes(prefix, seedProbes)...)
 	}
-	return rowsByRole, probes, nil, nil
+	return rowsByRole, probes, fullDomainRowsByRole, nil, nil
+}
+
+func legacyDirectRelationshipInitialSeedIsFullDomain(seedKind string) bool {
+	return seedKind == "relationship_vector_existence" || seedKind == "table_existence"
+}
+
+func legacyDirectRelationshipCloneRowsByRole(rowsByRole map[string][]qsbridge.QuantaRownum) map[string][]qsbridge.QuantaRownum {
+	cloned := make(map[string][]qsbridge.QuantaRownum, len(rowsByRole))
+	for role, rows := range rowsByRole {
+		cloned[role] = append([]qsbridge.QuantaRownum(nil), rows...)
+	}
+	return cloned
+}
+
+func legacyDirectRelationshipRetainUnchangedFullDomainRoles(fullDomainRowsByRole map[string]bool, before map[string][]qsbridge.QuantaRownum, after map[string][]qsbridge.QuantaRownum) {
+	for role, fullDomain := range fullDomainRowsByRole {
+		if !fullDomain {
+			continue
+		}
+		if !legacyDirectRelationshipRownumsEqual(before[role], after[role]) {
+			fullDomainRowsByRole[role] = false
+		}
+	}
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipInitialRownumsForRole(ctx context.Context, request ExecutionRequest, fallback legacyDirectRelationshipRoleFallback, edges []legacyDirectRelationshipEdge) ([]qsbridge.QuantaRownum, string, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
@@ -3388,6 +3457,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReduceWithProjectionRows(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum, projectionRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReduceTiming, qsbridge.DiagnosticSet, error) {
+	return e.legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx, request, edge, parentRows, childRows, projectionRows, legacyDirectRelationshipReduceOptions{})
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, parentRows []qsbridge.QuantaRownum, childRows []qsbridge.QuantaRownum, projectionRows []qsbridge.QuantaRownum, options legacyDirectRelationshipReduceOptions) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReduceTiming, qsbridge.DiagnosticSet, error) {
 	var timing legacyDirectRelationshipReduceTiming
 	if len(parentRows) == 0 || len(childRows) == 0 {
 		return nil, nil, timing, nil, nil
@@ -3425,7 +3498,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 	}
 	effectiveChildRows := childRows
 	effectiveProjectionRows := projectionRows
-	narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, artifactOK, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows)
+	narrowedRows, artifactResult, artifactParentByChild, artifactPairs, artifactTiming, artifactOK, artifactDiagnostics, artifactErr := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, options)
 	if !artifactOK {
 		timing.reverseArtifactSkipReason = artifactTiming.mode
 	} else {
@@ -3442,6 +3515,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactClientRPCMaxElapsed = artifactResult.CandidateClientRPCMaxElapsed
 		timing.reverseArtifactResponseMergeElapsed = artifactResult.CandidateResponseMergeElapsed
 		timing.reverseArtifactLocalMode = artifactTiming.mode
+		timing.reverseArtifactTargetCandidateMode = artifactTiming.targetCandidateMode
 		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
 		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
 		timing.reverseArtifactNarrowElapsed = artifactTiming.narrowElapsed
@@ -3717,7 +3791,7 @@ func legacyDirectRelationshipRownumsAscending(rownums []qsbridge.QuantaRownum) b
 	return true
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum, options legacyDirectRelationshipReduceOptions) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
 	var localTiming legacyDirectRelationshipReverseArtifactLocalTiming
 	if e.ReverseArtifactCandidateReader == nil {
 		localTiming.mode = "skip_nil_reader"
@@ -3745,7 +3819,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	readStart := time.Now()
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
 	read.MaxEstimatedTargetRows = len(childRows)
-	read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)
+	if options.omitFullDomainTargetCandidates {
+		localTiming.targetCandidateMode = "omitted_full_domain"
+	} else {
+		localTiming.targetCandidateMode = "retained"
+		read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)
+	}
 	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
 	localTiming.readElapsed = time.Since(readStart)
 	start := time.Now()
