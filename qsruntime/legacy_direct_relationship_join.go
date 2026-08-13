@@ -61,49 +61,53 @@ type legacyDirectRelationshipPair struct {
 }
 
 type legacyDirectRelationshipReduceTiming struct {
-	domainMappingCacheHit          bool
-	domainMappingCacheMode         string
-	projectionElapsed              time.Duration
-	projectionCacheHit             bool
-	projectionRows                 int
-	fkProjectionRows               int
-	fkChildOverlapRows             int
-	fkProjectionInitialCoverage    qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionCoverage           qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionScope              string
-	fkProjectionRetryRows          int
-	fkProjectionRetryOverlap       int
-	fkProjectionRetryCoverage      qsbridge.RelationshipVectorProjectionCoverage
-	parentKeyElapsed               time.Duration
-	parentKeyMaterialization       bool
-	parentKeyRows                  int
-	reverseArtifactUsed            bool
-	reverseArtifactSkipReason      string
-	reverseArtifactMode            string
-	reverseArtifactCacheHit        bool
-	reverseArtifactSourceValues    int
-	reverseArtifactCandidateRows   int
-	reverseArtifactNarrowedRows    int
-	reverseArtifactElapsed         time.Duration
-	reverseArtifactLookupElapsed   time.Duration
-	reverseArtifactLocalMode       string
-	reverseArtifactSourceElapsed   time.Duration
-	reverseArtifactReadElapsed     time.Duration
-	reverseArtifactNarrowElapsed   time.Duration
-	reverseArtifactParentElapsed   time.Duration
-	reverseArtifactProjectElapsed  time.Duration
-	reverseArtifactProjectMode     string
-	reverseArtifactCacheSetElapsed time.Duration
-	matchedRows                    int
-	childRetainCovered             bool
-	childRetainMode                string
-	batchEqualElapsed              time.Duration
-	singleKeyFoundSetElapsed       time.Duration
-	singleKeyEqualElapsed          time.Duration
-	valueVectorElapsed             time.Duration
-	intersectElapsed               time.Duration
-	rownumElapsed                  time.Duration
-	pairElapsed                    time.Duration
+	domainMappingCacheHit               bool
+	domainMappingCacheMode              string
+	projectionElapsed                   time.Duration
+	projectionCacheHit                  bool
+	projectionRows                      int
+	fkProjectionRows                    int
+	fkChildOverlapRows                  int
+	fkProjectionInitialCoverage         qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionCoverage                qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionScope                   string
+	fkProjectionRetryRows               int
+	fkProjectionRetryOverlap            int
+	fkProjectionRetryCoverage           qsbridge.RelationshipVectorProjectionCoverage
+	parentKeyElapsed                    time.Duration
+	parentKeyMaterialization            bool
+	parentKeyRows                       int
+	reverseArtifactUsed                 bool
+	reverseArtifactSkipReason           string
+	reverseArtifactMode                 string
+	reverseArtifactCacheHit             bool
+	reverseArtifactSourceValues         int
+	reverseArtifactCandidateRows        int
+	reverseArtifactNarrowedRows         int
+	reverseArtifactElapsed              time.Duration
+	reverseArtifactLookupElapsed        time.Duration
+	reverseArtifactFanoutElapsed        time.Duration
+	reverseArtifactClientRPCElapsed     time.Duration
+	reverseArtifactClientRPCMaxElapsed  time.Duration
+	reverseArtifactResponseMergeElapsed time.Duration
+	reverseArtifactLocalMode            string
+	reverseArtifactSourceElapsed        time.Duration
+	reverseArtifactReadElapsed          time.Duration
+	reverseArtifactNarrowElapsed        time.Duration
+	reverseArtifactParentElapsed        time.Duration
+	reverseArtifactProjectElapsed       time.Duration
+	reverseArtifactProjectMode          string
+	reverseArtifactCacheSetElapsed      time.Duration
+	matchedRows                         int
+	childRetainCovered                  bool
+	childRetainMode                     string
+	batchEqualElapsed                   time.Duration
+	singleKeyFoundSetElapsed            time.Duration
+	singleKeyEqualElapsed               time.Duration
+	valueVectorElapsed                  time.Duration
+	intersectElapsed                    time.Duration
+	rownumElapsed                       time.Duration
+	pairElapsed                         time.Duration
 }
 
 type legacyDirectRelationshipReverseArtifactLocalTiming struct {
@@ -734,6 +738,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrowed_rows", strconv.Itoa(reduceTiming.reverseArtifactNarrowedRows)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_elapsed", reduceTiming.reverseArtifactElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_lookup_elapsed", reduceTiming.reverseArtifactLookupElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_fanout_elapsed", reduceTiming.reverseArtifactFanoutElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_client_rpc_elapsed", reduceTiming.reverseArtifactClientRPCElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_client_rpc_max_elapsed", reduceTiming.reverseArtifactClientRPCMaxElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_response_merge_elapsed", reduceTiming.reverseArtifactResponseMergeElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_local_mode", reduceTiming.reverseArtifactLocalMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_elapsed", reduceTiming.reverseArtifactSourceElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_read_request_elapsed", reduceTiming.reverseArtifactReadElapsed.String()),
@@ -1525,6 +1533,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTupl
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_elapsed", vectorResult.CandidateElapsed.String()),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_batch_equal_elapsed", vectorResult.BatchEqualElapsed.String()),
 		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_scan_elapsed", vectorResult.CandidateScanElapsed.String()),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_fanout_elapsed", vectorResult.CandidateFanoutElapsed.String()),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_client_rpc_elapsed", vectorResult.CandidateClientRPCElapsed.String()),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_client_rpc_max_elapsed", vectorResult.CandidateClientRPCMaxElapsed.String()),
+		legacyDirectRelationshipProbe(prefix+"candidate_derivation_candidate_response_merge_elapsed", vectorResult.CandidateResponseMergeElapsed.String()),
 	)
 	return BitmapQueryResult{
 		Success: true,
@@ -3425,6 +3437,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactNarrowedRows = len(narrowedRows)
 		timing.reverseArtifactElapsed = artifactResult.CandidateElapsed
 		timing.reverseArtifactLookupElapsed = artifactResult.CandidateScanElapsed
+		timing.reverseArtifactFanoutElapsed = artifactResult.CandidateFanoutElapsed
+		timing.reverseArtifactClientRPCElapsed = artifactResult.CandidateClientRPCElapsed
+		timing.reverseArtifactClientRPCMaxElapsed = artifactResult.CandidateClientRPCMaxElapsed
+		timing.reverseArtifactResponseMergeElapsed = artifactResult.CandidateResponseMergeElapsed
 		timing.reverseArtifactLocalMode = artifactTiming.mode
 		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
 		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
@@ -3742,16 +3758,20 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		return nil, qsbridge.FilterDomainRelationshipVectorResult{}, nil, nil, localTiming, false, diagnostics, err
 	}
 	result := qsbridge.FilterDomainRelationshipVectorResult{
-		TargetCandidates:     candidates,
-		VectorIndex:          read.VectorIndex,
-		VectorField:          read.VectorField,
-		Direction:            read.Direction,
-		SourceValueCount:     artifactTiming.SourceValues,
-		CandidateCacheHit:    artifactTiming.CacheHit,
-		CandidateCacheMode:   "reverse_artifact",
-		CandidateMode:        artifactTiming.Mode,
-		CandidateElapsed:     elapsed,
-		CandidateScanElapsed: artifactTiming.LookupElapsed,
+		TargetCandidates:              candidates,
+		VectorIndex:                   read.VectorIndex,
+		VectorField:                   read.VectorField,
+		Direction:                     read.Direction,
+		SourceValueCount:              artifactTiming.SourceValues,
+		CandidateCacheHit:             artifactTiming.CacheHit,
+		CandidateCacheMode:            "reverse_artifact",
+		CandidateMode:                 artifactTiming.Mode,
+		CandidateElapsed:              elapsed,
+		CandidateScanElapsed:          artifactTiming.LookupElapsed,
+		CandidateFanoutElapsed:        artifactTiming.FanoutElapsed,
+		CandidateClientRPCElapsed:     artifactTiming.ClientRPCElapsed,
+		CandidateClientRPCMaxElapsed:  artifactTiming.MaxClientRPCElapsed,
+		CandidateResponseMergeElapsed: artifactTiming.ResponseMergeElapsed,
 	}
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, result, nil, nil, localTiming, true, diagnostics, err

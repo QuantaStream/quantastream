@@ -105,12 +105,16 @@ type CompareBSIFieldsStats struct {
 // candidate lookup work. Row/value counts are accumulated across node-local
 // maintained artifacts.
 type RelationshipReverseArtifactStats struct {
-	Rows          uint64
-	Values        uint64
-	SourceValues  int
-	TargetRows    uint64
-	LookupElapsed time.Duration
-	Nodes         uint64
+	Rows                 uint64
+	Values               uint64
+	SourceValues         int
+	TargetRows           uint64
+	LookupElapsed        time.Duration
+	FanoutElapsed        time.Duration
+	ResponseMergeElapsed time.Duration
+	ClientRPCElapsed     time.Duration
+	MaxClientRPCElapsed  time.Duration
+	Nodes                uint64
 }
 
 // RelationshipAlignedValueSumGroup carries one mergeable parent-keyed aggregate
@@ -1229,41 +1233,67 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 	if c.local != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 		defer cancel()
+		callStart := time.Now()
 		response, err := c.local.RelationshipReverseArtifactCandidates(ctx, req)
+		callElapsed := time.Since(callStart)
 		if err != nil {
 			return nil, nil, RelationshipReverseArtifactStats{}, false, err
 		}
-		return aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues)
+		mergeStart := time.Now()
+		rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues)
+		stats.FanoutElapsed = callElapsed
+		stats.ClientRPCElapsed = callElapsed
+		stats.MaxClientRPCElapsed = callElapsed
+		stats.ResponseMergeElapsed = time.Since(mergeStart)
+		return rownums, parentValueByChild, stats, ok, err
 	}
 
 	clients := c.activeClientsSnapshot()
 	if len(clients) == 0 {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: no active bitmap nodes")
 	}
-	resultChan := make(chan *pb.RelationshipReverseArtifactCandidatesResponse, len(clients))
+	type candidateResult struct {
+		response *pb.RelationshipReverseArtifactCandidatesResponse
+		elapsed  time.Duration
+	}
+	resultChan := make(chan candidateResult, len(clients))
 	var eg errgroup.Group
+	fanoutStart := time.Now()
 	for _, n := range clients {
 		client := n.client
 		clientIndex := n.index
 		eg.Go(func() error {
-			response, err := c.relationshipReverseArtifactCandidatesClient(client, req, clientIndex)
+			response, elapsed, err := c.relationshipReverseArtifactCandidatesClient(client, req, clientIndex)
 			if err != nil {
 				return err
 			}
-			resultChan <- response
+			resultChan <- candidateResult{response: response, elapsed: elapsed}
 			return nil
 		})
 	}
 	if err := eg.Wait(); err != nil {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, err
 	}
+	fanoutElapsed := time.Since(fanoutStart)
 	close(resultChan)
 
 	responses := make([]*pb.RelationshipReverseArtifactCandidatesResponse, 0, len(clients))
-	for response := range resultChan {
-		responses = append(responses, response)
+	clientRPCElapsed := time.Duration(0)
+	maxClientRPCElapsed := time.Duration(0)
+	for result := range resultChan {
+		responses = append(responses, result.response)
+		clientRPCElapsed += result.elapsed
+		if result.elapsed > maxClientRPCElapsed {
+			maxClientRPCElapsed = result.elapsed
+		}
 	}
-	return aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues)
+	mergeStart := time.Now()
+	rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues)
+	stats.FanoutElapsed = fanoutElapsed
+	stats.ClientRPCElapsed = clientRPCElapsed
+	stats.MaxClientRPCElapsed = maxClientRPCElapsed
+	stats.ResponseMergeElapsed = time.Since(mergeStart)
+	return rownums, parentValueByChild, stats, ok, err
 }
 
 // RelationshipReverseArtifactStats asks readable nodes for reverse-artifact
@@ -1873,17 +1903,19 @@ func (c *BitmapIndex) compareBSIFieldsClient(client pb.BitmapIndexClient, req *p
 }
 
 func (c *BitmapIndex) relationshipReverseArtifactCandidatesClient(client pb.BitmapIndexClient, req *pb.RelationshipReverseArtifactCandidatesRequest,
-	clientIndex int) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	clientIndex int) (*pb.RelationshipReverseArtifactCandidatesResponse, time.Duration, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
 	defer cancel()
 
+	start := time.Now()
 	result, err := client.RelationshipReverseArtifactCandidates(ctx, req)
+	elapsed := time.Since(start)
 	if err != nil {
-		return nil, fmt.Errorf("%v.RelationshipReverseArtifactCandidates(_) = _, %v, node = %s", client, err,
+		return nil, elapsed, fmt.Errorf("%v.RelationshipReverseArtifactCandidates(_) = _, %v, node = %s", client, err,
 			c.ClientConnections()[clientIndex].Target())
 	}
-	return result, nil
+	return result, elapsed, nil
 }
 
 func (c *BitmapIndex) relationshipReverseArtifactStatsClient(client pb.BitmapIndexClient, req *pb.RelationshipReverseArtifactStatsRequest,

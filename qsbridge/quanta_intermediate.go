@@ -502,23 +502,27 @@ type FilterDomainRelationshipVectorRequest struct {
 
 // FilterDomainRelationshipVectorResult carries translated target-domain candidates.
 type FilterDomainRelationshipVectorResult struct {
-	Request                    FilterDomainRelationshipVectorRequest
-	TargetCandidates           QuantaCandidateSet
-	VectorIndex                string
-	VectorField                string
-	Direction                  FilterDomainRelationshipVectorDirection
-	ProjectionElapsed          time.Duration
-	ProjectionCacheHit         bool
-	SourceKeyProjectionUsed    bool
-	SourceKeyProjectionReason  string
-	SourceKeyProjectionElapsed time.Duration
-	SourceValueCount           int
-	CandidateCacheHit          bool
-	CandidateCacheMode         string
-	CandidateMode              string
-	CandidateElapsed           time.Duration
-	BatchEqualElapsed          time.Duration
-	CandidateScanElapsed       time.Duration
+	Request                       FilterDomainRelationshipVectorRequest
+	TargetCandidates              QuantaCandidateSet
+	VectorIndex                   string
+	VectorField                   string
+	Direction                     FilterDomainRelationshipVectorDirection
+	ProjectionElapsed             time.Duration
+	ProjectionCacheHit            bool
+	SourceKeyProjectionUsed       bool
+	SourceKeyProjectionReason     string
+	SourceKeyProjectionElapsed    time.Duration
+	SourceValueCount              int
+	CandidateCacheHit             bool
+	CandidateCacheMode            string
+	CandidateMode                 string
+	CandidateElapsed              time.Duration
+	BatchEqualElapsed             time.Duration
+	CandidateScanElapsed          time.Duration
+	CandidateFanoutElapsed        time.Duration
+	CandidateClientRPCElapsed     time.Duration
+	CandidateClientRPCMaxElapsed  time.Duration
+	CandidateResponseMergeElapsed time.Duration
 }
 
 // RelationshipVectorRequest derives a concrete one-hop vector translation request.
@@ -572,54 +576,62 @@ func (r FilterDomainRelationshipVectorRequest) LeafName() string {
 
 // FilterDomainNormalizedLeaf is one translated predicate leaf in target-domain rownums.
 type FilterDomainNormalizedLeaf struct {
-	OriginalFragment           QuantaQueryFragment
-	SourceDomain               string
-	TargetDomain               string
-	VectorIndex                string
-	VectorField                string
-	Direction                  FilterDomainRelationshipVectorDirection
-	SourceCount                int
-	SourceElapsed              time.Duration
-	TranslationElapsed         time.Duration
-	ProjectionElapsed          time.Duration
-	ProjectionCacheHit         bool
-	SourceKeyProjectionUsed    bool
-	SourceKeyProjectionReason  string
-	SourceKeyProjectionElapsed time.Duration
-	SourceValueCount           int
-	CandidateCacheHit          bool
-	CandidateCacheMode         string
-	CandidateMode              string
-	CandidateElapsed           time.Duration
-	BatchEqualElapsed          time.Duration
-	CandidateScanElapsed       time.Duration
-	CandidateSet               QuantaCandidateSet
+	OriginalFragment              QuantaQueryFragment
+	SourceDomain                  string
+	TargetDomain                  string
+	VectorIndex                   string
+	VectorField                   string
+	Direction                     FilterDomainRelationshipVectorDirection
+	SourceCount                   int
+	SourceElapsed                 time.Duration
+	TranslationElapsed            time.Duration
+	ProjectionElapsed             time.Duration
+	ProjectionCacheHit            bool
+	SourceKeyProjectionUsed       bool
+	SourceKeyProjectionReason     string
+	SourceKeyProjectionElapsed    time.Duration
+	SourceValueCount              int
+	CandidateCacheHit             bool
+	CandidateCacheMode            string
+	CandidateMode                 string
+	CandidateElapsed              time.Duration
+	BatchEqualElapsed             time.Duration
+	CandidateScanElapsed          time.Duration
+	CandidateFanoutElapsed        time.Duration
+	CandidateClientRPCElapsed     time.Duration
+	CandidateClientRPCMaxElapsed  time.Duration
+	CandidateResponseMergeElapsed time.Duration
+	CandidateSet                  QuantaCandidateSet
 }
 
 // FilterDomainNormalizedBranch is one translated source-domain filter subtree.
 type FilterDomainNormalizedBranch struct {
-	OriginalFilter             QuantaFilterExpression
-	SourceDomain               string
-	TargetDomain               string
-	VectorIndex                string
-	VectorField                string
-	Direction                  FilterDomainRelationshipVectorDirection
-	SourceCount                int
-	SourceElapsed              time.Duration
-	TranslationElapsed         time.Duration
-	ProjectionElapsed          time.Duration
-	ProjectionCacheHit         bool
-	SourceKeyProjectionUsed    bool
-	SourceKeyProjectionReason  string
-	SourceKeyProjectionElapsed time.Duration
-	SourceValueCount           int
-	CandidateCacheHit          bool
-	CandidateCacheMode         string
-	CandidateMode              string
-	CandidateElapsed           time.Duration
-	BatchEqualElapsed          time.Duration
-	CandidateScanElapsed       time.Duration
-	CandidateSet               QuantaCandidateSet
+	OriginalFilter                QuantaFilterExpression
+	SourceDomain                  string
+	TargetDomain                  string
+	VectorIndex                   string
+	VectorField                   string
+	Direction                     FilterDomainRelationshipVectorDirection
+	SourceCount                   int
+	SourceElapsed                 time.Duration
+	TranslationElapsed            time.Duration
+	ProjectionElapsed             time.Duration
+	ProjectionCacheHit            bool
+	SourceKeyProjectionUsed       bool
+	SourceKeyProjectionReason     string
+	SourceKeyProjectionElapsed    time.Duration
+	SourceValueCount              int
+	CandidateCacheHit             bool
+	CandidateCacheMode            string
+	CandidateMode                 string
+	CandidateElapsed              time.Duration
+	BatchEqualElapsed             time.Duration
+	CandidateScanElapsed          time.Duration
+	CandidateFanoutElapsed        time.Duration
+	CandidateClientRPCElapsed     time.Duration
+	CandidateClientRPCMaxElapsed  time.Duration
+	CandidateResponseMergeElapsed time.Duration
+	CandidateSet                  QuantaCandidateSet
 }
 
 // FilterDomainRewriteResult describes typed replacements for normalized filter leaves.

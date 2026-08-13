@@ -387,13 +387,17 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 	)
 	elapsed := time.Since(start)
 	result := LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
-		Mode:          "reverse_artifact_cluster",
-		CacheHit:      true,
-		Rows:          stats.Rows,
-		Values:        stats.Values,
-		SourceValues:  sourceValueCount,
-		TargetRows:    uint64(len(rownums)),
-		LookupElapsed: lookupElapsed,
+		Mode:                 "reverse_artifact_cluster",
+		CacheHit:             true,
+		Rows:                 stats.Rows,
+		Values:               stats.Values,
+		SourceValues:         sourceValueCount,
+		TargetRows:           uint64(len(rownums)),
+		LookupElapsed:        lookupElapsed,
+		FanoutElapsed:        stats.FanoutElapsed,
+		ClientRPCElapsed:     stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed: stats.ResponseMergeElapsed,
 	}
 	if sourceValueCount == 0 {
 		result.SourceValues = len(legacyDirectRelationshipUniqueInt64s(sourceValues))

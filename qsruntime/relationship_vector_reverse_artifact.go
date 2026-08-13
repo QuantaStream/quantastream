@@ -54,35 +54,47 @@ type RelationshipVectorReverseArtifactManager struct {
 }
 
 type relationshipVectorReverseArtifactTiming struct {
-	Mode          string
-	CacheHit      bool
-	BuildElapsed  time.Duration
-	LookupElapsed time.Duration
-	Rows          uint64
-	Values        uint64
-	SourceValues  int
-	TargetRows    int
+	Mode                 string
+	CacheHit             bool
+	BuildElapsed         time.Duration
+	LookupElapsed        time.Duration
+	FanoutElapsed        time.Duration
+	ClientRPCElapsed     time.Duration
+	MaxClientRPCElapsed  time.Duration
+	ResponseMergeElapsed time.Duration
+	Rows                 uint64
+	Values               uint64
+	SourceValues         int
+	TargetRows           int
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactCandidateResult is the
 // physical-tier result for a prebuilt parent-value to child-row artifact.
 type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
-	Candidates         qsbridge.QuantaCandidateSet
-	ParentValueByChild map[qsbridge.QuantaRownum]int64
-	Mode               string
-	CacheHit           bool
-	Rows               uint64
-	Values             uint64
-	SourceValues       int
-	TargetRows         uint64
-	LookupElapsed      time.Duration
+	Candidates           qsbridge.QuantaCandidateSet
+	ParentValueByChild   map[qsbridge.QuantaRownum]int64
+	Mode                 string
+	CacheHit             bool
+	Rows                 uint64
+	Values               uint64
+	SourceValues         int
+	TargetRows           uint64
+	LookupElapsed        time.Duration
+	FanoutElapsed        time.Duration
+	ClientRPCElapsed     time.Duration
+	MaxClientRPCElapsed  time.Duration
+	ResponseMergeElapsed time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactStats describes a maintained
 // parent-to-child artifact without materializing lookup candidates.
 type LegacyDirectRelationshipVectorReverseArtifactStats struct {
-	Rows   uint64
-	Values uint64
+	Rows                 uint64
+	Values               uint64
+	FanoutElapsed        time.Duration
+	ClientRPCElapsed     time.Duration
+	MaxClientRPCElapsed  time.Duration
+	ResponseMergeElapsed time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactCandidateReader exposes
@@ -357,4 +369,8 @@ func legacyDirectRecordRelationshipVectorReverseArtifact(ctx context.Context, re
 	recorder.ObserveCount("relationship_reverse_artifact", "artifact_values", timing.Values, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "build_elapsed", timing.BuildElapsed, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "lookup_elapsed", timing.LookupElapsed, detail)
+	recorder.ObserveDuration("relationship_reverse_artifact", "fanout_elapsed", timing.FanoutElapsed, detail)
+	recorder.ObserveDuration("relationship_reverse_artifact", "client_rpc_elapsed", timing.ClientRPCElapsed, detail)
+	recorder.ObserveDuration("relationship_reverse_artifact", "client_rpc_max_elapsed", timing.MaxClientRPCElapsed, detail)
+	recorder.ObserveDuration("relationship_reverse_artifact", "response_merge_elapsed", timing.ResponseMergeElapsed, detail)
 }

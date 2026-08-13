@@ -410,6 +410,10 @@ func directBitmapFilterDomainBranchProbeDetail(branch qsbridge.FilterDomainNorma
 		"candidate_elapsed=" + branch.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + branch.BatchEqualElapsed.String(),
 		"candidate_scan_elapsed=" + branch.CandidateScanElapsed.String(),
+		"candidate_fanout_elapsed=" + branch.CandidateFanoutElapsed.String(),
+		"candidate_client_rpc_elapsed=" + branch.CandidateClientRPCElapsed.String(),
+		"candidate_client_rpc_max_elapsed=" + branch.CandidateClientRPCMaxElapsed.String(),
+		"candidate_response_merge_elapsed=" + branch.CandidateResponseMergeElapsed.String(),
 		"target_index=" + branch.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")
@@ -437,6 +441,10 @@ func directBitmapFilterDomainLeafProbeDetail(leaf qsbridge.FilterDomainNormalize
 		"candidate_elapsed=" + leaf.CandidateElapsed.String(),
 		"batch_equal_elapsed=" + leaf.BatchEqualElapsed.String(),
 		"candidate_scan_elapsed=" + leaf.CandidateScanElapsed.String(),
+		"candidate_fanout_elapsed=" + leaf.CandidateFanoutElapsed.String(),
+		"candidate_client_rpc_elapsed=" + leaf.CandidateClientRPCElapsed.String(),
+		"candidate_client_rpc_max_elapsed=" + leaf.CandidateClientRPCMaxElapsed.String(),
+		"candidate_response_merge_elapsed=" + leaf.CandidateResponseMergeElapsed.String(),
 		"target_index=" + leaf.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")

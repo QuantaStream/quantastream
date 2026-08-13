@@ -374,8 +374,12 @@ func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.Bit
 		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
 	}
 	return rownums, parentValueByChild, LegacyDirectRelationshipVectorReverseArtifactStats{
-		Rows:   stats.Rows,
-		Values: stats.Values,
+		Rows:                 stats.Rows,
+		Values:               stats.Values,
+		FanoutElapsed:        stats.FanoutElapsed,
+		ClientRPCElapsed:     stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed: stats.ResponseMergeElapsed,
 	}, stats.SourceValues, stats.LookupElapsed, true, nil
 }
 
