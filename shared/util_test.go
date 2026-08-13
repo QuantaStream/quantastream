@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/hashicorp/consul/api"
@@ -9,6 +10,13 @@ import (
 )
 
 // FIXME: (atw) this creates a test consul which conflicts with the real one.
+
+func requireTestConsul(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("consul"); err != nil {
+		t.Skipf("consul not found on $PATH: %v", err)
+	}
+}
 
 func notTestConsul(t *testing.T) {
 
@@ -61,6 +69,7 @@ func notTestConsul(t *testing.T) {
 }
 
 func TestMarshalConsulRoundTripsRelationshipArtifacts(t *testing.T) {
+	requireTestConsul(t)
 	srv, err := testutil.NewTestServerConfigT(t, nil)
 	if err != nil {
 		t.Fatal(err)
