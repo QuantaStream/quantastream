@@ -729,6 +729,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	for {
 		iterations++
 		changed := false
+		equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsWithPrefix(ctx, request, rowsByTable, fullDomainInitialRowsByRole, fmt.Sprintf("graph_iter_%d_pre_", iterations))
+		result.Probes = append(result.Probes, equalitySeedProbes...)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, err
+		}
+		changed = equalitySeedChanged
 		edgeOrderPolicy := legacyDirectRelationshipEdgeOrderPolicy(edges, rowsByTable, e.ApplyRecommendedEdgeOrder)
 		result.Probes = append(result.Probes, legacyDirectRelationshipEdgeOrderPolicyProbes(fmt.Sprintf("graph_iter_%d_", iterations), edgeOrderPolicy)...)
 		executionCandidates := legacyDirectRelationshipEdgeOrderExecutionCandidates(edges, edgeOrderPolicy)
@@ -829,6 +836,16 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			if len(nextChildRows) != len(childRows) {
 				changed = true
 				rowsByTable[edge.childKey()] = nextChildRows
+				fullDomainInitialRowsByRole[edge.childKey()] = false
+				equalitySeedProbes, equalitySeedChanged, diagnostics, err := e.legacyDirectRelationshipApplyGraphEqualityRoleSeedsWithPrefix(ctx, request, rowsByTable, fullDomainInitialRowsByRole, probePrefix+"post_")
+				result.Probes = append(result.Probes, equalitySeedProbes...)
+				result.Diagnostics = append(result.Diagnostics, diagnostics...)
+				if err != nil || result.Diagnostics.BlocksNative() {
+					return result, err
+				}
+				if equalitySeedChanged {
+					changed = true
+				}
 			}
 		}
 		singlePassAppliedThisIteration := changed && singlePassPolicy.Eligible
