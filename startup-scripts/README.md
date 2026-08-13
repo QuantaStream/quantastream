@@ -106,6 +106,11 @@ They are enabled through systemd and start after `consul.service`, so stopping
 and starting AWS instances should rejoin the Consul cluster and remount the
 QuantaStream processes automatically.
 
+Distributed node services default to `QUANTASTREAM_SKIP_NODE_SYNC=1`. This
+marks nodes active from their local store on startup and disables the legacy
+peer push sync path. For benchmark clusters, load data only after the full node
+set is online.
+
 For correctness benchmarks, do not expose the same fully loaded single-node data
 directory from multiple cloned QS servers unless replication is the explicit test
 case. Until cluster scale-out sync/rebalance is designed and validated, start

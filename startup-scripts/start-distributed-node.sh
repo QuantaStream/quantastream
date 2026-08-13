@@ -15,6 +15,7 @@ CONSUL_ENDPOINT="${QUANTASTREAM_CONSUL_ENDPOINT:-127.0.0.1:8500}"
 ENVIRONMENT="${QUANTASTREAM_ENV:-PROD}"
 LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
+SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-${QUANTA_DEV_SKIP_SYNC:-1}}"
 
 usage() {
   cat <<'EOF'
@@ -34,6 +35,7 @@ Environment:
   QUANTASTREAM_ENV               Logging environment label. Defaults to PROD.
   QUANTASTREAM_LOG_LEVEL         ERROR, WARN, INFO, or DEBUG. Defaults to INFO.
   QUANTASTREAM_PPROF             Start pprof/prom listener. Defaults to false.
+  QUANTASTREAM_SKIP_NODE_SYNC    Skip legacy peer sync on startup and mark node active. Defaults to 1.
 EOF
 }
 
@@ -62,6 +64,9 @@ echo "hash_key=${NODE_HASH_KEY}"
 echo "data_dir=${DATA_DIR}"
 echo "node=${BIND_ADDRESS}:${NODE_PORT}"
 echo "consul=${CONSUL_ENDPOINT}"
+echo "skip_node_sync=${SKIP_NODE_SYNC}"
+
+export QUANTASTREAM_SKIP_NODE_SYNC="$SKIP_NODE_SYNC"
 
 exec "$NODE_BIN" \
   "$NODE_HASH_KEY" \

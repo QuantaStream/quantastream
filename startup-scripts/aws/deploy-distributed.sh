@@ -73,7 +73,7 @@ deploy_node() {
   if (( do_pull )); then
     update_cmd="git pull --ff-only && "
   fi
-  qs_remote_bash "$host" "cd '$QS_REPO_DIR' && ${update_cmd}QUANTASTREAM_NODE_HASH_KEY='$node_key' QUANTASTREAM_DATA_DIR='$QS_NODE_DATA_DIR' QUANTASTREAM_NODE_PORT='$QS_NODE_PORT' QUANTASTREAM_CONSUL_ENDPOINT='127.0.0.1:8500' ENABLE_NOW='$enable_now' sudo -E ./startup-scripts/install-distributed-node-service.sh"
+  qs_remote_bash "$host" "cd '$QS_REPO_DIR' && ${update_cmd}QUANTASTREAM_NODE_HASH_KEY='$node_key' QUANTASTREAM_DATA_DIR='$QS_NODE_DATA_DIR' QUANTASTREAM_NODE_PORT='$QS_NODE_PORT' QUANTASTREAM_CONSUL_ENDPOINT='127.0.0.1:8500' QUANTASTREAM_SKIP_NODE_SYNC='$QS_SKIP_NODE_SYNC' ENABLE_NOW='$enable_now' sudo -E ./startup-scripts/install-distributed-node-service.sh"
 }
 
 if (( deploy_nodes )); then

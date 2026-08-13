@@ -17,6 +17,7 @@ CONSUL_ENDPOINT="${QUANTASTREAM_CONSUL_ENDPOINT:-127.0.0.1:8500}"
 ENVIRONMENT="${QUANTASTREAM_ENV:-PROD}"
 LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
+SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-1}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -67,6 +68,7 @@ Environment:
   QUANTASTREAM_NODE_BIND        node bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_NODE_PORT        node service port. Defaults to 4400.
   QUANTASTREAM_CONSUL_ENDPOINT  local Consul agent endpoint. Defaults to 127.0.0.1:8500.
+  QUANTASTREAM_SKIP_NODE_SYNC    skip legacy peer sync on startup and mark node active. Defaults to 1.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
@@ -108,6 +110,7 @@ QUANTASTREAM_CONSUL_ENDPOINT=$CONSUL_ENDPOINT
 QUANTASTREAM_ENV=$ENVIRONMENT
 QUANTASTREAM_LOG_LEVEL=$LOG_LEVEL
 QUANTASTREAM_PPROF=$PPROF
+QUANTASTREAM_SKIP_NODE_SYNC=$SKIP_NODE_SYNC
 EOF
 chmod 0644 "$ENV_DIR/node.env"
 

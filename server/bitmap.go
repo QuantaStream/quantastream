@@ -38,8 +38,12 @@ func formatShardTime(t time.Time) string {
 	return t.UTC().Format(timeFmt)
 }
 
-func devSkipSyncEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTA_DEV_SKIP_SYNC"))) {
+func skipNodeSyncEnabled() bool {
+	raw := os.Getenv("QUANTASTREAM_SKIP_NODE_SYNC")
+	if raw == "" {
+		raw = os.Getenv("QUANTA_DEV_SKIP_SYNC")
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1", "true", "yes", "on":
 		return true
 	default:
@@ -633,9 +637,9 @@ func (m *BitmapIndex) partitionProcessLoop() {
 
 func (m *BitmapIndex) verifyNode() {
 
-	if devSkipSyncEnabled() {
+	if skipNodeSyncEnabled() {
 		m.State = Active
-		u.Warnf("QUANTA_DEV_SKIP_SYNC enabled; skipping node synchronization and marking %s Active", m.GetNodeID())
+		u.Warnf("QUANTASTREAM_SKIP_NODE_SYNC enabled; skipping node synchronization and marking %s Active", m.GetNodeID())
 		consul := m.Consul
 		valStr := fmt.Sprintf("%s_%d", m.hashKey, time.Now().UnixMilli())
 		pair := &api.KVPair{Key: "AnyNodeStatusChangeTime", Value: []byte(valStr)}
