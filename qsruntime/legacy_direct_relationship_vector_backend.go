@@ -287,6 +287,9 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			ClientRPCElapsed:     stats.ClientRPCElapsed,
 			MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
 			ResponseMergeElapsed: stats.ResponseMergeElapsed,
+			RowMergeElapsed:      stats.RowMergeElapsed,
+			ParentMergeElapsed:   stats.ParentMergeElapsed,
+			SortElapsed:          stats.SortElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
@@ -301,6 +304,9 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			ClientRPCElapsed:     stats.ClientRPCElapsed,
 			MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
 			ResponseMergeElapsed: stats.ResponseMergeElapsed,
+			RowMergeElapsed:      stats.RowMergeElapsed,
+			ParentMergeElapsed:   stats.ParentMergeElapsed,
+			SortElapsed:          stats.SortElapsed,
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 		return qsbridge.QuantaCandidateSet{}, nil, timing, nil, nil, false
@@ -315,6 +321,11 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			ClientRPCElapsed:     result.ClientRPCElapsed,
 			MaxClientRPCElapsed:  result.MaxClientRPCElapsed,
 			ResponseMergeElapsed: result.ResponseMergeElapsed,
+			RowMergeElapsed:      result.RowMergeElapsed,
+			ParentMergeElapsed:   result.ParentMergeElapsed,
+			SortElapsed:          result.SortElapsed,
+			RowConversionElapsed: result.RowConversionElapsed,
+			MapConversionElapsed: result.MapConversionElapsed,
 			Rows:                 result.Rows,
 			Values:               result.Values,
 			SourceValues:         result.SourceValues,
@@ -332,6 +343,11 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		ClientRPCElapsed:     result.ClientRPCElapsed,
 		MaxClientRPCElapsed:  result.MaxClientRPCElapsed,
 		ResponseMergeElapsed: result.ResponseMergeElapsed,
+		RowMergeElapsed:      result.RowMergeElapsed,
+		ParentMergeElapsed:   result.ParentMergeElapsed,
+		SortElapsed:          result.SortElapsed,
+		RowConversionElapsed: result.RowConversionElapsed,
+		MapConversionElapsed: result.MapConversionElapsed,
 		Rows:                 result.Rows,
 		Values:               result.Values,
 		SourceValues:         result.SourceValues,

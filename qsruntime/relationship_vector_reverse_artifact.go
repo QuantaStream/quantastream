@@ -62,6 +62,11 @@ type relationshipVectorReverseArtifactTiming struct {
 	ClientRPCElapsed     time.Duration
 	MaxClientRPCElapsed  time.Duration
 	ResponseMergeElapsed time.Duration
+	RowMergeElapsed      time.Duration
+	ParentMergeElapsed   time.Duration
+	SortElapsed          time.Duration
+	RowConversionElapsed time.Duration
+	MapConversionElapsed time.Duration
 	Rows                 uint64
 	Values               uint64
 	SourceValues         int
@@ -84,6 +89,11 @@ type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
 	ClientRPCElapsed     time.Duration
 	MaxClientRPCElapsed  time.Duration
 	ResponseMergeElapsed time.Duration
+	RowMergeElapsed      time.Duration
+	ParentMergeElapsed   time.Duration
+	SortElapsed          time.Duration
+	RowConversionElapsed time.Duration
+	MapConversionElapsed time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactStats describes a maintained
@@ -95,6 +105,9 @@ type LegacyDirectRelationshipVectorReverseArtifactStats struct {
 	ClientRPCElapsed     time.Duration
 	MaxClientRPCElapsed  time.Duration
 	ResponseMergeElapsed time.Duration
+	RowMergeElapsed      time.Duration
+	ParentMergeElapsed   time.Duration
+	SortElapsed          time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactCandidateReader exposes

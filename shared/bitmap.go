@@ -112,6 +112,9 @@ type RelationshipReverseArtifactStats struct {
 	LookupElapsed        time.Duration
 	FanoutElapsed        time.Duration
 	ResponseMergeElapsed time.Duration
+	RowMergeElapsed      time.Duration
+	ParentMergeElapsed   time.Duration
+	SortElapsed          time.Duration
 	ClientRPCElapsed     time.Duration
 	MaxClientRPCElapsed  time.Duration
 	Nodes                uint64
@@ -1499,6 +1502,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			ok = false
 		}
 		stats.addProto(response.GetStats())
+		rowMergeStart := time.Now()
 		for _, rownum := range response.GetRownums() {
 			if _, seen := seenRows[rownum]; seen {
 				continue
@@ -1506,14 +1510,19 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			seenRows[rownum] = struct{}{}
 			rownums = append(rownums, rownum)
 		}
+		stats.RowMergeElapsed += time.Since(rowMergeStart)
+		parentMergeStart := time.Now()
 		for _, value := range response.GetParentValues() {
 			if value == nil {
 				continue
 			}
 			parentValueByChild[value.GetRownum()] = value.GetParentValue()
 		}
+		stats.ParentMergeElapsed += time.Since(parentMergeStart)
 	}
+	sortStart := time.Now()
 	sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
+	stats.SortElapsed = time.Since(sortStart)
 	stats.TargetRows = uint64(len(rownums))
 	return rownums, parentValueByChild, stats, ok, nil
 }

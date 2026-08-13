@@ -90,10 +90,15 @@ type legacyDirectRelationshipReduceTiming struct {
 	reverseArtifactClientRPCElapsed     time.Duration
 	reverseArtifactClientRPCMaxElapsed  time.Duration
 	reverseArtifactResponseMergeElapsed time.Duration
+	reverseArtifactRowMergeElapsed      time.Duration
+	reverseArtifactParentMergeElapsed   time.Duration
+	reverseArtifactSortElapsed          time.Duration
 	reverseArtifactLocalMode            string
 	reverseArtifactTargetCandidateMode  string
 	reverseArtifactSourceElapsed        time.Duration
 	reverseArtifactReadElapsed          time.Duration
+	reverseArtifactRowConversionElapsed time.Duration
+	reverseArtifactMapConversionElapsed time.Duration
 	reverseArtifactNarrowElapsed        time.Duration
 	reverseArtifactParentElapsed        time.Duration
 	reverseArtifactProjectElapsed       time.Duration
@@ -122,8 +127,13 @@ type legacyDirectRelationshipReverseArtifactLocalTiming struct {
 	clientRPCElapsed     time.Duration
 	maxClientRPCElapsed  time.Duration
 	responseMergeElapsed time.Duration
+	rowMergeElapsed      time.Duration
+	parentMergeElapsed   time.Duration
+	sortElapsed          time.Duration
 	sourceElapsed        time.Duration
 	readElapsed          time.Duration
+	rowConversionElapsed time.Duration
+	mapConversionElapsed time.Duration
 	narrowElapsed        time.Duration
 	parentElapsed        time.Duration
 }
@@ -1014,10 +1024,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_client_rpc_elapsed", reduceTiming.reverseArtifactClientRPCElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_client_rpc_max_elapsed", reduceTiming.reverseArtifactClientRPCMaxElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_response_merge_elapsed", reduceTiming.reverseArtifactResponseMergeElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_row_merge_elapsed", reduceTiming.reverseArtifactRowMergeElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_parent_merge_elapsed", reduceTiming.reverseArtifactParentMergeElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_sort_elapsed", reduceTiming.reverseArtifactSortElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_local_mode", reduceTiming.reverseArtifactLocalMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_target_candidate_mode", reduceTiming.reverseArtifactTargetCandidateMode),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_elapsed", reduceTiming.reverseArtifactSourceElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_read_request_elapsed", reduceTiming.reverseArtifactReadElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_row_conversion_elapsed", reduceTiming.reverseArtifactRowConversionElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_map_conversion_elapsed", reduceTiming.reverseArtifactMapConversionElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrow_elapsed", reduceTiming.reverseArtifactNarrowElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_parent_map_elapsed", reduceTiming.reverseArtifactParentElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_projection_intersect_elapsed", reduceTiming.reverseArtifactProjectElapsed.String()),
@@ -3804,6 +3819,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactClientRPCElapsed = artifactTiming.clientRPCElapsed
 		timing.reverseArtifactClientRPCMaxElapsed = artifactTiming.maxClientRPCElapsed
 		timing.reverseArtifactResponseMergeElapsed = artifactTiming.responseMergeElapsed
+		timing.reverseArtifactRowMergeElapsed = artifactTiming.rowMergeElapsed
+		timing.reverseArtifactParentMergeElapsed = artifactTiming.parentMergeElapsed
+		timing.reverseArtifactSortElapsed = artifactTiming.sortElapsed
 		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
 		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
 	} else {
@@ -3819,10 +3837,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactClientRPCElapsed = artifactResult.CandidateClientRPCElapsed
 		timing.reverseArtifactClientRPCMaxElapsed = artifactResult.CandidateClientRPCMaxElapsed
 		timing.reverseArtifactResponseMergeElapsed = artifactResult.CandidateResponseMergeElapsed
+		timing.reverseArtifactRowMergeElapsed = artifactTiming.rowMergeElapsed
+		timing.reverseArtifactParentMergeElapsed = artifactTiming.parentMergeElapsed
+		timing.reverseArtifactSortElapsed = artifactTiming.sortElapsed
 		timing.reverseArtifactLocalMode = artifactTiming.mode
 		timing.reverseArtifactTargetCandidateMode = artifactTiming.targetCandidateMode
 		timing.reverseArtifactSourceElapsed = artifactTiming.sourceElapsed
 		timing.reverseArtifactReadElapsed = artifactTiming.readElapsed
+		timing.reverseArtifactRowConversionElapsed = artifactTiming.rowConversionElapsed
+		timing.reverseArtifactMapConversionElapsed = artifactTiming.mapConversionElapsed
 		timing.reverseArtifactNarrowElapsed = artifactTiming.narrowElapsed
 		timing.reverseArtifactParentElapsed = artifactTiming.parentElapsed
 		if artifactErr != nil || artifactDiagnostics.BlocksNative() {
@@ -4143,6 +4166,11 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	localTiming.clientRPCElapsed = artifactTiming.ClientRPCElapsed
 	localTiming.maxClientRPCElapsed = artifactTiming.MaxClientRPCElapsed
 	localTiming.responseMergeElapsed = artifactTiming.ResponseMergeElapsed
+	localTiming.rowMergeElapsed = artifactTiming.RowMergeElapsed
+	localTiming.parentMergeElapsed = artifactTiming.ParentMergeElapsed
+	localTiming.sortElapsed = artifactTiming.SortElapsed
+	localTiming.rowConversionElapsed = artifactTiming.RowConversionElapsed
+	localTiming.mapConversionElapsed = artifactTiming.MapConversionElapsed
 	if !ok {
 		localTiming.mode = artifactTiming.Mode
 		if localTiming.mode == "" {

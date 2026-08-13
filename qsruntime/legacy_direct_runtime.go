@@ -406,18 +406,22 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 	if err != nil || !ok {
 		return result, nil, ok, err
 	}
+	rowConversionStart := time.Now()
 	candidateRows := make([]qsbridge.QuantaRownum, 0, len(rownums))
 	for _, rownum := range rownums {
 		candidateRows = append(candidateRows, qsbridge.QuantaRownum(rownum))
 	}
+	result.RowConversionElapsed = time.Since(rowConversionStart)
 	result.Candidates = qsbridge.QuantaCandidateSet{
 		Index:   read.TargetDomain,
 		Rownums: candidateRows,
 	}
+	mapConversionStart := time.Now()
 	result.ParentValueByChild = make(map[qsbridge.QuantaRownum]int64, len(parentValueByChild))
 	for child, parentValue := range parentValueByChild {
 		result.ParentValueByChild[qsbridge.QuantaRownum(child)] = parentValue
 	}
+	result.MapConversionElapsed = time.Since(mapConversionStart)
 	if result.LookupElapsed == 0 {
 		result.LookupElapsed = elapsed
 	}
