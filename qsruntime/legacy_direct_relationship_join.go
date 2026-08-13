@@ -187,6 +187,12 @@ type legacyDirectRelationshipGraphScratchpad struct {
 	initialRowsByRole        map[string][]qsbridge.QuantaRownum
 	initialRowsByTable       map[string][]qsbridge.QuantaRownum
 	fullDomainInitialRoleSet map[string]bool
+	alignedParentRowsByEdge  map[string]legacyDirectRelationshipAlignedParentRows
+}
+
+type legacyDirectRelationshipAlignedParentRows struct {
+	childRows  []qsbridge.QuantaRownum
+	parentRows []qsbridge.QuantaRownum
 }
 
 func newLegacyDirectRelationshipGraphScratchpad(rowsByRole map[string][]qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fullDomainRowsByRole ...map[string]bool) legacyDirectRelationshipGraphScratchpad {
@@ -194,6 +200,7 @@ func newLegacyDirectRelationshipGraphScratchpad(rowsByRole map[string][]qsbridge
 		initialRowsByRole:        make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
 		initialRowsByTable:       make(map[string][]qsbridge.QuantaRownum, len(rowsByRole)),
 		fullDomainInitialRoleSet: make(map[string]bool, len(rowsByRole)),
+		alignedParentRowsByEdge:  make(map[string]legacyDirectRelationshipAlignedParentRows, len(edges)),
 	}
 	for role, rows := range rowsByRole {
 		scratchpad.initialRowsByRole[role] = append([]qsbridge.QuantaRownum(nil), rows...)
@@ -260,6 +267,67 @@ func (s legacyDirectRelationshipGraphScratchpad) initialRowsForTable(table strin
 		return nil, false
 	}
 	return append([]qsbridge.QuantaRownum(nil), rows...), true
+}
+
+func (s legacyDirectRelationshipGraphScratchpad) storeAlignedParentRows(edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair) {
+	if s.alignedParentRowsByEdge == nil || len(childRows) == 0 || len(pairs) == 0 {
+		return
+	}
+	parentRows := make([]qsbridge.QuantaRownum, len(childRows))
+	if len(pairs) == len(childRows) {
+		exact := true
+		for i, pair := range pairs {
+			if pair.child != childRows[i] {
+				exact = false
+				break
+			}
+			parentRows[i] = pair.parent
+		}
+		if exact {
+			s.alignedParentRowsByEdge[legacyDirectRelationshipEdgeAlignmentKey(edge)] = legacyDirectRelationshipAlignedParentRows{
+				childRows:  append([]qsbridge.QuantaRownum(nil), childRows...),
+				parentRows: parentRows,
+			}
+			return
+		}
+	}
+	parentByChild := legacyDirectRelationshipParentMapFromPairs(pairs)
+	if len(parentByChild) == 0 {
+		return
+	}
+	for i, child := range childRows {
+		parent, ok := parentByChild[child]
+		if !ok {
+			return
+		}
+		parentRows[i] = parent
+	}
+	s.alignedParentRowsByEdge[legacyDirectRelationshipEdgeAlignmentKey(edge)] = legacyDirectRelationshipAlignedParentRows{
+		childRows:  append([]qsbridge.QuantaRownum(nil), childRows...),
+		parentRows: parentRows,
+	}
+}
+
+func (s legacyDirectRelationshipGraphScratchpad) alignedParentRows(edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, bool) {
+	if s.alignedParentRowsByEdge == nil || len(childRows) == 0 {
+		return nil, false
+	}
+	aligned, ok := s.alignedParentRowsByEdge[legacyDirectRelationshipEdgeAlignmentKey(edge)]
+	if !ok || !legacyDirectRelationshipRownumsEqual(aligned.childRows, childRows) {
+		return nil, false
+	}
+	return append([]qsbridge.QuantaRownum(nil), aligned.parentRows...), true
+}
+
+func legacyDirectRelationshipEdgeAlignmentKey(edge legacyDirectRelationshipEdge) string {
+	return strings.Join([]string{
+		edge.childKey(),
+		edge.parentKey(),
+		edge.childTable,
+		edge.childField,
+		edge.parentTable,
+		edge.parentField,
+	}, "\x00")
 }
 
 const (
@@ -805,7 +873,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			reduceOptions := legacyDirectRelationshipReduceOptions{
 				omitFullDomainTargetCandidates: scratchpad.fullDomainInitialRowsForRole(edge.childKey(), childRows),
 			}
-			joined, _, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx, request, edge, parentRows, childRows, projectionRows, reduceOptions)
+			joined, pairs, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx, request, edge, parentRows, childRows, projectionRows, reduceOptions)
 			edgeReduceElapsed := time.Since(edgeReduceStart)
 			result.Diagnostics = append(result.Diagnostics, diagnostics...)
 			if err != nil || result.Diagnostics.BlocksNative() {
@@ -868,6 +936,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				childRetainMode = "intersect"
 				nextChildRows = legacyDirectRelationshipIntersectRownums(childRows, joined)
 			}
+			scratchpad.storeAlignedParentRows(edge, nextChildRows, pairs)
 			childRetainElapsed := time.Since(childRetainStart)
 			reductionSummary.record(candidate.InputOrdinal, iterations, edgeIndex+1, edge, len(parentRows), len(childRows), len(joined), edgeReduceElapsed, reduceTiming, childRetainElapsed, len(nextChildRows))
 			result.Probes = append(result.Probes,
@@ -1217,8 +1286,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		return result, nil
 	}
 	alignmentStart := time.Now()
-	alignedRows, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
+	alignedRows, alignmentProbes, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
 	alignmentElapsed := time.Since(alignmentStart)
+	result.Probes = append(result.Probes, alignmentProbes...)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, err
@@ -1279,8 +1349,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	}
 	graphReductionElapsed := legacyDirectRelationshipProbeDuration(result.Probes, "phase_graph_reduction_elapsed")
 	alignmentStart := time.Now()
-	alignedRows, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
+	alignedRows, alignmentProbes, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, rownums, edges, scratchpad)
 	alignmentElapsed := time.Since(alignmentStart)
+	result.Probes = append(result.Probes, alignmentProbes...)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, err
@@ -1847,7 +1918,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		limitPushed = true
 	}
 	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("graph_projection_limit_pushed", strconv.FormatBool(limitPushed)))
-	alignedRows, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, limited, edges, scratchpad)
+	alignedRows, alignmentProbes, diagnostics, err := e.legacyDirectRelationshipGraphAlignedRownums(ctx, request, sink, limited, edges, scratchpad)
+	result.Probes = append(result.Probes, alignmentProbes...)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	if err != nil || result.Diagnostics.BlocksNative() {
 		return result, err
@@ -2305,11 +2377,13 @@ func legacyDirectRelationshipSortedRoleKeys(roles map[string]struct{}) string {
 	return strings.Join(keys, ",")
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphAlignedRownums(ctx context.Context, request ExecutionRequest, sink string, sinkRows []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, scratchpad legacyDirectRelationshipGraphScratchpad) (map[string][]qsbridge.QuantaRownum, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphAlignedRownums(ctx context.Context, request ExecutionRequest, sink string, sinkRows []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, scratchpad legacyDirectRelationshipGraphScratchpad) (map[string][]qsbridge.QuantaRownum, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	sinkRole := legacyDirectRelationshipGraphRoleForTable(edges, sink)
 	aligned := map[string][]qsbridge.QuantaRownum{
 		sinkRole: append([]qsbridge.QuantaRownum(nil), sinkRows...),
 	}
+	var probes []ExecutionProbe
+	alignmentEdges := 0
 	edgeByChild := make(map[string][]legacyDirectRelationshipEdge, len(edges))
 	for _, edge := range edges {
 		edgeByChild[edge.childKey()] = append(edgeByChild[edge.childKey()], edge)
@@ -2322,20 +2396,20 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 				if _, ok := aligned[parentKey]; ok {
 					continue
 				}
-				projectionPolicy := legacyDirectRelationshipProjectionPolicy(edge, childRows, scratchpad, 1)
-				projectionRows, _ := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
-				parentByChild, diagnostics, err := e.legacyDirectRelationshipParentMapWithProjectionRows(ctx, request, edge, childRows, projectionRows)
+				start := time.Now()
+				parentRows, source, diagnostics, err := e.legacyDirectRelationshipGraphAlignedParentRows(ctx, request, edge, childRows, scratchpad)
+				elapsed := time.Since(start)
 				if err != nil || diagnostics.BlocksNative() {
-					return nil, diagnostics, err
+					return nil, probes, diagnostics, err
 				}
-				parentRows := make([]qsbridge.QuantaRownum, 0, len(childRows))
-				for _, child := range childRows {
-					parent, ok := parentByChild[child]
-					if !ok {
-						return nil, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector graph could not align %s row %d to parent %s", edge.childTable, child, edge.parentTable)), nil
-					}
-					parentRows = append(parentRows, parent)
-				}
+				alignmentEdges++
+				prefix := "graph_alignment_edge_" + strconv.Itoa(alignmentEdges) + "_"
+				probes = append(probes,
+					legacyDirectRelationshipProbe(prefix+"source", source),
+					legacyDirectRelationshipProbe(prefix+"child_rows", strconv.Itoa(len(childRows))),
+					legacyDirectRelationshipProbe(prefix+"parent_rows", strconv.Itoa(len(parentRows))),
+					legacyDirectRelationshipProbe("phase_"+prefix+"elapsed", elapsed.String()),
+				)
 				aligned[parentKey] = parentRows
 				changed = true
 			}
@@ -2344,7 +2418,31 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 			break
 		}
 	}
-	return aligned, nil, nil
+	if len(probes) > 0 {
+		recordExecutionProbes(ctx, probes)
+	}
+	return aligned, probes, nil, nil
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphAlignedParentRows(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, scratchpad legacyDirectRelationshipGraphScratchpad) ([]qsbridge.QuantaRownum, string, qsbridge.DiagnosticSet, error) {
+	if parentRows, ok := scratchpad.alignedParentRows(edge, childRows); ok {
+		return parentRows, "reduction_scratchpad", nil, nil
+	}
+	projectionPolicy := legacyDirectRelationshipProjectionPolicy(edge, childRows, scratchpad, 1)
+	projectionRows, _ := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
+	parentByChild, diagnostics, err := e.legacyDirectRelationshipParentMapWithProjectionRows(ctx, request, edge, childRows, projectionRows)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, "parent_map", diagnostics, err
+	}
+	parentRows := make([]qsbridge.QuantaRownum, 0, len(childRows))
+	for _, child := range childRows {
+		parent, ok := parentByChild[child]
+		if !ok {
+			return nil, "parent_map", legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector graph could not align %s row %d to parent %s", edge.childTable, child, edge.parentTable)), nil
+		}
+		parentRows = append(parentRows, parent)
+	}
+	return parentRows, "parent_map", nil, nil
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipParentMap(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum) (map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, qsbridge.DiagnosticSet, error) {
