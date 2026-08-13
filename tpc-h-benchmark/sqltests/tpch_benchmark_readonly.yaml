@@ -43,16 +43,16 @@ tests:
     rows:
     - - A
       - F
-      - "24624"
+      - "73969"
     - - "N"
       - F
-      - "348"
+      - "1822"
     - - "N"
       - O
-      - "49205"
+      - "149722"
     - - R
       - F
-      - "23749"
+      - "74301"
 - id: tpch_benchmark_readonly.020.q3_grouped_revenue_limit
   status: supported
   kind: query
@@ -189,7 +189,7 @@ tests:
     columns:
     - revenue
     rows:
-    - - "2.1287137479000026e+06"
+    - - "5.933507833499993e+06"
 - id: tpch_benchmark_readonly.050.q12_same_row_date_comparison
   status: supported
   kind: query
@@ -215,7 +215,7 @@ tests:
     columns:
     - line_count
     rows:
-    - - "543"
+    - - "1585"
 - id: tpch_benchmark_readonly.060.q16_part_filter_count
   status: supported
   kind: query

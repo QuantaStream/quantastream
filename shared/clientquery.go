@@ -217,6 +217,46 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 		return ir, probes, nil
 	}
 
+	if distributedFragmentFanoutEligible(query) {
+		return c.queryGroupFragmentFanout(index, query)
+	}
+	return c.queryGroupWholeFanout(index, query)
+}
+
+func (c *BitmapIndex) queryGroupFragmentFanout(index string, query *pb.BitmapQuery) (*IntermediateResult, []QueryResultProbe, error) {
+	effective := cloneBitmapQuery(query)
+	ensureBitmapQueryHasUnion(effective)
+
+	group := NewIntermediateResult(index)
+	probes := make([]QueryResultProbe, 0)
+	for _, fragment := range flattenBitmapQueryFragments(effective) {
+		singleFragment := cloneQueryFragment(fragment)
+		singleFragment.ChildrenIds = nil
+		single := &pb.BitmapQuery{
+			Query:    []*pb.QueryFragment{singleFragment},
+			FromTime: effective.GetFromTime(),
+			ToTime:   effective.GetToTime(),
+		}
+		result, fragmentProbes, err := c.queryGroupWholeFanout(index, single)
+		if err != nil {
+			return nil, nil, err
+		}
+		probes = append(probes, fragmentProbes...)
+		result.Collapse()
+		bitmap := intermediateResultFinalBitmap(result)
+		switch fragment.GetOperation() {
+		case pb.QueryFragment_UNION:
+			group.AddUnion(bitmap)
+		case pb.QueryFragment_INTERSECT:
+			group.AddIntersect(bitmap)
+		default:
+			return nil, nil, fmt.Errorf("queryGroupFragmentFanout: unsupported operation %s", fragment.GetOperation())
+		}
+	}
+	return group, probes, nil
+}
+
+func (c *BitmapIndex) queryGroupWholeFanout(index string, query *pb.BitmapQuery) (*IntermediateResult, []QueryResultProbe, error) {
 	resultChan := make(chan *pb.QueryResult, 100)
 	var eg errgroup.Group
 
@@ -224,6 +264,9 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 
 	// Send the same query to each active node from one connection/status snapshot.
 	activeClients := c.activeClientsSnapshot()
+	if len(activeClients) == 0 {
+		return nil, nil, fmt.Errorf("queryGroup: no active bitmap nodes")
+	}
 	for _, n := range activeClients {
 		client := n.client
 		clientIndex := n.index
@@ -332,6 +375,144 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 	gr.AddExistence(roaring64.ParOr(len(ae), ae...))
 
 	return gr, probes, nil
+}
+
+func distributedFragmentFanoutEligible(query *pb.BitmapQuery) bool {
+	if query == nil || len(query.GetQuery()) <= 1 {
+		return false
+	}
+	for _, fragment := range query.GetQuery() {
+		if !distributedFragmentFanoutEligibleFragment(fragment) {
+			return false
+		}
+	}
+	return true
+}
+
+func distributedFragmentFanoutEligibleFragment(fragment *pb.QueryFragment) bool {
+	if fragment == nil {
+		return false
+	}
+	switch fragment.GetOperation() {
+	case pb.QueryFragment_INTERSECT, pb.QueryFragment_UNION:
+	default:
+		return false
+	}
+	if fragment.GetOrContext() || fragment.GetSamplePct() != 0 {
+		return false
+	}
+	if (fragment.GetNullCheck() || fragment.GetNegate()) && !(fragment.GetNullCheck() && fragment.GetNegate()) {
+		return false
+	}
+	return true
+}
+
+func flattenBitmapQueryFragments(query *pb.BitmapQuery) []*pb.QueryFragment {
+	if query == nil {
+		return nil
+	}
+	byID := make(map[string]*pb.QueryFragment, len(query.GetQuery()))
+	childIDs := make(map[string]struct{}, len(query.GetQuery()))
+	for _, fragment := range query.GetQuery() {
+		if fragment == nil {
+			continue
+		}
+		if fragment.GetId() != "" {
+			byID[fragment.GetId()] = fragment
+		}
+		for _, childID := range fragment.GetChildrenIds() {
+			childIDs[childID] = struct{}{}
+		}
+	}
+	var walk func(*pb.QueryFragment, map[string]bool, *[]*pb.QueryFragment) bool
+	walk = func(fragment *pb.QueryFragment, seen map[string]bool, out *[]*pb.QueryFragment) bool {
+		if fragment == nil {
+			return false
+		}
+		id := fragment.GetId()
+		if id != "" {
+			if seen[id] {
+				return false
+			}
+			seen[id] = true
+		}
+		*out = append(*out, fragment)
+		for _, childID := range fragment.GetChildrenIds() {
+			child := byID[childID]
+			if child == nil {
+				return false
+			}
+			if !walk(child, seen, out) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(byID) == 0 {
+		return query.GetQuery()
+	}
+	roots := make([]*pb.QueryFragment, 0)
+	for _, fragment := range query.GetQuery() {
+		if fragment == nil || fragment.GetId() == "" {
+			continue
+		}
+		if _, ok := childIDs[fragment.GetId()]; !ok {
+			roots = append(roots, fragment)
+		}
+	}
+	if len(roots) != 1 {
+		return query.GetQuery()
+	}
+	flattened := make([]*pb.QueryFragment, 0, len(query.GetQuery()))
+	if !walk(roots[0], make(map[string]bool, len(query.GetQuery())), &flattened) || len(flattened) != len(query.GetQuery()) {
+		return query.GetQuery()
+	}
+	return flattened
+}
+func cloneBitmapQuery(query *pb.BitmapQuery) *pb.BitmapQuery {
+	if query == nil {
+		return nil
+	}
+	clone := &pb.BitmapQuery{
+		Query:    make([]*pb.QueryFragment, 0, len(query.GetQuery())),
+		FromTime: query.GetFromTime(),
+		ToTime:   query.GetToTime(),
+	}
+	for _, fragment := range query.GetQuery() {
+		clone.Query = append(clone.Query, cloneQueryFragment(fragment))
+	}
+	return clone
+}
+
+func cloneQueryFragment(fragment *pb.QueryFragment) *pb.QueryFragment {
+	if fragment == nil {
+		return nil
+	}
+	clone := *fragment
+	clone.Value = cloneBytes(fragment.GetValue())
+	clone.Begin = cloneBytes(fragment.GetBegin())
+	clone.End = cloneBytes(fragment.GetEnd())
+	clone.Values = cloneByteSlices(fragment.GetValues())
+	clone.ChildrenIds = append([]string(nil), fragment.GetChildrenIds()...)
+	return &clone
+}
+
+func cloneBytes(value []byte) []byte {
+	if len(value) == 0 {
+		return nil
+	}
+	return append([]byte(nil), value...)
+}
+
+func cloneByteSlices(values [][]byte) [][]byte {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make([][]byte, len(values))
+	for i, value := range values {
+		clone[i] = cloneBytes(value)
+	}
+	return clone
 }
 
 func queryResultProbes(result *pb.QueryResult) []QueryResultProbe {

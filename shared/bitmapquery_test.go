@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"testing"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -124,5 +125,51 @@ func TestMergeIntermediateBitmapSlotTreatsMissingDifferenceSlotsAsEmpty(t *testi
 	}
 	if !merged.Contains(3) {
 		t.Fatalf("merged bitmap = %#v, want difference from first node", merged.ToArray())
+	}
+}
+
+func TestDistributedFragmentFanoutEligibilityDeclinesComplexQueries(t *testing.T) {
+	simple := &pb.BitmapQuery{Query: []*pb.QueryFragment{{
+		Id:        "root",
+		Index:     "lineitem",
+		Field:     "l_shipdate",
+		Operation: pb.QueryFragment_INTERSECT,
+		ChildrenIds: []string{
+			"child",
+		},
+	}, {
+		Id:        "child",
+		Index:     "lineitem",
+		Field:     "l_discount",
+		Operation: pb.QueryFragment_INTERSECT,
+	}}}
+	if !distributedFragmentFanoutEligible(simple) {
+		t.Fatal("simple tree-shaped intersect query should use distributed fragment fanout")
+	}
+	flattened := flattenBitmapQueryFragments(simple)
+	if len(flattened) != 2 {
+		t.Fatalf("flattened fragments = %d, want 2", len(flattened))
+	}
+	if flattened[0].GetId() != "root" || flattened[1].GetId() != "child" {
+		t.Fatalf("flattened ids = %#v, want root then child", []string{flattened[0].GetId(), flattened[1].GetId()})
+	}
+
+	complex := cloneBitmapQuery(simple)
+	complex.Query[0].NullCheck = true
+	complex.Query[0].Negate = true
+	if !distributedFragmentFanoutEligible(complex) {
+		t.Fatal("existence seed query should use distributed fragment fanout")
+	}
+
+	complex = cloneBitmapQuery(simple)
+	complex.Query[0].NullCheck = true
+	if distributedFragmentFanoutEligible(complex) {
+		t.Fatal("non-seed null-check query should stay on whole-query fanout")
+	}
+
+	join := cloneBitmapQuery(simple)
+	join.Query[1].Operation = pb.QueryFragment_INNER_JOIN
+	if distributedFragmentFanoutEligible(join) {
+		t.Fatal("join query should stay on whole-query fanout")
 	}
 }
