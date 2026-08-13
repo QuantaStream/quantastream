@@ -658,9 +658,10 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx c
 	if len(read.ChildRows) != len(read.ParentRows) {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, true, fmt.Errorf("relationship aggregate requires aligned child and parent rows")
 	}
+	validationField := qsbridge.RelationshipAlignedAggregateValidationField(read.ValueField)
 	executionRequest := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
 		Index:     valueIndex,
-		Field:     read.ValueField,
+		Field:     validationField,
 		Operation: qsbridge.QuantaOperationIntersect,
 		NullCheck: true,
 		Negate:    true,

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
 
@@ -553,7 +554,7 @@ func (m *BitmapIndex) RelationshipAlignedValueSumStorage(index, valueField strin
 	}
 
 	projectionStart := time.Now()
-	groupsByParent, projectionStats, aggregateElapsed, err := m.aggregateAlignedBSIValuesWithStats(index, valueField, fromTime, toTime, childRows, parentRows)
+	groupsByParent, projectionStats, aggregateElapsed, err := m.aggregateAlignedValuesWithStats(index, valueField, fromTime, toTime, childRows, parentRows)
 	if err != nil {
 		return nil, stats, true, err
 	}
@@ -567,6 +568,71 @@ func (m *BitmapIndex) RelationshipAlignedValueSumStorage(index, valueField strin
 		stats.TargetRows += group.Count
 	}
 	return groups, stats, true, nil
+}
+
+func (m *BitmapIndex) aggregateAlignedValuesWithStats(index, valueField string, fromTime, toTime int64, rownums []uint64, parentRows []uint64) (map[uint64]*RelationshipReverseArtifactSumGroup, ProjectBSIStats, time.Duration, error) {
+	if priceField, discountField, ok := qsbridge.ParseRelationshipAlignedDiscountedRevenueField(valueField); ok {
+		return m.aggregateAlignedDiscountedRevenueWithStats(index, priceField, discountField, fromTime, toTime, rownums, parentRows)
+	}
+	return m.aggregateAlignedBSIValuesWithStats(index, valueField, fromTime, toTime, rownums, parentRows)
+}
+
+func (m *BitmapIndex) aggregateAlignedDiscountedRevenueWithStats(index, priceField, discountField string, fromTime, toTime int64, rownums []uint64, parentRows []uint64) (map[uint64]*RelationshipReverseArtifactSumGroup, ProjectBSIStats, time.Duration, error) {
+	valuesByField, statsByField, err := m.ProjectBSIInt64ValuesWithStats(
+		index,
+		[]string{priceField, discountField},
+		fromTime,
+		toTime,
+		rownums,
+		relationshipReverseArtifactBitmap(rownums),
+		false,
+	)
+	if err != nil {
+		return nil, ProjectBSIStats{}, 0, err
+	}
+	stats := relationshipReverseArtifactCombineProjectionStats(statsByField[priceField], statsByField[discountField])
+	priceValues := valuesByField[priceField]
+	discountValues := valuesByField[discountField]
+	aggregateStart := time.Now()
+	groupsByParent := make(map[uint64]*RelationshipReverseArtifactSumGroup, relationshipReverseArtifactUniqueUint64Count(parentRows))
+	for i, rownum := range rownums {
+		if i >= len(parentRows) || i >= len(priceValues.Exists) || i >= len(discountValues.Exists) || !priceValues.Exists[i] || !discountValues.Exists[i] {
+			continue
+		}
+		parentRow := parentRows[i]
+		group := groupsByParent[parentRow]
+		if group == nil {
+			group = &RelationshipReverseArtifactSumGroup{
+				ParentValue:       parentRow,
+				RepresentativeRow: rownum,
+				Sum:               big.NewInt(0),
+			}
+			groupsByParent[parentRow] = group
+		}
+		group.Sum.Add(group.Sum, relationshipDiscountedRevenueScaledValue(priceValues.Values[i], discountValues.Values[i]))
+		group.Count++
+	}
+	return groupsByParent, stats, time.Since(aggregateStart), nil
+}
+
+func relationshipDiscountedRevenueScaledValue(priceScaled int64, discountScaled int64) *big.Int {
+	value := big.NewInt(priceScaled)
+	value.Mul(value, big.NewInt(100-discountScaled))
+	return value.Quo(value, big.NewInt(100))
+}
+
+func relationshipReverseArtifactCombineProjectionStats(left ProjectBSIStats, right ProjectBSIStats) ProjectBSIStats {
+	return ProjectBSIStats{
+		ShardsVisited:    left.ShardsVisited + right.ShardsVisited,
+		ShardsInWindow:   left.ShardsInWindow + right.ShardsInWindow,
+		ShardsLocal:      left.ShardsLocal + right.ShardsLocal,
+		ShardsRetained:   left.ShardsRetained + right.ShardsRetained,
+		RetainedRows:     left.RetainedRows + right.RetainedRows,
+		RetainBypassRows: left.RetainBypassRows + right.RetainBypassRows,
+		RetainElapsed:    left.RetainElapsed + right.RetainElapsed,
+		ValueElapsed:     left.ValueElapsed + right.ValueElapsed,
+		MergeElapsed:     left.MergeElapsed + right.MergeElapsed,
+	}
 }
 
 // RelationshipReverseArtifactStatsStorage returns maintained artifact cardinality

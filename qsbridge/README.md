@@ -191,6 +191,9 @@ Quanta-custom origin plus expression, aggregate, predicate, or table placement
 so planning diagnostics can distinguish standard SQL from intentional
 extensions and keep predicate-only functions such as sampling out of normal
 projection semantics.
+`relationship_aggregate_expr.go` contains neutral storage-expression tokens
+for relationship aligned aggregates that runtime adapters and storage nodes can
+share without importing each other.
 
 `function_registry.go` centralizes built-in function metadata for SQL scalar
 functions, SQL aggregates, catalog default expressions, and streaming selector

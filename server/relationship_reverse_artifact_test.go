@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
 )
@@ -390,6 +391,46 @@ func TestRelationshipAlignedValueSumStorageGroupsProjectedValues(t *testing.T) {
 	}
 }
 
+func TestRelationshipAlignedValueSumStorageDiscountedRevenueExpression(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, false)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_extendedprice", shardTime, map[uint64]int64{
+		2: 1000,
+		4: 2500,
+		6: 500,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_discount", shardTime, map[uint64]int64{
+		2: 5,
+		4: 10,
+		6: 20,
+	}, false))
+
+	valueField := qsbridge.RelationshipAlignedDiscountedRevenueField("l_extendedprice", "l_discount")
+	groups, stats, ok, err := index.RelationshipAlignedValueSumStorage("lineitem", valueField, 0, 0, []uint64{2, 4, 6, 4}, []uint64{7, 8, 8, 9})
+	if err != nil {
+		t.Fatalf("RelationshipAlignedValueSumStorage discounted revenue error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipAlignedValueSumStorage discounted revenue ok = false, want true")
+	}
+	if len(groups) != 3 {
+		t.Fatalf("groups = %#v, want three parent groups", groups)
+	}
+	if groups[0].ParentValue != 7 || groups[0].RepresentativeRow != 2 || groups[0].Count != 1 || groups[0].Sum.Int64() != 950 {
+		t.Fatalf("group[0] = %#v, want parent 7 sum 950", groups[0])
+	}
+	if groups[1].ParentValue != 8 || groups[1].RepresentativeRow != 4 || groups[1].Count != 2 || groups[1].Sum.Int64() != 2650 {
+		t.Fatalf("group[1] = %#v, want parent 8 sum 2650", groups[1])
+	}
+	if groups[2].ParentValue != 9 || groups[2].RepresentativeRow != 4 || groups[2].Count != 1 || groups[2].Sum.Int64() != 2250 {
+		t.Fatalf("group[2] = %#v, want duplicate child row counted for parent 9", groups[2])
+	}
+	if stats.Rows != 4 || stats.Values != 3 || stats.SourceValues != 3 || stats.TargetRows != 4 || stats.Groups != 3 {
+		t.Fatalf("stats = %#v, want rows=4 values=3 sourceValues=3 targetRows=4 groups=3", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactRebuiltFromPersistedBSIStartup(t *testing.T) {
 	hot := newRelationshipReverseArtifactPersistenceTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
@@ -545,6 +586,10 @@ attributes:
     mappingStrategy: ParentRelation
     foreignKey: supplier.s_suppkey
   - fieldName: l_extendedprice
+    type: Float
+    mappingStrategy: FloatScaleBSI
+    scale: 2
+  - fieldName: l_discount
     type: Float
     mappingStrategy: FloatScaleBSI
     scale: 2

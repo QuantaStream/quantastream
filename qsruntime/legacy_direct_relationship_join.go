@@ -1217,6 +1217,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 			}
 		}
 	}
+	if preAggResult, handled, err := e.legacyDirectRelationshipDiscountedRevenueResult(ctx, request, sink, rownums, edges, fields, alignedRows, tupleRows, graphReductionElapsed, alignmentElapsed, tupleExpansionElapsed, sameRowElapsed, membershipElapsed, residualElapsed, result); handled || err != nil {
+		return preAggResult, err
+	}
 	residuals = directBitmapResidualScanPredicates(request)
 	fields = legacyDirectRelationshipPostReductionMaterializationFields(request, fields)
 	if len(fields) == 0 {
