@@ -1324,11 +1324,11 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	if timing.reverseArtifactLocalMode != "omitted_target_candidate_rows" {
 		t.Fatalf("reverse artifact local mode = %q, want omitted_target_candidate_rows", timing.reverseArtifactLocalMode)
 	}
-	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{4, 2}) {
-		t.Fatalf("joined = %#v, want artifact order [4 2]", joined)
+	if !sameRownumSet(joined, []qsbridge.QuantaRownum{4, 2}) {
+		t.Fatalf("joined = %#v, want rows 4 and 2", joined)
 	}
 	wantPairs := []legacyDirectRelationshipPair{{child: 4, parent: 9}, {child: 2, parent: 7}}
-	if !reflect.DeepEqual(pairs, wantPairs) {
+	if !sameLegacyDirectRelationshipPairSet(pairs, wantPairs) {
 		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
 	}
 }
@@ -5875,4 +5875,38 @@ func assertLegacyDirectRelationshipMaterializationRownums(t *testing.T, requests
 		return
 	}
 	t.Fatalf("materializations = %#v, want request for %s", requests, index)
+}
+
+func sameRownumSet(got, want []qsbridge.QuantaRownum) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[qsbridge.QuantaRownum]int, len(want))
+	for _, rownum := range want {
+		seen[rownum]++
+	}
+	for _, rownum := range got {
+		if seen[rownum] == 0 {
+			return false
+		}
+		seen[rownum]--
+	}
+	return true
+}
+
+func sameLegacyDirectRelationshipPairSet(got, want []legacyDirectRelationshipPair) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[legacyDirectRelationshipPair]int, len(want))
+	for _, pair := range want {
+		seen[pair]++
+	}
+	for _, pair := range got {
+		if seen[pair] == 0 {
+			return false
+		}
+		seen[pair]--
+	}
+	return true
 }

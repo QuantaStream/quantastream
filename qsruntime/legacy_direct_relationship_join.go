@@ -4236,15 +4236,14 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 	if len(candidateRows) == 0 || len(parentValueByChild) == 0 || len(parentKeyRows) == 0 {
 		return nil, nil, nil, false
 	}
+	if len(candidateRows) != len(parentValueByChild) {
+		return legacyDirectRelationshipRowsFromArtifactParentValueMap(parentValueByChild, parentKeyRows)
+	}
 	rows := candidateRows
-	seenRows := make(map[qsbridge.QuantaRownum]struct{}, len(parentValueByChild))
 	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(parentValueByChild))
 	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(parentValueByChild))
 	pairs := make([]legacyDirectRelationshipPair, 0, len(parentValueByChild))
 	for _, child := range rows {
-		if _, seen := seenRows[child]; seen {
-			continue
-		}
 		parentValue, ok := parentValueByChild[child]
 		if !ok {
 			return nil, nil, nil, false
@@ -4253,7 +4252,25 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 		if !ok {
 			return nil, nil, nil, false
 		}
-		seenRows[child] = struct{}{}
+		narrowedRows = append(narrowedRows, child)
+		parentByChild[child] = parentRow
+		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
+	}
+	return narrowedRows, parentByChild, pairs, true
+}
+
+func legacyDirectRelationshipRowsFromArtifactParentValueMap(parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
+	if len(parentValueByChild) == 0 || len(parentKeyRows) == 0 {
+		return nil, nil, nil, false
+	}
+	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(parentValueByChild))
+	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(parentValueByChild))
+	pairs := make([]legacyDirectRelationshipPair, 0, len(parentValueByChild))
+	for child, parentValue := range parentValueByChild {
+		parentRow, ok := parentKeyRows[parentValue]
+		if !ok {
+			return nil, nil, nil, false
+		}
 		narrowedRows = append(narrowedRows, child)
 		parentByChild[child] = parentRow
 		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
