@@ -8,23 +8,26 @@ source "$script_dir/lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: ./startup-scripts/aws/deploy-distributed.sh [--pull] [--no-start]
+Usage: ./startup-scripts/aws/deploy-distributed.sh [--no-pull] [--no-start]
 
 Deploys distributed QuantaStream services for the configured AWS fleet.
 Run this from bench-runner after editing quantastream-aws.env.
 
 Options:
-  --pull      git pull --ff-only on bench-runner and each QS node before building.
+  --no-pull   skip git pull --ff-only on bench-runner and each QS node.
   --no-start  install/enable services, but do not restart them now.
 EOF
 }
 
-do_pull=0
+do_pull=1
 enable_now=1
 for arg in "$@"; do
   case "$arg" in
     --pull)
       do_pull=1
+      ;;
+    --no-pull)
+      do_pull=0
       ;;
     --no-start)
       enable_now=0
