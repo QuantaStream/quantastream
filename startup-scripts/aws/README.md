@@ -43,6 +43,12 @@ Load an empty, fully joined cluster:
 ./startup-scripts/aws/load-tpch-distributed.sh
 ```
 
+Reset distributed node data before a fresh load:
+
+```sh
+./startup-scripts/aws/reset-distributed-data.sh --confirm
+```
+
 Run the compact read-only suite:
 
 ```sh
