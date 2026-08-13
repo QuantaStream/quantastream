@@ -994,9 +994,11 @@ func TestLegacyDirectRelationshipReduceUsesSortedReverseArtifactCandidates(t *te
 	for row := 1; row <= 1500; row++ {
 		childRows = append(childRows, qsbridge.QuantaRownum(row))
 	}
+	var artifactRead LegacyDirectRelationshipVectorReadRequest
 	executor := LegacyDirectRelationshipVectorJoinExecutor{
 		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
-			OK: true,
+			OK:       true,
+			LastRead: &artifactRead,
 			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
 				Candidates: qsbridge.QuantaCandidateSet{
 					Index:   "lineitem",
@@ -1037,6 +1039,9 @@ func TestLegacyDirectRelationshipReduceUsesSortedReverseArtifactCandidates(t *te
 	}
 	if diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if !reflect.DeepEqual(artifactRead.TargetCandidateRows, childRows) {
+		t.Fatalf("artifact target candidate rows = %d rows, want childRows", len(artifactRead.TargetCandidateRows))
 	}
 	if timing.reverseArtifactLocalMode != "sorted_candidate_single_pass" {
 		t.Fatalf("reverseArtifactLocalMode = %q, want sorted_candidate_single_pass", timing.reverseArtifactLocalMode)

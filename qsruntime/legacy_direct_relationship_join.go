@@ -3745,6 +3745,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	readStart := time.Now()
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
 	read.MaxEstimatedTargetRows = len(childRows)
+	read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)
 	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
 	localTiming.readElapsed = time.Since(readStart)
 	start := time.Now()

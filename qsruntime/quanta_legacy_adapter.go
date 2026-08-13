@@ -365,11 +365,11 @@ func legacyDirectBitmapGroupAggregates(bitIndex *legacy.BitmapIndex, index strin
 	}, true, nil
 }
 
-func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.BitmapIndex, index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, LegacyDirectRelationshipVectorReverseArtifactStats, int, time.Duration, bool, error) {
+func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.BitmapIndex, index, field string, sourceValues []int64, candidateRows []qsbridge.QuantaRownum) ([]uint64, map[uint64]int64, LegacyDirectRelationshipVectorReverseArtifactStats, int, time.Duration, bool, error) {
 	if bitIndex == nil {
 		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, false, fmt.Errorf("relationship reverse artifact adapter received nil bitmap index")
 	}
-	rownums, parentValueByChild, stats, ok, err := bitIndex.RelationshipReverseArtifactCandidateValues(index, field, sourceValues)
+	rownums, parentValueByChild, stats, ok, err := bitIndex.RelationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, legacyDirectRelationshipAggregateUint64Rows(candidateRows))
 	if err != nil || !ok {
 		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
 	}

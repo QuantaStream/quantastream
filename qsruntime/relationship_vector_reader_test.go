@@ -1272,15 +1272,20 @@ type fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader struct {
 	OK          bool
 	StatsOK     bool
 	Calls       *int
+	LastRead    *LegacyDirectRelationshipVectorReadRequest
 }
 
 func (r fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader) ReadRelationshipVectorReverseArtifactCandidates(
-	context.Context,
-	LegacyDirectRelationshipVectorReadRequest,
-	[]int64,
+	_ context.Context,
+	read LegacyDirectRelationshipVectorReadRequest,
+	sourceValues []int64,
 ) (LegacyDirectRelationshipVectorReverseArtifactCandidateResult, qsbridge.DiagnosticSet, bool, error) {
+	_ = sourceValues
 	if r.Calls != nil {
 		*r.Calls++
+	}
+	if r.LastRead != nil {
+		*r.LastRead = read
 	}
 	return r.Result, r.Diagnostics, r.OK, r.Err
 }

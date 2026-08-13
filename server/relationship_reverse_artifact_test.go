@@ -149,6 +149,34 @@ func TestRelationshipReverseArtifactCandidateValuesUnordered(t *testing.T) {
 	}
 }
 
+func TestRelationshipReverseArtifactCandidateValuesForRowsFiltersCandidates(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		2: 7,
+		4: 8,
+		6: 8,
+	}, false))
+
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValuesForRows("lineitem", "l_orderkey", []int64{8, 7}, []uint64{4, 9})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValuesForRows error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipReverseArtifactCandidateValuesForRows ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4}) {
+		t.Fatalf("rownums = %#v, want [4]", rownums)
+	}
+	if !reflect.DeepEqual(parentValues, map[uint64]int64{4: 8}) {
+		t.Fatalf("parentValues = %#v, want retained child parent value", parentValues)
+	}
+	if stats.TargetRows != 1 || stats.SourceValues != 2 {
+		t.Fatalf("stats = %#v, want targetRows=1 sourceValues=2", stats)
+	}
+}
+
 func TestRelationshipSiblingDiversityCandidates(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()

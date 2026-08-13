@@ -1219,6 +1219,13 @@ func (c *BitmapIndex) BitmapGroupAggregates(index string, groupFields []string, 
 // RelationshipReverseArtifactCandidateValues asks readable nodes for child rows
 // keyed by a maintained parent-to-child reverse relationship artifact.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return c.RelationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, nil)
+}
+
+// RelationshipReverseArtifactCandidateValuesForRows asks readable nodes for
+// child rows keyed by a maintained parent-to-child reverse relationship
+// artifact, optionally retaining only a caller-supplied child row set.
+func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	if index == "" {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
 	}
@@ -1226,9 +1233,10 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: field not specified")
 	}
 	req := &pb.RelationshipReverseArtifactCandidatesRequest{
-		Index:        index,
-		Field:        field,
-		SourceValues: append([]int64(nil), sourceValues...),
+		Index:         index,
+		Field:         field,
+		SourceValues:  append([]int64(nil), sourceValues...),
+		CandidateRows: append([]uint64(nil), candidateRows...),
 	}
 	if c.local != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), Deadline)

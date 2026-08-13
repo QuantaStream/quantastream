@@ -384,6 +384,7 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 		read.VectorIndex,
 		read.VectorField,
 		sourceValues,
+		read.TargetCandidateRows,
 	)
 	elapsed := time.Since(start)
 	result := LegacyDirectRelationshipVectorReverseArtifactCandidateResult{

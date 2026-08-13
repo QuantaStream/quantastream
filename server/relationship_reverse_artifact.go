@@ -102,14 +102,28 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidatesStorage(index, field 
 // RelationshipReverseArtifactCandidateValues returns child-domain rownums plus
 // the parent-domain value encoded for each returned child row.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, true)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, true)
+}
+
+// RelationshipReverseArtifactCandidateValuesForRows returns child-domain
+// rownums plus parent-domain values, retaining only rows in candidateRows when
+// a candidate set is supplied.
+func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, true)
 }
 
 // RelationshipReverseArtifactCandidateValuesUnordered returns child-domain
 // rownums without sorting them. It is intended for callers that reconstruct
 // child-domain order from their own candidate row set.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesUnordered(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, false)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, false)
+}
+
+// RelationshipReverseArtifactCandidateValuesForRowsUnordered returns
+// child-domain rownums plus parent-domain values, retaining only rows in
+// candidateRows when supplied and leaving rows in artifact iteration order.
+func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, false)
 }
 
 type relationshipSiblingDiversityGroup struct {
@@ -421,7 +435,7 @@ func relationshipSiblingDiversityCacheKey(valueField string, fromTime, toTime in
 	return valueField + "\x00" + strconv.FormatInt(fromTime, 10) + "\x00" + strconv.FormatInt(toTime, 10)
 }
 
-func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	start := time.Now()
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
@@ -439,6 +453,10 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 	}
 	uniqueValues := relationshipReverseArtifactUniqueInt64Values(sourceValues)
 	targetCapacity := relationshipReverseArtifactCandidateCapacity(artifact, len(uniqueValues))
+	candidateSet := relationshipReverseArtifactBitmap(candidateRows)
+	if candidateSet != nil && uint64(targetCapacity) > candidateSet.GetCardinality() {
+		targetCapacity = int(candidateSet.GetCardinality())
+	}
 	rownums := make([]uint64, 0, targetCapacity)
 	parentValueByChild := make(map[uint64]int64, targetCapacity)
 	for _, value := range uniqueValues {
@@ -446,6 +464,9 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 			it := bitmap.Iterator()
 			for it.HasNext() {
 				rownum := it.Next()
+				if candidateSet != nil && !candidateSet.Contains(rownum) {
+					continue
+				}
 				if _, ok := parentValueByChild[rownum]; ok {
 					continue
 				}

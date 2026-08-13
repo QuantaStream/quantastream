@@ -1039,10 +1039,11 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rownums, parentValues, stats, ok, err := m.RelationshipReverseArtifactCandidateValuesUnordered(
+	rownums, parentValues, stats, ok, err := m.RelationshipReverseArtifactCandidateValuesForRowsUnordered(
 		req.GetIndex(),
 		req.GetField(),
 		req.GetSourceValues(),
+		req.GetCandidateRows(),
 	)
 	if err != nil {
 		return nil, err
