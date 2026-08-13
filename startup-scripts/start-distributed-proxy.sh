@@ -16,7 +16,7 @@ DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 SESSION_POOL_SIZE="${QUANTASTREAM_SESSION_POOL_SIZE:-0}"
 PPROF_BIND="${QUANTASTREAM_PPROF_BIND:-}"
-GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-1}"
+GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-0}"
 
 usage() {
   cat <<'EOF'
@@ -37,7 +37,7 @@ Environment:
   QUANTASTREAM_SESSION_POOL_SIZE Direct runtime session pool size. Defaults to runtime default.
   QUANTASTREAM_PPROF_BIND        Optional pprof bind address.
   QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED
-                                  Set 0 to disable graph equality role seeds. Defaults to 1.
+                                  Set 1 to enable graph equality role seeds. Defaults to 0.
 EOF
 }
 

@@ -18,7 +18,7 @@ DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 SESSION_POOL_SIZE="${QUANTASTREAM_SESSION_POOL_SIZE:-0}"
 PPROF_BIND="${QUANTASTREAM_PPROF_BIND:-}"
-GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-1}"
+GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-0}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -68,7 +68,7 @@ Environment:
   QUANTASTREAM_DATABASE         default database/schema. Defaults to quanta.
   QUANTASTREAM_RUNTIME_PROBES   set true to log runtime probes.
   QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED
-                                  set 0 to disable graph equality role seeds. Defaults to 1.
+                                  set 1 to enable graph equality role seeds. Defaults to 0.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF

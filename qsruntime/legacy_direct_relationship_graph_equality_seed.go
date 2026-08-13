@@ -25,13 +25,13 @@ type legacyDirectRelationshipGraphEqualityRoleSeed struct {
 func legacyDirectRelationshipGraphEqualityRoleSeedEnabled() bool {
 	raw := strings.TrimSpace(os.Getenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED"))
 	if raw == "" {
-		return true
+		return false
 	}
 	switch strings.ToLower(raw) {
-	case "0", "false", "no", "off":
-		return false
-	default:
+	case "1", "true", "yes", "on":
 		return true
+	default:
+		return false
 	}
 }
 

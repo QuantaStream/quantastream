@@ -11,8 +11,8 @@ import (
 
 func TestLegacyDirectRelationshipGraphEqualityRoleSeedEnabled(t *testing.T) {
 	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "")
-	if !legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
-		t.Fatalf("default equality role seed enabled = false, want true")
+	if legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
+		t.Fatalf("default equality role seed enabled = true, want false")
 	}
 	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "0")
 	if legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
