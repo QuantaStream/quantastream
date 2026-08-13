@@ -8,7 +8,7 @@ cd "$repo_root"
 
 NODE_BIN="${QUANTASTREAM_NODE_BIN:-$repo_root/bin/quantastream-node}"
 NODE_HASH_KEY="${QUANTASTREAM_NODE_HASH_KEY:-$(hostname -s)}"
-DATA_DIR="${QUANTASTREAM_DATA_DIR:-$repo_root/tpc-h-benchmark/local/standard-data}"
+DATA_DIR="${QUANTASTREAM_DATA_DIR:-$repo_root/tpc-h-benchmark/local/distributed-data}"
 BIND_ADDRESS="${QUANTASTREAM_NODE_BIND:-0.0.0.0}"
 NODE_PORT="${QUANTASTREAM_NODE_PORT:-4400}"
 CONSUL_ENDPOINT="${QUANTASTREAM_CONSUL_ENDPOINT:-127.0.0.1:8500}"
@@ -27,7 +27,7 @@ variables into the expected process form.
 Environment:
   QUANTASTREAM_NODE_BIN          quantastream-node binary path.
   QUANTASTREAM_NODE_HASH_KEY     Consistent-hash key. Defaults to hostname -s.
-  QUANTASTREAM_DATA_DIR          Data directory. Defaults to tpc-h-benchmark/local/standard-data.
+  QUANTASTREAM_DATA_DIR          Data directory. Defaults to tpc-h-benchmark/local/distributed-data.
   QUANTASTREAM_NODE_BIND         Node bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_NODE_PORT         Node service port. Defaults to 4400.
   QUANTASTREAM_CONSUL_ENDPOINT   Local Consul agent endpoint. Defaults to 127.0.0.1:8500.

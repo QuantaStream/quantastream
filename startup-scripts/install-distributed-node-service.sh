@@ -9,7 +9,7 @@ SERVICE_NAME="${SERVICE_NAME:-quantastream-node}"
 SERVICE_USER="${SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/quantastream/bin}"
 ENV_DIR="${ENV_DIR:-/etc/quantastream}"
-DATA_DIR="${QUANTASTREAM_DATA_DIR:-$repo_root/tpc-h-benchmark/local/standard-data}"
+DATA_DIR="${QUANTASTREAM_DATA_DIR:-$repo_root/tpc-h-benchmark/local/distributed-data}"
 NODE_HASH_KEY="${QUANTASTREAM_NODE_HASH_KEY:-$(hostname -s)}"
 NODE_BIND="${QUANTASTREAM_NODE_BIND:-0.0.0.0}"
 NODE_PORT="${QUANTASTREAM_NODE_PORT:-4400}"
@@ -54,7 +54,7 @@ Builds quantastream-node and installs a systemd service for distributed data
 nodes. Override configuration with environment variables, for example:
 
   QUANTASTREAM_NODE_HASH_KEY=qs-server-1 \
-  QUANTASTREAM_DATA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/local/standard-data \
+  QUANTASTREAM_DATA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/local/distributed-data \
     sudo -E ./startup-scripts/install-distributed-node-service.sh
 
 Environment:
@@ -63,7 +63,7 @@ Environment:
   INSTALL_DIR                   binary install directory. Defaults to /opt/quantastream/bin.
   ENV_DIR                       environment file directory. Defaults to /etc/quantastream.
   QUANTASTREAM_NODE_HASH_KEY    consistent-hash key. Defaults to hostname -s.
-  QUANTASTREAM_DATA_DIR         data directory.
+  QUANTASTREAM_DATA_DIR         data directory. Defaults to tpc-h-benchmark/local/distributed-data.
   QUANTASTREAM_NODE_BIND        node bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_NODE_PORT        node service port. Defaults to 4400.
   QUANTASTREAM_CONSUL_ENDPOINT  local Consul agent endpoint. Defaults to 127.0.0.1:8500.
@@ -91,7 +91,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 2
 fi
 
-mkdir -p "$INSTALL_DIR" "$ENV_DIR"
+mkdir -p "$INSTALL_DIR" "$ENV_DIR" "$DATA_DIR"
+chown "$SERVICE_USER":"$SERVICE_USER" "$DATA_DIR"
 GO_BIN="$(resolve_go)"
 "$GO_BIN" -C "$repo_root" build -o "$INSTALL_DIR/quantastream-node" ./quanta-node.go
 chmod 0755 "$INSTALL_DIR/quantastream-node"

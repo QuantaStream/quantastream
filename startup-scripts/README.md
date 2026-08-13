@@ -78,7 +78,7 @@ Useful node overrides:
 
 ```sh
 QUANTASTREAM_NODE_HASH_KEY=qs-server-1 \
-QUANTASTREAM_DATA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/local/standard-data \
+QUANTASTREAM_DATA_DIR=/home/ubuntu/quantastream/tpc-h-benchmark/local/distributed-data \
 QUANTASTREAM_NODE_PORT=4400 \
   sudo -E ./startup-scripts/install-distributed-node-service.sh
 ```
@@ -109,10 +109,10 @@ QuantaStream processes automatically.
 For correctness benchmarks, do not expose the same fully loaded single-node data
 directory from multiple cloned QS servers unless replication is the explicit test
 case. Until cluster scale-out sync/rebalance is designed and validated, start
-distributed nodes with empty per-node storage, bring the full target cluster
-online, and then load through the distributed path. Online scale-out from an
-already loaded node is a future 2.0-class capability, not a supported benchmark
-setup.
+distributed nodes with empty per-node storage separate from standalone
+`standard-data`, bring the full target cluster online, and then load through the
+distributed path. Online scale-out from an already loaded node is a future
+2.0-class capability, not a supported benchmark setup.
 
 AWS helper scripts for deploys, health checks, schema sync, distributed loads,
 and read-only benchmark runs live in `startup-scripts/aws/`.

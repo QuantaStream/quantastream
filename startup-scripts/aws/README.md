@@ -71,5 +71,8 @@ Restart or inspect services:
 ```
 
 For correctness benchmarks, start every target data node empty, verify the full
-target cluster is GREEN, then load through the distributed path. Online
-scale-out from already loaded data is future 2.0 work.
+target cluster is GREEN, then load through the distributed path. Keep
+distributed data under a separate directory such as
+`tpc-h-benchmark/local/distributed-data`; do not point distributed services at
+the standalone `standard-data` directory used by single-node standard mode.
+Online scale-out from already loaded data is future 2.0 work.
