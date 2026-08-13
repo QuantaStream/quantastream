@@ -19,6 +19,33 @@ LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
+resolve_go() {
+  if [[ -n "${GO_BIN:-}" && -x "$GO_BIN" ]]; then
+    printf '%s\n' "$GO_BIN"
+    return
+  fi
+  if command -v go >/dev/null 2>&1; then
+    command -v go
+    return
+  fi
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && command -v runuser >/dev/null 2>&1; then
+    local user_go
+    user_go="$(runuser -u "$SUDO_USER" -- bash -lc 'command -v go' 2>/dev/null || true)"
+    if [[ -n "$user_go" && -x "$user_go" ]]; then
+      printf '%s\n' "$user_go"
+      return
+    fi
+  fi
+  for candidate in /usr/local/go/bin/go /usr/bin/go /snap/bin/go; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  echo "go not found. Set GO_BIN=/path/to/go or install Go for root/sudo PATH." >&2
+  exit 2
+}
+
 usage() {
   cat <<'EOF'
 Usage: sudo ./startup-scripts/install-distributed-node-service.sh
@@ -40,6 +67,7 @@ Environment:
   QUANTASTREAM_NODE_BIND        node bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_NODE_PORT        node service port. Defaults to 4400.
   QUANTASTREAM_CONSUL_ENDPOINT  local Consul agent endpoint. Defaults to 127.0.0.1:8500.
+  GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
 }
@@ -64,7 +92,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 mkdir -p "$INSTALL_DIR" "$ENV_DIR"
-go -C "$repo_root" build -o "$INSTALL_DIR/quantastream-node" ./quanta-node.go
+GO_BIN="$(resolve_go)"
+"$GO_BIN" -C "$repo_root" build -o "$INSTALL_DIR/quantastream-node" ./quanta-node.go
 chmod 0755 "$INSTALL_DIR/quantastream-node"
 chmod 0755 "$repo_root/startup-scripts/start-distributed-node.sh"
 
