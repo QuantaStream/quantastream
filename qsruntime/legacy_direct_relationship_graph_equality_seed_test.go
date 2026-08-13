@@ -94,6 +94,31 @@ func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesIgnoreJoinEdgeEq
 	}
 }
 
+func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesIgnoreOnScopePredicates(t *testing.T) {
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	oOrderKey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
+	lOrderKey := qsbridge.FieldRef{Table: lineitem, Name: "l_orderkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(oOrderKey), qsbridge.Field(lOrderKey)),
+		Placement: qsbridge.PredicateResidualJoin,
+		Scope:     qsbridge.PredicateScopeOn,
+	}}
+	rowsByRole := map[string][]qsbridge.QuantaRownum{
+		"o": {10, 20},
+		"l": {1, 2, 3, 4},
+	}
+	fullDomain := map[string]bool{
+		"o": false,
+		"l": true,
+	}
+
+	if candidates := legacyDirectRelationshipGraphEqualityRoleSeedCandidates(request, rowsByRole, fullDomain); len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, want none for ON-scope residual predicate", candidates)
+	}
+}
+
 func TestLegacyDirectRelationshipApplyGraphEqualityRoleSeedsNarrowsFullDomainTarget(t *testing.T) {
 	supplier := qsbridge.TableInstance{Table: "supplier", Alias: "s"}
 	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}

@@ -208,6 +208,9 @@ func legacyDirectRelationshipGraphEqualityFields(request ExecutionRequest) []leg
 }
 
 func legacyDirectRelationshipGraphEqualityPredicateSupportsSemijoinSeed(predicate qsbridge.Predicate) bool {
+	if predicate.Scope != qsbridge.PredicateScopeWhere {
+		return false
+	}
 	return predicate.Placement == qsbridge.PredicateResidualScan || predicate.Placement == qsbridge.PredicateResidualJoin
 }
 
