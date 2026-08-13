@@ -1227,10 +1227,21 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 	return c.RelationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, nil)
 }
 
+// RelationshipReverseArtifactCandidateValuesForRowsUnordered asks readable
+// nodes for child rows without imposing a merged row order. Callers must only
+// use this when candidate row order is not semantically required downstream.
+func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false)
+}
+
 // RelationshipReverseArtifactCandidateValuesForRows asks readable nodes for
 // child rows keyed by a maintained parent-to-child reverse relationship
 // artifact, optionally retaining only a caller-supplied child row set.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, true)
+}
+
+func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	if index == "" {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
 	}
@@ -1253,7 +1264,7 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, f
 			return nil, nil, RelationshipReverseArtifactStats{}, false, err
 		}
 		mergeStart := time.Now()
-		rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues)
+		rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues, sortRows)
 		stats.FanoutElapsed = callElapsed
 		stats.ClientRPCElapsed = callElapsed
 		stats.MaxClientRPCElapsed = callElapsed
@@ -1301,7 +1312,7 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, f
 		}
 	}
 	mergeStart := time.Now()
-	rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues)
+	rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues, sortRows)
 	stats.FanoutElapsed = fanoutElapsed
 	stats.ClientRPCElapsed = clientRPCElapsed
 	stats.MaxClientRPCElapsed = maxClientRPCElapsed
@@ -1485,7 +1496,7 @@ func relationshipAlignedValueSumShardRoutableValueField(valueField string) bool 
 	return true
 }
 
-func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.RelationshipReverseArtifactCandidatesResponse, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.RelationshipReverseArtifactCandidatesResponse, sourceValues []int64, sortRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	stats := RelationshipReverseArtifactStats{
 		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
 	}
@@ -1520,9 +1531,11 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		}
 		stats.ParentMergeElapsed += time.Since(parentMergeStart)
 	}
-	sortStart := time.Now()
-	sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
-	stats.SortElapsed = time.Since(sortStart)
+	if sortRows {
+		sortStart := time.Now()
+		sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
+		stats.SortElapsed = time.Since(sortStart)
+	}
 	stats.TargetRows = uint64(len(rownums))
 	return rownums, parentValueByChild, stats, ok, nil
 }

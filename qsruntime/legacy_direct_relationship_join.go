@@ -4149,6 +4149,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	read.MaxEstimatedTargetRows = len(childRows)
 	if options.omitFullDomainTargetCandidates {
 		localTiming.targetCandidateMode = "omitted_full_domain"
+		read.PreserveArtifactOrder = true
 	} else {
 		localTiming.targetCandidateMode = "retained"
 		read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)
@@ -4236,10 +4237,6 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 		return nil, nil, nil, false
 	}
 	rows := candidateRows
-	if !legacyDirectRelationshipRownumsAscending(rows) {
-		rows = append([]qsbridge.QuantaRownum(nil), rows...)
-		sort.Slice(rows, func(i, j int) bool { return rows[i] < rows[j] })
-	}
 	parentByChild := make(map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, len(rows))
 	pairs := make([]legacyDirectRelationshipPair, 0, len(rows))
 	for _, child := range rows {

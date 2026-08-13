@@ -43,6 +43,7 @@ type LegacyDirectRelationshipVectorReadRequest struct {
 	AllowCandidateSuperset bool
 	MaxEstimatedTargetRows int
 	TargetCandidateRows    []qsbridge.QuantaRownum
+	PreserveArtifactOrder  bool
 }
 
 // LegacyDirectRelationshipVectorReader is the future bridge into relationship-vector reads.

@@ -1270,7 +1270,7 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
 				Candidates: qsbridge.QuantaCandidateSet{
 					Index:   "lineitem",
-					Rownums: []qsbridge.QuantaRownum{2, 4},
+					Rownums: []qsbridge.QuantaRownum{4, 2},
 				},
 				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
 					2: 7,
@@ -1312,6 +1312,9 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	if len(artifactRead.TargetCandidateRows) != 0 {
 		t.Fatalf("artifact target candidate rows = %#v, want omitted", artifactRead.TargetCandidateRows)
 	}
+	if !artifactRead.PreserveArtifactOrder {
+		t.Fatal("preserve artifact order = false, want true for omitted full-domain candidates")
+	}
 	if artifactRead.MaxEstimatedTargetRows != len(childRows) {
 		t.Fatalf("max estimated target rows = %d, want %d", artifactRead.MaxEstimatedTargetRows, len(childRows))
 	}
@@ -1321,10 +1324,10 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	if timing.reverseArtifactLocalMode != "omitted_target_candidate_rows" {
 		t.Fatalf("reverse artifact local mode = %q, want omitted_target_candidate_rows", timing.reverseArtifactLocalMode)
 	}
-	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{2, 4}) {
-		t.Fatalf("joined = %#v, want [2 4]", joined)
+	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{4, 2}) {
+		t.Fatalf("joined = %#v, want artifact order [4 2]", joined)
 	}
-	wantPairs := []legacyDirectRelationshipPair{{child: 2, parent: 7}, {child: 4, parent: 9}}
+	wantPairs := []legacyDirectRelationshipPair{{child: 4, parent: 9}, {child: 2, parent: 7}}
 	if !reflect.DeepEqual(pairs, wantPairs) {
 		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
 	}
