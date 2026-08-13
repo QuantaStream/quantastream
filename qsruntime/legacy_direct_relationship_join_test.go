@@ -4184,6 +4184,45 @@ func TestLegacyDirectRelationshipQ3OrderRevenueFinalMaterializationPrunesUnorder
 	}
 }
 
+func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatePrunesUnorderedLimit(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Result = qsbridge.ResultShape{Kind: qsbridge.ResultQuery, Limit: 2}
+	lineRows := []qsbridge.QuantaRownum{101, 102, 103, 104, 105, 106}
+	orderRows := []qsbridge.QuantaRownum{3, 3, 1, 2, 2, 4}
+
+	prunedLineRows, prunedOrderRows, prune := legacyDirectRelationshipQ3OrderRevenuePreAggregateRows(request, lineRows, orderRows)
+
+	if !prune.applied || prune.mode != "unordered_limit" {
+		t.Fatalf("prune = %#v, want unordered limit applied", prune)
+	}
+	if prune.rowsBefore != 6 || prune.rowsAfter != 3 || prune.groupsBefore != 4 || prune.groupsAfter != 2 {
+		t.Fatalf("prune = %#v, want rows 6->3 and groups 4->2", prune)
+	}
+	if got, want := prunedLineRows, []qsbridge.QuantaRownum{101, 102, 103}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("line rows = %#v, want %#v", got, want)
+	}
+	if got, want := prunedOrderRows, []qsbridge.QuantaRownum{3, 3, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("order rows = %#v, want %#v", got, want)
+	}
+}
+
+func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregateDoesNotPruneOrderedLimit(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("revenue", 0), Direction: qsbridge.SortDescending}}
+	request.Result = qsbridge.ResultShape{Kind: qsbridge.ResultQuery, Limit: 2}
+	lineRows := []qsbridge.QuantaRownum{101, 102, 103, 104, 105, 106}
+	orderRows := []qsbridge.QuantaRownum{3, 3, 1, 2, 2, 4}
+
+	prunedLineRows, prunedOrderRows, prune := legacyDirectRelationshipQ3OrderRevenuePreAggregateRows(request, lineRows, orderRows)
+
+	if prune.applied || prune.mode != "none" {
+		t.Fatalf("prune = %#v, want no pre-aggregate prune", prune)
+	}
+	if !reflect.DeepEqual(prunedLineRows, lineRows) || !reflect.DeepEqual(prunedOrderRows, orderRows) {
+		t.Fatalf("rows = %#v/%#v, want original %#v/%#v", prunedLineRows, prunedOrderRows, lineRows, orderRows)
+	}
+}
+
 func TestLegacyDirectRelationshipQ3OrderRevenueFinalMaterializationKeepsRevenueCutoffTies(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
 	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("revenue", 0), Direction: qsbridge.SortDescending}}

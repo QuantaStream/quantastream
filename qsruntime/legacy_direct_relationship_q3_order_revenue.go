@@ -55,6 +55,16 @@ type legacyDirectRelationshipQ3FinalMaterializationPrune struct {
 	elapsed    time.Duration
 }
 
+type legacyDirectRelationshipQ3PreAggregatePrune struct {
+	mode         string
+	applied      bool
+	rowsBefore   int
+	rowsAfter    int
+	groupsBefore int
+	groupsAfter  int
+	elapsed      time.Duration
+}
+
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueResult(ctx context.Context, request ExecutionRequest, sink string, rownums []qsbridge.QuantaRownum, edges []legacyDirectRelationshipEdge, fields []qsbridge.QuantaProjectionField, alignedRows map[string][]qsbridge.QuantaRownum, graphReductionElapsed time.Duration, alignmentElapsed time.Duration, result ExecutionResult) (ExecutionResult, bool, error) {
 	if !strings.EqualFold(sink, "lineitem") {
 		return result, false, nil
@@ -68,6 +78,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	if len(lineRows) == 0 || len(lineRows) != len(orderRows) {
 		return result, false, nil
 	}
+	inputLineRows := len(lineRows)
+	inputOrderRows := len(orderRows)
+	lineRows, orderRows, preAggregatePrune := legacyDirectRelationshipQ3OrderRevenuePreAggregateRows(request, lineRows, orderRows)
 
 	groupsByOrder, priceProbes, preAggregateMaterializationElapsed, preAggregateElapsed, diagnostics, err := e.legacyDirectRelationshipQ3OrderRevenuePreAggregate(ctx, request, sink, lineRows, orderRows, alignedRows, edges, plan)
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -148,6 +161,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_graph_reduction_elapsed", graphReductionElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_alignment_elapsed", alignmentElapsed.String()),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_rows", strconv.Itoa(len(lineRows))),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_prune_mode", preAggregatePrune.mode),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_prune_applied", strconv.FormatBool(preAggregatePrune.applied)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_rows_before_prune", strconv.Itoa(preAggregatePrune.rowsBefore)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_rows_after_prune", strconv.Itoa(preAggregatePrune.rowsAfter)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_groups_before_prune", strconv.Itoa(preAggregatePrune.groupsBefore)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_groups_after_prune", strconv.Itoa(preAggregatePrune.groupsAfter)),
+		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_prune_elapsed", preAggregatePrune.elapsed.String()),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_groups", strconv.Itoa(len(groupsByOrder))),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_post_having_groups", strconv.Itoa(postHavingGroups)),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_final_materialization_rows", strconv.Itoa(len(groupRows))),
@@ -179,8 +199,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		sortElapsed:                        sortElapsed,
 		outputElapsed:                      outputElapsed,
 		limitElapsed:                       limitElapsed,
-		inputLineRows:                      len(lineRows),
-		inputOrderRows:                     len(orderRows),
+		inputLineRows:                      inputLineRows,
+		inputOrderRows:                     inputOrderRows,
 		preAggregateGroups:                 len(groupsByOrder),
 		postHavingGroups:                   postHavingGroups,
 		finalMaterializationRows:           len(groupRows),
@@ -480,6 +500,61 @@ func legacyDirectRelationshipQ3OrderRevenueGroups(groupsByOrder map[qsbridge.Qua
 		groups = append(groups, *groupsByOrder[orderRow])
 	}
 	return groups
+}
+
+func legacyDirectRelationshipQ3OrderRevenuePreAggregateRows(request ExecutionRequest, lineRows, orderRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []qsbridge.QuantaRownum, legacyDirectRelationshipQ3PreAggregatePrune) {
+	start := time.Now()
+	prune := legacyDirectRelationshipQ3PreAggregatePrune{
+		mode:         "none",
+		rowsBefore:   len(lineRows),
+		rowsAfter:    len(lineRows),
+		groupsBefore: legacyDirectRelationshipQ3OrderRevenueDistinctOrderRows(orderRows),
+		groupsAfter:  legacyDirectRelationshipQ3OrderRevenueDistinctOrderRows(orderRows),
+	}
+	window, ok := legacyDirectRelationshipQ3OrderRevenueFinalMaterializationWindow(request, prune.groupsBefore)
+	if !ok || len(request.Having) > 0 || len(request.OrderBy) > 0 || len(lineRows) != len(orderRows) {
+		prune.elapsed = time.Since(start)
+		return lineRows, orderRows, prune
+	}
+	keepOrderRows := make(map[qsbridge.QuantaRownum]struct{}, window)
+	for _, orderRow := range orderRows {
+		if _, seen := keepOrderRows[orderRow]; !seen {
+			if len(keepOrderRows) >= window {
+				break
+			}
+			keepOrderRows[orderRow] = struct{}{}
+		}
+	}
+	if len(keepOrderRows) == 0 || len(keepOrderRows) >= prune.groupsBefore {
+		prune.elapsed = time.Since(start)
+		return lineRows, orderRows, prune
+	}
+	prunedLineRows := make([]qsbridge.QuantaRownum, 0, len(lineRows))
+	prunedOrderRows := make([]qsbridge.QuantaRownum, 0, len(orderRows))
+	for i, orderRow := range orderRows {
+		if _, keep := keepOrderRows[orderRow]; !keep {
+			continue
+		}
+		prunedLineRows = append(prunedLineRows, lineRows[i])
+		prunedOrderRows = append(prunedOrderRows, orderRow)
+	}
+	prune.mode = "unordered_limit"
+	prune.applied = len(prunedLineRows) < len(lineRows)
+	prune.rowsAfter = len(prunedLineRows)
+	prune.groupsAfter = len(keepOrderRows)
+	prune.elapsed = time.Since(start)
+	return prunedLineRows, prunedOrderRows, prune
+}
+
+func legacyDirectRelationshipQ3OrderRevenueDistinctOrderRows(orderRows []qsbridge.QuantaRownum) int {
+	if len(orderRows) == 0 {
+		return 0
+	}
+	seen := make(map[qsbridge.QuantaRownum]struct{}, len(orderRows))
+	for _, orderRow := range orderRows {
+		seen[orderRow] = struct{}{}
+	}
+	return len(seen)
 }
 
 func legacyDirectRelationshipQ3OrderRevenueFinalMaterializationGroups(request ExecutionRequest, groups []legacyDirectRelationshipQ3OrderRevenueGroup) ([]legacyDirectRelationshipQ3OrderRevenueGroup, legacyDirectRelationshipQ3FinalMaterializationPrune) {
