@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,19 @@ type legacyDirectRelationshipGraphEqualityRoleSeed struct {
 	targetRole  string
 	targetTable string
 	targetField qsbridge.FieldRef
+}
+
+func legacyDirectRelationshipGraphEqualityRoleSeedEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED"))
+	if raw == "" {
+		return true
+	}
+	switch strings.ToLower(raw) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyGraphEqualityRoleSeeds(ctx context.Context, request ExecutionRequest, rowsByRole map[string][]qsbridge.QuantaRownum, fullDomainRowsByRole map[string]bool, iteration int) ([]ExecutionProbe, bool, qsbridge.DiagnosticSet, error) {

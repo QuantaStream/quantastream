@@ -9,6 +9,21 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
+func TestLegacyDirectRelationshipGraphEqualityRoleSeedEnabled(t *testing.T) {
+	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "")
+	if !legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
+		t.Fatalf("default equality role seed enabled = false, want true")
+	}
+	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "0")
+	if legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
+		t.Fatalf("disabled equality role seed enabled = true, want false")
+	}
+	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "true")
+	if !legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
+		t.Fatalf("true equality role seed enabled = false, want true")
+	}
+}
+
 func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesUsesReducedSide(t *testing.T) {
 	supplier := qsbridge.TableInstance{Table: "supplier", Alias: "s"}
 	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}

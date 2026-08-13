@@ -31,6 +31,7 @@ qs_load_env() {
   QS_PROXY_MYSQL_PORT="${QS_PROXY_MYSQL_PORT:-4000}"
   QS_NODE_DATA_DIR="${QS_NODE_DATA_DIR:-$QS_REPO_DIR/tpc-h-benchmark/local/standard-data}"
   QS_SKIP_NODE_SYNC="${QS_SKIP_NODE_SYNC:-1}"
+  QS_GRAPH_EQUALITY_ROLE_SEED="${QS_GRAPH_EQUALITY_ROLE_SEED:-1}"
   QS_SCHEMA_DIR="${QS_SCHEMA_DIR:-$QS_REPO_DIR/tpc-h-benchmark/config}"
   QS_DATABASE="${QS_DATABASE:-quanta}"
   QS_TPCH_DATA_DIR="${QS_TPCH_DATA_DIR:-$QS_REPO_DIR/tpc-h-benchmark/local/data/sf-0.05}"

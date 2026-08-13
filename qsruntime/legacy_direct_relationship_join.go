@@ -710,11 +710,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	}
 	legacyDirectRelationshipRetainUnchangedFullDomainRoles(fullDomainInitialRowsByRole, rowsByTableBeforePrefilter, rowsByTable)
 	request = legacyDirectRelationshipRequestWithoutAppliedResidualPrefilters(request, appliedPrefilterPredicates)
+	equalitySeedEnabled := legacyDirectRelationshipGraphEqualityRoleSeedEnabled()
 	equalitySeedFields := legacyDirectRelationshipGraphEqualityFields(request)
+	if !equalitySeedEnabled {
+		equalitySeedFields = nil
+	}
 	scratchpad := newLegacyDirectRelationshipGraphScratchpad(rowsByTable, edges, fullDomainInitialRowsByRole)
 	result := ExecutionResult{Probes: []ExecutionProbe{
 		legacyDirectRelationshipProbe("graph_edges", strconv.Itoa(len(edges))),
 		legacyDirectRelationshipProbe("graph_tables", strconv.Itoa(len(rowsByTable))),
+		legacyDirectRelationshipProbe("graph_equality_role_seed_enabled", strconv.FormatBool(equalitySeedEnabled)),
+		legacyDirectRelationshipProbe("graph_equality_role_seed_fields", strconv.Itoa(len(equalitySeedFields))),
 		legacyDirectRelationshipProbe("graph_scratchpad_roles", strconv.Itoa(len(scratchpad.initialRowsByRole))),
 		legacyDirectRelationshipProbe("graph_scratchpad_tables", strconv.Itoa(len(scratchpad.initialRowsByTable))),
 		legacyDirectRelationshipProbe("phase_graph_initial_rows_elapsed", initialRowsElapsed.String()),

@@ -88,6 +88,7 @@ if (( deploy_proxy )); then
   QUANTASTREAM_NODE_PORT="$QS_NODE_PORT" \
   QUANTASTREAM_SCHEMA_DIR="$QS_SCHEMA_DIR" \
   QUANTASTREAM_DATABASE="$QS_DATABASE" \
+  QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED="$QS_GRAPH_EQUALITY_ROLE_SEED" \
   ENABLE_NOW="$enable_now" \
     sudo -E "$qs_repo_root/startup-scripts/install-distributed-proxy-service.sh"
 fi

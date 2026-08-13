@@ -18,6 +18,7 @@ DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 SESSION_POOL_SIZE="${QUANTASTREAM_SESSION_POOL_SIZE:-0}"
 PPROF_BIND="${QUANTASTREAM_PPROF_BIND:-}"
+GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-1}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -66,6 +67,8 @@ Environment:
   QUANTASTREAM_SCHEMA_DIR       schema/catalog directory.
   QUANTASTREAM_DATABASE         default database/schema. Defaults to quanta.
   QUANTASTREAM_RUNTIME_PROBES   set true to log runtime probes.
+  QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED
+                                  set 0 to disable graph equality role seeds. Defaults to 1.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
@@ -107,6 +110,7 @@ QUANTASTREAM_DATABASE=$DATABASE
 QUANTASTREAM_RUNTIME_PROBES=$RUNTIME_PROBES
 QUANTASTREAM_SESSION_POOL_SIZE=$SESSION_POOL_SIZE
 QUANTASTREAM_PPROF_BIND=$PPROF_BIND
+QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED=$GRAPH_EQUALITY_ROLE_SEED
 EOF
 chmod 0644 "$ENV_DIR/proxy.env"
 

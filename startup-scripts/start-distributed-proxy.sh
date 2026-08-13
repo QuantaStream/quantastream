@@ -16,6 +16,7 @@ DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 SESSION_POOL_SIZE="${QUANTASTREAM_SESSION_POOL_SIZE:-0}"
 PPROF_BIND="${QUANTASTREAM_PPROF_BIND:-}"
+GRAPH_EQUALITY_ROLE_SEED="${QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED:-1}"
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,8 @@ Environment:
   QUANTASTREAM_RUNTIME_PROBES    Set to true to log runtime execution probes.
   QUANTASTREAM_SESSION_POOL_SIZE Direct runtime session pool size. Defaults to runtime default.
   QUANTASTREAM_PPROF_BIND        Optional pprof bind address.
+  QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED
+                                  Set 0 to disable graph equality role seeds. Defaults to 1.
 EOF
 }
 
@@ -65,6 +68,9 @@ echo "node_port=${NODE_PORT}"
 echo "schema_dir=${SCHEMA_DIR}"
 echo "database=${DATABASE}"
 echo "runtime_probes=${RUNTIME_PROBES}"
+echo "graph_equality_role_seed=${GRAPH_EQUALITY_ROLE_SEED}"
+
+export QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED="$GRAPH_EQUALITY_ROLE_SEED"
 
 exec "$PROXY_BIN" \
   -bind "$BIND_ADDRESS" \
