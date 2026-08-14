@@ -147,7 +147,8 @@ type legacyDirectRelationshipReverseArtifactLocalTiming struct {
 }
 
 type legacyDirectRelationshipReduceOptions struct {
-	omitFullDomainTargetCandidates bool
+	omitFullDomainTargetCandidates  bool
+	omitReverseArtifactParentValues bool
 }
 
 type legacyDirectRelationshipGraphReductionSummary struct {
@@ -1015,7 +1016,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			projectionRows, projectionPolicy := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
 			edgeReduceStart := time.Now()
 			reduceOptions := legacyDirectRelationshipReduceOptions{
-				omitFullDomainTargetCandidates: scratchpad.fullDomainInitialRowsForRole(edge.childKey(), childRows),
+				omitFullDomainTargetCandidates:  scratchpad.fullDomainInitialRowsForRole(edge.childKey(), childRows),
+				omitReverseArtifactParentValues: legacyDirectRelationshipEdgeHasLaterSharedChild(executionCandidates, edgeIndex, edge),
 			}
 			joined, pairs, reduceTiming, diagnostics, err := e.legacyDirectRelationshipReduceWithProjectionRowsOptions(ctx, request, edge, parentRows, childRows, projectionRows, reduceOptions)
 			edgeReduceElapsed := time.Since(edgeReduceStart)
@@ -3925,6 +3927,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			}
 			return joined, pairs, timing, nil, nil
 		}
+		if artifactTiming.mode == "row_filter_only" {
+			timing.matchedRows = len(effectiveChildRows)
+			timing.fkProjectionScope = "reverse_artifact_row_filter"
+			timing.projectionRows = 0
+			timing.reverseArtifactProjectMode = "skipped_row_filter_only"
+			timing.childRetainCovered = true
+			timing.childRetainMode = "reverse_artifact_row_filter"
+			return effectiveChildRows, nil, timing, nil, nil
+		}
 		projectionIntersectStart := time.Now()
 		effectiveProjectionRows = legacyDirectRelationshipIntersectRownums(projectionRows, narrowedRows)
 		timing.reverseArtifactProjectElapsed = time.Since(projectionIntersectStart)
@@ -4195,11 +4206,18 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	read.MaxEstimatedTargetRows = len(childRows)
 	if options.omitFullDomainTargetCandidates {
 		localTiming.targetCandidateMode = "omitted_full_domain"
-		read.PreserveArtifactOrder = true
-		read.DeriveArtifactRows = true
+		if options.omitReverseArtifactParentValues {
+			read.OmitArtifactParentValues = true
+		} else {
+			read.PreserveArtifactOrder = true
+			read.DeriveArtifactRows = true
+		}
 	} else {
 		localTiming.targetCandidateMode = "retained"
 		read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)
+		if options.omitReverseArtifactParentValues {
+			read.OmitArtifactParentValues = true
+		}
 	}
 	projectionKey := backend.relationshipVectorProjectionCacheKey(read)
 	localTiming.readElapsed = time.Since(readStart)
@@ -4248,6 +4266,12 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		return nil, result, nil, nil, localTiming, true, diagnostics, err
 	}
 	narrowStart := time.Now()
+	if options.omitReverseArtifactParentValues {
+		narrowedRows := legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums)
+		localTiming.narrowElapsed = time.Since(narrowStart)
+		localTiming.mode = "row_filter_only"
+		return narrowedRows, result, nil, nil, localTiming, true, diagnostics, nil
+	}
 	if localTiming.targetCandidateMode == "omitted_full_domain" {
 		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromRawArtifactCandidateRows(candidates.Rownums, artifactRead.RawParentValueByChild, parentValueByChild, parentKeyRows)
 		localTiming.narrowElapsed = time.Since(narrowStart)

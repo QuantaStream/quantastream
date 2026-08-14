@@ -102,28 +102,28 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidatesStorage(index, field 
 // RelationshipReverseArtifactCandidateValues returns child-domain rownums plus
 // the parent-domain value encoded for each returned child row.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, true, true)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, true, true, true)
 }
 
 // RelationshipReverseArtifactCandidateValuesForRows returns child-domain
 // rownums plus parent-domain values, retaining only rows in candidateRows when
 // a candidate set is supplied.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, true, true)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, true, true, true)
 }
 
 // RelationshipReverseArtifactCandidateValuesUnordered returns child-domain
 // rownums without sorting them. It is intended for callers that reconstruct
 // child-domain order from their own candidate row set.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesUnordered(index, field string, sourceValues []int64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, false, true)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, nil, false, true, true)
 }
 
 // RelationshipReverseArtifactCandidateValuesForRowsUnordered returns
 // child-domain rownums plus parent-domain values, retaining only rows in
 // candidateRows when supplied and leaving rows in artifact iteration order.
 func (m *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, false, true)
+	return m.relationshipReverseArtifactCandidateValues(index, field, sourceValues, candidateRows, false, true, true)
 }
 
 type relationshipSiblingDiversityGroup struct {
@@ -435,7 +435,7 @@ func relationshipSiblingDiversityCacheKey(valueField string, fromTime, toTime in
 	return valueField + "\x00" + strconv.FormatInt(fromTime, 10) + "\x00" + strconv.FormatInt(toTime, 10)
 }
 
-func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, includeRows bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, includeRows bool, includeParentValues bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	start := time.Now()
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
@@ -461,7 +461,14 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 	if includeRows {
 		rownums = make([]uint64, 0, targetCapacity)
 	}
-	parentValueByChild := make(map[uint64]int64, targetCapacity)
+	parentValueByChild := map[uint64]int64(nil)
+	if includeParentValues {
+		parentValueByChild = make(map[uint64]int64, targetCapacity)
+	}
+	seenRows := map[uint64]struct{}(nil)
+	if includeRows && !includeParentValues {
+		seenRows = make(map[uint64]struct{}, targetCapacity)
+	}
 	for _, value := range uniqueValues {
 		if bitmap := artifact.byValue[value]; bitmap != nil {
 			it := bitmap.Iterator()
@@ -470,10 +477,17 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 				if candidateSet != nil && !candidateSet.Contains(rownum) {
 					continue
 				}
-				if _, ok := parentValueByChild[rownum]; ok {
-					continue
+				if includeParentValues {
+					if _, ok := parentValueByChild[rownum]; ok {
+						continue
+					}
+					parentValueByChild[rownum] = value
+				} else if includeRows {
+					if _, ok := seenRows[rownum]; ok {
+						continue
+					}
+					seenRows[rownum] = struct{}{}
 				}
-				parentValueByChild[rownum] = value
 				if includeRows {
 					rownums = append(rownums, rownum)
 				}

@@ -180,6 +180,19 @@ func legacyDirectRelationshipEdgeOrderExecutionCandidates(edges []legacyDirectRe
 	return candidates
 }
 
+func legacyDirectRelationshipEdgeHasLaterSharedChild(candidates []legacyDirectRelationshipEdgeOrderCandidate, candidateIndex int, edge legacyDirectRelationshipEdge) bool {
+	childKey := edge.childKey()
+	if childKey == "" || candidateIndex < 0 || candidateIndex >= len(candidates)-1 {
+		return false
+	}
+	for _, later := range candidates[candidateIndex+1:] {
+		if later.Edge.childKey() == childKey {
+			return true
+		}
+	}
+	return false
+}
+
 func legacyDirectRelationshipEdgeOrderFrontierRecommendation(candidates []legacyDirectRelationshipEdgeOrderCandidate) []legacyDirectRelationshipEdgeOrderCandidate {
 	remaining := append([]legacyDirectRelationshipEdgeOrderCandidate(nil), candidates...)
 	ordered := make([]legacyDirectRelationshipEdgeOrderCandidate, 0, len(candidates))

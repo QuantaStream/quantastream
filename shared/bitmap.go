@@ -1231,7 +1231,7 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 // nodes for child rows without imposing a merged row order. Callers must only
 // use this when candidate row order is not semantically required downstream.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false)
+	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, false)
 }
 
 // RelationshipReverseArtifactCandidateValuesForRowsUnorderedDerived asks
@@ -1239,17 +1239,26 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered
 // merged parent-value map when possible. Callers must only use this when row
 // order is not semantically required downstream.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnorderedDerived(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true)
+	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false)
+}
+
+// RelationshipReverseArtifactCandidateRowsForRowsUnordered asks readable nodes
+// for child rows only, skipping row-to-parent value materialization. It is for
+// intermediate graph filters whose parent alignment can be reconstructed later
+// against a smaller surviving row set.
+func (c *BitmapIndex) RelationshipReverseArtifactCandidateRowsForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, RelationshipReverseArtifactStats, bool, error) {
+	rownums, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, true)
+	return rownums, stats, ok, err
 }
 
 // RelationshipReverseArtifactCandidateValuesForRows asks readable nodes for
 // child rows keyed by a maintained parent-to-child reverse relationship
 // artifact, optionally retaining only a caller-supplied child row set.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, true, true)
+	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, true, true, false)
 }
 
-func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, deriveRowsFromParentValues bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, deriveRowsFromParentValues bool, omitParentValues bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	if index == "" {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
 	}
@@ -1257,11 +1266,12 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, f
 		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: field not specified")
 	}
 	req := &pb.RelationshipReverseArtifactCandidatesRequest{
-		Index:         index,
-		Field:         field,
-		SourceValues:  append([]int64(nil), sourceValues...),
-		CandidateRows: append([]uint64(nil), candidateRows...),
-		OmitRownums:   deriveRowsFromParentValues,
+		Index:            index,
+		Field:            field,
+		SourceValues:     append([]int64(nil), sourceValues...),
+		CandidateRows:    append([]uint64(nil), candidateRows...),
+		OmitRownums:      deriveRowsFromParentValues,
+		OmitParentValues: omitParentValues,
 	}
 	if c.local != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), Deadline)

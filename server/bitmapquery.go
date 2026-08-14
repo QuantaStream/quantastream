@@ -1255,16 +1255,20 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(ctx context.Context,
 		req.GetCandidateRows(),
 		false,
 		!req.GetOmitRownums(),
+		!req.GetOmitParentValues(),
 	)
 	if err != nil {
 		return nil, err
 	}
-	values := make([]*pb.RelationshipReverseArtifactParentValue, 0, len(parentValues))
-	for rownum, parentValue := range parentValues {
-		values = append(values, &pb.RelationshipReverseArtifactParentValue{
-			Rownum:      rownum,
-			ParentValue: parentValue,
-		})
+	values := []*pb.RelationshipReverseArtifactParentValue(nil)
+	if !req.GetOmitParentValues() {
+		values = make([]*pb.RelationshipReverseArtifactParentValue, 0, len(parentValues))
+		for rownum, parentValue := range parentValues {
+			values = append(values, &pb.RelationshipReverseArtifactParentValue{
+				Rownum:      rownum,
+				ParentValue: parentValue,
+			})
+		}
 	}
 	responseRows := append([]uint64(nil), rownums...)
 	if req.GetOmitRownums() {
