@@ -476,6 +476,7 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             "reverse_artifact_narrow_elapsed",
             "reverse_artifact_parent_map_elapsed",
             "reverse_artifact_projection_intersect_elapsed",
+            "reverse_artifact_domain_cache_store_elapsed",
             "parent_key_elapsed",
             "child_retain_elapsed",
             "value_vector_elapsed",
@@ -542,6 +543,9 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
         target_mode = scalar_median(metrics.get("reverse_artifact_target_candidate_mode", []))
         if target_mode:
             parts.append(f"reverse_artifact_target_candidate_mode={target_mode}")
+        cache_hit = scalar_median(metrics.get("reverse_artifact_cache_hit", []))
+        if cache_hit is not None:
+            parts.append(f"reverse_artifact_cache_hit={cache_hit}")
         print(f"  {' '.join(parts)}  {desc}")
 
 

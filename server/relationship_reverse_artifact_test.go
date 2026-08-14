@@ -161,6 +161,66 @@ func TestRelationshipReverseArtifactDistributedUpdatesWarmOwnedCache(t *testing.
 	}
 }
 
+func TestRelationshipReverseArtifactDistributedLookupUsesOwnedShardsWithoutMergedCache(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	conn := shared.NewDefaultConnection("reverse-artifact-owned-shard-test")
+	conn.Replicas = 1
+	conn.HashTable = rendezvous.New([]string{"this-node", "other-node"})
+	index.Node = &Node{Conn: conn, hashKey: "this-node", State: Active}
+	ownedShard := testRelationshipReverseArtifactShardTimeForOwnership(t, index, "lineitem", "l_orderkey", true)
+	replicaShard := testRelationshipReverseArtifactShardTimeForOwnership(t, index, "lineitem", "l_orderkey", false)
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, ownedShard, map[uint64]int64{
+		4: 8,
+		5: 9,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, replicaShard, map[uint64]int64{
+		6: 8,
+		7: 9,
+	}, false))
+
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	artifact.owned = nil
+	artifact.ownedShardKey = ""
+
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_orderkey", []int64{8, 9})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("artifact lookup ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4, 5}) {
+		t.Fatalf("rownums = %#v, want owned shard rows [4 5]", rownums)
+	}
+	if !reflect.DeepEqual(parentValues, map[uint64]int64{4: 8, 5: 9}) {
+		t.Fatalf("parentValues = %#v, want owned shard parent values", parentValues)
+	}
+	if stats.Rows != 2 || stats.Values != 2 || stats.TargetRows != 2 {
+		t.Fatalf("stats = %#v, want rows=2 values=2 targetRows=2", stats)
+	}
+	if artifact.owned != nil {
+		t.Fatal("distributed lookup rebuilt merged owned cache; want direct owned-shard read")
+	}
+
+	storageStats, ok, err := index.RelationshipReverseArtifactStatsStorage("lineitem", "l_orderkey")
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactStatsStorage error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("stats lookup ok = false, want true")
+	}
+	if storageStats.Rows != 2 || storageStats.Values != 2 {
+		t.Fatalf("storage stats = %#v, want owned shard rows=2 values=2", storageStats)
+	}
+	if artifact.owned != nil {
+		t.Fatal("distributed stats rebuilt merged owned cache; want direct owned-shard read")
+	}
+}
+
 func TestRelationshipReverseArtifactSingleNodeUsesAggregateArtifact(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
@@ -780,6 +840,18 @@ attributes:
 
 func testRelationshipReverseArtifactBSIFragment(t *testing.T, shardTime time.Time, values map[uint64]int64, update bool) *BitmapFragment {
 	return testRelationshipReverseArtifactBSIFragmentForField(t, "l_orderkey", shardTime, values, update)
+}
+
+func testRelationshipReverseArtifactShardTimeForOwnership(t *testing.T, index *BitmapIndex, table, field string, owned bool) time.Time {
+	t.Helper()
+	for i := int64(0); i < 10000; i++ {
+		shardTime := time.Unix(0, i*int64(time.Hour)).UTC()
+		if index.relationshipReverseArtifactOwnsShard(table, field, shardTime.UnixNano()) == owned {
+			return shardTime
+		}
+	}
+	t.Fatalf("could not find shard ownership=%t for %s.%s", owned, table, field)
+	return time.Time{}
 }
 
 func testRelationshipReverseArtifactBSIFragmentForField(t *testing.T, field string, shardTime time.Time, values map[uint64]int64, update bool) *BitmapFragment {
