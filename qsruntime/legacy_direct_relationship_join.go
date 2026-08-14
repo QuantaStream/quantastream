@@ -4473,7 +4473,22 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 }
 
 func legacyDirectRelationshipShouldUseBatchEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
-	return len(childRows) >= 1024 && len(parentKeyRows) > 1 && len(parentKeyRows) <= 32
+	if len(childRows) < 1024 || len(parentKeyRows) <= 1 {
+		return false
+	}
+	parentKeys := len(parentKeyRows)
+	if parentKeys <= 32 {
+		return true
+	}
+	return legacyDirectRelationshipShouldUseBroadBatchEqualReduce(len(childRows), parentKeys)
+}
+
+func legacyDirectRelationshipShouldUseBroadBatchEqualReduce(childRows, parentKeys int) bool {
+	const minBroadParentKeys = 4096
+	const maxBroadParentKeys = 8_000_000
+	return parentKeys >= minBroadParentKeys &&
+		parentKeys <= maxBroadParentKeys &&
+		parentKeys <= childRows*2
 }
 
 func legacyDirectRelationshipShouldUseValueVectorReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
