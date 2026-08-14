@@ -824,7 +824,7 @@ func (m *BitmapIndex) clearAll(index string, start, end int64, nbm *roaring64.Bi
 				bsi.Lock.Lock()
 				clearSet := roaring64.FastAnd(bsi.GetExistenceBitmap(), nbm)
 				if !clearSet.IsEmpty() {
-					m.updateRelationshipReverseArtifactForBSIFragment(index, field, bsi.BSI, clearSet, nil)
+					m.updateRelationshipReverseArtifactForBSIFragment(index, field, ts, bsi.BSI, clearSet, nil)
 					bsi.ClearValues(clearSet)
 					bsi.ModTime = time.Now()
 					bsi.AccessTime = bsi.ModTime
@@ -861,7 +861,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		}
 		existBm.Lock.Lock()
 		clearSet := roaring64.FastAnd(existBm.GetExistenceBitmap(), ebm)
-		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, existBm.BSI, clearSet, nil)
+		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), existBm.BSI, clearSet, nil)
 		existBm.ClearValues(clearSet)
 		existBm.ModTime = applyTime
 		existBm.AccessTime = applyTime
@@ -901,7 +901,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 	if existBm, ok := m.bsiCache[f.IndexName][f.FieldName][f.Time.UnixNano()]; !ok {
 		m.bsiCache[f.IndexName][f.FieldName][f.Time.UnixNano()] = newBSI
 		m.bsiCacheLock.Unlock()
-		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, nil, nil, newBSI.BSI)
+		m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), nil, nil, newBSI.BSI)
 	} else {
 		// Lock de-escalation
 		existBm.Lock.Lock()
@@ -916,12 +916,12 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 			m.bsiMergeOverlapCount.Add(1)
 			clearStart := time.Now()
 			clearSet := roaring64.FastAnd(existingRows, newRows)
-			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, existBm.BSI, clearSet, newBSI.BSI)
+			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), existBm.BSI, clearSet, newBSI.BSI)
 			existBm.ClearValues(clearSet)
 			m.bsiMergeClearNanos.Add(uint64(time.Since(clearStart).Nanoseconds()))
 		} else {
 			m.bsiMergeDisjointCount.Add(1)
-			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, nil, nil, newBSI.BSI)
+			m.updateRelationshipReverseArtifactForBSIFragment(f.IndexName, f.FieldName, f.Time.UnixNano(), nil, nil, newBSI.BSI)
 		}
 		orStart := time.Now()
 		existBm.ParOr(0, newBSI.BSI)

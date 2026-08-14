@@ -75,6 +75,49 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	}
 }
 
+func TestRelationshipReverseArtifactMaintainsPerShardArtifacts(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	firstShard := time.Unix(0, 0).UTC()
+	secondShard := time.Unix(0, int64(time.Hour)).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, firstShard, map[uint64]int64{
+		2: 7,
+		4: 8,
+	}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, secondShard, map[uint64]int64{
+		6: 8,
+		9: 9,
+	}, false))
+
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	if artifact.rows != 4 {
+		t.Fatalf("aggregate artifact rows = %d, want 4", artifact.rows)
+	}
+	if len(artifact.byShard) != 2 {
+		t.Fatalf("shard artifact count = %d, want 2", len(artifact.byShard))
+	}
+	if got := artifact.byShard[firstShard.UnixNano()].rows; got != 2 {
+		t.Fatalf("first shard rows = %d, want 2", got)
+	}
+	if got := artifact.byShard[secondShard.UnixNano()].rows; got != 2 {
+		t.Fatalf("second shard rows = %d, want 2", got)
+	}
+
+	rownums, _, ok, err := index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidates error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("artifact lookup ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4, 6}) {
+		t.Fatalf("rownums for value 8 = %#v, want [4 6]", rownums)
+	}
+}
+
 func TestRelationshipReverseArtifactRequiresSchemaFlag(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, false)
 	shardTime := time.Unix(0, 0).UTC()
