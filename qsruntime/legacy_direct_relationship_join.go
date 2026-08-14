@@ -2630,14 +2630,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if parentRows, ok := scratchpad.alignedParentRows(edge, childRows); ok {
 		return parentRows, "reduction_scratchpad", nil, nil
 	}
+	parentMapSource := "parent_map_no_reduced_parent_rows"
 	if parentRows, ok := scratchpad.reducedRowsForRole(edge.parentKey()); ok {
-		parentRows, ok, diagnostics, err := e.legacyDirectRelationshipGraphReverseArtifactAlignedParentRows(ctx, request, edge, childRows, parentRows)
+		parentMapSource = "parent_map_after_reverse_artifact_not_attempted"
+		parentRows, ok, mode, diagnostics, err := e.legacyDirectRelationshipGraphReverseArtifactAlignedParentRows(ctx, request, edge, childRows, parentRows)
 		if err != nil || diagnostics.BlocksNative() {
-			return nil, "reverse_artifact_parent_map", diagnostics, err
+			return nil, "reverse_artifact_parent_map_" + mode, diagnostics, err
 		}
 		if ok {
 			return parentRows, "reverse_artifact_parent_map", nil, nil
 		}
+		parentMapSource = "parent_map_after_reverse_artifact_" + mode
 	}
 	projectionPolicy := legacyDirectRelationshipProjectionPolicy(edge, childRows, scratchpad, 1)
 	projectionRows, _ := e.legacyDirectRelationshipProjectionRowsForGraphReduce(ctx, request, edge, childRows, scratchpad, projectionPolicy)
@@ -2653,30 +2656,40 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		}
 		parentRows = append(parentRows, parent)
 	}
-	return parentRows, "parent_map", nil, nil
+	return parentRows, parentMapSource, nil, nil
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphReverseArtifactAlignedParentRows(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, bool, qsbridge.DiagnosticSet, error) {
-	if len(childRows) == 0 || len(parentRows) == 0 || e.ReverseArtifactCandidateReader == nil {
-		return nil, false, nil, nil
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGraphReverseArtifactAlignedParentRows(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, bool, string, qsbridge.DiagnosticSet, error) {
+	if len(childRows) == 0 {
+		return nil, false, "empty_child_rows", nil, nil
+	}
+	if len(parentRows) == 0 {
+		return nil, false, "empty_parent_rows", nil, nil
+	}
+	if e.ReverseArtifactCandidateReader == nil {
+		return nil, false, "nil_reader", nil, nil
 	}
 	parentKeyRows, _, diagnostics, err := e.legacyDirectRelationshipParentKeyRows(ctx, request, edge, parentRows)
 	if err != nil || diagnostics.BlocksNative() {
-		return nil, false, diagnostics, err
+		return nil, false, "parent_keys", diagnostics, err
 	}
-	_, _, parentByChild, _, _, ok, diagnostics, err := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, legacyDirectRelationshipReduceOptions{})
+	_, _, parentByChild, _, timing, ok, diagnostics, err := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, legacyDirectRelationshipReduceOptions{})
 	if err != nil || diagnostics.BlocksNative() || !ok || len(parentByChild) == 0 {
-		return nil, false, diagnostics, err
+		mode := timing.mode
+		if mode == "" {
+			mode = "no_parent_map"
+		}
+		return nil, false, mode, diagnostics, err
 	}
 	alignedParentRows := make([]qsbridge.QuantaRownum, len(childRows))
 	for i, child := range childRows {
 		parent, ok := parentByChild[child]
 		if !ok {
-			return nil, false, nil, nil
+			return nil, false, "incomplete_parent_map", nil, nil
 		}
 		alignedParentRows[i] = parent
 	}
-	return alignedParentRows, true, nil, nil
+	return alignedParentRows, true, timing.mode, nil, nil
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipParentMap(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum) (map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, qsbridge.DiagnosticSet, error) {
