@@ -281,7 +281,6 @@ func (m *BitmapIndex) JoinCluster() {
 	}
 	u.Infof("Bitmap server is joining the cluster %s.", m.hashKey)
 	m.verifyNode()
-	m.warmRelationshipReverseArtifactOwnedCaches()
 }
 
 // BatchMutate API call (used by client SetBit call for bulk loading data)
@@ -639,6 +638,8 @@ func (m *BitmapIndex) partitionProcessLoop() {
 func (m *BitmapIndex) verifyNode() {
 
 	if skipNodeSyncEnabled() {
+		m.State = Syncing
+		m.warmRelationshipReverseArtifactOwnedCaches()
 		m.State = Active
 		u.Warnf("QUANTASTREAM_SKIP_NODE_SYNC enabled; skipping node synchronization and marking %s Active", m.GetNodeID())
 		consul := m.Consul
@@ -662,6 +663,7 @@ func (m *BitmapIndex) verifyNode() {
 			u.Log(u.FATAL, fmt.Errorf("Node synchronization/verification failed - %v", err))
 		}
 		if diffCount <= 0 {
+			m.warmRelationshipReverseArtifactOwnedCaches()
 			m.State = Active
 			u.Debugf("verifyNode Setting node state to Active for %s", m.hashKey)
 			// we need to 'touch' the health so everyone knows we are active atw
