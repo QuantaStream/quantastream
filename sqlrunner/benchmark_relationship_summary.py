@@ -54,7 +54,12 @@ RELATIONSHIP_PHASE_NAMES = [
     "phase_graph_grouped_aggregate_preagg_storage_elapsed",
     "phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed",
     "phase_graph_grouped_aggregate_preagg_storage_projection_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_projection_retain_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_projection_value_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_projection_merge_elapsed",
     "phase_graph_grouped_aggregate_preagg_storage_aggregate_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_rpc_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_rpc_max_elapsed",
     "phase_graph_grouped_aggregate_group_row_build_elapsed",
     "phase_graph_grouped_aggregate_having_elapsed",
     "phase_graph_grouped_aggregate_final_materialization_elapsed",
@@ -127,6 +132,7 @@ PREAGG_COUNTER_NAMES = [
     "graph_grouped_aggregate_preagg_storage_projection_shards_visited",
     "graph_grouped_aggregate_preagg_storage_projection_shards_retained",
     "graph_grouped_aggregate_preagg_storage_projection_rows_retained",
+    "graph_grouped_aggregate_preagg_storage_projection_retain_bypass_rows",
     "node_interaction_estimate_initial_row_reads",
     "node_interaction_estimate_vector_projection_reads",
     "node_interaction_estimate_materialization_reads",
@@ -154,6 +160,7 @@ POLICY_EVENT_NAMES = [
     "graph_single_pass_reason",
     "graph_sink",
     "graph_reduced_roles",
+    "graph_grouped_aggregate_preagg_storage_sorted_child_rows",
 ]
 
 
