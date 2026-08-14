@@ -24,6 +24,7 @@ DURATION_UNITS = {
 }
 
 EDGE_NAME_RE = re.compile(r"^graph_iter_(\d+)_edge_(\d+)_(.+)$")
+ALIGNMENT_EDGE_NAME_RE = re.compile(r"^(?:phase_)?graph_alignment_edge_(\d+)_(.+)$")
 EQUALITY_SEED_NAME_RE = re.compile(
     r"^(?P<seed>.*equality_role_seed_\d+)_(?P<metric>"
     r"source_role|source_field|source_rows|target_role|target_field|target_rows_before|"
@@ -579,6 +580,47 @@ def print_shared_child_summary(runs: list[list[dict[str, Any]]]) -> None:
         )
 
 
+def alignment_edge_entries(runs: list[list[dict[str, Any]]]) -> dict[int, dict[str, list[Any]]]:
+    edges: dict[int, dict[str, list[Any]]] = defaultdict(lambda: defaultdict(list))
+    for run in runs:
+        for obj in run:
+            name = str(obj.get("name") or "")
+            value = object_value(obj)
+            match = ALIGNMENT_EDGE_NAME_RE.match(name)
+            if not match:
+                continue
+            edge_id = int(match.group(1))
+            metric = match.group(2)
+            seconds = duration_seconds(value)
+            parsed_int = int_value(value)
+            if seconds is not None:
+                edges[edge_id][metric].append(seconds)
+            elif parsed_int is not None:
+                edges[edge_id][metric].append(parsed_int)
+            elif value != "":
+                edges[edge_id][metric].append(value)
+    return edges
+
+
+def print_alignment_summary(runs: list[list[dict[str, Any]]]) -> None:
+    edges = alignment_edge_entries(runs)
+    if not edges:
+        return
+    rows = []
+    for edge_id, metrics in edges.items():
+        elapsed = metric_median(metrics, "elapsed")
+        rows.append((elapsed, edge_id, metrics))
+    print("alignment_edges")
+    for elapsed, edge_id, metrics in sorted(rows, reverse=True):
+        source = scalar_median(metrics.get("source", [])) or "?"
+        child_rows = metric_int_median(metrics, "child_rows")
+        parent_rows = metric_int_median(metrics, "parent_rows")
+        print(
+            f"  edge={edge_id} elapsed={fmt_seconds(elapsed)} source={source} "
+            f"child_rows={fmt_int(child_rows)} parent_rows={fmt_int(parent_rows)}"
+        )
+
+
 def print_policy_summary(runs: list[list[dict[str, Any]]]) -> None:
     print("policy")
     for name in POLICY_EVENT_NAMES:
@@ -663,6 +705,7 @@ def print_case(report: dict[str, Any], case: dict[str, Any]) -> None:
     print_materialization_summary(runs)
     print_edge_summary(runs)
     print_shared_child_summary(runs)
+    print_alignment_summary(runs)
     print_equality_seed_summary(runs)
     print_policy_summary(runs)
 
