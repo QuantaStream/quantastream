@@ -1059,6 +1059,9 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesValueVectorForManyParen
 	if !timing.valueVectorUsed {
 		t.Fatalf("valueVectorUsed = false, want value-vector path")
 	}
+	if timing.valueVectorMode != "int64" {
+		t.Fatalf("valueVectorMode = %q, want int64", timing.valueVectorMode)
+	}
 	if timing.batchEqualUsed || timing.singleKeyEqualUsed {
 		t.Fatalf("batch/single paths = %t/%t, want false/false", timing.batchEqualUsed, timing.singleKeyEqualUsed)
 	}

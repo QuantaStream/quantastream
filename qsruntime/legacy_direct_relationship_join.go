@@ -111,6 +111,7 @@ type legacyDirectRelationshipReduceTiming struct {
 	singleKeyFoundSetElapsed            time.Duration
 	singleKeyEqualElapsed               time.Duration
 	valueVectorElapsed                  time.Duration
+	valueVectorMode                     string
 	intersectElapsed                    time.Duration
 	rownumElapsed                       time.Duration
 	pairElapsed                         time.Duration
@@ -178,6 +179,7 @@ type legacyDirectRelationshipProjectedFKReduceTiming struct {
 	batchEqualUsed           bool
 	singleKeyEqualUsed       bool
 	valueVectorUsed          bool
+	valueVectorMode          string
 	batchEqualElapsed        time.Duration
 	singleKeyFoundSetElapsed time.Duration
 	singleKeyEqualElapsed    time.Duration
@@ -1043,6 +1045,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"single_key_foundset_elapsed", reduceTiming.singleKeyFoundSetElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"single_key_equal_elapsed", reduceTiming.singleKeyEqualElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"value_vector_elapsed", reduceTiming.valueVectorElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_mode", reduceTiming.valueVectorMode),
 				legacyDirectRelationshipProbe(probePrefix+"intersect_elapsed", reduceTiming.intersectElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"rownum_elapsed", reduceTiming.rownumElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"pair_elapsed", reduceTiming.pairElapsed.String()),
@@ -3945,6 +3948,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.singleKeyFoundSetElapsed = projectedTiming.singleKeyFoundSetElapsed
 		timing.singleKeyEqualElapsed = projectedTiming.singleKeyEqualElapsed
 		timing.valueVectorElapsed = projectedTiming.valueVectorElapsed
+		timing.valueVectorMode = projectedTiming.valueVectorMode
 		timing.intersectElapsed = projectedTiming.intersectElapsed
 		timing.rownumElapsed = projectedTiming.rownumElapsed
 		timing.pairElapsed = projectedTiming.pairElapsed
@@ -4404,7 +4408,32 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 	if legacyDirectRelationshipShouldUseValueVectorReduce(childRows, parentKeyRows) {
 		timing.valueVectorUsed = true
 		valueStart := time.Now()
-		parentKeys := fkBSI.GetBigValues(nativeProjectionRownumColumnIDs(childRows))
+		childColumnIDs := nativeProjectionRownumColumnIDs(childRows)
+		if legacyDirectRelationshipFKBSIInt64ValuesAllowed(fkBSI) {
+			timing.valueVectorMode = "int64"
+			parentKeys, exists := fkBSI.GetValues(childColumnIDs)
+			timing.valueVectorElapsed = time.Since(valueStart)
+
+			joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
+			pairs := make([]legacyDirectRelationshipPair, 0, len(childRows))
+			pairStart := time.Now()
+			for i, child := range childRows {
+				if i >= len(parentKeys) || i >= len(exists) || !exists[i] {
+					continue
+				}
+				parent, ok := parentKeyRows[parentKeys[i]]
+				if !ok {
+					continue
+				}
+				joined = append(joined, child)
+				pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
+			}
+			timing.pairElapsed = time.Since(pairStart)
+			return joined, pairs, timing, nil
+		}
+
+		timing.valueVectorMode = "big"
+		parentKeys := fkBSI.GetBigValues(childColumnIDs)
 		timing.valueVectorElapsed = time.Since(valueStart)
 
 		joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
@@ -4449,6 +4478,10 @@ func legacyDirectRelationshipShouldUseBatchEqualReduce(childRows []qsbridge.Quan
 
 func legacyDirectRelationshipShouldUseValueVectorReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
 	return len(childRows) >= 1024 && len(parentKeyRows) > 32
+}
+
+func legacyDirectRelationshipFKBSIInt64ValuesAllowed(fkBSI *roaring64.BSI) bool {
+	return fkBSI != nil && fkBSI.BitCount() < 63
 }
 
 func legacyDirectRelationshipShouldUseSingleKeyEqualReduce(childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum) bool {
@@ -4758,7 +4791,7 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		s.maxChildRetainLabel = label
 	}
 	s.edgeSummaries = append(s.edgeSummaries, fmt.Sprintf(
-		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
+		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
 		label,
 		joinedRows,
 		childRetainRows,
@@ -4769,6 +4802,7 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		timing.reverseArtifactClientRPCElapsed,
 		timing.reverseArtifactClientRPCMaxElapsed,
 		timing.valueVectorElapsed,
+		timing.valueVectorMode,
 		timing.intersectElapsed,
 		timing.pairElapsed,
 		childRetainElapsed,
