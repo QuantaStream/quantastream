@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,80 @@ func TestQueryPriorIntersectCandidatesSeedBSICompare(t *testing.T) {
 	found = seed.FoundSetFor(second)
 	if got, want := found.ToArray(), []uint64{2, 4}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("updated found set = %#v, want %#v", got, want)
+	}
+}
+
+func TestBitmapQueryStatsProbeSamplesIncludeFragmentDetails(t *testing.T) {
+	stats := bitmapQueryStats{
+		startedAt: time.Now(),
+		node:      "qs-server-2",
+		fragments: []bitmapQueryFragmentStats{{
+			ordinal:           1,
+			index:             "lineitem",
+			field:             "l_partkey",
+			operation:         pb.QueryFragment_INTERSECT.String(),
+			bsiOp:             pb.QueryFragment_BATCH_EQ.String(),
+			mode:              "bsi",
+			valueCount:        115,
+			foundSetAvailable: true,
+			foundSetUsed:      false,
+			foundSetRows:      250,
+			rows:              225,
+			elapsed:           7 * time.Millisecond,
+			bsiLoadElapsed:    time.Millisecond,
+			bsiCompareElapsed: 6 * time.Millisecond,
+		}},
+	}
+
+	probes := make(map[string]shared.QueryResultProbe)
+	for _, sample := range stats.probeSamples() {
+		probe, ok := shared.QueryResultProbeFromSample(sample)
+		if !ok {
+			t.Fatalf("sample did not decode as probe: %#v", sample)
+		}
+		probes[probe.Name] = probe
+	}
+
+	order := probes["fragment_order"]
+	if order.Section != "direct_bitmap_server" {
+		t.Fatalf("fragment_order section = %q, want direct_bitmap_server", order.Section)
+	}
+	if !strings.Contains(order.Value, "001|lineitem.l_partkey|op=INTERSECT|bsi=BATCH_EQ|mode=bsi") {
+		t.Fatalf("fragment_order value = %q", order.Value)
+	}
+	if order.Detail != "node=qs-server-2" {
+		t.Fatalf("fragment_order detail = %q, want node=qs-server-2", order.Detail)
+	}
+
+	for _, name := range []string{
+		"fragment_001_order",
+		"fragment_001_mode",
+		"fragment_001_elapsed",
+		"fragment_001_rows",
+		"fragment_001_value_count",
+		"fragment_001_found_set_available",
+		"fragment_001_found_set_used",
+		"fragment_001_found_set_rows",
+		"fragment_001_bsi_cache_hit",
+		"fragment_001_bsi_load_elapsed",
+		"fragment_001_bsi_compare_elapsed",
+	} {
+		probe, ok := probes[name]
+		if !ok {
+			t.Fatalf("missing probe %s", name)
+		}
+		if probe.Section != "direct_bitmap_server_fragment" {
+			t.Fatalf("%s section = %q, want direct_bitmap_server_fragment", name, probe.Section)
+		}
+		if !strings.Contains(probe.Detail, "node=qs-server-2") || !strings.Contains(probe.Detail, "index=lineitem") || !strings.Contains(probe.Detail, "field=l_partkey") {
+			t.Fatalf("%s detail = %q, want node/index/field", name, probe.Detail)
+		}
+	}
+	if probes["fragment_001_rows"].Value != "225" {
+		t.Fatalf("fragment_001_rows = %q, want 225", probes["fragment_001_rows"].Value)
+	}
+	if probes["fragment_001_value_count"].Value != "115" {
+		t.Fatalf("fragment_001_value_count = %q, want 115", probes["fragment_001_value_count"].Value)
 	}
 }
 
