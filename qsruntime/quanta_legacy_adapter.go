@@ -392,15 +392,17 @@ func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.Bit
 		return nil, nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
 	}
 	return rownums, rawParentValues, parentValueByChild, LegacyDirectRelationshipVectorReverseArtifactStats{
-		Rows:                 stats.Rows,
-		Values:               stats.Values,
-		FanoutElapsed:        stats.FanoutElapsed,
-		ClientRPCElapsed:     stats.ClientRPCElapsed,
-		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
-		ResponseMergeElapsed: stats.ResponseMergeElapsed,
-		RowMergeElapsed:      stats.RowMergeElapsed,
-		ParentMergeElapsed:   stats.ParentMergeElapsed,
-		SortElapsed:          stats.SortElapsed,
+		Rows:                        stats.Rows,
+		Values:                      stats.Values,
+		FanoutElapsed:               stats.FanoutElapsed,
+		ClientRPCElapsed:            stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:         stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed:        stats.ResponseMergeElapsed,
+		RowMergeElapsed:             stats.RowMergeElapsed,
+		ParentMergeElapsed:          stats.ParentMergeElapsed,
+		SortElapsed:                 stats.SortElapsed,
+		ParentValueEntries:          stats.ParentValueEntries,
+		DuplicateParentValueEntries: stats.DuplicateParentValueEntries,
 	}, stats.SourceValues, stats.LookupElapsed, true, nil
 }
 
@@ -413,15 +415,17 @@ func legacyDirectRelationshipReverseArtifactStats(bitIndex *legacy.BitmapIndex, 
 		return LegacyDirectRelationshipVectorReverseArtifactStats{}, ok, err
 	}
 	return LegacyDirectRelationshipVectorReverseArtifactStats{
-		Rows:                 stats.Rows,
-		Values:               stats.Values,
-		FanoutElapsed:        stats.FanoutElapsed,
-		ClientRPCElapsed:     stats.ClientRPCElapsed,
-		MaxClientRPCElapsed:  stats.MaxClientRPCElapsed,
-		ResponseMergeElapsed: stats.ResponseMergeElapsed,
-		RowMergeElapsed:      stats.RowMergeElapsed,
-		ParentMergeElapsed:   stats.ParentMergeElapsed,
-		SortElapsed:          stats.SortElapsed,
+		Rows:                        stats.Rows,
+		Values:                      stats.Values,
+		FanoutElapsed:               stats.FanoutElapsed,
+		ClientRPCElapsed:            stats.ClientRPCElapsed,
+		MaxClientRPCElapsed:         stats.MaxClientRPCElapsed,
+		ResponseMergeElapsed:        stats.ResponseMergeElapsed,
+		RowMergeElapsed:             stats.RowMergeElapsed,
+		ParentMergeElapsed:          stats.ParentMergeElapsed,
+		SortElapsed:                 stats.SortElapsed,
+		ParentValueEntries:          stats.ParentValueEntries,
+		DuplicateParentValueEntries: stats.DuplicateParentValueEntries,
 	}, true, nil
 }
 

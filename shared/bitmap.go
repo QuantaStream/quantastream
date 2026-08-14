@@ -105,19 +105,21 @@ type CompareBSIFieldsStats struct {
 // candidate lookup work. Row/value counts are accumulated across node-local
 // maintained artifacts.
 type RelationshipReverseArtifactStats struct {
-	Rows                 uint64
-	Values               uint64
-	SourceValues         int
-	TargetRows           uint64
-	LookupElapsed        time.Duration
-	FanoutElapsed        time.Duration
-	ResponseMergeElapsed time.Duration
-	RowMergeElapsed      time.Duration
-	ParentMergeElapsed   time.Duration
-	SortElapsed          time.Duration
-	ClientRPCElapsed     time.Duration
-	MaxClientRPCElapsed  time.Duration
-	Nodes                uint64
+	Rows                        uint64
+	Values                      uint64
+	SourceValues                int
+	TargetRows                  uint64
+	ParentValueEntries          uint64
+	DuplicateParentValueEntries uint64
+	LookupElapsed               time.Duration
+	FanoutElapsed               time.Duration
+	ResponseMergeElapsed        time.Duration
+	RowMergeElapsed             time.Duration
+	ParentMergeElapsed          time.Duration
+	SortElapsed                 time.Duration
+	ClientRPCElapsed            time.Duration
+	MaxClientRPCElapsed         time.Duration
+	Nodes                       uint64
 }
 
 // RelationshipAlignedValueSumGroup carries one mergeable parent-keyed aggregate
@@ -1565,6 +1567,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 				if value == nil {
 					continue
 				}
+				stats.ParentValueEntries++
 				rownum := value.GetRownum()
 				parentValue := value.GetParentValue()
 				if collectParentMap {
@@ -1572,6 +1575,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 				}
 				if deriveRowsFromParentValues {
 					if _, seen := seenRows[rownum]; seen {
+						stats.DuplicateParentValueEntries++
 						continue
 					}
 					seenRows[rownum] = struct{}{}

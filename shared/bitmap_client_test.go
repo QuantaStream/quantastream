@@ -576,6 +576,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesCanReturnAlignedP
 		{
 			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
 				{Rownum: 20, ParentValue: 8},
+				{Rownum: 10, ParentValue: 7},
 				{Rownum: 40, ParentValue: 9},
 			},
 			Ok: true,
@@ -600,6 +601,12 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesCanReturnAlignedP
 	}
 	if got, want := stats.TargetRows, uint64(4); got != want {
 		t.Fatalf("target rows = %d, want derived count %d", got, want)
+	}
+	if got, want := stats.ParentValueEntries, uint64(5); got != want {
+		t.Fatalf("parent value entries = %d, want raw count %d", got, want)
+	}
+	if got, want := stats.DuplicateParentValueEntries, uint64(1); got != want {
+		t.Fatalf("duplicate parent value entries = %d, want duplicate count %d", got, want)
 	}
 }
 

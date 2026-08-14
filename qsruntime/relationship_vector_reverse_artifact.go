@@ -54,62 +54,68 @@ type RelationshipVectorReverseArtifactManager struct {
 }
 
 type relationshipVectorReverseArtifactTiming struct {
-	Mode                 string
-	CacheHit             bool
-	BuildElapsed         time.Duration
-	LookupElapsed        time.Duration
-	FanoutElapsed        time.Duration
-	ClientRPCElapsed     time.Duration
-	MaxClientRPCElapsed  time.Duration
-	ResponseMergeElapsed time.Duration
-	RowMergeElapsed      time.Duration
-	ParentMergeElapsed   time.Duration
-	SortElapsed          time.Duration
-	RowConversionElapsed time.Duration
-	MapConversionElapsed time.Duration
-	Rows                 uint64
-	Values               uint64
-	SourceValues         int
-	TargetRows           int
+	Mode                        string
+	CacheHit                    bool
+	BuildElapsed                time.Duration
+	LookupElapsed               time.Duration
+	FanoutElapsed               time.Duration
+	ClientRPCElapsed            time.Duration
+	MaxClientRPCElapsed         time.Duration
+	ResponseMergeElapsed        time.Duration
+	RowMergeElapsed             time.Duration
+	ParentMergeElapsed          time.Duration
+	SortElapsed                 time.Duration
+	RowConversionElapsed        time.Duration
+	MapConversionElapsed        time.Duration
+	Rows                        uint64
+	Values                      uint64
+	SourceValues                int
+	TargetRows                  int
+	ParentValueEntries          uint64
+	DuplicateParentValueEntries uint64
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactCandidateResult is the
 // physical-tier result for a prebuilt parent-value to child-row artifact.
 type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
-	Candidates            qsbridge.QuantaCandidateSet
-	ParentValueByChild    map[qsbridge.QuantaRownum]int64
-	RawParentValueByChild map[uint64]int64
-	RawParentValues       []int64
-	Mode                  string
-	CacheHit              bool
-	Rows                  uint64
-	Values                uint64
-	SourceValues          int
-	TargetRows            uint64
-	LookupElapsed         time.Duration
-	FanoutElapsed         time.Duration
-	ClientRPCElapsed      time.Duration
-	MaxClientRPCElapsed   time.Duration
-	ResponseMergeElapsed  time.Duration
-	RowMergeElapsed       time.Duration
-	ParentMergeElapsed    time.Duration
-	SortElapsed           time.Duration
-	RowConversionElapsed  time.Duration
-	MapConversionElapsed  time.Duration
+	Candidates                  qsbridge.QuantaCandidateSet
+	ParentValueByChild          map[qsbridge.QuantaRownum]int64
+	RawParentValueByChild       map[uint64]int64
+	RawParentValues             []int64
+	Mode                        string
+	CacheHit                    bool
+	Rows                        uint64
+	Values                      uint64
+	SourceValues                int
+	TargetRows                  uint64
+	ParentValueEntries          uint64
+	DuplicateParentValueEntries uint64
+	LookupElapsed               time.Duration
+	FanoutElapsed               time.Duration
+	ClientRPCElapsed            time.Duration
+	MaxClientRPCElapsed         time.Duration
+	ResponseMergeElapsed        time.Duration
+	RowMergeElapsed             time.Duration
+	ParentMergeElapsed          time.Duration
+	SortElapsed                 time.Duration
+	RowConversionElapsed        time.Duration
+	MapConversionElapsed        time.Duration
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactStats describes a maintained
 // parent-to-child artifact without materializing lookup candidates.
 type LegacyDirectRelationshipVectorReverseArtifactStats struct {
-	Rows                 uint64
-	Values               uint64
-	FanoutElapsed        time.Duration
-	ClientRPCElapsed     time.Duration
-	MaxClientRPCElapsed  time.Duration
-	ResponseMergeElapsed time.Duration
-	RowMergeElapsed      time.Duration
-	ParentMergeElapsed   time.Duration
-	SortElapsed          time.Duration
+	Rows                        uint64
+	Values                      uint64
+	FanoutElapsed               time.Duration
+	ClientRPCElapsed            time.Duration
+	MaxClientRPCElapsed         time.Duration
+	ResponseMergeElapsed        time.Duration
+	RowMergeElapsed             time.Duration
+	ParentMergeElapsed          time.Duration
+	SortElapsed                 time.Duration
+	ParentValueEntries          uint64
+	DuplicateParentValueEntries uint64
 }
 
 // LegacyDirectRelationshipVectorReverseArtifactCandidateReader exposes
@@ -382,6 +388,8 @@ func legacyDirectRecordRelationshipVectorReverseArtifact(ctx context.Context, re
 	recorder.ObserveCount("relationship_reverse_artifact", "target_rows", uint64(timing.TargetRows), detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "artifact_rows", timing.Rows, detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "artifact_values", timing.Values, detail)
+	recorder.ObserveCount("relationship_reverse_artifact", "parent_value_entries", timing.ParentValueEntries, detail)
+	recorder.ObserveCount("relationship_reverse_artifact", "duplicate_parent_value_entries", timing.DuplicateParentValueEntries, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "build_elapsed", timing.BuildElapsed, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "lookup_elapsed", timing.LookupElapsed, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "fanout_elapsed", timing.FanoutElapsed, detail)

@@ -110,6 +110,8 @@ PREAGG_COUNTER_NAMES = [
     "graph_reduction_joined_rows_seen",
     "graph_reduction_reverse_artifact_candidate_rows",
     "graph_reduction_reverse_artifact_narrowed_rows",
+    "graph_reduction_reverse_artifact_parent_value_entries",
+    "graph_reduction_reverse_artifact_duplicate_parent_value_entries",
     "graph_reduction_matched_rows",
     "graph_reduction_value_vector_child_rows",
     "graph_reduction_value_vector_values",
@@ -488,6 +490,8 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             "joined_rows",
             "reverse_artifact_candidate_rows",
             "reverse_artifact_narrowed_rows",
+            "reverse_artifact_parent_value_entries",
+            "reverse_artifact_duplicate_parent_value_entries",
             "matched_rows",
             "child_retain_rows",
             "value_vector_child_rows",
@@ -502,6 +506,8 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
         child_rows = median([v for v in metrics.get("child_rows", []) if isinstance(v, int)])
         joined_rows = median([v for v in metrics.get("joined_rows", []) if isinstance(v, int)])
         candidate_rows = median([v for v in metrics.get("reverse_artifact_candidate_rows", []) if isinstance(v, int)])
+        parent_value_entries = median([v for v in metrics.get("reverse_artifact_parent_value_entries", []) if isinstance(v, int)])
+        duplicate_parent_value_entries = median([v for v in metrics.get("reverse_artifact_duplicate_parent_value_entries", []) if isinstance(v, int)])
         value_vector_values = median([v for v in metrics.get("value_vector_values", []) if isinstance(v, int)])
         value_vector_exists = median([v for v in metrics.get("value_vector_exists", []) if isinstance(v, int)])
         value_vector_parent_misses = median([v for v in metrics.get("value_vector_parent_misses", []) if isinstance(v, int)])
@@ -511,6 +517,8 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             parts.append(f"child_selectivity={joined_rows / child_rows:.4f}")
         if joined_rows:
             parts.append(f"candidate_overjoin={candidate_rows / joined_rows:.2f}x")
+        if parent_value_entries:
+            parts.append(f"reverse_artifact_duplicate_parent_value_ratio={(duplicate_parent_value_entries or 0) / parent_value_entries:.4f}")
         if value_vector_values:
             parent_hits = max(0, value_vector_exists - value_vector_parent_misses)
             parts.append(f"value_vector_parent_hit_rate={parent_hits / value_vector_values:.4f}")

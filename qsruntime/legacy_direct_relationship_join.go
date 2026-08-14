@@ -61,89 +61,93 @@ type legacyDirectRelationshipPair struct {
 }
 
 type legacyDirectRelationshipReduceTiming struct {
-	domainMappingCacheHit               bool
-	domainMappingCacheMode              string
-	projectionElapsed                   time.Duration
-	projectionCacheHit                  bool
-	projectionRows                      int
-	fkProjectionRows                    int
-	fkChildOverlapRows                  int
-	fkProjectionInitialCoverage         qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionCoverage                qsbridge.RelationshipVectorProjectionCoverage
-	fkProjectionScope                   string
-	fkProjectionRetryRows               int
-	fkProjectionRetryOverlap            int
-	fkProjectionRetryCoverage           qsbridge.RelationshipVectorProjectionCoverage
-	parentKeyElapsed                    time.Duration
-	parentKeyMaterialization            bool
-	parentKeyRows                       int
-	reverseArtifactUsed                 bool
-	reverseArtifactSkipReason           string
-	reverseArtifactMode                 string
-	reverseArtifactCacheHit             bool
-	reverseArtifactSourceValues         int
-	reverseArtifactCandidateRows        int
-	reverseArtifactNarrowedRows         int
-	reverseArtifactElapsed              time.Duration
-	reverseArtifactLookupElapsed        time.Duration
-	reverseArtifactFanoutElapsed        time.Duration
-	reverseArtifactClientRPCElapsed     time.Duration
-	reverseArtifactClientRPCMaxElapsed  time.Duration
-	reverseArtifactResponseMergeElapsed time.Duration
-	reverseArtifactRowMergeElapsed      time.Duration
-	reverseArtifactParentMergeElapsed   time.Duration
-	reverseArtifactSortElapsed          time.Duration
-	reverseArtifactLocalMode            string
-	reverseArtifactTargetCandidateMode  string
-	reverseArtifactSourceElapsed        time.Duration
-	reverseArtifactReadElapsed          time.Duration
-	reverseArtifactRowConversionElapsed time.Duration
-	reverseArtifactMapConversionElapsed time.Duration
-	reverseArtifactNarrowElapsed        time.Duration
-	reverseArtifactParentElapsed        time.Duration
-	reverseArtifactProjectElapsed       time.Duration
-	reverseArtifactProjectMode          string
-	reverseArtifactCacheSetElapsed      time.Duration
-	matchedRows                         int
-	childRetainCovered                  bool
-	childRetainMode                     string
-	batchEqualElapsed                   time.Duration
-	singleKeyFoundSetElapsed            time.Duration
-	singleKeyEqualElapsed               time.Duration
-	valueVectorElapsed                  time.Duration
-	valueVectorMode                     string
-	valueVectorColumnIDElapsed          time.Duration
-	valueVectorReadElapsed              time.Duration
-	valueVectorPairElapsed              time.Duration
-	valueVectorChildRows                int
-	valueVectorValues                   int
-	valueVectorExists                   int
-	valueVectorParentMisses             int
-	intersectElapsed                    time.Duration
-	rownumElapsed                       time.Duration
-	pairElapsed                         time.Duration
+	domainMappingCacheHit                      bool
+	domainMappingCacheMode                     string
+	projectionElapsed                          time.Duration
+	projectionCacheHit                         bool
+	projectionRows                             int
+	fkProjectionRows                           int
+	fkChildOverlapRows                         int
+	fkProjectionInitialCoverage                qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionCoverage                       qsbridge.RelationshipVectorProjectionCoverage
+	fkProjectionScope                          string
+	fkProjectionRetryRows                      int
+	fkProjectionRetryOverlap                   int
+	fkProjectionRetryCoverage                  qsbridge.RelationshipVectorProjectionCoverage
+	parentKeyElapsed                           time.Duration
+	parentKeyMaterialization                   bool
+	parentKeyRows                              int
+	reverseArtifactUsed                        bool
+	reverseArtifactSkipReason                  string
+	reverseArtifactMode                        string
+	reverseArtifactCacheHit                    bool
+	reverseArtifactSourceValues                int
+	reverseArtifactCandidateRows               int
+	reverseArtifactNarrowedRows                int
+	reverseArtifactParentValueEntries          int
+	reverseArtifactDuplicateParentValueEntries int
+	reverseArtifactElapsed                     time.Duration
+	reverseArtifactLookupElapsed               time.Duration
+	reverseArtifactFanoutElapsed               time.Duration
+	reverseArtifactClientRPCElapsed            time.Duration
+	reverseArtifactClientRPCMaxElapsed         time.Duration
+	reverseArtifactResponseMergeElapsed        time.Duration
+	reverseArtifactRowMergeElapsed             time.Duration
+	reverseArtifactParentMergeElapsed          time.Duration
+	reverseArtifactSortElapsed                 time.Duration
+	reverseArtifactLocalMode                   string
+	reverseArtifactTargetCandidateMode         string
+	reverseArtifactSourceElapsed               time.Duration
+	reverseArtifactReadElapsed                 time.Duration
+	reverseArtifactRowConversionElapsed        time.Duration
+	reverseArtifactMapConversionElapsed        time.Duration
+	reverseArtifactNarrowElapsed               time.Duration
+	reverseArtifactParentElapsed               time.Duration
+	reverseArtifactProjectElapsed              time.Duration
+	reverseArtifactProjectMode                 string
+	reverseArtifactCacheSetElapsed             time.Duration
+	matchedRows                                int
+	childRetainCovered                         bool
+	childRetainMode                            string
+	batchEqualElapsed                          time.Duration
+	singleKeyFoundSetElapsed                   time.Duration
+	singleKeyEqualElapsed                      time.Duration
+	valueVectorElapsed                         time.Duration
+	valueVectorMode                            string
+	valueVectorColumnIDElapsed                 time.Duration
+	valueVectorReadElapsed                     time.Duration
+	valueVectorPairElapsed                     time.Duration
+	valueVectorChildRows                       int
+	valueVectorValues                          int
+	valueVectorExists                          int
+	valueVectorParentMisses                    int
+	intersectElapsed                           time.Duration
+	rownumElapsed                              time.Duration
+	pairElapsed                                time.Duration
 }
 
 type legacyDirectRelationshipReverseArtifactLocalTiming struct {
-	mode                 string
-	targetCandidateMode  string
-	sourceValues         int
-	candidateRows        int
-	elapsed              time.Duration
-	lookupElapsed        time.Duration
-	fanoutElapsed        time.Duration
-	clientRPCElapsed     time.Duration
-	maxClientRPCElapsed  time.Duration
-	responseMergeElapsed time.Duration
-	rowMergeElapsed      time.Duration
-	parentMergeElapsed   time.Duration
-	sortElapsed          time.Duration
-	sourceElapsed        time.Duration
-	readElapsed          time.Duration
-	rowConversionElapsed time.Duration
-	mapConversionElapsed time.Duration
-	narrowElapsed        time.Duration
-	parentElapsed        time.Duration
+	mode                        string
+	targetCandidateMode         string
+	sourceValues                int
+	candidateRows               int
+	parentValueEntries          int
+	duplicateParentValueEntries int
+	elapsed                     time.Duration
+	lookupElapsed               time.Duration
+	fanoutElapsed               time.Duration
+	clientRPCElapsed            time.Duration
+	maxClientRPCElapsed         time.Duration
+	responseMergeElapsed        time.Duration
+	rowMergeElapsed             time.Duration
+	parentMergeElapsed          time.Duration
+	sortElapsed                 time.Duration
+	sourceElapsed               time.Duration
+	readElapsed                 time.Duration
+	rowConversionElapsed        time.Duration
+	mapConversionElapsed        time.Duration
+	narrowElapsed               time.Duration
+	parentElapsed               time.Duration
 }
 
 type legacyDirectRelationshipReduceOptions struct {
@@ -152,44 +156,46 @@ type legacyDirectRelationshipReduceOptions struct {
 }
 
 type legacyDirectRelationshipGraphReductionSummary struct {
-	edges                         int
-	totalReduceElapsed            time.Duration
-	totalProjectionElapsed        time.Duration
-	totalParentKeyElapsed         time.Duration
-	totalReverseArtifactElapsed   time.Duration
-	totalReverseArtifactRPC       time.Duration
-	totalReverseArtifactRPCMax    time.Duration
-	totalValueVectorElapsed       time.Duration
-	totalValueVectorColumnID      time.Duration
-	totalValueVectorRead          time.Duration
-	totalValueVectorPair          time.Duration
-	totalBatchEqualElapsed        time.Duration
-	totalIntersectElapsed         time.Duration
-	totalPairElapsed              time.Duration
-	totalChildRetainElapsed       time.Duration
-	totalProjectionRows           int
-	totalParentRows               int
-	totalChildRows                int
-	totalJoinedRows               int
-	totalReverseArtifactSource    int
-	totalReverseArtifactCandidate int
-	totalReverseArtifactNarrowed  int
-	totalMatchedRows              int
-	totalValueVectorChildRows     int
-	totalValueVectorValues        int
-	totalValueVectorExists        int
-	totalValueVectorParentMisses  int
-	maxReduceElapsed              time.Duration
-	maxReduceLabel                string
-	maxProjectionElapsed          time.Duration
-	maxProjectionLabel            string
-	maxReverseArtifactElapsed     time.Duration
-	maxReverseArtifactLabel       string
-	maxValueVectorElapsed         time.Duration
-	maxValueVectorLabel           string
-	maxChildRetainElapsed         time.Duration
-	maxChildRetainLabel           string
-	edgeSummaries                 []string
+	edges                                           int
+	totalReduceElapsed                              time.Duration
+	totalProjectionElapsed                          time.Duration
+	totalParentKeyElapsed                           time.Duration
+	totalReverseArtifactElapsed                     time.Duration
+	totalReverseArtifactRPC                         time.Duration
+	totalReverseArtifactRPCMax                      time.Duration
+	totalValueVectorElapsed                         time.Duration
+	totalValueVectorColumnID                        time.Duration
+	totalValueVectorRead                            time.Duration
+	totalValueVectorPair                            time.Duration
+	totalBatchEqualElapsed                          time.Duration
+	totalIntersectElapsed                           time.Duration
+	totalPairElapsed                                time.Duration
+	totalChildRetainElapsed                         time.Duration
+	totalProjectionRows                             int
+	totalParentRows                                 int
+	totalChildRows                                  int
+	totalJoinedRows                                 int
+	totalReverseArtifactSource                      int
+	totalReverseArtifactCandidate                   int
+	totalReverseArtifactNarrowed                    int
+	totalReverseArtifactParentValueEntries          int
+	totalReverseArtifactDuplicateParentValueEntries int
+	totalMatchedRows                                int
+	totalValueVectorChildRows                       int
+	totalValueVectorValues                          int
+	totalValueVectorExists                          int
+	totalValueVectorParentMisses                    int
+	maxReduceElapsed                                time.Duration
+	maxReduceLabel                                  string
+	maxProjectionElapsed                            time.Duration
+	maxProjectionLabel                              string
+	maxReverseArtifactElapsed                       time.Duration
+	maxReverseArtifactLabel                         string
+	maxValueVectorElapsed                           time.Duration
+	maxValueVectorLabel                             string
+	maxChildRetainElapsed                           time.Duration
+	maxChildRetainLabel                             string
+	edgeSummaries                                   []string
 }
 
 type legacyDirectRelationshipProjectedFKReduceTiming struct {
@@ -1066,6 +1072,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_values", strconv.Itoa(reduceTiming.reverseArtifactSourceValues)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_candidate_rows", strconv.Itoa(reduceTiming.reverseArtifactCandidateRows)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrowed_rows", strconv.Itoa(reduceTiming.reverseArtifactNarrowedRows)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_parent_value_entries", strconv.Itoa(reduceTiming.reverseArtifactParentValueEntries)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_duplicate_parent_value_entries", strconv.Itoa(reduceTiming.reverseArtifactDuplicateParentValueEntries)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_elapsed", reduceTiming.reverseArtifactElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_lookup_elapsed", reduceTiming.reverseArtifactLookupElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_fanout_elapsed", reduceTiming.reverseArtifactFanoutElapsed.String()),
@@ -3919,6 +3927,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactSkipReason = artifactTiming.mode
 		timing.reverseArtifactSourceValues = artifactTiming.sourceValues
 		timing.reverseArtifactCandidateRows = artifactTiming.candidateRows
+		timing.reverseArtifactParentValueEntries = artifactTiming.parentValueEntries
+		timing.reverseArtifactDuplicateParentValueEntries = artifactTiming.duplicateParentValueEntries
 		timing.reverseArtifactElapsed = artifactTiming.elapsed
 		timing.reverseArtifactLookupElapsed = artifactTiming.lookupElapsed
 		timing.reverseArtifactFanoutElapsed = artifactTiming.fanoutElapsed
@@ -3937,6 +3947,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactSourceValues = artifactResult.SourceValueCount
 		timing.reverseArtifactCandidateRows = len(artifactResult.TargetCandidates.Rownums)
 		timing.reverseArtifactNarrowedRows = len(narrowedRows)
+		timing.reverseArtifactParentValueEntries = artifactTiming.parentValueEntries
+		timing.reverseArtifactDuplicateParentValueEntries = artifactTiming.duplicateParentValueEntries
 		timing.reverseArtifactElapsed = artifactResult.CandidateElapsed
 		timing.reverseArtifactLookupElapsed = artifactResult.CandidateScanElapsed
 		timing.reverseArtifactFanoutElapsed = artifactResult.CandidateFanoutElapsed
@@ -4308,6 +4320,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	parentValueByChild := artifactRead.ParentValueByChild
 	localTiming.sourceValues = artifactTiming.SourceValues
 	localTiming.candidateRows = artifactTiming.TargetRows
+	localTiming.parentValueEntries = int(artifactTiming.ParentValueEntries)
+	localTiming.duplicateParentValueEntries = int(artifactTiming.DuplicateParentValueEntries)
 	localTiming.elapsed = elapsed
 	localTiming.lookupElapsed = artifactTiming.LookupElapsed
 	localTiming.fanoutElapsed = artifactTiming.FanoutElapsed
@@ -4979,6 +4993,8 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 	s.totalReverseArtifactSource += timing.reverseArtifactSourceValues
 	s.totalReverseArtifactCandidate += timing.reverseArtifactCandidateRows
 	s.totalReverseArtifactNarrowed += timing.reverseArtifactNarrowedRows
+	s.totalReverseArtifactParentValueEntries += timing.reverseArtifactParentValueEntries
+	s.totalReverseArtifactDuplicateParentValueEntries += timing.reverseArtifactDuplicateParentValueEntries
 	s.totalMatchedRows += timing.matchedRows
 	s.totalValueVectorChildRows += timing.valueVectorChildRows
 	s.totalValueVectorValues += timing.valueVectorValues
@@ -5005,7 +5021,7 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		s.maxChildRetainLabel = label
 	}
 	s.edgeSummaries = append(s.edgeSummaries, fmt.Sprintf(
-		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s value_vector_column_ids=%s value_vector_read=%s value_vector_pair=%s value_vector_children=%d value_vector_values=%d value_vector_exists=%d value_vector_parent_misses=%d intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
+		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s value_vector_column_ids=%s value_vector_read=%s value_vector_pair=%s value_vector_children=%d value_vector_values=%d value_vector_exists=%d value_vector_parent_misses=%d intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d reverse_parent_values=%d reverse_duplicate_parent_values=%d",
 		label,
 		joinedRows,
 		childRetainRows,
@@ -5031,6 +5047,8 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		timing.reverseArtifactSourceValues,
 		timing.reverseArtifactCandidateRows,
 		timing.reverseArtifactNarrowedRows,
+		timing.reverseArtifactParentValueEntries,
+		timing.reverseArtifactDuplicateParentValueEntries,
 	))
 }
 
@@ -5047,6 +5065,8 @@ func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_source_values", strconv.Itoa(s.totalReverseArtifactSource)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_candidate_rows", strconv.Itoa(s.totalReverseArtifactCandidate)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_narrowed_rows", strconv.Itoa(s.totalReverseArtifactNarrowed)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_parent_value_entries", strconv.Itoa(s.totalReverseArtifactParentValueEntries)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_duplicate_parent_value_entries", strconv.Itoa(s.totalReverseArtifactDuplicateParentValueEntries)),
 		legacyDirectRelationshipProbe("graph_reduction_matched_rows", strconv.Itoa(s.totalMatchedRows)),
 		legacyDirectRelationshipProbe("graph_reduction_value_vector_child_rows", strconv.Itoa(s.totalValueVectorChildRows)),
 		legacyDirectRelationshipProbe("graph_reduction_value_vector_values", strconv.Itoa(s.totalValueVectorValues)),
