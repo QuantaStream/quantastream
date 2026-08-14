@@ -1539,15 +1539,12 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	var rownums []uint64
 	var parentValues []int64
 	var seenRows map[uint64]struct{}
-	var seenRowBitmap *roaring64.Bitmap
 	if deriveRowsFromParentValues {
 		rownums = make([]uint64, 0, parentValueCapacity)
 		if !collectParentMap {
 			parentValues = make([]int64, 0, parentValueCapacity)
-			seenRowBitmap = roaring64.NewBitmap()
-		} else {
-			seenRows = make(map[uint64]struct{}, parentValueCapacity)
 		}
+		seenRows = make(map[uint64]struct{}, parentValueCapacity)
 	} else {
 		rownums = make([]uint64, 0, rownumCapacity)
 		seenRows = make(map[uint64]struct{}, rownumCapacity)
@@ -1563,20 +1560,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		}
 		stats.addProto(response.GetStats())
 		parentMergeStart := time.Now()
-		if deriveRowsFromParentValues && !collectParentMap {
-			for _, value := range response.GetParentValues() {
-				if value == nil {
-					continue
-				}
-				rownum := value.GetRownum()
-				if seenRowBitmap.Contains(rownum) {
-					continue
-				}
-				seenRowBitmap.Add(rownum)
-				rownums = append(rownums, rownum)
-				parentValues = append(parentValues, value.GetParentValue())
-			}
-		} else if collectParentMap || deriveRowsFromParentValues {
+		if collectParentMap || deriveRowsFromParentValues {
 			for _, value := range response.GetParentValues() {
 				if value == nil {
 					continue
@@ -1592,6 +1576,9 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 					}
 					seenRows[rownum] = struct{}{}
 					rownums = append(rownums, rownum)
+					if !collectParentMap {
+						parentValues = append(parentValues, parentValue)
+					}
 				}
 			}
 		}
@@ -1608,8 +1595,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			stats.RowMergeElapsed += time.Since(rowMergeStart)
 		}
 	}
-	shouldSortAlignedValues := len(parentValues) == len(rownums) && !relationshipReverseArtifactRowsStrictlyIncreasing(rownums)
-	if sortRows || shouldSortAlignedValues {
+	if sortRows {
 		sortStart := time.Now()
 		if len(parentValues) == len(rownums) {
 			type rowParentValue struct {
@@ -1632,15 +1618,6 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	}
 	stats.TargetRows = uint64(len(rownums))
 	return rownums, parentValues, parentValueByChild, stats, ok, nil
-}
-
-func relationshipReverseArtifactRowsStrictlyIncreasing(rownums []uint64) bool {
-	for i := 1; i < len(rownums); i++ {
-		if rownums[i] <= rownums[i-1] {
-			return false
-		}
-	}
-	return true
 }
 
 func relationshipReverseArtifactCandidateResponseCapacities(responses []*pb.RelationshipReverseArtifactCandidatesResponse) (int, int) {

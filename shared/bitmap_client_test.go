@@ -603,46 +603,6 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesCanReturnAlignedP
 	}
 }
 
-func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesAlignedParentValuesWithoutMap(t *testing.T) {
-	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
-		{
-			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
-				{Rownum: 30, ParentValue: 7},
-				{Rownum: 10, ParentValue: 7},
-			},
-			Ok: true,
-		},
-		{
-			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
-				{Rownum: 20, ParentValue: 8},
-				{Rownum: 10, ParentValue: 7},
-				{Rownum: 40, ParentValue: 9},
-			},
-			Ok: true,
-		},
-	}
-
-	rownums, alignedParentValues, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false, true, false)
-	if err != nil {
-		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
-	}
-	if !ok {
-		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
-	}
-	if got, want := rownums, []uint64{10, 20, 30, 40}; !equalUint64Slices(got, want) {
-		t.Fatalf("rownums = %v, want deduped sorted rownums %v", got, want)
-	}
-	if got, want := alignedParentValues, []int64{7, 8, 7, 9}; !equalInt64Slices(got, want) {
-		t.Fatalf("aligned parent values = %v, want %v", got, want)
-	}
-	if parentValues != nil {
-		t.Fatalf("parent value map = %#v, want nil", parentValues)
-	}
-	if got, want := stats.TargetRows, uint64(4); got != want {
-		t.Fatalf("target rows = %d, want derived count %d", got, want)
-	}
-}
-
 func TestAggregateRelationshipReverseArtifactCandidateResponsesFallsBackWhenParentValuesDoNotCoverRows(t *testing.T) {
 	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
 		{
