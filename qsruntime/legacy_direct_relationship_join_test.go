@@ -241,6 +241,9 @@ func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReverseArtifactParentMap
 	if !reflect.DeepEqual(artifactRead.TargetCandidateRows, []qsbridge.QuantaRownum{102, 101}) {
 		t.Fatalf("artifact target candidate rows = %#v, want final child rows", artifactRead.TargetCandidateRows)
 	}
+	if !artifactRead.AllowUnselectiveReverseArtifactTarget {
+		t.Fatal("allow unselective reverse artifact target = false, want true for final alignment")
+	}
 	if !reflect.DeepEqual(aligned["s"], []qsbridge.QuantaRownum{12, 11}) {
 		t.Fatalf("aligned supplier rows = %#v, want [12 11]", aligned["s"])
 	}
