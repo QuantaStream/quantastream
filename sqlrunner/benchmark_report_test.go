@@ -287,13 +287,14 @@ func TestRenderBenchmarkComparison(t *testing.T) {
 
 func TestBenchmarkComparisonMetadataKeysPrioritizesCommonContext(t *testing.T) {
 	keys := benchmarkComparisonMetadataKeys(map[string]string{
-		"z_custom":    "z",
-		"repo_commit": "abc",
-		"host_os":     "linux",
-		"dataset":     "tpch",
-		"a_custom":    "a",
+		"z_custom":       "z",
+		"repo_commit":    "abc",
+		"host_os":        "linux",
+		"dataset":        "tpch",
+		"execution_path": "sqlrunner_direct_cluster_rpc",
+		"a_custom":       "a",
 	})
-	want := []string{"dataset", "repo_commit", "host_os", "a_custom", "z_custom"}
+	want := []string{"dataset", "execution_path", "repo_commit", "host_os", "a_custom", "z_custom"}
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("keys = %#v, want %#v", keys, want)
 	}

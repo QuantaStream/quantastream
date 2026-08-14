@@ -25,6 +25,28 @@ func TestValidateFlagsAllowsInaboxDirectWithoutEndpointConnectionFlags(t *testin
 	}
 }
 
+func TestDescribeEngineExecutionDistinguishesDirectClusterRPCFromProxy(t *testing.T) {
+	direct := describeEngineExecution(engineInaboxDirect)
+	if direct.ExecutionPath != "sqlrunner_direct_cluster_rpc" || direct.PlannerProcess != "sqlrunner" {
+		t.Fatalf("inabox-direct descriptor = %#v", direct)
+	}
+	if direct.UsesMySQLProxy || !direct.UsesNodeRPC {
+		t.Fatalf("inabox-direct proxy/node flags = proxy:%v node_rpc:%v", direct.UsesMySQLProxy, direct.UsesNodeRPC)
+	}
+	metadata := direct.BenchmarkMetadata()
+	if metadata["execution_path"] != "sqlrunner_direct_cluster_rpc" || metadata["uses_mysql_proxy"] != "false" {
+		t.Fatalf("inabox-direct metadata = %#v", metadata)
+	}
+
+	distributed := describeEngineExecution(engineDistributed)
+	if distributed.ExecutionPath != "mysql_proxy_endpoint" || distributed.PlannerProcess != "quantastream_proxy" {
+		t.Fatalf("distributed descriptor = %#v", distributed)
+	}
+	if !distributed.UsesMySQLProxy || !distributed.UsesNodeRPC {
+		t.Fatalf("distributed proxy/node flags = proxy:%v node_rpc:%v", distributed.UsesMySQLProxy, distributed.UsesNodeRPC)
+	}
+}
+
 func TestValidateFlagsAllowsMySQLReferenceWithDSN(t *testing.T) {
 	cfg := runnerConfig{Engine: engineMySQLReference, MySQLDSN: "user:pass@tcp(127.0.0.1:3306)/test"}
 

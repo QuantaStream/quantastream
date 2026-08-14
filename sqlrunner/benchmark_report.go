@@ -87,7 +87,12 @@ func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roa
 	if err != nil {
 		return err
 	}
-	metadata = mergeBenchmarkMetadata(detectBenchmarkMetadata(), metadata)
+	autoMetadata := mergeBenchmarkMetadata(
+		detectBenchmarkMetadata(),
+		describeEngineExecution(cfg.Engine).BenchmarkMetadata(),
+	)
+	metadata = mergeBenchmarkMetadata(autoMetadata, metadata)
+	logBenchmarkExecutionPath(cfg.Engine, metadata)
 
 	for i := 0; i < cfg.BenchmarkWarmup; i++ {
 		log.Printf("BENCHMARK warmup %d/%d", i+1, cfg.BenchmarkWarmup)
@@ -132,6 +137,29 @@ func executeBenchmarkSuite(ctx context.Context, suite *roadmap.Suite, runner roa
 		return fmt.Errorf("benchmark suite contains FAIL or XPASS results")
 	}
 	return nil
+}
+
+func logBenchmarkExecutionPath(engine string, metadata map[string]string) {
+	descriptor := describeEngineExecution(engine)
+	log.Printf(
+		"BENCHMARK execution_path=%s planner_process=%s query_transport=%s uses_mysql_proxy=%s uses_node_rpc=%s planner_deploy_target=%s node_deploy_scope=%s",
+		metadataValue(metadata, "execution_path", descriptor.ExecutionPath),
+		metadataValue(metadata, "planner_process", descriptor.PlannerProcess),
+		metadataValue(metadata, "query_transport", descriptor.QueryTransport),
+		metadataValue(metadata, "uses_mysql_proxy", formatBoolMetadata(descriptor.UsesMySQLProxy)),
+		metadataValue(metadata, "uses_node_rpc", formatBoolMetadata(descriptor.UsesNodeRPC)),
+		metadataValue(metadata, "planner_deploy_target", descriptor.PlannerDeployTarget),
+		metadataValue(metadata, "node_deploy_scope", descriptor.NodeDeployScope),
+	)
+}
+
+func metadataValue(metadata map[string]string, key, fallback string) string {
+	if metadata != nil {
+		if value := strings.TrimSpace(metadata[key]); value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 func parseBenchmarkMetadata(raw string) (map[string]string, error) {
@@ -788,6 +816,13 @@ func benchmarkComparisonMetadataKeys(metadata map[string]string) []string {
 		"storage_class",
 		"dataset",
 		"scale_factor",
+		"execution_path",
+		"planner_process",
+		"query_transport",
+		"uses_mysql_proxy",
+		"uses_node_rpc",
+		"planner_deploy_target",
+		"node_deploy_scope",
 		"repo_commit",
 		"repo_branch",
 		"repo_dirty",

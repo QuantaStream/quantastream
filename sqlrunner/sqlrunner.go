@@ -271,6 +271,19 @@ func printUsage(err error) {
 	u.Warn("Benchmark summary example: ./sqlrunner -benchmark_summary expected/local/tpch.json")
 	u.Warn("Benchmark compare example: ./sqlrunner -benchmark_compare expected/local/direct.json,expected/local/standard.json")
 	u.Warn("Profile capture example: ./sqlrunner -engine inabox-standard -suite_file ../tpc-h-benchmark/sqltests/tpch_queries.yaml -case tpch_queries.q21.080_formal_supplier_wait_exists_not_exists_count -verbose -capture_profile")
+	u.Warn()
+	u.Warn("Engine execution paths:")
+	for _, engine := range []string{engineInaboxDirect, engineDistributed, engineProxy, engineInaboxStandard, engineRuntime, engineMySQLReference} {
+		descriptor := describeEngineExecution(engine)
+		u.Warnf("  %s: execution_path=%s planner_process=%s query_transport=%s uses_mysql_proxy=%t uses_node_rpc=%t",
+			engine,
+			descriptor.ExecutionPath,
+			descriptor.PlannerProcess,
+			descriptor.QueryTransport,
+			descriptor.UsesMySQLProxy,
+			descriptor.UsesNodeRPC,
+		)
+	}
 }
 
 func configureLogging(logLevel string) {
