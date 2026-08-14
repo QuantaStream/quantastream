@@ -435,6 +435,12 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesUnorderedR
 	if got, want := stats.TargetRows, uint64(4); got != want {
 		t.Fatalf("target rows = %d, want deduped count %d", got, want)
 	}
+	if got, want := stats.ParentValueEntries, uint64(6); got != want {
+		t.Fatalf("parent value entries = %d, want raw count %d", got, want)
+	}
+	if got, want := stats.DuplicateParentValueEntries, uint64(2); got != want {
+		t.Fatalf("duplicate parent value entries = %d, want duplicate count %d", got, want)
+	}
 	wantParentValues := map[uint64]int64{10: 7, 20: 8, 30: 7, 40: 9}
 	for rownum, want := range wantParentValues {
 		if got := parentValues[rownum]; got != want {

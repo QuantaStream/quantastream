@@ -1570,12 +1570,19 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 				stats.ParentValueEntries++
 				rownum := value.GetRownum()
 				parentValue := value.GetParentValue()
+				duplicateParentValue := false
 				if collectParentMap {
+					_, duplicateParentValue = parentValueByChild[rownum]
+					if duplicateParentValue {
+						stats.DuplicateParentValueEntries++
+					}
 					parentValueByChild[rownum] = parentValue
 				}
 				if deriveRowsFromParentValues {
 					if _, seen := seenRows[rownum]; seen {
-						stats.DuplicateParentValueEntries++
+						if !collectParentMap {
+							stats.DuplicateParentValueEntries++
+						}
 						continue
 					}
 					seenRows[rownum] = struct{}{}
