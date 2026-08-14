@@ -18,7 +18,7 @@ import (
 
 // Main processing flow for bitmap queries.  Returns a bitmap plus row
 // cardinality. Processing is parallelized.
-func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, []QueryResultProbe, error) {
+func (c *BitmapIndex) query(query *pb.BitmapQuery, disableFragmentFanout ...bool) (*roaring64.Bitmap, uint64, []QueryResultProbe, error) {
 
 	//c.Conn.nodeMapLock.RLock()
 	//defer c.Conn.nodeMapLock.RUnlock()
@@ -35,6 +35,8 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, [
 
 	var eg errgroup.Group
 
+	forceWholeFanout := len(disableFragmentFanout) > 0 && disableFragmentFanout[0]
+
 	// Break up the query and group fragments by index
 	indexGroups := c.groupQueryFragmentsByIndex(query)
 	for k, v := range indexGroups {
@@ -49,7 +51,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, [
 		i := k
 		q := v
 		eg.Go(func() error {
-			ir, groupProbes, err := c.queryGroup(i, q)
+			ir, groupProbes, err := c.queryGroup(i, q, forceWholeFanout)
 			if err != nil {
 				return err
 			}
@@ -198,7 +200,7 @@ func (c *BitmapIndex) query(query *pb.BitmapQuery) (*roaring64.Bitmap, uint64, [
 
 // Perform query processing for a group of query predicates (fragments) for a given index.
 // Processing is parallelized across nodes.
-func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*IntermediateResult, []QueryResultProbe, error) {
+func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery, disableFragmentFanout bool) (*IntermediateResult, []QueryResultProbe, error) {
 
 	if c.local != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
@@ -217,10 +219,14 @@ func (c *BitmapIndex) queryGroup(index string, query *pb.BitmapQuery) (*Intermed
 		return ir, probes, nil
 	}
 
-	if distributedFragmentFanoutEligible(query) {
+	if bitmapQueryShouldUseFragmentFanout(query, disableFragmentFanout) {
 		return c.queryGroupFragmentFanout(index, query)
 	}
 	return c.queryGroupWholeFanout(index, query)
+}
+
+func bitmapQueryShouldUseFragmentFanout(query *pb.BitmapQuery, disableFragmentFanout bool) bool {
+	return !disableFragmentFanout && distributedFragmentFanoutEligible(query)
 }
 
 func (c *BitmapIndex) queryGroupFragmentFanout(index string, query *pb.BitmapQuery) (*IntermediateResult, []QueryResultProbe, error) {
@@ -661,7 +667,7 @@ func (c *BitmapIndex) Query(query *BitmapQuery) (*BitmapQueryResponse, error) {
 
 	response := &BitmapQueryResponse{}
 	var err error
-	if response.Results, response.Count, response.Probes, err = c.query(query.ToProto()); err != nil {
+	if response.Results, response.Count, response.Probes, err = c.query(query.ToProto(), query.DisableFragmentFanout); err != nil {
 		response.ErrorMessage = fmt.Sprintf("%v", err)
 	} else {
 		response.Success = true

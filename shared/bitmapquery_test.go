@@ -146,6 +146,12 @@ func TestDistributedFragmentFanoutEligibilityDeclinesComplexQueries(t *testing.T
 	if !distributedFragmentFanoutEligible(simple) {
 		t.Fatal("simple tree-shaped intersect query should use distributed fragment fanout")
 	}
+	if !bitmapQueryShouldUseFragmentFanout(simple, false) {
+		t.Fatal("simple query should use distributed fragment fanout when not disabled")
+	}
+	if bitmapQueryShouldUseFragmentFanout(simple, true) {
+		t.Fatal("disabled fragment fanout should use whole-query fanout")
+	}
 	flattened := flattenBitmapQueryFragments(simple)
 	if len(flattened) != 2 {
 		t.Fatalf("flattened fragments = %d, want 2", len(flattened))

@@ -50,6 +50,7 @@ func (a LegacyBitmapQueryAdapter) ToBitmapQuery(query qsbridge.QuantaIntermediat
 // ToBitmapQueryFromRequest converts a neutral runtime execution request to legacy shared.BitmapQuery.
 func (a LegacyBitmapQueryAdapter) ToBitmapQueryFromRequest(request ExecutionRequest) *legacy.BitmapQuery {
 	query := a.ToBitmapQuery(request.Query)
+	query.DisableFragmentFanout = request.PreserveBitmapFragmentOrder
 	a.applyDefaultTimeWindow(query)
 	a.applyTimeWindow(query, request)
 	return query

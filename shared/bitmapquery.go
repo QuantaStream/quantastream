@@ -51,10 +51,11 @@ type QueryFragment struct {
 
 // BitmapQuery - Top level query state container
 type BitmapQuery struct {
-	FromTime string `yaml:"fromTime"`
-	ToTime   string `yaml:"toTime"`
-	root     *QueryFragment
-	curLevel int
+	FromTime              string `yaml:"fromTime"`
+	ToTime                string `yaml:"toTime"`
+	DisableFragmentFanout bool   `yaml:"disableFragmentFanout,omitempty"`
+	root                  *QueryFragment
+	curLevel              int
 }
 
 // NewBitmapQuery - Construct a new query.

@@ -1053,6 +1053,9 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirec
 		},
 		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
 			borrowCalls++
+			if !request.PreserveBitmapFragmentOrder {
+				t.Fatal("PreserveBitmapFragmentOrder = false, want true for direct relationship-vector candidate query")
+			}
 			if len(request.Query.Fragments) != 3 {
 				t.Fatalf("fragments = %#v, want two target filters plus BATCH_EQ", request.Query.Fragments)
 			}

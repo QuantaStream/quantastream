@@ -117,8 +117,13 @@ func TestLegacyBitmapQueryAdapterConvertsExecutionRequestToProto(t *testing.T) {
 			Value:     big.NewInt(8),
 		}},
 	})
+	request.PreserveBitmapFragmentOrder = true
 
-	proto := LegacyBitmapQueryAdapter{}.ToProtoFromRequest(request)
+	query := LegacyBitmapQueryAdapter{}.ToBitmapQueryFromRequest(request)
+	if !query.DisableFragmentFanout {
+		t.Fatal("DisableFragmentFanout = false, want true when preserving fragment order")
+	}
+	proto := query.ToProto()
 	if len(proto.Query) != 1 {
 		t.Fatalf("fragments = %d, want 1", len(proto.Query))
 	}

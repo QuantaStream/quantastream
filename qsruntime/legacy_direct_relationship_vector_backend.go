@@ -548,6 +548,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: fragments,
 	})
+	request.PreserveBitmapFragmentOrder = true
 	timing := legacyDirectRelationshipVectorDirectQueryTiming{Fragments: len(fragments)}
 	borrowStart := time.Now()
 	session, diagnostics, err := b.Sessions.BorrowDirectSession(ctx, request)
