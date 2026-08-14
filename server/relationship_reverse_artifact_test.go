@@ -10,6 +10,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"github.com/stvp/rendezvous"
 )
 
 func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
@@ -115,6 +116,77 @@ func TestRelationshipReverseArtifactMaintainsPerShardArtifacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rownums, []uint64{4, 6}) {
 		t.Fatalf("rownums for value 8 = %#v, want [4 6]", rownums)
+	}
+}
+
+func TestRelationshipReverseArtifactDistributedUpdatesWarmOwnedCache(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	conn := shared.NewDefaultConnection("reverse-artifact-owned-cache-test")
+	conn.Replicas = 1
+	conn.HashTable = rendezvous.New([]string{"this-node"})
+	index.Node = &Node{Conn: conn, hashKey: "this-node", State: Active}
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		2: 7,
+		4: 8,
+	}, false))
+
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	if artifact.owned == nil {
+		t.Fatal("owned reverse artifact cache was not warmed during distributed BSI update")
+	}
+	if artifact.owned.rows != 2 {
+		t.Fatalf("owned reverse artifact rows = %d, want 2", artifact.owned.rows)
+	}
+	if artifact.ownedShardKey == "" {
+		t.Fatal("owned reverse artifact shard key is empty")
+	}
+
+	rownums, stats, ok, err := index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidates error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("artifact lookup ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4}) {
+		t.Fatalf("rownums for value 8 = %#v, want [4]", rownums)
+	}
+	if stats.Rows != 2 || stats.Values != 2 || stats.TargetRows != 1 {
+		t.Fatalf("stats = %#v, want rows=2 values=2 targetRows=1", stats)
+	}
+}
+
+func TestRelationshipReverseArtifactSingleNodeUsesAggregateArtifact(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{
+		2: 7,
+		4: 8,
+	}, false))
+
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	if artifact.owned != nil {
+		t.Fatalf("single-node reverse artifact owned cache = %#v, want nil", artifact.owned)
+	}
+
+	rownums, _, ok, err := index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidates error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("artifact lookup ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{4}) {
+		t.Fatalf("rownums for value 8 = %#v, want [4]", rownums)
 	}
 }
 

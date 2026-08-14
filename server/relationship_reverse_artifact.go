@@ -1104,8 +1104,31 @@ func (m *BitmapIndex) relationshipReverseArtifactOwnsShard(index, field string, 
 		return true
 	}
 	hashKey := fmt.Sprintf("%s/%s/%s", index, field, formatShardTime(time.Unix(0, shardTime)))
+	if found, replica := m.relationshipReverseArtifactLocalShardReplica(hashKey); found {
+		return replica == 1
+	}
 	found, replica := m.CheckNodeForKey(hashKey, m.GetNodeID())
 	return found && replica == 1
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactLocalShardReplica(hashKey string) (bool, int) {
+	if m == nil || m.HashTable == nil {
+		return false, 0
+	}
+	nodeID := strings.TrimSpace(m.GetNodeID())
+	if nodeID == "" {
+		return false, 0
+	}
+	if m.State != Active && m.State != Syncing {
+		return false, 0
+	}
+	nodeKeys := m.HashTable.GetN(m.Replicas, hashKey)
+	for i, candidate := range nodeKeys {
+		if candidate == nodeID {
+			return true, i + 1
+		}
+	}
+	return false, 0
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactReadableShardKey(index, field string) string {
