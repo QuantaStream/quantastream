@@ -57,6 +57,13 @@ func TestLegacyDirectRelationshipGraphReductionSummaryProbes(t *testing.T) {
 		reverseArtifactCandidateRows:       13,
 		reverseArtifactNarrowedRows:        14,
 		matchedRows:                        15,
+		valueVectorColumnIDElapsed:         17 * time.Millisecond,
+		valueVectorReadElapsed:             18 * time.Millisecond,
+		valueVectorPairElapsed:             19 * time.Millisecond,
+		valueVectorChildRows:               20,
+		valueVectorValues:                  21,
+		valueVectorExists:                  22,
+		valueVectorParentMisses:            23,
 	}, 16*time.Millisecond, 2)
 
 	probes := summary.probes()
@@ -65,8 +72,11 @@ func TestLegacyDirectRelationshipGraphReductionSummaryProbes(t *testing.T) {
 	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_child_rows_seen", "5")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_joined_rows_seen", "2")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_projection_rows", "11")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_value_vector_child_rows", "20")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_value_vector_parent_misses", "23")
 	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_edge_reduce_total_elapsed", "7ms")
 	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_reverse_artifact_rpc_total_elapsed", "4ms")
+	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_value_vector_read_total_elapsed", "18ms")
 	assertExecutionProbe(t, probes, "relationship_join", "phase_graph_reduction_max_child_retain_elapsed", "16ms")
 	assertExecutionProbe(t, probes, "relationship_join", "graph_reduction_max_edge_reduce", "iter=1 edge=1 input=2 o:orders[3] -> l:lineitem[5]")
 	assertExecutionProbeName(t, probes, "relationship_join", "graph_reduction_edge_summary_1")
@@ -1061,6 +1071,12 @@ func TestLegacyDirectRelationshipReduceProjectedFKBSIUsesValueVectorForManyParen
 	}
 	if timing.valueVectorMode != "int64" {
 		t.Fatalf("valueVectorMode = %q, want int64", timing.valueVectorMode)
+	}
+	if timing.valueVectorChildRows != len(childRows) || timing.valueVectorValues != len(childRows) || timing.valueVectorExists != len(childRows) {
+		t.Fatalf("value vector rows/values/exists = %d/%d/%d, want %d/%d/%d", timing.valueVectorChildRows, timing.valueVectorValues, timing.valueVectorExists, len(childRows), len(childRows), len(childRows))
+	}
+	if timing.valueVectorParentMisses != len(childRows)-len(wantJoined) {
+		t.Fatalf("valueVectorParentMisses = %d, want %d", timing.valueVectorParentMisses, len(childRows)-len(wantJoined))
 	}
 	if timing.batchEqualUsed || timing.singleKeyEqualUsed {
 		t.Fatalf("batch/single paths = %t/%t, want false/false", timing.batchEqualUsed, timing.singleKeyEqualUsed)

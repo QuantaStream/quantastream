@@ -112,6 +112,13 @@ type legacyDirectRelationshipReduceTiming struct {
 	singleKeyEqualElapsed               time.Duration
 	valueVectorElapsed                  time.Duration
 	valueVectorMode                     string
+	valueVectorColumnIDElapsed          time.Duration
+	valueVectorReadElapsed              time.Duration
+	valueVectorPairElapsed              time.Duration
+	valueVectorChildRows                int
+	valueVectorValues                   int
+	valueVectorExists                   int
+	valueVectorParentMisses             int
 	intersectElapsed                    time.Duration
 	rownumElapsed                       time.Duration
 	pairElapsed                         time.Duration
@@ -152,6 +159,9 @@ type legacyDirectRelationshipGraphReductionSummary struct {
 	totalReverseArtifactRPC       time.Duration
 	totalReverseArtifactRPCMax    time.Duration
 	totalValueVectorElapsed       time.Duration
+	totalValueVectorColumnID      time.Duration
+	totalValueVectorRead          time.Duration
+	totalValueVectorPair          time.Duration
 	totalBatchEqualElapsed        time.Duration
 	totalIntersectElapsed         time.Duration
 	totalPairElapsed              time.Duration
@@ -164,12 +174,18 @@ type legacyDirectRelationshipGraphReductionSummary struct {
 	totalReverseArtifactCandidate int
 	totalReverseArtifactNarrowed  int
 	totalMatchedRows              int
+	totalValueVectorChildRows     int
+	totalValueVectorValues        int
+	totalValueVectorExists        int
+	totalValueVectorParentMisses  int
 	maxReduceElapsed              time.Duration
 	maxReduceLabel                string
 	maxProjectionElapsed          time.Duration
 	maxProjectionLabel            string
 	maxReverseArtifactElapsed     time.Duration
 	maxReverseArtifactLabel       string
+	maxValueVectorElapsed         time.Duration
+	maxValueVectorLabel           string
 	maxChildRetainElapsed         time.Duration
 	maxChildRetainLabel           string
 	edgeSummaries                 []string
@@ -184,6 +200,13 @@ type legacyDirectRelationshipProjectedFKReduceTiming struct {
 	singleKeyFoundSetElapsed time.Duration
 	singleKeyEqualElapsed    time.Duration
 	valueVectorElapsed       time.Duration
+	valueVectorColumnID      time.Duration
+	valueVectorRead          time.Duration
+	valueVectorPair          time.Duration
+	valueVectorChildRows     int
+	valueVectorValues        int
+	valueVectorExists        int
+	valueVectorParentMisses  int
 	intersectElapsed         time.Duration
 	rownumElapsed            time.Duration
 	pairElapsed              time.Duration
@@ -1046,6 +1069,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"single_key_equal_elapsed", reduceTiming.singleKeyEqualElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"value_vector_elapsed", reduceTiming.valueVectorElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"value_vector_mode", reduceTiming.valueVectorMode),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_column_ids_elapsed", reduceTiming.valueVectorColumnIDElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_read_elapsed", reduceTiming.valueVectorReadElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_pair_elapsed", reduceTiming.valueVectorPairElapsed.String()),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_child_rows", strconv.Itoa(reduceTiming.valueVectorChildRows)),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_values", strconv.Itoa(reduceTiming.valueVectorValues)),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_exists", strconv.Itoa(reduceTiming.valueVectorExists)),
+				legacyDirectRelationshipProbe(probePrefix+"value_vector_parent_misses", strconv.Itoa(reduceTiming.valueVectorParentMisses)),
 				legacyDirectRelationshipProbe(probePrefix+"intersect_elapsed", reduceTiming.intersectElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"rownum_elapsed", reduceTiming.rownumElapsed.String()),
 				legacyDirectRelationshipProbe(probePrefix+"pair_elapsed", reduceTiming.pairElapsed.String()),
@@ -3949,6 +3979,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.singleKeyEqualElapsed = projectedTiming.singleKeyEqualElapsed
 		timing.valueVectorElapsed = projectedTiming.valueVectorElapsed
 		timing.valueVectorMode = projectedTiming.valueVectorMode
+		timing.valueVectorColumnIDElapsed = projectedTiming.valueVectorColumnID
+		timing.valueVectorReadElapsed = projectedTiming.valueVectorRead
+		timing.valueVectorPairElapsed = projectedTiming.valueVectorPair
+		timing.valueVectorChildRows = projectedTiming.valueVectorChildRows
+		timing.valueVectorValues = projectedTiming.valueVectorValues
+		timing.valueVectorExists = projectedTiming.valueVectorExists
+		timing.valueVectorParentMisses = projectedTiming.valueVectorParentMisses
 		timing.intersectElapsed = projectedTiming.intersectElapsed
 		timing.rownumElapsed = projectedTiming.rownumElapsed
 		timing.pairElapsed = projectedTiming.pairElapsed
@@ -4408,10 +4445,21 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 	if legacyDirectRelationshipShouldUseValueVectorReduce(childRows, parentKeyRows) {
 		timing.valueVectorUsed = true
 		valueStart := time.Now()
+		columnIDStart := time.Now()
 		childColumnIDs := nativeProjectionRownumColumnIDs(childRows)
+		timing.valueVectorColumnID = time.Since(columnIDStart)
+		timing.valueVectorChildRows = len(childRows)
 		if legacyDirectRelationshipFKBSIInt64ValuesAllowed(fkBSI) {
 			timing.valueVectorMode = "int64"
+			readStart := time.Now()
 			parentKeys, exists := fkBSI.GetValues(childColumnIDs)
+			timing.valueVectorRead = time.Since(readStart)
+			timing.valueVectorValues = len(parentKeys)
+			for _, ok := range exists {
+				if ok {
+					timing.valueVectorExists++
+				}
+			}
 			timing.valueVectorElapsed = time.Since(valueStart)
 
 			joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
@@ -4423,17 +4471,27 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 				}
 				parent, ok := parentKeyRows[parentKeys[i]]
 				if !ok {
+					timing.valueVectorParentMisses++
 					continue
 				}
 				joined = append(joined, child)
 				pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
 			}
 			timing.pairElapsed = time.Since(pairStart)
+			timing.valueVectorPair = timing.pairElapsed
 			return joined, pairs, timing, nil
 		}
 
 		timing.valueVectorMode = "big"
+		readStart := time.Now()
 		parentKeys := fkBSI.GetBigValues(childColumnIDs)
+		timing.valueVectorRead = time.Since(readStart)
+		timing.valueVectorValues = len(parentKeys)
+		for _, parentKey := range parentKeys {
+			if parentKey != nil {
+				timing.valueVectorExists++
+			}
+		}
 		timing.valueVectorElapsed = time.Since(valueStart)
 
 		joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
@@ -4445,12 +4503,14 @@ func legacyDirectRelationshipReduceProjectedFKBSIWithTiming(fkBSI *roaring64.BSI
 			}
 			parent, ok := parentKeyRows[parentKeys[i].Int64()]
 			if !ok {
+				timing.valueVectorParentMisses++
 				continue
 			}
 			joined = append(joined, child)
 			pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parent})
 		}
 		timing.pairElapsed = time.Since(pairStart)
+		timing.valueVectorPair = timing.pairElapsed
 		return joined, pairs, timing, nil
 	}
 	joined := make([]qsbridge.QuantaRownum, 0, len(childRows))
@@ -4762,6 +4822,9 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 	s.totalReverseArtifactRPC += timing.reverseArtifactClientRPCElapsed
 	s.totalReverseArtifactRPCMax += timing.reverseArtifactClientRPCMaxElapsed
 	s.totalValueVectorElapsed += timing.valueVectorElapsed
+	s.totalValueVectorColumnID += timing.valueVectorColumnIDElapsed
+	s.totalValueVectorRead += timing.valueVectorReadElapsed
+	s.totalValueVectorPair += timing.valueVectorPairElapsed
 	s.totalBatchEqualElapsed += timing.batchEqualElapsed
 	s.totalIntersectElapsed += timing.intersectElapsed
 	s.totalPairElapsed += timing.pairElapsed
@@ -4774,6 +4837,10 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 	s.totalReverseArtifactCandidate += timing.reverseArtifactCandidateRows
 	s.totalReverseArtifactNarrowed += timing.reverseArtifactNarrowedRows
 	s.totalMatchedRows += timing.matchedRows
+	s.totalValueVectorChildRows += timing.valueVectorChildRows
+	s.totalValueVectorValues += timing.valueVectorValues
+	s.totalValueVectorExists += timing.valueVectorExists
+	s.totalValueVectorParentMisses += timing.valueVectorParentMisses
 	if reduceElapsed > s.maxReduceElapsed {
 		s.maxReduceElapsed = reduceElapsed
 		s.maxReduceLabel = label
@@ -4786,12 +4853,16 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		s.maxReverseArtifactElapsed = timing.reverseArtifactElapsed
 		s.maxReverseArtifactLabel = label
 	}
+	if timing.valueVectorElapsed > s.maxValueVectorElapsed {
+		s.maxValueVectorElapsed = timing.valueVectorElapsed
+		s.maxValueVectorLabel = label
+	}
 	if childRetainElapsed > s.maxChildRetainElapsed {
 		s.maxChildRetainElapsed = childRetainElapsed
 		s.maxChildRetainLabel = label
 	}
 	s.edgeSummaries = append(s.edgeSummaries, fmt.Sprintf(
-		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
+		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s value_vector_column_ids=%s value_vector_read=%s value_vector_pair=%s value_vector_children=%d value_vector_values=%d value_vector_exists=%d value_vector_parent_misses=%d intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d",
 		label,
 		joinedRows,
 		childRetainRows,
@@ -4803,6 +4874,13 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		timing.reverseArtifactClientRPCMaxElapsed,
 		timing.valueVectorElapsed,
 		timing.valueVectorMode,
+		timing.valueVectorColumnIDElapsed,
+		timing.valueVectorReadElapsed,
+		timing.valueVectorPairElapsed,
+		timing.valueVectorChildRows,
+		timing.valueVectorValues,
+		timing.valueVectorExists,
+		timing.valueVectorParentMisses,
 		timing.intersectElapsed,
 		timing.pairElapsed,
 		childRetainElapsed,
@@ -4827,6 +4905,10 @@ func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_candidate_rows", strconv.Itoa(s.totalReverseArtifactCandidate)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_narrowed_rows", strconv.Itoa(s.totalReverseArtifactNarrowed)),
 		legacyDirectRelationshipProbe("graph_reduction_matched_rows", strconv.Itoa(s.totalMatchedRows)),
+		legacyDirectRelationshipProbe("graph_reduction_value_vector_child_rows", strconv.Itoa(s.totalValueVectorChildRows)),
+		legacyDirectRelationshipProbe("graph_reduction_value_vector_values", strconv.Itoa(s.totalValueVectorValues)),
+		legacyDirectRelationshipProbe("graph_reduction_value_vector_exists", strconv.Itoa(s.totalValueVectorExists)),
+		legacyDirectRelationshipProbe("graph_reduction_value_vector_parent_misses", strconv.Itoa(s.totalValueVectorParentMisses)),
 		legacyDirectRelationshipProbe("phase_graph_reduction_edge_reduce_total_elapsed", s.totalReduceElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_edge_projection_total_elapsed", s.totalProjectionElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_parent_key_total_elapsed", s.totalParentKeyElapsed.String()),
@@ -4834,6 +4916,9 @@ func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe
 		legacyDirectRelationshipProbe("phase_graph_reduction_reverse_artifact_rpc_total_elapsed", s.totalReverseArtifactRPC.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_reverse_artifact_rpc_max_sum_elapsed", s.totalReverseArtifactRPCMax.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_value_vector_total_elapsed", s.totalValueVectorElapsed.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_value_vector_column_ids_total_elapsed", s.totalValueVectorColumnID.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_value_vector_read_total_elapsed", s.totalValueVectorRead.String()),
+		legacyDirectRelationshipProbe("phase_graph_reduction_value_vector_pair_total_elapsed", s.totalValueVectorPair.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_batch_equal_total_elapsed", s.totalBatchEqualElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_intersect_total_elapsed", s.totalIntersectElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_reduction_pair_total_elapsed", s.totalPairElapsed.String()),
@@ -4844,6 +4929,8 @@ func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe
 		legacyDirectRelationshipProbe("graph_reduction_max_edge_projection", s.maxProjectionLabel),
 		legacyDirectRelationshipProbe("phase_graph_reduction_max_reverse_artifact_elapsed", s.maxReverseArtifactElapsed.String()),
 		legacyDirectRelationshipProbe("graph_reduction_max_reverse_artifact", s.maxReverseArtifactLabel),
+		legacyDirectRelationshipProbe("phase_graph_reduction_max_value_vector_elapsed", s.maxValueVectorElapsed.String()),
+		legacyDirectRelationshipProbe("graph_reduction_max_value_vector", s.maxValueVectorLabel),
 		legacyDirectRelationshipProbe("phase_graph_reduction_max_child_retain_elapsed", s.maxChildRetainElapsed.String()),
 		legacyDirectRelationshipProbe("graph_reduction_max_child_retain", s.maxChildRetainLabel),
 	}

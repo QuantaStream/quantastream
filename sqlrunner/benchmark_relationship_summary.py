@@ -81,6 +81,9 @@ REDUCTION_TOTAL_NAMES = [
     "phase_graph_reduction_reverse_artifact_rpc_total_elapsed",
     "phase_graph_reduction_reverse_artifact_rpc_max_sum_elapsed",
     "phase_graph_reduction_value_vector_total_elapsed",
+    "phase_graph_reduction_value_vector_column_ids_total_elapsed",
+    "phase_graph_reduction_value_vector_read_total_elapsed",
+    "phase_graph_reduction_value_vector_pair_total_elapsed",
     "phase_graph_reduction_batch_equal_total_elapsed",
     "phase_graph_reduction_intersect_total_elapsed",
     "phase_graph_reduction_pair_total_elapsed",
@@ -96,6 +99,10 @@ PREAGG_COUNTER_NAMES = [
     "graph_reduction_reverse_artifact_candidate_rows",
     "graph_reduction_reverse_artifact_narrowed_rows",
     "graph_reduction_matched_rows",
+    "graph_reduction_value_vector_child_rows",
+    "graph_reduction_value_vector_values",
+    "graph_reduction_value_vector_exists",
+    "graph_reduction_value_vector_parent_misses",
     "graph_grouped_aggregate_rows",
     "graph_grouped_aggregate_fields",
     "graph_grouped_aggregate_materialization_rows",
@@ -273,24 +280,34 @@ def event_values(runs: list[list[dict[str, Any]]], name: str) -> list[str]:
 
 
 def print_timing_table(title: str, runs: list[list[dict[str, Any]]], names: list[str]) -> None:
-    print(title)
+    rows = []
     for name in names:
         values = timing_values(runs, name)
         if not values:
             continue
-        print(
+        rows.append(
             f"  {name}: median={fmt_seconds(median(values))} "
             f"p95={fmt_seconds(percentile(values, 0.95))} max={fmt_seconds(max(values))} n={len(values)}"
         )
+    if not rows:
+        return
+    print(title)
+    for row in rows:
+        print(row)
 
 
 def print_counter_table(title: str, runs: list[list[dict[str, Any]]], names: list[str]) -> None:
-    print(title)
+    rows = []
     for name in names:
         values = counter_values(runs, name)
         if not values:
             continue
-        print(f"  {name}: median={fmt_int(int(median(values)))} max={fmt_int(max(values))} n={len(values)}")
+        rows.append(f"  {name}: median={fmt_int(int(median(values)))} max={fmt_int(max(values))} n={len(values)}")
+    if not rows:
+        return
+    print(title)
+    for row in rows:
+        print(row)
 
 
 def field_probe_bases(runs: list[list[dict[str, Any]]]) -> list[str]:
@@ -420,6 +437,9 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             "parent_key_elapsed",
             "child_retain_elapsed",
             "value_vector_elapsed",
+            "value_vector_column_ids_elapsed",
+            "value_vector_read_elapsed",
+            "value_vector_pair_elapsed",
         ):
             values = [v for v in metrics.get(metric, []) if isinstance(v, float)]
             if values:
@@ -432,6 +452,10 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             "reverse_artifact_narrowed_rows",
             "matched_rows",
             "child_retain_rows",
+            "value_vector_child_rows",
+            "value_vector_values",
+            "value_vector_exists",
+            "value_vector_parent_misses",
         ):
             values = [v for v in metrics.get(metric, []) if isinstance(v, int)]
             if values:
@@ -440,12 +464,18 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
         child_rows = median([v for v in metrics.get("child_rows", []) if isinstance(v, int)])
         joined_rows = median([v for v in metrics.get("joined_rows", []) if isinstance(v, int)])
         candidate_rows = median([v for v in metrics.get("reverse_artifact_candidate_rows", []) if isinstance(v, int)])
+        value_vector_values = median([v for v in metrics.get("value_vector_values", []) if isinstance(v, int)])
+        value_vector_exists = median([v for v in metrics.get("value_vector_exists", []) if isinstance(v, int)])
+        value_vector_parent_misses = median([v for v in metrics.get("value_vector_parent_misses", []) if isinstance(v, int)])
         if parent_rows:
             parts.append(f"fanout={joined_rows / parent_rows:.2f}x")
         if child_rows:
             parts.append(f"child_selectivity={joined_rows / child_rows:.4f}")
         if joined_rows:
             parts.append(f"candidate_overjoin={candidate_rows / joined_rows:.2f}x")
+        if value_vector_values:
+            parent_hits = max(0, value_vector_exists - value_vector_parent_misses)
+            parts.append(f"value_vector_parent_hit_rate={parent_hits / value_vector_values:.4f}")
         mode = scalar_median(metrics.get("value_vector_mode", []))
         if mode:
             parts.append(f"value_vector_mode={mode}")
