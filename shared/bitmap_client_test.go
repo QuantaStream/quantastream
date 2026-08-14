@@ -341,6 +341,9 @@ func TestBitmapIndexRelationshipReverseArtifactFansOutToActiveClients(t *testing
 	if got, want := fake.candidateCallCount(), 3; got != want {
 		t.Fatalf("candidate fanout calls = %d, want %d", got, want)
 	}
+	if got, want := fake.omitRownumsCandidateCallCount(), 3; got != want {
+		t.Fatalf("omit rownums candidate calls = %d, want %d", got, want)
+	}
 	if got, want := rownums, []uint64{10, 20, 30}; !equalUint64Slices(got, want) {
 		t.Fatalf("rownums = %v, want %v", got, want)
 	}
@@ -470,6 +473,45 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesCanDeriveUnordere
 		},
 		{
 			Rownums: []uint64{20, 40},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 20, ParentValue: 8},
+				{Rownum: 40, ParentValue: 9},
+			},
+			Ok: true,
+		},
+	}
+
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false, true)
+	if err != nil {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
+	}
+	if !sameUint64Set(rownums, []uint64{10, 20, 30, 40}) {
+		t.Fatalf("rownums = %v, want parent-value row key set", rownums)
+	}
+	if got, want := stats.TargetRows, uint64(4); got != want {
+		t.Fatalf("target rows = %d, want derived count %d", got, want)
+	}
+	wantParentValues := map[uint64]int64{10: 7, 20: 8, 30: 7, 40: 9}
+	for rownum, want := range wantParentValues {
+		if got := parentValues[rownum]; got != want {
+			t.Fatalf("parent value for row %d = %d, want %d", rownum, got, want)
+		}
+	}
+}
+
+func TestAggregateRelationshipReverseArtifactCandidateResponsesCanDeriveRowsWhenRownumsOmitted(t *testing.T) {
+	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
+		{
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 30, ParentValue: 7},
+				{Rownum: 10, ParentValue: 7},
+			},
+			Ok: true,
+		},
+		{
 			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
 				{Rownum: 20, ParentValue: 8},
 				{Rownum: 40, ParentValue: 9},
@@ -810,20 +852,29 @@ func (s *compareFanoutBitmapIndexServer) callCount() int {
 
 type reverseArtifactFanoutBitmapIndexServer struct {
 	pb.UnimplementedBitmapIndexServer
-	mu             sync.Mutex
-	candidateCalls int
-	statsCalls     int
+	mu               sync.Mutex
+	candidateCalls   int
+	omitRownumsCalls int
+	statsCalls       int
 }
 
-func (s *reverseArtifactFanoutBitmapIndexServer) RelationshipReverseArtifactCandidates(context.Context, *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+func (s *reverseArtifactFanoutBitmapIndexServer) RelationshipReverseArtifactCandidates(_ context.Context, req *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
 	s.mu.Lock()
 	s.candidateCalls++
+	omitRownums := req.GetOmitRownums()
+	if omitRownums {
+		s.omitRownumsCalls++
+	}
 	call := s.candidateCalls
 	s.mu.Unlock()
 
 	rownum := uint64(call * 10)
+	rownums := []uint64{rownum}
+	if omitRownums {
+		rownums = nil
+	}
 	return &pb.RelationshipReverseArtifactCandidatesResponse{
-		Rownums: []uint64{rownum},
+		Rownums: rownums,
 		ParentValues: []*pb.RelationshipReverseArtifactParentValue{{
 			Rownum:      rownum,
 			ParentValue: 7,
@@ -857,6 +908,12 @@ func (s *reverseArtifactFanoutBitmapIndexServer) candidateCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.candidateCalls
+}
+
+func (s *reverseArtifactFanoutBitmapIndexServer) omitRownumsCandidateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.omitRownumsCalls
 }
 
 func (s *reverseArtifactFanoutBitmapIndexServer) statsCallCount() int {

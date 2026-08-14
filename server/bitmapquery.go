@@ -1248,11 +1248,13 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rownums, parentValues, stats, ok, err := m.RelationshipReverseArtifactCandidateValuesForRowsUnordered(
+	rownums, parentValues, stats, ok, err := m.relationshipReverseArtifactCandidateValues(
 		req.GetIndex(),
 		req.GetField(),
 		req.GetSourceValues(),
 		req.GetCandidateRows(),
+		false,
+		!req.GetOmitRownums(),
 	)
 	if err != nil {
 		return nil, err
@@ -1264,8 +1266,12 @@ func (m *BitmapIndex) RelationshipReverseArtifactCandidates(ctx context.Context,
 			ParentValue: parentValue,
 		})
 	}
+	responseRows := append([]uint64(nil), rownums...)
+	if req.GetOmitRownums() {
+		responseRows = nil
+	}
 	return &pb.RelationshipReverseArtifactCandidatesResponse{
-		Rownums:      append([]uint64(nil), rownums...),
+		Rownums:      responseRows,
 		ParentValues: values,
 		Stats:        relationshipReverseArtifactStatsToProto(stats),
 		Ok:           ok,

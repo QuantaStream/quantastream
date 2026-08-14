@@ -286,6 +286,7 @@ message RelationshipReverseArtifactCandidatesRequest {
   string   field = 2;
   repeated int64 sourceValues = 3;
   repeated uint64 candidateRows = 4;
+  bool     omitRownums = 5;
 }
 
 message RelationshipReverseArtifactParentValue {

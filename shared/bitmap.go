@@ -1261,6 +1261,7 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, f
 		Field:         field,
 		SourceValues:  append([]int64(nil), sourceValues...),
 		CandidateRows: append([]uint64(nil), candidateRows...),
+		OmitRownums:   deriveRowsFromParentValues,
 	}
 	if c.local != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
@@ -1509,7 +1510,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
 	}
 	rownumCapacity, parentValueCapacity := relationshipReverseArtifactCandidateResponseCapacities(responses)
-	deriveRowsFromParentValues = deriveRowsFromParentValues && rownumCapacity > 0 && parentValueCapacity >= rownumCapacity
+	deriveRowsFromParentValues = deriveRowsFromParentValues && (rownumCapacity == 0 || parentValueCapacity >= rownumCapacity)
 	parentValueByChild := make(map[uint64]int64, parentValueCapacity)
 	rownums := []uint64(nil)
 	seenRows := map[uint64]struct{}(nil)
