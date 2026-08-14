@@ -368,6 +368,55 @@ func TestBitmapIndexRelationshipReverseArtifactFansOutToActiveClients(t *testing
 	}
 }
 
+func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesUnorderedRows(t *testing.T) {
+	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
+		{
+			Rownums: []uint64{30, 10, 20, 10},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 30, ParentValue: 7},
+				{Rownum: 10, ParentValue: 7},
+				{Rownum: 20, ParentValue: 8},
+			},
+			Stats: &pb.RelationshipReverseArtifactStats{
+				TargetRows: 4,
+			},
+			Ok: true,
+		},
+		{
+			Rownums: []uint64{20, 40, 30},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 20, ParentValue: 8},
+				{Rownum: 40, ParentValue: 9},
+				{Rownum: 30, ParentValue: 7},
+			},
+			Stats: &pb.RelationshipReverseArtifactStats{
+				TargetRows: 3,
+			},
+			Ok: true,
+		},
+	}
+
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false)
+	if err != nil {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
+	}
+	if got, want := rownums, []uint64{30, 10, 20, 40}; !equalUint64Slices(got, want) {
+		t.Fatalf("rownums = %v, want first-seen unique order %v", got, want)
+	}
+	if got, want := stats.TargetRows, uint64(4); got != want {
+		t.Fatalf("target rows = %d, want deduped count %d", got, want)
+	}
+	wantParentValues := map[uint64]int64{10: 7, 20: 8, 30: 7, 40: 9}
+	for rownum, want := range wantParentValues {
+		if got := parentValues[rownum]; got != want {
+			t.Fatalf("parent value for row %d = %d, want %d", rownum, got, want)
+		}
+	}
+}
+
 func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.T) {
 	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]relationshipAlignedValueSumClientResult{
 		{

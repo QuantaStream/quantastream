@@ -1502,10 +1502,7 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	}
 	parentValueByChild := make(map[uint64]int64)
 	rownums := make([]uint64, 0)
-	var seenRows map[uint64]struct{}
-	if sortRows {
-		seenRows = make(map[uint64]struct{})
-	}
+	seenRows := make(map[uint64]struct{})
 	ok := len(responses) > 0
 	for _, response := range responses {
 		if response == nil {
@@ -1517,16 +1514,12 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		}
 		stats.addProto(response.GetStats())
 		rowMergeStart := time.Now()
-		if sortRows {
-			for _, rownum := range response.GetRownums() {
-				if _, seen := seenRows[rownum]; seen {
-					continue
-				}
-				seenRows[rownum] = struct{}{}
-				rownums = append(rownums, rownum)
+		for _, rownum := range response.GetRownums() {
+			if _, seen := seenRows[rownum]; seen {
+				continue
 			}
-		} else {
-			rownums = append(rownums, response.GetRownums()...)
+			seenRows[rownum] = struct{}{}
+			rownums = append(rownums, rownum)
 		}
 		stats.RowMergeElapsed += time.Since(rowMergeStart)
 		parentMergeStart := time.Now()
