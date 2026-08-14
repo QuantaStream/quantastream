@@ -1500,9 +1500,10 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	stats := RelationshipReverseArtifactStats{
 		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
 	}
-	parentValueByChild := make(map[uint64]int64)
-	rownums := make([]uint64, 0)
-	seenRows := make(map[uint64]struct{})
+	rownumCapacity, parentValueCapacity := relationshipReverseArtifactCandidateResponseCapacities(responses)
+	parentValueByChild := make(map[uint64]int64, parentValueCapacity)
+	rownums := make([]uint64, 0, rownumCapacity)
+	seenRows := make(map[uint64]struct{}, rownumCapacity)
 	ok := len(responses) > 0
 	for _, response := range responses {
 		if response == nil {
@@ -1538,6 +1539,19 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	}
 	stats.TargetRows = uint64(len(rownums))
 	return rownums, parentValueByChild, stats, ok, nil
+}
+
+func relationshipReverseArtifactCandidateResponseCapacities(responses []*pb.RelationshipReverseArtifactCandidatesResponse) (int, int) {
+	rownums := 0
+	parentValues := 0
+	for _, response := range responses {
+		if response == nil {
+			continue
+		}
+		rownums += len(response.GetRownums())
+		parentValues += len(response.GetParentValues())
+	}
+	return rownums, parentValues
 }
 
 type relationshipReverseArtifactStatsClientResult struct {

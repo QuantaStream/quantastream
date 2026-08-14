@@ -417,6 +417,29 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesUnorderedR
 	}
 }
 
+func TestRelationshipReverseArtifactCandidateResponseCapacities(t *testing.T) {
+	rownums, parentValues := relationshipReverseArtifactCandidateResponseCapacities([]*pb.RelationshipReverseArtifactCandidatesResponse{
+		nil,
+		{
+			Rownums: []uint64{1, 2, 3},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 1, ParentValue: 7},
+				{Rownum: 2, ParentValue: 8},
+			},
+		},
+		{
+			Rownums: []uint64{4},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 4, ParentValue: 9},
+			},
+		},
+	})
+
+	if rownums != 4 || parentValues != 3 {
+		t.Fatalf("capacities = rownums %d parentValues %d, want 4/3", rownums, parentValues)
+	}
+}
+
 func TestAggregateRelationshipAlignedValueSumResponsesMergesPartials(t *testing.T) {
 	groups, stats, ok, err := aggregateRelationshipAlignedValueSumResponses([]relationshipAlignedValueSumClientResult{
 		{
