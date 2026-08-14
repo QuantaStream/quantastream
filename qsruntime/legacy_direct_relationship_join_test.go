@@ -4324,6 +4324,7 @@ func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T
 		t.Fatalf("second row = %#v, want order 1/revenue 350", chunk.Rows[1])
 	}
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_late_materialization", "q3_order_revenue_projection")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_final_materialization_mode", "direct_q3_group_rows")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_rows", "5")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_scope", "graph_reduction_to_output")
@@ -4484,6 +4485,7 @@ func TestLegacyDirectRelationshipQ3OrderRevenueUsesStorageAggregate(t *testing.T
 		t.Fatalf("first row = %#v, want order 3/revenue 450", chunk.Rows[0])
 	}
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_mode", "storage_relationship_sum")
+	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_final_materialization_mode", "direct_q3_group_rows")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_storage_mode", "reverse_artifact_sum")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_preagg_groups", "3")
 	assertExecutionProbe(t, result.Probes, "relationship_join", "q3_attribution_preagg_groups", "3")
