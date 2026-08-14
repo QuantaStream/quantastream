@@ -1051,6 +1051,14 @@ func (m *BitmapIndex) relationshipReverseArtifactReadableData(index, field strin
 	if artifact.owned != nil && artifact.ownedShardKey == shardKey {
 		return artifact.owned
 	}
+	return m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactBuildOwnedLocked(index, field string, artifact *relationshipReverseArtifact) *relationshipReverseArtifactData {
+	if artifact == nil || !m.relationshipReverseArtifactShardOwnershipFilterEnabled() || len(artifact.byShard) == 0 {
+		return nil
+	}
+	shardKey := m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
 	owned := &relationshipReverseArtifactData{byValue: make(map[int64]*roaring64.Bitmap)}
 	for shardTime, shard := range artifact.byShard {
 		if shard == nil || !m.relationshipReverseArtifactOwnsShard(index, field, shardTime) {
@@ -1065,6 +1073,20 @@ func (m *BitmapIndex) relationshipReverseArtifactReadableData(index, field strin
 	}
 	artifact.owned = owned
 	return artifact.owned
+}
+
+func (m *BitmapIndex) warmRelationshipReverseArtifactOwnedCaches() {
+	if !m.relationshipReverseArtifactShardOwnershipFilterEnabled() {
+		return
+	}
+	m.reverseArtifactLock.Lock()
+	defer m.reverseArtifactLock.Unlock()
+
+	for index, fields := range m.reverseArtifactCache {
+		for field, artifact := range fields {
+			m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
+		}
+	}
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactShardOwnershipFilterEnabled() bool {
@@ -1184,8 +1206,18 @@ func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, fie
 	}
 
 	artifact := m.relationshipReverseArtifact(index, field)
-	artifact.owned = nil
-	artifact.ownedShardKey = ""
+	ownershipFilterEnabled := m.relationshipReverseArtifactShardOwnershipFilterEnabled()
+	ownsShard := false
+	if ownershipFilterEnabled {
+		ownsShard = m.relationshipReverseArtifactOwnsShard(index, field, shardTime)
+		shardKey := m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
+		if shardKey == "" {
+			artifact.owned = nil
+			artifact.ownedShardKey = ""
+		} else if artifact.owned == nil || artifact.ownedShardKey != shardKey {
+			m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
+		}
+	}
 	if removedRows != nil && oldBSI != nil {
 		m.removeRelationshipReverseArtifactRows(&artifact.relationshipReverseArtifactData, oldBSI, removedRows)
 		if shard := artifact.byShard[shardTime]; shard != nil {
@@ -1194,10 +1226,25 @@ func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, fie
 				delete(artifact.byShard, shardTime)
 			}
 		}
+		if ownershipFilterEnabled && ownsShard && artifact.owned != nil {
+			m.removeRelationshipReverseArtifactRows(artifact.owned, oldBSI, removedRows)
+		}
 	}
 	if addedBSI != nil {
 		m.addRelationshipReverseArtifactRows(&artifact.relationshipReverseArtifactData, addedBSI)
 		m.addRelationshipReverseArtifactRows(m.relationshipReverseArtifactShard(artifact, shardTime), addedBSI)
+		if ownershipFilterEnabled && ownsShard {
+			if artifact.owned == nil {
+				artifact.owned = &relationshipReverseArtifactData{byValue: make(map[int64]*roaring64.Bitmap)}
+			}
+			m.addRelationshipReverseArtifactRows(artifact.owned, addedBSI)
+		}
+	}
+	if ownershipFilterEnabled {
+		artifact.ownedShardKey = m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
+		if artifact.owned != nil && artifact.owned.rows == 0 {
+			artifact.owned = nil
+		}
 	}
 }
 
@@ -1238,6 +1285,7 @@ func (m *BitmapIndex) rebuildRelationshipReverseArtifactsForIndex(index string) 
 				bsi.Lock.RUnlock()
 			}
 			if artifact.rows > 0 {
+				m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
 				rebuilt[field] = artifact
 			}
 		}

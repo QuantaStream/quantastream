@@ -281,6 +281,7 @@ func (m *BitmapIndex) JoinCluster() {
 	}
 	u.Infof("Bitmap server is joining the cluster %s.", m.hashKey)
 	m.verifyNode()
+	m.warmRelationshipReverseArtifactOwnedCaches()
 }
 
 // BatchMutate API call (used by client SetBit call for bulk loading data)
