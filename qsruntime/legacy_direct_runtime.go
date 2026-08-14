@@ -379,7 +379,7 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 	}
 
 	start := time.Now()
-	rownums, parentValueByChild, stats, sourceValueCount, lookupElapsed, ok, err := legacyDirectRelationshipReverseArtifactCandidateValues(
+	rownums, rawParentValues, parentValueByChild, stats, sourceValueCount, lookupElapsed, ok, err := legacyDirectRelationshipReverseArtifactCandidateValues(
 		legacySession.Session.BitIndex,
 		read.VectorIndex,
 		read.VectorField,
@@ -406,6 +406,7 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 		ParentMergeElapsed:    stats.ParentMergeElapsed,
 		SortElapsed:           stats.SortElapsed,
 		RawParentValueByChild: parentValueByChild,
+		RawParentValues:       rawParentValues,
 	}
 	if sourceValueCount == 0 {
 		result.SourceValues = len(legacyDirectRelationshipUniqueInt64s(sourceValues))

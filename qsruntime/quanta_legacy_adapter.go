@@ -366,13 +366,14 @@ func legacyDirectBitmapGroupAggregates(bitIndex *legacy.BitmapIndex, index strin
 	}, true, nil
 }
 
-func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.BitmapIndex, index, field string, sourceValues []int64, candidateRows []qsbridge.QuantaRownum, preserveArtifactOrder bool, deriveArtifactRows bool, omitParentValues bool) ([]uint64, map[uint64]int64, LegacyDirectRelationshipVectorReverseArtifactStats, int, time.Duration, bool, error) {
+func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.BitmapIndex, index, field string, sourceValues []int64, candidateRows []qsbridge.QuantaRownum, preserveArtifactOrder bool, deriveArtifactRows bool, omitParentValues bool) ([]uint64, []int64, map[uint64]int64, LegacyDirectRelationshipVectorReverseArtifactStats, int, time.Duration, bool, error) {
 	if bitIndex == nil {
-		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, false, fmt.Errorf("relationship reverse artifact adapter received nil bitmap index")
+		return nil, nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, false, fmt.Errorf("relationship reverse artifact adapter received nil bitmap index")
 	}
 	rows := legacyDirectRelationshipAggregateUint64Rows(candidateRows)
 	var (
 		rownums            []uint64
+		rawParentValues    []int64
 		parentValueByChild map[uint64]int64
 		stats              legacy.RelationshipReverseArtifactStats
 		ok                 bool
@@ -381,16 +382,16 @@ func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.Bit
 	if omitParentValues {
 		rownums, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateRowsForRowsUnordered(index, field, sourceValues, rows)
 	} else if deriveArtifactRows {
-		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRowsUnorderedDerived(index, field, sourceValues, rows)
+		rownums, rawParentValues, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived(index, field, sourceValues, rows)
 	} else if preserveArtifactOrder {
 		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, rows)
 	} else {
 		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field, sourceValues, rows)
 	}
 	if err != nil || !ok {
-		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
+		return nil, nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
 	}
-	return rownums, parentValueByChild, LegacyDirectRelationshipVectorReverseArtifactStats{
+	return rownums, rawParentValues, parentValueByChild, LegacyDirectRelationshipVectorReverseArtifactStats{
 		Rows:                 stats.Rows,
 		Values:               stats.Values,
 		FanoutElapsed:        stats.FanoutElapsed,

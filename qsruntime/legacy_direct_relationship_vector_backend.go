@@ -272,6 +272,7 @@ type legacyDirectRelationshipVectorReverseArtifactReadResult struct {
 	Candidates            qsbridge.QuantaCandidateSet
 	ParentValueByChild    map[qsbridge.QuantaRownum]int64
 	RawParentValueByChild map[uint64]int64
+	RawParentValues       []int64
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorReverseArtifactCandidates(ctx context.Context, projectionKey string, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (legacyDirectRelationshipVectorReverseArtifactReadResult, relationshipVectorReverseArtifactTiming, qsbridge.DiagnosticSet, error, bool) {
@@ -329,6 +330,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		Candidates:            result.Candidates,
 		ParentValueByChild:    result.ParentValueByChild,
 		RawParentValueByChild: result.RawParentValueByChild,
+		RawParentValues:       result.RawParentValues,
 	}
 	if err != nil || diagnostics.BlocksNative() {
 		return readResult, relationshipVectorReverseArtifactTiming{

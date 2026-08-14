@@ -3971,7 +3971,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 			timing.childRetainMode = "empty_reverse_artifact"
 			return nil, nil, timing, nil, nil
 		}
-		if len(artifactParentByChild) > 0 {
+		if len(artifactParentByChild) > 0 || len(artifactPairs) > 0 {
 			joined := effectiveChildRows
 			pairs := artifactPairs
 			if len(pairs) == 0 {
@@ -3980,16 +3980,21 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 				timing.pairElapsed = time.Since(pairStart)
 			}
 			timing.matchedRows = len(joined)
-			timing.fkProjectionScope = "reverse_artifact_parent_map"
+			timing.fkProjectionScope = "reverse_artifact_parent_pairs"
 			timing.projectionRows = 0
-			timing.reverseArtifactProjectMode = "skipped_parent_map"
+			timing.reverseArtifactProjectMode = "skipped_parent_pairs"
 			timing.childRetainCovered = true
-			timing.childRetainMode = "reverse_artifact_parent_map"
-			if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
-				cacheSetStart := time.Now()
-				domainCache.Set(domainCacheKey, parentRows, childRows, artifactParentByChild)
-				timing.reverseArtifactCacheSetElapsed = time.Since(cacheSetStart)
-				recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
+			timing.childRetainMode = "reverse_artifact_parent_pairs"
+			if len(artifactParentByChild) > 0 {
+				timing.fkProjectionScope = "reverse_artifact_parent_map"
+				timing.reverseArtifactProjectMode = "skipped_parent_map"
+				timing.childRetainMode = "reverse_artifact_parent_map"
+				if domainCache := DomainMappingCacheFromContext(ctx); domainCache != nil {
+					cacheSetStart := time.Now()
+					domainCache.Set(domainCacheKey, parentRows, childRows, artifactParentByChild)
+					timing.reverseArtifactCacheSetElapsed = time.Since(cacheSetStart)
+					recordQueryScratchpadCacheStore(ctx, "domain_mapping_cache", domainCacheDetail)
+				}
 			}
 			return joined, pairs, timing, nil, nil
 		}
@@ -4354,7 +4359,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 		return narrowedRows, result, nil, nil, localTiming, true, diagnostics, nil
 	}
 	if localTiming.targetCandidateMode == "omitted_full_domain" {
-		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromRawArtifactCandidateRows(candidates.Rownums, artifactRead.RawParentValueByChild, parentValueByChild, parentKeyRows)
+		narrowedRows, parentByChild, pairs, ok := legacyDirectRelationshipRowsFromAlignedArtifactParentValues(candidates.Rownums, artifactRead.RawParentValues, parentKeyRows)
+		localTiming.narrowElapsed = time.Since(narrowStart)
+		if ok {
+			localTiming.mode = "omitted_target_candidate_rows_aligned_values"
+			return narrowedRows, result, parentByChild, pairs, localTiming, true, diagnostics, nil
+		}
+		narrowedRows, parentByChild, pairs, ok = legacyDirectRelationshipRowsFromRawArtifactCandidateRows(candidates.Rownums, artifactRead.RawParentValueByChild, parentValueByChild, parentKeyRows)
 		localTiming.narrowElapsed = time.Since(narrowStart)
 		if ok {
 			localTiming.mode = "omitted_target_candidate_rows"
@@ -4415,6 +4426,23 @@ func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbri
 		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
 	}
 	return narrowedRows, parentByChild, pairs, true
+}
+
+func legacyDirectRelationshipRowsFromAlignedArtifactParentValues(candidateRows []qsbridge.QuantaRownum, parentValues []int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
+	if len(candidateRows) == 0 || len(candidateRows) != len(parentValues) || len(parentKeyRows) == 0 {
+		return nil, nil, nil, false
+	}
+	narrowedRows := make([]qsbridge.QuantaRownum, 0, len(candidateRows))
+	pairs := make([]legacyDirectRelationshipPair, 0, len(candidateRows))
+	for i, child := range candidateRows {
+		parentRow, ok := parentKeyRows[parentValues[i]]
+		if !ok {
+			return nil, nil, nil, false
+		}
+		narrowedRows = append(narrowedRows, child)
+		pairs = append(pairs, legacyDirectRelationshipPair{child: child, parent: parentRow})
+	}
+	return narrowedRows, nil, pairs, true
 }
 
 func legacyDirectRelationshipRowsFromRawArtifactCandidateRows(candidateRows []qsbridge.QuantaRownum, rawParentValueByChild map[uint64]int64, parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {

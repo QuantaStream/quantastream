@@ -79,6 +79,7 @@ type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
 	Candidates            qsbridge.QuantaCandidateSet
 	ParentValueByChild    map[qsbridge.QuantaRownum]int64
 	RawParentValueByChild map[uint64]int64
+	RawParentValues       []int64
 	Mode                  string
 	CacheHit              bool
 	Rows                  uint64

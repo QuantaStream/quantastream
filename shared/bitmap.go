@@ -1231,7 +1231,8 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValues(index, field st
 // nodes for child rows without imposing a merged row order. Callers must only
 // use this when candidate row order is not semantically required downstream.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, false)
+	rownums, _, parentValueByChild, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, false, true)
+	return rownums, parentValueByChild, stats, ok, err
 }
 
 // RelationshipReverseArtifactCandidateValuesForRowsUnorderedDerived asks
@@ -1239,7 +1240,16 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered
 // merged parent-value map when possible. Callers must only use this when row
 // order is not semantically required downstream.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnorderedDerived(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false)
+	rownums, _, parentValueByChild, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false, true)
+	return rownums, parentValueByChild, stats, ok, err
+}
+
+// RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived asks
+// readable nodes for child rows and parent values as aligned slices. It avoids
+// building a row-to-parent map when the caller only needs ordered pairs.
+func (c *BitmapIndex) RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, []int64, RelationshipReverseArtifactStats, bool, error) {
+	rownums, parentValues, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false, false)
+	return rownums, parentValues, stats, ok, err
 }
 
 // RelationshipReverseArtifactCandidateRowsForRowsUnordered asks readable nodes
@@ -1247,7 +1257,7 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered
 // intermediate graph filters whose parent alignment can be reconstructed later
 // against a smaller surviving row set.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateRowsForRowsUnordered(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, RelationshipReverseArtifactStats, bool, error) {
-	rownums, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, true)
+	rownums, _, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, false, true, false)
 	return rownums, stats, ok, err
 }
 
@@ -1255,15 +1265,16 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateRowsForRowsUnordered(i
 // child rows keyed by a maintained parent-to-child reverse relationship
 // artifact, optionally retaining only a caller-supplied child row set.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
-	return c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, true, true, false)
+	rownums, _, parentValueByChild, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, true, true, false, true)
+	return rownums, parentValueByChild, stats, ok, err
 }
 
-func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, deriveRowsFromParentValues bool, omitParentValues bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, field string, sourceValues []int64, candidateRows []uint64, sortRows bool, deriveRowsFromParentValues bool, omitParentValues bool, collectParentMap bool) ([]uint64, []int64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	if index == "" {
-		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
+		return nil, nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: index not specified")
 	}
 	if field == "" {
-		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: field not specified")
+		return nil, nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: field not specified")
 	}
 	req := &pb.RelationshipReverseArtifactCandidatesRequest{
 		Index:            index,
@@ -1280,20 +1291,20 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, f
 		response, err := c.local.RelationshipReverseArtifactCandidates(ctx, req)
 		callElapsed := time.Since(callStart)
 		if err != nil {
-			return nil, nil, RelationshipReverseArtifactStats{}, false, err
+			return nil, nil, nil, RelationshipReverseArtifactStats{}, false, err
 		}
 		mergeStart := time.Now()
-		rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues, sortRows, deriveRowsFromParentValues)
+		rownums, parentValues, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses([]*pb.RelationshipReverseArtifactCandidatesResponse{response}, sourceValues, sortRows, deriveRowsFromParentValues, collectParentMap)
 		stats.FanoutElapsed = callElapsed
 		stats.ClientRPCElapsed = callElapsed
 		stats.MaxClientRPCElapsed = callElapsed
 		stats.ResponseMergeElapsed = time.Since(mergeStart)
-		return rownums, parentValueByChild, stats, ok, err
+		return rownums, parentValues, parentValueByChild, stats, ok, err
 	}
 
 	clients := c.activeClientsSnapshot()
 	if len(clients) == 0 {
-		return nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: no active bitmap nodes")
+		return nil, nil, nil, RelationshipReverseArtifactStats{}, false, fmt.Errorf("RelationshipReverseArtifactCandidateValues: no active bitmap nodes")
 	}
 	type candidateResult struct {
 		response *pb.RelationshipReverseArtifactCandidatesResponse
@@ -1315,7 +1326,7 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, f
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		return nil, nil, RelationshipReverseArtifactStats{}, false, err
+		return nil, nil, nil, RelationshipReverseArtifactStats{}, false, err
 	}
 	fanoutElapsed := time.Since(fanoutStart)
 	close(resultChan)
@@ -1331,12 +1342,12 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidateValuesForRows(index, f
 		}
 	}
 	mergeStart := time.Now()
-	rownums, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues, sortRows, deriveRowsFromParentValues)
+	rownums, parentValues, parentValueByChild, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, sourceValues, sortRows, deriveRowsFromParentValues, collectParentMap)
 	stats.FanoutElapsed = fanoutElapsed
 	stats.ClientRPCElapsed = clientRPCElapsed
 	stats.MaxClientRPCElapsed = maxClientRPCElapsed
 	stats.ResponseMergeElapsed = time.Since(mergeStart)
-	return rownums, parentValueByChild, stats, ok, err
+	return rownums, parentValues, parentValueByChild, stats, ok, err
 }
 
 // RelationshipReverseArtifactStats asks readable nodes for reverse-artifact
@@ -1515,16 +1526,26 @@ func relationshipAlignedValueSumShardRoutableValueField(valueField string) bool 
 	return true
 }
 
-func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.RelationshipReverseArtifactCandidatesResponse, sourceValues []int64, sortRows bool, deriveRowsFromParentValues bool) ([]uint64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
+func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.RelationshipReverseArtifactCandidatesResponse, sourceValues []int64, sortRows bool, deriveRowsFromParentValues bool, collectParentMap bool) ([]uint64, []int64, map[uint64]int64, RelationshipReverseArtifactStats, bool, error) {
 	stats := RelationshipReverseArtifactStats{
 		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
 	}
 	rownumCapacity, parentValueCapacity := relationshipReverseArtifactCandidateResponseCapacities(responses)
 	deriveRowsFromParentValues = deriveRowsFromParentValues && (rownumCapacity == 0 || parentValueCapacity >= rownumCapacity)
-	parentValueByChild := make(map[uint64]int64, parentValueCapacity)
-	rownums := []uint64(nil)
-	seenRows := map[uint64]struct{}(nil)
-	if !deriveRowsFromParentValues {
+	var parentValueByChild map[uint64]int64
+	if collectParentMap {
+		parentValueByChild = make(map[uint64]int64, parentValueCapacity)
+	}
+	var rownums []uint64
+	var parentValues []int64
+	var seenRows map[uint64]struct{}
+	if deriveRowsFromParentValues {
+		rownums = make([]uint64, 0, parentValueCapacity)
+		if !collectParentMap {
+			parentValues = make([]int64, 0, parentValueCapacity)
+		}
+		seenRows = make(map[uint64]struct{}, parentValueCapacity)
+	} else {
 		rownums = make([]uint64, 0, rownumCapacity)
 		seenRows = make(map[uint64]struct{}, rownumCapacity)
 	}
@@ -1539,11 +1560,27 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		}
 		stats.addProto(response.GetStats())
 		parentMergeStart := time.Now()
-		for _, value := range response.GetParentValues() {
-			if value == nil {
-				continue
+		if collectParentMap || deriveRowsFromParentValues {
+			for _, value := range response.GetParentValues() {
+				if value == nil {
+					continue
+				}
+				rownum := value.GetRownum()
+				parentValue := value.GetParentValue()
+				if collectParentMap {
+					parentValueByChild[rownum] = parentValue
+				}
+				if deriveRowsFromParentValues {
+					if _, seen := seenRows[rownum]; seen {
+						continue
+					}
+					seenRows[rownum] = struct{}{}
+					rownums = append(rownums, rownum)
+					if !collectParentMap {
+						parentValues = append(parentValues, parentValue)
+					}
+				}
 			}
-			parentValueByChild[value.GetRownum()] = value.GetParentValue()
 		}
 		stats.ParentMergeElapsed += time.Since(parentMergeStart)
 		if !deriveRowsFromParentValues {
@@ -1558,21 +1595,29 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			stats.RowMergeElapsed += time.Since(rowMergeStart)
 		}
 	}
-	if deriveRowsFromParentValues {
-		rowMergeStart := time.Now()
-		rownums = make([]uint64, 0, len(parentValueByChild))
-		for rownum := range parentValueByChild {
-			rownums = append(rownums, rownum)
-		}
-		stats.RowMergeElapsed = time.Since(rowMergeStart)
-	}
 	if sortRows {
 		sortStart := time.Now()
-		sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
+		if len(parentValues) == len(rownums) {
+			type rowParentValue struct {
+				rownum      uint64
+				parentValue int64
+			}
+			pairs := make([]rowParentValue, len(rownums))
+			for i, rownum := range rownums {
+				pairs[i] = rowParentValue{rownum: rownum, parentValue: parentValues[i]}
+			}
+			sort.Slice(pairs, func(i, j int) bool { return pairs[i].rownum < pairs[j].rownum })
+			for i, pair := range pairs {
+				rownums[i] = pair.rownum
+				parentValues[i] = pair.parentValue
+			}
+		} else {
+			sort.Slice(rownums, func(i, j int) bool { return rownums[i] < rownums[j] })
+		}
 		stats.SortElapsed = time.Since(sortStart)
 	}
 	stats.TargetRows = uint64(len(rownums))
-	return rownums, parentValueByChild, stats, ok, nil
+	return rownums, parentValues, parentValueByChild, stats, ok, nil
 }
 
 func relationshipReverseArtifactCandidateResponseCapacities(responses []*pb.RelationshipReverseArtifactCandidatesResponse) (int, int) {

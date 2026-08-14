@@ -1438,6 +1438,76 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	}
 }
 
+func TestLegacyDirectRelationshipReduceCanUseAlignedReverseArtifactParentValues(t *testing.T) {
+	childRows := []qsbridge.QuantaRownum{1, 2, 3, 4}
+	var artifactRead LegacyDirectRelationshipVectorReadRequest
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			OK:       true,
+			LastRead: &artifactRead,
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{4, 2},
+				},
+				RawParentValues: []int64{9, 7},
+				Mode:            "reverse_artifact_server",
+				CacheHit:        true,
+				SourceValues:    2,
+				TargetRows:      2,
+			},
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:   "o",
+		parentTable:  "orders",
+		parentField:  "o_orderkey",
+		childRole:    "l",
+		childTable:   "lineitem",
+		childField:   "l_orderkey",
+		capabilities: qsbridge.RelationshipCapabilities{qsbridge.RelationshipCapabilityChildExpansion},
+	}
+
+	joined, pairs, timing, diagnostics, err := executor.legacyDirectRelationshipReduceWithProjectionRowsOptions(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		edge,
+		[]qsbridge.QuantaRownum{7, 9},
+		childRows,
+		childRows,
+		legacyDirectRelationshipReduceOptions{omitFullDomainTargetCandidates: true},
+	)
+
+	if err != nil {
+		t.Fatalf("reduce error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want no blockers", diagnostics)
+	}
+	if len(artifactRead.TargetCandidateRows) != 0 {
+		t.Fatalf("artifact target candidate rows = %#v, want omitted", artifactRead.TargetCandidateRows)
+	}
+	if !artifactRead.PreserveArtifactOrder || !artifactRead.DeriveArtifactRows {
+		t.Fatalf("artifact read preserve/derive = %t/%t, want true/true", artifactRead.PreserveArtifactOrder, artifactRead.DeriveArtifactRows)
+	}
+	if timing.reverseArtifactLocalMode != "omitted_target_candidate_rows_aligned_values" {
+		t.Fatalf("reverse artifact local mode = %q, want omitted_target_candidate_rows_aligned_values", timing.reverseArtifactLocalMode)
+	}
+	if timing.fkProjectionScope != "reverse_artifact_parent_pairs" {
+		t.Fatalf("fk projection scope = %q, want reverse_artifact_parent_pairs", timing.fkProjectionScope)
+	}
+	if timing.reverseArtifactProjectMode != "skipped_parent_pairs" {
+		t.Fatalf("reverse artifact project mode = %q, want skipped_parent_pairs", timing.reverseArtifactProjectMode)
+	}
+	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{4, 2}) {
+		t.Fatalf("joined = %#v, want aligned candidate order", joined)
+	}
+	wantPairs := []legacyDirectRelationshipPair{{child: 4, parent: 9}, {child: 2, parent: 7}}
+	if !reflect.DeepEqual(pairs, wantPairs) {
+		t.Fatalf("pairs = %#v, want %#v", pairs, wantPairs)
+	}
+}
+
 func TestLegacyDirectRelationshipReduceCanUseReverseArtifactAsRowFilterOnly(t *testing.T) {
 	childRows := []qsbridge.QuantaRownum{1, 2, 3, 4}
 	var artifactRead LegacyDirectRelationshipVectorReadRequest
