@@ -417,6 +417,79 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesUnorderedR
 	}
 }
 
+func TestAggregateRelationshipReverseArtifactCandidateResponsesDerivesOrderedRowsFromParentValues(t *testing.T) {
+	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
+		{
+			Rownums: []uint64{30, 10},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 30, ParentValue: 7},
+				{Rownum: 10, ParentValue: 7},
+			},
+			Ok: true,
+		},
+		{
+			Rownums: []uint64{20, 40},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 20, ParentValue: 8},
+				{Rownum: 40, ParentValue: 9},
+			},
+			Ok: true,
+		},
+	}
+
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, true)
+	if err != nil {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
+	}
+	if got, want := rownums, []uint64{10, 20, 30, 40}; !equalUint64Slices(got, want) {
+		t.Fatalf("rownums = %v, want sorted parent-value row keys %v", got, want)
+	}
+	if got, want := stats.TargetRows, uint64(4); got != want {
+		t.Fatalf("target rows = %d, want derived count %d", got, want)
+	}
+	wantParentValues := map[uint64]int64{10: 7, 20: 8, 30: 7, 40: 9}
+	for rownum, want := range wantParentValues {
+		if got := parentValues[rownum]; got != want {
+			t.Fatalf("parent value for row %d = %d, want %d", rownum, got, want)
+		}
+	}
+}
+
+func TestAggregateRelationshipReverseArtifactCandidateResponsesFallsBackWhenParentValuesDoNotCoverRows(t *testing.T) {
+	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
+		{
+			Rownums: []uint64{30, 10},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 30, ParentValue: 7},
+			},
+			Ok: true,
+		},
+	}
+
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7}, true)
+	if err != nil {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
+	}
+	if got, want := rownums, []uint64{10, 30}; !equalUint64Slices(got, want) {
+		t.Fatalf("rownums = %v, want sorted response rownums %v", got, want)
+	}
+	if got, want := stats.TargetRows, uint64(2); got != want {
+		t.Fatalf("target rows = %d, want response row count %d", got, want)
+	}
+	if got, want := parentValues[30], int64(7); got != want {
+		t.Fatalf("parent value for row 30 = %d, want %d", got, want)
+	}
+	if _, ok := parentValues[10]; ok {
+		t.Fatalf("parent value unexpectedly present for row 10")
+	}
+}
+
 func TestRelationshipReverseArtifactCandidateResponseCapacities(t *testing.T) {
 	rownums, parentValues := relationshipReverseArtifactCandidateResponseCapacities([]*pb.RelationshipReverseArtifactCandidatesResponse{
 		nil,

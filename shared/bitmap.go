@@ -1501,9 +1501,14 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
 	}
 	rownumCapacity, parentValueCapacity := relationshipReverseArtifactCandidateResponseCapacities(responses)
+	deriveRowsFromParentValues := sortRows && rownumCapacity > 0 && parentValueCapacity >= rownumCapacity
 	parentValueByChild := make(map[uint64]int64, parentValueCapacity)
-	rownums := make([]uint64, 0, rownumCapacity)
-	seenRows := make(map[uint64]struct{}, rownumCapacity)
+	rownums := []uint64(nil)
+	seenRows := map[uint64]struct{}(nil)
+	if !deriveRowsFromParentValues {
+		rownums = make([]uint64, 0, rownumCapacity)
+		seenRows = make(map[uint64]struct{}, rownumCapacity)
+	}
 	ok := len(responses) > 0
 	for _, response := range responses {
 		if response == nil {
@@ -1514,15 +1519,6 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			ok = false
 		}
 		stats.addProto(response.GetStats())
-		rowMergeStart := time.Now()
-		for _, rownum := range response.GetRownums() {
-			if _, seen := seenRows[rownum]; seen {
-				continue
-			}
-			seenRows[rownum] = struct{}{}
-			rownums = append(rownums, rownum)
-		}
-		stats.RowMergeElapsed += time.Since(rowMergeStart)
 		parentMergeStart := time.Now()
 		for _, value := range response.GetParentValues() {
 			if value == nil {
@@ -1531,6 +1527,25 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			parentValueByChild[value.GetRownum()] = value.GetParentValue()
 		}
 		stats.ParentMergeElapsed += time.Since(parentMergeStart)
+		if !deriveRowsFromParentValues {
+			rowMergeStart := time.Now()
+			for _, rownum := range response.GetRownums() {
+				if _, seen := seenRows[rownum]; seen {
+					continue
+				}
+				seenRows[rownum] = struct{}{}
+				rownums = append(rownums, rownum)
+			}
+			stats.RowMergeElapsed += time.Since(rowMergeStart)
+		}
+	}
+	if deriveRowsFromParentValues {
+		rowMergeStart := time.Now()
+		rownums = make([]uint64, 0, len(parentValueByChild))
+		for rownum := range parentValueByChild {
+			rownums = append(rownums, rownum)
+		}
+		stats.RowMergeElapsed = time.Since(rowMergeStart)
 	}
 	if sortRows {
 		sortStart := time.Now()
