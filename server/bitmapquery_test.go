@@ -264,6 +264,87 @@ func TestBitmapIndexQueryWithFoundSetConstrainsSingleStandardRowIDFragments(t *t
 	}
 }
 
+func TestBatchEqualBigWithFoundSetMatchesOnlyCandidateRows(t *testing.T) {
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(1, big.NewInt(10))
+	bsi.SetBigValue(2, big.NewInt(20))
+	bsi.SetBigValue(3, big.NewInt(30))
+	bsi.SetBigValue(4, big.NewInt(20))
+
+	matches := batchEqualBigWithFoundSet(bsi, []*big.Int{big.NewInt(20)}, roaring64.BitmapOf(1, 2, 3))
+	if got, want := matches.ToArray(), []uint64{2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("matches = %#v, want %#v", got, want)
+	}
+}
+
+func TestBitmapIndexQueryWithFoundSetConstrainsBSIBatchEq(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "part", nil)
+	if err != nil {
+		t.Fatalf("load part schema: %v", err)
+	}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(1, big.NewInt(10))
+	bsi.SetBigValue(2, big.NewInt(20))
+	bsi.SetBigValue(3, big.NewInt(30))
+	bsi.SetBigValue(4, big.NewInt(20))
+
+	index := &BitmapIndex{
+		Node: &Node{},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"part": {
+				"p_size": {
+					time.Unix(0, 0).UnixNano(): {BSI: bsi},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{
+			"part": table,
+		},
+	}
+	query := &pb.BitmapQuery{Query: []*pb.QueryFragment{{
+		Id:        "part-size-batch",
+		Index:     "part",
+		Field:     "p_size",
+		Operation: pb.QueryFragment_UNION,
+		BsiOp:     pb.QueryFragment_BATCH_EQ,
+		Values: [][]byte{
+			big.NewInt(20).Bytes(),
+		},
+	}}}
+
+	result, err := index.QueryWithFoundSet(context.Background(), query, "part", []uint64{1, 2, 3})
+	if err != nil {
+		t.Fatalf("QueryWithFoundSet() error = %v", err)
+	}
+	union := roaring64.NewBitmap()
+	if err := union.UnmarshalBinary(result.GetUnions()); err != nil {
+		t.Fatalf("unmarshal union: %v", err)
+	}
+	if got, want := union.ToArray(), []uint64{2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("union rownums = %#v, want %#v", got, want)
+	}
+
+	var sawFoundSetAvailable, sawFoundSetUsed bool
+	for _, sample := range result.GetSamples() {
+		probe, ok := shared.QueryResultProbeFromSample(sample)
+		if !ok {
+			continue
+		}
+		if probe.Name == "fragment_001_found_set_available" && probe.Value == "true" {
+			sawFoundSetAvailable = true
+		}
+		if probe.Name == "fragment_001_found_set_used" && probe.Value == "true" {
+			sawFoundSetUsed = true
+		}
+	}
+	if !sawFoundSetAvailable {
+		t.Fatal("fragment_001_found_set_available probe was not true")
+	}
+	if !sawFoundSetUsed {
+		t.Fatal("fragment_001_found_set_used probe was not true")
+	}
+}
+
 func TestQueryPriorIntersectCandidatesIgnoreUnsafeFragments(t *testing.T) {
 	tests := []struct {
 		name     string

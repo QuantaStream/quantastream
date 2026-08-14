@@ -184,11 +184,9 @@ func (m *BitmapIndex) queryWithPriorIntersect(ctx context.Context, query *pb.Bit
 				foundSetRows := foundSet.GetCardinality()
 				fragmentStats.foundSetAvailable = true
 				fragmentStats.foundSetRows = foundSetRows
-				if v.BsiOp != pb.QueryFragment_BATCH_EQ {
-					queryStats.bsiFoundSetUses++
-					queryStats.bsiFoundSetRows += foundSetRows
-					fragmentStats.foundSetUsed = true
-				}
+				queryStats.bsiFoundSetUses++
+				queryStats.bsiFoundSetRows += foundSetRows
+				fragmentStats.foundSetUsed = true
 			}
 			values := make([]*big.Int, len(v.Values))
 			for i, v := range v.Values {
@@ -228,7 +226,11 @@ func (m *BitmapIndex) queryWithPriorIntersect(ctx context.Context, query *pb.Bit
 			case pb.QueryFragment_RANGE:
 				bm = bsi.CompareBigValue(0, roaring64.RANGE, begin, end, foundSet)
 			case pb.QueryFragment_BATCH_EQ:
-				bm = bsi.BatchEqualBig(0, values)
+				if foundSet != nil {
+					bm = batchEqualBigWithFoundSet(bsi.BSI, values, foundSet)
+				} else {
+					bm = bsi.BatchEqualBig(0, values)
+				}
 			}
 			bsiCompareElapsed := time.Since(bsiCompareStart)
 			queryStats.bsiCompareElapsed += bsiCompareElapsed
@@ -501,6 +503,42 @@ func bitmapQueryFragmentValueCount(fragment *pb.QueryFragment) int {
 		return 1
 	}
 	return 0
+}
+
+func batchEqualBigWithFoundSet(bsi *roaring64.BSI, values []*big.Int, foundSet *roaring64.Bitmap) *roaring64.Bitmap {
+	result := roaring64.NewBitmap()
+	if bsi == nil || foundSet == nil || foundSet.GetCardinality() == 0 || len(values) == 0 {
+		return result
+	}
+	valueSet := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		valueSet[batchEqualBigKey(value)] = struct{}{}
+	}
+	if len(valueSet) == 0 {
+		return result
+	}
+	rows := foundSet.ToArray()
+	rowValues := bsi.GetBigValues(rows)
+	for i, value := range rowValues {
+		if value == nil {
+			continue
+		}
+		if _, ok := valueSet[batchEqualBigKey(value)]; ok {
+			result.Add(rows[i])
+		}
+	}
+	return result
+}
+
+func batchEqualBigKey(value *big.Int) string {
+	bytes := value.Bytes()
+	key := make([]byte, len(bytes)+1)
+	key[0] = byte(value.Sign() + 1)
+	copy(key[1:], bytes)
+	return string(key)
 }
 
 func bitmapQueryProbeNodeDetail(node string) string {
