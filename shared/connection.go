@@ -744,6 +744,12 @@ func (m *Conn) GetNodeMap() map[string]int {
 	return m.nodeMap
 }
 
+func (m *Conn) NodeCount() int {
+	m.nodeMapLock.RLock()
+	defer m.nodeMapLock.RUnlock()
+	return len(m.nodeMap)
+}
+
 // CheckNodeForKey - Verify the existence of a given shard on a specific node.
 func (m *Conn) CheckNodeForKey(key, nodeID string) (bool, int) {
 

@@ -65,6 +65,20 @@ func bitmapFlushTimeout() time.Duration {
 	return timeout
 }
 
+func reverseArtifactWarmMembershipTimeout() time.Duration {
+	const defaultTimeout = 30 * time.Second
+
+	raw := strings.TrimSpace(os.Getenv("QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT"))
+	if raw == "" {
+		return defaultTimeout
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout < 0 {
+		return defaultTimeout
+	}
+	return timeout
+}
+
 var (
 	// Ensure BitmapIndex implements shared.Service
 	_ NodeService = (*BitmapIndex)(nil)
@@ -639,7 +653,8 @@ func (m *BitmapIndex) verifyNode() {
 
 	if skipNodeSyncEnabled() {
 		m.State = Syncing
-		m.warmRelationshipReverseArtifactOwnedCaches()
+		m.waitForRelationshipReverseArtifactWarmMembershipTarget()
+		m.warmRelationshipReverseArtifactOwnedCaches("verify_skip_sync")
 		m.State = Active
 		u.Warnf("QUANTASTREAM_SKIP_NODE_SYNC enabled; skipping node synchronization and marking %s Active", m.GetNodeID())
 		consul := m.Consul
@@ -663,7 +678,8 @@ func (m *BitmapIndex) verifyNode() {
 			u.Log(u.FATAL, fmt.Errorf("Node synchronization/verification failed - %v", err))
 		}
 		if diffCount <= 0 {
-			m.warmRelationshipReverseArtifactOwnedCaches()
+			m.waitForRelationshipReverseArtifactWarmMembershipTarget()
+			m.warmRelationshipReverseArtifactOwnedCaches("verify_sync_complete")
 			m.State = Active
 			u.Debugf("verifyNode Setting node state to Active for %s", m.hashKey)
 			// we need to 'touch' the health so everyone knows we are active atw
@@ -678,6 +694,32 @@ func (m *BitmapIndex) verifyNode() {
 		u.Warnf("%s %d Differences detected, retrying Synchronization (attempt %d)", m.hashKey, diffCount, tryCount)
 	}
 	u.Debug("verifyNode done ", m.hashKey)
+}
+
+func (m *BitmapIndex) waitForRelationshipReverseArtifactWarmMembershipTarget() {
+	if !m.relationshipReverseArtifactShardOwnershipFilterEnabled() {
+		return
+	}
+	timeout := reverseArtifactWarmMembershipTimeout()
+	if timeout == 0 {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		_, _, target := m.GetClusterState()
+		nodeCount := m.NodeCount()
+		if target <= 0 || nodeCount >= target {
+			if nodeCount > 0 {
+				fmt.Printf("relationship reverse artifact warm membership ready node=%s members=%d target=%d\n", m.GetNodeID(), nodeCount, target)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			u.Warnf("relationship reverse artifact warm membership wait timed out node=%s members=%d target=%d timeout=%v", m.GetNodeID(), nodeCount, target, timeout)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // Updates to the standard bitmap field cache

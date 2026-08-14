@@ -74,6 +74,14 @@ type relationshipReverseArtifactSnapshot struct {
 	Rows   uint64
 }
 
+type relationshipReverseArtifactWarmStats struct {
+	Fields        uint64
+	Shards        uint64
+	AggregateRows uint64
+	OwnedValues   uint64
+	OwnedRows     uint64
+}
+
 type relationshipReverseArtifactData struct {
 	byValue map[int64]*roaring64.Bitmap
 	rows    uint64
@@ -1075,18 +1083,32 @@ func (m *BitmapIndex) relationshipReverseArtifactBuildOwnedLocked(index, field s
 	return artifact.owned
 }
 
-func (m *BitmapIndex) warmRelationshipReverseArtifactOwnedCaches() {
+func (m *BitmapIndex) warmRelationshipReverseArtifactOwnedCaches(reason string) relationshipReverseArtifactWarmStats {
+	var stats relationshipReverseArtifactWarmStats
+	start := time.Now()
 	if !m.relationshipReverseArtifactShardOwnershipFilterEnabled() {
-		return
+		return stats
 	}
 	m.reverseArtifactLock.Lock()
 	defer m.reverseArtifactLock.Unlock()
 
 	for index, fields := range m.reverseArtifactCache {
 		for field, artifact := range fields {
-			m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
+			if artifact == nil {
+				continue
+			}
+			stats.Fields++
+			stats.Shards += uint64(len(artifact.byShard))
+			stats.AggregateRows += artifact.rows
+			owned := m.relationshipReverseArtifactBuildOwnedLocked(index, field, artifact)
+			ownedRows, ownedValues := relationshipReverseArtifactDataStats(owned)
+			stats.OwnedRows += ownedRows
+			stats.OwnedValues += ownedValues
 		}
 	}
+	fmt.Printf("relationship reverse artifact owned cache warm reason=%s node=%s fields=%d shards=%d aggregate_rows=%d owned_values=%d owned_rows=%d elapsed=%v\n",
+		reason, m.GetNodeID(), stats.Fields, stats.Shards, stats.AggregateRows, stats.OwnedValues, stats.OwnedRows, time.Since(start))
+	return stats
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactShardOwnershipFilterEnabled() bool {
