@@ -24,6 +24,12 @@ DURATION_UNITS = {
 }
 
 EDGE_NAME_RE = re.compile(r"^graph_iter_(\d+)_edge_(\d+)_(.+)$")
+EQUALITY_SEED_NAME_RE = re.compile(
+    r"^(?P<seed>.*equality_role_seed_\d+)_(?P<metric>"
+    r"source_role|source_field|source_rows|target_role|target_field|target_rows_before|"
+    r"target_rows_after|values|candidate_rows|applied|reason|elapsed"
+    r")$"
+)
 EDGE_DESC_RE = re.compile(
     r"iter=(?P<iter>\d+)\s+edge=(?P<edge>\d+)\s+input=(?P<input>\d+)\s+"
     r"(?P<parent_role>[^:\s]+):(?P<parent_table>[^\[]+)\[(?P<parent_rows>\d+)\]\s+->\s+"
@@ -131,6 +137,10 @@ PREAGG_COUNTER_NAMES = [
 ]
 
 POLICY_EVENT_NAMES = [
+    "graph_equality_role_seed_enabled",
+    "graph_equality_role_seed_mode",
+    "graph_equality_role_seed_auto_max_source_rows",
+    "graph_equality_role_seed_fields",
     "graph_iter_1_edge_policy_applied_order",
     "graph_iter_1_edge_policy_input_order",
     "graph_iter_1_edge_policy_recommended_order",
@@ -496,6 +506,58 @@ def print_policy_summary(runs: list[list[dict[str, Any]]]) -> None:
         print(f"  {name}: {rendered}")
 
 
+def equality_seed_entries(runs: list[list[dict[str, Any]]]) -> dict[str, dict[str, list[Any]]]:
+    seeds: dict[str, dict[str, list[Any]]] = defaultdict(lambda: defaultdict(list))
+    for run in runs:
+        for obj in run:
+            name = str(obj.get("name") or "")
+            match = EQUALITY_SEED_NAME_RE.match(name)
+            if not match:
+                continue
+            seed = match.group("seed")
+            metric = match.group("metric")
+            value = object_value(obj)
+            seconds = duration_seconds(value)
+            parsed_int = int_value(value)
+            if seconds is not None:
+                seeds[seed][metric].append(seconds)
+            elif parsed_int is not None:
+                seeds[seed][metric].append(parsed_int)
+            elif value != "":
+                seeds[seed][metric].append(value)
+    return seeds
+
+
+def print_equality_seed_summary(runs: list[list[dict[str, Any]]]) -> None:
+    seeds = equality_seed_entries(runs)
+    if not seeds:
+        return
+    print("equality_seeds")
+    for seed, metrics in sorted(seeds.items()):
+        source_role = scalar_median(metrics.get("source_role", [])) or "?"
+        source_field = scalar_median(metrics.get("source_field", [])) or "?"
+        target_role = scalar_median(metrics.get("target_role", [])) or "?"
+        target_field = scalar_median(metrics.get("target_field", [])) or "?"
+        applied = scalar_median(metrics.get("applied", []))
+        reason = scalar_median(metrics.get("reason", []))
+        elapsed = [v for v in metrics.get("elapsed", []) if isinstance(v, float)]
+        parts = [
+            f"{seed}",
+            f"{source_role}.{source_field}->{target_role}.{target_field}",
+        ]
+        for metric in ("source_rows", "values", "candidate_rows", "target_rows_before", "target_rows_after"):
+            values = [v for v in metrics.get(metric, []) if isinstance(v, int)]
+            if values:
+                parts.append(f"{metric}={fmt_int(int(median(values)))}")
+        if applied is not None:
+            parts.append(f"applied={applied}")
+        if reason:
+            parts.append(f"reason={reason}")
+        if elapsed:
+            parts.append(f"elapsed={fmt_seconds(median(elapsed))}")
+        print(f"  {' '.join(parts)}")
+
+
 def print_case(report: dict[str, Any], case: dict[str, Any]) -> None:
     runs = profile_runs(case)
     case_id = str(case.get("id", "<unknown>"))
@@ -516,6 +578,7 @@ def print_case(report: dict[str, Any], case: dict[str, Any]) -> None:
     print_counter_table("relationship_rows", runs, PREAGG_COUNTER_NAMES)
     print_materialization_summary(runs)
     print_edge_summary(runs)
+    print_equality_seed_summary(runs)
     print_policy_summary(runs)
 
 

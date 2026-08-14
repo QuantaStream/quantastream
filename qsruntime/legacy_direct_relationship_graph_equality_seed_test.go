@@ -11,14 +11,27 @@ import (
 
 func TestLegacyDirectRelationshipGraphEqualityRoleSeedEnabled(t *testing.T) {
 	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "")
+	if mode := legacyDirectRelationshipGraphEqualityRoleSeedModeFromEnv(); mode != legacyDirectRelationshipGraphEqualityRoleSeedModeAuto {
+		t.Fatalf("default equality role seed mode = %q, want auto", mode)
+	}
 	if legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
 		t.Fatalf("default equality role seed enabled = true, want false")
 	}
 	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "0")
+	if mode := legacyDirectRelationshipGraphEqualityRoleSeedModeFromEnv(); mode != legacyDirectRelationshipGraphEqualityRoleSeedModeOff {
+		t.Fatalf("disabled equality role seed mode = %q, want off", mode)
+	}
 	if legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
 		t.Fatalf("disabled equality role seed enabled = true, want false")
 	}
+	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "auto")
+	if mode := legacyDirectRelationshipGraphEqualityRoleSeedModeFromEnv(); mode != legacyDirectRelationshipGraphEqualityRoleSeedModeAuto {
+		t.Fatalf("auto equality role seed mode = %q, want auto", mode)
+	}
 	t.Setenv("QUANTASTREAM_GRAPH_EQUALITY_ROLE_SEED", "true")
+	if mode := legacyDirectRelationshipGraphEqualityRoleSeedModeFromEnv(); mode != legacyDirectRelationshipGraphEqualityRoleSeedModeOn {
+		t.Fatalf("enabled equality role seed mode = %q, want on", mode)
+	}
 	if !legacyDirectRelationshipGraphEqualityRoleSeedEnabled() {
 		t.Fatalf("true equality role seed enabled = false, want true")
 	}
@@ -51,6 +64,31 @@ func TestLegacyDirectRelationshipGraphEqualityRoleSeedCandidatesUsesReducedSide(
 	got := candidates[0]
 	if got.sourceRole != "s" || got.targetRole != "c" || directBitmapFieldPhysicalName(got.sourceField) != "s_nationkey" || directBitmapFieldPhysicalName(got.targetField) != "c_nationkey" {
 		t.Fatalf("candidate = %#v, want s.s_nationkey -> c.c_nationkey", got)
+	}
+}
+
+func TestLegacyDirectRelationshipGraphEqualityRoleSeedAutoCandidatesSkipLargeSources(t *testing.T) {
+	supplier := qsbridge.TableInstance{Table: "supplier", Alias: "s"}
+	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}
+	sNation := qsbridge.FieldRef{Table: supplier, Name: "s_nationkey", Type: qsbridge.DataTypeInt}
+	cNation := qsbridge.FieldRef{Table: customer, Name: "c_nationkey", Type: qsbridge.DataTypeInt}
+	equalities := []legacyDirectRelationshipGraphEqualityFieldPair{{left: cNation, right: sNation}}
+	rowsByRole := map[string][]qsbridge.QuantaRownum{
+		"s": make([]qsbridge.QuantaRownum, 5),
+		"c": {1, 2, 3, 4},
+	}
+	fullDomain := map[string]bool{
+		"s": false,
+		"c": true,
+	}
+	options := legacyDirectRelationshipGraphEqualityRoleSeedOptions{maxSourceRows: 4}
+
+	if candidates := legacyDirectRelationshipGraphEqualityRoleSeedCandidatesFromFieldsWithOptions(equalities, rowsByRole, fullDomain, options); len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, want none when reduced source exceeds auto cap", candidates)
+	}
+	options.maxSourceRows = 5
+	if candidates := legacyDirectRelationshipGraphEqualityRoleSeedCandidatesFromFieldsWithOptions(equalities, rowsByRole, fullDomain, options); len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one candidate at auto cap", candidates)
 	}
 }
 
