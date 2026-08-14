@@ -175,6 +175,7 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterLeaf(c
 		CandidateDirectFragments:      vectorResult.CandidateDirectFragments,
 		CandidateDirectRows:           vectorResult.CandidateDirectRows,
 		CandidateSet:                  targetCandidates,
+		Probes:                        append([]ExecutionProbe(nil), vectorResult.Probes...),
 	}, diagnostics, nil
 }
 
@@ -261,6 +262,7 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterExpres
 		CandidateDirectFragments:      vectorResult.CandidateDirectFragments,
 		CandidateDirectRows:           vectorResult.CandidateDirectRows,
 		CandidateSet:                  targetCandidates,
+		Probes:                        append([]ExecutionProbe(nil), vectorResult.Probes...),
 	}, diagnostics, nil
 }
 

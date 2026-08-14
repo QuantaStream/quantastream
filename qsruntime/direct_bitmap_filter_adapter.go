@@ -250,6 +250,7 @@ func directBitmapFilterDomainRewriteProbes(rewrite qsbridge.FilterDomainRewriteR
 			Detail:  directBitmapFilterDomainBranchProbeDetail(branch),
 		})
 		probes = append(probes, directBitmapFilterDomainBranchExpansionProbes(i+1, branch)...)
+		probes = append(probes, directBitmapFilterDomainScopedProbes("branch_"+directBitmapFilterDomainProbeOrdinal(i+1), branch.Probes)...)
 	}
 	for i, leaf := range rewrite.Leaves {
 		probes = append(probes, ExecutionProbe{
@@ -259,8 +260,24 @@ func directBitmapFilterDomainRewriteProbes(rewrite qsbridge.FilterDomainRewriteR
 			Detail:  directBitmapFilterDomainLeafProbeDetail(leaf),
 		})
 		probes = append(probes, directBitmapFilterDomainLeafExpansionProbes(i+1, leaf)...)
+		probes = append(probes, directBitmapFilterDomainScopedProbes("leaf_"+directBitmapFilterDomainProbeOrdinal(i+1), leaf.Probes)...)
 	}
 	return probes
+}
+
+func directBitmapFilterDomainScopedProbes(scope string, probes []ExecutionProbe) []ExecutionProbe {
+	if len(probes) == 0 {
+		return nil
+	}
+	scoped := make([]ExecutionProbe, 0, len(probes))
+	for _, probe := range probes {
+		if probe.Section == "" || probe.Name == "" {
+			continue
+		}
+		probe.Detail = directBitmapFilterProbeDetailAppend(probe.Detail, "normalization="+scope)
+		scoped = append(scoped, probe)
+	}
+	return scoped
 }
 
 func directBitmapFilterDomainBranchExpansionProbes(index int, branch qsbridge.FilterDomainNormalizedBranch) []ExecutionProbe {

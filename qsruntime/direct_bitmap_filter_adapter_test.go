@@ -39,6 +39,12 @@ func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.
 				Index:   "lineitem",
 				Rownums: []qsbridge.QuantaRownum{101, 102, 103},
 			},
+			Probes: []qsbridge.ProjectionProbe{{
+				Section: "direct_bitmap_server_fragment",
+				Name:    "fragment_001_order",
+				Value:   "001|lineitem.l_quantity|op=INTERSECT|bsi=GE|mode=bsi",
+				Detail:  "node=qs-server-2",
+			}},
 		}},
 	}
 
@@ -52,6 +58,7 @@ func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_query_elapsed", "125ms", "source=part")
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_fragments", "3", "target=lineitem")
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_rows", "27", "vector=lineitem.l_partkey")
+	assertFilterAdapterExecutionProbe(t, probes, "direct_bitmap_server_fragment", "fragment_001_order", "001|lineitem.l_quantity|op=INTERSECT|bsi=GE|mode=bsi", "normalization=branch_001")
 }
 
 func TestDirectBitmapFilterFragmentShouldMaterializeStringEnumUntilBitmapKernelIsAvailable(t *testing.T) {

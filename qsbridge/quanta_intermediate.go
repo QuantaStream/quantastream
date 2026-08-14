@@ -529,6 +529,7 @@ type FilterDomainRelationshipVectorResult struct {
 	CandidateDirectReleaseElapsed time.Duration
 	CandidateDirectFragments      int
 	CandidateDirectRows           int
+	Probes                        []ProjectionProbe
 }
 
 // RelationshipVectorRequest derives a concrete one-hop vector translation request.
@@ -613,6 +614,7 @@ type FilterDomainNormalizedLeaf struct {
 	CandidateDirectFragments      int
 	CandidateDirectRows           int
 	CandidateSet                  QuantaCandidateSet
+	Probes                        []ProjectionProbe
 }
 
 // FilterDomainNormalizedBranch is one translated source-domain filter subtree.
@@ -648,6 +650,7 @@ type FilterDomainNormalizedBranch struct {
 	CandidateDirectFragments      int
 	CandidateDirectRows           int
 	CandidateSet                  QuantaCandidateSet
+	Probes                        []ProjectionProbe
 }
 
 // FilterDomainRewriteResult describes typed replacements for normalized filter leaves.

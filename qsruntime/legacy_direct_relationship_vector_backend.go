@@ -139,6 +139,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 					CandidateDirectReleaseElapsed: directTiming.ReleaseElapsed,
 					CandidateDirectFragments:      directTiming.Fragments,
 					CandidateDirectRows:           directTiming.Rows,
+					Probes:                        append([]ExecutionProbe(nil), directTiming.Probes...),
 				}, candidateDiagnostics, candidateErr
 			}
 		}
@@ -518,6 +519,7 @@ type legacyDirectRelationshipVectorDirectQueryTiming struct {
 	ReleaseElapsed time.Duration
 	Fragments      int
 	Rows           int
+	Probes         []ExecutionProbe
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorParentToChildCandidatesDirect(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, legacyDirectRelationshipVectorDirectQueryTiming, qsbridge.DiagnosticSet, error, bool) {
@@ -562,6 +564,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 	result, queryDiagnostics, queryErr := session.QueryBitmap(ctx, request)
 	timing.QueryElapsed = time.Since(queryStart)
 	timing.Rows = len(result.Rownums)
+	timing.Probes = append([]ExecutionProbe(nil), result.Probes...)
 	releaseStart := time.Now()
 	releaseDiagnostics := session.Release(ctx)
 	timing.ReleaseElapsed = time.Since(releaseStart)

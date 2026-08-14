@@ -1075,6 +1075,12 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirec
 						Success: true,
 						Count:   2,
 						Rownums: []qsbridge.QuantaRownum{2, 6},
+						Probes: []ExecutionProbe{{
+							Section: "direct_bitmap_server_fragment",
+							Name:    "fragment_001_order",
+							Value:   "001|lineitem.l_quantity|op=INTERSECT|bsi=GE|mode=bsi",
+							Detail:  "node=qs-server-2",
+						}},
 					}, nil, nil
 				},
 			}, nil, nil
@@ -1111,6 +1117,9 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirec
 	}
 	if result.CandidateDirectFragments != 3 || result.CandidateDirectRows != 2 || result.CandidateDirectQueryElapsed == 0 {
 		t.Fatalf("direct query fragments/rows/elapsed = %d/%d/%s, want 3/2/non-zero", result.CandidateDirectFragments, result.CandidateDirectRows, result.CandidateDirectQueryElapsed)
+	}
+	if len(result.Probes) != 1 || result.Probes[0].Name != "fragment_001_order" {
+		t.Fatalf("probes = %#v, want direct server fragment probe", result.Probes)
 	}
 	if projectionCalls != 0 || borrowCalls != 1 || queryCalls != 1 {
 		t.Fatalf("calls projection/borrow/query = %d/%d/%d, want 0/1/1", projectionCalls, borrowCalls, queryCalls)
