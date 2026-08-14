@@ -788,9 +788,13 @@ func (m *BitmapIndex) aggregateAlignedBSIValuesWithStats(index, field string, fr
 	if field == "" {
 		return nil, ProjectBSIStats{}, 0, fmt.Errorf("field not specified for aligned BSI aggregate")
 	}
-	positions := make(map[uint64][]int, len(rownums))
-	for i, rownum := range rownums {
-		positions[rownum] = append(positions[rownum], i)
+	sortedUniqueRows := relationshipReverseArtifactRowsStrictlyIncreasing(rownums)
+	positions := map[uint64][]int(nil)
+	if !sortedUniqueRows {
+		positions = make(map[uint64][]int, len(rownums))
+		for i, rownum := range rownums {
+			positions[rownum] = append(positions[rownum], i)
+		}
 	}
 	foundSet := relationshipReverseArtifactBitmap(rownums)
 	groupsByParent := make(map[uint64]*RelationshipReverseArtifactSumGroup, relationshipReverseArtifactUniqueUint64Count(parentRows))
@@ -849,22 +853,19 @@ func (m *BitmapIndex) aggregateAlignedBSIValuesWithStats(index, field string, fr
 			if i >= len(retainedValues) || retainedValues[i] == nil {
 				continue
 			}
+			if sortedUniqueRows {
+				position := sort.Search(len(rownums), func(i int) bool { return rownums[i] >= rownum })
+				if position >= len(rownums) || rownums[position] != rownum || position >= len(parentRows) {
+					continue
+				}
+				relationshipReverseArtifactAccumulateAlignedValue(groupsByParent, parentRows[position], rownums[position], retainedValues[i])
+				continue
+			}
 			for _, position := range positions[rownum] {
 				if position >= len(parentRows) {
 					continue
 				}
-				parentRow := parentRows[position]
-				group := groupsByParent[parentRow]
-				if group == nil {
-					group = &RelationshipReverseArtifactSumGroup{
-						ParentValue:       parentRow,
-						RepresentativeRow: rownums[position],
-						Sum:               big.NewInt(0),
-					}
-					groupsByParent[parentRow] = group
-				}
-				group.Sum.Add(group.Sum, retainedValues[i])
-				group.Count++
+				relationshipReverseArtifactAccumulateAlignedValue(groupsByParent, parentRows[position], rownums[position], retainedValues[i])
 			}
 		}
 		aggregateElapsed += time.Since(aggregateStart)
@@ -895,6 +896,35 @@ func (m *BitmapIndex) aggregateAlignedBSIValuesWithStats(index, field string, fr
 		}
 	}
 	return groupsByParent, stats, aggregateElapsed, nil
+}
+
+func relationshipReverseArtifactRowsStrictlyIncreasing(rows []uint64) bool {
+	if len(rows) < 2 {
+		return true
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1] >= rows[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func relationshipReverseArtifactAccumulateAlignedValue(groupsByParent map[uint64]*RelationshipReverseArtifactSumGroup, parentRow, representativeRow uint64, value *big.Int) {
+	if value == nil {
+		return
+	}
+	group := groupsByParent[parentRow]
+	if group == nil {
+		group = &RelationshipReverseArtifactSumGroup{
+			ParentValue:       parentRow,
+			RepresentativeRow: representativeRow,
+			Sum:               big.NewInt(0),
+		}
+		groupsByParent[parentRow] = group
+	}
+	group.Sum.Add(group.Sum, value)
+	group.Count++
 }
 
 func relationshipReverseArtifactSortedSumGroups(groupsByParent map[uint64]*RelationshipReverseArtifactSumGroup) []RelationshipReverseArtifactSumGroup {

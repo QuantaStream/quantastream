@@ -4712,6 +4712,23 @@ func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatePrunesUnorderedLimit(
 	}
 }
 
+func TestLegacyDirectRelationshipQ3OrderRevenueSortedAggregateRowsPreservesPairs(t *testing.T) {
+	lineRows := []qsbridge.QuantaRownum{40, 10, 30, 20}
+	orderRows := []qsbridge.QuantaRownum{4, 1, 3, 2}
+
+	sortedLineRows, sortedOrderRows, unique := legacyDirectRelationshipQ3OrderRevenueSortedAggregateRows(lineRows, orderRows)
+
+	if !unique {
+		t.Fatalf("unique = false, want true")
+	}
+	if got, want := sortedLineRows, []qsbridge.QuantaRownum{10, 20, 30, 40}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("line rows = %#v, want %#v", got, want)
+	}
+	if got, want := sortedOrderRows, []qsbridge.QuantaRownum{1, 2, 3, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("order rows = %#v, want %#v", got, want)
+	}
+}
+
 func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregateDoesNotPruneOrderedLimit(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
 	request.OrderBy = []qsbridge.SortSpec{{Expr: qsbridge.AggregateRef("revenue", 0), Direction: qsbridge.SortDescending}}

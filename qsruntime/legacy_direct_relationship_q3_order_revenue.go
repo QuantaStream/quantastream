@@ -313,14 +313,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	if valueField == "" {
 		return nil, nil, 0, 0, nil, nil, false
 	}
+	aggregateLineRows, aggregateOrderRows, sortedAggregateRows := legacyDirectRelationshipQ3OrderRevenueSortedAggregateRows(lineRows, orderRows)
 	fromEpochMillis, toEpochMillis := legacyDirectRelationshipQ3OrderRevenueStorageWindow(e, request, plan.lineitemRole)
 	aggregateRequest := LegacyDirectRelationshipVectorAggregateRequest{
 		VectorIndex:     "lineitem",
 		VectorField:     "l_orderkey",
 		ValueIndex:      "lineitem",
 		ValueField:      valueField,
-		ChildRows:       lineRows,
-		ParentRows:      orderRows,
+		ChildRows:       aggregateLineRows,
+		ParentRows:      aggregateOrderRows,
 		FromEpochMillis: fromEpochMillis,
 		ToEpochMillis:   toEpochMillis,
 	}
@@ -350,6 +351,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_source_values", strconv.Itoa(aggregate.SourceValues)),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_target_rows", strconv.FormatUint(aggregate.TargetRows, 10)),
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_nodes", strconv.FormatUint(aggregate.Nodes, 10)),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_preagg_storage_sorted_child_rows", strconv.FormatBool(sortedAggregateRows)),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_elapsed", elapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed", aggregate.LookupElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_projection_elapsed", aggregate.ProjectionElapsed.String()),
@@ -366,6 +368,47 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_rpc_elapsed", aggregate.ClientRPCElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_preagg_storage_rpc_max_elapsed", aggregate.MaxClientRPCElapsed.String()),
 	}, aggregate.ProjectionElapsed, aggregate.AggregateElapsed, diagnostics, nil, true
+}
+
+func legacyDirectRelationshipQ3OrderRevenueSortedAggregateRows(lineRows, orderRows []qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, []qsbridge.QuantaRownum, bool) {
+	if len(lineRows) != len(orderRows) || len(lineRows) < 2 {
+		return lineRows, orderRows, false
+	}
+	sorted := true
+	for i := 1; i < len(lineRows); i++ {
+		if lineRows[i-1] >= lineRows[i] {
+			sorted = false
+			break
+		}
+	}
+	if sorted {
+		return lineRows, orderRows, true
+	}
+	type aggregatePair struct {
+		lineRow  qsbridge.QuantaRownum
+		orderRow qsbridge.QuantaRownum
+	}
+	pairs := make([]aggregatePair, len(lineRows))
+	for i := range lineRows {
+		pairs[i] = aggregatePair{lineRow: lineRows[i], orderRow: orderRows[i]}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].lineRow == pairs[j].lineRow {
+			return pairs[i].orderRow < pairs[j].orderRow
+		}
+		return pairs[i].lineRow < pairs[j].lineRow
+	})
+	sortedLineRows := make([]qsbridge.QuantaRownum, len(pairs))
+	sortedOrderRows := make([]qsbridge.QuantaRownum, len(pairs))
+	unique := true
+	for i, pair := range pairs {
+		if i > 0 && pairs[i-1].lineRow == pair.lineRow {
+			unique = false
+		}
+		sortedLineRows[i] = pair.lineRow
+		sortedOrderRows[i] = pair.orderRow
+	}
+	return sortedLineRows, sortedOrderRows, unique
 }
 
 func legacyDirectRelationshipQ3OrderRevenueStorageWindow(e LegacyDirectRelationshipVectorJoinExecutor, request ExecutionRequest, lineitemRole string) (int64, int64) {

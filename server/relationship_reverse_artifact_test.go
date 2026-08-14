@@ -419,6 +419,37 @@ func TestRelationshipAlignedValueSumStorageGroupsProjectedValues(t *testing.T) {
 	}
 }
 
+func TestRelationshipAlignedValueSumStorageUsesSortedUniqueRows(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, false)
+	shardTime := time.Unix(0, 0).UTC()
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragmentForField(t, "l_extendedprice", shardTime, map[uint64]int64{
+		2: 1000,
+		4: 2500,
+		6: 500,
+	}, false))
+
+	groups, stats, ok, err := index.RelationshipAlignedValueSumStorage("lineitem", "l_extendedprice", 0, 0, []uint64{2, 4, 6}, []uint64{7, 8, 8})
+	if err != nil {
+		t.Fatalf("RelationshipAlignedValueSumStorage sorted unique error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("RelationshipAlignedValueSumStorage sorted unique ok = false, want true")
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups = %#v, want two parent groups", groups)
+	}
+	if groups[0].ParentValue != 7 || groups[0].RepresentativeRow != 2 || groups[0].Count != 1 || groups[0].Sum.Int64() != 1000 {
+		t.Fatalf("group[0] = %#v, want parent 7 sum 1000", groups[0])
+	}
+	if groups[1].ParentValue != 8 || groups[1].RepresentativeRow != 4 || groups[1].Count != 2 || groups[1].Sum.Int64() != 3000 {
+		t.Fatalf("group[1] = %#v, want parent 8 sum 3000", groups[1])
+	}
+	if stats.Rows != 3 || stats.Values != 2 || stats.SourceValues != 2 || stats.TargetRows != 3 || stats.Groups != 2 {
+		t.Fatalf("stats = %#v, want rows=3 values=2 sourceValues=2 targetRows=3 groups=2", stats)
+	}
+}
+
 func TestRelationshipAlignedValueSumStorageDiscountedRevenueExpression(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, false)
 	shardTime := time.Unix(0, 0).UTC()
