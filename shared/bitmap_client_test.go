@@ -603,7 +603,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesCanReturnAlignedP
 	}
 }
 
-func TestAggregateRelationshipReverseArtifactCandidateResponsesKeepsAlignedParentValueOrder(t *testing.T) {
+func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesAlignedParentValuesWithoutMap(t *testing.T) {
 	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
 		{
 			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
@@ -615,6 +615,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesKeepsAlignedParen
 		{
 			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
 				{Rownum: 20, ParentValue: 8},
+				{Rownum: 10, ParentValue: 7},
 				{Rownum: 40, ParentValue: 9},
 			},
 			Ok: true,
@@ -628,10 +629,10 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesKeepsAlignedParen
 	if !ok {
 		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
 	}
-	if got, want := rownums, []uint64{30, 10, 20, 40}; !equalUint64Slices(got, want) {
-		t.Fatalf("rownums = %v, want response order %v", got, want)
+	if got, want := rownums, []uint64{10, 20, 30, 40}; !equalUint64Slices(got, want) {
+		t.Fatalf("rownums = %v, want deduped sorted rownums %v", got, want)
 	}
-	if got, want := alignedParentValues, []int64{7, 7, 8, 9}; !equalInt64Slices(got, want) {
+	if got, want := alignedParentValues, []int64{7, 8, 7, 9}; !equalInt64Slices(got, want) {
 		t.Fatalf("aligned parent values = %v, want %v", got, want)
 	}
 	if parentValues != nil {

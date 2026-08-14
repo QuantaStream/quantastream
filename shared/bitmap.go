@@ -1246,9 +1246,7 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered
 
 // RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived asks
 // readable nodes for child rows and parent values as aligned slices. It avoids
-// building a row-to-parent map when the caller only needs ordered pairs. Callers
-// must only use this when response row domains are disjoint or duplicate child
-// rows are otherwise impossible.
+// building a row-to-parent map when the caller only needs ordered pairs.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, []int64, RelationshipReverseArtifactStats, bool, error) {
 	rownums, parentValues, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false, false)
 	return rownums, parentValues, stats, ok, err
@@ -1541,10 +1539,12 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	var rownums []uint64
 	var parentValues []int64
 	var seenRows map[uint64]struct{}
+	var seenRowBitmap *roaring64.Bitmap
 	if deriveRowsFromParentValues {
 		rownums = make([]uint64, 0, parentValueCapacity)
 		if !collectParentMap {
 			parentValues = make([]int64, 0, parentValueCapacity)
+			seenRowBitmap = roaring64.NewBitmap()
 		} else {
 			seenRows = make(map[uint64]struct{}, parentValueCapacity)
 		}
@@ -1568,7 +1568,12 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 				if value == nil {
 					continue
 				}
-				rownums = append(rownums, value.GetRownum())
+				rownum := value.GetRownum()
+				if seenRowBitmap.Contains(rownum) {
+					continue
+				}
+				seenRowBitmap.Add(rownum)
+				rownums = append(rownums, rownum)
 				parentValues = append(parentValues, value.GetParentValue())
 			}
 		} else if collectParentMap || deriveRowsFromParentValues {
@@ -1603,7 +1608,8 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 			stats.RowMergeElapsed += time.Since(rowMergeStart)
 		}
 	}
-	if sortRows {
+	shouldSortAlignedValues := len(parentValues) == len(rownums) && !relationshipReverseArtifactRowsStrictlyIncreasing(rownums)
+	if sortRows || shouldSortAlignedValues {
 		sortStart := time.Now()
 		if len(parentValues) == len(rownums) {
 			type rowParentValue struct {
@@ -1626,6 +1632,15 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 	}
 	stats.TargetRows = uint64(len(rownums))
 	return rownums, parentValues, parentValueByChild, stats, ok, nil
+}
+
+func relationshipReverseArtifactRowsStrictlyIncreasing(rownums []uint64) bool {
+	for i := 1; i < len(rownums); i++ {
+		if rownums[i] <= rownums[i-1] {
+			return false
+		}
+	}
+	return true
 }
 
 func relationshipReverseArtifactCandidateResponseCapacities(responses []*pb.RelationshipReverseArtifactCandidatesResponse) (int, int) {
