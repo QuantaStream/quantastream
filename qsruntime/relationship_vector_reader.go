@@ -41,15 +41,12 @@ type LegacyDirectRelationshipVectorReadRequest struct {
 	// AllowCandidateSuperset permits membership seed reads to reuse a broader
 	// target candidate set because the correlated membership evaluator rechecks
 	// the relationship key before accepting rows.
-	AllowCandidateSuperset bool
-	// AllowUnselectiveReverseArtifactTarget lets exact target-window callers use
-	// reverse artifacts even when global artifact stats look too broad.
-	AllowUnselectiveReverseArtifactTarget bool
-	MaxEstimatedTargetRows                int
-	TargetCandidateRows                   []qsbridge.QuantaRownum
-	PreserveArtifactOrder                 bool
-	DeriveArtifactRows                    bool
-	OmitArtifactParentValues              bool
+	AllowCandidateSuperset   bool
+	MaxEstimatedTargetRows   int
+	TargetCandidateRows      []qsbridge.QuantaRownum
+	PreserveArtifactOrder    bool
+	DeriveArtifactRows       bool
+	OmitArtifactParentValues bool
 }
 
 // LegacyDirectRelationshipVectorReader is the future bridge into relationship-vector reads.

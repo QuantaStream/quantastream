@@ -147,9 +147,8 @@ type legacyDirectRelationshipReverseArtifactLocalTiming struct {
 }
 
 type legacyDirectRelationshipReduceOptions struct {
-	omitFullDomainTargetCandidates      bool
-	omitReverseArtifactParentValues     bool
-	allowUnselectiveReverseArtifactRead bool
+	omitFullDomainTargetCandidates  bool
+	omitReverseArtifactParentValues bool
 }
 
 type legacyDirectRelationshipGraphReductionSummary struct {
@@ -2674,9 +2673,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, false, "parent_keys", diagnostics, err
 	}
-	_, _, parentByChild, _, timing, ok, diagnostics, err := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, legacyDirectRelationshipReduceOptions{
-		allowUnselectiveReverseArtifactRead: true,
-	})
+	_, _, parentByChild, _, timing, ok, diagnostics, err := e.legacyDirectRelationshipReverseArtifactChildRows(ctx, edge, childRows, parentKeyRows, legacyDirectRelationshipReduceOptions{})
 	if err != nil || diagnostics.BlocksNative() || !ok || len(parentByChild) == 0 {
 		mode := timing.mode
 		if mode == "" {
@@ -4273,7 +4270,6 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	readStart := time.Now()
 	read := legacyDirectRelationshipTupleMembershipParentToChildReadRequest(edge, legacyDirectRelationshipParentRowsFromKeyRows(parentKeyRows))
 	read.MaxEstimatedTargetRows = len(childRows)
-	read.AllowUnselectiveReverseArtifactTarget = options.allowUnselectiveReverseArtifactRead
 	if options.omitFullDomainTargetCandidates {
 		localTiming.targetCandidateMode = "omitted_full_domain"
 		if options.omitReverseArtifactParentValues {

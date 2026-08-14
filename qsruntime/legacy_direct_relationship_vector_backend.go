@@ -306,8 +306,7 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		}
 		legacyDirectRecordRelationshipVectorReverseArtifact(ctx, read, projectionKey, timing)
 		return legacyDirectRelationshipVectorReverseArtifactReadResult{}, timing, nil, nil, false
-	} else if err == nil && ok && !read.AllowUnselectiveReverseArtifactTarget &&
-		legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount, stats.Values, stats.Rows, read.MaxEstimatedTargetRows) {
+	} else if err == nil && ok && legacyDirectRelationshipReverseArtifactTargetTooBroad(sourceValueCount, stats.Values, stats.Rows, read.MaxEstimatedTargetRows) {
 		timing := relationshipVectorReverseArtifactTiming{
 			Mode:                 "reverse_artifact_skip_unselective_target",
 			CacheHit:             true,
