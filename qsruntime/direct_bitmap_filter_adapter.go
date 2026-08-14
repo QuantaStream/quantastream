@@ -289,6 +289,11 @@ func directBitmapFilterDomainBranchExpansionProbes(index int, branch qsbridge.Fi
 		candidateElapsed:           branch.CandidateElapsed,
 		batchEqualElapsed:          branch.BatchEqualElapsed,
 		candidateScanElapsed:       branch.CandidateScanElapsed,
+		candidateDirectBorrow:      branch.CandidateDirectBorrowElapsed,
+		candidateDirectQuery:       branch.CandidateDirectQueryElapsed,
+		candidateDirectRelease:     branch.CandidateDirectReleaseElapsed,
+		candidateDirectFragments:   branch.CandidateDirectFragments,
+		candidateDirectRows:        branch.CandidateDirectRows,
 	})
 }
 
@@ -318,6 +323,11 @@ func directBitmapFilterDomainLeafExpansionProbes(index int, leaf qsbridge.Filter
 		candidateElapsed:           leaf.CandidateElapsed,
 		batchEqualElapsed:          leaf.BatchEqualElapsed,
 		candidateScanElapsed:       leaf.CandidateScanElapsed,
+		candidateDirectBorrow:      leaf.CandidateDirectBorrowElapsed,
+		candidateDirectQuery:       leaf.CandidateDirectQueryElapsed,
+		candidateDirectRelease:     leaf.CandidateDirectReleaseElapsed,
+		candidateDirectFragments:   leaf.CandidateDirectFragments,
+		candidateDirectRows:        leaf.CandidateDirectRows,
 	})
 }
 
@@ -337,6 +347,11 @@ type filterDomainExpansionProbeValues struct {
 	candidateElapsed           time.Duration
 	batchEqualElapsed          time.Duration
 	candidateScanElapsed       time.Duration
+	candidateDirectBorrow      time.Duration
+	candidateDirectQuery       time.Duration
+	candidateDirectRelease     time.Duration
+	candidateDirectFragments   int
+	candidateDirectRows        int
 }
 
 func directBitmapFilterDomainExpansionProbes(prefix, detail string, values filterDomainExpansionProbeValues) []ExecutionProbe {
@@ -356,6 +371,11 @@ func directBitmapFilterDomainExpansionProbes(prefix, detail string, values filte
 		directBitmapFilterDomainExpansionProbe(prefix+"candidate_elapsed", values.candidateElapsed.String(), detail),
 		directBitmapFilterDomainExpansionProbe(prefix+"batch_equal_elapsed", values.batchEqualElapsed.String(), detail),
 		directBitmapFilterDomainExpansionProbe(prefix+"candidate_scan_elapsed", values.candidateScanElapsed.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_direct_borrow_elapsed", values.candidateDirectBorrow.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_direct_query_elapsed", values.candidateDirectQuery.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_direct_release_elapsed", values.candidateDirectRelease.String(), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_direct_fragments", strconv.Itoa(values.candidateDirectFragments), detail),
+		directBitmapFilterDomainExpansionProbe(prefix+"candidate_direct_rows", strconv.Itoa(values.candidateDirectRows), detail),
 	}
 }
 
@@ -414,6 +434,11 @@ func directBitmapFilterDomainBranchProbeDetail(branch qsbridge.FilterDomainNorma
 		"candidate_client_rpc_elapsed=" + branch.CandidateClientRPCElapsed.String(),
 		"candidate_client_rpc_max_elapsed=" + branch.CandidateClientRPCMaxElapsed.String(),
 		"candidate_response_merge_elapsed=" + branch.CandidateResponseMergeElapsed.String(),
+		"candidate_direct_borrow_elapsed=" + branch.CandidateDirectBorrowElapsed.String(),
+		"candidate_direct_query_elapsed=" + branch.CandidateDirectQueryElapsed.String(),
+		"candidate_direct_release_elapsed=" + branch.CandidateDirectReleaseElapsed.String(),
+		"candidate_direct_fragments=" + strconv.Itoa(branch.CandidateDirectFragments),
+		"candidate_direct_rows=" + strconv.Itoa(branch.CandidateDirectRows),
 		"target_index=" + branch.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")
@@ -445,6 +470,11 @@ func directBitmapFilterDomainLeafProbeDetail(leaf qsbridge.FilterDomainNormalize
 		"candidate_client_rpc_elapsed=" + leaf.CandidateClientRPCElapsed.String(),
 		"candidate_client_rpc_max_elapsed=" + leaf.CandidateClientRPCMaxElapsed.String(),
 		"candidate_response_merge_elapsed=" + leaf.CandidateResponseMergeElapsed.String(),
+		"candidate_direct_borrow_elapsed=" + leaf.CandidateDirectBorrowElapsed.String(),
+		"candidate_direct_query_elapsed=" + leaf.CandidateDirectQueryElapsed.String(),
+		"candidate_direct_release_elapsed=" + leaf.CandidateDirectReleaseElapsed.String(),
+		"candidate_direct_fragments=" + strconv.Itoa(leaf.CandidateDirectFragments),
+		"candidate_direct_rows=" + strconv.Itoa(leaf.CandidateDirectRows),
 		"target_index=" + leaf.CandidateSet.Index,
 	}
 	return strings.Join(details, " ")

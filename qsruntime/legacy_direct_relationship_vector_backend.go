@@ -118,22 +118,27 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) ReadRelationshipVectorCan
 			}, artifactDiagnostics, artifactErr
 		}
 		if b.shouldReadRelationshipVectorParentToChildCandidatesDirect(sourceValueResult.Values) {
-			if candidates, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
+			if candidates, directTiming, candidateDiagnostics, candidateErr, ok := b.readRelationshipVectorParentToChildCandidatesDirect(ctx, read, sourceValueResult.Values); ok {
 				if read.AllowCandidateSuperset && candidateErr == nil && !candidateDiagnostics.BlocksNative() {
 					b.storeRelationshipVectorCandidateSuperset(ctx, candidateCacheKey, sourceValueResult.Values, candidates.Rownums)
 				}
 				return qsbridge.FilterDomainRelationshipVectorResult{
-					TargetCandidates:           candidates,
-					VectorIndex:                read.VectorIndex,
-					VectorField:                read.VectorField,
-					Direction:                  read.Direction,
-					SourceKeyProjectionUsed:    sourceValueResult.ProjectionUsed,
-					SourceKeyProjectionReason:  sourceValueResult.ProjectionReason,
-					SourceKeyProjectionElapsed: sourceValueResult.ProjectionElapsed,
-					SourceValueCount:           sourceValueResult.ValueCount,
-					CandidateCacheMode:         "direct_query",
-					CandidateMode:              "direct_batch_eq",
-					CandidateElapsed:           time.Since(candidateStart),
+					TargetCandidates:              candidates,
+					VectorIndex:                   read.VectorIndex,
+					VectorField:                   read.VectorField,
+					Direction:                     read.Direction,
+					SourceKeyProjectionUsed:       sourceValueResult.ProjectionUsed,
+					SourceKeyProjectionReason:     sourceValueResult.ProjectionReason,
+					SourceKeyProjectionElapsed:    sourceValueResult.ProjectionElapsed,
+					SourceValueCount:              sourceValueResult.ValueCount,
+					CandidateCacheMode:            "direct_query",
+					CandidateMode:                 "direct_batch_eq",
+					CandidateElapsed:              time.Since(candidateStart),
+					CandidateDirectBorrowElapsed:  directTiming.BorrowElapsed,
+					CandidateDirectQueryElapsed:   directTiming.QueryElapsed,
+					CandidateDirectReleaseElapsed: directTiming.ReleaseElapsed,
+					CandidateDirectFragments:      directTiming.Fragments,
+					CandidateDirectRows:           directTiming.Rows,
 				}, candidateDiagnostics, candidateErr
 			}
 		}
@@ -507,15 +512,23 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) storeRelationshipVectorCa
 	recordQueryScratchpadCacheStore(ctx, "relationship_vector_candidate_cache", legacyDirectRelationshipProjectionCacheDetail(key))
 }
 
-func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorParentToChildCandidatesDirect(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, qsbridge.DiagnosticSet, error, bool) {
+type legacyDirectRelationshipVectorDirectQueryTiming struct {
+	BorrowElapsed  time.Duration
+	QueryElapsed   time.Duration
+	ReleaseElapsed time.Duration
+	Fragments      int
+	Rows           int
+}
+
+func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorParentToChildCandidatesDirect(ctx context.Context, read LegacyDirectRelationshipVectorReadRequest, sourceValues []int64) (qsbridge.QuantaCandidateSet, legacyDirectRelationshipVectorDirectQueryTiming, qsbridge.DiagnosticSet, error, bool) {
 	if b.Sessions == nil {
-		return qsbridge.QuantaCandidateSet{}, nil, nil, false
+		return qsbridge.QuantaCandidateSet{}, legacyDirectRelationshipVectorDirectQueryTiming{}, nil, nil, false
 	}
 	if len(sourceValues) == 0 {
-		return qsbridge.QuantaCandidateSet{Index: read.TargetDomain}, nil, nil, true
+		return qsbridge.QuantaCandidateSet{Index: read.TargetDomain}, legacyDirectRelationshipVectorDirectQueryTiming{}, nil, nil, true
 	}
 	if len(sourceValues) > directBitmapMembershipMaxDynamicBatchEQValues {
-		return qsbridge.QuantaCandidateSet{}, nil, nil, false
+		return qsbridge.QuantaCandidateSet{}, legacyDirectRelationshipVectorDirectQueryTiming{}, nil, nil, false
 	}
 	values := make([]*big.Int, 0, len(sourceValues))
 	for _, sourceValue := range sourceValues {
@@ -532,26 +545,34 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: fragments,
 	})
+	timing := legacyDirectRelationshipVectorDirectQueryTiming{Fragments: len(fragments)}
+	borrowStart := time.Now()
 	session, diagnostics, err := b.Sessions.BorrowDirectSession(ctx, request)
+	timing.BorrowElapsed = time.Since(borrowStart)
 	if err != nil || diagnostics.BlocksNative() {
-		return qsbridge.QuantaCandidateSet{}, diagnostics, err, true
+		return qsbridge.QuantaCandidateSet{}, timing, diagnostics, err, true
 	}
 	if session == nil {
-		return qsbridge.QuantaCandidateSet{}, qsbridge.DiagnosticSet{
+		return qsbridge.QuantaCandidateSet{}, timing, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship-vector candidate query received nil session"),
 		}, nil, true
 	}
+	queryStart := time.Now()
 	result, queryDiagnostics, queryErr := session.QueryBitmap(ctx, request)
+	timing.QueryElapsed = time.Since(queryStart)
+	timing.Rows = len(result.Rownums)
+	releaseStart := time.Now()
 	releaseDiagnostics := session.Release(ctx)
+	timing.ReleaseElapsed = time.Since(releaseStart)
 	diagnostics = append(diagnostics, queryDiagnostics...)
 	diagnostics = append(diagnostics, releaseDiagnostics...)
 	if queryErr != nil || diagnostics.BlocksNative() {
-		return qsbridge.QuantaCandidateSet{}, diagnostics, queryErr, true
+		return qsbridge.QuantaCandidateSet{}, timing, diagnostics, queryErr, true
 	}
 	return qsbridge.QuantaCandidateSet{
 		Index:   read.TargetDomain,
 		Rownums: append([]qsbridge.QuantaRownum(nil), result.Rownums...),
-	}, diagnostics, nil, true
+	}, timing, diagnostics, nil, true
 }
 
 func legacyDirectRelationshipVectorTargetFilterFragments(read LegacyDirectRelationshipVectorReadRequest) []qsbridge.QuantaQueryFragment {

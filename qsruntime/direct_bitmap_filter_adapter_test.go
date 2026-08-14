@@ -13,25 +13,28 @@ import (
 func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.T) {
 	rewrite := qsbridge.FilterDomainRewriteResult{
 		Branches: []qsbridge.FilterDomainNormalizedBranch{{
-			SourceDomain:               "part",
-			TargetDomain:               "lineitem",
-			VectorIndex:                "lineitem",
-			VectorField:                "l_partkey",
-			Direction:                  qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
-			SourceCount:                88,
-			SourceElapsed:              2 * time.Millisecond,
-			TranslationElapsed:         3 * time.Second,
-			ProjectionElapsed:          2800 * time.Millisecond,
-			ProjectionCacheHit:         true,
-			SourceKeyProjectionUsed:    false,
-			SourceKeyProjectionElapsed: 0,
-			SourceValueCount:           88,
-			CandidateCacheHit:          false,
-			CandidateCacheMode:         "coverage_miss",
-			CandidateMode:              "batch_equal",
-			CandidateElapsed:           200 * time.Millisecond,
-			BatchEqualElapsed:          150 * time.Millisecond,
-			CandidateScanElapsed:       50 * time.Millisecond,
+			SourceDomain:                "part",
+			TargetDomain:                "lineitem",
+			VectorIndex:                 "lineitem",
+			VectorField:                 "l_partkey",
+			Direction:                   qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+			SourceCount:                 88,
+			SourceElapsed:               2 * time.Millisecond,
+			TranslationElapsed:          3 * time.Second,
+			ProjectionElapsed:           2800 * time.Millisecond,
+			ProjectionCacheHit:          true,
+			SourceKeyProjectionUsed:     false,
+			SourceKeyProjectionElapsed:  0,
+			SourceValueCount:            88,
+			CandidateCacheHit:           false,
+			CandidateCacheMode:          "coverage_miss",
+			CandidateMode:               "batch_equal",
+			CandidateElapsed:            200 * time.Millisecond,
+			BatchEqualElapsed:           150 * time.Millisecond,
+			CandidateScanElapsed:        50 * time.Millisecond,
+			CandidateDirectQueryElapsed: 125 * time.Millisecond,
+			CandidateDirectFragments:    3,
+			CandidateDirectRows:         27,
 			CandidateSet: qsbridge.QuantaCandidateSet{
 				Index:   "lineitem",
 				Rownums: []qsbridge.QuantaRownum{101, 102, 103},
@@ -46,6 +49,9 @@ func TestDirectBitmapFilterDomainRewriteProbesExposeExpansionMetrics(t *testing.
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_projection_cache_hit", "true", "direction=right_to_left")
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_cache_mode", "coverage_miss", "target_index=lineitem")
 	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_mode", "batch_equal", "source=part")
+	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_query_elapsed", "125ms", "source=part")
+	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_fragments", "3", "target=lineitem")
+	assertFilterDomainExpansionProbe(t, probes, "branch_001_candidate_direct_rows", "27", "vector=lineitem.l_partkey")
 }
 
 func TestDirectBitmapFilterFragmentShouldMaterializeStringEnumUntilBitmapKernelIsAvailable(t *testing.T) {

@@ -1024,6 +1024,9 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesDirectBatchEQForBounde
 	if result.CandidateMode != "direct_batch_eq" || result.CandidateCacheMode != "direct_query" {
 		t.Fatalf("candidate mode/cache = %q/%q, want direct_batch_eq/direct_query", result.CandidateMode, result.CandidateCacheMode)
 	}
+	if result.CandidateDirectFragments != 1 || result.CandidateDirectRows != 3 || result.CandidateDirectQueryElapsed == 0 {
+		t.Fatalf("direct query fragments/rows/elapsed = %d/%d/%s, want 1/3/non-zero", result.CandidateDirectFragments, result.CandidateDirectRows, result.CandidateDirectQueryElapsed)
+	}
 	if !result.SourceKeyProjectionUsed || result.SourceKeyProjectionReason != "projected_source_key" {
 		t.Fatalf("source key projection = %t/%q, want projected source key", result.SourceKeyProjectionUsed, result.SourceKeyProjectionReason)
 	}
@@ -1105,6 +1108,9 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirec
 	}
 	if !reflect.DeepEqual(result.TargetCandidates.Rownums, []qsbridge.QuantaRownum{2, 6}) {
 		t.Fatalf("candidates = %#v, want [2 6]", result.TargetCandidates.Rownums)
+	}
+	if result.CandidateDirectFragments != 3 || result.CandidateDirectRows != 2 || result.CandidateDirectQueryElapsed == 0 {
+		t.Fatalf("direct query fragments/rows/elapsed = %d/%d/%s, want 3/2/non-zero", result.CandidateDirectFragments, result.CandidateDirectRows, result.CandidateDirectQueryElapsed)
 	}
 	if projectionCalls != 0 || borrowCalls != 1 || queryCalls != 1 {
 		t.Fatalf("calls projection/borrow/query = %d/%d/%d, want 0/1/1", projectionCalls, borrowCalls, queryCalls)

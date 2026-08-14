@@ -524,6 +524,11 @@ type FilterDomainRelationshipVectorResult struct {
 	CandidateClientRPCElapsed     time.Duration
 	CandidateClientRPCMaxElapsed  time.Duration
 	CandidateResponseMergeElapsed time.Duration
+	CandidateDirectBorrowElapsed  time.Duration
+	CandidateDirectQueryElapsed   time.Duration
+	CandidateDirectReleaseElapsed time.Duration
+	CandidateDirectFragments      int
+	CandidateDirectRows           int
 }
 
 // RelationshipVectorRequest derives a concrete one-hop vector translation request.
@@ -602,6 +607,11 @@ type FilterDomainNormalizedLeaf struct {
 	CandidateClientRPCElapsed     time.Duration
 	CandidateClientRPCMaxElapsed  time.Duration
 	CandidateResponseMergeElapsed time.Duration
+	CandidateDirectBorrowElapsed  time.Duration
+	CandidateDirectQueryElapsed   time.Duration
+	CandidateDirectReleaseElapsed time.Duration
+	CandidateDirectFragments      int
+	CandidateDirectRows           int
 	CandidateSet                  QuantaCandidateSet
 }
 
@@ -632,6 +642,11 @@ type FilterDomainNormalizedBranch struct {
 	CandidateClientRPCElapsed     time.Duration
 	CandidateClientRPCMaxElapsed  time.Duration
 	CandidateResponseMergeElapsed time.Duration
+	CandidateDirectBorrowElapsed  time.Duration
+	CandidateDirectQueryElapsed   time.Duration
+	CandidateDirectReleaseElapsed time.Duration
+	CandidateDirectFragments      int
+	CandidateDirectRows           int
 	CandidateSet                  QuantaCandidateSet
 }
 

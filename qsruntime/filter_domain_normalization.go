@@ -169,6 +169,11 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterLeaf(c
 		CandidateClientRPCElapsed:     vectorResult.CandidateClientRPCElapsed,
 		CandidateClientRPCMaxElapsed:  vectorResult.CandidateClientRPCMaxElapsed,
 		CandidateResponseMergeElapsed: vectorResult.CandidateResponseMergeElapsed,
+		CandidateDirectBorrowElapsed:  vectorResult.CandidateDirectBorrowElapsed,
+		CandidateDirectQueryElapsed:   vectorResult.CandidateDirectQueryElapsed,
+		CandidateDirectReleaseElapsed: vectorResult.CandidateDirectReleaseElapsed,
+		CandidateDirectFragments:      vectorResult.CandidateDirectFragments,
+		CandidateDirectRows:           vectorResult.CandidateDirectRows,
 		CandidateSet:                  targetCandidates,
 	}, diagnostics, nil
 }
@@ -250,6 +255,11 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterExpres
 		CandidateClientRPCElapsed:     vectorResult.CandidateClientRPCElapsed,
 		CandidateClientRPCMaxElapsed:  vectorResult.CandidateClientRPCMaxElapsed,
 		CandidateResponseMergeElapsed: vectorResult.CandidateResponseMergeElapsed,
+		CandidateDirectBorrowElapsed:  vectorResult.CandidateDirectBorrowElapsed,
+		CandidateDirectQueryElapsed:   vectorResult.CandidateDirectQueryElapsed,
+		CandidateDirectReleaseElapsed: vectorResult.CandidateDirectReleaseElapsed,
+		CandidateDirectFragments:      vectorResult.CandidateDirectFragments,
+		CandidateDirectRows:           vectorResult.CandidateDirectRows,
 		CandidateSet:                  targetCandidates,
 	}, diagnostics, nil
 }
