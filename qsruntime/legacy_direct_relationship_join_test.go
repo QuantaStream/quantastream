@@ -1495,8 +1495,8 @@ func TestLegacyDirectRelationshipReduceCanUseReverseArtifactAsRowFilterOnly(t *t
 	if len(artifactRead.TargetCandidateRows) != 0 {
 		t.Fatalf("artifact target candidate rows = %#v, want omitted", artifactRead.TargetCandidateRows)
 	}
-	if timing.reverseArtifactLocalMode != "row_filter_only" {
-		t.Fatalf("reverse artifact local mode = %q, want row_filter_only", timing.reverseArtifactLocalMode)
+	if timing.reverseArtifactLocalMode != "row_filter_only_direct_candidates" {
+		t.Fatalf("reverse artifact local mode = %q, want row_filter_only_direct_candidates", timing.reverseArtifactLocalMode)
 	}
 	if timing.fkProjectionScope != "reverse_artifact_row_filter" || timing.projectionRows != 0 {
 		t.Fatalf("fk projection = %q/%d, want row-filter/no projection", timing.fkProjectionScope, timing.projectionRows)
@@ -1504,8 +1504,8 @@ func TestLegacyDirectRelationshipReduceCanUseReverseArtifactAsRowFilterOnly(t *t
 	if !timing.childRetainCovered || timing.childRetainMode != "reverse_artifact_row_filter" {
 		t.Fatalf("child retain coverage = %t/%q, want row-filter coverage", timing.childRetainCovered, timing.childRetainMode)
 	}
-	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{2, 4}) {
-		t.Fatalf("joined = %#v, want rows 2 and 4 in child order", joined)
+	if !reflect.DeepEqual(joined, []qsbridge.QuantaRownum{4, 2}) {
+		t.Fatalf("joined = %#v, want artifact rows without full-domain intersect", joined)
 	}
 	if len(pairs) != 0 {
 		t.Fatalf("pairs = %#v, want none so final alignment can rebuild against reduced rows", pairs)
