@@ -84,6 +84,8 @@ type legacyDirectRelationshipReduceTiming struct {
 	reverseArtifactSourceValues                int
 	reverseArtifactCandidateRows               int
 	reverseArtifactNarrowedRows                int
+	reverseArtifactRownumEntries               int
+	reverseArtifactDuplicateRownumEntries      int
 	reverseArtifactParentValueEntries          int
 	reverseArtifactDuplicateParentValueEntries int
 	reverseArtifactElapsed                     time.Duration
@@ -131,6 +133,8 @@ type legacyDirectRelationshipReverseArtifactLocalTiming struct {
 	targetCandidateMode         string
 	sourceValues                int
 	candidateRows               int
+	rownumEntries               int
+	duplicateRownumEntries      int
 	parentValueEntries          int
 	duplicateParentValueEntries int
 	elapsed                     time.Duration
@@ -178,6 +182,8 @@ type legacyDirectRelationshipGraphReductionSummary struct {
 	totalReverseArtifactSource                      int
 	totalReverseArtifactCandidate                   int
 	totalReverseArtifactNarrowed                    int
+	totalReverseArtifactRownumEntries               int
+	totalReverseArtifactDuplicateRownumEntries      int
 	totalReverseArtifactParentValueEntries          int
 	totalReverseArtifactDuplicateParentValueEntries int
 	totalMatchedRows                                int
@@ -1072,6 +1078,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_source_values", strconv.Itoa(reduceTiming.reverseArtifactSourceValues)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_candidate_rows", strconv.Itoa(reduceTiming.reverseArtifactCandidateRows)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_narrowed_rows", strconv.Itoa(reduceTiming.reverseArtifactNarrowedRows)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_rownum_entries", strconv.Itoa(reduceTiming.reverseArtifactRownumEntries)),
+				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_duplicate_rownum_entries", strconv.Itoa(reduceTiming.reverseArtifactDuplicateRownumEntries)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_parent_value_entries", strconv.Itoa(reduceTiming.reverseArtifactParentValueEntries)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_duplicate_parent_value_entries", strconv.Itoa(reduceTiming.reverseArtifactDuplicateParentValueEntries)),
 				legacyDirectRelationshipProbe(probePrefix+"reverse_artifact_elapsed", reduceTiming.reverseArtifactElapsed.String()),
@@ -3927,6 +3935,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactSkipReason = artifactTiming.mode
 		timing.reverseArtifactSourceValues = artifactTiming.sourceValues
 		timing.reverseArtifactCandidateRows = artifactTiming.candidateRows
+		timing.reverseArtifactRownumEntries = artifactTiming.rownumEntries
+		timing.reverseArtifactDuplicateRownumEntries = artifactTiming.duplicateRownumEntries
 		timing.reverseArtifactParentValueEntries = artifactTiming.parentValueEntries
 		timing.reverseArtifactDuplicateParentValueEntries = artifactTiming.duplicateParentValueEntries
 		timing.reverseArtifactElapsed = artifactTiming.elapsed
@@ -3947,6 +3957,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipRedu
 		timing.reverseArtifactSourceValues = artifactResult.SourceValueCount
 		timing.reverseArtifactCandidateRows = len(artifactResult.TargetCandidates.Rownums)
 		timing.reverseArtifactNarrowedRows = len(narrowedRows)
+		timing.reverseArtifactRownumEntries = artifactTiming.rownumEntries
+		timing.reverseArtifactDuplicateRownumEntries = artifactTiming.duplicateRownumEntries
 		timing.reverseArtifactParentValueEntries = artifactTiming.parentValueEntries
 		timing.reverseArtifactDuplicateParentValueEntries = artifactTiming.duplicateParentValueEntries
 		timing.reverseArtifactElapsed = artifactResult.CandidateElapsed
@@ -4320,6 +4332,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	parentValueByChild := artifactRead.ParentValueByChild
 	localTiming.sourceValues = artifactTiming.SourceValues
 	localTiming.candidateRows = artifactTiming.TargetRows
+	localTiming.rownumEntries = int(artifactTiming.RownumEntries)
+	localTiming.duplicateRownumEntries = int(artifactTiming.DuplicateRownumEntries)
 	localTiming.parentValueEntries = int(artifactTiming.ParentValueEntries)
 	localTiming.duplicateParentValueEntries = int(artifactTiming.DuplicateParentValueEntries)
 	localTiming.elapsed = elapsed
@@ -4993,6 +5007,8 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 	s.totalReverseArtifactSource += timing.reverseArtifactSourceValues
 	s.totalReverseArtifactCandidate += timing.reverseArtifactCandidateRows
 	s.totalReverseArtifactNarrowed += timing.reverseArtifactNarrowedRows
+	s.totalReverseArtifactRownumEntries += timing.reverseArtifactRownumEntries
+	s.totalReverseArtifactDuplicateRownumEntries += timing.reverseArtifactDuplicateRownumEntries
 	s.totalReverseArtifactParentValueEntries += timing.reverseArtifactParentValueEntries
 	s.totalReverseArtifactDuplicateParentValueEntries += timing.reverseArtifactDuplicateParentValueEntries
 	s.totalMatchedRows += timing.matchedRows
@@ -5021,7 +5037,7 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		s.maxChildRetainLabel = label
 	}
 	s.edgeSummaries = append(s.edgeSummaries, fmt.Sprintf(
-		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s value_vector_column_ids=%s value_vector_read=%s value_vector_pair=%s value_vector_children=%d value_vector_values=%d value_vector_exists=%d value_vector_parent_misses=%d intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d reverse_parent_values=%d reverse_duplicate_parent_values=%d",
+		"%s joined=%d retained=%d reduce=%s projection=%s parent_key=%s reverse_artifact=%s rpc=%s rpc_max=%s value_vector=%s value_vector_mode=%s value_vector_column_ids=%s value_vector_read=%s value_vector_pair=%s value_vector_children=%d value_vector_values=%d value_vector_exists=%d value_vector_parent_misses=%d intersect=%s pair=%s retain=%s matched=%d reverse_source=%d reverse_candidate=%d reverse_narrowed=%d reverse_rownums=%d reverse_duplicate_rownums=%d reverse_parent_values=%d reverse_duplicate_parent_values=%d",
 		label,
 		joinedRows,
 		childRetainRows,
@@ -5047,6 +5063,8 @@ func (s *legacyDirectRelationshipGraphReductionSummary) record(inputOrdinal, ite
 		timing.reverseArtifactSourceValues,
 		timing.reverseArtifactCandidateRows,
 		timing.reverseArtifactNarrowedRows,
+		timing.reverseArtifactRownumEntries,
+		timing.reverseArtifactDuplicateRownumEntries,
 		timing.reverseArtifactParentValueEntries,
 		timing.reverseArtifactDuplicateParentValueEntries,
 	))
@@ -5065,6 +5083,8 @@ func (s legacyDirectRelationshipGraphReductionSummary) probes() []ExecutionProbe
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_source_values", strconv.Itoa(s.totalReverseArtifactSource)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_candidate_rows", strconv.Itoa(s.totalReverseArtifactCandidate)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_narrowed_rows", strconv.Itoa(s.totalReverseArtifactNarrowed)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_rownum_entries", strconv.Itoa(s.totalReverseArtifactRownumEntries)),
+		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_duplicate_rownum_entries", strconv.Itoa(s.totalReverseArtifactDuplicateRownumEntries)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_parent_value_entries", strconv.Itoa(s.totalReverseArtifactParentValueEntries)),
 		legacyDirectRelationshipProbe("graph_reduction_reverse_artifact_duplicate_parent_value_entries", strconv.Itoa(s.totalReverseArtifactDuplicateParentValueEntries)),
 		legacyDirectRelationshipProbe("graph_reduction_matched_rows", strconv.Itoa(s.totalMatchedRows)),

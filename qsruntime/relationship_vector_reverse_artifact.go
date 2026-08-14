@@ -71,6 +71,8 @@ type relationshipVectorReverseArtifactTiming struct {
 	Values                      uint64
 	SourceValues                int
 	TargetRows                  int
+	RownumEntries               uint64
+	DuplicateRownumEntries      uint64
 	ParentValueEntries          uint64
 	DuplicateParentValueEntries uint64
 }
@@ -88,6 +90,8 @@ type LegacyDirectRelationshipVectorReverseArtifactCandidateResult struct {
 	Values                      uint64
 	SourceValues                int
 	TargetRows                  uint64
+	RownumEntries               uint64
+	DuplicateRownumEntries      uint64
 	ParentValueEntries          uint64
 	DuplicateParentValueEntries uint64
 	LookupElapsed               time.Duration
@@ -114,6 +118,8 @@ type LegacyDirectRelationshipVectorReverseArtifactStats struct {
 	RowMergeElapsed             time.Duration
 	ParentMergeElapsed          time.Duration
 	SortElapsed                 time.Duration
+	RownumEntries               uint64
+	DuplicateRownumEntries      uint64
 	ParentValueEntries          uint64
 	DuplicateParentValueEntries uint64
 }
@@ -388,6 +394,8 @@ func legacyDirectRecordRelationshipVectorReverseArtifact(ctx context.Context, re
 	recorder.ObserveCount("relationship_reverse_artifact", "target_rows", uint64(timing.TargetRows), detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "artifact_rows", timing.Rows, detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "artifact_values", timing.Values, detail)
+	recorder.ObserveCount("relationship_reverse_artifact", "rownum_entries", timing.RownumEntries, detail)
+	recorder.ObserveCount("relationship_reverse_artifact", "duplicate_rownum_entries", timing.DuplicateRownumEntries, detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "parent_value_entries", timing.ParentValueEntries, detail)
 	recorder.ObserveCount("relationship_reverse_artifact", "duplicate_parent_value_entries", timing.DuplicateParentValueEntries, detail)
 	recorder.ObserveDuration("relationship_reverse_artifact", "build_elapsed", timing.BuildElapsed, detail)

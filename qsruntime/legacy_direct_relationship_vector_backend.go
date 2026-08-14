@@ -350,6 +350,8 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 			Values:                      result.Values,
 			SourceValues:                result.SourceValues,
 			TargetRows:                  int(result.TargetRows),
+			RownumEntries:               result.RownumEntries,
+			DuplicateRownumEntries:      result.DuplicateRownumEntries,
 			ParentValueEntries:          result.ParentValueEntries,
 			DuplicateParentValueEntries: result.DuplicateParentValueEntries,
 		}, diagnostics, err, true
@@ -374,6 +376,8 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorRev
 		Values:                      result.Values,
 		SourceValues:                result.SourceValues,
 		TargetRows:                  int(result.TargetRows),
+		RownumEntries:               result.RownumEntries,
+		DuplicateRownumEntries:      result.DuplicateRownumEntries,
 		ParentValueEntries:          result.ParentValueEntries,
 		DuplicateParentValueEntries: result.DuplicateParentValueEntries,
 	}

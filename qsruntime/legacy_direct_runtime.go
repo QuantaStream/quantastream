@@ -397,6 +397,8 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorReverseArtifact
 		Values:                      stats.Values,
 		SourceValues:                sourceValueCount,
 		TargetRows:                  uint64(len(rownums)),
+		RownumEntries:               stats.RownumEntries,
+		DuplicateRownumEntries:      stats.DuplicateRownumEntries,
 		ParentValueEntries:          stats.ParentValueEntries,
 		DuplicateParentValueEntries: stats.DuplicateParentValueEntries,
 		LookupElapsed:               lookupElapsed,

@@ -401,6 +401,8 @@ func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.Bit
 		RowMergeElapsed:             stats.RowMergeElapsed,
 		ParentMergeElapsed:          stats.ParentMergeElapsed,
 		SortElapsed:                 stats.SortElapsed,
+		RownumEntries:               stats.RownumEntries,
+		DuplicateRownumEntries:      stats.DuplicateRownumEntries,
 		ParentValueEntries:          stats.ParentValueEntries,
 		DuplicateParentValueEntries: stats.DuplicateParentValueEntries,
 	}, stats.SourceValues, stats.LookupElapsed, true, nil
@@ -424,6 +426,8 @@ func legacyDirectRelationshipReverseArtifactStats(bitIndex *legacy.BitmapIndex, 
 		RowMergeElapsed:             stats.RowMergeElapsed,
 		ParentMergeElapsed:          stats.ParentMergeElapsed,
 		SortElapsed:                 stats.SortElapsed,
+		RownumEntries:               stats.RownumEntries,
+		DuplicateRownumEntries:      stats.DuplicateRownumEntries,
 		ParentValueEntries:          stats.ParentValueEntries,
 		DuplicateParentValueEntries: stats.DuplicateParentValueEntries,
 	}, true, nil

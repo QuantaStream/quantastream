@@ -109,6 +109,8 @@ type RelationshipReverseArtifactStats struct {
 	Values                      uint64
 	SourceValues                int
 	TargetRows                  uint64
+	RownumEntries               uint64
+	DuplicateRownumEntries      uint64
 	ParentValueEntries          uint64
 	DuplicateParentValueEntries uint64
 	LookupElapsed               time.Duration
@@ -1597,7 +1599,9 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		if !deriveRowsFromParentValues {
 			rowMergeStart := time.Now()
 			for _, rownum := range response.GetRownums() {
+				stats.RownumEntries++
 				if _, seen := seenRows[rownum]; seen {
+					stats.DuplicateRownumEntries++
 					continue
 				}
 				seenRows[rownum] = struct{}{}
