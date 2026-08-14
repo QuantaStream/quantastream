@@ -428,22 +428,42 @@ def scalar_median(values: list[Any]) -> Any:
     return Counter(str(value) for value in values).most_common(1)[0][0] if values else None
 
 
+def metric_median(metrics: dict[str, list[Any]], name: str) -> float:
+    return median([value for value in metrics.get(name, []) if isinstance(value, float)])
+
+
+def metric_int_median(metrics: dict[str, list[Any]], name: str) -> int | None:
+    values = [value for value in metrics.get(name, []) if isinstance(value, int)]
+    if not values:
+        return None
+    return int(median(values))
+
+
 def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
     edges = edge_entries(runs)
     print("edges_by_reduce")
     sortable = []
     for key, metrics in edges.items():
-        reduce_values = metrics.get("reduce_elapsed") or metrics.get("summary_reduce") or []
-        reduce_median = median([v for v in reduce_values if isinstance(v, float)])
+        reduce_median = metric_median(metrics, "reduce_elapsed") or metric_median(metrics, "summary_reduce")
         sortable.append((reduce_median, key, metrics))
     for reduce_median, key, metrics in sorted(sortable, reverse=True):
         desc = scalar_median(metrics.get("edge_desc", [])) or f"iter={key[0]} edge={key[1]}"
         parts = [f"reduce={fmt_seconds(reduce_median)}"]
         for metric in (
             "reverse_artifact_elapsed",
+            "reverse_artifact_client_rpc_elapsed",
             "reverse_artifact_client_rpc_max_elapsed",
             "reverse_artifact_response_merge_elapsed",
+            "reverse_artifact_row_merge_elapsed",
+            "reverse_artifact_parent_merge_elapsed",
+            "reverse_artifact_sort_elapsed",
+            "reverse_artifact_source_elapsed",
+            "reverse_artifact_read_request_elapsed",
+            "reverse_artifact_row_conversion_elapsed",
+            "reverse_artifact_map_conversion_elapsed",
             "reverse_artifact_narrow_elapsed",
+            "reverse_artifact_parent_map_elapsed",
+            "reverse_artifact_projection_intersect_elapsed",
             "parent_key_elapsed",
             "child_retain_elapsed",
             "value_vector_elapsed",
@@ -492,7 +512,71 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
         ra_mode = scalar_median(metrics.get("reverse_artifact_mode", []))
         if ra_mode:
             parts.append(f"reverse_artifact_mode={ra_mode}")
+        local_mode = scalar_median(metrics.get("reverse_artifact_local_mode", []))
+        if local_mode:
+            parts.append(f"reverse_artifact_local_mode={local_mode}")
+        target_mode = scalar_median(metrics.get("reverse_artifact_target_candidate_mode", []))
+        if target_mode:
+            parts.append(f"reverse_artifact_target_candidate_mode={target_mode}")
         print(f"  {' '.join(parts)}  {desc}")
+
+
+def print_shared_child_summary(runs: list[list[dict[str, Any]]]) -> None:
+    edges = edge_entries(runs)
+    groups: dict[tuple[str, str], list[dict[str, list[Any]]]] = defaultdict(list)
+    for metrics in edges.values():
+        child_role = scalar_median(metrics.get("child_role", []))
+        child_table = scalar_median(metrics.get("child_table", []))
+        if not child_role or not child_table:
+            continue
+        groups[(str(child_role), str(child_table))].append(metrics)
+    rows = []
+    for (child_role, child_table), group_edges in groups.items():
+        if len(group_edges) < 2:
+            continue
+        reverse_artifact_total = sum(
+            metric_median(metrics, "reverse_artifact_elapsed") or metric_median(metrics, "summary_reverse_artifact")
+            for metrics in group_edges
+        )
+        rpc_max_total = sum(
+            metric_median(metrics, "reverse_artifact_client_rpc_max_elapsed")
+            or metric_median(metrics, "summary_reverse_artifact_client_rpc_max")
+            for metrics in group_edges
+        )
+        response_merge_total = sum(
+            metric_median(metrics, "reverse_artifact_response_merge_elapsed")
+            or metric_median(metrics, "summary_reverse_artifact_response_merge")
+            for metrics in group_edges
+        )
+        narrowed_total = sum(metric_int_median(metrics, "reverse_artifact_narrowed_rows") or 0 for metrics in group_edges)
+        joined_total = sum(metric_int_median(metrics, "joined_rows") or 0 for metrics in group_edges)
+        rows.append(
+            (
+                reverse_artifact_total,
+                child_role,
+                child_table,
+                group_edges,
+                rpc_max_total,
+                response_merge_total,
+                narrowed_total,
+                joined_total,
+            )
+        )
+    if not rows:
+        return
+    print("shared_child_hotspots")
+    for total, child_role, child_table, group_edges, rpc_max, response_merge, narrowed_total, joined_total in sorted(rows, reverse=True):
+        parents = []
+        for metrics in group_edges:
+            parent_role = scalar_median(metrics.get("parent_role", [])) or "?"
+            parent_table = scalar_median(metrics.get("parent_table", [])) or "?"
+            parents.append(f"{parent_role}:{parent_table}")
+        print(
+            f"  child={child_role}:{child_table} incoming={len(group_edges)} "
+            f"parents={','.join(parents)} reverse_artifact_total={fmt_seconds(total)} "
+            f"rpc_max_total={fmt_seconds(rpc_max)} response_merge_total={fmt_seconds(response_merge)} "
+            f"joined_rows_total={fmt_int(joined_total)} narrowed_rows_total={fmt_int(narrowed_total)}"
+        )
 
 
 def print_policy_summary(runs: list[list[dict[str, Any]]]) -> None:
@@ -578,6 +662,7 @@ def print_case(report: dict[str, Any], case: dict[str, Any]) -> None:
     print_counter_table("relationship_rows", runs, PREAGG_COUNTER_NAMES)
     print_materialization_summary(runs)
     print_edge_summary(runs)
+    print_shared_child_summary(runs)
     print_equality_seed_summary(runs)
     print_policy_summary(runs)
 
