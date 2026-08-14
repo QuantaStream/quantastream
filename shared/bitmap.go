@@ -1246,7 +1246,9 @@ func (c *BitmapIndex) RelationshipReverseArtifactCandidateValuesForRowsUnordered
 
 // RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived asks
 // readable nodes for child rows and parent values as aligned slices. It avoids
-// building a row-to-parent map when the caller only needs ordered pairs.
+// building a row-to-parent map when the caller only needs ordered pairs. Callers
+// must only use this when response row domains are disjoint or duplicate child
+// rows are otherwise impossible.
 func (c *BitmapIndex) RelationshipReverseArtifactCandidateAlignedValuesForRowsUnorderedDerived(index, field string, sourceValues []int64, candidateRows []uint64) ([]uint64, []int64, RelationshipReverseArtifactStats, bool, error) {
 	rownums, parentValues, _, stats, ok, err := c.relationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, candidateRows, false, true, false, false)
 	return rownums, parentValues, stats, ok, err
@@ -1543,8 +1545,9 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		rownums = make([]uint64, 0, parentValueCapacity)
 		if !collectParentMap {
 			parentValues = make([]int64, 0, parentValueCapacity)
+		} else {
+			seenRows = make(map[uint64]struct{}, parentValueCapacity)
 		}
-		seenRows = make(map[uint64]struct{}, parentValueCapacity)
 	} else {
 		rownums = make([]uint64, 0, rownumCapacity)
 		seenRows = make(map[uint64]struct{}, rownumCapacity)
@@ -1560,7 +1563,15 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 		}
 		stats.addProto(response.GetStats())
 		parentMergeStart := time.Now()
-		if collectParentMap || deriveRowsFromParentValues {
+		if deriveRowsFromParentValues && !collectParentMap {
+			for _, value := range response.GetParentValues() {
+				if value == nil {
+					continue
+				}
+				rownums = append(rownums, value.GetRownum())
+				parentValues = append(parentValues, value.GetParentValue())
+			}
+		} else if collectParentMap || deriveRowsFromParentValues {
 			for _, value := range response.GetParentValues() {
 				if value == nil {
 					continue
@@ -1576,9 +1587,6 @@ func aggregateRelationshipReverseArtifactCandidateResponses(responses []*pb.Rela
 					}
 					seenRows[rownum] = struct{}{}
 					rownums = append(rownums, rownum)
-					if !collectParentMap {
-						parentValues = append(parentValues, parentValue)
-					}
 				}
 			}
 		}
