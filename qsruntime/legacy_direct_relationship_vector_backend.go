@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"math/big"
@@ -455,7 +456,19 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) relationshipVectorCandida
 		read.TargetDomain,
 		string(read.Direction),
 		projectionKey,
+		legacyDirectRelationshipVectorTargetFilterCacheKey(read.TargetFilter),
 	}, "\x00")
+}
+
+func legacyDirectRelationshipVectorTargetFilterCacheKey(filter qsbridge.QuantaFilterExpression) string {
+	if filter.Empty() {
+		return "target_filter:none"
+	}
+	data, err := json.Marshal(filter)
+	if err != nil {
+		return "target_filter:" + fmt.Sprintf("%#v", filter)
+	}
+	return "target_filter:" + string(data)
 }
 
 func (b LegacyDirectBitIndexRelationshipVectorBackend) cachedRelationshipVectorCandidates(ctx context.Context, key string, targetDomain string, sourceValues []int64, allowSuperset bool) (qsbridge.QuantaCandidateSet, string, bool) {
@@ -508,14 +521,16 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 	for _, sourceValue := range sourceValues {
 		values = append(values, big.NewInt(sourceValue))
 	}
+	fragments := []qsbridge.QuantaQueryFragment{{
+		Index:     read.VectorIndex,
+		Field:     read.VectorField,
+		Operation: qsbridge.QuantaOperationIntersect,
+		BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
+		Values:    values,
+	}}
+	fragments = append(fragments, legacyDirectRelationshipVectorTargetFilterFragments(read)...)
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
-		Fragments: []qsbridge.QuantaQueryFragment{{
-			Index:     read.VectorIndex,
-			Field:     read.VectorField,
-			Operation: qsbridge.QuantaOperationIntersect,
-			BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
-			Values:    values,
-		}},
+		Fragments: fragments,
 	})
 	session, diagnostics, err := b.Sessions.BorrowDirectSession(ctx, request)
 	if err != nil || diagnostics.BlocksNative() {
@@ -537,6 +552,42 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 		Index:   read.TargetDomain,
 		Rownums: append([]qsbridge.QuantaRownum(nil), result.Rownums...),
 	}, diagnostics, nil, true
+}
+
+func legacyDirectRelationshipVectorTargetFilterFragments(read LegacyDirectRelationshipVectorReadRequest) []qsbridge.QuantaQueryFragment {
+	fragments, ok := legacyDirectRelationshipVectorTargetFilterFragmentsFromExpression(read.TargetFilter, read.TargetDomain)
+	if !ok {
+		return nil
+	}
+	return fragments
+}
+
+func legacyDirectRelationshipVectorTargetFilterFragmentsFromExpression(filter qsbridge.QuantaFilterExpression, targetDomain string) ([]qsbridge.QuantaQueryFragment, bool) {
+	if filter.Empty() {
+		return nil, true
+	}
+	if filter.Leaf() {
+		if filter.Fragment.Index != targetDomain {
+			return nil, false
+		}
+		fragment := filter.Fragment
+		if fragment.Operation == "" {
+			fragment.Operation = qsbridge.QuantaOperationIntersect
+		}
+		return []qsbridge.QuantaQueryFragment{fragment}, true
+	}
+	if filter.Operation != qsbridge.QuantaFilterIntersect {
+		return nil, false
+	}
+	var fragments []qsbridge.QuantaQueryFragment
+	for _, child := range filter.Children {
+		childFragments, ok := legacyDirectRelationshipVectorTargetFilterFragmentsFromExpression(child, targetDomain)
+		if !ok {
+			return nil, false
+		}
+		fragments = append(fragments, childFragments...)
+	}
+	return fragments, true
 }
 
 // legacyDirectRelationshipVectorFoundSetCacheKey produces a stable key for projection narrowing foundsets.

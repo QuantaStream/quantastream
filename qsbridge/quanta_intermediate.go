@@ -493,6 +493,7 @@ type FilterDomainRelationshipVectorRequest struct {
 	Operation        FilterDomainNormalizationOperation
 	SourceFragment   QuantaQueryFragment
 	SourceCandidates QuantaCandidateSet
+	TargetFilter     QuantaFilterExpression
 	SourceDomain     string
 	TargetDomain     string
 	Edge             RelationshipJoinPlanEdge

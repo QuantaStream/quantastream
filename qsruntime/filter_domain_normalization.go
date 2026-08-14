@@ -203,6 +203,7 @@ func (k RelationshipVectorFilterDomainNormalizationKernel) NormalizeFilterExpres
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, filterDomainRelationshipVectorRequestMessage(normalization, fragment)),
 		}, nil
 	}
+	vectorRequest.TargetFilter = filterDomainTargetFilterForSourceBranch(request.Query.Filter, filter, normalization.TargetDomain)
 	if k.Translator == nil {
 		return qsbridge.FilterDomainNormalizedBranch{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, filterDomainRelationshipTranslatorMissingMessage(vectorRequest)),
@@ -511,6 +512,111 @@ func filterDomainIntersectSourceBranch(filter qsbridge.QuantaFilterExpression, s
 		Operation: qsbridge.QuantaFilterIntersect,
 		Children:  sourceChildren,
 	}, true
+}
+
+func filterDomainConjunctsForFactoring(filter qsbridge.QuantaFilterExpression) []qsbridge.QuantaFilterExpression {
+	if filter.Empty() {
+		return nil
+	}
+	if filter.Operation != qsbridge.QuantaFilterIntersect {
+		return []qsbridge.QuantaFilterExpression{filter}
+	}
+	var conjuncts []qsbridge.QuantaFilterExpression
+	for _, child := range filter.Children {
+		conjuncts = append(conjuncts, filterDomainConjunctsForFactoring(child)...)
+	}
+	return conjuncts
+}
+
+func filterDomainConjunctExpression(conjuncts []qsbridge.QuantaFilterExpression) qsbridge.QuantaFilterExpression {
+	if len(conjuncts) == 0 {
+		return qsbridge.QuantaFilterExpression{}
+	}
+	if len(conjuncts) == 1 {
+		return conjuncts[0]
+	}
+	return qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children:  conjuncts,
+	}
+}
+
+func filterDomainTargetFilterForSourceBranch(root, sourceBranch qsbridge.QuantaFilterExpression, targetDomain string) qsbridge.QuantaFilterExpression {
+	if targetDomain == "" {
+		return qsbridge.QuantaFilterExpression{}
+	}
+	container, ok := filterDomainContainingConjunctiveBranch(root, filterDomainConjunctsForFactoring(sourceBranch))
+	if !ok {
+		return qsbridge.QuantaFilterExpression{}
+	}
+	return filterDomainConjunctExpression(filterDomainConjunctiveTargetExpressions(container, targetDomain))
+}
+
+func filterDomainContainingConjunctiveBranch(filter qsbridge.QuantaFilterExpression, conjuncts []qsbridge.QuantaFilterExpression) (qsbridge.QuantaFilterExpression, bool) {
+	if len(conjuncts) == 0 {
+		return qsbridge.QuantaFilterExpression{}, false
+	}
+	if filter.Operation == qsbridge.QuantaFilterIntersect && filterDomainConjunctiveTreeContainsAll(filter, conjuncts) {
+		return filter, true
+	}
+	for _, child := range filter.Children {
+		if branch, ok := filterDomainContainingConjunctiveBranch(child, conjuncts); ok {
+			return branch, true
+		}
+	}
+	return qsbridge.QuantaFilterExpression{}, false
+}
+
+func filterDomainConjunctiveTreeContainsAll(filter qsbridge.QuantaFilterExpression, branchChildren []qsbridge.QuantaFilterExpression) bool {
+	matched := make([]bool, len(branchChildren))
+	filterDomainMarkConjunctiveBranchMatches(filter, branchChildren, matched)
+	for _, ok := range matched {
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func filterDomainMarkConjunctiveBranchMatches(filter qsbridge.QuantaFilterExpression, branchChildren []qsbridge.QuantaFilterExpression, matched []bool) {
+	for i := range branchChildren {
+		if matched[i] {
+			continue
+		}
+		if filterDomainExpressionMatchesRuntime(filter, branchChildren[i]) {
+			matched[i] = true
+			return
+		}
+	}
+	if filter.Operation != qsbridge.QuantaFilterIntersect {
+		return
+	}
+	for _, child := range filter.Children {
+		filterDomainMarkConjunctiveBranchMatches(child, branchChildren, matched)
+	}
+}
+
+func filterDomainConjunctiveTargetExpressions(filter qsbridge.QuantaFilterExpression, targetDomain string) []qsbridge.QuantaFilterExpression {
+	if filter.Leaf() {
+		if filter.Fragment.Index == targetDomain {
+			return []qsbridge.QuantaFilterExpression{filter}
+		}
+		return nil
+	}
+	if filter.CandidateSetLeaf() {
+		if filter.CandidateSet.Index == targetDomain {
+			return []qsbridge.QuantaFilterExpression{filter}
+		}
+		return nil
+	}
+	if filter.Operation != qsbridge.QuantaFilterIntersect {
+		return nil
+	}
+	var targetChildren []qsbridge.QuantaFilterExpression
+	for _, child := range filter.Children {
+		targetChildren = append(targetChildren, filterDomainConjunctiveTargetExpressions(child, targetDomain)...)
+	}
+	return targetChildren
 }
 
 func filterDomainConjunctiveSourceExpressions(filter qsbridge.QuantaFilterExpression, sourceDomain string) []qsbridge.QuantaFilterExpression {

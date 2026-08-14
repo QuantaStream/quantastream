@@ -36,6 +36,32 @@ func TestFilterDomainBranchesForSourceKeepsQ19PartPredicatesTogether(t *testing.
 	}
 }
 
+func TestFilterDomainTargetFilterForSourceBranchKeepsQ19LineitemPredicatesTogether(t *testing.T) {
+	filter := q19FormalFilterTreeForTest()
+
+	branches := filterDomainBranchesForSource(filter, "part")
+	if len(branches) != 3 {
+		t.Fatalf("part branches = %d, want 3: %#v", len(branches), branches)
+	}
+	for i, branch := range branches {
+		targetFilter := filterDomainTargetFilterForSourceBranch(filter, branch, "lineitem")
+		if targetFilter.Operation != qsbridge.QuantaFilterIntersect {
+			t.Fatalf("target filter[%d] operation = %q, want INTERSECT: %#v", i, targetFilter.Operation, targetFilter)
+		}
+		if got := filterDomainExpressionLeafCount(targetFilter); got != 4 {
+			t.Fatalf("target filter[%d] leaf count = %d, want quantity lower/upper, shipmode, shipinstruct", i, got)
+		}
+		if !filterDomainExpressionOnlySource(targetFilter, "lineitem") {
+			t.Fatalf("target filter[%d] includes a non-lineitem predicate: %#v", i, targetFilter)
+		}
+		fields := filterDomainLeafFieldsForTest(targetFilter)
+		want := []string{"l_quantity", "l_quantity", "l_shipmode", "l_shipinstruct"}
+		if !reflect.DeepEqual(fields, want) {
+			t.Fatalf("target filter[%d] fields = %#v, want %#v", i, fields, want)
+		}
+	}
+}
+
 func TestKernelFilterDomainNormalizationExecutorNormalizesSourceBranchesConcurrently(t *testing.T) {
 	filter := q19FormalFilterTreeForTest()
 	branches := filterDomainBranchesForSource(filter, "part")
@@ -177,6 +203,17 @@ func (k *blockingFilterDomainExpressionKernel) MaxActive() int {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	return k.maxActive
+}
+
+func filterDomainLeafFieldsForTest(filter qsbridge.QuantaFilterExpression) []string {
+	if filter.Leaf() {
+		return []string{filter.Fragment.Field}
+	}
+	var fields []string
+	for _, child := range filter.Children {
+		fields = append(fields, filterDomainLeafFieldsForTest(child)...)
+	}
+	return fields
 }
 
 func q19FormalFilterTreeForTest() qsbridge.QuantaFilterExpression {

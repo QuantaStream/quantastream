@@ -1035,6 +1035,82 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendUsesDirectBatchEQForBounde
 	}
 }
 
+func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirectBatchEQ(t *testing.T) {
+	projectionCalls := 0
+	borrowCalls := 0
+	queryCalls := 0
+	backend := LegacyDirectBitIndexRelationshipVectorBackend{
+		PreferDirectParentToChildCandidate: true,
+		ProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   testRelationshipVectorBSI(map[uint64]int64{20: 8}),
+			Calls: &projectionCalls,
+		},
+		SourceKeyReader: fakeLegacyDirectRelationshipVectorSourceKeyReader{
+			Values: []int64{7, 8},
+		},
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			borrowCalls++
+			if len(request.Query.Fragments) != 3 {
+				t.Fatalf("fragments = %#v, want BATCH_EQ plus two target filters", request.Query.Fragments)
+			}
+			batch := request.Query.Fragments[0]
+			if batch.Index != "lineitem" || batch.Field != "l_partkey" || batch.BSIOp != qsbridge.QuantaBSIOpBatchEQ {
+				t.Fatalf("batch fragment = %#v, want lineitem.l_partkey BATCH_EQ", batch)
+			}
+			if request.Query.Fragments[1].Field != "l_quantity" || request.Query.Fragments[2].Field != "l_shipmode" {
+				t.Fatalf("target fragments = %#v, want l_quantity then l_shipmode", request.Query.Fragments[1:])
+			}
+			for _, fragment := range request.Query.Fragments[1:] {
+				if fragment.Index != "lineitem" || fragment.Operation != qsbridge.QuantaOperationIntersect {
+					t.Fatalf("target fragment = %#v, want lineitem INTERSECT", fragment)
+				}
+			}
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalls++
+					return BitmapQueryResult{
+						Success: true,
+						Count:   2,
+						Rownums: []qsbridge.QuantaRownum{2, 6},
+					}, nil, nil
+				},
+			}, nil, nil
+		}),
+	}
+	request := testPartLineitemVectorRequest(
+		"part",
+		"lineitem",
+		qsbridge.FilterDomainRelationshipVectorDirectionRightToLeft,
+		[]qsbridge.QuantaRownum{100, 101},
+	)
+	request.Edge.Right.PhysicalName = "p_partkey"
+	request.TargetFilter = qsbridge.QuantaFilterExpression{
+		Operation: qsbridge.QuantaFilterIntersect,
+		Children: []qsbridge.QuantaFilterExpression{
+			q19LineitemQuantityLeafForTest(qsbridge.QuantaBSIOpGE, 10),
+			q19LineitemLeafForTest("l_shipmode"),
+		},
+	}
+	read, diagnostics := NewLegacyDirectRelationshipVectorReadRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("read request diagnostics = %#v, want none", diagnostics)
+	}
+
+	result, diagnostics, err := backend.ReadRelationshipVectorCandidateResult(context.Background(), read)
+	if err != nil {
+		t.Fatalf("ReadRelationshipVectorCandidateResult error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if !reflect.DeepEqual(result.TargetCandidates.Rownums, []qsbridge.QuantaRownum{2, 6}) {
+		t.Fatalf("candidates = %#v, want [2 6]", result.TargetCandidates.Rownums)
+	}
+	if projectionCalls != 0 || borrowCalls != 1 || queryCalls != 1 {
+		t.Fatalf("calls projection/borrow/query = %d/%d/%d, want 0/1/1", projectionCalls, borrowCalls, queryCalls)
+	}
+}
+
 func TestLegacyDirectBitIndexRelationshipVectorBackendReusesDirectBatchEQCoveredSuperset(t *testing.T) {
 	queryCalls := 0
 	backend := LegacyDirectBitIndexRelationshipVectorBackend{

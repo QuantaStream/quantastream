@@ -30,6 +30,7 @@ type LegacyDirectRelationshipVectorResultBackend interface {
 type LegacyDirectRelationshipVectorReadRequest struct {
 	SourceFragment   qsbridge.QuantaQueryFragment
 	SourceCandidates qsbridge.QuantaCandidateSet
+	TargetFilter     qsbridge.QuantaFilterExpression
 	SourceDomain     string
 	TargetDomain     string
 	Edge             qsbridge.RelationshipJoinPlanEdge
@@ -121,6 +122,7 @@ func NewLegacyDirectRelationshipVectorReadRequest(request qsbridge.FilterDomainR
 	read := LegacyDirectRelationshipVectorReadRequest{
 		SourceFragment:   request.SourceFragment,
 		SourceCandidates: request.SourceCandidates,
+		TargetFilter:     request.TargetFilter,
 		SourceDomain:     request.SourceDomain,
 		TargetDomain:     request.TargetDomain,
 		Edge:             request.Edge,
