@@ -4242,6 +4242,15 @@ func legacyDirectRelationshipRownumsAscending(rownums []qsbridge.QuantaRownum) b
 	return true
 }
 
+func legacyDirectRelationshipSortedRownumsCopy(rownums []qsbridge.QuantaRownum) []qsbridge.QuantaRownum {
+	sorted := append([]qsbridge.QuantaRownum(nil), rownums...)
+	if legacyDirectRelationshipRownumsAscending(sorted) {
+		return sorted
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted
+}
+
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReverseArtifactChildRows(ctx context.Context, edge legacyDirectRelationshipEdge, childRows []qsbridge.QuantaRownum, parentKeyRows map[int64]qsbridge.QuantaRownum, options legacyDirectRelationshipReduceOptions) ([]qsbridge.QuantaRownum, qsbridge.FilterDomainRelationshipVectorResult, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, legacyDirectRelationshipReverseArtifactLocalTiming, bool, qsbridge.DiagnosticSet, error) {
 	var localTiming legacyDirectRelationshipReverseArtifactLocalTiming
 	if e.ReverseArtifactCandidateReader == nil {
@@ -4334,9 +4343,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	narrowStart := time.Now()
 	if options.omitReverseArtifactParentValues {
 		if localTiming.targetCandidateMode == "omitted_full_domain" {
+			narrowedRows := legacyDirectRelationshipSortedRownumsCopy(candidates.Rownums)
 			localTiming.narrowElapsed = time.Since(narrowStart)
-			localTiming.mode = "row_filter_only_direct_candidates"
-			return append([]qsbridge.QuantaRownum(nil), candidates.Rownums...), result, nil, nil, localTiming, true, diagnostics, nil
+			localTiming.mode = "row_filter_only_sorted_candidates"
+			return narrowedRows, result, nil, nil, localTiming, true, diagnostics, nil
 		}
 		narrowedRows := legacyDirectRelationshipIntersectRownums(childRows, candidates.Rownums)
 		localTiming.narrowElapsed = time.Since(narrowStart)
@@ -4377,7 +4387,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 }
 
 func legacyDirectRelationshipReverseArtifactRowFilterOnlyMode(mode string) bool {
-	return mode == "row_filter_only" || mode == "row_filter_only_direct_candidates"
+	return mode == "row_filter_only" || mode == "row_filter_only_sorted_candidates"
 }
 
 func legacyDirectRelationshipRowsFromArtifactCandidateRows(candidateRows []qsbridge.QuantaRownum, parentValueByChild map[qsbridge.QuantaRownum]int64, parentKeyRows map[int64]qsbridge.QuantaRownum) ([]qsbridge.QuantaRownum, map[qsbridge.QuantaRownum]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
