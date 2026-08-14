@@ -396,7 +396,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDedupesUnorderedR
 		},
 	}
 
-	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false)
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false, false)
 	if err != nil {
 		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
 	}
@@ -437,7 +437,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDerivesOrderedRow
 		},
 	}
 
-	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, true)
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, true, true)
 	if err != nil {
 		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
 	}
@@ -446,6 +446,47 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesDerivesOrderedRow
 	}
 	if got, want := rownums, []uint64{10, 20, 30, 40}; !equalUint64Slices(got, want) {
 		t.Fatalf("rownums = %v, want sorted parent-value row keys %v", got, want)
+	}
+	if got, want := stats.TargetRows, uint64(4); got != want {
+		t.Fatalf("target rows = %d, want derived count %d", got, want)
+	}
+	wantParentValues := map[uint64]int64{10: 7, 20: 8, 30: 7, 40: 9}
+	for rownum, want := range wantParentValues {
+		if got := parentValues[rownum]; got != want {
+			t.Fatalf("parent value for row %d = %d, want %d", rownum, got, want)
+		}
+	}
+}
+
+func TestAggregateRelationshipReverseArtifactCandidateResponsesCanDeriveUnorderedRowsFromParentValues(t *testing.T) {
+	responses := []*pb.RelationshipReverseArtifactCandidatesResponse{
+		{
+			Rownums: []uint64{30, 10},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 30, ParentValue: 7},
+				{Rownum: 10, ParentValue: 7},
+			},
+			Ok: true,
+		},
+		{
+			Rownums: []uint64{20, 40},
+			ParentValues: []*pb.RelationshipReverseArtifactParentValue{
+				{Rownum: 20, ParentValue: 8},
+				{Rownum: 40, ParentValue: 9},
+			},
+			Ok: true,
+		},
+	}
+
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7, 8, 9}, false, true)
+	if err != nil {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() ok = false, want true")
+	}
+	if !sameUint64Set(rownums, []uint64{10, 20, 30, 40}) {
+		t.Fatalf("rownums = %v, want parent-value row key set", rownums)
 	}
 	if got, want := stats.TargetRows, uint64(4); got != want {
 		t.Fatalf("target rows = %d, want derived count %d", got, want)
@@ -469,7 +510,7 @@ func TestAggregateRelationshipReverseArtifactCandidateResponsesFallsBackWhenPare
 		},
 	}
 
-	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7}, true)
+	rownums, parentValues, stats, ok, err := aggregateRelationshipReverseArtifactCandidateResponses(responses, []int64{7}, true, true)
 	if err != nil {
 		t.Fatalf("aggregateRelationshipReverseArtifactCandidateResponses() error = %v", err)
 	}
@@ -842,6 +883,23 @@ func equalUint64Slices(left, right []uint64) bool {
 	}
 	for i := range left {
 		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameUint64Set(left, right []uint64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[uint64]int, len(left))
+	for _, value := range left {
+		counts[value]++
+	}
+	for _, value := range right {
+		counts[value]--
+		if counts[value] < 0 {
 			return false
 		}
 	}

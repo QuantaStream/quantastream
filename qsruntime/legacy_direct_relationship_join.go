@@ -4196,6 +4196,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipReve
 	if options.omitFullDomainTargetCandidates {
 		localTiming.targetCandidateMode = "omitted_full_domain"
 		read.PreserveArtifactOrder = true
+		read.DeriveArtifactRows = true
 	} else {
 		localTiming.targetCandidateMode = "retained"
 		read.TargetCandidateRows = append([]qsbridge.QuantaRownum(nil), childRows...)

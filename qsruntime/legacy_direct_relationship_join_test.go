@@ -1338,6 +1338,9 @@ func TestLegacyDirectRelationshipReduceCanOmitFullDomainReverseArtifactTargetCan
 	if !artifactRead.PreserveArtifactOrder {
 		t.Fatal("preserve artifact order = false, want true for omitted full-domain candidates")
 	}
+	if !artifactRead.DeriveArtifactRows {
+		t.Fatal("derive artifact rows = false, want true for omitted full-domain candidates")
+	}
 	if artifactRead.MaxEstimatedTargetRows != len(childRows) {
 		t.Fatalf("max estimated target rows = %d, want %d", artifactRead.MaxEstimatedTargetRows, len(childRows))
 	}
