@@ -379,9 +379,9 @@ func legacyDirectRelationshipReverseArtifactCandidateValues(bitIndex *legacy.Bit
 		err                error
 	)
 	if preserveArtifactOrder {
-		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field, sourceValues, rows)
-	} else {
 		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRows(index, field, sourceValues, rows)
+	} else {
+		rownums, parentValueByChild, stats, ok, err = bitIndex.RelationshipReverseArtifactCandidateValuesForRowsUnordered(index, field, sourceValues, rows)
 	}
 	if err != nil || !ok {
 		return nil, nil, LegacyDirectRelationshipVectorReverseArtifactStats{}, 0, 0, ok, err
