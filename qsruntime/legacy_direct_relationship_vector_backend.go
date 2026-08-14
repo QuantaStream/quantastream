@@ -534,14 +534,15 @@ func (b LegacyDirectBitIndexRelationshipVectorBackend) readRelationshipVectorPar
 	for _, sourceValue := range sourceValues {
 		values = append(values, big.NewInt(sourceValue))
 	}
-	fragments := []qsbridge.QuantaQueryFragment{{
+	batchEqualFragment := qsbridge.QuantaQueryFragment{
 		Index:     read.VectorIndex,
 		Field:     read.VectorField,
 		Operation: qsbridge.QuantaOperationIntersect,
 		BSIOp:     qsbridge.QuantaBSIOpBatchEQ,
 		Values:    values,
-	}}
-	fragments = append(fragments, legacyDirectRelationshipVectorTargetFilterFragments(read)...)
+	}
+	fragments := legacyDirectRelationshipVectorTargetFilterFragments(read)
+	fragments = append(fragments, batchEqualFragment)
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: fragments,
 	})

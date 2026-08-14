@@ -1054,19 +1054,19 @@ func TestLegacyDirectBitIndexRelationshipVectorBackendAppliesTargetFilterToDirec
 		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
 			borrowCalls++
 			if len(request.Query.Fragments) != 3 {
-				t.Fatalf("fragments = %#v, want BATCH_EQ plus two target filters", request.Query.Fragments)
+				t.Fatalf("fragments = %#v, want two target filters plus BATCH_EQ", request.Query.Fragments)
 			}
-			batch := request.Query.Fragments[0]
-			if batch.Index != "lineitem" || batch.Field != "l_partkey" || batch.BSIOp != qsbridge.QuantaBSIOpBatchEQ {
-				t.Fatalf("batch fragment = %#v, want lineitem.l_partkey BATCH_EQ", batch)
+			if request.Query.Fragments[0].Field != "l_quantity" || request.Query.Fragments[1].Field != "l_shipmode" {
+				t.Fatalf("target fragments = %#v, want l_quantity then l_shipmode", request.Query.Fragments[:2])
 			}
-			if request.Query.Fragments[1].Field != "l_quantity" || request.Query.Fragments[2].Field != "l_shipmode" {
-				t.Fatalf("target fragments = %#v, want l_quantity then l_shipmode", request.Query.Fragments[1:])
-			}
-			for _, fragment := range request.Query.Fragments[1:] {
+			for _, fragment := range request.Query.Fragments[:2] {
 				if fragment.Index != "lineitem" || fragment.Operation != qsbridge.QuantaOperationIntersect {
 					t.Fatalf("target fragment = %#v, want lineitem INTERSECT", fragment)
 				}
+			}
+			batch := request.Query.Fragments[2]
+			if batch.Index != "lineitem" || batch.Field != "l_partkey" || batch.BSIOp != qsbridge.QuantaBSIOpBatchEQ {
+				t.Fatalf("batch fragment = %#v, want lineitem.l_partkey BATCH_EQ", batch)
 			}
 			return DirectSessionHandleFunc{
 				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
