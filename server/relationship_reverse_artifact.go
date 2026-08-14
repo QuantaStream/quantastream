@@ -849,16 +849,26 @@ func (m *BitmapIndex) aggregateAlignedBSIValuesWithStats(index, field string, fr
 		stats.ValueElapsed += time.Since(valueStart)
 
 		aggregateStart := time.Now()
+		sortedPosition := 0
+		if sortedUniqueRows && len(retainedRownums) > 0 {
+			firstRetainedRow := retainedRownums[0]
+			sortedPosition = sort.Search(len(rownums), func(i int) bool { return rownums[i] >= firstRetainedRow })
+		}
 		for i, rownum := range retainedRownums {
 			if i >= len(retainedValues) || retainedValues[i] == nil {
 				continue
 			}
 			if sortedUniqueRows {
-				position := sort.Search(len(rownums), func(i int) bool { return rownums[i] >= rownum })
-				if position >= len(rownums) || rownums[position] != rownum || position >= len(parentRows) {
+				for sortedPosition < len(rownums) && rownums[sortedPosition] < rownum {
+					sortedPosition++
+				}
+				if sortedPosition >= len(rownums) {
+					break
+				}
+				if rownums[sortedPosition] != rownum || sortedPosition >= len(parentRows) {
 					continue
 				}
-				relationshipReverseArtifactAccumulateAlignedValue(groupsByParent, parentRows[position], rownums[position], retainedValues[i])
+				relationshipReverseArtifactAccumulateAlignedValue(groupsByParent, parentRows[sortedPosition], rownums[sortedPosition], retainedValues[i])
 				continue
 			}
 			for _, position := range positions[rownum] {
