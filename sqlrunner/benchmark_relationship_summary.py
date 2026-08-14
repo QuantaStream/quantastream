@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-DURATION_RE = re.compile(r"^([0-9.]+)(ns|\u00b5s|us|ms|s|m|h)$")
+DURATION_RE = re.compile(r"([0-9.]+)(ns|\u00b5s|us|ms|s|m|h)")
 DURATION_UNITS = {
     "ns": 1e-9,
     "\u00b5s": 1e-6,
@@ -31,8 +31,32 @@ EDGE_DESC_RE = re.compile(
 )
 KEY_VALUE_RE = re.compile(r"([A-Za-z0-9_]+)=([^\s]+)")
 
-PHASE_NAMES = [
+RELATIONSHIP_PHASE_NAMES = [
     "phase_execute_relationship_vector_elapsed",
+    "phase_graph_reduction_elapsed",
+    "phase_graph_grouped_aggregate_graph_reduction_elapsed",
+    "phase_graph_grouped_aggregate_alignment_elapsed",
+    "phase_graph_grouped_aggregate_materialization_elapsed",
+    "phase_graph_grouped_aggregate_tuple_expansion_elapsed",
+    "phase_graph_grouped_aggregate_same_row_elapsed",
+    "phase_graph_grouped_aggregate_membership_elapsed",
+    "phase_graph_grouped_aggregate_residual_filter_elapsed",
+    "phase_graph_grouped_aggregate_execution_elapsed",
+    "phase_graph_grouped_aggregate_preagg_materialization_elapsed",
+    "phase_graph_grouped_aggregate_preagg_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_lookup_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_projection_elapsed",
+    "phase_graph_grouped_aggregate_preagg_storage_aggregate_elapsed",
+    "phase_graph_grouped_aggregate_group_row_build_elapsed",
+    "phase_graph_grouped_aggregate_having_elapsed",
+    "phase_graph_grouped_aggregate_final_materialization_elapsed",
+    "phase_graph_grouped_aggregate_final_sort_elapsed",
+    "phase_graph_grouped_aggregate_output_elapsed",
+    "phase_graph_grouped_aggregate_final_limit_elapsed",
+]
+
+Q3_PHASE_NAMES = [
     "q3_attribution_known_elapsed",
     "q3_attribution_graph_reduction_elapsed",
     "q3_attribution_preagg_total_elapsed",
@@ -64,12 +88,35 @@ REDUCTION_TOTAL_NAMES = [
 ]
 
 PREAGG_COUNTER_NAMES = [
+    "graph_sink_rows",
+    "graph_reduction_edges_evaluated",
+    "graph_reduction_parent_rows_seen",
+    "graph_reduction_child_rows_seen",
+    "graph_reduction_joined_rows_seen",
+    "graph_reduction_reverse_artifact_candidate_rows",
+    "graph_reduction_reverse_artifact_narrowed_rows",
+    "graph_reduction_matched_rows",
+    "graph_grouped_aggregate_rows",
+    "graph_grouped_aggregate_fields",
+    "graph_grouped_aggregate_materialization_rows",
+    "graph_grouped_aggregate_materialization_fields",
+    "graph_grouped_aggregate_residual_predicates",
+    "graph_grouped_aggregate_residual_rows_before",
+    "graph_grouped_aggregate_residual_rows_after",
+    "graph_grouped_aggregate_residual_rows_removed",
     "graph_grouped_aggregate_preagg_rows",
     "graph_grouped_aggregate_preagg_groups",
+    "graph_grouped_aggregate_post_having_groups",
+    "graph_grouped_aggregate_final_materialization_rows",
+    "graph_grouped_aggregate_final_materialization_fields",
     "graph_grouped_aggregate_preagg_storage_nodes",
     "graph_grouped_aggregate_preagg_storage_projection_shards_visited",
     "graph_grouped_aggregate_preagg_storage_projection_shards_retained",
     "graph_grouped_aggregate_preagg_storage_projection_rows_retained",
+    "node_interaction_estimate_initial_row_reads",
+    "node_interaction_estimate_vector_projection_reads",
+    "node_interaction_estimate_materialization_reads",
+    "node_interaction_estimate_total_reads",
     "q3_attribution_input_line_rows",
     "q3_attribution_input_order_rows",
     "q3_attribution_final_materialization_rows",
@@ -100,10 +147,18 @@ def usage() -> int:
 def duration_seconds(value: str) -> float | None:
     if value == "0s":
         return 0.0
-    match = DURATION_RE.match(value)
-    if not match:
+    position = 0
+    total = 0.0
+    matched = False
+    for match in DURATION_RE.finditer(value):
+        if match.start() != position:
+            return None
+        total += float(match.group(1)) * DURATION_UNITS[match.group(2)]
+        position = match.end()
+        matched = True
+    if not matched or position != len(value):
         return None
-    return float(match.group(1)) * DURATION_UNITS[match.group(2)]
+    return total
 
 
 def int_value(value: str) -> int | None:
@@ -238,6 +293,50 @@ def print_counter_table(title: str, runs: list[list[dict[str, Any]]], names: lis
         print(f"  {name}: median={fmt_int(int(median(values)))} max={fmt_int(max(values))} n={len(values)}")
 
 
+def field_probe_bases(runs: list[list[dict[str, Any]]]) -> list[str]:
+    bases = set()
+    for run in runs:
+        for obj in run:
+            name = str(obj.get("name") or "")
+            for suffix in ("_fetch_elapsed", "_attach_elapsed"):
+                if name.startswith("graph_") and name.endswith(suffix) and "_materialization_field_" in name:
+                    bases.add(name[: -len(suffix)])
+    return sorted(bases)
+
+
+def first_event_value(runs: list[list[dict[str, Any]]], name: str) -> str:
+    values = event_values(runs, name)
+    return values[0] if values else ""
+
+
+def print_materialization_summary(runs: list[list[dict[str, Any]]]) -> None:
+    bases = field_probe_bases(runs)
+    if not bases:
+        return
+    print("materialization_fields")
+    rows = []
+    for base in bases:
+        fetch_values = timing_values(runs, f"{base}_fetch_elapsed")
+        attach_values = timing_values(runs, f"{base}_attach_elapsed")
+        total = median(fetch_values) + median(attach_values)
+        rows.append((total, base, fetch_values, attach_values))
+    for _, base, fetch_values, attach_values in sorted(rows, reverse=True):
+        role = first_event_value(runs, f"{base}_role") or "?"
+        table = first_event_value(runs, f"{base}_table") or "?"
+        field = first_event_value(runs, f"{base}_field") or "?"
+        source = first_event_value(runs, f"{base}_source")
+        row_values = counter_values(runs, f"{base}_rows")
+        parts = [
+            f"{role}.{table}.{field}",
+            f"rows={fmt_int(int(median(row_values))) if row_values else '-'}",
+            f"fetch={fmt_seconds(median(fetch_values)) if fetch_values else '0s'}",
+            f"attach={fmt_seconds(median(attach_values)) if attach_values else '0s'}",
+        ]
+        if source:
+            parts.append(f"source={source}")
+        print(f"  {' '.join(parts)}")
+
+
 def edge_entries(runs: list[list[dict[str, Any]]]) -> dict[tuple[int, int], dict[str, list[Any]]]:
     edges: dict[tuple[int, int], dict[str, list[Any]]] = defaultdict(lambda: defaultdict(list))
     for run in runs:
@@ -337,6 +436,16 @@ def print_edge_summary(runs: list[list[dict[str, Any]]]) -> None:
             values = [v for v in metrics.get(metric, []) if isinstance(v, int)]
             if values:
                 parts.append(f"{metric}={fmt_int(int(median(values)))}")
+        parent_rows = median([v for v in metrics.get("parent_rows", []) if isinstance(v, int)])
+        child_rows = median([v for v in metrics.get("child_rows", []) if isinstance(v, int)])
+        joined_rows = median([v for v in metrics.get("joined_rows", []) if isinstance(v, int)])
+        candidate_rows = median([v for v in metrics.get("reverse_artifact_candidate_rows", []) if isinstance(v, int)])
+        if parent_rows:
+            parts.append(f"fanout={joined_rows / parent_rows:.2f}x")
+        if child_rows:
+            parts.append(f"child_selectivity={joined_rows / child_rows:.4f}")
+        if joined_rows:
+            parts.append(f"candidate_overjoin={candidate_rows / joined_rows:.2f}x")
         mode = scalar_median(metrics.get("value_vector_mode", []))
         if mode:
             parts.append(f"value_vector_mode={mode}")
@@ -371,9 +480,11 @@ def print_case(report: dict[str, Any], case: dict[str, Any]) -> None:
         repo_commit = metadata.get("repo_commit")
         if execution_path or repo_commit:
             print(f"metadata execution_path={execution_path or '?'} repo_commit={repo_commit or '?'}")
-    print_timing_table("q3_phase_timings", runs, PHASE_NAMES)
+    print_timing_table("relationship_phase_timings", runs, RELATIONSHIP_PHASE_NAMES)
+    print_timing_table("q3_phase_timings", runs, Q3_PHASE_NAMES)
     print_timing_table("graph_reduction_totals", runs, REDUCTION_TOTAL_NAMES)
-    print_counter_table("q3_rows", runs, PREAGG_COUNTER_NAMES)
+    print_counter_table("relationship_rows", runs, PREAGG_COUNTER_NAMES)
+    print_materialization_summary(runs)
     print_edge_summary(runs)
     print_policy_summary(runs)
 
