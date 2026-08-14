@@ -170,6 +170,85 @@ func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReductionScratchpad(t *t
 	assertExecutionProbeName(t, probes, "relationship_join", "phase_graph_alignment_edge_1_elapsed")
 }
 
+func TestLegacyDirectRelationshipGraphAlignedRownumsUsesReverseArtifactParentMap(t *testing.T) {
+	projectionCalls := 0
+	artifactCalls := 0
+	var artifactRead LegacyDirectRelationshipVectorReadRequest
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		RelationshipProjectionReader: fakeLegacyDirectRelationshipVectorProjectionReader{
+			BSI:   testRelationshipVectorBSI(map[uint64]int64{}),
+			Calls: &projectionCalls,
+		},
+		ReverseArtifactCandidateReader: fakeLegacyDirectRelationshipVectorReverseArtifactCandidateReader{
+			OK:       true,
+			Calls:    &artifactCalls,
+			LastRead: &artifactRead,
+			Result: LegacyDirectRelationshipVectorReverseArtifactCandidateResult{
+				Candidates: qsbridge.QuantaCandidateSet{
+					Index:   "lineitem",
+					Rownums: []qsbridge.QuantaRownum{101, 102},
+				},
+				ParentValueByChild: map[qsbridge.QuantaRownum]int64{
+					101: 11,
+					102: 12,
+				},
+				Mode:         "reverse_artifact_server",
+				SourceValues: 2,
+				TargetRows:   2,
+			},
+		},
+	}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:  "s",
+		parentTable: "supplier",
+		parentField: "s_suppkey",
+		childRole:   "l",
+		childTable:  "lineitem",
+		childField:  "l_suppkey",
+	}
+	scratchpad := newLegacyDirectRelationshipGraphScratchpad(map[string][]qsbridge.QuantaRownum{
+		"s": {11, 12, 13},
+		"l": {101, 102},
+	}, []legacyDirectRelationshipEdge{edge})
+	scratchpad.storeReducedRowsByRole(map[string][]qsbridge.QuantaRownum{
+		"s": {11, 12},
+		"l": {101, 102},
+	})
+
+	aligned, probes, diagnostics, err := executor.legacyDirectRelationshipGraphAlignedRownums(
+		context.Background(),
+		NewExecutionRequest(qsbridge.QuantaIntermediateQuery{}),
+		"lineitem",
+		[]qsbridge.QuantaRownum{102, 101},
+		[]legacyDirectRelationshipEdge{edge},
+		scratchpad,
+	)
+	if err != nil {
+		t.Fatalf("aligned rownums error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if projectionCalls != 0 {
+		t.Fatalf("projection calls = %d, want 0", projectionCalls)
+	}
+	if artifactCalls != 1 {
+		t.Fatalf("reverse artifact calls = %d, want 1", artifactCalls)
+	}
+	if artifactRead.OmitArtifactParentValues {
+		t.Fatal("omit artifact parent values = true, want parent values for final alignment")
+	}
+	if !reflect.DeepEqual(artifactRead.TargetCandidateRows, []qsbridge.QuantaRownum{102, 101}) {
+		t.Fatalf("artifact target candidate rows = %#v, want final child rows", artifactRead.TargetCandidateRows)
+	}
+	if !reflect.DeepEqual(aligned["s"], []qsbridge.QuantaRownum{12, 11}) {
+		t.Fatalf("aligned supplier rows = %#v, want [12 11]", aligned["s"])
+	}
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_source", "reverse_artifact_parent_map")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_child_rows", "2")
+	assertExecutionProbe(t, probes, "relationship_join", "graph_alignment_edge_1_parent_rows", "2")
+}
+
 func TestLegacyDirectRelationshipGraphAlignedRownumsStopsAtRequiredRoles(t *testing.T) {
 	calls := 0
 	executor := LegacyDirectRelationshipVectorJoinExecutor{

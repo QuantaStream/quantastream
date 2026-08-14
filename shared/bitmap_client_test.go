@@ -372,7 +372,7 @@ func TestBitmapIndexRelationshipReverseArtifactFansOutToActiveClients(t *testing
 	if got, want := fake.omitRownumsCandidateCallCount(), 3; got != want {
 		t.Fatalf("omit rownums candidate calls after row-only read = %d, want %d", got, want)
 	}
-	if got, want := rowOnly, []uint64{40, 50, 60}; !equalUint64Slices(got, want) {
+	if got, want := rowOnly, []uint64{40, 50, 60}; !sameUint64Set(got, want) {
 		t.Fatalf("row-only rownums = %v, want %v", got, want)
 	}
 	if rowOnlyStats.Nodes != 3 || rowOnlyStats.SourceValues != 1 || rowOnlyStats.TargetRows != 3 {

@@ -613,10 +613,15 @@ def print_alignment_summary(runs: list[list[dict[str, Any]]]) -> None:
     print("alignment_edges")
     for elapsed, edge_id, metrics in sorted(rows, reverse=True):
         source = scalar_median(metrics.get("source", [])) or "?"
+        parent_role = scalar_median(metrics.get("parent_role", [])) or "?"
+        parent_table = scalar_median(metrics.get("parent_table", [])) or "?"
+        child_role = scalar_median(metrics.get("child_role", [])) or "?"
+        child_table = scalar_median(metrics.get("child_table", [])) or "?"
         child_rows = metric_int_median(metrics, "child_rows")
         parent_rows = metric_int_median(metrics, "parent_rows")
         print(
             f"  edge={edge_id} elapsed={fmt_seconds(elapsed)} source={source} "
+            f"{parent_role}:{parent_table}->{child_role}:{child_table} "
             f"child_rows={fmt_int(child_rows)} parent_rows={fmt_int(parent_rows)}"
         )
 
