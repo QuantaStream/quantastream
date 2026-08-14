@@ -81,7 +81,9 @@ type relationshipReverseArtifactData struct {
 
 type relationshipReverseArtifact struct {
 	relationshipReverseArtifactData
-	byShard map[int64]*relationshipReverseArtifactData
+	byShard       map[int64]*relationshipReverseArtifactData
+	owned         *relationshipReverseArtifactData
+	ownedShardKey string
 }
 
 type relationshipSiblingDiversityArtifact struct {
@@ -159,20 +161,20 @@ func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField,
 		return rownums, stats, true, nil
 	}
 
-	m.reverseArtifactLock.RLock()
+	m.reverseArtifactLock.Lock()
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, RelationshipSiblingDiversityStats{}, false, nil
 	}
 	artifact := fields[parentField]
 	if artifact == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, RelationshipSiblingDiversityStats{}, false, nil
 	}
-	readable := relationshipReverseArtifactMergeData(m.relationshipReverseArtifactReadableShards(index, parentField, artifact))
+	readable := m.relationshipReverseArtifactReadableData(index, parentField, artifact)
 	if readable == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return []uint64{}, RelationshipSiblingDiversityStats{
 			CandidateRows: uint64(len(candidateRows)),
 			LookupElapsed: time.Since(start),
@@ -213,7 +215,7 @@ func (m *BitmapIndex) RelationshipSiblingDiversityCandidates(index, parentField,
 		Groups:         uint64(len(groups)),
 		LookupElapsed:  time.Since(start),
 	}
-	m.reverseArtifactLock.RUnlock()
+	m.reverseArtifactLock.Unlock()
 	if len(groups) == 0 || len(allRows) == 0 {
 		return []uint64{}, stats, true, nil
 	}
@@ -329,21 +331,21 @@ func (m *BitmapIndex) relationshipSiblingDiversityCachedSummaryLocked(index, par
 
 func (m *BitmapIndex) buildRelationshipSiblingDiversitySummary(index, parentField, valueField string, fromTime, toTime int64, start time.Time) (*relationshipSiblingDiversityArtifact, RelationshipSiblingDiversityStats, uint64, bool, error) {
 	buildStart := time.Now()
-	m.reverseArtifactLock.RLock()
+	m.reverseArtifactLock.Lock()
 	generation := m.relationshipSiblingDiversityGenerationLocked(index)
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, RelationshipSiblingDiversityStats{}, generation, false, nil
 	}
 	artifact := fields[parentField]
 	if artifact == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, RelationshipSiblingDiversityStats{}, generation, false, nil
 	}
-	readable := relationshipReverseArtifactMergeData(m.relationshipReverseArtifactReadableShards(index, parentField, artifact))
+	readable := m.relationshipReverseArtifactReadableData(index, parentField, artifact)
 	if readable == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		summary := &relationshipSiblingDiversityArtifact{diverseRows: roaring64.NewBitmap()}
 		return summary, RelationshipSiblingDiversityStats{
 			Mode:          "sibling_diversity_summary_cache_build",
@@ -369,7 +371,7 @@ func (m *BitmapIndex) buildRelationshipSiblingDiversitySummary(index, parentFiel
 		Mode:           "sibling_diversity_summary_cache_build",
 		LookupElapsed:  time.Since(start),
 	}
-	m.reverseArtifactLock.RUnlock()
+	m.reverseArtifactLock.Unlock()
 	if len(groups) == 0 || len(allRows) == 0 {
 		summary := &relationshipSiblingDiversityArtifact{
 			diverseRows:    roaring64.NewBitmap(),
@@ -466,19 +468,19 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
-	m.reverseArtifactLock.RLock()
+	m.reverseArtifactLock.Lock()
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
 	artifact := fields[field]
 	if artifact == nil {
-		m.reverseArtifactLock.RUnlock()
+		m.reverseArtifactLock.Unlock()
 		return nil, nil, RelationshipReverseArtifactStats{}, false, nil
 	}
-	shards := m.relationshipReverseArtifactReadableShards(index, field, artifact)
-	readableRows, readableValues := relationshipReverseArtifactDataStats(shards)
+	readable := m.relationshipReverseArtifactReadableData(index, field, artifact)
+	readableRows, readableValues := relationshipReverseArtifactDataStats(readable)
 	uniqueValues := relationshipReverseArtifactUniqueInt64Values(sourceValues)
 	targetCapacity := relationshipReverseArtifactCandidateCapacity(readableRows, readableValues, len(uniqueValues))
 	candidateSet := relationshipReverseArtifactBitmap(candidateRows)
@@ -497,12 +499,9 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 	if includeRows && !includeParentValues {
 		seenRows = make(map[uint64]struct{}, targetCapacity)
 	}
-	for _, value := range uniqueValues {
-		for _, shard := range shards {
-			if shard == nil {
-				continue
-			}
-			if bitmap := shard.byValue[value]; bitmap != nil {
+	if readable != nil {
+		for _, value := range uniqueValues {
+			if bitmap := readable.byValue[value]; bitmap != nil {
 				it := bitmap.Iterator()
 				for it.HasNext() {
 					rownum := it.Next()
@@ -541,7 +540,7 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 		TargetRows:    uint64(targetRows),
 		LookupElapsed: time.Since(start),
 	}
-	m.reverseArtifactLock.RUnlock()
+	m.reverseArtifactLock.Unlock()
 	return rownums, parentValueByChild, stats, true, nil
 }
 
@@ -718,8 +717,8 @@ func (m *BitmapIndex) RelationshipReverseArtifactStatsStorage(index, field strin
 	if !m.relationshipReverseArtifactEnabled(index, field) {
 		return RelationshipReverseArtifactStats{}, false, nil
 	}
-	m.reverseArtifactLock.RLock()
-	defer m.reverseArtifactLock.RUnlock()
+	m.reverseArtifactLock.Lock()
+	defer m.reverseArtifactLock.Unlock()
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
 		return RelationshipReverseArtifactStats{}, false, nil
@@ -728,7 +727,7 @@ func (m *BitmapIndex) RelationshipReverseArtifactStatsStorage(index, field strin
 	if artifact == nil {
 		return RelationshipReverseArtifactStats{}, false, nil
 	}
-	rows, values := relationshipReverseArtifactDataStats(m.relationshipReverseArtifactReadableShards(index, field, artifact))
+	rows, values := relationshipReverseArtifactDataStats(m.relationshipReverseArtifactReadableData(index, field, artifact))
 	return RelationshipReverseArtifactStats{
 		Rows:   rows,
 		Values: values,
@@ -741,8 +740,8 @@ type relationshipReverseArtifactGroupRows struct {
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, childSet *roaring64.Bitmap, parentValues []uint64, start time.Time) ([]relationshipReverseArtifactGroupRows, RelationshipReverseArtifactSumStats, bool) {
-	m.reverseArtifactLock.RLock()
-	defer m.reverseArtifactLock.RUnlock()
+	m.reverseArtifactLock.Lock()
+	defer m.reverseArtifactLock.Unlock()
 
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
@@ -752,34 +751,23 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	if artifact == nil {
 		return nil, RelationshipReverseArtifactSumStats{}, false
 	}
-	shards := m.relationshipReverseArtifactReadableShards(index, field, artifact)
-	rows, valueCount := relationshipReverseArtifactDataStats(shards)
-	values := relationshipReverseArtifactRequestedValues(shards, parentValues)
+	readable := m.relationshipReverseArtifactReadableData(index, field, artifact)
+	rows, valueCount := relationshipReverseArtifactDataStats(readable)
+	values := relationshipReverseArtifactRequestedValues(readable, parentValues)
 	groups := make([]relationshipReverseArtifactGroupRows, 0, len(values))
 	for _, value := range values {
+		if readable == nil {
+			continue
+		}
+		bitmap := readable.byValue[value]
+		if bitmap == nil {
+			continue
+		}
 		var retained *roaring64.Bitmap
-		for _, shard := range shards {
-			if shard == nil {
-				continue
-			}
-			bitmap := shard.byValue[value]
-			if bitmap == nil {
-				continue
-			}
-			var shardRetained *roaring64.Bitmap
-			if childSet == nil {
-				shardRetained = bitmap.Clone()
-			} else {
-				shardRetained = roaring64.And(bitmap, childSet)
-			}
-			if shardRetained == nil || shardRetained.IsEmpty() {
-				continue
-			}
-			if retained == nil {
-				retained = shardRetained
-			} else {
-				retained.Or(shardRetained)
-			}
+		if childSet == nil {
+			retained = bitmap.Clone()
+		} else {
+			retained = roaring64.And(bitmap, childSet)
 		}
 		if retained == nil || retained.IsEmpty() {
 			continue
@@ -797,19 +785,13 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	}, true
 }
 
-func relationshipReverseArtifactRequestedValues(shards []*relationshipReverseArtifactData, parentValues []uint64) []int64 {
+func relationshipReverseArtifactRequestedValues(readable *relationshipReverseArtifactData, parentValues []uint64) []int64 {
 	if len(parentValues) == 0 {
-		unique := make(map[int64]struct{})
-		for _, shard := range shards {
-			if shard == nil {
-				continue
-			}
-			for value := range shard.byValue {
-				unique[value] = struct{}{}
-			}
+		if readable == nil {
+			return nil
 		}
-		values := make([]int64, 0, len(unique))
-		for value := range unique {
+		values := make([]int64, 0, len(readable.byValue))
+		for value := range readable.byValue {
 			values = append(values, value)
 		}
 		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
@@ -1055,24 +1037,34 @@ func relationshipReverseArtifactCandidateCapacity(rows uint64, values uint64, so
 	return int(estimate)
 }
 
-func (m *BitmapIndex) relationshipReverseArtifactReadableShards(index, field string, artifact *relationshipReverseArtifact) []*relationshipReverseArtifactData {
+func (m *BitmapIndex) relationshipReverseArtifactReadableData(index, field string, artifact *relationshipReverseArtifact) *relationshipReverseArtifactData {
 	if artifact == nil {
 		return nil
 	}
 	if !m.relationshipReverseArtifactShardOwnershipFilterEnabled() {
-		return []*relationshipReverseArtifactData{&artifact.relationshipReverseArtifactData}
+		return &artifact.relationshipReverseArtifactData
 	}
 	if len(artifact.byShard) == 0 {
 		return nil
 	}
-	shards := make([]*relationshipReverseArtifactData, 0, len(artifact.byShard))
+	shardKey := m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
+	if artifact.owned != nil && artifact.ownedShardKey == shardKey {
+		return artifact.owned
+	}
+	owned := &relationshipReverseArtifactData{byValue: make(map[int64]*roaring64.Bitmap)}
 	for shardTime, shard := range artifact.byShard {
 		if shard == nil || !m.relationshipReverseArtifactOwnsShard(index, field, shardTime) {
 			continue
 		}
-		shards = append(shards, shard)
+		relationshipReverseArtifactMergeInto(owned, shard)
 	}
-	return shards
+	artifact.ownedShardKey = shardKey
+	if owned.rows == 0 {
+		artifact.owned = nil
+		return nil
+	}
+	artifact.owned = owned
+	return artifact.owned
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactShardOwnershipFilterEnabled() bool {
@@ -1105,6 +1097,13 @@ func (m *BitmapIndex) relationshipReverseArtifactReadableShardKey(index, field s
 	if artifact == nil || len(artifact.byShard) == 0 {
 		return ""
 	}
+	return m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactReadableShardKeyLocked(index, field string, artifact *relationshipReverseArtifact) string {
+	if artifact == nil || len(artifact.byShard) == 0 {
+		return ""
+	}
 	shardTimes := make([]int64, 0, len(artifact.byShard))
 	for shardTime := range artifact.byShard {
 		if m.relationshipReverseArtifactOwnsShard(index, field, shardTime) {
@@ -1122,61 +1121,38 @@ func (m *BitmapIndex) relationshipReverseArtifactReadableShardKey(index, field s
 	return builder.String()
 }
 
-func relationshipReverseArtifactDataStats(shards []*relationshipReverseArtifactData) (uint64, uint64) {
-	if len(shards) == 0 {
+func relationshipReverseArtifactDataStats(data *relationshipReverseArtifactData) (uint64, uint64) {
+	if data == nil {
 		return 0, 0
 	}
-	if len(shards) == 1 {
-		shard := shards[0]
-		if shard == nil {
-			return 0, 0
-		}
-		return shard.rows, uint64(len(shard.byValue))
-	}
-	var rows uint64
-	values := make(map[int64]struct{})
-	for _, shard := range shards {
-		if shard == nil {
-			continue
-		}
-		rows += shard.rows
-		for value := range shard.byValue {
-			values[value] = struct{}{}
-		}
-	}
-	return rows, uint64(len(values))
+	return data.rows, uint64(len(data.byValue))
 }
 
-func relationshipReverseArtifactMergeData(shards []*relationshipReverseArtifactData) *relationshipReverseArtifactData {
-	if len(shards) == 0 {
-		return nil
+func relationshipReverseArtifactMergeInto(target *relationshipReverseArtifactData, source *relationshipReverseArtifactData) {
+	if target == nil || source == nil {
+		return
 	}
-	if len(shards) == 1 {
-		return shards[0]
+	if target.byValue == nil {
+		target.byValue = make(map[int64]*roaring64.Bitmap)
 	}
-	merged := &relationshipReverseArtifactData{byValue: make(map[int64]*roaring64.Bitmap)}
-	for _, shard := range shards {
-		if shard == nil {
+	for value, bitmap := range source.byValue {
+		if bitmap == nil || bitmap.IsEmpty() {
 			continue
 		}
-		for value, bitmap := range shard.byValue {
-			if bitmap == nil || bitmap.IsEmpty() {
-				continue
-			}
-			target := merged.byValue[value]
-			if target == nil {
-				merged.byValue[value] = bitmap.Clone()
-				continue
-			}
-			target.Or(bitmap)
+		targetBitmap := target.byValue[value]
+		before := uint64(0)
+		if targetBitmap == nil {
+			target.byValue[value] = bitmap.Clone()
+			target.rows += bitmap.GetCardinality()
+			continue
+		}
+		before = targetBitmap.GetCardinality()
+		targetBitmap.Or(bitmap)
+		after := targetBitmap.GetCardinality()
+		if after > before {
+			target.rows += after - before
 		}
 	}
-	for _, bitmap := range merged.byValue {
-		if bitmap != nil {
-			merged.rows += bitmap.GetCardinality()
-		}
-	}
-	return merged
 }
 
 func (m *BitmapIndex) relationshipReverseArtifactSnapshot() relationshipReverseArtifactSnapshot {
@@ -1208,6 +1184,8 @@ func (m *BitmapIndex) updateRelationshipReverseArtifactForBSIFragment(index, fie
 	}
 
 	artifact := m.relationshipReverseArtifact(index, field)
+	artifact.owned = nil
+	artifact.ownedShardKey = ""
 	if removedRows != nil && oldBSI != nil {
 		m.removeRelationshipReverseArtifactRows(&artifact.relationshipReverseArtifactData, oldBSI, removedRows)
 		if shard := artifact.byShard[shardTime]; shard != nil {
