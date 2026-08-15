@@ -118,6 +118,79 @@ described as execution-model advantages, not as isolated TPC-H hacks.
 4. Q19 is now mostly polish. Its remaining gap is small in absolute terms and
    should be addressed through broader filter-domain normalization improvements.
 
+## 2026-08-15 AWS Distributed SF3 Load Boundary
+
+The current three-node AWS distributed test cluster establishes a useful
+capacity boundary rather than a stable SF3 benchmark target.
+
+### Cluster Shape
+
+- Data nodes: 3 x `m7i.4xlarge`.
+- Per-node shape: 16 vCPU, 64 GiB memory.
+- Loader host: `bench-runner`.
+- Node sync: disabled for benchmark redeploys.
+- Consul health check profile: production by default, with a coarse
+  `bulk-load` profile available for ingest runs that can temporarily starve
+  health checks.
+
+### Load Findings
+
+- SF1 best observed loader shape: `QS_TPCH_LOAD_WORKERS=12`,
+  `QS_TPCH_LOAD_BATCH_SIZE=2000`.
+- SF2 best stable loader shape: `QS_TPCH_LOAD_WORKERS=12`,
+  `QS_TPCH_LOAD_BATCH_SIZE=1000`.
+- SF3 on the current three-node shape is not stable with the current
+  loader/node memory behavior. Attempts at `w12-b1000`, `w6-b1000`, and
+  `w3-b1000` all failed near the end of `lineitem` load or final commit after
+  one data node left the cluster.
+
+The decisive failure signature is kernel OOM on a data node, not a Consul
+health-check false positive:
+
+```text
+Out of memory: Killed process ... quantastream-no ... anon-rss:63369968kB
+```
+
+That is roughly 60 GiB resident memory on a 64 GiB node. In another run, the
+loader saw `BatchMutateItems` return `EOF`, then `GetAllPeerStatus` failed with
+`connect: connection refused` because the target node was no longer listening on
+port 4400. After restart, Pogreb recovery logs appeared, confirming the load was
+tainted and should not be benchmarked.
+
+A follow-up client bug was also fixed: when membership changed during final
+commit, error formatting could index the current client list using an index from
+an older fanout snapshot and panic with `index out of range`. Commit
+`7573517` changed error formatting to use a safe client-target helper so this
+class of failure returns a useful error instead of masking the node failure with
+a loader panic.
+
+### Capacity Interpretation
+
+This should be recorded as a scale boundary:
+
+- SF1 and SF2 are usable for clean query benchmarks on the current cluster.
+- SF3 requires either more memory per node, more data nodes, or a reduction in
+  node-side ingest memory pressure before it should be used as a benchmark data
+  point.
+- Re-running SF3 on the same three-node `m7i.4xlarge` shape is not likely to
+  produce new information until memory behavior changes.
+
+AWS does not allow memory to be hot-added to an EC2 instance. To add memory to a
+node, stop the EBS-backed instance and change its instance type, or launch a
+replacement instance type. Practical next configurations are:
+
+- Scale up each data node to a larger general-purpose instance such as
+  `m7i.8xlarge` for 128 GiB per node.
+- Move each data node to a memory-optimized shape such as `r7i.4xlarge`, which
+  keeps 16 vCPU while doubling memory to 128 GiB.
+- Scale out to five data nodes to reduce per-node shard ownership and increase
+  total cluster memory.
+
+The cleanest diagnostic next step is memory-up first, preferably
+`r7i.4xlarge`, because it isolates the variable: same vCPU count, double memory.
+Five nodes is still likely useful for the product shape, but it changes both
+capacity and distribution behavior at once.
+
 ## Tech Debt And Follow-Up Items
 
 ### Optimizer Completeness
