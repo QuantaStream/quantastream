@@ -30,6 +30,9 @@ Slow node startup can make ownership-sensitive reverse artifact caches warm
 before every node has joined membership. Use
 `QS_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT` to control how long data nodes
 wait for the configured cluster target before warming those caches.
+Use `QS_CLUSTER_WAIT_SECONDS` to control how long AWS helper scripts wait for
+the cluster to become GREEN after service restart; it should be longer than
+the reverse artifact membership wait plus cache warm time.
 
 Check health:
 

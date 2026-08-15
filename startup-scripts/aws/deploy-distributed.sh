@@ -98,5 +98,5 @@ qs_set_cluster_size
 
 if (( enable_now && deploy_nodes )); then
   echo "Waiting for distributed cluster"
-  qs_wait_for_cluster 180
+  qs_wait_for_cluster "$QS_CLUSTER_WAIT_SECONDS"
 fi

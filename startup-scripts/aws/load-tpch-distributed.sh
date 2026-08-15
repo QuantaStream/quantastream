@@ -40,7 +40,7 @@ done
 qs_load_env
 
 if (( ! skip_health )); then
-  qs_wait_for_cluster 180 >/dev/null
+  qs_wait_for_cluster "$QS_CLUSTER_WAIT_SECONDS" >/dev/null
 fi
 if (( ! skip_schema )); then
   "$script_dir/sync-schema.sh"
