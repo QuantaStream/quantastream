@@ -147,13 +147,20 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	}
 	postHavingGroups := len(aggregateRows)
 	orderStrategy := directBitmapGroupedAggregateOrderStrategy(request, len(aggregateRows))
+	skipDefaultSort := legacyDirectRelationshipQ3OrderRevenueSkipDefaultSort(request)
+	if skipDefaultSort {
+		orderStrategy = "q3_unordered_group_order"
+	}
 
-	sortStart := time.Now()
-	aggregateRows, diagnostics = directBitmapOrderGroupedAggregateRows(request, aggregateRows, groupExpressions)
-	sortElapsed := time.Since(sortStart)
-	result.Diagnostics = append(result.Diagnostics, diagnostics...)
-	if result.Diagnostics.BlocksNative() {
-		return result, true, nil
+	var sortElapsed time.Duration
+	if !skipDefaultSort {
+		sortStart := time.Now()
+		aggregateRows, diagnostics = directBitmapOrderGroupedAggregateRows(request, aggregateRows, groupExpressions)
+		sortElapsed = time.Since(sortStart)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if result.Diagnostics.BlocksNative() {
+			return result, true, nil
+		}
 	}
 
 	outputStart := time.Now()
@@ -196,6 +203,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_group_row_build_elapsed", groupedRowsElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_having_elapsed", havingElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_final_materialization_elapsed", finalMaterializationElapsed.String()),
+		legacyDirectRelationshipProbe("graph_grouped_aggregate_final_sort_skipped", strconv.FormatBool(skipDefaultSort)),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_final_sort_elapsed", sortElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_output_elapsed", outputElapsed.String()),
 		legacyDirectRelationshipProbe("phase_graph_grouped_aggregate_final_limit_elapsed", limitElapsed.String()),
@@ -809,6 +817,10 @@ func legacyDirectRelationshipQ3OrderRevenueSortedDistinctRows(rows []qsbridge.Qu
 	return distinct
 }
 
+func legacyDirectRelationshipQ3OrderRevenueSkipDefaultSort(request ExecutionRequest) bool {
+	return len(request.OrderBy) == 0
+}
+
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueDirectAggregateRows(ctx context.Context, request ExecutionRequest, plan legacyDirectRelationshipQ3OrderRevenuePlan, groupExpressions []directBitmapGroupExpression, groups []legacyDirectRelationshipQ3OrderRevenueGroup, prefetchedFinalMaterialization *legacyDirectRelationshipQ3OrderRevenueMaterializationFuture) ([]directBitmapGroupedAggregateRow, []ExecutionProbe, time.Duration, time.Duration, qsbridge.DiagnosticSet, error, bool) {
 	if len(request.SQLAggregates) != 1 || len(groupExpressions) != len(plan.finalFields) {
 		return nil, nil, 0, 0, nil, nil, false
@@ -950,6 +962,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 	}
 	probes = append(probes, legacyDirectRelationshipProbe("graph_grouped_aggregate_final_materialization_vector_aligned", strconv.FormatBool(alignedVectors)))
 
+	buildStableKey := len(request.OrderBy) > 0
 	rows := make([]directBitmapGroupedAggregateRow, 0, len(groups))
 	for rowIndex, group := range groups {
 		cells := make([]qsbridge.ResultCell, 0, len(groupExpressions))
@@ -968,14 +981,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 			}
 			cells = append(cells, cell)
 		}
-		rows = append(rows, directBitmapGroupedAggregateRow{
-			Key:    directBitmapGroupCellsKey(cells),
+		row := directBitmapGroupedAggregateRow{
 			Groups: cells,
 			Aggs: []qsbridge.ResultCell{{
 				Kind:  qsbridge.ValueFloat,
 				Value: group.revenue,
 			}},
-		})
+		}
+		if buildStableKey {
+			row.Key = directBitmapGroupCellsKey(cells)
+		}
+		rows = append(rows, row)
 	}
 	return rows, probes, materializationElapsed, time.Since(rowBuildStart), nil, nil, true
 }
