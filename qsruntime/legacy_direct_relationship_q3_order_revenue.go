@@ -702,6 +702,8 @@ type legacyDirectRelationshipQ3OrderRevenueDirectFinalField struct {
 	roleKey       string
 	table         string
 	cells         []qsbridge.ResultCell
+	values        []qsbridge.ResultCell
+	valueByRow    map[qsbridge.QuantaRownum]qsbridge.ResultCell
 	fetchElapsed  time.Duration
 	attachElapsed time.Duration
 	source        string
@@ -748,7 +750,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 
 	materialization := e.projectionMaterializationKernel()
 	materializationStart := time.Now()
-	values, materializationProbes, diagnostics, err := e.legacyDirectRelationshipMaterializedValuesWithProbes(ctx, materialization, "orders", orderRows, orderFields, e.legacyDirectRelationshipTimeMaterialization(request, "orders"))
+	orderRowSet, materializationProbes, diagnostics, err := e.legacyDirectRelationshipQ3OrderRevenueMaterializedOrderRows(ctx, request, materialization, orderRows, orderFields)
 	materializationElapsed := time.Since(materializationStart)
 	if err != nil || diagnostics.BlocksNative() {
 		return nil, materializationProbes, materializationElapsed, 0, diagnostics, err, true
@@ -759,28 +761,45 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		legacyDirectRelationshipProbe("graph_grouped_aggregate_final_materialization_mode", "direct_q3_group_rows"),
 	}
 	probes = append(probes, materializationProbes...)
+	alignedVectors := legacyDirectRelationshipQ3OrderRevenueRownumsAligned(orderRowSet.Rownums, orderRows)
+	orderVectorValues := make(map[string][]qsbridge.ResultCell, len(orderRowSet.ProjectionVectors))
+	orderVectorMaps := make(map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell, len(orderRowSet.ProjectionVectors))
+	for i, vector := range orderRowSet.ProjectionVectors {
+		field := vector.Field
+		if field.Field == "" && field.PhysicalName == "" && i < len(orderFields) {
+			field = orderFields[i]
+		}
+		key := legacyDirectRelationshipQ3OrderRevenueDirectFieldKey(field)
+		if key == "" {
+			continue
+		}
+		if len(vector.Values) != len(orderRowSet.Rownums) {
+			return nil, probes, materializationElapsed, time.Since(rowBuildStart), legacyDirectRelationshipDiagnostic(fmt.Sprintf("Q3 order-revenue final direct materialization field %s.%s returned %d values for %d rownums", field.Index, field.Field, len(vector.Values), len(orderRowSet.Rownums))), nil, true
+		}
+		if alignedVectors {
+			orderVectorValues[key] = vector.Values
+			continue
+		}
+		valuesByRow := make(map[qsbridge.QuantaRownum]qsbridge.ResultCell, len(orderRowSet.Rownums))
+		for rowIndex, rownum := range orderRowSet.Rownums {
+			valuesByRow[rownum] = vector.Values[rowIndex]
+		}
+		orderVectorMaps[key] = valuesByRow
+	}
 	fieldByKey := make(map[string]*legacyDirectRelationshipQ3OrderRevenueDirectFinalField, len(fields))
 	fetchCharged := false
 	for i := range fields {
 		state := &fields[i]
 		attachStart := time.Now()
-		state.cells = make([]qsbridge.ResultCell, 0, len(groups))
 		switch state.source {
 		case "synthetic_relationship_endpoint":
-			for _, group := range groups {
-				state.cells = append(state.cells, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(group.orderRow)})
-			}
+			state.cells = nil
 		default:
-			fieldValues := values[legacyDirectRelationshipProjectionFieldKey(state.field)]
-			if fieldValues == nil {
+			key := legacyDirectRelationshipQ3OrderRevenueDirectFieldKey(state.field)
+			state.values = orderVectorValues[key]
+			state.valueByRow = orderVectorMaps[key]
+			if len(state.values) == 0 && state.valueByRow == nil {
 				return nil, probes, materializationElapsed, time.Since(rowBuildStart), legacyDirectRelationshipDiagnostic(fmt.Sprintf("Q3 order-revenue final direct materialization missing values for %s.%s", state.field.Index, state.field.Field)), nil, true
-			}
-			for _, group := range groups {
-				cell, ok := fieldValues[group.orderRow]
-				if !ok {
-					return nil, probes, materializationElapsed, time.Since(rowBuildStart), legacyDirectRelationshipDiagnostic(fmt.Sprintf("Q3 order-revenue final direct materialization missing value for %s.%s row %d", state.field.Index, state.field.Field, group.orderRow)), nil, true
-				}
-				state.cells = append(state.cells, cell)
 			}
 			if !fetchCharged {
 				state.fetchElapsed = materializationElapsed
@@ -796,6 +815,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 			legacyDirectRelationshipProbe(probePrefix+"field", state.field.Field),
 			legacyDirectRelationshipProbe(probePrefix+"rows", strconv.Itoa(len(groups))),
 			legacyDirectRelationshipProbe(probePrefix+"source", state.source),
+			legacyDirectRelationshipProbe(probePrefix+"vector_aligned", strconv.FormatBool(alignedVectors)),
 			legacyDirectRelationshipProbe(probePrefix+"fetch_elapsed", state.fetchElapsed.String()),
 			legacyDirectRelationshipProbe(probePrefix+"attach_elapsed", state.attachElapsed.String()),
 		)
@@ -803,6 +823,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 			probes = append(probes, legacyDirectRelationshipProbe(probePrefix+"source_role", state.sourceRole))
 		}
 	}
+	probes = append(probes, legacyDirectRelationshipProbe("graph_grouped_aggregate_final_materialization_vector_aligned", strconv.FormatBool(alignedVectors)))
 
 	rows := make([]directBitmapGroupedAggregateRow, 0, len(groups))
 	for rowIndex, group := range groups {
@@ -813,10 +834,14 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 				return nil, nil, 0, 0, nil, nil, false
 			}
 			state := fieldByKey[legacyDirectRelationshipQ3OrderRevenueDirectFieldRefKey(ref)]
-			if state == nil || rowIndex >= len(state.cells) {
+			if state == nil {
 				return nil, nil, 0, 0, nil, nil, false
 			}
-			cells = append(cells, state.cells[rowIndex])
+			cell, ok := legacyDirectRelationshipQ3OrderRevenueDirectFieldCell(state, group, rowIndex)
+			if !ok {
+				return nil, probes, materializationElapsed, time.Since(rowBuildStart), legacyDirectRelationshipDiagnostic(fmt.Sprintf("Q3 order-revenue final direct materialization missing value for %s.%s row %d", state.field.Index, state.field.Field, group.orderRow)), nil, true
+			}
+			cells = append(cells, cell)
 		}
 		rows = append(rows, directBitmapGroupedAggregateRow{
 			Key:    directBitmapGroupCellsKey(cells),
@@ -828,6 +853,71 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3Or
 		})
 	}
 	return rows, probes, materializationElapsed, time.Since(rowBuildStart), nil, nil, true
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ3OrderRevenueMaterializedOrderRows(ctx context.Context, request ExecutionRequest, materialization ProjectionMaterializationKernel, orderRows []qsbridge.QuantaRownum, orderFields []qsbridge.QuantaProjectionField) (qsbridge.QuantaProjectedRowSet, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	if materialization == nil {
+		return qsbridge.QuantaProjectedRowSet{}, nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship-vector materialization kernel is not configured"),
+		}, nil
+	}
+	materializationRequest := e.legacyDirectRelationshipTimeMaterialization(request, "orders")
+	materializationRequest.Index = "orders"
+	materializationRequest.Rownums = append([]qsbridge.QuantaRownum(nil), orderRows...)
+	materializationRequest.ProjectionFields = orderFields
+	if materializationRequest.DependencyID == "" {
+		materializationRequest.DependencyID = "relationship_materialization.orders"
+	}
+	kernelRequest := qsbridge.ProjectionMaterializationKernelRequest{
+		ID:          "relationship_projection_materialization",
+		ProbePrefix: "relationship_projection_materialization_",
+		Requests:    []qsbridge.QuantaMaterializationRequest{materializationRequest},
+	}
+	result, err := ExecuteProjectionMaterializationKernel(ctx, materialization, kernelRequest)
+	diagnostics := append(qsbridge.DiagnosticSet(nil), result.Diagnostics...)
+	if err != nil || diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, result.Probes, diagnostics, err
+	}
+	if len(result.Results) == 0 {
+		return qsbridge.QuantaProjectedRowSet{}, result.Probes, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship-vector materialization kernel returned no results"),
+		}, nil
+	}
+	rowSet := result.Results[0].RowSet
+	diagnostics = append(diagnostics, result.Results[0].Diagnostics...)
+	if diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, result.Probes, diagnostics, nil
+	}
+	return rowSet, result.Probes, diagnostics, nil
+}
+
+func legacyDirectRelationshipQ3OrderRevenueRownumsAligned(actual []qsbridge.QuantaRownum, expected []qsbridge.QuantaRownum) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for i := range actual {
+		if actual[i] != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func legacyDirectRelationshipQ3OrderRevenueDirectFieldCell(state *legacyDirectRelationshipQ3OrderRevenueDirectFinalField, group legacyDirectRelationshipQ3OrderRevenueGroup, rowIndex int) (qsbridge.ResultCell, bool) {
+	if state.source == "synthetic_relationship_endpoint" {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(group.orderRow)}, true
+	}
+	if len(state.values) > 0 {
+		if rowIndex >= len(state.values) {
+			return qsbridge.ResultCell{}, false
+		}
+		return state.values[rowIndex], true
+	}
+	if state.valueByRow != nil {
+		cell, ok := state.valueByRow[group.orderRow]
+		return cell, ok
+	}
+	return qsbridge.ResultCell{}, false
 }
 
 func legacyDirectRelationshipQ3OrderRevenueSyntheticOrderKeyField(field qsbridge.QuantaProjectionField, plan legacyDirectRelationshipQ3OrderRevenuePlan) bool {
