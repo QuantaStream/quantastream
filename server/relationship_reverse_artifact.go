@@ -1086,6 +1086,15 @@ func (m *BitmapIndex) relationshipReverseArtifactReadableDataSourcesLocked(index
 		return []*relationshipReverseArtifactData{&artifact.relationshipReverseArtifactData}, rows, values
 	}
 
+	shardKey := m.relationshipReverseArtifactReadableShardKeyLocked(index, field, artifact)
+	if artifact.owned != nil && artifact.ownedShardKey == shardKey {
+		rows, values := relationshipReverseArtifactDataStats(artifact.owned)
+		if rows == 0 {
+			return nil, rows, values
+		}
+		return []*relationshipReverseArtifactData{artifact.owned}, rows, values
+	}
+
 	shardTimes := make([]int64, 0, len(artifact.byShard))
 	for shardTime := range artifact.byShard {
 		if m.relationshipReverseArtifactOwnsShard(index, field, shardTime) {

@@ -221,6 +221,46 @@ func TestRelationshipReverseArtifactDistributedLookupUsesOwnedShardsWithoutMerge
 	}
 }
 
+func TestRelationshipReverseArtifactDistributedLookupPrefersValidMergedOwnedCache(t *testing.T) {
+	index := newRelationshipReverseArtifactTestIndex(t, true)
+	conn := shared.NewDefaultConnection("reverse-artifact-owned-cache-preferred-test")
+	conn.Replicas = 1
+	conn.HashTable = rendezvous.New([]string{"this-node", "other-node"})
+	index.Node = &Node{Conn: conn, hashKey: "this-node", State: Active}
+	ownedShard := testRelationshipReverseArtifactShardTimeForOwnership(t, index, "lineitem", "l_orderkey", true)
+	replicaShard := testRelationshipReverseArtifactShardTimeForOwnership(t, index, "lineitem", "l_orderkey", false)
+
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, ownedShard, map[uint64]int64{4: 8}, false))
+	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, replicaShard, map[uint64]int64{6: 8}, false))
+
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	artifact.owned = &relationshipReverseArtifactData{
+		byValue: map[int64]*roaring64.Bitmap{8: roaring64.BitmapOf(44)},
+		rows:    1,
+	}
+	artifact.ownedShardKey = index.relationshipReverseArtifactReadableShardKeyLocked("lineitem", "l_orderkey", artifact)
+
+	rownums, parentValues, stats, ok, err := index.RelationshipReverseArtifactCandidateValues("lineitem", "l_orderkey", []int64{8})
+	if err != nil {
+		t.Fatalf("RelationshipReverseArtifactCandidateValues error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("artifact lookup ok = false, want true")
+	}
+	if !reflect.DeepEqual(rownums, []uint64{44}) {
+		t.Fatalf("rownums = %#v, want merged owned cache row [44]", rownums)
+	}
+	if !reflect.DeepEqual(parentValues, map[uint64]int64{44: 8}) {
+		t.Fatalf("parentValues = %#v, want merged owned cache parent value", parentValues)
+	}
+	if stats.Rows != 1 || stats.Values != 1 || stats.TargetRows != 1 {
+		t.Fatalf("stats = %#v, want merged owned rows=1 values=1 targetRows=1", stats)
+	}
+}
+
 func TestRelationshipReverseArtifactSingleNodeUsesAggregateArtifact(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, true)
 	shardTime := time.Unix(0, 0).UTC()
