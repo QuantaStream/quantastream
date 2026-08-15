@@ -39,6 +39,11 @@ type LegacyDirectRelationshipVectorAggregateResult struct {
 	SourceValues               int
 	TargetRows                 uint64
 	LookupElapsed              time.Duration
+	LookupValueElapsed         time.Duration
+	LookupBitmapElapsed        time.Duration
+	LookupToArrayElapsed       time.Duration
+	LookupGroups               int
+	LookupRows                 uint64
 	ProjectionElapsed          time.Duration
 	AggregateElapsed           time.Duration
 	Nodes                      uint64

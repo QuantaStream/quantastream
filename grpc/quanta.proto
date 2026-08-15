@@ -347,6 +347,11 @@ message RelationshipAlignedValueSumStats {
   int64    projectionElapsedNanos = 7;
   int64    aggregateElapsedNanos = 8;
   BSIProjectionStats projection = 9;
+  int64    lookupValueElapsedNanos = 10;
+  int64    lookupBitmapElapsedNanos = 11;
+  int64    lookupToArrayElapsedNanos = 12;
+  uint64   lookupGroups = 13;
+  uint64   lookupRows = 14;
 }
 
 message RelationshipAlignedValueSumResponse {

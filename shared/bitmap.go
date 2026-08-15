@@ -137,18 +137,23 @@ type RelationshipAlignedValueSumGroup struct {
 // work. Input cardinalities describe the original request; projection/timing
 // fields are accumulated from node-local partials.
 type RelationshipAlignedValueSumStats struct {
-	Rows                uint64
-	Values              uint64
-	SourceValues        int
-	TargetRows          uint64
-	Groups              int
-	LookupElapsed       time.Duration
-	ProjectionElapsed   time.Duration
-	AggregateElapsed    time.Duration
-	Projection          CompareBSIFieldsProjectionStats
-	Nodes               uint64
-	ClientRPCElapsed    time.Duration
-	MaxClientRPCElapsed time.Duration
+	Rows                 uint64
+	Values               uint64
+	SourceValues         int
+	TargetRows           uint64
+	Groups               int
+	LookupElapsed        time.Duration
+	LookupValueElapsed   time.Duration
+	LookupBitmapElapsed  time.Duration
+	LookupToArrayElapsed time.Duration
+	LookupGroups         int
+	LookupRows           uint64
+	ProjectionElapsed    time.Duration
+	AggregateElapsed     time.Duration
+	Projection           CompareBSIFieldsProjectionStats
+	Nodes                uint64
+	ClientRPCElapsed     time.Duration
+	MaxClientRPCElapsed  time.Duration
 }
 
 // BitmapGroupAggregateSpec describes one grouped aggregate over bitmap group
@@ -2103,6 +2108,11 @@ func (s *RelationshipAlignedValueSumStats) addProto(stats *pb.RelationshipAligne
 	}
 	s.Nodes++
 	s.LookupElapsed += time.Duration(stats.GetLookupElapsedNanos())
+	s.LookupValueElapsed += time.Duration(stats.GetLookupValueElapsedNanos())
+	s.LookupBitmapElapsed += time.Duration(stats.GetLookupBitmapElapsedNanos())
+	s.LookupToArrayElapsed += time.Duration(stats.GetLookupToArrayElapsedNanos())
+	s.LookupGroups += int(stats.GetLookupGroups())
+	s.LookupRows += stats.GetLookupRows()
 	s.ProjectionElapsed += time.Duration(stats.GetProjectionElapsedNanos())
 	s.AggregateElapsed += time.Duration(stats.GetAggregateElapsedNanos())
 	s.Projection.addProto(stats.GetProjection())

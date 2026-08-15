@@ -57,15 +57,20 @@ type RelationshipReverseArtifactSumGroup struct {
 
 // RelationshipReverseArtifactSumStats summarizes storage-side grouped work.
 type RelationshipReverseArtifactSumStats struct {
-	Rows              uint64
-	Values            uint64
-	SourceValues      int
-	TargetRows        uint64
-	Groups            int
-	LookupElapsed     time.Duration
-	ProjectionElapsed time.Duration
-	AggregateElapsed  time.Duration
-	ProjectionStats   ProjectBSIStats
+	Rows                 uint64
+	Values               uint64
+	SourceValues         int
+	TargetRows           uint64
+	Groups               int
+	LookupElapsed        time.Duration
+	LookupValueElapsed   time.Duration
+	LookupBitmapElapsed  time.Duration
+	LookupToArrayElapsed time.Duration
+	LookupGroups         int
+	LookupRows           uint64
+	ProjectionElapsed    time.Duration
+	AggregateElapsed     time.Duration
+	ProjectionStats      ProjectBSIStats
 }
 
 type relationshipReverseArtifactSnapshot struct {
@@ -849,35 +854,56 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	}
 	readable := m.relationshipReverseArtifactReadableData(index, field, artifact)
 	rows, valueCount := relationshipReverseArtifactDataStats(readable)
+	valueStart := time.Now()
 	values := relationshipReverseArtifactRequestedValues(readable, parentValues)
+	valueElapsed := time.Since(valueStart)
 	groups := make([]relationshipReverseArtifactGroupRows, 0, len(values))
+	bitmapElapsed := time.Duration(0)
+	toArrayElapsed := time.Duration(0)
+	lookupRows := uint64(0)
 	for _, value := range values {
 		if readable == nil {
 			continue
 		}
+		bitmapStart := time.Now()
 		bitmap := readable.byValue[value]
 		if bitmap == nil {
+			bitmapElapsed += time.Since(bitmapStart)
 			continue
 		}
 		var retained *roaring64.Bitmap
 		if childSet == nil {
-			retained = bitmap.Clone()
+			retained = bitmap
 		} else {
 			retained = roaring64.And(bitmap, childSet)
 		}
 		if retained == nil || retained.IsEmpty() {
+			bitmapElapsed += time.Since(bitmapStart)
 			continue
 		}
+		bitmapElapsed += time.Since(bitmapStart)
+		toArrayStart := time.Now()
+		groupRows := retained.ToArray()
+		toArrayElapsed += time.Since(toArrayStart)
+		if len(groupRows) == 0 {
+			continue
+		}
+		lookupRows += uint64(len(groupRows))
 		groups = append(groups, relationshipReverseArtifactGroupRows{
 			parentValue: value,
-			rows:        retained.ToArray(),
+			rows:        groupRows,
 		})
 	}
 	return groups, RelationshipReverseArtifactSumStats{
-		Rows:          rows,
-		Values:        valueCount,
-		SourceValues:  len(values),
-		LookupElapsed: time.Since(start),
+		Rows:                 rows,
+		Values:               valueCount,
+		SourceValues:         len(values),
+		LookupElapsed:        time.Since(start),
+		LookupValueElapsed:   valueElapsed,
+		LookupBitmapElapsed:  bitmapElapsed,
+		LookupToArrayElapsed: toArrayElapsed,
+		LookupGroups:         len(groups),
+		LookupRows:           lookupRows,
 	}, true
 }
 

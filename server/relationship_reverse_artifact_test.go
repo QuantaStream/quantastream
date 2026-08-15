@@ -598,6 +598,9 @@ func TestRelationshipReverseArtifactSumGroupsProjectedValues(t *testing.T) {
 	if stats.Rows != 4 || stats.Values != 3 || stats.SourceValues != 2 || stats.TargetRows != 3 || stats.Groups != 2 {
 		t.Fatalf("stats = %#v, want rows=4 values=3 sourceValues=2 targetRows=3 groups=2", stats)
 	}
+	if stats.LookupGroups != 2 || stats.LookupRows != 3 {
+		t.Fatalf("lookup stats = groups %d rows %d, want groups=2 rows=3", stats.LookupGroups, stats.LookupRows)
+	}
 }
 
 func TestRelationshipAlignedValueSumStorageGroupsProjectedValues(t *testing.T) {
@@ -669,6 +672,9 @@ func TestRelationshipVectorValueSumStorageExpandsArtifactAndGroupsValues(t *test
 	}
 	if stats.Rows != 4 || stats.Values != 3 || stats.SourceValues != 2 || stats.TargetRows != 3 || stats.Groups != 2 {
 		t.Fatalf("stats = %#v, want rows=4 values=3 sourceValues=2 targetRows=3 groups=2", stats)
+	}
+	if stats.LookupGroups != 2 || stats.LookupRows != 3 {
+		t.Fatalf("lookup stats = groups %d rows %d, want groups=2 rows=3", stats.LookupGroups, stats.LookupRows)
 	}
 }
 
