@@ -18,6 +18,7 @@ ENVIRONMENT="${QUANTASTREAM_ENV:-PROD}"
 LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
 SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-1}"
+REQUIRE_LOCAL_CONSUL="${QUANTASTREAM_REQUIRE_LOCAL_CONSUL:-auto}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -68,10 +69,43 @@ Environment:
   QUANTASTREAM_NODE_BIND        node bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_NODE_PORT        node service port. Defaults to 4400.
   QUANTASTREAM_CONSUL_ENDPOINT  local Consul agent endpoint. Defaults to 127.0.0.1:8500.
+  QUANTASTREAM_REQUIRE_LOCAL_CONSUL
+                                1/0/auto. Defaults to auto, requiring consul.service
+                                only when the Consul endpoint is localhost.
   QUANTASTREAM_SKIP_NODE_SYNC    skip legacy peer sync on startup and mark node active. Defaults to 1.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
+}
+
+is_local_consul_endpoint() {
+  case "$CONSUL_ENDPOINT" in
+    127.0.0.1:*|localhost:*|::1:*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+should_require_local_consul() {
+  case "$REQUIRE_LOCAL_CONSUL" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF)
+      return 1
+      ;;
+    auto|AUTO|"")
+      is_local_consul_endpoint
+      return
+      ;;
+    *)
+      echo "Invalid QUANTASTREAM_REQUIRE_LOCAL_CONSUL=$REQUIRE_LOCAL_CONSUL; use 1, 0, or auto." >&2
+      exit 2
+      ;;
+  esac
 }
 
 for arg in "$@"; do
@@ -111,15 +145,23 @@ QUANTASTREAM_ENV=$ENVIRONMENT
 QUANTASTREAM_LOG_LEVEL=$LOG_LEVEL
 QUANTASTREAM_PPROF=$PPROF
 QUANTASTREAM_SKIP_NODE_SYNC=$SKIP_NODE_SYNC
+QUANTASTREAM_REQUIRE_LOCAL_CONSUL=$REQUIRE_LOCAL_CONSUL
 EOF
 chmod 0644 "$ENV_DIR/node.env"
+
+unit_after="network-online.target"
+unit_requires=""
+if should_require_local_consul; then
+  unit_after="$unit_after consul.service"
+  unit_requires="Requires=consul.service"
+fi
 
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=QuantaStream distributed data node
-After=network-online.target consul.service
+After=$unit_after
 Wants=network-online.target
-Requires=consul.service
+$unit_requires
 
 [Service]
 Type=simple

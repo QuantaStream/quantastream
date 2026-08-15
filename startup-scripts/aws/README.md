@@ -2,8 +2,9 @@
 
 These scripts are bench-runner-oriented helpers for the current distributed
 benchmark environment. They assume bench-runner runs the Consul server and
-`quantastream-proxy`, while each QS server runs a local Consul client and a
-`quantastream-node` service.
+`quantastream-proxy`, while each QS server runs a `quantastream-node` service.
+QS servers can either talk to a local Consul client or directly to the
+bench-runner Consul server.
 
 Copy the env template once and edit it for the active fleet:
 
@@ -18,6 +19,12 @@ Deploy or update services:
 ```sh
 ./startup-scripts/aws/deploy-distributed.sh --pull
 ```
+
+To run QS servers without auto-starting a local Consul client, set
+`QS_NODE_CONSUL_ENDPOINT` in `startup-scripts/aws/quantastream-aws.env` to the
+bench-runner private address, for example `172.31.14.139:8500`, then redeploy
+nodes. The generated `quantastream-node.service` will omit
+`Requires=consul.service` when the endpoint is not localhost.
 
 Check health:
 
