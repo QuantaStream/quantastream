@@ -582,7 +582,7 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 		return nil, RelationshipReverseArtifactSumStats{}, false, nil
 	}
 	childSet := relationshipReverseArtifactBitmap(childRows)
-	groupRows, stats, ok := m.relationshipReverseArtifactSumRows(index, vectorField, childSet, parentValues, start)
+	groupRows, allRows, stats, ok := m.relationshipReverseArtifactSumRows(index, vectorField, childSet, parentValues, start)
 	if !ok {
 		return nil, RelationshipReverseArtifactSumStats{}, false, nil
 	}
@@ -590,10 +590,6 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
 	}
 
-	allRows := make([]uint64, 0)
-	for _, group := range groupRows {
-		allRows = append(allRows, group.rows...)
-	}
 	if priceField, discountField, ok := qsbridge.ParseRelationshipAlignedDiscountedRevenueField(valueField); ok {
 		return m.relationshipReverseArtifactDiscountedRevenueSum(index, priceField, discountField, fromTime, toTime, groupRows, allRows, stats)
 	}
@@ -609,25 +605,23 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 
 	aggregateStart := time.Now()
 	groups := make([]RelationshipReverseArtifactSumGroup, 0, len(groupRows))
-	offset := 0
 	for _, group := range groupRows {
 		sum := big.NewInt(0)
 		count := uint64(0)
-		for i := 0; i < len(group.rows); i++ {
-			position := offset + i
+		for i := 0; i < group.count; i++ {
+			position := group.offset + i
 			if position >= len(values) || values[position] == nil {
 				continue
 			}
 			sum.Add(sum, values[position])
 			count++
 		}
-		offset += len(group.rows)
 		if count == 0 {
 			continue
 		}
 		groups = append(groups, RelationshipReverseArtifactSumGroup{
 			ParentValue:       uint64(group.parentValue),
-			RepresentativeRow: group.rows[0],
+			RepresentativeRow: group.representativeRow,
 			Count:             count,
 			Sum:               sum,
 		})
@@ -660,25 +654,23 @@ func (m *BitmapIndex) relationshipReverseArtifactDiscountedRevenueSum(index, pri
 
 	aggregateStart := time.Now()
 	groups := make([]RelationshipReverseArtifactSumGroup, 0, len(groupRows))
-	offset := 0
 	for _, group := range groupRows {
 		sum := big.NewInt(0)
 		count := uint64(0)
-		for i := 0; i < len(group.rows); i++ {
-			position := offset + i
+		for i := 0; i < group.count; i++ {
+			position := group.offset + i
 			if position >= len(priceValues.Exists) || position >= len(discountValues.Exists) || !priceValues.Exists[position] || !discountValues.Exists[position] {
 				continue
 			}
 			sum.Add(sum, relationshipDiscountedRevenueScaledValue(priceValues.Values[position], discountValues.Values[position]))
 			count++
 		}
-		offset += len(group.rows)
 		if count == 0 {
 			continue
 		}
 		groups = append(groups, RelationshipReverseArtifactSumGroup{
 			ParentValue:       uint64(group.parentValue),
-			RepresentativeRow: group.rows[0],
+			RepresentativeRow: group.representativeRow,
 			Count:             count,
 			Sum:               sum,
 		})
@@ -836,21 +828,23 @@ func (m *BitmapIndex) RelationshipReverseArtifactStatsStorage(index, field strin
 }
 
 type relationshipReverseArtifactGroupRows struct {
-	parentValue int64
-	rows        []uint64
+	parentValue       int64
+	offset            int
+	count             int
+	representativeRow uint64
 }
 
-func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, childSet *roaring64.Bitmap, parentValues []uint64, start time.Time) ([]relationshipReverseArtifactGroupRows, RelationshipReverseArtifactSumStats, bool) {
+func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, childSet *roaring64.Bitmap, parentValues []uint64, start time.Time) ([]relationshipReverseArtifactGroupRows, []uint64, RelationshipReverseArtifactSumStats, bool) {
 	m.reverseArtifactLock.Lock()
 	defer m.reverseArtifactLock.Unlock()
 
 	fields := m.reverseArtifactCache[index]
 	if fields == nil {
-		return nil, RelationshipReverseArtifactSumStats{}, false
+		return nil, nil, RelationshipReverseArtifactSumStats{}, false
 	}
 	artifact := fields[field]
 	if artifact == nil {
-		return nil, RelationshipReverseArtifactSumStats{}, false
+		return nil, nil, RelationshipReverseArtifactSumStats{}, false
 	}
 	readable := m.relationshipReverseArtifactReadableData(index, field, artifact)
 	rows, valueCount := relationshipReverseArtifactDataStats(readable)
@@ -858,8 +852,9 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	values := relationshipReverseArtifactRequestedValues(readable, parentValues)
 	valueElapsed := time.Since(valueStart)
 	groups := make([]relationshipReverseArtifactGroupRows, 0, len(values))
+	allRows := make([]uint64, 0, relationshipReverseArtifactCandidateCapacity(rows, valueCount, len(values)))
 	bitmapElapsed := time.Duration(0)
-	toArrayElapsed := time.Duration(0)
+	rowMaterializationElapsed := time.Duration(0)
 	lookupRows := uint64(0)
 	for _, value := range values {
 		if readable == nil {
@@ -871,37 +866,51 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			bitmapElapsed += time.Since(bitmapStart)
 			continue
 		}
-		var retained *roaring64.Bitmap
+		var iterator roaring64.IntPeekable64
 		if childSet == nil {
-			retained = bitmap
+			iterator = bitmap.Iterator()
 		} else {
-			retained = roaring64.And(bitmap, childSet)
+			retained := roaring64.And(bitmap, childSet)
+			if retained != nil {
+				iterator = retained.Iterator()
+			}
 		}
-		if retained == nil || retained.IsEmpty() {
+		if iterator == nil || !iterator.HasNext() {
 			bitmapElapsed += time.Since(bitmapStart)
 			continue
 		}
 		bitmapElapsed += time.Since(bitmapStart)
-		toArrayStart := time.Now()
-		groupRows := retained.ToArray()
-		toArrayElapsed += time.Since(toArrayStart)
-		if len(groupRows) == 0 {
+		groupOffset := len(allRows)
+		representativeRow := uint64(0)
+		rowMaterializationStart := time.Now()
+		for iterator.HasNext() {
+			row := iterator.Next()
+			if len(allRows) == groupOffset {
+				representativeRow = row
+			}
+			allRows = append(allRows, row)
+		}
+		groupCount := len(allRows) - groupOffset
+		rowMaterializationElapsed += time.Since(rowMaterializationStart)
+		if groupCount == 0 {
 			continue
 		}
-		lookupRows += uint64(len(groupRows))
+		lookupRows += uint64(groupCount)
 		groups = append(groups, relationshipReverseArtifactGroupRows{
-			parentValue: value,
-			rows:        groupRows,
+			parentValue:       value,
+			offset:            groupOffset,
+			count:             groupCount,
+			representativeRow: representativeRow,
 		})
 	}
-	return groups, RelationshipReverseArtifactSumStats{
+	return groups, allRows, RelationshipReverseArtifactSumStats{
 		Rows:                 rows,
 		Values:               valueCount,
 		SourceValues:         len(values),
 		LookupElapsed:        time.Since(start),
 		LookupValueElapsed:   valueElapsed,
 		LookupBitmapElapsed:  bitmapElapsed,
-		LookupToArrayElapsed: toArrayElapsed,
+		LookupToArrayElapsed: rowMaterializationElapsed,
 		LookupGroups:         len(groups),
 		LookupRows:           lookupRows,
 	}, true
