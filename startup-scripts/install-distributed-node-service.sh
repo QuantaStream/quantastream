@@ -19,6 +19,7 @@ LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
 SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-1}"
 REQUIRE_LOCAL_CONSUL="${QUANTASTREAM_REQUIRE_LOCAL_CONSUL:-auto}"
+REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT="${QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT:-3m}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -73,6 +74,10 @@ Environment:
                                 1/0/auto. Defaults to auto, requiring consul.service
                                 only when the Consul endpoint is localhost.
   QUANTASTREAM_SKIP_NODE_SYNC    skip legacy peer sync on startup and mark node active. Defaults to 1.
+  QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT
+                                wait for full membership before warming owned
+                                reverse artifact caches. Defaults to 3m. Use 0
+                                to skip the wait.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
@@ -146,6 +151,7 @@ QUANTASTREAM_LOG_LEVEL=$LOG_LEVEL
 QUANTASTREAM_PPROF=$PPROF
 QUANTASTREAM_SKIP_NODE_SYNC=$SKIP_NODE_SYNC
 QUANTASTREAM_REQUIRE_LOCAL_CONSUL=$REQUIRE_LOCAL_CONSUL
+QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT=$REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT
 EOF
 chmod 0644 "$ENV_DIR/node.env"
 

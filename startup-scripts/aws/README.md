@@ -26,6 +26,11 @@ bench-runner private address, for example `172.31.14.139:8500`, then redeploy
 nodes. The generated `quantastream-node.service` will omit
 `Requires=consul.service` when the endpoint is not localhost.
 
+Slow node startup can make ownership-sensitive reverse artifact caches warm
+before every node has joined membership. Use
+`QS_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT` to control how long data nodes
+wait for the configured cluster target before warming those caches.
+
 Check health:
 
 ```sh
