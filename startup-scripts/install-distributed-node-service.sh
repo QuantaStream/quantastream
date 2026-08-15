@@ -20,6 +20,11 @@ PPROF="${QUANTASTREAM_PPROF:-false}"
 SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-1}"
 REQUIRE_LOCAL_CONSUL="${QUANTASTREAM_REQUIRE_LOCAL_CONSUL:-auto}"
 REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT="${QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT:-3m}"
+CONSUL_HEALTH_CHECK_PROFILE="${QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE:-}"
+CONSUL_HEALTH_CHECK_INTERVAL="${QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL:-}"
+CONSUL_HEALTH_CHECK_TIMEOUT="${QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT:-}"
+CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL="${QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL:-}"
+CONSUL_HEALTH_CHECK_DEREGISTER_AFTER="${QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER:-}"
 ENABLE_NOW="${ENABLE_NOW:-1}"
 
 resolve_go() {
@@ -78,6 +83,22 @@ Environment:
                                 wait for full membership before warming owned
                                 reverse artifact caches. Defaults to 3m. Use 0
                                 to skip the wait.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE
+                                Consul health-check profile. Empty/production
+                                uses fast failure detection. Use bulk-load for
+                                large benchmark loads.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL
+                                Consul gRPC health-check interval. Empty uses
+                                the node default.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT
+                                Consul gRPC health-check timeout. Empty leaves
+                                Consul's default behavior.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL
+                                Consecutive health failures before critical.
+                                Empty or 0 leaves Consul's default behavior.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER
+                                Time critical before service deregistration.
+                                Empty leaves Consul's default behavior.
   GO_BIN                        optional absolute path to the Go binary.
   ENABLE_NOW=0                  install and enable without starting immediately.
 EOF
@@ -152,6 +173,11 @@ QUANTASTREAM_PPROF=$PPROF
 QUANTASTREAM_SKIP_NODE_SYNC=$SKIP_NODE_SYNC
 QUANTASTREAM_REQUIRE_LOCAL_CONSUL=$REQUIRE_LOCAL_CONSUL
 QUANTASTREAM_REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT=$REVERSE_ARTIFACT_WARM_MEMBERSHIP_TIMEOUT
+QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE=$CONSUL_HEALTH_CHECK_PROFILE
+QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL=$CONSUL_HEALTH_CHECK_INTERVAL
+QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT=$CONSUL_HEALTH_CHECK_TIMEOUT
+QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL=$CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL
+QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER=$CONSUL_HEALTH_CHECK_DEREGISTER_AFTER
 EOF
 chmod 0644 "$ENV_DIR/node.env"
 

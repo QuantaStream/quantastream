@@ -35,10 +35,32 @@ import (
 )
 
 const (
-	checkInterval = 5 * time.Second
-	pollWait      = time.Second
-	sep           = string(os.PathSeparator)
+	checkInterval                       = 5 * time.Second
+	checkTimeout                        = 3 * time.Second
+	checkFailuresBeforeCritical         = 3
+	checkDeregisterCriticalServiceAfter = 2 * time.Minute
+	bulkLoadCheckInterval               = 10 * time.Second
+	bulkLoadCheckTimeout                = 10 * time.Second
+	bulkLoadCheckFailuresBeforeCritical = 6
+	bulkLoadCheckDeregisterAfter        = 10 * time.Minute
+	pollWait                            = time.Second
+	sep                                 = string(os.PathSeparator)
 )
+
+const (
+	nodeConsulHealthCheckProfileEnv                = "QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE"
+	nodeConsulHealthCheckIntervalEnv               = "QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL"
+	nodeConsulHealthCheckTimeoutEnv                = "QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT"
+	nodeConsulHealthCheckFailuresBeforeCriticalEnv = "QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL"
+	nodeConsulHealthCheckDeregisterAfterEnv        = "QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER"
+)
+
+type nodeConsulHealthCheckDefaults struct {
+	interval               time.Duration
+	timeout                time.Duration
+	failuresBeforeCritical int
+	deregisterAfter        time.Duration
+}
 
 // StateType - LifeCycle States of a Node.
 type StateType int
@@ -211,17 +233,80 @@ func (n *Node) register() (err error) {
 	fmt.Printf("register node serviceName=%v hashKey=%v bindAddr=%v port=%v\n", n.serviceName, n.hashKey, n.BindAddr, n.ServicePort)
 
 	err = n.consul.Agent().ServiceRegister(&api.AgentServiceRegistration{
-		Name: n.serviceName,
-		ID:   n.hashKey,
-		Check: &api.AgentServiceCheck{
-			GRPC:     fmt.Sprintf("%v:%v/%v", n.BindAddr, n.ServicePort, n.checkURL),
-			Interval: checkInterval.String(),
-		},
+		Name:    n.serviceName,
+		ID:      n.hashKey,
+		Check:   nodeConsulHealthCheck(n.BindAddr, n.ServicePort, n.checkURL),
 		Tags:    []string{"hashkey: " + n.hashKey, "address: " + n.BindAddr, "port: " + strconv.Itoa(n.ServicePort)},
 		Port:    n.ServicePort,
 		Address: n.BindAddr, // comes out as Service.Address and not Node.Address
 	})
 	return err
+}
+
+func nodeConsulHealthCheck(bindAddr string, servicePort int, checkURL string) *api.AgentServiceCheck {
+	defaults := nodeConsulHealthCheckProfileDefaults()
+	check := &api.AgentServiceCheck{
+		GRPC:                           fmt.Sprintf("%v:%v/%v", bindAddr, servicePort, checkURL),
+		Interval:                       nodeConsulHealthCheckDuration(nodeConsulHealthCheckIntervalEnv, defaults.interval).String(),
+		Timeout:                        nodeConsulHealthCheckDuration(nodeConsulHealthCheckTimeoutEnv, defaults.timeout).String(),
+		FailuresBeforeCritical:         nodeConsulHealthCheckInt(nodeConsulHealthCheckFailuresBeforeCriticalEnv, defaults.failuresBeforeCritical),
+		DeregisterCriticalServiceAfter: nodeConsulHealthCheckDuration(nodeConsulHealthCheckDeregisterAfterEnv, defaults.deregisterAfter).String(),
+	}
+	return check
+}
+
+func nodeConsulHealthCheckProfileDefaults() nodeConsulHealthCheckDefaults {
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv(nodeConsulHealthCheckProfileEnv)))
+	switch profile {
+	case "", "default", "production", "prod":
+		return nodeConsulHealthCheckDefaults{
+			interval:               checkInterval,
+			timeout:                checkTimeout,
+			failuresBeforeCritical: checkFailuresBeforeCritical,
+			deregisterAfter:        checkDeregisterCriticalServiceAfter,
+		}
+	case "bulk-load", "bulk_load", "load", "benchmark":
+		return nodeConsulHealthCheckDefaults{
+			interval:               bulkLoadCheckInterval,
+			timeout:                bulkLoadCheckTimeout,
+			failuresBeforeCritical: bulkLoadCheckFailuresBeforeCritical,
+			deregisterAfter:        bulkLoadCheckDeregisterAfter,
+		}
+	default:
+		u.Warnf("invalid %s=%q; using production health check profile", nodeConsulHealthCheckProfileEnv, profile)
+		return nodeConsulHealthCheckDefaults{
+			interval:               checkInterval,
+			timeout:                checkTimeout,
+			failuresBeforeCritical: checkFailuresBeforeCritical,
+			deregisterAfter:        checkDeregisterCriticalServiceAfter,
+		}
+	}
+}
+
+func nodeConsulHealthCheckDuration(envName string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		u.Warnf("invalid %s=%q; using %s", envName, raw, fallback)
+		return fallback
+	}
+	return duration
+}
+
+func nodeConsulHealthCheckInt(envName string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		u.Warnf("invalid %s=%q; using %d", envName, raw, fallback)
+		return fallback
+	}
+	return value
 }
 
 // What is this for?

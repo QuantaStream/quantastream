@@ -16,6 +16,11 @@ ENVIRONMENT="${QUANTASTREAM_ENV:-PROD}"
 LOG_LEVEL="${QUANTASTREAM_LOG_LEVEL:-INFO}"
 PPROF="${QUANTASTREAM_PPROF:-false}"
 SKIP_NODE_SYNC="${QUANTASTREAM_SKIP_NODE_SYNC:-${QUANTA_DEV_SKIP_SYNC:-1}}"
+CONSUL_HEALTH_CHECK_PROFILE="${QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE:-}"
+CONSUL_HEALTH_CHECK_INTERVAL="${QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL:-}"
+CONSUL_HEALTH_CHECK_TIMEOUT="${QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT:-}"
+CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL="${QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL:-}"
+CONSUL_HEALTH_CHECK_DEREGISTER_AFTER="${QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER:-}"
 
 usage() {
   cat <<'EOF'
@@ -36,6 +41,18 @@ Environment:
   QUANTASTREAM_LOG_LEVEL         ERROR, WARN, INFO, or DEBUG. Defaults to INFO.
   QUANTASTREAM_PPROF             Start pprof/prom listener. Defaults to false.
   QUANTASTREAM_SKIP_NODE_SYNC    Skip legacy peer sync on startup and mark node active. Defaults to 1.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE
+                                  Consul health-check profile. Empty/production
+                                  uses fast failure detection. Use bulk-load
+                                  for large benchmark loads.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL
+                                  Consul gRPC health-check interval.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT
+                                  Consul gRPC health-check timeout.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL
+                                  Consecutive health failures before critical.
+  QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER
+                                  Time critical before service deregistration.
 EOF
 }
 
@@ -65,8 +82,18 @@ echo "data_dir=${DATA_DIR}"
 echo "node=${BIND_ADDRESS}:${NODE_PORT}"
 echo "consul=${CONSUL_ENDPOINT}"
 echo "skip_node_sync=${SKIP_NODE_SYNC}"
+echo "consul_health_check_profile=${CONSUL_HEALTH_CHECK_PROFILE:-production}"
+echo "consul_health_check_interval=${CONSUL_HEALTH_CHECK_INTERVAL:-node-default}"
+echo "consul_health_check_timeout=${CONSUL_HEALTH_CHECK_TIMEOUT:-node-default}"
+echo "consul_health_check_failures_before_critical=${CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL:-node-default}"
+echo "consul_health_check_deregister_after=${CONSUL_HEALTH_CHECK_DEREGISTER_AFTER:-node-default}"
 
 export QUANTASTREAM_SKIP_NODE_SYNC="$SKIP_NODE_SYNC"
+export QUANTASTREAM_CONSUL_HEALTH_CHECK_PROFILE="$CONSUL_HEALTH_CHECK_PROFILE"
+export QUANTASTREAM_CONSUL_HEALTH_CHECK_INTERVAL="$CONSUL_HEALTH_CHECK_INTERVAL"
+export QUANTASTREAM_CONSUL_HEALTH_CHECK_TIMEOUT="$CONSUL_HEALTH_CHECK_TIMEOUT"
+export QUANTASTREAM_CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL="$CONSUL_HEALTH_CHECK_FAILURES_BEFORE_CRITICAL"
+export QUANTASTREAM_CONSUL_HEALTH_CHECK_DEREGISTER_AFTER="$CONSUL_HEALTH_CHECK_DEREGISTER_AFTER"
 
 exec "$NODE_BIN" \
   "$NODE_HASH_KEY" \
