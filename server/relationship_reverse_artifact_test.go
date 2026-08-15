@@ -36,6 +36,13 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	if stats.Rows != 3 || stats.Values != 2 || stats.TargetRows != 3 {
 		t.Fatalf("initial stats = %#v, want rows=3 values=2 targetRows=3", stats)
 	}
+	artifact := index.reverseArtifactCache["lineitem"]["l_orderkey"]
+	if artifact == nil {
+		t.Fatal("reverse artifact not created")
+	}
+	if !reflect.DeepEqual(artifact.rowsByValue[8], []uint64{4, 6}) {
+		t.Fatalf("initial rowsByValue[8] = %#v, want [4 6]", artifact.rowsByValue[8])
+	}
 
 	index.updateBSICache(testRelationshipReverseArtifactBSIFragment(t, shardTime, map[uint64]int64{4: 9}, true))
 
@@ -49,6 +56,9 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	if !reflect.DeepEqual(rownums, []uint64{6}) {
 		t.Fatalf("rownums for value 8 after update = %#v, want [6]", rownums)
 	}
+	if !reflect.DeepEqual(artifact.rowsByValue[8], []uint64{6}) {
+		t.Fatalf("rowsByValue[8] after update = %#v, want [6]", artifact.rowsByValue[8])
+	}
 	rownums, _, ok, err = index.RelationshipReverseArtifactCandidatesStorage("lineitem", "l_orderkey", []int64{9})
 	if err != nil {
 		t.Fatalf("RelationshipReverseArtifactCandidates for value 9 error = %v", err)
@@ -58,6 +68,9 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rownums, []uint64{4}) {
 		t.Fatalf("rownums for value 9 = %#v, want [4]", rownums)
+	}
+	if !reflect.DeepEqual(artifact.rowsByValue[9], []uint64{4}) {
+		t.Fatalf("rowsByValue[9] after update = %#v, want [4]", artifact.rowsByValue[9])
 	}
 
 	index.updateBSICache(testRelationshipReverseArtifactClearFragment(t, shardTime, 6))
@@ -73,6 +86,9 @@ func TestRelationshipReverseArtifactMaintainedByBSIUpdates(t *testing.T) {
 	}
 	if stats.Rows != 2 || stats.Values != 2 {
 		t.Fatalf("stats after clear = %#v, want rows=2 values=2", stats)
+	}
+	if _, ok := artifact.rowsByValue[8]; ok {
+		t.Fatalf("rowsByValue[8] after clear = %#v, want absent", artifact.rowsByValue[8])
 	}
 }
 
