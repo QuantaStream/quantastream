@@ -723,6 +723,22 @@ func TestRelationshipVectorValueSumStorageDiscountedRevenueExpression(t *testing
 	}
 }
 
+func TestRelationshipReverseArtifactStrictlyIncreasingInt64Values(t *testing.T) {
+	values, ok := relationshipReverseArtifactStrictlyIncreasingInt64Values([]uint64{7, 8, 10})
+	if !ok {
+		t.Fatalf("strictly increasing values ok = false, want true")
+	}
+	if !reflect.DeepEqual(values, []int64{7, 8, 10}) {
+		t.Fatalf("strictly increasing values = %#v, want [7 8 10]", values)
+	}
+	if _, ok := relationshipReverseArtifactStrictlyIncreasingInt64Values([]uint64{8, 7}); ok {
+		t.Fatalf("unsorted values ok = true, want false")
+	}
+	if _, ok := relationshipReverseArtifactStrictlyIncreasingInt64Values([]uint64{7, 7}); ok {
+		t.Fatalf("duplicate values ok = true, want false")
+	}
+}
+
 func TestRelationshipAlignedValueSumStorageUsesSortedUniqueRows(t *testing.T) {
 	index := newRelationshipReverseArtifactTestIndex(t, false)
 	shardTime := time.Unix(0, 0).UTC()

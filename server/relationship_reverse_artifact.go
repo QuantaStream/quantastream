@@ -17,6 +17,8 @@ const relationshipSiblingDiversitySkipProjectionRowsExceedsLimit = "projection_r
 var relationshipSiblingDiversityMaxProjectionRows uint64 = 100000
 var relationshipSiblingDiversitySummaryCacheEnabled = true
 
+const relationshipReverseArtifactTimingSampleStride = 1024
+
 // RelationshipReverseArtifactStats summarizes one reverse-artifact lookup.
 type RelationshipReverseArtifactStats struct {
 	Rows          uint64
@@ -855,15 +857,24 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	allRows := make([]uint64, 0, relationshipReverseArtifactCandidateCapacity(rows, valueCount, len(values)))
 	bitmapElapsed := time.Duration(0)
 	rowMaterializationElapsed := time.Duration(0)
+	bitmapSamples := 0
+	rowMaterializationSamples := 0
 	lookupRows := uint64(0)
-	for _, value := range values {
+	for i, value := range values {
 		if readable == nil {
 			continue
 		}
-		bitmapStart := time.Now()
+		sampleBitmap := relationshipReverseArtifactShouldSampleTiming(i)
+		bitmapStart := time.Time{}
+		if sampleBitmap {
+			bitmapStart = time.Now()
+		}
 		bitmap := readable.byValue[value]
 		if bitmap == nil {
-			bitmapElapsed += time.Since(bitmapStart)
+			if sampleBitmap {
+				bitmapElapsed += time.Since(bitmapStart)
+				bitmapSamples++
+			}
 			continue
 		}
 		var iterator roaring64.IntPeekable64
@@ -876,13 +887,23 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			}
 		}
 		if iterator == nil || !iterator.HasNext() {
-			bitmapElapsed += time.Since(bitmapStart)
+			if sampleBitmap {
+				bitmapElapsed += time.Since(bitmapStart)
+				bitmapSamples++
+			}
 			continue
 		}
-		bitmapElapsed += time.Since(bitmapStart)
+		if sampleBitmap {
+			bitmapElapsed += time.Since(bitmapStart)
+			bitmapSamples++
+		}
 		groupOffset := len(allRows)
 		representativeRow := uint64(0)
-		rowMaterializationStart := time.Now()
+		sampleRows := relationshipReverseArtifactShouldSampleTiming(len(groups))
+		rowMaterializationStart := time.Time{}
+		if sampleRows {
+			rowMaterializationStart = time.Now()
+		}
 		for iterator.HasNext() {
 			row := iterator.Next()
 			if len(allRows) == groupOffset {
@@ -891,7 +912,10 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			allRows = append(allRows, row)
 		}
 		groupCount := len(allRows) - groupOffset
-		rowMaterializationElapsed += time.Since(rowMaterializationStart)
+		if sampleRows {
+			rowMaterializationElapsed += time.Since(rowMaterializationStart)
+			rowMaterializationSamples++
+		}
 		if groupCount == 0 {
 			continue
 		}
@@ -903,6 +927,8 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			representativeRow: representativeRow,
 		})
 	}
+	bitmapElapsed = relationshipReverseArtifactScaleSampleDuration(bitmapElapsed, bitmapSamples, len(values))
+	rowMaterializationElapsed = relationshipReverseArtifactScaleSampleDuration(rowMaterializationElapsed, rowMaterializationSamples, len(groups))
 	return groups, allRows, RelationshipReverseArtifactSumStats{
 		Rows:                 rows,
 		Values:               valueCount,
@@ -928,6 +954,9 @@ func relationshipReverseArtifactRequestedValues(readable *relationshipReverseArt
 		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 		return values
 	}
+	if values, ok := relationshipReverseArtifactStrictlyIncreasingInt64Values(parentValues); ok {
+		return values
+	}
 	unique := make(map[int64]struct{}, len(parentValues))
 	values := make([]int64, 0, len(parentValues))
 	for _, value := range parentValues {
@@ -940,6 +969,34 @@ func relationshipReverseArtifactRequestedValues(readable *relationshipReverseArt
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 	return values
+}
+
+func relationshipReverseArtifactStrictlyIncreasingInt64Values(parentValues []uint64) ([]int64, bool) {
+	if len(parentValues) == 0 {
+		return nil, true
+	}
+	const maxInt64AsUint64 = uint64(1<<63 - 1)
+	values := make([]int64, len(parentValues))
+	var previous uint64
+	for i, value := range parentValues {
+		if value > maxInt64AsUint64 || (i > 0 && value <= previous) {
+			return nil, false
+		}
+		values[i] = int64(value)
+		previous = value
+	}
+	return values, true
+}
+
+func relationshipReverseArtifactShouldSampleTiming(index int) bool {
+	return index%relationshipReverseArtifactTimingSampleStride == 0
+}
+
+func relationshipReverseArtifactScaleSampleDuration(sampledDuration time.Duration, sampledCount int, totalCount int) time.Duration {
+	if sampledDuration <= 0 || sampledCount <= 0 || totalCount <= sampledCount {
+		return sampledDuration
+	}
+	return time.Duration(int64(sampledDuration) * int64(totalCount) / int64(sampledCount))
 }
 
 func relationshipReverseArtifactBitmap(rows []uint64) *roaring64.Bitmap {
