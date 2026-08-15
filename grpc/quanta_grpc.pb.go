@@ -820,6 +820,7 @@ const (
 	BitmapIndex_RelationshipReverseArtifactCandidates_FullMethodName = "/shared.BitmapIndex/RelationshipReverseArtifactCandidates"
 	BitmapIndex_RelationshipReverseArtifactStats_FullMethodName      = "/shared.BitmapIndex/RelationshipReverseArtifactStats"
 	BitmapIndex_RelationshipAlignedValueSum_FullMethodName           = "/shared.BitmapIndex/RelationshipAlignedValueSum"
+	BitmapIndex_RelationshipVectorValueSum_FullMethodName            = "/shared.BitmapIndex/RelationshipVectorValueSum"
 	BitmapIndex_BitmapGroupAggregates_FullMethodName                 = "/shared.BitmapIndex/BitmapGroupAggregates"
 	BitmapIndex_CheckoutSequence_FullMethodName                      = "/shared.BitmapIndex/CheckoutSequence"
 	BitmapIndex_TableOperation_FullMethodName                        = "/shared.BitmapIndex/TableOperation"
@@ -844,6 +845,7 @@ type BitmapIndexClient interface {
 	RelationshipReverseArtifactCandidates(ctx context.Context, in *RelationshipReverseArtifactCandidatesRequest, opts ...grpc.CallOption) (*RelationshipReverseArtifactCandidatesResponse, error)
 	RelationshipReverseArtifactStats(ctx context.Context, in *RelationshipReverseArtifactStatsRequest, opts ...grpc.CallOption) (*RelationshipReverseArtifactStatsResponse, error)
 	RelationshipAlignedValueSum(ctx context.Context, in *RelationshipAlignedValueSumRequest, opts ...grpc.CallOption) (*RelationshipAlignedValueSumResponse, error)
+	RelationshipVectorValueSum(ctx context.Context, in *RelationshipVectorValueSumRequest, opts ...grpc.CallOption) (*RelationshipVectorValueSumResponse, error)
 	BitmapGroupAggregates(ctx context.Context, in *BitmapGroupAggregatesRequest, opts ...grpc.CallOption) (*BitmapGroupAggregatesResponse, error)
 	CheckoutSequence(ctx context.Context, in *CheckoutSequenceRequest, opts ...grpc.CallOption) (*CheckoutSequenceResponse, error)
 	TableOperation(ctx context.Context, in *TableOperationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -977,6 +979,15 @@ func (c *bitmapIndexClient) RelationshipAlignedValueSum(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *bitmapIndexClient) RelationshipVectorValueSum(ctx context.Context, in *RelationshipVectorValueSumRequest, opts ...grpc.CallOption) (*RelationshipVectorValueSumResponse, error) {
+	out := new(RelationshipVectorValueSumResponse)
+	err := c.cc.Invoke(ctx, BitmapIndex_RelationshipVectorValueSum_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bitmapIndexClient) BitmapGroupAggregates(ctx context.Context, in *BitmapGroupAggregatesRequest, opts ...grpc.CallOption) (*BitmapGroupAggregatesResponse, error) {
 	out := new(BitmapGroupAggregatesResponse)
 	err := c.cc.Invoke(ctx, BitmapIndex_BitmapGroupAggregates_FullMethodName, in, out, opts...)
@@ -1063,6 +1074,7 @@ type BitmapIndexServer interface {
 	RelationshipReverseArtifactCandidates(context.Context, *RelationshipReverseArtifactCandidatesRequest) (*RelationshipReverseArtifactCandidatesResponse, error)
 	RelationshipReverseArtifactStats(context.Context, *RelationshipReverseArtifactStatsRequest) (*RelationshipReverseArtifactStatsResponse, error)
 	RelationshipAlignedValueSum(context.Context, *RelationshipAlignedValueSumRequest) (*RelationshipAlignedValueSumResponse, error)
+	RelationshipVectorValueSum(context.Context, *RelationshipVectorValueSumRequest) (*RelationshipVectorValueSumResponse, error)
 	BitmapGroupAggregates(context.Context, *BitmapGroupAggregatesRequest) (*BitmapGroupAggregatesResponse, error)
 	CheckoutSequence(context.Context, *CheckoutSequenceRequest) (*CheckoutSequenceResponse, error)
 	TableOperation(context.Context, *TableOperationRequest) (*emptypb.Empty, error)
@@ -1106,6 +1118,9 @@ func (UnimplementedBitmapIndexServer) RelationshipReverseArtifactStats(context.C
 }
 func (UnimplementedBitmapIndexServer) RelationshipAlignedValueSum(context.Context, *RelationshipAlignedValueSumRequest) (*RelationshipAlignedValueSumResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RelationshipAlignedValueSum not implemented")
+}
+func (UnimplementedBitmapIndexServer) RelationshipVectorValueSum(context.Context, *RelationshipVectorValueSumRequest) (*RelationshipVectorValueSumResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RelationshipVectorValueSum not implemented")
 }
 func (UnimplementedBitmapIndexServer) BitmapGroupAggregates(context.Context, *BitmapGroupAggregatesRequest) (*BitmapGroupAggregatesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BitmapGroupAggregates not implemented")
@@ -1331,6 +1346,24 @@ func _BitmapIndex_RelationshipAlignedValueSum_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BitmapIndex_RelationshipVectorValueSum_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RelationshipVectorValueSumRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BitmapIndexServer).RelationshipVectorValueSum(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BitmapIndex_RelationshipVectorValueSum_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BitmapIndexServer).RelationshipVectorValueSum(ctx, req.(*RelationshipVectorValueSumRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BitmapIndex_BitmapGroupAggregates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BitmapGroupAggregatesRequest)
 	if err := dec(in); err != nil {
@@ -1517,6 +1550,10 @@ var BitmapIndex_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RelationshipAlignedValueSum",
 			Handler:    _BitmapIndex_RelationshipAlignedValueSum_Handler,
+		},
+		{
+			MethodName: "RelationshipVectorValueSum",
+			Handler:    _BitmapIndex_RelationshipVectorValueSum_Handler,
 		},
 		{
 			MethodName: "BitmapGroupAggregates",

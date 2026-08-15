@@ -1487,6 +1487,78 @@ func (c *BitmapIndex) RelationshipAlignedValueSum(index, valueField string, from
 	return aggregateRelationshipAlignedValueSumResponses(responses, childRows, parentRows)
 }
 
+// RelationshipVectorValueSum asks readable nodes to expand source-domain values
+// through maintained reverse relationship artifacts and aggregate child-domain
+// BSI values grouped by source value.
+func (c *BitmapIndex) RelationshipVectorValueSum(index, vectorField, valueField string, fromTime, toTime int64, sourceValues []int64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
+	if index == "" {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipVectorValueSum: index not specified")
+	}
+	if vectorField == "" {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipVectorValueSum: vector field not specified")
+	}
+	if valueField == "" {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipVectorValueSum: value field not specified")
+	}
+	req := &pb.RelationshipVectorValueSumRequest{
+		Index:        index,
+		VectorField:  vectorField,
+		ValueField:   valueField,
+		FromTime:     fromTime,
+		ToTime:       toTime,
+		SourceValues: append([]int64(nil), sourceValues...),
+	}
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		callStart := time.Now()
+		response, err := c.local.RelationshipVectorValueSum(ctx, req)
+		callElapsed := time.Since(callStart)
+		if err != nil {
+			return nil, RelationshipAlignedValueSumStats{}, false, err
+		}
+		groups, stats, ok, err := aggregateRelationshipVectorValueSumResponses([]relationshipVectorValueSumClientResult{{
+			response: response,
+			elapsed:  callElapsed,
+		}}, sourceValues)
+		stats.ClientRPCElapsed = callElapsed
+		stats.MaxClientRPCElapsed = callElapsed
+		return groups, stats, ok, err
+	}
+
+	clients := c.activeClientsSnapshot()
+	if len(clients) == 0 {
+		return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipVectorValueSum: no active bitmap nodes")
+	}
+	resultChan := make(chan relationshipVectorValueSumClientResult, len(clients))
+	var eg errgroup.Group
+	for _, n := range clients {
+		client := n.client
+		clientIndex := n.index
+		eg.Go(func() error {
+			response, elapsed, err := c.relationshipVectorValueSumClient(client, req, clientIndex)
+			if err != nil {
+				return err
+			}
+			resultChan <- relationshipVectorValueSumClientResult{
+				response: response,
+				elapsed:  elapsed,
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, RelationshipAlignedValueSumStats{}, false, err
+	}
+	close(resultChan)
+
+	responses := make([]relationshipVectorValueSumClientResult, 0, len(clients))
+	for result := range resultChan {
+		responses = append(responses, result)
+	}
+	return aggregateRelationshipVectorValueSumResponses(responses, sourceValues)
+}
+
 func (c *BitmapIndex) relationshipAlignedValueSumClients(index, valueField string, fromTime, toTime int64) ([]bitmapClientSnapshot, error) {
 	if c.Conn == nil {
 		return nil, fmt.Errorf("RelationshipAlignedValueSum: connection not configured")
@@ -1681,6 +1753,11 @@ type relationshipAlignedValueSumClientResult struct {
 	elapsed  time.Duration
 }
 
+type relationshipVectorValueSumClientResult struct {
+	response *pb.RelationshipVectorValueSumResponse
+	elapsed  time.Duration
+}
+
 func aggregateRelationshipAlignedValueSumResponses(responses []relationshipAlignedValueSumClientResult, childRows, parentRows []uint64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
 	stats := RelationshipAlignedValueSumStats{
 		Rows:         uint64(len(childRows)),
@@ -1712,6 +1789,65 @@ func aggregateRelationshipAlignedValueSumResponses(responses []relationshipAlign
 				sum.SetInt64(0)
 			} else if _, parsed := sum.SetString(protoGroup.GetSum(), 10); !parsed {
 				return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipAlignedValueSum: could not parse sum %q", protoGroup.GetSum())
+			}
+			parent := protoGroup.GetParentValue()
+			group := groupsByParent[parent]
+			if group == nil {
+				group = &RelationshipAlignedValueSumGroup{
+					ParentValue:       parent,
+					RepresentativeRow: protoGroup.GetRepresentativeRow(),
+					Sum:               big.NewInt(0),
+				}
+				groupsByParent[parent] = group
+			}
+			if group.RepresentativeRow == 0 {
+				group.RepresentativeRow = protoGroup.GetRepresentativeRow()
+			}
+			group.Count += protoGroup.GetCount()
+			group.Sum.Add(group.Sum, sum)
+		}
+	}
+	groups := relationshipAlignedValueSumSortedGroups(groupsByParent)
+	stats.Groups = len(groups)
+	stats.Values = uint64(len(groups))
+	stats.TargetRows = 0
+	for _, group := range groups {
+		stats.TargetRows += group.Count
+	}
+	stats.MaxClientRPCElapsed = maxRPC
+	return groups, stats, ok, nil
+}
+
+func aggregateRelationshipVectorValueSumResponses(responses []relationshipVectorValueSumClientResult, sourceValues []int64) ([]RelationshipAlignedValueSumGroup, RelationshipAlignedValueSumStats, bool, error) {
+	stats := RelationshipAlignedValueSumStats{
+		SourceValues: relationshipReverseArtifactUniqueInt64Count(sourceValues),
+	}
+	groupsByParent := make(map[uint64]*RelationshipAlignedValueSumGroup)
+	ok := len(responses) > 0
+	var maxRPC time.Duration
+	for _, result := range responses {
+		response := result.response
+		if response == nil {
+			ok = false
+			continue
+		}
+		if !response.GetOk() {
+			ok = false
+		}
+		stats.addProto(response.GetStats())
+		stats.ClientRPCElapsed += result.elapsed
+		if result.elapsed > maxRPC {
+			maxRPC = result.elapsed
+		}
+		for _, protoGroup := range response.GetGroups() {
+			if protoGroup == nil || protoGroup.GetCount() == 0 {
+				continue
+			}
+			sum := new(big.Int)
+			if protoGroup.GetSum() == "" {
+				sum.SetInt64(0)
+			} else if _, parsed := sum.SetString(protoGroup.GetSum(), 10); !parsed {
+				return nil, RelationshipAlignedValueSumStats{}, false, fmt.Errorf("RelationshipVectorValueSum: could not parse sum %q", protoGroup.GetSum())
 			}
 			parent := protoGroup.GetParentValue()
 			group := groupsByParent[parent]
@@ -2174,6 +2310,22 @@ func (c *BitmapIndex) relationshipAlignedValueSumClient(client pb.BitmapIndexCli
 	elapsed := time.Since(start)
 	if err != nil {
 		return nil, elapsed, fmt.Errorf("%v.RelationshipAlignedValueSum(_) = _, %v, node = %s", client, err,
+			c.ClientConnections()[clientIndex].Target())
+	}
+	return result, elapsed, nil
+}
+
+func (c *BitmapIndex) relationshipVectorValueSumClient(client pb.BitmapIndexClient, req *pb.RelationshipVectorValueSumRequest,
+	clientIndex int) (*pb.RelationshipVectorValueSumResponse, time.Duration, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+	defer cancel()
+
+	start := time.Now()
+	result, err := client.RelationshipVectorValueSum(ctx, req)
+	elapsed := time.Since(start)
+	if err != nil {
+		return nil, elapsed, fmt.Errorf("%v.RelationshipVectorValueSum(_) = _, %v, node = %s", client, err,
 			c.ClientConnections()[clientIndex].Target())
 	}
 	return result, elapsed, nil

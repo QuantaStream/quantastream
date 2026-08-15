@@ -17,6 +17,7 @@ type LegacyDirectRelationshipVectorAggregateRequest struct {
 	ValueField      string
 	ChildRows       []qsbridge.QuantaRownum
 	ParentRows      []qsbridge.QuantaRownum
+	SourceValues    []int64
 	FromEpochMillis int64
 	ToEpochMillis   int64
 }

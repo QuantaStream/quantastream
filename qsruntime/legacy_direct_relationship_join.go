@@ -1002,6 +1002,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	result.Probes = append(result.Probes, pruneProbes...)
 	result.Probes = append(result.Probes, initialRowProbes...)
 	result.Probes = append(result.Probes, prefilterProbes...)
+	groupedFields := request.Query.ProjectionFields
+	if len(request.Materialization.ProjectionFields) > 0 {
+		groupedFields = request.Materialization.ProjectionFields
+	}
+	if earlyResult, handled, err := e.legacyDirectRelationshipQ3OrderRevenueEarlyStorageResult(ctx, request, edges, groupedFields, rowsByTable, fullDomainInitialRowsByRole, result); handled || err != nil {
+		return earlyResult, err
+	}
 	iterations := 0
 	singlePassApplied := false
 	singlePassReason := "not_evaluated"

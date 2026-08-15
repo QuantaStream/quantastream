@@ -163,6 +163,18 @@ func (a LocalBitmapIndexAdapter) RelationshipAlignedValueSum(ctx context.Context
 	return result, err
 }
 
+// RelationshipVectorValueSum forwards a reverse-artifact aggregate request
+// without a gRPC client hop.
+func (a LocalBitmapIndexAdapter) RelationshipVectorValueSum(ctx context.Context, req *pb.RelationshipVectorValueSumRequest) (*pb.RelationshipVectorValueSumResponse, error) {
+	if a.Index == nil {
+		return nil, fmt.Errorf("local BitmapIndex adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Index.RelationshipVectorValueSum(ctx, req)
+	observeLocalNodeCall(a.Observer, "BitmapIndex", "RelationshipVectorValueSum", start, err)
+	return result, err
+}
+
 // Join forwards a join request without a gRPC client hop.
 func (a LocalBitmapIndexAdapter) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
 	if a.Index == nil {

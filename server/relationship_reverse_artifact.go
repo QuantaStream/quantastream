@@ -666,6 +666,89 @@ func (m *BitmapIndex) RelationshipAlignedValueSumStorage(index, valueField strin
 	return groups, stats, true, nil
 }
 
+// RelationshipVectorValueSumStorage expands source-domain values through a
+// maintained reverse relationship artifact and aggregates child-domain BSI
+// values grouped by the source value. This avoids returning the expanded child
+// row vector to the query process when the caller only needs grouped measure
+// state.
+func (m *BitmapIndex) RelationshipVectorValueSumStorage(index, vectorField, valueField string, fromTime, toTime int64, sourceValues []int64) ([]RelationshipReverseArtifactSumGroup, RelationshipReverseArtifactSumStats, bool, error) {
+	if strings.TrimSpace(vectorField) == "" {
+		return nil, RelationshipReverseArtifactSumStats{}, false, fmt.Errorf("relationship vector value sum requires vector field")
+	}
+	if strings.TrimSpace(valueField) == "" {
+		return nil, RelationshipReverseArtifactSumStats{}, false, fmt.Errorf("relationship vector value sum requires value field")
+	}
+	if !m.relationshipReverseArtifactEnabled(index, vectorField) {
+		return nil, RelationshipReverseArtifactSumStats{}, false, nil
+	}
+	uniqueSourceValues := relationshipReverseArtifactUniqueInt64Values(sourceValues)
+	stats := RelationshipReverseArtifactSumStats{
+		SourceValues: len(uniqueSourceValues),
+	}
+	if len(uniqueSourceValues) == 0 {
+		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
+	}
+
+	lookupStart := time.Now()
+	m.reverseArtifactLock.Lock()
+	fields := m.reverseArtifactCache[index]
+	if fields == nil {
+		m.reverseArtifactLock.Unlock()
+		return nil, stats, false, nil
+	}
+	artifact := fields[vectorField]
+	if artifact == nil {
+		m.reverseArtifactLock.Unlock()
+		return nil, stats, false, nil
+	}
+	readable := m.relationshipReverseArtifactReadableData(index, vectorField, artifact)
+	if readable == nil {
+		m.reverseArtifactLock.Unlock()
+		stats.LookupElapsed = time.Since(lookupStart)
+		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
+	}
+	stats.Rows = readable.rows
+	stats.Values = uint64(len(readable.byValue))
+	allRows := make([]uint64, 0, relationshipReverseArtifactCandidateCapacity(readable.rows, uint64(len(readable.byValue)), len(uniqueSourceValues)))
+	parentRows := make([]uint64, 0, cap(allRows))
+	for _, sourceValue := range uniqueSourceValues {
+		if sourceValue < 0 {
+			continue
+		}
+		bitmap := readable.byValue[sourceValue]
+		if bitmap == nil || bitmap.IsEmpty() {
+			continue
+		}
+		rows := bitmap.ToArray()
+		parentValue := uint64(sourceValue)
+		for _, rownum := range rows {
+			allRows = append(allRows, rownum)
+			parentRows = append(parentRows, parentValue)
+		}
+	}
+	m.reverseArtifactLock.Unlock()
+	stats.LookupElapsed = time.Since(lookupStart)
+	if len(allRows) == 0 {
+		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
+	}
+
+	projectionStart := time.Now()
+	groupsByParent, projectionStats, aggregateElapsed, err := m.aggregateAlignedValuesWithStats(index, valueField, fromTime, toTime, allRows, parentRows)
+	if err != nil {
+		return nil, stats, true, err
+	}
+	stats.ProjectionElapsed = time.Since(projectionStart)
+	stats.ProjectionStats = projectionStats
+	stats.AggregateElapsed = aggregateElapsed
+	stats.Groups = len(groupsByParent)
+	groups := relationshipReverseArtifactSortedSumGroups(groupsByParent)
+	stats.TargetRows = 0
+	for _, group := range groups {
+		stats.TargetRows += group.Count
+	}
+	return groups, stats, true, nil
+}
+
 func (m *BitmapIndex) aggregateAlignedValuesWithStats(index, valueField string, fromTime, toTime int64, rownums []uint64, parentRows []uint64) (map[uint64]*RelationshipReverseArtifactSumGroup, ProjectBSIStats, time.Duration, error) {
 	if priceField, discountField, ok := qsbridge.ParseRelationshipAlignedDiscountedRevenueField(valueField); ok {
 		return m.aggregateAlignedDiscountedRevenueWithStats(index, priceField, discountField, fromTime, toTime, rownums, parentRows)

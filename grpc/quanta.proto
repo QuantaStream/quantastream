@@ -42,6 +42,7 @@ service BitmapIndex {
   rpc RelationshipReverseArtifactCandidates(RelationshipReverseArtifactCandidatesRequest) returns (RelationshipReverseArtifactCandidatesResponse) {}
   rpc RelationshipReverseArtifactStats(RelationshipReverseArtifactStatsRequest) returns (RelationshipReverseArtifactStatsResponse) {}
   rpc RelationshipAlignedValueSum(RelationshipAlignedValueSumRequest) returns (RelationshipAlignedValueSumResponse) {}
+  rpc RelationshipVectorValueSum(RelationshipVectorValueSumRequest) returns (RelationshipVectorValueSumResponse) {}
   rpc BitmapGroupAggregates(BitmapGroupAggregatesRequest) returns (BitmapGroupAggregatesResponse) {}
   rpc CheckoutSequence(CheckoutSequenceRequest) returns (CheckoutSequenceResponse) {}
   rpc TableOperation(TableOperationRequest) returns (google.protobuf.Empty) {}
@@ -349,6 +350,21 @@ message RelationshipAlignedValueSumStats {
 }
 
 message RelationshipAlignedValueSumResponse {
+  repeated RelationshipAlignedValueSumGroup groups = 1;
+  RelationshipAlignedValueSumStats stats = 2;
+  bool ok = 3;
+}
+
+message RelationshipVectorValueSumRequest {
+  string   index = 1;
+  string   vectorField = 2;
+  string   valueField = 3;
+  int64    fromTime = 4;
+  int64    toTime = 5;
+  repeated int64 sourceValues = 6;
+}
+
+message RelationshipVectorValueSumResponse {
   repeated RelationshipAlignedValueSumGroup groups = 1;
   RelationshipAlignedValueSumStats stats = 2;
   bool ok = 3;

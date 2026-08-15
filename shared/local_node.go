@@ -53,6 +53,7 @@ type LocalBitmapIndexService interface {
 	RelationshipReverseArtifactCandidates(context.Context, *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error)
 	RelationshipReverseArtifactStats(context.Context, *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error)
 	RelationshipAlignedValueSum(context.Context, *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error)
+	RelationshipVectorValueSum(context.Context, *pb.RelationshipVectorValueSumRequest) (*pb.RelationshipVectorValueSumResponse, error)
 	Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error)
 	CheckoutSequence(context.Context, *pb.CheckoutSequenceRequest) (*pb.CheckoutSequenceResponse, error)
 	BulkClear(context.Context, *pb.BulkClearRequest) (*empty.Empty, error)

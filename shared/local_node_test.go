@@ -315,6 +315,8 @@ type recordingLocalBitmapIndexService struct {
 	relationshipReverseArtifactStatsRequest *pb.RelationshipReverseArtifactStatsRequest
 	relationshipSumCalls                    int
 	relationshipSumRequest                  *pb.RelationshipAlignedValueSumRequest
+	relationshipVectorSumCalls              int
+	relationshipVectorSumRequest            *pb.RelationshipVectorValueSumRequest
 	bulkClearCalls                          int
 	bulkClearRequest                        *pb.BulkClearRequest
 	batchMutateCalls                        int
@@ -399,6 +401,12 @@ func (s *recordingLocalBitmapIndexService) RelationshipAlignedValueSum(_ context
 	s.relationshipSumCalls++
 	s.relationshipSumRequest = req
 	return &pb.RelationshipAlignedValueSumResponse{Ok: true}, nil
+}
+
+func (s *recordingLocalBitmapIndexService) RelationshipVectorValueSum(_ context.Context, req *pb.RelationshipVectorValueSumRequest) (*pb.RelationshipVectorValueSumResponse, error) {
+	s.relationshipVectorSumCalls++
+	s.relationshipVectorSumRequest = req
+	return &pb.RelationshipVectorValueSumResponse{Ok: true}, nil
 }
 
 func (s *recordingLocalBitmapIndexService) Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error) {

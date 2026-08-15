@@ -37,17 +37,21 @@ func (r LegacyDirectSharedRelationshipVectorAggregateReader) ReadRelationshipVec
 	if valueIndex != read.VectorIndex {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
 	}
-	if len(read.ChildRows) != len(read.ParentRows) {
+	sourceValueMode := len(read.SourceValues) > 0
+	if !sourceValueMode && len(read.ChildRows) != len(read.ParentRows) {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, true, fmt.Errorf("relationship aggregate requires aligned child and parent rows")
 	}
 	if r.Remote != nil {
 		result, diagnostics, ok, err := r.Remote.ReadRelationshipVectorAggregate(ctx, read)
-		if ok && err == nil && !diagnostics.BlocksNative() && len(read.ChildRows) > 0 && len(result.Groups) == 0 {
+		if ok && err == nil && !diagnostics.BlocksNative() && (len(read.ChildRows) > 0 || len(read.SourceValues) > 0) && len(result.Groups) == 0 {
 			ok = false
 		}
 		if err != nil || diagnostics.BlocksNative() || ok {
 			return result, diagnostics, ok, err
 		}
+	}
+	if sourceValueMode {
+		return LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
 	}
 	projectionSource := r.Source
 	if projectionSource == nil {

@@ -678,7 +678,8 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx c
 	if valueIndex != read.VectorIndex {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, false, nil
 	}
-	if len(read.ChildRows) != len(read.ParentRows) {
+	sourceValueMode := len(read.SourceValues) > 0
+	if !sourceValueMode && len(read.ChildRows) != len(read.ParentRows) {
 		return LegacyDirectRelationshipVectorAggregateResult{}, nil, true, fmt.Errorf("relationship aggregate requires aligned child and parent rows")
 	}
 	validationField := qsbridge.RelationshipAlignedAggregateValidationField(read.ValueField)
@@ -705,9 +706,59 @@ func (p LegacyQuantaSourceSessionProvider) ReadRelationshipVectorAggregate(ctx c
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "relationship aggregate reader has no bitmap index"),
 		}, true, nil
 	}
+	fromTime, toTime := legacyDirectRelationshipAggregateWindowNanos(p.Source, valueIndex, read)
+	if sourceValueMode {
+		groups, stats, ok, err := legacySession.Session.BitIndex.RelationshipVectorValueSum(
+			valueIndex,
+			read.VectorField,
+			read.ValueField,
+			fromTime,
+			toTime,
+			append([]int64(nil), read.SourceValues...),
+		)
+		if err != nil || !ok {
+			return LegacyDirectRelationshipVectorAggregateResult{}, nil, ok, err
+		}
+		result := LegacyDirectRelationshipVectorAggregateResult{
+			Mode:                       "shared_remote_reverse_artifact_sum",
+			Rows:                       stats.Rows,
+			Values:                     stats.Values,
+			SourceValues:               stats.SourceValues,
+			TargetRows:                 stats.TargetRows,
+			LookupElapsed:              stats.LookupElapsed,
+			ProjectionElapsed:          stats.ProjectionElapsed,
+			AggregateElapsed:           stats.AggregateElapsed,
+			Nodes:                      stats.Nodes,
+			ProjectionShardsVisited:    int(stats.Projection.ShardsVisited),
+			ProjectionShardsInWindow:   int(stats.Projection.ShardsInWindow),
+			ProjectionShardsLocal:      int(stats.Projection.ShardsLocal),
+			ProjectionShardsRetained:   int(stats.Projection.ShardsRetained),
+			ProjectionRetainedRows:     stats.Projection.RetainedRows,
+			ProjectionRetainBypassRows: stats.Projection.RetainBypassRows,
+			ProjectionRetainElapsed:    stats.Projection.RetainElapsed,
+			ProjectionValueElapsed:     stats.Projection.ValueElapsed,
+			ProjectionMergeElapsed:     stats.Projection.MergeElapsed,
+			ClientRPCElapsed:           stats.ClientRPCElapsed,
+			MaxClientRPCElapsed:        stats.MaxClientRPCElapsed,
+		}
+		result.Groups = make([]LegacyDirectRelationshipVectorAggregateGroup, 0, len(groups))
+		for _, group := range groups {
+			sum := big.NewInt(0)
+			if group.Sum != nil {
+				sum.Set(group.Sum)
+			}
+			result.Groups = append(result.Groups, LegacyDirectRelationshipVectorAggregateGroup{
+				ParentRow:              qsbridge.QuantaRownum(group.ParentValue),
+				RepresentativeChildRow: qsbridge.QuantaRownum(group.RepresentativeRow),
+				Count:                  group.Count,
+				Sum:                    sum,
+			})
+		}
+		return result, nil, true, nil
+	}
+
 	childRows := legacyDirectRelationshipAggregateUint64Rows(read.ChildRows)
 	parentRows := legacyDirectRelationshipAggregateUint64Rows(read.ParentRows)
-	fromTime, toTime := legacyDirectRelationshipAggregateWindowNanos(p.Source, valueIndex, read)
 	groups, stats, ok, err := legacySession.Session.BitIndex.RelationshipAlignedValueSum(
 		valueIndex,
 		read.ValueField,

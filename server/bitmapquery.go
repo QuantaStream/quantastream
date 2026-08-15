@@ -1326,6 +1326,39 @@ func (m *BitmapIndex) RelationshipAlignedValueSum(ctx context.Context, req *pb.R
 	if err != nil {
 		return nil, err
 	}
+	return &pb.RelationshipAlignedValueSumResponse{
+		Groups: relationshipValueSumGroupsToProto(groups),
+		Stats:  relationshipAlignedValueSumStatsToProto(stats),
+		Ok:     ok,
+	}, nil
+}
+
+// RelationshipVectorValueSum computes a node-local partial aggregate by first
+// expanding source-domain values through a maintained reverse relationship
+// artifact and then grouping child-domain BSI values by source value.
+func (m *BitmapIndex) RelationshipVectorValueSum(ctx context.Context, req *pb.RelationshipVectorValueSumRequest) (*pb.RelationshipVectorValueSumResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	groups, stats, ok, err := m.RelationshipVectorValueSumStorage(
+		req.GetIndex(),
+		req.GetVectorField(),
+		req.GetValueField(),
+		req.GetFromTime(),
+		req.GetToTime(),
+		req.GetSourceValues(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.RelationshipVectorValueSumResponse{
+		Groups: relationshipValueSumGroupsToProto(groups),
+		Stats:  relationshipAlignedValueSumStatsToProto(stats),
+		Ok:     ok,
+	}, nil
+}
+
+func relationshipValueSumGroupsToProto(groups []RelationshipReverseArtifactSumGroup) []*pb.RelationshipAlignedValueSumGroup {
 	protoGroups := make([]*pb.RelationshipAlignedValueSumGroup, 0, len(groups))
 	for _, group := range groups {
 		sum := ""
@@ -1339,11 +1372,7 @@ func (m *BitmapIndex) RelationshipAlignedValueSum(ctx context.Context, req *pb.R
 			Sum:               sum,
 		})
 	}
-	return &pb.RelationshipAlignedValueSumResponse{
-		Groups: protoGroups,
-		Stats:  relationshipAlignedValueSumStatsToProto(stats),
-		Ok:     ok,
-	}, nil
+	return protoGroups
 }
 
 func relationshipAlignedValueSumStatsToProto(stats RelationshipReverseArtifactSumStats) *pb.RelationshipAlignedValueSumStats {
