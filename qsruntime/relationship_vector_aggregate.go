@@ -42,6 +42,9 @@ type LegacyDirectRelationshipVectorAggregateResult struct {
 	LookupValueElapsed         time.Duration
 	LookupBitmapElapsed        time.Duration
 	LookupToArrayElapsed       time.Duration
+	LookupRowSliceElapsed      time.Duration
+	LookupRowSliceGroups       int
+	LookupMode                 string
 	LookupGroups               int
 	LookupRows                 uint64
 	ProjectionElapsed          time.Duration

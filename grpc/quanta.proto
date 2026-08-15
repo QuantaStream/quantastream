@@ -352,6 +352,9 @@ message RelationshipAlignedValueSumStats {
   int64    lookupToArrayElapsedNanos = 12;
   uint64   lookupGroups = 13;
   uint64   lookupRows = 14;
+  int64    lookupRowSliceElapsedNanos = 15;
+  uint64   lookupRowSliceGroups = 16;
+  string   lookupMode = 17;
 }
 
 message RelationshipAlignedValueSumResponse {

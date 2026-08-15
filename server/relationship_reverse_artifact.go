@@ -59,20 +59,23 @@ type RelationshipReverseArtifactSumGroup struct {
 
 // RelationshipReverseArtifactSumStats summarizes storage-side grouped work.
 type RelationshipReverseArtifactSumStats struct {
-	Rows                 uint64
-	Values               uint64
-	SourceValues         int
-	TargetRows           uint64
-	Groups               int
-	LookupElapsed        time.Duration
-	LookupValueElapsed   time.Duration
-	LookupBitmapElapsed  time.Duration
-	LookupToArrayElapsed time.Duration
-	LookupGroups         int
-	LookupRows           uint64
-	ProjectionElapsed    time.Duration
-	AggregateElapsed     time.Duration
-	ProjectionStats      ProjectBSIStats
+	Rows                  uint64
+	Values                uint64
+	SourceValues          int
+	TargetRows            uint64
+	Groups                int
+	LookupElapsed         time.Duration
+	LookupValueElapsed    time.Duration
+	LookupBitmapElapsed   time.Duration
+	LookupToArrayElapsed  time.Duration
+	LookupRowSliceElapsed time.Duration
+	LookupRowSliceGroups  int
+	LookupMode            string
+	LookupGroups          int
+	LookupRows            uint64
+	ProjectionElapsed     time.Duration
+	AggregateElapsed      time.Duration
+	ProjectionStats       ProjectBSIStats
 }
 
 type relationshipReverseArtifactSnapshot struct {
@@ -858,43 +861,28 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 	allRows := make([]uint64, 0, relationshipReverseArtifactCandidateCapacity(rows, valueCount, len(values)))
 	bitmapElapsed := time.Duration(0)
 	rowMaterializationElapsed := time.Duration(0)
+	rowSliceElapsed := time.Duration(0)
 	bitmapSamples := 0
 	rowMaterializationSamples := 0
 	lookupRows := uint64(0)
+	lookupMode := "bitmap_intersection"
+	rowSliceStart := time.Time{}
+	if childSet == nil {
+		lookupMode = "row_slice_cache"
+		rowSliceStart = time.Now()
+	}
 	for i, value := range values {
 		if readable == nil {
 			continue
 		}
-		sampleBitmap := relationshipReverseArtifactShouldSampleTiming(i)
-		bitmapStart := time.Time{}
-		if sampleBitmap {
-			bitmapStart = time.Now()
-		}
 		if childSet == nil {
 			rowsForValue := relationshipReverseArtifactRowsForValue(readable, value)
 			if len(rowsForValue) == 0 {
-				if sampleBitmap {
-					bitmapElapsed += time.Since(bitmapStart)
-					bitmapSamples++
-				}
 				continue
 			}
-			if sampleBitmap {
-				bitmapElapsed += time.Since(bitmapStart)
-				bitmapSamples++
-			}
 			groupOffset := len(allRows)
-			sampleRows := relationshipReverseArtifactShouldSampleTiming(len(groups))
-			rowMaterializationStart := time.Time{}
-			if sampleRows {
-				rowMaterializationStart = time.Now()
-			}
 			allRows = append(allRows, rowsForValue...)
 			groupCount := len(allRows) - groupOffset
-			if sampleRows {
-				rowMaterializationElapsed += time.Since(rowMaterializationStart)
-				rowMaterializationSamples++
-			}
 			if groupCount == 0 {
 				continue
 			}
@@ -907,6 +895,11 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			})
 			continue
 		}
+		sampleBitmap := relationshipReverseArtifactShouldSampleTiming(i)
+		bitmapStart := time.Time{}
+		if sampleBitmap {
+			bitmapStart = time.Now()
+		}
 		bitmap := readable.byValue[value]
 		if bitmap == nil {
 			if sampleBitmap {
@@ -916,13 +909,9 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			continue
 		}
 		var iterator roaring64.IntPeekable64
-		if childSet == nil {
-			iterator = bitmap.Iterator()
-		} else {
-			retained := roaring64.And(bitmap, childSet)
-			if retained != nil {
-				iterator = retained.Iterator()
-			}
+		retained := roaring64.And(bitmap, childSet)
+		if retained != nil {
+			iterator = retained.Iterator()
 		}
 		if iterator == nil || !iterator.HasNext() {
 			if sampleBitmap {
@@ -965,18 +954,24 @@ func (m *BitmapIndex) relationshipReverseArtifactSumRows(index, field string, ch
 			representativeRow: representativeRow,
 		})
 	}
+	if !rowSliceStart.IsZero() {
+		rowSliceElapsed = time.Since(rowSliceStart)
+	}
 	bitmapElapsed = relationshipReverseArtifactScaleSampleDuration(bitmapElapsed, bitmapSamples, len(values))
 	rowMaterializationElapsed = relationshipReverseArtifactScaleSampleDuration(rowMaterializationElapsed, rowMaterializationSamples, len(groups))
 	return groups, allRows, RelationshipReverseArtifactSumStats{
-		Rows:                 rows,
-		Values:               valueCount,
-		SourceValues:         len(values),
-		LookupElapsed:        time.Since(start),
-		LookupValueElapsed:   valueElapsed,
-		LookupBitmapElapsed:  bitmapElapsed,
-		LookupToArrayElapsed: rowMaterializationElapsed,
-		LookupGroups:         len(groups),
-		LookupRows:           lookupRows,
+		Rows:                  rows,
+		Values:                valueCount,
+		SourceValues:          len(values),
+		LookupElapsed:         time.Since(start),
+		LookupValueElapsed:    valueElapsed,
+		LookupBitmapElapsed:   bitmapElapsed,
+		LookupToArrayElapsed:  rowMaterializationElapsed,
+		LookupRowSliceElapsed: rowSliceElapsed,
+		LookupRowSliceGroups:  len(groups),
+		LookupMode:            lookupMode,
+		LookupGroups:          len(groups),
+		LookupRows:            lookupRows,
 	}, true
 }
 

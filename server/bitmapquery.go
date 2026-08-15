@@ -1377,20 +1377,23 @@ func relationshipValueSumGroupsToProto(groups []RelationshipReverseArtifactSumGr
 
 func relationshipAlignedValueSumStatsToProto(stats RelationshipReverseArtifactSumStats) *pb.RelationshipAlignedValueSumStats {
 	return &pb.RelationshipAlignedValueSumStats{
-		Rows:                      stats.Rows,
-		Values:                    stats.Values,
-		SourceValues:              uint64(stats.SourceValues),
-		TargetRows:                stats.TargetRows,
-		Groups:                    uint64(stats.Groups),
-		LookupElapsedNanos:        stats.LookupElapsed.Nanoseconds(),
-		ProjectionElapsedNanos:    stats.ProjectionElapsed.Nanoseconds(),
-		AggregateElapsedNanos:     stats.AggregateElapsed.Nanoseconds(),
-		Projection:                projectBSIStatsToProto(stats.ProjectionStats),
-		LookupValueElapsedNanos:   stats.LookupValueElapsed.Nanoseconds(),
-		LookupBitmapElapsedNanos:  stats.LookupBitmapElapsed.Nanoseconds(),
-		LookupToArrayElapsedNanos: stats.LookupToArrayElapsed.Nanoseconds(),
-		LookupGroups:              uint64(stats.LookupGroups),
-		LookupRows:                stats.LookupRows,
+		Rows:                       stats.Rows,
+		Values:                     stats.Values,
+		SourceValues:               uint64(stats.SourceValues),
+		TargetRows:                 stats.TargetRows,
+		Groups:                     uint64(stats.Groups),
+		LookupElapsedNanos:         stats.LookupElapsed.Nanoseconds(),
+		ProjectionElapsedNanos:     stats.ProjectionElapsed.Nanoseconds(),
+		AggregateElapsedNanos:      stats.AggregateElapsed.Nanoseconds(),
+		Projection:                 projectBSIStatsToProto(stats.ProjectionStats),
+		LookupValueElapsedNanos:    stats.LookupValueElapsed.Nanoseconds(),
+		LookupBitmapElapsedNanos:   stats.LookupBitmapElapsed.Nanoseconds(),
+		LookupToArrayElapsedNanos:  stats.LookupToArrayElapsed.Nanoseconds(),
+		LookupGroups:               uint64(stats.LookupGroups),
+		LookupRows:                 stats.LookupRows,
+		LookupRowSliceElapsedNanos: stats.LookupRowSliceElapsed.Nanoseconds(),
+		LookupRowSliceGroups:       uint64(stats.LookupRowSliceGroups),
+		LookupMode:                 stats.LookupMode,
 	}
 }
 
