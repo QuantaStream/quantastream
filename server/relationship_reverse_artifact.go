@@ -589,6 +589,9 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 	for _, group := range groupRows {
 		allRows = append(allRows, group.rows...)
 	}
+	if priceField, discountField, ok := qsbridge.ParseRelationshipAlignedDiscountedRevenueField(valueField); ok {
+		return m.relationshipReverseArtifactDiscountedRevenueSum(index, priceField, discountField, fromTime, toTime, groupRows, allRows, stats)
+	}
 	foundSet := relationshipReverseArtifactBitmap(allRows)
 	projectionStart := time.Now()
 	valuesByField, statsByField, err := m.ProjectBSIValuesWithStats(index, []string{valueField}, fromTime, toTime, allRows, foundSet, false)
@@ -611,6 +614,57 @@ func (m *BitmapIndex) RelationshipReverseArtifactSum(index, vectorField, valueFi
 				continue
 			}
 			sum.Add(sum, values[position])
+			count++
+		}
+		offset += len(group.rows)
+		if count == 0 {
+			continue
+		}
+		groups = append(groups, RelationshipReverseArtifactSumGroup{
+			ParentValue:       uint64(group.parentValue),
+			RepresentativeRow: group.rows[0],
+			Count:             count,
+			Sum:               sum,
+		})
+		stats.TargetRows += count
+	}
+	stats.AggregateElapsed = time.Since(aggregateStart)
+	stats.Groups = len(groups)
+	return groups, stats, true, nil
+}
+
+func (m *BitmapIndex) relationshipReverseArtifactDiscountedRevenueSum(index, priceField, discountField string, fromTime, toTime int64, groupRows []relationshipReverseArtifactGroupRows, allRows []uint64, stats RelationshipReverseArtifactSumStats) ([]RelationshipReverseArtifactSumGroup, RelationshipReverseArtifactSumStats, bool, error) {
+	foundSet := relationshipReverseArtifactBitmap(allRows)
+	projectionStart := time.Now()
+	valuesByField, statsByField, err := m.ProjectBSIInt64ValuesWithStats(
+		index,
+		[]string{priceField, discountField},
+		fromTime,
+		toTime,
+		allRows,
+		foundSet,
+		false,
+	)
+	if err != nil {
+		return nil, stats, true, err
+	}
+	stats.ProjectionElapsed = time.Since(projectionStart)
+	stats.ProjectionStats = relationshipReverseArtifactCombineProjectionStats(statsByField[priceField], statsByField[discountField])
+	priceValues := valuesByField[priceField]
+	discountValues := valuesByField[discountField]
+
+	aggregateStart := time.Now()
+	groups := make([]RelationshipReverseArtifactSumGroup, 0, len(groupRows))
+	offset := 0
+	for _, group := range groupRows {
+		sum := big.NewInt(0)
+		count := uint64(0)
+		for i := 0; i < len(group.rows); i++ {
+			position := offset + i
+			if position >= len(priceValues.Exists) || position >= len(discountValues.Exists) || !priceValues.Exists[position] || !discountValues.Exists[position] {
+				continue
+			}
+			sum.Add(sum, relationshipDiscountedRevenueScaledValue(priceValues.Values[position], discountValues.Values[position]))
 			count++
 		}
 		offset += len(group.rows)
@@ -678,75 +732,14 @@ func (m *BitmapIndex) RelationshipVectorValueSumStorage(index, vectorField, valu
 	if strings.TrimSpace(valueField) == "" {
 		return nil, RelationshipReverseArtifactSumStats{}, false, fmt.Errorf("relationship vector value sum requires value field")
 	}
-	if !m.relationshipReverseArtifactEnabled(index, vectorField) {
-		return nil, RelationshipReverseArtifactSumStats{}, false, nil
-	}
-	uniqueSourceValues := relationshipReverseArtifactUniqueInt64Values(sourceValues)
+	parentValues := relationshipReverseArtifactUint64SourceValues(sourceValues)
 	stats := RelationshipReverseArtifactSumStats{
-		SourceValues: len(uniqueSourceValues),
+		SourceValues: len(parentValues),
 	}
-	if len(uniqueSourceValues) == 0 {
+	if len(parentValues) == 0 {
 		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
 	}
-
-	lookupStart := time.Now()
-	m.reverseArtifactLock.Lock()
-	fields := m.reverseArtifactCache[index]
-	if fields == nil {
-		m.reverseArtifactLock.Unlock()
-		return nil, stats, false, nil
-	}
-	artifact := fields[vectorField]
-	if artifact == nil {
-		m.reverseArtifactLock.Unlock()
-		return nil, stats, false, nil
-	}
-	readable := m.relationshipReverseArtifactReadableData(index, vectorField, artifact)
-	if readable == nil {
-		m.reverseArtifactLock.Unlock()
-		stats.LookupElapsed = time.Since(lookupStart)
-		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
-	}
-	stats.Rows = readable.rows
-	stats.Values = uint64(len(readable.byValue))
-	allRows := make([]uint64, 0, relationshipReverseArtifactCandidateCapacity(readable.rows, uint64(len(readable.byValue)), len(uniqueSourceValues)))
-	parentRows := make([]uint64, 0, cap(allRows))
-	for _, sourceValue := range uniqueSourceValues {
-		if sourceValue < 0 {
-			continue
-		}
-		bitmap := readable.byValue[sourceValue]
-		if bitmap == nil || bitmap.IsEmpty() {
-			continue
-		}
-		rows := bitmap.ToArray()
-		parentValue := uint64(sourceValue)
-		for _, rownum := range rows {
-			allRows = append(allRows, rownum)
-			parentRows = append(parentRows, parentValue)
-		}
-	}
-	m.reverseArtifactLock.Unlock()
-	stats.LookupElapsed = time.Since(lookupStart)
-	if len(allRows) == 0 {
-		return []RelationshipReverseArtifactSumGroup{}, stats, true, nil
-	}
-
-	projectionStart := time.Now()
-	groupsByParent, projectionStats, aggregateElapsed, err := m.aggregateAlignedValuesWithStats(index, valueField, fromTime, toTime, allRows, parentRows)
-	if err != nil {
-		return nil, stats, true, err
-	}
-	stats.ProjectionElapsed = time.Since(projectionStart)
-	stats.ProjectionStats = projectionStats
-	stats.AggregateElapsed = aggregateElapsed
-	stats.Groups = len(groupsByParent)
-	groups := relationshipReverseArtifactSortedSumGroups(groupsByParent)
-	stats.TargetRows = 0
-	for _, group := range groups {
-		stats.TargetRows += group.Count
-	}
-	return groups, stats, true, nil
+	return m.RelationshipReverseArtifactSum(index, vectorField, valueField, fromTime, toTime, nil, parentValues)
 }
 
 func (m *BitmapIndex) aggregateAlignedValuesWithStats(index, valueField string, fromTime, toTime int64, rownums []uint64, parentRows []uint64) (map[uint64]*RelationshipReverseArtifactSumGroup, ProjectBSIStats, time.Duration, error) {
@@ -1123,6 +1116,22 @@ func relationshipReverseArtifactUniqueInt64Values(values []int64) []int64 {
 		unique = append(unique, value)
 	}
 	return unique
+}
+
+func relationshipReverseArtifactUint64SourceValues(values []int64) []uint64 {
+	unique := relationshipReverseArtifactUniqueInt64Values(values)
+	if len(unique) == 0 {
+		return nil
+	}
+	sourceValues := make([]uint64, 0, len(unique))
+	for _, value := range unique {
+		if value < 0 {
+			continue
+		}
+		sourceValues = append(sourceValues, uint64(value))
+	}
+	sort.Slice(sourceValues, func(i, j int) bool { return sourceValues[i] < sourceValues[j] })
+	return sourceValues
 }
 
 func relationshipReverseArtifactCandidateCapacity(rows uint64, values uint64, sourceValueCount int) int {

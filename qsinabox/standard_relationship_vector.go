@@ -3,6 +3,7 @@ package qsinabox
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -168,6 +169,25 @@ func (r StandardRelationshipVectorAggregateReader) ReadRelationshipVectorAggrega
 			return standardRelationshipAggregateResult(groups, stats, "aligned_relationship_sum"), nil, ok, err
 		}
 	}
+	if len(read.SourceValues) > 0 {
+		sourceValues := standardRelationshipAggregateSourceValues(read.SourceValues)
+		if len(sourceValues) == 0 {
+			return standardRelationshipAggregateResult(nil, server.RelationshipReverseArtifactSumStats{SourceValues: len(sourceValues)}, "reverse_artifact_source_sum"), nil, true, nil
+		}
+		groups, stats, ok, err := r.Direct.RelationshipReverseArtifactSum(
+			read.VectorIndex,
+			read.VectorField,
+			read.ValueField,
+			fromTime,
+			toTime,
+			nil,
+			sourceValues,
+		)
+		if err != nil || !ok {
+			return qsruntime.LegacyDirectRelationshipVectorAggregateResult{}, nil, ok, err
+		}
+		return standardRelationshipAggregateResult(groups, stats, "reverse_artifact_source_sum"), nil, true, nil
+	}
 	groups, stats, ok, err := r.Direct.RelationshipReverseArtifactSum(
 		read.VectorIndex,
 		read.VectorField,
@@ -289,4 +309,22 @@ func standardRelationshipAggregateRows(rownums []qsbridge.QuantaRownum) []uint64
 		rows = append(rows, uint64(rownum))
 	}
 	return rows
+}
+
+func standardRelationshipAggregateSourceValues(values []int64) []uint64 {
+	sourceValues := make([]uint64, 0, len(values))
+	seen := make(map[uint64]struct{}, len(values))
+	for _, value := range values {
+		if value < 0 {
+			continue
+		}
+		unsigned := uint64(value)
+		if _, ok := seen[unsigned]; ok {
+			continue
+		}
+		seen[unsigned] = struct{}{}
+		sourceValues = append(sourceValues, unsigned)
+	}
+	sort.Slice(sourceValues, func(i, j int) bool { return sourceValues[i] < sourceValues[j] })
+	return sourceValues
 }
