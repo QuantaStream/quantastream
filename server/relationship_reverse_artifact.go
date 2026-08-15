@@ -507,12 +507,18 @@ func (m *BitmapIndex) relationshipReverseArtifactCandidateValues(index, field st
 		seenRows = make(map[uint64]struct{}, targetCapacity)
 	}
 	if len(readableSources) > 0 {
+		requestedValues := make(map[int64]struct{}, len(uniqueValues))
 		for _, value := range uniqueValues {
-			for _, readable := range readableSources {
-				if readable == nil {
+			requestedValues[value] = struct{}{}
+		}
+		for _, readable := range readableSources {
+			if readable == nil {
+				continue
+			}
+			for value, bitmap := range readable.byValue {
+				if _, ok := requestedValues[value]; !ok {
 					continue
 				}
-				bitmap := readable.byValue[value]
 				if bitmap == nil {
 					continue
 				}
