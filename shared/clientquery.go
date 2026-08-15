@@ -657,7 +657,7 @@ func (c *BitmapIndex) queryClient(client pb.BitmapIndexClient, q *pb.BitmapQuery
 	if err != nil {
 		t := ""
 		return nil, fmt.Errorf("%v.Query(_) = _, %v, node = %s", client, err, t)
-		// c.ClientConnections()[clientIndex].Target())
+		// c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }
@@ -844,7 +844,7 @@ func (c *BitmapIndex) joinClient(client pb.BitmapIndexClient, req *pb.JoinReques
 	result, err := client.Join(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.Join(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }

@@ -117,6 +117,16 @@ func TestActiveClientsSnapshotKeepsNodesWithMissingCachedStatus(t *testing.T) {
 	}
 }
 
+func TestClientTargetHandlesMembershipShrink(t *testing.T) {
+	conn := NewDefaultConnection("membership-shrink")
+	conn.clientConn = []*grpc.ClientConn{{}, {}}
+
+	target := conn.ClientTarget(2)
+	if !strings.Contains(target, "index=2 unavailable clients=2") {
+		t.Fatalf("target = %q, want unavailable index detail", target)
+	}
+}
+
 func TestRelationshipAlignedValueSumClientsRoutesExactValueShard(t *testing.T) {
 	conn := NewDefaultConnection("aligned-sum-route")
 	conn.ServicePort = 4010

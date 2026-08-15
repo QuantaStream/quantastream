@@ -895,7 +895,7 @@ func (c *BitmapIndex) clearClient(client pb.BitmapIndexClient, req *pb.BulkClear
 
 	if _, err := client.BulkClear(ctx, req); err != nil {
 		return fmt.Errorf("%v.BulkClear(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return nil
 }
@@ -946,7 +946,7 @@ func (c *BitmapIndex) sequencerClient(client pb.BitmapIndexClient, req *pb.Check
 
 	if result, err = client.CheckoutSequence(ctx, req); err != nil {
 		return nil, fmt.Errorf("%v.CheckoutSequence(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }
@@ -2277,7 +2277,7 @@ func (c *BitmapIndex) projectionClient(client pb.BitmapIndexClient, req *pb.Proj
 	result, err := client.Projection(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.Projection(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }
@@ -2291,7 +2291,7 @@ func (c *BitmapIndex) compareBSIFieldsClient(client pb.BitmapIndexClient, req *p
 	result, err := client.CompareBSIFields(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.CompareBSIFields(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }
@@ -2307,7 +2307,7 @@ func (c *BitmapIndex) relationshipReverseArtifactCandidatesClient(client pb.Bitm
 	elapsed := time.Since(start)
 	if err != nil {
 		return nil, elapsed, fmt.Errorf("%v.RelationshipReverseArtifactCandidates(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, elapsed, nil
 }
@@ -2323,7 +2323,7 @@ func (c *BitmapIndex) relationshipReverseArtifactStatsClient(client pb.BitmapInd
 	elapsed := time.Since(start)
 	if err != nil {
 		return nil, elapsed, fmt.Errorf("%v.RelationshipReverseArtifactStats(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, elapsed, nil
 }
@@ -2339,7 +2339,7 @@ func (c *BitmapIndex) relationshipAlignedValueSumClient(client pb.BitmapIndexCli
 	elapsed := time.Since(start)
 	if err != nil {
 		return nil, elapsed, fmt.Errorf("%v.RelationshipAlignedValueSum(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, elapsed, nil
 }
@@ -2355,7 +2355,7 @@ func (c *BitmapIndex) relationshipVectorValueSumClient(client pb.BitmapIndexClie
 	elapsed := time.Since(start)
 	if err != nil {
 		return nil, elapsed, fmt.Errorf("%v.RelationshipVectorValueSum(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, elapsed, nil
 }
@@ -2369,7 +2369,7 @@ func (c *BitmapIndex) bitmapGroupAggregatesClient(client pb.BitmapIndexClient, r
 	result, err := client.BitmapGroupAggregates(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.BitmapGroupAggregates(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return result, nil
 }
@@ -2433,7 +2433,7 @@ func (c *BitmapIndex) tableOperationClient(client pb.BitmapIndexClient, req *pb.
 	_, err := client.TableOperation(ctx, req)
 	if err != nil {
 		return fmt.Errorf("%v.TableOperation(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return nil
 }
@@ -2480,7 +2480,7 @@ func (c *BitmapIndex) commitClient(client pb.BitmapIndexClient, clientIndex int)
 	_, err := client.Commit(ctx, &empty.Empty{}) // where does this go, on the nodes?
 	if err != nil {
 		return fmt.Errorf("%v.Commit(_) = _, %v, node = %s", client, err,
-			c.ClientConnections()[clientIndex].Target())
+			c.ClientTarget(clientIndex))
 	}
 	return nil
 }
@@ -2504,7 +2504,7 @@ func (c *BitmapIndex) shardInfoClient(client pb.BitmapIndexClient, req *pb.Parti
 	response, err := client.PartitionInfo(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%v.PartitionInfo(_) = _, %v, node = %s", client, err,
-			c.Conn.ClientConnections()[clientIndex].Target())
+			c.Conn.ClientTarget(clientIndex))
 	}
 	return response, nil
 }
@@ -2588,7 +2588,7 @@ func (c *BitmapIndex) purgePartitionClient(client pb.BitmapIndexClient, req *pb.
 	_, err := client.OfflinePartitions(ctx, req)
 	if err != nil {
 		return fmt.Errorf("%v.OfflinePartitions(_) = _, %v, node = %s", client, err,
-			c.Conn.ClientConnections()[clientIndex].Target())
+			c.Conn.ClientTarget(clientIndex))
 	}
 	return nil
 }

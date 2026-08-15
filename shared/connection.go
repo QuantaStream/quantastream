@@ -736,6 +736,19 @@ func (m *Conn) ClientConnections() []*grpc.ClientConn {
 	return m.clientConn
 }
 
+func (m *Conn) ClientTarget(clientIndex int) string {
+	m.nodeMapLock.RLock()
+	defer m.nodeMapLock.RUnlock()
+
+	if clientIndex < 0 || clientIndex >= len(m.clientConn) {
+		return fmt.Sprintf("index=%d unavailable clients=%d", clientIndex, len(m.clientConn))
+	}
+	if m.clientConn[clientIndex] == nil {
+		return fmt.Sprintf("index=%d nil client", clientIndex)
+	}
+	return m.clientConn[clientIndex].Target()
+}
+
 // GetNodeMap - Return list of members
 func (m *Conn) GetNodeMap() map[string]int {
 

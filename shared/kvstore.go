@@ -123,7 +123,7 @@ func (c *KVStore) Put(indexPath string, k interface{}, v interface{}, pathIsKey 
 		_, err := c.client[i].Put(ctx, &pb.IndexKVPair{IndexPath: indexPath, Key: ToBytes(k),
 			Value: [][]byte{ToBytes(v)}})
 		if err != nil {
-			return fmt.Errorf("%v.Put(_) = _, %v: [%s]", c.client[i], err, c.Conn.ClientConnections()[i].Target())
+			return fmt.Errorf("%v.Put(_) = _, %v: [%s]", c.client[i], err, c.Conn.ClientTarget(i))
 		}
 	}
 	return nil
@@ -472,7 +472,7 @@ func (c *KVStore) Lookup(indexPath string, k interface{}, valueType reflect.Kind
 	lookup, err := client.Lookup(ctx, &pb.IndexKVPair{IndexPath: indexPath, Key: ToBytes(k), Value: nil})
 	if err != nil {
 		return uint64(0), fmt.Errorf("%v.Lookup(_) = _, %v: [%s]", c.client, err,
-			c.Conn.ClientConnections()[indices[0]].Target())
+			c.Conn.ClientTarget(indices[0]))
 	}
 	if lookup.Value != nil && len(lookup.Value) != 0 && len(lookup.Value[0]) != 0 {
 		return UnmarshalValue(valueType, lookup.Value[0]), nil
@@ -723,7 +723,7 @@ func (c *KVStore) PutStringEnum(index, value string) (uint64, error) {
 	// If the value already exists it will silently return the existing rowID
 	rowID, err := c.client[indices[0]].PutStringEnum(ctx, &pb.StringEnum{IndexPath: index, Value: value})
 	if err != nil {
-		return 0, fmt.Errorf("PutStringEnum(_) = _, %v: [%s]", err, c.Conn.ClientConnections()[indices[0]].Target())
+		return 0, fmt.Errorf("PutStringEnum(_) = _, %v: [%s]", err, c.Conn.ClientTarget(indices[0]))
 	}
 
 	// Parallel iterate over remaining client list and perform Put operation (replication)
