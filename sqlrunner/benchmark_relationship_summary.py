@@ -137,6 +137,7 @@ PREAGG_COUNTER_NAMES = [
     "graph_grouped_aggregate_final_materialization_rows",
     "graph_grouped_aggregate_final_materialization_fields",
     "graph_grouped_aggregate_preagg_storage_nodes",
+    "graph_grouped_aggregate_preagg_storage_lookup_row_slice_groups",
     "graph_grouped_aggregate_preagg_storage_projection_shards_visited",
     "graph_grouped_aggregate_preagg_storage_projection_shards_retained",
     "graph_grouped_aggregate_preagg_storage_projection_rows_retained",
@@ -168,6 +169,7 @@ POLICY_EVENT_NAMES = [
     "graph_single_pass_reason",
     "graph_sink",
     "graph_reduced_roles",
+    "graph_grouped_aggregate_preagg_storage_lookup_mode",
     "graph_grouped_aggregate_preagg_storage_sorted_child_rows",
 ]
 
