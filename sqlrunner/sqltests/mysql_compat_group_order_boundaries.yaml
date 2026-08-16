@@ -174,3 +174,88 @@ tests:
         - [2, 68]
         - [3, 77]
         - [4, 58]
+
+  - id: mysql_compat_group_order_boundaries.020.group_by_limit_zero
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by market_segment
+      limit 0
+    expect:
+      columns: [market_segment, customer_count]
+      row_count: 0
+
+  - id: mysql_compat_group_order_boundaries.021.group_by_offset_beyond_result
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by, limit, offset]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by market_segment
+      limit 2 offset 99
+    expect:
+      columns: [market_segment, customer_count]
+      row_count: 0
+
+  - id: mysql_compat_group_order_boundaries.022.group_by_limit_offset_zero
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by, limit, offset]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by market_segment
+      limit 2 offset 0
+    expect:
+      columns: [market_segment, customer_count]
+      row_count: 2
+
+  - id: mysql_compat_group_order_boundaries.023.group_by_comma_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by, limit, offset]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by market_segment
+      limit 1, 2
+    expect:
+      columns: [market_segment, customer_count]
+      row_count: 2
+
+  - id: mysql_compat_group_order_boundaries.024.group_by_alias_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_alias_order_limit_boundary
+    compatibility: mysql
+    requires: [select, table_scan, aliases, group_by, count, order_by, limit, offset]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by market_segment
+      order by market_segment
+      limit 2 offset 1
+    expect:
+      columns: [market_segment, customer_count]
+      row_count: 2
