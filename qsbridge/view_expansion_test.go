@@ -86,6 +86,44 @@ func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsScalarAggregateLogicalView(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "lineitem_count_view",
+		SQL:    "select count(*) as line_count from lineitem",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan("select line_count from lineitem_count_view")
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "lineitem" {
+		t.Fatalf("sources = %#v, want lineitem", result.Query.Sources)
+	}
+	if got := result.Query.Sources[0].RefName(); got != "lineitem_count_view" {
+		t.Fatalf("source ref = %q, want lineitem_count_view", got)
+	}
+	if len(result.Query.Aggregates) != 1 {
+		t.Fatalf("aggregates = %#v, want one count aggregate", result.Query.Aggregates)
+	}
+	if result.Query.Aggregates[0].Function != "count" || result.Query.Aggregates[0].Alias != "line_count" {
+		t.Fatalf("aggregate = %#v, want count line_count", result.Query.Aggregates[0])
+	}
+	if len(result.Query.Projection) != 1 || result.Query.Projection[0].Alias != "line_count" {
+		t.Fatalf("projection = %#v, want line_count", result.Query.Projection)
+	}
+	ref, ok := result.Query.Projection[0].Expr.(AggregateRefExpr)
+	if !ok || ref.Index != 0 || ref.Alias != "line_count" {
+		t.Fatalf("projection expr = %#v, want line_count aggregate ref", result.Query.Projection[0].Expr)
+	}
+}
+
 func TestPlannerExpandsLogicalViewWithInnerJoin(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

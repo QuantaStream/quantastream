@@ -58,15 +58,18 @@ tests:
       from lineitem
 
   - id: mysql_compat_views_boundaries.011.select_aggregate_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_query_boundary
     compatibility: mysql
     requires: [select, view_reference, aggregate]
-    issue: "Aggregate view definitions are persisted but not expandable yet."
     sql: |
       select line_count
       from qs_mysql_compat_aggregate_view
+    expect:
+      columns: [line_count]
+      rows:
+        - [60175]
 
   - id: mysql_compat_views_boundaries.012.drop_aggregate_view
     status: supported
