@@ -218,6 +218,7 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinScalarFunction("abs", DataTypeFloat, sqlExpressionFunctionContexts),
 	builtinScalarFunction("round", DataTypeFloat, sqlExpressionFunctionContexts),
 	builtinScalarFunction("timediff", DataTypeInt, sqlExpressionFunctionContexts),
+	builtinScalarFunction("date_format", DataTypeString, sqlExpressionFunctionContexts),
 	builtinScalarFunction("year", DataTypeInt, sqlExpressionFunctionContexts, "yy"),
 	builtinScalarFunction("mm", DataTypeInt, sqlExpressionFunctionContexts, "monthofyear", "month"),
 	builtinScalarFunction("yymm", DataTypeInt, sqlExpressionFunctionContexts),

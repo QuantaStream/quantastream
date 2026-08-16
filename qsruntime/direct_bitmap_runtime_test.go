@@ -112,6 +112,23 @@ func TestDirectBitmapMaterializedDayOfWeekUsesMySQLConvention(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedDateFormatCall(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{}
+	call := qsbridge.Call(
+		"date_format",
+		qsbridge.Literal(qsbridge.ValueString, "1995-03-15 04:05:06"),
+		qsbridge.Literal(qsbridge.ValueString, "%Y-%m %d %H:%i:%s %W"),
+	)
+
+	cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(call, rowSet, 0)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if cell.Kind != qsbridge.ValueString || cell.Value != "1995-03 15 04:05:06 Wednesday" {
+		t.Fatalf("date_format = %#v, want formatted timestamp", cell)
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}

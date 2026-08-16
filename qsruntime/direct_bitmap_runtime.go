@@ -994,6 +994,8 @@ func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materializ
 		return directBitmapEvaluateMaterializedToDateCall(call, materialized, index)
 	case "timediff":
 		return directBitmapEvaluateMaterializedTimeDiffCall(call, materialized, index)
+	case "date_format":
+		return directBitmapEvaluateMaterializedDateFormatCall(call, materialized, index)
 	case "hash.sha256":
 		return directBitmapEvaluateMaterializedSHA256Call(call, materialized, index)
 	default:
@@ -1455,6 +1457,121 @@ func directBitmapEvaluateMaterializedTimeDiffCall(call qsbridge.CallExpr, materi
 		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: diff.String()}, nil
 	default:
 		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q does not support scale %q", call.Name, scale))
+	}
+}
+
+func directBitmapEvaluateMaterializedDateFormatCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) != 2 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects two arguments", call.Name))
+	}
+	valueCell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	formatCell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[1], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(valueCell) || directBitmapNullCell(formatCell) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	value, ok := directBitmapTimeCellValue(valueCell)
+	if !ok {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q requires a time value", call.Name))
+	}
+	formatted := directBitmapMySQLDateFormat(value.UTC(), fmt.Sprint(formatCell.Value))
+	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: formatted}, nil
+}
+
+func directBitmapMySQLDateFormat(value time.Time, format string) string {
+	var builder strings.Builder
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' || i == len(format)-1 {
+			builder.WriteByte(format[i])
+			continue
+		}
+		i++
+		switch format[i] {
+		case '%':
+			builder.WriteByte('%')
+		case 'Y':
+			builder.WriteString(fmt.Sprintf("%04d", value.Year()))
+		case 'y':
+			builder.WriteString(fmt.Sprintf("%02d", value.Year()%100))
+		case 'm':
+			builder.WriteString(fmt.Sprintf("%02d", int(value.Month())))
+		case 'c':
+			builder.WriteString(fmt.Sprint(int(value.Month())))
+		case 'M':
+			builder.WriteString(value.Month().String())
+		case 'b':
+			builder.WriteString(value.Month().String()[:3])
+		case 'd':
+			builder.WriteString(fmt.Sprintf("%02d", value.Day()))
+		case 'e':
+			builder.WriteString(fmt.Sprint(value.Day()))
+		case 'D':
+			builder.WriteString(fmt.Sprintf("%d%s", value.Day(), directBitmapOrdinalSuffix(value.Day())))
+		case 'H':
+			builder.WriteString(fmt.Sprintf("%02d", value.Hour()))
+		case 'k':
+			builder.WriteString(fmt.Sprint(value.Hour()))
+		case 'h', 'I':
+			hour := value.Hour() % 12
+			if hour == 0 {
+				hour = 12
+			}
+			builder.WriteString(fmt.Sprintf("%02d", hour))
+		case 'l':
+			hour := value.Hour() % 12
+			if hour == 0 {
+				hour = 12
+			}
+			builder.WriteString(fmt.Sprint(hour))
+		case 'i':
+			builder.WriteString(fmt.Sprintf("%02d", value.Minute()))
+		case 's', 'S':
+			builder.WriteString(fmt.Sprintf("%02d", value.Second()))
+		case 'f':
+			builder.WriteString(fmt.Sprintf("%06d", value.Nanosecond()/1000))
+		case 'p':
+			if value.Hour() < 12 {
+				builder.WriteString("AM")
+			} else {
+				builder.WriteString("PM")
+			}
+		case 'T':
+			builder.WriteString(value.Format("15:04:05"))
+		case 'r':
+			builder.WriteString(value.Format("03:04:05 PM"))
+		case 'W':
+			builder.WriteString(value.Weekday().String())
+		case 'a':
+			builder.WriteString(value.Weekday().String()[:3])
+		case 'w':
+			builder.WriteString(fmt.Sprint(int(value.Weekday())))
+		case 'j':
+			builder.WriteString(fmt.Sprintf("%03d", value.YearDay()))
+		default:
+			builder.WriteByte(format[i])
+		}
+	}
+	return builder.String()
+}
+
+func directBitmapOrdinalSuffix(day int) string {
+	if day%100 >= 11 && day%100 <= 13 {
+		return "th"
+	}
+	switch day % 10 {
+	case 1:
+		return "st"
+	case 2:
+		return "nd"
+	case 3:
+		return "rd"
+	default:
+		return "th"
 	}
 }
 

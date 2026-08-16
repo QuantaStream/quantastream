@@ -31,13 +31,12 @@ tests:
         - [stream]
 
   - id: mysql_compat_functions_boundaries.003.date_format_literal
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_datetime_boundary
     compatibility: mysql
     requires: [select, date_format]
-    issue: "DATE_FORMAT is not implemented as a scalar function yet."
     sql: |
       select date_format('1995-03-15', '%Y-%m') as value
     expect:
