@@ -127,16 +127,20 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.031.select_distinct_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_query_boundary
     compatibility: mysql
     requires: [select, view_reference, distinct]
-    issue: "DISTINCT view definitions are persisted but not expandable yet."
     sql: |
       select market_segment
       from qs_mysql_compat_distinct_view
+      order by market_segment
       limit 1
+    expect:
+      columns: [market_segment]
+      rows:
+        - ["AUTOMOBILE"]
 
   - id: mysql_compat_views_boundaries.032.drop_distinct_view
     status: supported

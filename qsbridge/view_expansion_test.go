@@ -124,6 +124,46 @@ func TestPlannerExpandsScalarAggregateLogicalView(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsDistinctLogicalView(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_segments",
+		SQL:    "select distinct c_name as customer_name from customer",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan("select customer_name from customer_segments order by customer_name limit 1")
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if !result.Query.Result.Distinct {
+		t.Fatalf("distinct = false, want true")
+	}
+	if result.Query.Result.Limit != 1 {
+		t.Fatalf("limit = %d, want 1", result.Query.Result.Limit)
+	}
+	if len(result.Query.OrderBy) != 1 {
+		t.Fatalf("order by = %#v, want one sort", result.Query.OrderBy)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "customer" {
+		t.Fatalf("sources = %#v, want customer", result.Query.Sources)
+	}
+	if got := result.Query.Sources[0].RefName(); got != "customer_segments" {
+		t.Fatalf("source ref = %q, want customer_segments", got)
+	}
+	if len(result.Query.Projection) != 1 || result.Query.Projection[0].Alias != "customer_name" {
+		t.Fatalf("projection = %#v, want customer_name", result.Query.Projection)
+	}
+	if !exprReferencesField(result.Query.Projection[0].Expr, "customer_segments", "c_name") {
+		t.Fatalf("projection expr = %#v, want customer_segments.c_name", result.Query.Projection[0].Expr)
+	}
+}
+
 func TestPlannerExpandsLogicalViewWithInnerJoin(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

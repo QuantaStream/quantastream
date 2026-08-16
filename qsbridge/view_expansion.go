@@ -35,6 +35,7 @@ type viewExpansion struct {
 	aggregates []UnboundAggregate
 	columns    viewProjectionMap
 	viewRef    string
+	distinct   bool
 }
 
 type viewProjectionMap struct {
@@ -103,6 +104,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			return selectStmt, diagnostics
 		}
 		selectStmt.Aggregates = append(expansion.aggregates, selectStmt.Aggregates...)
+	}
+	if expansion.distinct {
+		if diagnostics := validateDistinctViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+			return selectStmt, diagnostics
+		}
+		selectStmt.Result.Distinct = true
 	}
 	var rewriteDiagnostics DiagnosticSet
 	selectStmt, rewriteDiagnostics = rewriteOuterSelectViewReferences(selectStmt, expansion)
@@ -188,6 +195,7 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		aggregates: aggregates,
 		columns:    columns,
 		viewRef:    outerRef,
+		distinct:   viewSelect.Result.Distinct,
 	}, nil, true
 }
 
@@ -232,14 +240,64 @@ func validateExpandableViewSelect(schema string, viewName string, selectStmt Unb
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain grouping, having, or order by yet"),
 		}
 	}
-	if selectStmt.Result.Distinct || selectStmt.Result.Limit > 0 || selectStmt.Result.Offset > 0 {
+	if selectStmt.Result.Limit > 0 || selectStmt.Result.Offset > 0 {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain distinct, limit, or offset yet"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain limit or offset yet"),
 		}
 	}
 	if selectStmt.WhereExpr != nil {
 		return DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain grouped boolean predicates yet"),
+		}
+	}
+	return nil
+}
+
+func validateDistinctViewUsage(selectStmt UnboundSelect, expansion viewExpansion) DiagnosticSet {
+	if len(expansion.aggregates) > 0 || len(expansion.joins) > 0 || len(selectStmt.Tables) != len(expansion.tables) || len(selectStmt.Joins) > len(expansion.joins) || len(selectStmt.Predicates) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently support direct projection only"),
+		}
+	}
+	if expansion.columns.wildcard || len(selectStmt.Projection) != len(expansion.columns.exprs) {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently require projecting every view column explicitly"),
+		}
+	}
+	for _, projection := range selectStmt.Projection {
+		field, ok := projection.Expr.(UnboundFieldExpr)
+		if !ok || field.Name == "*" {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently require explicit projected columns"),
+			}
+		}
+		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently support direct projection only"),
+			}
+		}
+		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
+			}
+		}
+	}
+	for _, sort := range selectStmt.OrderBy {
+		field, ok := sort.Expr.(UnboundFieldExpr)
+		if !ok || field.Name == "*" {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently require ordering by projected columns"),
+			}
+		}
+		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "distinct logical views currently support ordering by view columns only"),
+			}
+		}
+		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
+			}
 		}
 	}
 	return nil
