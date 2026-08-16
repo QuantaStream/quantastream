@@ -97,8 +97,7 @@ tests:
     sql: |
       select next_customer_key
       from qs_mysql_compat_expression_view
-      order by next_customer_key
-      limit 1
+      where next_customer_key = 2
     expect:
       columns: [next_customer_key]
       rows:

@@ -77,6 +77,13 @@ func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	if !predicateReferencesField(result.Query.Predicates[0], "customer_next_keys", "c_custkey") {
 		t.Fatalf("predicate = %#v, want expression over customer_next_keys.c_custkey", result.Query.Predicates[0])
 	}
+	predicate, ok := result.Query.Predicates[0].Expr.(BinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expr = %T, want BinaryExpr", result.Query.Predicates[0].Expr)
+	}
+	if _, ok := predicate.Left.(FieldExpr); !ok {
+		t.Fatalf("predicate left = %T, want rewritten FieldExpr", predicate.Left)
+	}
 }
 
 func TestPlannerExpandsLogicalViewWithInnerJoin(t *testing.T) {

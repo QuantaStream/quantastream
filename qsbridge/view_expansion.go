@@ -431,6 +431,9 @@ func rewriteViewColumnExpr(expr UnboundExpr, expansion viewExpansion, diagnostic
 		}
 		return rewriteMappedViewExpr(expr)
 	case UnboundBinaryExpr:
+		if rewritten, ok := rewriteViewColumnComparisonExpr(typed, expansion); ok {
+			return rewritten
+		}
 		typed.Left = rewriteViewColumnExpr(typed.Left, expansion, diagnostics)
 		typed.Right = rewriteViewColumnExpr(typed.Right, expansion, diagnostics)
 		return typed
@@ -453,6 +456,203 @@ func rewriteViewColumnExpr(expr UnboundExpr, expansion viewExpansion, diagnostic
 		return typed
 	default:
 		return expr
+	}
+}
+
+func rewriteViewColumnComparisonExpr(binary UnboundBinaryExpr, expansion viewExpansion) (UnboundExpr, bool) {
+	if !viewExpressionComparisonOp(binary.Op) {
+		return nil, false
+	}
+	if field, ok := binary.Left.(UnboundFieldExpr); ok {
+		if mapped, mappedOK := viewMappedExprForField(field, expansion); mappedOK {
+			return rewriteViewExpressionAliasComparison(mapped, binary.Op, binary.Right)
+		}
+	}
+	if field, ok := binary.Right.(UnboundFieldExpr); ok {
+		if mapped, mappedOK := viewMappedExprForField(field, expansion); mappedOK {
+			return rewriteViewExpressionAliasComparison(mapped, flipViewExpressionComparisonOp(binary.Op), binary.Left)
+		}
+	}
+	return nil, false
+}
+
+func viewMappedExprForField(field UnboundFieldExpr, expansion viewExpansion) (UnboundExpr, bool) {
+	if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+		return nil, false
+	}
+	if field.Name == "*" || expansion.columns.wildcard {
+		return nil, false
+	}
+	return expansionMappedExpr(expansion, field.Name)
+}
+
+func rewriteViewExpressionAliasComparison(expr UnboundExpr, op BinaryOp, value UnboundExpr) (UnboundExpr, bool) {
+	if _, ok := expr.(UnboundFieldExpr); ok {
+		return UnboundBinary(op, expr, value), true
+	}
+	binary, ok := expr.(UnboundBinaryExpr)
+	if !ok {
+		return nil, false
+	}
+	switch binary.Op {
+	case BinaryOpAdd:
+		if field, offset, ok := viewExpressionFieldAndNumericOffset(binary.Left, binary.Right); ok {
+			adjusted, ok := adjustViewExpressionNumericLiteral(value, offset, BinaryOpSubtract)
+			if !ok {
+				return nil, false
+			}
+			return UnboundBinary(op, field, adjusted), true
+		}
+	case BinaryOpSubtract:
+		if field, offset, ok := viewExpressionLeadingFieldAndNumericOffset(binary.Left, binary.Right); ok {
+			adjusted, ok := adjustViewExpressionNumericLiteral(value, offset, BinaryOpAdd)
+			if !ok {
+				return nil, false
+			}
+			return UnboundBinary(op, field, adjusted), true
+		}
+		if offset, field, ok := viewExpressionNumericOffsetAndField(binary.Left, binary.Right); ok {
+			adjusted, ok := adjustViewExpressionNumericLiteral(offset, value, BinaryOpSubtract)
+			if !ok {
+				return nil, false
+			}
+			return UnboundBinary(flipViewExpressionComparisonOp(op), field, adjusted), true
+		}
+	}
+	return nil, false
+}
+
+func viewExpressionLeadingFieldAndNumericOffset(left UnboundExpr, right UnboundExpr) (UnboundFieldExpr, UnboundLiteralExpr, bool) {
+	field, ok := left.(UnboundFieldExpr)
+	if !ok {
+		return UnboundFieldExpr{}, UnboundLiteralExpr{}, false
+	}
+	literal, ok := right.(UnboundLiteralExpr)
+	if !ok || !viewExpressionNumericLiteral(literal) {
+		return UnboundFieldExpr{}, UnboundLiteralExpr{}, false
+	}
+	return field, literal, true
+}
+
+func viewExpressionFieldAndNumericOffset(left UnboundExpr, right UnboundExpr) (UnboundFieldExpr, UnboundLiteralExpr, bool) {
+	if field, ok := left.(UnboundFieldExpr); ok {
+		if literal, literalOK := right.(UnboundLiteralExpr); literalOK && viewExpressionNumericLiteral(literal) {
+			return field, literal, true
+		}
+	}
+	if field, ok := right.(UnboundFieldExpr); ok {
+		if literal, literalOK := left.(UnboundLiteralExpr); literalOK && viewExpressionNumericLiteral(literal) {
+			return field, literal, true
+		}
+	}
+	return UnboundFieldExpr{}, UnboundLiteralExpr{}, false
+}
+
+func viewExpressionNumericOffsetAndField(left UnboundExpr, right UnboundExpr) (UnboundLiteralExpr, UnboundFieldExpr, bool) {
+	field, ok := right.(UnboundFieldExpr)
+	if !ok {
+		return UnboundLiteralExpr{}, UnboundFieldExpr{}, false
+	}
+	literal, ok := left.(UnboundLiteralExpr)
+	if !ok || !viewExpressionNumericLiteral(literal) {
+		return UnboundLiteralExpr{}, UnboundFieldExpr{}, false
+	}
+	return literal, field, true
+}
+
+func adjustViewExpressionNumericLiteral(value UnboundExpr, offset UnboundExpr, op BinaryOp) (UnboundLiteralExpr, bool) {
+	valueLiteral, ok := value.(UnboundLiteralExpr)
+	if !ok || !viewExpressionNumericLiteral(valueLiteral) {
+		return UnboundLiteralExpr{}, false
+	}
+	offsetLiteral, ok := offset.(UnboundLiteralExpr)
+	if !ok || !viewExpressionNumericLiteral(offsetLiteral) {
+		return UnboundLiteralExpr{}, false
+	}
+	valueNumber, valueInt, ok := viewExpressionLiteralNumber(valueLiteral)
+	if !ok {
+		return UnboundLiteralExpr{}, false
+	}
+	offsetNumber, offsetInt, ok := viewExpressionLiteralNumber(offsetLiteral)
+	if !ok {
+		return UnboundLiteralExpr{}, false
+	}
+	adjusted := valueNumber
+	switch op {
+	case BinaryOpAdd:
+		adjusted += offsetNumber
+	case BinaryOpSubtract:
+		adjusted -= offsetNumber
+	default:
+		return UnboundLiteralExpr{}, false
+	}
+	if valueInt && offsetInt && adjusted == float64(int64(adjusted)) {
+		return UnboundLiteral(ValueInt, int64(adjusted)), true
+	}
+	return UnboundLiteral(ValueFloat, adjusted), true
+}
+
+func viewExpressionNumericLiteral(literal UnboundLiteralExpr) bool {
+	switch literal.Kind {
+	case ValueInt, ValueFloat:
+		return true
+	default:
+		return false
+	}
+}
+
+func viewExpressionLiteralNumber(literal UnboundLiteralExpr) (float64, bool, bool) {
+	switch typed := literal.Value.(type) {
+	case int:
+		return float64(typed), true, true
+	case int8:
+		return float64(typed), true, true
+	case int16:
+		return float64(typed), true, true
+	case int32:
+		return float64(typed), true, true
+	case int64:
+		return float64(typed), true, true
+	case uint:
+		return float64(typed), true, true
+	case uint8:
+		return float64(typed), true, true
+	case uint16:
+		return float64(typed), true, true
+	case uint32:
+		return float64(typed), true, true
+	case uint64:
+		return float64(typed), true, true
+	case float32:
+		return float64(typed), false, true
+	case float64:
+		return typed, false, true
+	default:
+		return 0, false, false
+	}
+}
+
+func viewExpressionComparisonOp(op BinaryOp) bool {
+	switch op {
+	case BinaryOpEqual, BinaryOpNotEqual, BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual:
+		return true
+	default:
+		return false
+	}
+}
+
+func flipViewExpressionComparisonOp(op BinaryOp) BinaryOp {
+	switch op {
+	case BinaryOpLess:
+		return BinaryOpGreater
+	case BinaryOpLessEqual:
+		return BinaryOpGreaterEqual
+	case BinaryOpGreater:
+		return BinaryOpLess
+	case BinaryOpGreaterEqual:
+		return BinaryOpLessEqual
+	default:
+		return op
 	}
 }
 
