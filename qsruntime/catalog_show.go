@@ -440,6 +440,129 @@ func showVariableRows(pattern string) []showVariableRow {
 	return filtered
 }
 
+func showWarningsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	_ = request
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:   "catalog",
+			Rownums: []qsbridge.QuantaRownum{},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{
+				describeProjectionVector("Level", qsbridge.DataTypeString, 0),
+				describeProjectionVector("Code", qsbridge.DataTypeInt, 0),
+				describeProjectionVector("Message", qsbridge.DataTypeString, 0),
+			},
+		},
+		Count: 0,
+	}
+}
+
+func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Charset", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Description", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Default collation", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Maxlen", qsbridge.DataTypeInt, len(rows)),
+	}
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.charset)
+		vectors[1].Values[i] = describeStringCell(row.description)
+		vectors[2].Values[i] = describeStringCell(row.defaultCollation)
+		vectors[3].Values[i] = describeIntCell(row.maxlen)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+type showCharacterSetRow struct {
+	charset          string
+	description      string
+	defaultCollation string
+	maxlen           int64
+}
+
+func showCharacterSetRows(pattern string) []showCharacterSetRow {
+	all := []showCharacterSetRow{
+		{charset: "utf8mb4", description: "UTF-8 Unicode", defaultCollation: "utf8mb4_0900_ai_ci", maxlen: 4},
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return all
+	}
+	filtered := make([]showCharacterSetRow, 0, len(all))
+	for _, row := range all {
+		if sqlLikeMatch(row.charset, pattern) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func showCollationRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	rows := showCollationRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Collation", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Charset", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Id", qsbridge.DataTypeInt, len(rows)),
+		describeProjectionVector("Default", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Compiled", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Sortlen", qsbridge.DataTypeInt, len(rows)),
+	}
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.collation)
+		vectors[1].Values[i] = describeStringCell(row.charset)
+		vectors[2].Values[i] = describeIntCell(row.id)
+		vectors[3].Values[i] = describeStringCell(row.defaultValue)
+		vectors[4].Values[i] = describeStringCell(row.compiled)
+		vectors[5].Values[i] = describeIntCell(row.sortlen)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+type showCollationRow struct {
+	collation    string
+	charset      string
+	id           int64
+	defaultValue string
+	compiled     string
+	sortlen      int64
+}
+
+func showCollationRows(pattern string) []showCollationRow {
+	all := []showCollationRow{
+		{collation: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, defaultValue: "Yes", compiled: "Yes", sortlen: 0},
+		{collation: "utf8mb4_bin", charset: "utf8mb4", id: 46, defaultValue: "", compiled: "Yes", sortlen: 1},
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return all
+	}
+	filtered := make([]showCollationRow, 0, len(all))
+	for _, row := range all {
+		if sqlLikeMatch(row.collation, pattern) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
 func sqlLikeMatch(value string, pattern string) bool {
 	value = strings.ToLower(value)
 	pattern = strings.ToLower(pattern)

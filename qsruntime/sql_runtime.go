@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -194,6 +195,18 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showVariablesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowWarnings {
+		result.Runtime = showWarningsRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowCharacterSet {
+		result.Runtime = showCharacterSetRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowCollation {
+		result.Runtime = showCollationRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindDescribe {
 		result.Runtime = describeRuntimeResult(request)
 		return result, nil
@@ -215,7 +228,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, err
 	}
 
-	if runtimeResult, diagnostics, ok := constantProjectionExecutionResult(request); ok {
+	if runtimeResult, diagnostics, ok := r.constantProjectionExecutionResult(request); ok {
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		return result, nil
@@ -316,7 +329,7 @@ func withEmptyCandidateSet(request ExecutionRequest) ExecutionRequest {
 	return request.WithCandidateSet(qsbridge.QuantaCandidateSet{Index: index})
 }
 
-func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {
+func (r SQLRuntime) constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {
 	query := request.Bound.Prepared.Query
 	if query.Kind != qsbridge.QueryKindSelect ||
 		len(query.Sources) != 0 ||
@@ -336,7 +349,8 @@ func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (Execu
 		ProjectionVectors: make([]qsbridge.QuantaProjectionVector, 0, len(query.Projection)),
 	}
 	for _, projection := range query.Projection {
-		cell, diagnostics := directBitmapEvaluateMaterializedExpr(projection.Expr, rowSet, 0)
+		expr := r.materializeProjectionMetadataExpr(projection.Expr)
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(expr, rowSet, 0)
 		if diagnostics.BlocksNative() {
 			constantDiagnostics := qsbridge.DiagnosticSet{
 				qsbridge.ErrorDiagnostic(
@@ -361,6 +375,89 @@ func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (Execu
 		RowSet: rowSet,
 		Count:  1,
 	}, nil, true
+}
+
+func (r SQLRuntime) materializeProjectionMetadataExpr(expr qsbridge.Expr) qsbridge.Expr {
+	switch typed := expr.(type) {
+	case qsbridge.CallExpr:
+		return r.materializeProjectionMetadataCall(typed)
+	case *qsbridge.CallExpr:
+		if typed == nil {
+			return expr
+		}
+		call := r.materializeProjectionMetadataCall(*typed)
+		return call
+	case qsbridge.BinaryExpr:
+		typed.Left = r.materializeProjectionMetadataExpr(typed.Left)
+		typed.Right = r.materializeProjectionMetadataExpr(typed.Right)
+		return typed
+	case *qsbridge.BinaryExpr:
+		if typed == nil {
+			return expr
+		}
+		copied := *typed
+		copied.Left = r.materializeProjectionMetadataExpr(copied.Left)
+		copied.Right = r.materializeProjectionMetadataExpr(copied.Right)
+		return copied
+	case qsbridge.SearchedCaseExpr:
+		return r.materializeProjectionMetadataSearchedCase(typed)
+	case *qsbridge.SearchedCaseExpr:
+		if typed == nil {
+			return expr
+		}
+		return r.materializeProjectionMetadataSearchedCase(*typed)
+	default:
+		return expr
+	}
+}
+
+func (r SQLRuntime) materializeProjectionMetadataCall(call qsbridge.CallExpr) qsbridge.Expr {
+	if literal, ok := r.runtimeMetadataFunctionLiteral(call.Name, len(call.Args)); ok {
+		return literal
+	}
+	for i, arg := range call.Args {
+		call.Args[i] = r.materializeProjectionMetadataExpr(arg)
+	}
+	return call
+}
+
+func (r SQLRuntime) materializeProjectionMetadataSearchedCase(expr qsbridge.SearchedCaseExpr) qsbridge.Expr {
+	for i, when := range expr.Whens {
+		expr.Whens[i] = qsbridge.SearchedCaseWhen{
+			Condition: r.materializeProjectionMetadataExpr(when.Condition),
+			Result:    r.materializeProjectionMetadataExpr(when.Result),
+		}
+	}
+	if expr.Else != nil {
+		expr.Else = r.materializeProjectionMetadataExpr(expr.Else)
+	}
+	return expr
+}
+
+func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (qsbridge.LiteralExpr, bool) {
+	if argCount != 0 {
+		return qsbridge.LiteralExpr{}, false
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "database", "schema":
+		schema := strings.TrimSpace(r.Session.EffectiveSchema(r.DefaultSchema))
+		if schema == "" {
+			schema = "quanta"
+		}
+		return qsbridge.Literal(qsbridge.ValueString, schema), true
+	case "version":
+		return qsbridge.Literal(qsbridge.ValueString, "8.0.0-quantastream"), true
+	case "user", "current_user":
+		user := strings.TrimSpace(string(r.Session.User))
+		if user == "" {
+			user = "MOLIG004@localhost"
+		}
+		return qsbridge.Literal(qsbridge.ValueString, user), true
+	case "connection_id":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
+	default:
+		return qsbridge.LiteralExpr{}, false
+	}
 }
 
 // InspectSQL prepares, lowers, and inspects runtime routing without executing SQL.

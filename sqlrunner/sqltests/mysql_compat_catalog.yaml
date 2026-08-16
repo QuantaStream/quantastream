@@ -138,6 +138,39 @@ tests:
     expect:
       columns: [Variable_name, Value]
 
+  - id: mysql_compat_catalog.017.show_warnings
+    status: supported
+    kind: query
+    feature: catalog_warnings
+    compatibility: mysql
+    requires: [show_warnings, metadata_columns]
+    sql: |
+      show warnings
+    expect:
+      columns: [Level, Code, Message]
+
+  - id: mysql_compat_catalog.018.show_character_set
+    status: supported
+    kind: query
+    feature: catalog_character_sets
+    compatibility: mysql
+    requires: [show_character_set, metadata_columns]
+    sql: |
+      show character set like 'utf8mb4'
+    expect:
+      columns: [Charset, Description, "Default collation", Maxlen]
+
+  - id: mysql_compat_catalog.019.show_collation
+    status: supported
+    kind: query
+    feature: catalog_collations
+    compatibility: mysql
+    requires: [show_collation, metadata_columns]
+    sql: |
+      show collation like 'utf8mb4_0900%'
+    expect:
+      columns: [Collation, Charset, Id, "Default", Compiled, Sortlen]
+
   - id: mysql_compat_catalog.020.describe_table
     status: supported
     kind: query

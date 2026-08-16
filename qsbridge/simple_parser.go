@@ -64,7 +64,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -690,6 +690,26 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowVariables(sql, variablesBody)
 	}
+	warningsBody, ok := consumeKeyword(showBody, "warnings")
+	if ok {
+		return parseSimpleShowWarnings(sql, warningsBody)
+	}
+	characterBody, ok := consumeKeyword(showBody, "character")
+	if ok {
+		setBody, setOK := consumeKeyword(characterBody, "set")
+		if !setOK {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW CHARACTER only supports SET"), false
+		}
+		return parseSimpleShowCharacterSet(sql, setBody)
+	}
+	charsetBody, ok := consumeKeyword(showBody, "charset")
+	if ok {
+		return parseSimpleShowCharacterSet(sql, charsetBody)
+	}
+	collationBody, ok := consumeKeyword(showBody, "collation")
+	if ok {
+		return parseSimpleShowCollation(sql, collationBody)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -705,7 +725,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
 }
@@ -878,6 +898,65 @@ func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatemen
 	}, Diagnostic{}, true
 }
 
+func parseSimpleShowWarnings(sql string, warningsBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(warningsBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW WARNINGS does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowWarnings,
+		ShowWarnings: UnboundShowWarnings{
+			Result: showWarningsResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowCharacterSet(sql string, characterSetBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(characterSetBody, "SHOW CHARACTER SET")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowCharacterSet,
+		ShowCharset: UnboundShowCharacterSet{
+			Pattern: pattern,
+			Result:  showCharacterSetResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowCollation(sql string, collationBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(collationBody, "SHOW COLLATION")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowCollation,
+		ShowCollation: UnboundShowCollation{
+			Pattern: pattern,
+			Result:  showCollationResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleOptionalLikePattern(text string, statement string) (string, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", Diagnostic{}, true
+	}
+	likeBody, ok := consumeKeyword(trimmed, "like")
+	if !ok {
+		return "", simpleParserDiagnostic(statement + " only supports optional LIKE pattern"), false
+	}
+	fields := strings.Fields(likeBody)
+	if len(fields) != 1 {
+		return "", simpleParserDiagnostic(statement + " LIKE must use one literal pattern"), false
+	}
+	return strings.Trim(fields[0], "'\""), Diagnostic{}, true
+}
+
 func parseSimpleDescribe(sql string) (UnboundStatement, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
 	targetBody, ok := consumeKeyword(trimmed, "describe")
@@ -1044,6 +1123,43 @@ func showVariablesResultShape() ResultShape {
 		Columns: []FieldRef{
 			{Name: "Variable_name", Type: DataTypeString},
 			{Name: "Value", Type: DataTypeString},
+		},
+	}
+}
+
+func showWarningsResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Level", Type: DataTypeString},
+			{Name: "Code", Type: DataTypeInt},
+			{Name: "Message", Type: DataTypeString},
+		},
+	}
+}
+
+func showCharacterSetResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Charset", Type: DataTypeString},
+			{Name: "Description", Type: DataTypeString},
+			{Name: "Default collation", Type: DataTypeString},
+			{Name: "Maxlen", Type: DataTypeInt},
+		},
+	}
+}
+
+func showCollationResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Collation", Type: DataTypeString},
+			{Name: "Charset", Type: DataTypeString},
+			{Name: "Id", Type: DataTypeInt},
+			{Name: "Default", Type: DataTypeString},
+			{Name: "Compiled", Type: DataTypeString},
+			{Name: "Sortlen", Type: DataTypeInt},
 		},
 	}
 }
@@ -1761,6 +1877,9 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 	}
 	inputText := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
 	if inputText == "" {
+		if simpleZeroArgumentScalarFunctionName(function) {
+			return UnboundCall(function), true
+		}
 		return UnboundCallExpr{}, false
 	}
 	argTexts := splitSimpleCommaList(inputText)
@@ -1785,6 +1904,15 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 
 func simpleScalarFunctionName(function string) bool {
 	return IsBuiltinSQLScalarFunction(function)
+}
+
+func simpleZeroArgumentScalarFunctionName(function string) bool {
+	switch strings.ToLower(strings.TrimSpace(function)) {
+	case "database", "schema", "version", "user", "current_user", "connection_id":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSimpleAggregateCallExpression(text string) (UnboundCallExpr, bool) {

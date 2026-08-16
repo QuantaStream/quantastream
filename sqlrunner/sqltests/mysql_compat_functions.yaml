@@ -132,6 +132,22 @@ tests:
       rows:
         - [1995]
 
+  - id: mysql_compat_functions.011.session_metadata_functions
+    status: supported
+    kind: query
+    feature: scalar_functions_session
+    compatibility: mysql
+    requires: [select, database, schema, version, user, current_user, connection_id]
+    sql: |
+      select database() as db_name,
+             schema() as schema_name,
+             version() as version_value,
+             user() as user_value,
+             current_user() as current_user_value,
+             connection_id() as connection_id_value
+    expect:
+      columns: [db_name, schema_name, version_value, user_value, current_user_value, connection_id_value]
+
   - id: mysql_compat_functions.020.concat
     status: supported
     kind: query

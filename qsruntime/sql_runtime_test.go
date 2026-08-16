@@ -343,6 +343,106 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{User: "bench@localhost", CurrentSchema: "analytics"}
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select database() as db_name,
+		       schema() as schema_name,
+		       version() as version_value,
+		       user() as user_value,
+		       current_user() as current_user_value,
+		       connection_id() as connection_id_value
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("projection-only metadata functions should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 6 {
+		t.Fatalf("rows = %#v, want one six-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "analytics" || row[1].Value != "analytics" || row[2].Value != "8.0.0-quantastream" {
+		t.Fatalf("schema/version cells = %#v", row[:3])
+	}
+	if row[3].Value != "bench@localhost" || row[4].Value != "bench@localhost" || row[5].Value != int64(1) {
+		t.Fatalf("user/connection cells = %#v", row[3:])
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	warnings, err := runtime.ExecuteSQL(context.Background(), "show warnings", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW WARNINGS failed: %v", err)
+	}
+	if warnings.Diagnostics.BlocksNative() || warnings.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("warnings diagnostics = %#v runtime=%#v", warnings.Diagnostics, warnings.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW WARNINGS should not dispatch to the direct executor")
+	}
+	if got, want := len(warnings.Runtime.RowSet.ProjectionVectors), 3; got != want {
+		t.Fatalf("warning columns = %d, want %d", got, want)
+	}
+	if got, want := warnings.Runtime.Count, uint64(0); got != want {
+		t.Fatalf("warning count = %d, want %d", got, want)
+	}
+
+	charset, err := runtime.ExecuteSQL(context.Background(), "show character set like 'utf8mb4'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW CHARACTER SET failed: %v", err)
+	}
+	charsetChunk, diagnostics := charset.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("charset chunk diagnostics = %#v", diagnostics)
+	}
+	if len(charsetChunk.Rows) != 1 || len(charsetChunk.Rows[0]) != 4 {
+		t.Fatalf("charset rows = %#v, want one four-column row", charsetChunk.Rows)
+	}
+	if got, want := charsetChunk.Rows[0][0].Value, "utf8mb4"; got != want {
+		t.Fatalf("charset = %#v, want %q", got, want)
+	}
+
+	collation, err := runtime.ExecuteSQL(context.Background(), "show collation like 'utf8mb4_0900%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW COLLATION failed: %v", err)
+	}
+	collationChunk, diagnostics := collation.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("collation chunk diagnostics = %#v", diagnostics)
+	}
+	if len(collationChunk.Rows) != 1 || len(collationChunk.Rows[0]) != 6 {
+		t.Fatalf("collation rows = %#v, want one six-column row", collationChunk.Rows)
+	}
+	if got, want := collationChunk.Rows[0][0].Value, "utf8mb4_0900_ai_ci"; got != want {
+		t.Fatalf("collation = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLInformationSchemaTablesReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

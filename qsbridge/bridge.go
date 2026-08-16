@@ -35,6 +35,9 @@ type UnboundStatement struct {
 	ShowTableStatus UnboundShowTableStatus
 	ShowTables      UnboundShowTables
 	ShowVars        UnboundShowVariables
+	ShowWarnings    UnboundShowWarnings
+	ShowCharset     UnboundShowCharacterSet
+	ShowCollation   UnboundShowCollation
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -76,6 +79,12 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowTables(context, s.ShowTables)
 	case QueryKindShowVariables:
 		return BindShowVariables(context, s.ShowVars)
+	case QueryKindShowWarnings:
+		return BindShowWarnings(context, s.ShowWarnings)
+	case QueryKindShowCharacterSet:
+		return BindShowCharacterSet(context, s.ShowCharset)
+	case QueryKindShowCollation:
+		return BindShowCollation(context, s.ShowCollation)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -227,6 +236,26 @@ type UnboundShowTables struct {
 
 // UnboundShowVariables describes a SHOW VARIABLES metadata read before binding.
 type UnboundShowVariables struct {
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowWarnings describes a SHOW WARNINGS metadata read before binding.
+type UnboundShowWarnings struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowCharacterSet describes a SHOW CHARACTER SET metadata read before binding.
+type UnboundShowCharacterSet struct {
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowCollation describes a SHOW COLLATION metadata read before binding.
+type UnboundShowCollation struct {
 	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
@@ -1165,6 +1194,40 @@ func BindShowVariables(context *BindContext, showStmt UnboundShowVariables) (Que
 		return query, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
 		}
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowWarnings binds parser-neutral SHOW WARNINGS metadata into QueryIR.
+func BindShowWarnings(context *BindContext, showStmt UnboundShowWarnings) (QueryIR, DiagnosticSet) {
+	_ = context
+	return QueryIR{
+		Kind:     QueryKindShowWarnings,
+		Result:   showWarningsResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowCharacterSet binds parser-neutral SHOW CHARACTER SET metadata into QueryIR.
+func BindShowCharacterSet(context *BindContext, showStmt UnboundShowCharacterSet) (QueryIR, DiagnosticSet) {
+	_ = context
+	query := QueryIR{
+		Kind:     QueryKindShowCharacterSet,
+		Result:   showCharacterSetResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowCollation binds parser-neutral SHOW COLLATION metadata into QueryIR.
+func BindShowCollation(context *BindContext, showStmt UnboundShowCollation) (QueryIR, DiagnosticSet) {
+	_ = context
+	query := QueryIR{
+		Kind:     QueryKindShowCollation,
+		Result:   showCollationResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
 	return query, nil

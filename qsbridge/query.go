@@ -38,6 +38,12 @@ const (
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.
 	QueryKindShowVariables QueryKind = "show_variables"
+	// QueryKindShowWarnings identifies a SHOW WARNINGS metadata read statement.
+	QueryKindShowWarnings QueryKind = "show_warnings"
+	// QueryKindShowCharacterSet identifies a SHOW CHARACTER SET metadata read statement.
+	QueryKindShowCharacterSet QueryKind = "show_character_set"
+	// QueryKindShowCollation identifies a SHOW COLLATION metadata read statement.
+	QueryKindShowCollation QueryKind = "show_collation"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
