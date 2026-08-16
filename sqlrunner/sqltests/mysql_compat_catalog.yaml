@@ -185,6 +185,18 @@ tests:
       columns: [variable_name, value]
       row_count: 1
 
+  - id: mysql_compat_catalog.01403.show_variables_where_in
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables, where, in, metadata_columns]
+    sql: |
+      show variables where Variable_name in ('version', 'version_comment')
+    expect:
+      columns: [variable_name, value]
+      row_count: 2
+
   - id: mysql_compat_catalog.0141.show_status
     status: supported
     kind: query
@@ -218,6 +230,18 @@ tests:
     expect:
       columns: [variable_name, value]
       row_count: 1
+
+  - id: mysql_compat_catalog.01413.show_status_where_in
+    status: supported
+    kind: query
+    feature: catalog_status
+    compatibility: mysql
+    requires: [show_status, where, in, metadata_columns]
+    sql: |
+      show status where Variable_name in ('Connections', 'Threads_connected')
+    expect:
+      columns: [variable_name, value]
+      row_count: 2
 
   - id: mysql_compat_catalog.017.show_warnings
     status: supported
@@ -330,6 +354,18 @@ tests:
       show collation where Charset = 'utf8mb4'
     expect:
       columns: [Collation, Charset, Id, "Default", Compiled, Sortlen]
+
+  - id: mysql_compat_catalog.0192.show_collation_where_charset_in
+    status: supported
+    kind: query
+    feature: catalog_collations
+    compatibility: mysql
+    requires: [show_collation, where, in, metadata_columns]
+    sql: |
+      show collation where Charset in ('utf8mb4')
+    expect:
+      columns: [Collation, Charset, Id, "Default", Compiled, Sortlen]
+      row_count: 2
 
   - id: mysql_compat_catalog.020.describe_table
     status: supported

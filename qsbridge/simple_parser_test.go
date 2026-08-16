@@ -1,6 +1,7 @@
 package qsbridge
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -408,6 +409,17 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	}
 	if got, want := whereStatement.ShowVars.Pattern, "version"; got != want {
 		t.Fatalf("where pattern = %q, want %q", got, want)
+	}
+
+	inStatement, diagnostics := SimpleParserBridge{}.Parse("show variables where Variable_name in ('version', 'version_comment');")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse in diagnostics: %#v", diagnostics)
+	}
+	if inStatement.Kind != QueryKindShowVariables {
+		t.Fatalf("in kind = %q, want show_variables", inStatement.Kind)
+	}
+	if got, want := inStatement.ShowVars.Patterns, []string{"version", "version_comment"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("in patterns = %#v, want %#v", got, want)
 	}
 }
 

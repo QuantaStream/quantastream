@@ -603,6 +603,18 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	if len(versionChunk.Rows) != 1 || versionChunk.Rows[0][0].Value != "version" || versionChunk.Rows[0][1].Value != "8.0.0-quantastream" {
 		t.Fatalf("version rows = %#v", versionChunk.Rows)
 	}
+
+	versionPair, err := runtime.ExecuteSQL(context.Background(), "show variables where Variable_name in ('version', 'version_comment')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW VARIABLES WHERE IN failed: %v", err)
+	}
+	versionPairChunk, diagnostics := versionPair.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("version pair chunk diagnostics = %#v", diagnostics)
+	}
+	if len(versionPairChunk.Rows) != 2 || versionPairChunk.Rows[0][0].Value != "version" || versionPairChunk.Rows[1][0].Value != "version_comment" {
+		t.Fatalf("version pair rows = %#v", versionPairChunk.Rows)
+	}
 }
 
 func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
@@ -645,6 +657,18 @@ func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
 	}
 	if len(whereChunk.Rows) != 1 || whereChunk.Rows[0][0].Value != "Threads_connected" {
 		t.Fatalf("where status rows = %#v", whereChunk.Rows)
+	}
+
+	statusPair, err := runtime.ExecuteSQL(context.Background(), "show status where Variable_name in ('Connections', 'Threads_connected')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW STATUS WHERE IN failed: %v", err)
+	}
+	statusPairChunk, diagnostics := statusPair.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("status pair chunk diagnostics = %#v", diagnostics)
+	}
+	if len(statusPairChunk.Rows) != 2 || statusPairChunk.Rows[0][0].Value != "Connections" || statusPairChunk.Rows[1][0].Value != "Threads_connected" {
+		t.Fatalf("status pair rows = %#v", statusPairChunk.Rows)
 	}
 }
 
@@ -1134,6 +1158,18 @@ func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
 	}
 	if got, want := collationChunk.Rows[0][0].Value, "utf8mb4_0900_ai_ci"; got != want {
 		t.Fatalf("collation = %#v, want %q", got, want)
+	}
+
+	collationByIn, err := runtime.ExecuteSQL(context.Background(), "show collation where Charset in ('utf8mb4')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW COLLATION WHERE IN failed: %v", err)
+	}
+	collationByInChunk, diagnostics := collationByIn.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("collation by in chunk diagnostics = %#v", diagnostics)
+	}
+	if len(collationByInChunk.Rows) != 2 {
+		t.Fatalf("collation by in rows = %#v, want both utf8mb4 collations", collationByInChunk.Rows)
 	}
 }
 
@@ -2333,12 +2369,12 @@ func newTestSQLRuntime(t *testing.T) SQLRuntime {
 }
 
 func TestCatalogCharacterMetadataRowsFilterAcrossDisplayedFields(t *testing.T) {
-	charsets := showCharacterSetRows("utf8mb4_0900_ai_ci")
+	charsets := showCharacterSetRows("utf8mb4_0900_ai_ci", nil)
 	if len(charsets) != 1 || charsets[0].charset != "utf8mb4" {
 		t.Fatalf("charsets = %#v, want utf8mb4 row by default collation", charsets)
 	}
 
-	collations := showCollationRows("utf8mb4")
+	collations := showCollationRows("utf8mb4", nil)
 	if len(collations) != 2 {
 		t.Fatalf("collations = %#v, want both utf8mb4 collations by charset", collations)
 	}

@@ -330,6 +330,7 @@ type UnboundShowEvents struct {
 // UnboundShowVariables describes a SHOW VARIABLES metadata read before binding.
 type UnboundShowVariables struct {
 	Pattern  string
+	Patterns []string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -337,6 +338,7 @@ type UnboundShowVariables struct {
 // UnboundShowStatus describes a SHOW STATUS metadata read before binding.
 type UnboundShowStatus struct {
 	Pattern  string
+	Patterns []string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -368,6 +370,7 @@ type UnboundShowErrorCount struct {
 // UnboundShowCharacterSet describes a SHOW CHARACTER SET metadata read before binding.
 type UnboundShowCharacterSet struct {
 	Pattern  string
+	Patterns []string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -375,6 +378,7 @@ type UnboundShowCharacterSet struct {
 // UnboundShowCollation describes a SHOW COLLATION metadata read before binding.
 type UnboundShowCollation struct {
 	Pattern  string
+	Patterns []string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1498,6 +1502,7 @@ func BindShowVariables(context *BindContext, showStmt UnboundShowVariables) (Que
 		}
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	query.Catalog.Patterns = append([]string(nil), showStmt.Patterns...)
 	return query, nil
 }
 
@@ -1510,6 +1515,7 @@ func BindShowStatus(context *BindContext, showStmt UnboundShowStatus) (QueryIR, 
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	query.Catalog.Patterns = append([]string(nil), showStmt.Patterns...)
 	return query, nil
 }
 
@@ -1578,6 +1584,7 @@ func BindShowCharacterSet(context *BindContext, showStmt UnboundShowCharacterSet
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	query.Catalog.Patterns = append([]string(nil), showStmt.Patterns...)
 	return query, nil
 }
 
@@ -1590,6 +1597,7 @@ func BindShowCollation(context *BindContext, showStmt UnboundShowCollation) (Que
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	query.Catalog.Patterns = append([]string(nil), showStmt.Patterns...)
 	return query, nil
 }
 

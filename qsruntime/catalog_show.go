@@ -549,7 +549,8 @@ func showTablesRuntimeColumnName(schemaName string) string {
 }
 
 func (r SQLRuntime) showVariablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	rows := r.showVariableRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	catalog := request.Bound.Prepared.Query.Catalog
+	rows := r.showVariableRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
@@ -575,7 +576,7 @@ type showVariableRow struct {
 	value string
 }
 
-func (r SQLRuntime) showVariableRows(pattern string) []showVariableRow {
+func (r SQLRuntime) showVariableRows(pattern string, patterns []string) []showVariableRow {
 	all := []showVariableRow{
 		{name: "autocommit", value: showVariableAutocommit(r.Session.Variables["autocommit"])},
 		{name: "character_set_client", value: "utf8mb4"},
@@ -589,12 +590,12 @@ func (r SQLRuntime) showVariableRows(pattern string) []showVariableRow {
 		{name: "version_comment", value: "QuantaStream"},
 	}
 	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
+	if pattern == "" && len(patterns) == 0 {
 		return all
 	}
 	filtered := make([]showVariableRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.name, pattern) {
+		if catalogMetadataValueMatches(row.name, pattern, patterns) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -611,7 +612,8 @@ func showVariableAutocommit(value string) string {
 }
 
 func showStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	rows := showStatusRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	catalog := request.Bound.Prepared.Query.Catalog
+	rows := showStatusRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
@@ -637,7 +639,7 @@ type showStatusRow struct {
 	value string
 }
 
-func showStatusRows(pattern string) []showStatusRow {
+func showStatusRows(pattern string, patterns []string) []showStatusRow {
 	all := []showStatusRow{
 		{name: "Connections", value: "1"},
 		{name: "Questions", value: "0"},
@@ -645,12 +647,12 @@ func showStatusRows(pattern string) []showStatusRow {
 		{name: "Uptime", value: "0"},
 	}
 	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
+	if pattern == "" && len(patterns) == 0 {
 		return all
 	}
 	filtered := make([]showStatusRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.name, pattern) {
+		if catalogMetadataValueMatches(row.name, pattern, patterns) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -947,7 +949,8 @@ func quoteSQLString(value string) string {
 }
 
 func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	catalog := request.Bound.Prepared.Query.Catalog
+	rows := showCharacterSetRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("Charset", qsbridge.DataTypeString, len(rows)),
@@ -979,20 +982,20 @@ type showCharacterSetRow struct {
 	maxlen           int64
 }
 
-func showCharacterSetRows(pattern string) []showCharacterSetRow {
+func showCharacterSetRows(pattern string, patterns []string) []showCharacterSetRow {
 	all := []showCharacterSetRow{
 		{charset: "utf8mb4", description: "UTF-8 Unicode", defaultCollation: "utf8mb4_0900_ai_ci", maxlen: 4},
 	}
 	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
+	if pattern == "" && len(patterns) == 0 {
 		return all
 	}
 	filtered := make([]showCharacterSetRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.charset, pattern) ||
-			sqlLikeMatch(row.description, pattern) ||
-			sqlLikeMatch(row.defaultCollation, pattern) ||
-			sqlLikeMatch(strconv.FormatInt(row.maxlen, 10), pattern) {
+		if catalogMetadataValueMatches(row.charset, pattern, patterns) ||
+			catalogMetadataValueMatches(row.description, pattern, patterns) ||
+			catalogMetadataValueMatches(row.defaultCollation, pattern, patterns) ||
+			catalogMetadataValueMatches(strconv.FormatInt(row.maxlen, 10), pattern, patterns) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -1000,7 +1003,8 @@ func showCharacterSetRows(pattern string) []showCharacterSetRow {
 }
 
 func showCollationRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	rows := showCollationRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	catalog := request.Bound.Prepared.Query.Catalog
+	rows := showCollationRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("Collation", qsbridge.DataTypeString, len(rows)),
@@ -1038,27 +1042,41 @@ type showCollationRow struct {
 	sortlen      int64
 }
 
-func showCollationRows(pattern string) []showCollationRow {
+func showCollationRows(pattern string, patterns []string) []showCollationRow {
 	all := []showCollationRow{
 		{collation: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, defaultValue: "Yes", compiled: "Yes", sortlen: 0},
 		{collation: "utf8mb4_bin", charset: "utf8mb4", id: 46, defaultValue: "", compiled: "Yes", sortlen: 1},
 	}
 	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
+	if pattern == "" && len(patterns) == 0 {
 		return all
 	}
 	filtered := make([]showCollationRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.collation, pattern) ||
-			sqlLikeMatch(row.charset, pattern) ||
-			sqlLikeMatch(strconv.FormatInt(row.id, 10), pattern) ||
-			sqlLikeMatch(row.defaultValue, pattern) ||
-			sqlLikeMatch(row.compiled, pattern) ||
-			sqlLikeMatch(strconv.FormatInt(row.sortlen, 10), pattern) {
+		if catalogMetadataValueMatches(row.collation, pattern, patterns) ||
+			catalogMetadataValueMatches(row.charset, pattern, patterns) ||
+			catalogMetadataValueMatches(strconv.FormatInt(row.id, 10), pattern, patterns) ||
+			catalogMetadataValueMatches(row.defaultValue, pattern, patterns) ||
+			catalogMetadataValueMatches(row.compiled, pattern, patterns) ||
+			catalogMetadataValueMatches(strconv.FormatInt(row.sortlen, 10), pattern, patterns) {
 			filtered = append(filtered, row)
 		}
 	}
 	return filtered
+}
+
+func catalogMetadataValueMatches(value string, pattern string, patterns []string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern != "" && sqlLikeMatch(value, pattern) {
+		return true
+	}
+	for _, candidate := range patterns {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && strings.EqualFold(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func sqlLikeMatch(value string, pattern string) bool {

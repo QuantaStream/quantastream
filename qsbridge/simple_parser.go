@@ -1174,7 +1174,7 @@ func parseSimpleShowSchemaAndLike(body string, statement string) (string, string
 }
 
 func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatement, Diagnostic, bool) {
-	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(variablesBody, "SHOW VARIABLES")
+	filter, diagnostic, ok := parseSimpleOptionalLikePatternSet(variablesBody, "SHOW VARIABLES")
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1182,14 +1182,15 @@ func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatemen
 		SQL:  sql,
 		Kind: QueryKindShowVariables,
 		ShowVars: UnboundShowVariables{
-			Pattern: pattern,
-			Result:  showVariablesResultShape(),
+			Pattern:  filter.Pattern,
+			Patterns: filter.Patterns,
+			Result:   showVariablesResultShape(),
 		},
 	}, Diagnostic{}, true
 }
 
 func parseSimpleShowStatus(sql string, statusBody string) (UnboundStatement, Diagnostic, bool) {
-	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(statusBody, "SHOW STATUS")
+	filter, diagnostic, ok := parseSimpleOptionalLikePatternSet(statusBody, "SHOW STATUS")
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1197,8 +1198,9 @@ func parseSimpleShowStatus(sql string, statusBody string) (UnboundStatement, Dia
 		SQL:  sql,
 		Kind: QueryKindShowStatus,
 		ShowStatus: UnboundShowStatus{
-			Pattern: pattern,
-			Result:  showStatusResultShape(),
+			Pattern:  filter.Pattern,
+			Patterns: filter.Patterns,
+			Result:   showStatusResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1284,7 +1286,7 @@ func parseSimpleExplain(sql string) (UnboundStatement, Diagnostic, bool) {
 }
 
 func parseSimpleShowCharacterSet(sql string, characterSetBody string) (UnboundStatement, Diagnostic, bool) {
-	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(characterSetBody, "SHOW CHARACTER SET")
+	filter, diagnostic, ok := parseSimpleOptionalLikePatternSet(characterSetBody, "SHOW CHARACTER SET")
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1292,14 +1294,15 @@ func parseSimpleShowCharacterSet(sql string, characterSetBody string) (UnboundSt
 		SQL:  sql,
 		Kind: QueryKindShowCharacterSet,
 		ShowCharset: UnboundShowCharacterSet{
-			Pattern: pattern,
-			Result:  showCharacterSetResultShape(),
+			Pattern:  filter.Pattern,
+			Patterns: filter.Patterns,
+			Result:   showCharacterSetResultShape(),
 		},
 	}, Diagnostic{}, true
 }
 
 func parseSimpleShowCollation(sql string, collationBody string) (UnboundStatement, Diagnostic, bool) {
-	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(collationBody, "SHOW COLLATION")
+	filter, diagnostic, ok := parseSimpleOptionalLikePatternSet(collationBody, "SHOW COLLATION")
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1307,8 +1310,9 @@ func parseSimpleShowCollation(sql string, collationBody string) (UnboundStatemen
 		SQL:  sql,
 		Kind: QueryKindShowCollation,
 		ShowCollation: UnboundShowCollation{
-			Pattern: pattern,
-			Result:  showCollationResultShape(),
+			Pattern:  filter.Pattern,
+			Patterns: filter.Patterns,
+			Result:   showCollationResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1397,6 +1401,104 @@ func parseSimpleOptionalLikePattern(text string, statement string) (string, Diag
 		return "", simpleParserDiagnostic(statement + " only supports optional LIKE pattern or WHERE field = literal"), false
 	}
 	return parseSimpleShowWherePattern(whereBody, statement)
+}
+
+type simpleShowPatternSet struct {
+	Pattern  string
+	Patterns []string
+}
+
+func parseSimpleOptionalLikePatternSet(text string, statement string) (simpleShowPatternSet, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return simpleShowPatternSet{}, Diagnostic{}, true
+	}
+	likeBody, ok := consumeKeyword(trimmed, "like")
+	if ok {
+		fields := strings.Fields(likeBody)
+		if len(fields) != 1 {
+			return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " LIKE must use one literal pattern"), false
+		}
+		return simpleShowPatternSet{Pattern: strings.Trim(fields[0], "'\"")}, Diagnostic{}, true
+	}
+	whereBody, ok := consumeKeyword(trimmed, "where")
+	if !ok {
+		return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " only supports optional LIKE pattern or WHERE field = literal"), false
+	}
+	return parseSimpleShowWherePatternSet(whereBody, statement)
+}
+
+func parseSimpleShowWherePatternSet(whereBody string, statement string) (simpleShowPatternSet, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(whereBody))
+	if len(fields) < 3 {
+		return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE must use field = literal, field LIKE literal, or field IN (literal[, ...])"), false
+	}
+	op := strings.ToLower(fields[1])
+	switch op {
+	case "=", "like":
+		return simpleShowPatternSet{Pattern: strings.Trim(strings.Join(fields[2:], " "), "'\"")}, Diagnostic{}, true
+	case "in":
+		raw := strings.TrimSpace(strings.Join(fields[2:], " "))
+		if !strings.HasPrefix(raw, "(") || !strings.HasSuffix(raw, ")") {
+			return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE field IN must use a parenthesized literal list"), false
+		}
+		values, ok := parseSimpleShowLiteralList(raw[1 : len(raw)-1])
+		if !ok || len(values) == 0 {
+			return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE field IN must include at least one literal"), false
+		}
+		return simpleShowPatternSet{Patterns: values}, Diagnostic{}, true
+	default:
+		return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE only supports field = literal, field LIKE literal, or field IN (literal[, ...])"), false
+	}
+}
+
+func parseSimpleShowLiteralList(text string) ([]string, bool) {
+	values := []string{}
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range text {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			if r == '\\' {
+				escaped = true
+				current.WriteRune(r)
+				continue
+			}
+			current.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+			current.WriteRune(r)
+		case ',':
+			value := strings.TrimSpace(current.String())
+			if value == "" {
+				return nil, false
+			}
+			values = append(values, strings.Trim(value, "'\""))
+			current.Reset()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if quote != 0 || escaped {
+		return nil, false
+	}
+	value := strings.TrimSpace(current.String())
+	if value == "" {
+		return nil, false
+	}
+	values = append(values, strings.Trim(value, "'\""))
+	return values, true
 }
 
 func parseSimpleShowWherePattern(whereBody string, statement string) (string, Diagnostic, bool) {

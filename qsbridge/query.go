@@ -135,6 +135,7 @@ type CatalogReadShape struct {
 	Functions   []FunctionDefinition
 	Full        bool
 	Pattern     string
+	Patterns    []string
 }
 
 // SortSpec describes one ORDER BY expression.
