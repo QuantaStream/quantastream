@@ -2108,6 +2108,23 @@ func TestSimpleParserBridgeParsesGroupByProjectionAlias(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesGroupByOrdinalPosition(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_mktsegment as market_segment, count(*) as customer_count from customer group by 1 order by market_segment")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.GroupBy) != 1 {
+		t.Fatalf("group by = %d, want 1", len(statement.Select.GroupBy))
+	}
+	group, ok := statement.Select.GroupBy[0].(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("group expression = %T, want UnboundFieldExpr", statement.Select.GroupBy[0])
+	}
+	if group.Name != "c_mktsegment" {
+		t.Fatalf("group expression = %#v, want c_mktsegment", group)
+	}
+}
+
 func TestSimpleParserBridgeParsesSeedAndGroupedResidualOrPredicate(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select count(*) as phone_prefix_count

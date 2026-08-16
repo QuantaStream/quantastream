@@ -139,7 +139,10 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, diagnostic, false
 	}
 	if hasGroupBy {
-		groupBy = resolveSimpleGroupByProjections(groupBy, projections)
+		groupBy, diagnostic, ok = resolveSimpleGroupByProjections(groupBy, projections)
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
 	}
 	sourceOnlyText, whereText, hasWhere := splitOptionalKeyword(sourceText, "where")
 	tables, joins, diagnostic, ok := parseSimpleSources(sourceOnlyText)
@@ -2482,9 +2485,16 @@ func simpleUnboundIntegerOrdinal(expr UnboundExpr) (int, bool) {
 	return int(value), true
 }
 
-func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []UnboundProjection) []UnboundExpr {
+func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []UnboundProjection) ([]UnboundExpr, Diagnostic, bool) {
 	resolved := make([]UnboundExpr, 0, len(expressions))
 	for _, expr := range expressions {
+		if ordinal, ok := simpleUnboundIntegerOrdinal(expr); ok {
+			if ordinal < 1 || ordinal > len(projections) {
+				return nil, simpleParserDiagnostic("GROUP BY ordinal is out of range"), false
+			}
+			resolved = append(resolved, projections[ordinal-1].Expr)
+			continue
+		}
 		field, ok := expr.(UnboundFieldExpr)
 		if !ok || field.Qualifier != "" {
 			resolved = append(resolved, expr)
@@ -2503,7 +2513,7 @@ func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []Un
 		}
 		resolved = append(resolved, replacement)
 	}
-	return resolved
+	return resolved, Diagnostic{}, true
 }
 
 func resolveSimpleOrderByAggregateCall(expr UnboundExpr, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, Diagnostic, bool) {
