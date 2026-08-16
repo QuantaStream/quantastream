@@ -275,6 +275,19 @@ tests:
       rows:
         - [3, 15]
 
+  - id: mysql_compat_functions.051.date_part_aliases
+    status: supported
+    kind: query
+    feature: scalar_functions_datetime
+    compatibility: mysql
+    requires: [select, dayofmonth, dayofweek]
+    sql: |
+      select dayofmonth('1995-03-15') as ship_day, dayofweek('1995-03-19') as ship_dow
+    expect:
+      columns: [ship_day, ship_dow]
+      rows:
+        - [15, 1]
+
   - id: mysql_compat_functions.100.row_string_select_list
     status: supported
     kind: query
