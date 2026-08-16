@@ -899,6 +899,29 @@ func TestUnboundStatementBindShowFunctionStatus(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowFunctionStatusFallsBackToBuiltins(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show function status like 'lower'",
+		Kind: QueryKindShowFunctionStatus,
+		ShowFuncStatus: UnboundShowFunctionStatus{
+			Pattern: "lower",
+			Result:  showRoutineStatusResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if got, want := len(query.Catalog.Functions), 1; got != want {
+		t.Fatalf("functions = %d, want %d", got, want)
+	}
+	if got, want := query.Catalog.Functions[0].Name, "lower"; got != want {
+		t.Fatalf("function = %q, want %q", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowProcedureTriggersAndEvents(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{}, "quanta")
 	cases := []struct {

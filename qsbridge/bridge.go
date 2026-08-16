@@ -1367,15 +1367,18 @@ func BindShowFunctionStatus(context *BindContext, showStmt UnboundShowFunctionSt
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
 		}
 	}
-	metadata, ok := context.Catalog.(CatalogFunctionMetadata)
-	if !ok {
-		return query, catalogMetadataUnsupportedDiagnostics()
-	}
 	query.Catalog.Schema = strings.TrimSpace(context.DefaultSchema)
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
-	functions, diagnostics := metadata.ListFunctions()
-	if diagnostics.BlocksNative() {
-		return query, diagnostics
+	functions := BuiltinSQLFunctionDefinitions()
+	if metadata, ok := context.Catalog.(CatalogFunctionMetadata); ok {
+		catalogFunctions, diagnostics := metadata.ListFunctions()
+		if diagnostics.BlocksNative() {
+			if !diagnosticsContainOnlyInvalidExecutionOption(diagnostics) {
+				return query, diagnostics
+			}
+		} else if len(catalogFunctions) > 0 {
+			functions = catalogFunctions
+		}
 	}
 	query.Catalog.Functions = make([]FunctionDefinition, 0, len(functions))
 	for _, function := range functions {
@@ -1385,6 +1388,18 @@ func BindShowFunctionStatus(context *BindContext, showStmt UnboundShowFunctionSt
 		query.Catalog.Functions = append(query.Catalog.Functions, cloneFunctionDefinition(function))
 	}
 	return query, nil
+}
+
+func diagnosticsContainOnlyInvalidExecutionOption(diagnostics DiagnosticSet) bool {
+	if len(diagnostics) == 0 {
+		return false
+	}
+	for _, code := range diagnostics.Codes() {
+		if code != DiagnosticInvalidExecutionOption {
+			return false
+		}
+	}
+	return true
 }
 
 // BindShowProcedureStatus binds parser-neutral SHOW PROCEDURE STATUS metadata into QueryIR.

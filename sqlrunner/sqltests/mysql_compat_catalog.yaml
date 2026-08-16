@@ -291,3 +291,181 @@ tests:
         - Index_comment
         - Visible
         - Expression
+
+  - id: mysql_compat_catalog.050.show_engines
+    status: supported
+    kind: query
+    feature: catalog_storage_engine
+    compatibility: mysql
+    requires: [show_engines, metadata_columns]
+    sql: |
+      show engines
+    expect:
+      columns: [Engine, Support, Comment, Transactions, XA, Savepoints]
+      row_count: 1
+
+  - id: mysql_compat_catalog.051.show_table_types
+    status: supported
+    kind: query
+    feature: catalog_storage_engine
+    compatibility: mysql
+    requires: [show_table_types, metadata_columns]
+    sql: |
+      show table types
+    expect:
+      columns: [Engine, Support, Comment, Transactions, XA, Savepoints]
+      row_count: 1
+
+  - id: mysql_compat_catalog.052.show_plugins
+    status: supported
+    kind: query
+    feature: catalog_plugins
+    compatibility: mysql
+    requires: [show_plugins, metadata_columns]
+    sql: |
+      show plugins
+    expect:
+      columns: [Name, Status, Type, Library, License]
+      row_count: 1
+
+  - id: mysql_compat_catalog.053.show_privileges
+    status: supported
+    kind: query
+    feature: catalog_privileges
+    compatibility: mysql
+    requires: [show_privileges, metadata_columns]
+    sql: |
+      show privileges
+    expect:
+      columns: [Privilege, Context, Comment]
+
+  - id: mysql_compat_catalog.054.show_grants
+    status: supported
+    kind: query
+    feature: catalog_privileges
+    compatibility: mysql
+    requires: [show_grants, metadata_columns]
+    sql: |
+      show grants
+    expect:
+      row_count: 2
+
+  - id: mysql_compat_catalog.055.show_processlist
+    status: supported
+    kind: query
+    feature: catalog_processlist
+    compatibility: mysql
+    requires: [show_processlist, metadata_columns]
+    sql: |
+      show full processlist
+    expect:
+      columns: [Id, User, Host, db, Command, Time, State, Info]
+      row_count: 1
+
+  - id: mysql_compat_catalog.056.show_open_tables
+    status: supported
+    kind: query
+    feature: catalog_tables
+    compatibility: mysql
+    requires: [show_open_tables, metadata_columns]
+    sql: |
+      show open tables from quanta like 'customer'
+    expect:
+      columns: [Database, Table, In_use, Name_locked]
+      row_count: 1
+
+  - id: mysql_compat_catalog.057.show_function_status
+    status: supported
+    kind: query
+    feature: catalog_routines
+    compatibility: mysql
+    requires: [show_function_status, metadata_columns]
+    sql: |
+      show function status like 'lower'
+    expect:
+      columns:
+        - Db
+        - Name
+        - Type
+        - Definer
+        - Modified
+        - Created
+        - Security_type
+        - Comment
+        - character_set_client
+        - collation_connection
+        - Database Collation
+      row_count: 1
+
+  - id: mysql_compat_catalog.058.show_procedure_status
+    status: supported
+    kind: query
+    feature: catalog_routines
+    compatibility: mysql
+    requires: [show_procedure_status, metadata_columns]
+    sql: |
+      show procedure status
+    expect:
+      columns:
+        - Db
+        - Name
+        - Type
+        - Definer
+        - Modified
+        - Created
+        - Security_type
+        - Comment
+        - character_set_client
+        - collation_connection
+        - Database Collation
+      row_count: 0
+
+  - id: mysql_compat_catalog.059.show_triggers
+    status: supported
+    kind: query
+    feature: catalog_triggers
+    compatibility: mysql
+    requires: [show_triggers, metadata_columns]
+    sql: |
+      show triggers from quanta
+    expect:
+      columns:
+        - Trigger
+        - Event
+        - Table
+        - Statement
+        - Timing
+        - Created
+        - sql_mode
+        - Definer
+        - character_set_client
+        - collation_connection
+        - Database Collation
+      row_count: 0
+
+  - id: mysql_compat_catalog.060.show_events
+    status: supported
+    kind: query
+    feature: catalog_events
+    compatibility: mysql
+    requires: [show_events, metadata_columns]
+    sql: |
+      show events from quanta
+    expect:
+      columns:
+        - Db
+        - Name
+        - Definer
+        - Time zone
+        - Type
+        - Execute at
+        - Interval value
+        - Interval field
+        - Starts
+        - Ends
+        - Status
+        - Originator
+        - character_set_client
+        - collation_connection
+        - Database Collation
+      row_count: 0
