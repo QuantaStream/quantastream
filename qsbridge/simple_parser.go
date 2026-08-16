@@ -398,10 +398,11 @@ func parseSimpleCreateViewBody(sql string, createBody string, replace bool) (Unb
 	if strings.TrimSpace(viewText) == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW must include a view name"), false
 	}
-	if strings.Contains(viewText, "(") || strings.Contains(viewText, ",") {
-		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW only supports one view name without an inline column list"), false
+	viewNameText, inlineColumns, diagnostic, ok := parseSimpleCreateViewTarget(viewText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
 	}
-	view, diagnostic, ok := parseSimpleTable(viewText)
+	view, diagnostic, ok := parseSimpleTable(viewNameText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -410,6 +411,12 @@ func parseSimpleCreateViewBody(sql string, createBody string, replace bool) (Unb
 	}
 	if _, ok := consumeKeyword(selectText, "select"); !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW must use a SELECT statement"), false
+	}
+	if len(inlineColumns) > 0 {
+		selectText, diagnostic, ok = applySimpleCreateViewColumnAliases(selectText, inlineColumns)
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
 	}
 	if _, diagnostic, ok := parseSimpleSelect(selectText); !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -424,6 +431,69 @@ func parseSimpleCreateViewBody(sql string, createBody string, replace bool) (Unb
 			Result:  ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleCreateViewTarget(viewText string) (string, []string, Diagnostic, bool) {
+	viewText = strings.TrimSpace(viewText)
+	if !strings.Contains(viewText, "(") {
+		if strings.Contains(viewText, ",") {
+			return "", nil, simpleParserDiagnostic("CREATE VIEW only supports one view name"), false
+		}
+		return viewText, nil, Diagnostic{}, true
+	}
+	open := strings.Index(viewText, "(")
+	close := strings.LastIndex(viewText, ")")
+	if close != len(viewText)-1 || open < 0 || close < open {
+		return "", nil, simpleParserDiagnostic("CREATE VIEW inline column list must be enclosed in parentheses"), false
+	}
+	viewName := strings.TrimSpace(viewText[:open])
+	if viewName == "" {
+		return "", nil, simpleParserDiagnostic("CREATE VIEW must include a view name"), false
+	}
+	columnText := strings.TrimSpace(viewText[open+1 : close])
+	if columnText == "" {
+		return "", nil, simpleParserDiagnostic("CREATE VIEW inline column list must not be empty"), false
+	}
+	columns := splitSimpleCommaList(columnText)
+	for i, column := range columns {
+		column = strings.TrimSpace(column)
+		if column == "" || strings.Contains(column, ".") || len(strings.Fields(column)) != 1 {
+			return "", nil, simpleParserDiagnostic("CREATE VIEW inline column names must be simple identifiers"), false
+		}
+		columns[i] = column
+	}
+	return viewName, columns, Diagnostic{}, true
+}
+
+func applySimpleCreateViewColumnAliases(selectText string, columns []string) (string, Diagnostic, bool) {
+	selectBody, ok := consumeKeyword(selectText, "select")
+	if !ok {
+		return "", simpleParserDiagnostic("CREATE VIEW must use a SELECT statement"), false
+	}
+	projectionText, sourceText, hasSource := splitBeforeTopLevelKeyword(selectBody, "from")
+	if !hasSource {
+		projectionText = strings.TrimSpace(selectBody)
+	}
+	projectionParts := splitSimpleCommaList(projectionText)
+	if len(projectionParts) != len(columns) {
+		return "", simpleParserDiagnostic("CREATE VIEW inline column count must match SELECT projection count"), false
+	}
+	aliased := make([]string, 0, len(projectionParts))
+	for index, part := range projectionParts {
+		exprText, _, diagnostic, ok := parseSimpleProjectionAlias(part)
+		if !ok {
+			return "", diagnostic, false
+		}
+		if _, field := splitProjectionField(exprText); field == "*" {
+			return "", simpleParserDiagnostic("CREATE VIEW inline column list requires explicit projections"), false
+		}
+		aliased = append(aliased, strings.TrimSpace(exprText)+" as "+columns[index])
+	}
+	result := "select " + strings.Join(aliased, ", ")
+	if hasSource {
+		result += " from " + strings.TrimSpace(sourceText)
+	}
+	return result, Diagnostic{}, true
 }
 
 func parseSimpleDrop(sql string) (UnboundStatement, Diagnostic, bool) {

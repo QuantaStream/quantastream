@@ -215,6 +215,26 @@ func TestSimpleParserBridgeParsesDropViewIfExistsStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateViewInlineColumnList(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create or replace view customer_names (customer_key, customer_name) as select c_custkey, c_name from customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateView {
+		t.Fatalf("kind = %q, want create view", statement.Kind)
+	}
+	if statement.CreateView.View.Name != "customer_names" {
+		t.Fatalf("view = %#v, want customer_names", statement.CreateView.View)
+	}
+	if !statement.CreateView.Replace {
+		t.Fatalf("Replace = false, want true")
+	}
+	wantSQL := "select c_custkey as customer_key, c_name as customer_name from customer"
+	if statement.CreateView.SQL != wantSQL {
+		t.Fatalf("CreateView.SQL = %q, want %q", statement.CreateView.SQL, wantSQL)
+	}
+}
+
 func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
 	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_qa (id int)")
 	if !diagnostics.BlocksNative() {

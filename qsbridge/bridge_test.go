@@ -535,6 +535,26 @@ func TestUnboundStatementBindCreateView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateViewInlineColumnList(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create or replace view customer_names (customer_key, customer_name) as select c_custkey, c_name from customer")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	wantSQL := "select c_custkey as customer_key, c_name as customer_name from customer"
+	if query.Mutation.ViewSQL != wantSQL {
+		t.Fatalf("ViewSQL = %q, want %q", query.Mutation.ViewSQL, wantSQL)
+	}
+	if len(query.Mutation.ViewDependencies) != 1 || query.Mutation.ViewDependencies[0].Table != "customer" {
+		t.Fatalf("ViewDependencies = %#v, want customer", query.Mutation.ViewDependencies)
+	}
+}
+
 func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

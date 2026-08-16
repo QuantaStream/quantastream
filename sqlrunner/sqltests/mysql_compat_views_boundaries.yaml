@@ -12,16 +12,39 @@ tests:
       drop view if exists qs_mysql_compat_missing_view
 
   - id: mysql_compat_views_boundaries.002.create_view_column_list
-    status: xfail
+    status: supported
     kind: statement
     feature: views_ddl_boundary
     compatibility: mysql
     requires: [create_view, inline_column_list]
-    issue: "CREATE VIEW with an inline column list is valid MySQL syntax; QS currently requires aliases in the SELECT list."
     sql: |
       create or replace view qs_mysql_compat_column_list_view (customer_key, customer_name) as
       select c_custkey, c_name
       from customer
+
+  - id: mysql_compat_views_boundaries.003.select_view_column_list
+    status: supported
+    kind: query
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [select, view_reference, inline_column_list]
+    sql: |
+      select customer_key, customer_name
+      from qs_mysql_compat_column_list_view
+      where customer_key = 1
+    expect:
+      columns: [customer_key, customer_name]
+      rows:
+        - [1, "Customer#000000001"]
+
+  - id: mysql_compat_views_boundaries.004.drop_view_column_list
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_column_list_view
 
   - id: mysql_compat_views_boundaries.010.create_aggregate_view
     status: supported
