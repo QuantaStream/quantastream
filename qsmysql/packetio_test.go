@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
 type testPacketReader struct {
@@ -39,6 +41,14 @@ func (h *testCommandHandler) HandleCommand(ctx context.Context, command Command)
 		return QuitResponse(), nil
 	}
 	return PingResponse(), nil
+}
+
+type statementOKCommandHandler struct {
+	statement qsbridge.StatementResult
+}
+
+func (h statementOKCommandHandler) HandleCommand(ctx context.Context, command Command) (CommandResponse, error) {
+	return StatementOKResponse(h.statement), nil
 }
 
 func TestCommandLoopDecodesHandlesAndWritesResponse(t *testing.T) {
@@ -76,6 +86,28 @@ func TestCommandLoopShapesOKForSessionTrackCapability(t *testing.T) {
 	}
 	if got := writer.packets[0].Payload; !bytes.Equal(got, []byte{okPacketHeader, 0, 0, byte(StatusAutocommit), 0, 0, 0, 0}) {
 		t.Fatalf("written OK payload = %v, want session-track shape", got)
+	}
+}
+
+func TestCommandLoopReencodesOKStatusForSessionTrackCapability(t *testing.T) {
+	reader := &testPacketReader{packets: []Packet{{SequenceID: 0, Payload: []byte{byte(CommandQuery), 'c'}}}}
+	writer := &testPacketWriter{}
+
+	response, err := (CommandLoop{
+		Reader:          reader,
+		Writer:          writer,
+		Handler:         statementOKCommandHandler{statement: qsbridge.StatementResult{Status: "View sample_view created"}},
+		CapabilityFlags: CapabilitySessionTrack,
+	}).ServeNext(context.Background())
+	if err != nil {
+		t.Fatalf("ServeNext failed: %v", err)
+	}
+	if response.Kind != CommandResponseOK || len(writer.packets) != 1 {
+		t.Fatalf("response = %#v written=%#v", response, writer.packets)
+	}
+	want := OKPayloadWithCapabilities(qsbridge.StatementResult{Status: "View sample_view created"}, CapabilitySessionTrack)
+	if got := writer.packets[0].Payload; !bytes.Equal(got, want) {
+		t.Fatalf("written OK payload = %v, want %v", got, want)
 	}
 }
 

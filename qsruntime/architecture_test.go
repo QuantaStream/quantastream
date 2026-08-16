@@ -69,7 +69,8 @@ func TestQSRuntimeLegacyImportsStayInAdapterIslands(t *testing.T) {
 			"github.com/QuantaStream/quantastream/shared": "github.com/QuantaStream/quantastream/shared",
 		},
 		"legacy_catalog.go": {
-			"github.com/QuantaStream/quantastream/core": "github.com/QuantaStream/quantastream/core",
+			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",
+			"github.com/QuantaStream/quantastream/shared": "github.com/QuantaStream/quantastream/shared",
 		},
 		"legacy_direct_runtime.go": {
 			"github.com/QuantaStream/quantastream/core":   "github.com/QuantaStream/quantastream/core",

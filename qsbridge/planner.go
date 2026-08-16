@@ -77,6 +77,14 @@ func (p Planner) PlanWithRequest(request PlanRequest) PlanResult {
 		return result
 	}
 
+	expanded, expansionDiagnostics := ExpandStatementViews(p.Catalog, p.Parser, request.DefaultSchema, unbound)
+	result.Unbound = expanded
+	if expansionDiagnostics.BlocksNative() {
+		result.Diagnostics = mergeDiagnosticSets(parseDiagnostics, expansionDiagnostics)
+		return result
+	}
+	unbound = expanded
+
 	context := NewBindContext(p.Catalog, request.DefaultSchema)
 	query, bindDiagnostics := unbound.Bind(context)
 	result.Query = query

@@ -537,6 +537,10 @@ const (
 	MutationCreateTable MutationKind = "create_table"
 	// MutationDropTable describes dropping an active table schema and data.
 	MutationDropTable MutationKind = "drop_table"
+	// MutationCreateView describes creating a logical non-materialized view.
+	MutationCreateView MutationKind = "create_view"
+	// MutationDropView describes dropping a logical non-materialized view.
+	MutationDropView MutationKind = "drop_view"
 )
 
 // MutationRow describes one parser-neutral row of values for INSERT planning.
@@ -559,6 +563,9 @@ type MutationAssignment struct {
 type MutationShape struct {
 	Kind                   MutationKind
 	Target                 TableInstance
+	ViewSQL                string
+	Replace                bool
+	ViewDependencies       []TableInstance
 	Columns                []FieldRef
 	Rows                   []MutationRow
 	Assignments            []MutationAssignment

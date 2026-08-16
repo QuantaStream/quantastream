@@ -38,6 +38,8 @@ const (
 	DiagnosticInternalInvariant DiagnosticCode = "internal_invariant"
 	// DiagnosticCatalogTableNotFound marks a missing catalog table lookup.
 	DiagnosticCatalogTableNotFound DiagnosticCode = "catalog_table_not_found"
+	// DiagnosticCatalogViewNotFound marks a missing catalog view lookup.
+	DiagnosticCatalogViewNotFound DiagnosticCode = "catalog_view_not_found"
 	// DiagnosticCatalogSchemaNotFound marks a missing catalog schema lookup.
 	DiagnosticCatalogSchemaNotFound DiagnosticCode = "catalog_schema_not_found"
 	// DiagnosticCatalogFieldNotFound marks a missing catalog field lookup.

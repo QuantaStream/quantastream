@@ -177,6 +177,77 @@ func TestStandardDirectSessionProviderQueriesLocalBitmapIndex(t *testing.T) {
 	handle.Release(context.Background())
 }
 
+func TestStandardDirectSessionProviderCreatesViewWithSyntheticHandle(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	backend, err := MountStandardLocalBackend(config, nil)
+	if err != nil {
+		t.Fatalf("MountStandardLocalBackend() error = %v", err)
+	}
+	defer backend.Close()
+	pool := backend.NewSessionPool(config, nil, 1)
+	defer pool.Shutdown()
+
+	request := qsruntime.NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Mutation = qsbridge.MutationShape{
+		Kind:    qsbridge.MutationCreateView,
+		Target:  qsbridge.TableInstance{Schema: "quanta", Table: "sample_view"},
+		ViewSQL: "select id, city from sample",
+		ViewDependencies: []qsbridge.TableInstance{{
+			Schema: "quanta",
+			Table:  "sample",
+		}},
+	}
+
+	provider := StandardDirectSessionProvider{
+		Pool:      pool,
+		SchemaDir: backend.ConfigBaseDir(config),
+		Conn:      backend.NewLocalConnection(),
+	}
+	handle, diagnostics, err := provider.BorrowDirectSession(context.Background(), request)
+	if err != nil {
+		t.Fatalf("BorrowDirectSession() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("BorrowDirectSession() diagnostics = %#v, want non-blocking", diagnostics)
+	}
+	standardHandle, ok := handle.(StandardDirectSessionHandle)
+	if !ok {
+		t.Fatalf("BorrowDirectSession() handle = %T, want StandardDirectSessionHandle", handle)
+	}
+	if !standardHandle.Synthetic {
+		t.Fatalf("BorrowDirectSession() Synthetic = false, want true for CREATE VIEW")
+	}
+
+	statement, mutationDiagnostics, err := handle.ExecuteMutation(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ExecuteMutation() error = %v", err)
+	}
+	if mutationDiagnostics.BlocksNative() {
+		t.Fatalf("ExecuteMutation() diagnostics = %#v, want non-blocking", mutationDiagnostics)
+	}
+	if statement.Status != "View sample_view created" {
+		t.Fatalf("ExecuteMutation() status = %q, want view created", statement.Status)
+	}
+	if _, err := os.Stat(filepath.Join(backend.ConfigBaseDir(config), "views", "sample_view.yaml")); err != nil {
+		t.Fatalf("view definition was not written under staged config: %v", err)
+	}
+	if active, err := shared.CatalogViewActive(backend.ConfigBaseDir(config), "quanta", "sample_view"); err != nil {
+		t.Fatalf("CatalogViewActive() error = %v", err)
+	} else if !active {
+		t.Fatalf("CatalogViewActive() = false, want true")
+	}
+	if releaseDiagnostics := handle.Release(context.Background()); releaseDiagnostics.BlocksNative() {
+		t.Fatalf("Release() diagnostics = %#v, want non-blocking", releaseDiagnostics)
+	}
+}
+
 func TestStandardDirectRuntimeExecutesFlatBitmapReadLocally(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

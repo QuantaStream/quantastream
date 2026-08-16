@@ -228,6 +228,7 @@ func cloneUnboundStatement(statement UnboundStatement) UnboundStatement {
 	statement.Update.Blockers = append([]NativeBlocker(nil), statement.Update.Blockers...)
 	statement.Delete.Predicates = append([]UnboundPredicate(nil), statement.Delete.Predicates...)
 	statement.Delete.Blockers = append([]NativeBlocker(nil), statement.Delete.Blockers...)
+	statement.ShowView.Blockers = append([]NativeBlocker(nil), statement.ShowView.Blockers...)
 	statement.Session.Actions = append([]SessionAction(nil), statement.Session.Actions...)
 	statement.Session.Blockers = append([]NativeBlocker(nil), statement.Session.Blockers...)
 	return statement

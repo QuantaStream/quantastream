@@ -226,13 +226,18 @@ tokenizes the narrow simple-parser SQL surface into keyword, identifier,
 literal, operator, punctuation, placeholder, wildcard, EOF, and error tokens
 with byte spans, but it is not yet wired into the active parser.
 
+`view_expansion.go` rewrites supported logical view references before binding.
+The first cut only inlines single-source, non-materialized views whose
+definitions remain simple SELECTs, preserving ordinary table planning after the
+rewrite.
+
 `dictionary.go` contains the planner-facing StringEnum dictionary boundary,
 including field identity, encoded values, versions, capabilities, update mode,
 consistency mode, and a small cached resolver wrapper for tests and
 scaffolding.
 
 `catalog_cache.go` provides a small in-memory catalog cache wrapper for table,
-relationship, and function lookups. It caches successful lookups and
+view, relationship, and function lookups. It caches successful lookups and
 diagnostics while returning copies so planner metadata callers do not alias
 cached state.
 

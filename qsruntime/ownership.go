@@ -165,6 +165,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 	switch file {
 	case "bitmap_result_adapter.go",
 		"catalog_factory.go",
+		"catalog_show.go",
 		"direct_config.go",
 		"direct_executor.go",
 		"direct_factory.go",

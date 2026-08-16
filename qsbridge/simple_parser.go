@@ -44,15 +44,18 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 		return parseSimpleTruncate(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "create"); ok {
-		return parseSimpleCreateTable(sql)
+		return parseSimpleCreate(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "drop"); ok {
-		return parseSimpleDropTable(sql)
+		return parseSimpleDrop(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "show"); ok {
+		return parseSimpleShow(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, DROP TABLE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -336,16 +339,34 @@ func parseSimpleTruncate(sql string) (UnboundStatement, Diagnostic, bool) {
 	}, Diagnostic{}, true
 }
 
-func parseSimpleCreateTable(sql string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleCreate(sql string) (UnboundStatement, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
 	createBody, ok := consumeKeyword(trimmed, "create")
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("only CREATE statements are supported"), false
 	}
-	createBody, ok = consumeKeyword(createBody, "table")
-	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("CREATE must include TABLE"), false
+	replace := false
+	if remaining, ok := consumeKeyword(createBody, "or"); ok {
+		remaining, ok = consumeKeyword(remaining, "replace")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("CREATE OR must be followed by REPLACE"), false
+		}
+		createBody = remaining
+		replace = true
 	}
+	if remaining, ok := consumeKeyword(createBody, "table"); ok {
+		if replace {
+			return UnboundStatement{}, simpleParserDiagnostic("CREATE OR REPLACE TABLE is not supported"), false
+		}
+		return parseSimpleCreateTableBody(sql, remaining)
+	}
+	if remaining, ok := consumeKeyword(createBody, "view"); ok {
+		return parseSimpleCreateViewBody(sql, remaining, replace)
+	}
+	return UnboundStatement{}, simpleParserDiagnostic("CREATE must include TABLE or VIEW"), false
+}
+
+func parseSimpleCreateTableBody(sql string, createBody string) (UnboundStatement, Diagnostic, bool) {
 	if strings.TrimSpace(createBody) == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE must include a table"), false
 	}
@@ -369,15 +390,58 @@ func parseSimpleCreateTable(sql string) (UnboundStatement, Diagnostic, bool) {
 	}, Diagnostic{}, true
 }
 
-func parseSimpleDropTable(sql string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleCreateViewBody(sql string, createBody string, replace bool) (UnboundStatement, Diagnostic, bool) {
+	viewText, selectText, ok := splitBeforeTopLevelKeyword(createBody, "as")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW must include AS SELECT"), false
+	}
+	if strings.TrimSpace(viewText) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW must include a view name"), false
+	}
+	if strings.Contains(viewText, "(") || strings.Contains(viewText, ",") {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW only supports one view name without an inline column list"), false
+	}
+	view, diagnostic, ok := parseSimpleTable(viewText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if view.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW aliases are not supported"), false
+	}
+	if _, ok := consumeKeyword(selectText, "select"); !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE VIEW must use a SELECT statement"), false
+	}
+	if _, diagnostic, ok := parseSimpleSelect(selectText); !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindCreateView,
+		CreateView: UnboundCreateView{
+			View:    view,
+			SQL:     strings.TrimSpace(selectText),
+			Replace: replace,
+			Result:  ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleDrop(sql string) (UnboundStatement, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
 	dropBody, ok := consumeKeyword(trimmed, "drop")
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("only DROP statements are supported"), false
 	}
 	if remaining, ok := consumeKeyword(dropBody, "table"); ok {
-		dropBody = remaining
+		return parseSimpleDropTableBody(sql, remaining)
 	}
+	if remaining, ok := consumeKeyword(dropBody, "view"); ok {
+		return parseSimpleDropViewBody(sql, remaining)
+	}
+	return parseSimpleDropTableBody(sql, dropBody)
+}
+
+func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
 	if strings.TrimSpace(dropBody) == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
 	}
@@ -397,6 +461,67 @@ func parseSimpleDropTable(sql string) (UnboundStatement, Diagnostic, bool) {
 		Drop: UnboundDropTable{
 			Table:  table,
 			Result: ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(dropBody) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW must include a view"), false
+	}
+	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW only supports one view name"), false
+	}
+	view, diagnostic, ok := parseSimpleTable(dropBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if view.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindDropView,
+		DropView: UnboundDropView{
+			View:   view,
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	showBody, ok := consumeKeyword(trimmed, "show")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only SHOW statements are supported"), false
+	}
+	createBody, ok := consumeKeyword(showBody, "create")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW"), false
+	}
+	viewBody, ok := consumeKeyword(createBody, "view")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE only supports VIEW"), false
+	}
+	view, diagnostic, ok := parseSimpleTable(viewBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if view.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE VIEW aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowCreateView,
+		ShowView: UnboundShowCreateView{
+			View: view,
+			Result: ResultShape{
+				Kind: ResultQuery,
+				Columns: []FieldRef{
+					{Name: "View", Type: DataTypeString},
+					{Name: "Create View", Type: DataTypeString},
+				},
+			},
 		},
 	}, Diagnostic{}, true
 }

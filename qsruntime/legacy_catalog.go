@@ -3,11 +3,14 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/hashicorp/consul/api"
 )
 
 // LegacyTableLoader loads a missing core table into the shared table cache.
@@ -22,6 +25,8 @@ type LegacyTableCacheCatalog struct {
 	TableCache *core.TableCacheStruct
 	LoadTable  LegacyTableLoader
 	Functions  []qsbridge.FunctionDefinition
+	ConfigDir  string
+	Consul     *api.Client
 }
 
 // LegacyTableCacheCatalogFactory builds cached catalogs from the legacy table cache.
@@ -53,10 +58,20 @@ func (f LegacyTableCacheCatalogFactory) NewRuntimeCatalog(ctx context.Context, c
 	if len(functions) == 0 {
 		functions = qsbridge.BuiltinSQLFunctionDefinitions()
 	}
+	var consul *api.Client
+	if strings.TrimSpace(config.ConsulAddress) != "" {
+		client, err := api.NewClient(&api.Config{Address: strings.TrimSpace(config.ConsulAddress)})
+		if err != nil {
+			return nil, nil, err
+		}
+		consul = client
+	}
 	return qsbridge.NewCachedCatalog(LegacyTableCacheCatalog{
 		TableCache: f.TableCache,
 		LoadTable:  loader,
 		Functions:  functions,
+		ConfigDir:  strings.TrimSpace(config.BaseDir),
+		Consul:     consul,
 	}), nil, nil
 }
 
@@ -81,6 +96,35 @@ func (c LegacyTableCacheCatalog) Table(schema string, name string) (qsbridge.Tab
 		}
 	}
 	return c.tableDefinition(schema, table), nil
+}
+
+// View looks up a logical view definition from Consul or the file-backed catalog.
+func (c LegacyTableCacheCatalog) View(schema string, name string) (qsbridge.SQLViewDefinition, qsbridge.DiagnosticSet) {
+	if c.Consul != nil {
+		view, err := shared.LoadViewDefinitionConsul(c.Consul, name)
+		if err != nil {
+			return qsbridge.SQLViewDefinition{}, legacyCatalogViewDiagnostic(schema, name, err)
+		}
+		return legacyCatalogSQLViewDefinition(schema, view), nil
+	}
+	configDir := strings.TrimSpace(c.ConfigDir)
+	if configDir == "" {
+		return qsbridge.SQLViewDefinition{}, legacyCatalogViewDiagnostic(schema, name, os.ErrNotExist)
+	}
+	if shared.CatalogObjectsFileExists(configDir) {
+		active, err := shared.CatalogViewActive(configDir, schema, name)
+		if err != nil {
+			return qsbridge.SQLViewDefinition{}, legacyCatalogViewDiagnostic(schema, name, err)
+		}
+		if !active {
+			return qsbridge.SQLViewDefinition{}, legacyCatalogViewDiagnostic(schema, name, os.ErrNotExist)
+		}
+	}
+	view, err := shared.LoadViewDefinition(configDir, name)
+	if err != nil {
+		return qsbridge.SQLViewDefinition{}, legacyCatalogViewDiagnostic(schema, name, err)
+	}
+	return legacyCatalogSQLViewDefinition(schema, view), nil
 }
 
 // Relationship looks up a relationship by name from cached table metadata.
@@ -127,6 +171,34 @@ func (c LegacyTableCacheCatalog) Function(name string) (qsbridge.FunctionDefinit
 	}
 	return qsbridge.FunctionDefinition{}, qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogFunctionNotFound, qsbridge.PhaseBind, "function not found: "+name),
+	}
+}
+
+func legacyCatalogSQLViewDefinition(schema string, view shared.ViewDefinition) qsbridge.SQLViewDefinition {
+	schemaName := strings.TrimSpace(view.SchemaName)
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(schema)
+	}
+	sql := strings.TrimSpace(view.SQL)
+	canonical := strings.TrimSpace(view.CanonicalSQL)
+	if sql == "" {
+		sql = canonical
+	}
+	return qsbridge.SQLViewDefinition{
+		Schema:       schemaName,
+		Name:         strings.TrimSpace(view.ViewName),
+		SQL:          sql,
+		CanonicalSQL: canonical,
+	}
+}
+
+func legacyCatalogViewDiagnostic(schema string, name string, err error) qsbridge.DiagnosticSet {
+	message := "view not found: " + qualifiedCatalogName(schema, name)
+	if err != nil && !os.IsNotExist(err) {
+		message += " (" + err.Error() + ")"
+	}
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogViewNotFound, qsbridge.PhaseBind, message),
 	}
 }
 

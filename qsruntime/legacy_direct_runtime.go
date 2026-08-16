@@ -322,7 +322,7 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 			),
 		}, nil
 	}
-	if request.Mutation.Kind == qsbridge.MutationCreateTable && strings.TrimSpace(p.SchemaDir) != "" {
+	if schemaMutationNeedsSyntheticHandle(request.Mutation.Kind) && strings.TrimSpace(p.SchemaDir) != "" {
 		handle, err := NewLegacySchemaMutationHandle(p.Source, tableName, p.SchemaDir)
 		if err != nil {
 			return nil, nil, err
@@ -343,6 +343,15 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		Session:               session,
 		DictionaryInvalidator: p.DictionaryInvalidator,
 	}, nil, nil
+}
+
+func schemaMutationNeedsSyntheticHandle(kind qsbridge.MutationKind) bool {
+	switch kind {
+	case qsbridge.MutationCreateTable, qsbridge.MutationCreateView, qsbridge.MutationDropView:
+		return true
+	default:
+		return false
+	}
 }
 
 // ReadRelationshipVectorReverseArtifactCandidates asks direct bitmap nodes for
@@ -1186,6 +1195,10 @@ func (h LegacyQuantaSessionHandle) ExecuteMutation(ctx context.Context, request 
 		return h.CreateTable(ctx, request)
 	case qsbridge.MutationDropTable:
 		return h.DropTable(ctx, request)
+	case qsbridge.MutationCreateView:
+		return h.CreateView(ctx, request)
+	case qsbridge.MutationDropView:
+		return h.DropView(ctx, request)
 	default:
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(

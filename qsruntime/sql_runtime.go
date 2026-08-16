@@ -162,6 +162,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = ExecutionResult{Statement: cloneStatementResult(request.Statement)}
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowCreateView {
+		result.Runtime = showCreateViewRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind != qsbridge.QueryKindSelect {
 		lowerStart := time.Now()
 		intermediate, diagnostics := r.Lowerer.LowerExecutionRequest(request)

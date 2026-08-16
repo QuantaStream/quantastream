@@ -49,6 +49,10 @@ func (q QueryIR) RequiredAccess() []AccessRequirement {
 		collector.ensureTable(AccessCreate, q.Mutation.Target)
 	case MutationDropTable:
 		collector.ensureTable(AccessDrop, q.Mutation.Target)
+	case MutationCreateView:
+		collector.ensureTable(AccessCreate, q.Mutation.Target)
+	case MutationDropView:
+		collector.ensureTable(AccessDrop, q.Mutation.Target)
 	}
 	return collector.requirements
 }

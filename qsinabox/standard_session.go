@@ -207,7 +207,7 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhasePlan, "direct request has no root table"),
 		}, nil
 	}
-	if request.Mutation.Kind == qsbridge.MutationCreateTable && strings.TrimSpace(p.SchemaDir) != "" {
+	if standardSchemaMutationNeedsSyntheticHandle(request.Mutation.Kind) && strings.TrimSpace(p.SchemaDir) != "" {
 		return StandardDirectSessionHandle{
 			Pool:      p.Pool,
 			Table:     table,
@@ -232,6 +232,15 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		Result:                               qsruntime.LegacyBitmapQueryResultAdapter{},
 		PrimaryKeyAuthorityManifestPublisher: p.PrimaryKeyAuthorityManifestPublisher,
 	}, nil, nil
+}
+
+func standardSchemaMutationNeedsSyntheticHandle(kind qsbridge.MutationKind) bool {
+	switch kind {
+	case qsbridge.MutationCreateTable, qsbridge.MutationCreateView, qsbridge.MutationDropView:
+		return true
+	default:
+		return false
+	}
 }
 
 // TimeBucketYearBounds reports observed BSI shard years for local standard mode.

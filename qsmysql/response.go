@@ -18,9 +18,10 @@ const (
 
 // CommandResponse is the socket-free packet response to one decoded MySQL command.
 type CommandResponse struct {
-	Kind    CommandResponseKind
-	Packets []Packet
-	Close   bool
+	Kind      CommandResponseKind
+	Packets   []Packet
+	Close     bool
+	Statement *qsbridge.StatementResult
 }
 
 const (
@@ -40,7 +41,8 @@ func QueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
 
 // StatementOKResponse encodes a statement response as a MySQL OK packet.
 func StatementOKResponse(statement qsbridge.StatementResult) CommandResponse {
-	return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{OKPacket(1, statement)}}
+	statement = cloneStatementResult(statement)
+	return CommandResponse{Kind: CommandResponseOK, Packets: []Packet{OKPacket(1, statement)}, Statement: &statement}
 }
 
 // AuthSuccessResponse encodes the successful server side of a MySQL auth exchange.
@@ -50,7 +52,20 @@ func AuthSuccessResponse(_ string, capabilities CapabilityFlag) CommandResponse 
 
 // WithCapabilities reshapes OK packets for negotiated client capabilities.
 func (r CommandResponse) WithCapabilities(capabilities CapabilityFlag) CommandResponse {
-	if capabilities&CapabilitySessionTrack == 0 || r.Kind != CommandResponseOK {
+	if r.Kind != CommandResponseOK {
+		return r
+	}
+	if r.Statement != nil {
+		sequenceID := byte(1)
+		if len(r.Packets) > 0 {
+			sequenceID = r.Packets[0].SequenceID
+		}
+		statement := cloneStatementResult(*r.Statement)
+		r.Statement = &statement
+		r.Packets = []Packet{OKPacketWithCapabilities(sequenceID, statement, capabilities)}
+		return r
+	}
+	if capabilities&CapabilitySessionTrack == 0 {
 		return r
 	}
 	r.Packets = clonePackets(r.Packets)
@@ -60,6 +75,12 @@ func (r CommandResponse) WithCapabilities(capabilities CapabilityFlag) CommandRe
 		}
 	}
 	return r
+}
+
+func cloneStatementResult(statement qsbridge.StatementResult) qsbridge.StatementResult {
+	statement.Notices = append([]qsbridge.StatementNotice(nil), statement.Notices...)
+	statement.SessionActions = append([]qsbridge.SessionAction(nil), statement.SessionActions...)
+	return statement
 }
 
 func clonePackets(packets []Packet) []Packet {

@@ -31,6 +31,15 @@ func TestOKPayloadWithSessionTrackIncludesEmptyInfo(t *testing.T) {
 	}
 }
 
+func TestOKPayloadWithSessionTrackLengthEncodesStatusInfo(t *testing.T) {
+	payload := OKPayloadWithCapabilities(qsbridge.StatementResult{Status: "View sample_view created"}, CapabilitySessionTrack)
+	want := []byte{okPacketHeader, 0, 0, byte(StatusAutocommit), 0, 0, 0, 24}
+	want = append(want, []byte("View sample_view created")...)
+	if !bytes.Equal(payload, want) {
+		t.Fatalf("OK payload = %v, want %v", payload, want)
+	}
+}
+
 func TestERRPayloadEncodesProtocolError(t *testing.T) {
 	payload := ERRPayload(qsbridge.ProtocolError{
 		SQLState:   qsbridge.SQLStateSyntaxError,

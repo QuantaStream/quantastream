@@ -13,6 +13,7 @@ import "strings"
 type CachedCatalog struct {
 	backend       Catalog
 	tables        *shardedValueCache
+	views         *shardedValueCache
 	relationships *shardedValueCache
 	functions     *shardedValueCache
 }
@@ -22,6 +23,7 @@ func NewCachedCatalog(backend Catalog) *CachedCatalog {
 	return &CachedCatalog{
 		backend:       backend,
 		tables:        newShardedValueCache(),
+		views:         newShardedValueCache(),
 		relationships: newShardedValueCache(),
 		functions:     newShardedValueCache(),
 	}
@@ -38,6 +40,27 @@ func (c *CachedCatalog) Table(schema string, name string) (TableDefinition, Diag
 	table, diagnostics := c.backend.Table(schema, name)
 	c.tables.Set(key, cachedTable{value: cloneTableDefinition(table), diagnostics: cloneDiagnosticSet(diagnostics)})
 	return cloneTableDefinition(table), cloneDiagnosticSet(diagnostics)
+}
+
+// View looks up a logical view definition through the cache when the backend supports views.
+func (c *CachedCatalog) View(schema string, name string) (SQLViewDefinition, DiagnosticSet) {
+	backend, ok := c.backend.(ViewCatalog)
+	if !ok {
+		return SQLViewDefinition{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogViewNotFound, PhaseBind, "view not found: "+qualifiedCatalogName(schema, name)),
+		}
+	}
+	key := catalogTableCacheKey(schema, name)
+	if value, ok := c.views.Get(key); ok {
+		cached := value.(cachedView)
+		return cloneSQLViewDefinition(cached.value), cloneDiagnosticSet(cached.diagnostics)
+	}
+
+	view, diagnostics := backend.View(schema, name)
+	if !diagnostics.BlocksNative() {
+		c.views.Set(key, cachedView{value: cloneSQLViewDefinition(view), diagnostics: cloneDiagnosticSet(diagnostics)})
+	}
+	return cloneSQLViewDefinition(view), cloneDiagnosticSet(diagnostics)
 }
 
 // Relationship looks up a relationship definition through the cache.
@@ -81,6 +104,11 @@ func (c *CachedCatalog) InvalidateTable(schema string, name string) {
 	c.tables.Delete(catalogTableCacheKey(schema, name))
 }
 
+// InvalidateView removes one cached view entry.
+func (c *CachedCatalog) InvalidateView(schema string, name string) {
+	c.views.Delete(catalogTableCacheKey(schema, name))
+}
+
 // InvalidateRelationship removes one cached relationship entry.
 func (c *CachedCatalog) InvalidateRelationship(name string) {
 	c.relationships.Delete(catalogNameCacheKey(name))
@@ -94,12 +122,18 @@ func (c *CachedCatalog) InvalidateFunction(name string) {
 // Clear removes all cached metadata.
 func (c *CachedCatalog) Clear() {
 	c.tables.Clear()
+	c.views.Clear()
 	c.relationships.Clear()
 	c.functions.Clear()
 }
 
 type cachedTable struct {
 	value       TableDefinition
+	diagnostics DiagnosticSet
+}
+
+type cachedView struct {
+	value       SQLViewDefinition
 	diagnostics DiagnosticSet
 }
 
@@ -132,6 +166,11 @@ func cloneTableDefinition(table TableDefinition) TableDefinition {
 	}
 	cloned.Relationships = cloneRelationshipDefinitions(table.Relationships)
 	return cloned
+}
+
+// cloneSQLViewDefinition returns view metadata that callers may mutate safely.
+func cloneSQLViewDefinition(view SQLViewDefinition) SQLViewDefinition {
+	return view
 }
 
 // cloneFunctionDefinition returns function metadata with independent slice fields.

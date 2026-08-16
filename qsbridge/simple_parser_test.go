@@ -132,6 +132,73 @@ func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateViewStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create view building_customers as select c_custkey, c_name from customer where c_mktsegment = 'BUILDING';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateView {
+		t.Fatalf("kind = %q, want create view", statement.Kind)
+	}
+	if statement.CreateView.View.Name != "building_customers" {
+		t.Fatalf("view = %#v, want building_customers", statement.CreateView.View)
+	}
+	if statement.CreateView.Replace {
+		t.Fatalf("replace should be false")
+	}
+	if statement.CreateView.SQL != "select c_custkey, c_name from customer where c_mktsegment = 'BUILDING'" {
+		t.Fatalf("view sql = %q", statement.CreateView.SQL)
+	}
+	if statement.CreateView.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.CreateView.Result.Kind)
+	}
+}
+
+func TestSimpleParserBridgeParsesCreateOrReplaceViewStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create or replace view building_customers as select c_custkey from customer")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateView {
+		t.Fatalf("kind = %q, want create view", statement.Kind)
+	}
+	if !statement.CreateView.Replace {
+		t.Fatalf("replace should be true")
+	}
+}
+
+func TestSimpleParserBridgeParsesShowCreateViewStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show create view building_customers;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowCreateView {
+		t.Fatalf("kind = %q, want show_create_view", statement.Kind)
+	}
+	if statement.ShowView.View.Name != "building_customers" {
+		t.Fatalf("view = %#v, want building_customers", statement.ShowView.View)
+	}
+	if statement.ShowView.Result.Kind != ResultQuery || len(statement.ShowView.Result.Columns) != 2 {
+		t.Fatalf("result = %#v, want two-column query result", statement.ShowView.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesDropViewStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop view building_customers;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropView {
+		t.Fatalf("kind = %q, want drop view", statement.Kind)
+	}
+	if statement.DropView.View.Name != "building_customers" {
+		t.Fatalf("view = %#v, want building_customers", statement.DropView.View)
+	}
+	if statement.DropView.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.DropView.Result.Kind)
+	}
+}
+
 func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
 	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_qa (id int)")
 	if !diagnostics.BlocksNative() {

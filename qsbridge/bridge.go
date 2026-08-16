@@ -13,16 +13,19 @@ type ParserBridge interface {
 
 // UnboundStatement is a parser-neutral statement before catalog binding.
 type UnboundStatement struct {
-	SQL      string
-	Kind     QueryKind
-	Select   UnboundSelect
-	Insert   UnboundInsert
-	Update   UnboundUpdate
-	Delete   UnboundDelete
-	Truncate UnboundTruncate
-	Create   UnboundCreateTable
-	Drop     UnboundDropTable
-	Session  UnboundSession
+	SQL        string
+	Kind       QueryKind
+	Select     UnboundSelect
+	Insert     UnboundInsert
+	Update     UnboundUpdate
+	Delete     UnboundDelete
+	Truncate   UnboundTruncate
+	Create     UnboundCreateTable
+	Drop       UnboundDropTable
+	CreateView UnboundCreateView
+	DropView   UnboundDropView
+	ShowView   UnboundShowCreateView
+	Session    UnboundSession
 }
 
 // Bind binds the statement using context and returns a QueryIR when possible.
@@ -42,6 +45,12 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindCreateTable(context, s.Create)
 	case QueryKindDropTable:
 		return BindDropTable(context, s.Drop)
+	case QueryKindCreateView:
+		return BindCreateView(context, s.CreateView)
+	case QueryKindDropView:
+		return BindDropView(context, s.DropView)
+	case QueryKindShowCreateView:
+		return BindShowCreateView(context, s.ShowView)
 	case QueryKindSession:
 		return BindSession(context, s.Session)
 	default:
@@ -114,9 +123,32 @@ type UnboundCreateTable struct {
 	Blockers []NativeBlocker
 }
 
+// UnboundCreateView describes a CREATE VIEW operation before binding.
+type UnboundCreateView struct {
+	View     UnboundTable
+	SQL      string
+	Replace  bool
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
 // UnboundDropTable describes a DROP TABLE operation before binding.
 type UnboundDropTable struct {
 	Table    UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundDropView describes a DROP VIEW operation before binding.
+type UnboundDropView struct {
+	View     UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowCreateView describes a SHOW CREATE VIEW operation before binding.
+type UnboundShowCreateView struct {
+	View     UnboundTable
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -549,6 +581,36 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 	return query, diagnostics
 }
 
+// BindCreateView binds parser-neutral CREATE VIEW metadata into QueryIR.
+func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindSchemaOperationTarget(context, QueryKindCreateView, createStmt.View, createStmt.Result, createStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	viewStatement, viewDiagnostics := SimpleParserBridge{}.Parse(createStmt.SQL)
+	if viewDiagnostics.BlocksNative() {
+		diagnostics = append(diagnostics, viewDiagnostics...)
+		return query, diagnostics
+	}
+	if viewStatement.Kind != QueryKindSelect {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE VIEW must use a SELECT statement"))
+		return query, diagnostics
+	}
+	viewQuery, selectDiagnostics := BindSelect(context, viewStatement.Select)
+	if selectDiagnostics.BlocksNative() {
+		diagnostics = append(diagnostics, selectDiagnostics...)
+		return query, diagnostics
+	}
+	query.Mutation = MutationShape{
+		Kind:             MutationCreateView,
+		Target:           target,
+		ViewSQL:          strings.TrimSpace(createStmt.SQL),
+		Replace:          createStmt.Replace,
+		ViewDependencies: viewDependenciesFromQuery(viewQuery),
+	}
+	return query, diagnostics
+}
+
 // BindDropTable binds parser-neutral DROP TABLE metadata into QueryIR.
 func BindDropTable(context *BindContext, dropStmt UnboundDropTable) (QueryIR, DiagnosticSet) {
 	query, target, diagnostics := bindSchemaOperationTarget(context, QueryKindDropTable, dropStmt.Table, dropStmt.Result, dropStmt.Blockers)
@@ -566,6 +628,94 @@ func BindDropTable(context *BindContext, dropStmt UnboundDropTable) (QueryIR, Di
 		DependentRelationships: dependencies,
 	}
 	return query, diagnostics
+}
+
+// BindDropView binds parser-neutral DROP VIEW metadata into QueryIR.
+func BindDropView(context *BindContext, dropStmt UnboundDropView) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindSchemaOperationTarget(context, QueryKindDropView, dropStmt.View, dropStmt.Result, dropStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Mutation = MutationShape{
+		Kind:   MutationDropView,
+		Target: target,
+	}
+	return query, diagnostics
+}
+
+// BindShowCreateView binds parser-neutral SHOW CREATE VIEW metadata into QueryIR.
+func BindShowCreateView(context *BindContext, showStmt UnboundShowCreateView) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowCreateView,
+		Result:   showStmt.Result,
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	viewName := strings.TrimSpace(showStmt.View.Name)
+	if viewName == "" {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "SHOW CREATE VIEW target is empty"),
+		}
+	}
+	schemaName := strings.TrimSpace(showStmt.View.Schema)
+	if schemaName == "" {
+		schemaName = context.DefaultSchema
+	}
+	target := TableInstance{
+		ID:     TableInstanceID(viewName),
+		Schema: schemaName,
+		Table:  viewName,
+		Alias:  showStmt.View.Alias,
+		Role:   viewName,
+	}
+	query.Mutation.Target = target
+	viewCatalog, ok := context.Catalog.(ViewCatalog)
+	if !ok {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogViewNotFound, PhaseBind, "view not found: "+qualifiedCatalogName(schemaName, viewName)),
+		}
+	}
+	view, diagnostics := viewCatalog.View(schemaName, viewName)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	if strings.TrimSpace(view.Schema) != "" {
+		query.Mutation.Target.Schema = strings.TrimSpace(view.Schema)
+	}
+	if strings.TrimSpace(view.Name) != "" {
+		query.Mutation.Target.Table = strings.TrimSpace(view.Name)
+	}
+	query.Mutation.ViewSQL = strings.TrimSpace(view.SQL)
+	if query.Mutation.ViewSQL == "" {
+		query.Mutation.ViewSQL = strings.TrimSpace(view.CanonicalSQL)
+	}
+	return query, nil
+}
+
+func viewDependenciesFromQuery(query QueryIR) []TableInstance {
+	dependencies := make([]TableInstance, 0, len(query.Sources))
+	seen := make(map[string]struct{}, len(query.Sources))
+	for _, source := range query.Sources {
+		key := strings.ToLower(strings.TrimSpace(source.Schema)) + "." + strings.ToLower(strings.TrimSpace(source.Table))
+		if key == "." {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dependencies = append(dependencies, TableInstance{
+			ID:     TableInstanceID(source.Table),
+			Schema: source.Schema,
+			Table:  source.Table,
+			Role:   source.Table,
+		})
+	}
+	return dependencies
 }
 
 func bindSchemaOperationTarget(context *BindContext, kind QueryKind, table UnboundTable, result ResultShape, blockers []NativeBlocker) (QueryIR, TableInstance, DiagnosticSet) {

@@ -82,6 +82,14 @@ func (t TableDefinition) Instance(id TableInstanceID, alias string) TableInstanc
 	}
 }
 
+// SQLViewDefinition describes one logical, non-materialized SQL view.
+type SQLViewDefinition struct {
+	Schema       string
+	Name         string
+	SQL          string
+	CanonicalSQL string
+}
+
 // RelationshipDefinition describes a catalog relationship between two fields.
 type RelationshipDefinition struct {
 	Name        string
@@ -280,6 +288,11 @@ type Catalog interface {
 	Function(name string) (FunctionDefinition, DiagnosticSet)
 }
 
+// ViewCatalog can resolve logical, non-materialized SQL views for planning.
+type ViewCatalog interface {
+	View(schema string, name string) (SQLViewDefinition, DiagnosticSet)
+}
+
 // DependentRelationshipCatalog can enumerate child relationships for parent-table operations.
 type DependentRelationshipCatalog interface {
 	DependentRelationships(schema string, parentTable string) ([]RelationshipDefinition, DiagnosticSet)
@@ -289,6 +302,7 @@ type DependentRelationshipCatalog interface {
 type MemoryCatalog struct {
 	Schemas       []CatalogSchemaDefinition
 	Tables        []TableDefinition
+	Views         []SQLViewDefinition
 	Relationships []RelationshipDefinition
 	Functions     []FunctionDefinition
 }
@@ -305,6 +319,21 @@ func (c MemoryCatalog) Table(schema string, name string) (TableDefinition, Diagn
 	}
 	return TableDefinition{}, DiagnosticSet{
 		ErrorDiagnostic(DiagnosticCatalogTableNotFound, PhaseBind, "table not found: "+qualifiedCatalogName(schema, name)),
+	}
+}
+
+// View looks up a logical view definition by schema and name.
+func (c MemoryCatalog) View(schema string, name string) (SQLViewDefinition, DiagnosticSet) {
+	for _, view := range c.Views {
+		if schema != "" && view.Schema != "" && !strings.EqualFold(view.Schema, schema) {
+			continue
+		}
+		if strings.EqualFold(view.Name, name) {
+			return cloneSQLViewDefinition(view), nil
+		}
+	}
+	return SQLViewDefinition{}, DiagnosticSet{
+		ErrorDiagnostic(DiagnosticCatalogViewNotFound, PhaseBind, "view not found: "+qualifiedCatalogName(schema, name)),
 	}
 }
 

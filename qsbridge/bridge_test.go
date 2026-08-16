@@ -494,6 +494,47 @@ func TestUnboundStatementBindCreateTable(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateView(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "create or replace view customer_names as select c_custkey, c_name from customer",
+		Kind: QueryKindCreateView,
+		CreateView: UnboundCreateView{
+			View:    UnboundTable{Name: "customer_names"},
+			SQL:     "select c_custkey, c_name from customer",
+			Replace: true,
+			Result:  ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindCreateView {
+		t.Fatalf("Kind = %q, want create_view", query.Kind)
+	}
+	if query.Mutation.Kind != MutationCreateView {
+		t.Fatalf("Mutation.Kind = %q, want create_view", query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "customer_names" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("Mutation target = %#v, want quanta.customer_names", query.Mutation.Target)
+	}
+	if !query.Mutation.Replace {
+		t.Fatalf("Replace = false, want true")
+	}
+	if query.Mutation.ViewSQL != "select c_custkey, c_name from customer" {
+		t.Fatalf("ViewSQL = %q", query.Mutation.ViewSQL)
+	}
+	if len(query.Mutation.ViewDependencies) != 1 || query.Mutation.ViewDependencies[0].Table != "customer" {
+		t.Fatalf("ViewDependencies = %#v, want customer", query.Mutation.ViewDependencies)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessCreate, "customer_names") {
+		t.Fatalf("RequiredAccess = %#v, want create on customer_names", access)
+	}
+}
+
 func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{
@@ -521,6 +562,77 @@ func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
 	}
 	if len(query.Mutation.DependentRelationships) != 1 {
 		t.Fatalf("dependent relationships = %#v, want orders_customer", query.Mutation.DependentRelationships)
+	}
+}
+
+func TestUnboundStatementBindShowCreateView(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_names",
+		SQL:    "select c_custkey, c_name from customer",
+	}}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show create view customer_names",
+		Kind: QueryKindShowCreateView,
+		ShowView: UnboundShowCreateView{
+			View: UnboundTable{Name: "customer_names"},
+			Result: ResultShape{
+				Kind: ResultQuery,
+				Columns: []FieldRef{
+					{Name: "View", Type: DataTypeString},
+					{Name: "Create View", Type: DataTypeString},
+				},
+			},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowCreateView {
+		t.Fatalf("Kind = %q, want show_create_view", query.Kind)
+	}
+	if query.Mutation.Target.Table != "customer_names" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("target = %#v, want quanta.customer_names", query.Mutation.Target)
+	}
+	if query.Mutation.ViewSQL != "select c_custkey, c_name from customer" {
+		t.Fatalf("ViewSQL = %q", query.Mutation.ViewSQL)
+	}
+	if len(query.Result.Columns) != 2 || query.Result.Columns[0].Name != "View" {
+		t.Fatalf("result columns = %#v", query.Result.Columns)
+	}
+}
+
+func TestUnboundStatementBindDropView(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "drop view customer_names",
+		Kind: QueryKindDropView,
+		DropView: UnboundDropView{
+			View:   UnboundTable{Name: "customer_names"},
+			Result: ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindDropView {
+		t.Fatalf("Kind = %q, want drop_view", query.Kind)
+	}
+	if query.Mutation.Kind != MutationDropView {
+		t.Fatalf("Mutation.Kind = %q, want drop_view", query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "customer_names" {
+		t.Fatalf("Mutation target = %#v, want customer_names", query.Mutation.Target)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessDrop, "customer_names") {
+		t.Fatalf("RequiredAccess = %#v, want drop on customer_names", access)
 	}
 }
 

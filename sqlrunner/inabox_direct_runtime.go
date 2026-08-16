@@ -230,6 +230,16 @@ func inaboxDirectSuiteTables(suite *roadmap.Suite) []string {
 			rememberTable(statement.Create.Table)
 		case qsbridge.QueryKindDropTable:
 			rememberTable(statement.Drop.Table)
+		case qsbridge.QueryKindCreateView:
+			viewStatement, viewDiagnostics := parser.Parse(statement.CreateView.SQL)
+			if !viewDiagnostics.BlocksNative() && viewStatement.Kind == qsbridge.QueryKindSelect {
+				for _, table := range viewStatement.Select.Tables {
+					rememberTable(table)
+				}
+				for _, membership := range viewStatement.Select.Memberships {
+					rememberTable(membership.RightTable)
+				}
+			}
 		case qsbridge.QueryKindTruncate:
 			rememberTable(statement.Truncate.Table)
 		}

@@ -58,6 +58,30 @@ func TestActiveOrDiscoveredSchemaTablesPrefersCatalogObjects(t *testing.T) {
 	}
 }
 
+func TestViewOnlyCatalogManifestFallsBackToDiscoveredTables(t *testing.T) {
+	configDir := t.TempDir()
+	writeSharedCatalogSchema(t, configDir, "customer", "")
+	writeSharedCatalogSchema(t, configDir, "orders", "")
+	if err := ActivateCatalogView(configDir, "quanta", "customer_orders", time.Now().UTC()); err != nil {
+		t.Fatalf("ActivateCatalogView() error = %v", err)
+	}
+
+	tables, err := ActiveCatalogTables(configDir, "quanta")
+	if err != nil {
+		t.Fatalf("ActiveCatalogTables() error = %v", err)
+	}
+	if len(tables) != 2 || tables[0] != "customer" || tables[1] != "orders" {
+		t.Fatalf("tables = %#v, want discovered customer/orders", tables)
+	}
+	active, err := CatalogTableActive(configDir, "quanta", "customer")
+	if err != nil {
+		t.Fatalf("CatalogTableActive() error = %v", err)
+	}
+	if !active {
+		t.Fatalf("customer should be active through discovered-schema fallback")
+	}
+}
+
 func TestFileCatalogParentAndChildRelationChecks(t *testing.T) {
 	configDir := t.TempDir()
 	writeSharedCatalogSchema(t, configDir, "customers", "")

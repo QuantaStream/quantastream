@@ -34,6 +34,45 @@ func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowCreateViewReturnsCatalogRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Views: []qsbridge.SQLViewDefinition{{
+			Schema: "quanta",
+			Name:   "customer_names",
+			SQL:    "select c_custkey, c_name from customer",
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show create view customer_names", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW CREATE VIEW should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("rows = %#v, want one two-column row", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != "customer_names" {
+		t.Fatalf("view name = %#v", chunk.Rows[0][0].Value)
+	}
+	if got, want := chunk.Rows[0][1].Value, "CREATE VIEW quanta.customer_names AS select c_custkey, c_name from customer"; got != want {
+		t.Fatalf("create view SQL = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		recorder := ExecutionInstrumentationFromContext(ctx)
@@ -687,6 +726,32 @@ func newTestSQLRuntimeWithDirect(t *testing.T, execute func(context.Context, Exe
 		EnvironmentBuilder: RuntimeEnvironmentBuilder{
 			Config:         NewDirectRuntimeConfig("", "", 0, 0),
 			CatalogFactory: LegacyTableCacheCatalogFactory{TableCache: legacyCatalogTestCache()},
+			DirectFactory: DirectRuntimeFactoryFunc(func(ctx context.Context, config DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {
+				return DirectRuntimeFunc(execute), nil, nil
+			}),
+		},
+	}
+	runtime, diagnostics, err := builder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("build sql runtime: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("build diagnostics = %#v, want none", diagnostics)
+	}
+	return runtime
+}
+
+func newTestSQLRuntimeWithCatalog(t *testing.T, catalog qsbridge.Catalog, execute func(context.Context, ExecutionRequest) (ExecutionResult, error)) SQLRuntime {
+	t.Helper()
+	builder := SQLRuntimeBuilder{
+		Parser:         qsbridge.SimpleParserBridge{},
+		DefaultSchema:  "quanta",
+		CatalogVersion: qsbridge.CatalogVersion("test-catalog-v1"),
+		EnvironmentBuilder: RuntimeEnvironmentBuilder{
+			Config: NewDirectRuntimeConfig("", "", 0, 0),
+			CatalogFactory: RuntimeCatalogFactoryFunc(func(ctx context.Context, config DirectRuntimeConfig) (qsbridge.Catalog, qsbridge.DiagnosticSet, error) {
+				return qsbridge.NewCachedCatalog(catalog), nil, nil
+			}),
 			DirectFactory: DirectRuntimeFactoryFunc(func(ctx context.Context, config DirectRuntimeConfig) (DirectRuntime, qsbridge.DiagnosticSet, error) {
 				return DirectRuntimeFunc(execute), nil, nil
 			}),

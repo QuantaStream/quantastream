@@ -18,6 +18,12 @@ const (
 	QueryKindCreateTable QueryKind = "create_table"
 	// QueryKindDropTable identifies a DROP TABLE deactivation statement.
 	QueryKindDropTable QueryKind = "drop_table"
+	// QueryKindCreateView identifies a CREATE VIEW catalog statement.
+	QueryKindCreateView QueryKind = "create_view"
+	// QueryKindDropView identifies a DROP VIEW catalog statement.
+	QueryKindDropView QueryKind = "drop_view"
+	// QueryKindShowCreateView identifies a SHOW CREATE VIEW catalog read statement.
+	QueryKindShowCreateView QueryKind = "show_create_view"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
 	QueryKindSession QueryKind = "session"
 	// QueryKindDDL identifies schema-changing statements.

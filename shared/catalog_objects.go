@@ -16,6 +16,8 @@ const (
 	CatalogObjectsFileName = "CATALOG_OBJECTS"
 	// CatalogObjectTypeTable identifies active table objects.
 	CatalogObjectTypeTable = "TABLE"
+	// CatalogObjectTypeView identifies active logical view objects.
+	CatalogObjectTypeView = "VIEW"
 )
 
 // CatalogObjectsFile stores active catalog objects for file-backed deployments.
@@ -25,7 +27,8 @@ type CatalogObjectsFile struct {
 
 // CatalogObjectRecord records one active catalog object.
 type CatalogObjectRecord struct {
-	SchemaName       string    `yaml:"schema_name"`
+	SchemaName string `yaml:"schema_name"`
+	// TableName stores the physical table name for TABLE objects and the logical view name for VIEW objects.
 	TableName        string    `yaml:"table_name"`
 	CreationDate     time.Time `yaml:"creation_date"`
 	ModificationDate time.Time `yaml:"modification_date"`
@@ -77,51 +80,132 @@ func CatalogObjectsFileExists(configDir string) bool {
 
 // ActiveCatalogTables returns active TABLE objects from the file-backed catalog.
 func ActiveCatalogTables(configDir string, schemaName string) ([]string, error) {
+	manifestExists := CatalogObjectsFileExists(configDir)
 	catalog, err := LoadCatalogObjectsFile(configDir)
 	if err != nil {
 		return nil, err
 	}
-	tables := make([]string, 0, len(catalog.Objects))
-	for _, object := range catalog.Objects {
-		if !strings.EqualFold(object.ObjectType, CatalogObjectTypeTable) {
-			continue
-		}
-		if schemaName != "" && object.SchemaName != "" && !strings.EqualFold(object.SchemaName, schemaName) {
-			continue
-		}
-		if object.TableName == "" {
-			continue
-		}
-		tables = append(tables, object.TableName)
+	names := activeCatalogObjectNames(catalog, schemaName, CatalogObjectTypeTable)
+	if len(names) == 0 && catalogShouldFallbackToDiscoveredTables(manifestExists, catalog) {
+		return DiscoverSchemaTables(configDir)
 	}
-	sort.Strings(tables)
-	return tables, nil
+	return names, nil
+}
+
+// ActiveCatalogViews returns active VIEW objects from the file-backed catalog.
+func ActiveCatalogViews(configDir string, schemaName string) ([]string, error) {
+	catalog, err := LoadCatalogObjectsFile(configDir)
+	if err != nil {
+		return nil, err
+	}
+	return activeCatalogObjectNames(catalog, schemaName, CatalogObjectTypeView), nil
 }
 
 // CatalogTableActive reports whether tableName is active in the file-backed catalog.
 func CatalogTableActive(configDir string, schemaName string, tableName string) (bool, error) {
+	manifestExists := CatalogObjectsFileExists(configDir)
 	catalog, err := LoadCatalogObjectsFile(configDir)
 	if err != nil {
 		return false, err
 	}
+	if catalogObjectActive(catalog, schemaName, tableName, CatalogObjectTypeTable) {
+		return true, nil
+	}
+	if catalogShouldFallbackToDiscoveredTables(manifestExists, catalog) {
+		_, err := os.Stat(filepath.Join(configDir, strings.TrimSpace(tableName), "schema.yaml"))
+		if err == nil {
+			return true, nil
+		}
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// CatalogViewActive reports whether viewName is active in the file-backed catalog.
+func CatalogViewActive(configDir string, schemaName string, viewName string) (bool, error) {
+	catalog, err := LoadCatalogObjectsFile(configDir)
+	if err != nil {
+		return false, err
+	}
+	return catalogObjectActive(catalog, schemaName, viewName, CatalogObjectTypeView), nil
+}
+
+// ActivateCatalogTable marks a table schema as active in the file-backed catalog.
+func ActivateCatalogTable(configDir string, schemaName string, tableName string, now time.Time) error {
+	return activateCatalogObject(configDir, schemaName, tableName, CatalogObjectTypeTable, "table", now)
+}
+
+// ActivateCatalogView marks a logical view as active in the file-backed catalog.
+func ActivateCatalogView(configDir string, schemaName string, viewName string, now time.Time) error {
+	return activateCatalogObject(configDir, schemaName, viewName, CatalogObjectTypeView, "view", now)
+}
+
+// RemoveCatalogTable removes a table from the file-backed active catalog.
+func RemoveCatalogTable(configDir string, schemaName string, tableName string) error {
+	return removeCatalogObject(configDir, schemaName, tableName, CatalogObjectTypeTable)
+}
+
+// RemoveCatalogView removes a view from the file-backed active catalog.
+func RemoveCatalogView(configDir string, schemaName string, viewName string) error {
+	return removeCatalogObject(configDir, schemaName, viewName, CatalogObjectTypeView)
+}
+
+func activeCatalogObjectNames(catalog CatalogObjectsFile, schemaName string, objectType string) []string {
+	names := make([]string, 0, len(catalog.Objects))
 	for _, object := range catalog.Objects {
-		if !strings.EqualFold(object.ObjectType, CatalogObjectTypeTable) {
+		if !strings.EqualFold(object.ObjectType, objectType) {
 			continue
 		}
 		if schemaName != "" && object.SchemaName != "" && !strings.EqualFold(object.SchemaName, schemaName) {
 			continue
 		}
-		if strings.EqualFold(object.TableName, tableName) {
-			return true, nil
+		name := strings.TrimSpace(object.TableName)
+		if name == "" {
+			continue
 		}
+		names = append(names, name)
 	}
-	return false, nil
+	sort.Strings(names)
+	return names
 }
 
-// ActivateCatalogTable marks a table schema as active in the file-backed catalog.
-func ActivateCatalogTable(configDir string, schemaName string, tableName string, now time.Time) error {
-	if tableName == "" {
-		return fmt.Errorf("table name must not be empty")
+func catalogObjectActive(catalog CatalogObjectsFile, schemaName string, objectName string, objectType string) bool {
+	for _, object := range catalog.Objects {
+		if !strings.EqualFold(object.ObjectType, objectType) {
+			continue
+		}
+		if schemaName != "" && object.SchemaName != "" && !strings.EqualFold(object.SchemaName, schemaName) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(object.TableName), strings.TrimSpace(objectName)) {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogHasObjectType(catalog CatalogObjectsFile, objectType string) bool {
+	for _, object := range catalog.Objects {
+		if strings.EqualFold(object.ObjectType, objectType) {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogShouldFallbackToDiscoveredTables(manifestExists bool, catalog CatalogObjectsFile) bool {
+	return manifestExists &&
+		catalogHasObjectType(catalog, CatalogObjectTypeView) &&
+		!catalogHasObjectType(catalog, CatalogObjectTypeTable)
+}
+
+func activateCatalogObject(configDir string, schemaName string, objectName string, objectType string, objectKind string, now time.Time) error {
+	objectName = strings.TrimSpace(objectName)
+	if objectName == "" {
+		return fmt.Errorf("%s name must not be empty", objectKind)
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -131,13 +215,13 @@ func ActivateCatalogTable(configDir string, schemaName string, tableName string,
 		return err
 	}
 	for i, object := range catalog.Objects {
-		if !strings.EqualFold(object.ObjectType, CatalogObjectTypeTable) {
+		if !strings.EqualFold(object.ObjectType, objectType) {
 			continue
 		}
 		if schemaName != "" && object.SchemaName != "" && !strings.EqualFold(object.SchemaName, schemaName) {
 			continue
 		}
-		if strings.EqualFold(object.TableName, tableName) {
+		if strings.EqualFold(object.TableName, objectName) {
 			catalog.Objects[i].ModificationDate = now.UTC()
 			if catalog.Objects[i].SchemaName == "" {
 				catalog.Objects[i].SchemaName = schemaName
@@ -147,24 +231,23 @@ func ActivateCatalogTable(configDir string, schemaName string, tableName string,
 	}
 	catalog.Objects = append(catalog.Objects, CatalogObjectRecord{
 		SchemaName:       schemaName,
-		TableName:        tableName,
+		TableName:        objectName,
 		CreationDate:     now.UTC(),
 		ModificationDate: now.UTC(),
-		ObjectType:       CatalogObjectTypeTable,
+		ObjectType:       objectType,
 	})
 	return SaveCatalogObjectsFile(configDir, catalog)
 }
 
-// RemoveCatalogTable removes a table from the file-backed active catalog.
-func RemoveCatalogTable(configDir string, schemaName string, tableName string) error {
+func removeCatalogObject(configDir string, schemaName string, objectName string, objectType string) error {
 	catalog, err := LoadCatalogObjectsFile(configDir)
 	if err != nil {
 		return err
 	}
 	filtered := catalog.Objects[:0]
 	for _, object := range catalog.Objects {
-		remove := strings.EqualFold(object.ObjectType, CatalogObjectTypeTable) &&
-			strings.EqualFold(object.TableName, tableName) &&
+		remove := strings.EqualFold(object.ObjectType, objectType) &&
+			strings.EqualFold(object.TableName, strings.TrimSpace(objectName)) &&
 			(schemaName == "" || object.SchemaName == "" || strings.EqualFold(object.SchemaName, schemaName))
 		if !remove {
 			filtered = append(filtered, object)
