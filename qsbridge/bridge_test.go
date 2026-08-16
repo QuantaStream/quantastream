@@ -871,6 +871,28 @@ func TestUnboundStatementBindShowEngines(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowPlugins(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show plugins",
+		Kind: QueryKindShowPlugins,
+		ShowPlugins: UnboundShowPlugins{
+			Result: showPluginsResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowPlugins {
+		t.Fatalf("Kind = %q, want show_plugins", query.Kind)
+	}
+	if got, want := len(query.Result.Columns), 5; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowIndex(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{

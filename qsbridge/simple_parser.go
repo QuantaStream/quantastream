@@ -739,6 +739,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowEngines(sql, enginesBody)
 	}
+	pluginsBody, ok := consumeKeyword(showBody, "plugins")
+	if ok {
+		return parseSimpleShowPlugins(sql, pluginsBody)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -1012,6 +1016,19 @@ func parseSimpleShowEngines(sql string, enginesBody string) (UnboundStatement, D
 	}, Diagnostic{}, true
 }
 
+func parseSimpleShowPlugins(sql string, pluginsBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(pluginsBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW PLUGINS does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowPlugins,
+		ShowPlugins: UnboundShowPlugins{
+			Result: showPluginsResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
 func parseSimpleOptionalLikePattern(text string, statement string) (string, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -1275,6 +1292,19 @@ func showEnginesResultShape() ResultShape {
 			{Name: "Transactions", Type: DataTypeString},
 			{Name: "XA", Type: DataTypeString},
 			{Name: "Savepoints", Type: DataTypeString},
+		},
+	}
+}
+
+func showPluginsResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Name", Type: DataTypeString},
+			{Name: "Status", Type: DataTypeString},
+			{Name: "Type", Type: DataTypeString},
+			{Name: "Library", Type: DataTypeString, Nullable: true},
+			{Name: "License", Type: DataTypeString},
 		},
 	}
 }

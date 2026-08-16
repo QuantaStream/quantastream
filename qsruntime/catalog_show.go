@@ -583,6 +583,31 @@ func showEnginesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult
 	}
 }
 
+func showPluginsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	_ = request
+	rownums := []qsbridge.QuantaRownum{1}
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Name", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Status", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Type", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Library", qsbridge.DataTypeString, 1),
+		describeProjectionVector("License", qsbridge.DataTypeString, 1),
+	}
+	vectors[0].Values[0] = describeStringCell("QUANTASTREAM")
+	vectors[1].Values[0] = describeStringCell("ACTIVE")
+	vectors[2].Values[0] = describeStringCell("STORAGE ENGINE")
+	vectors[3].Values[0] = describeNullCell()
+	vectors[4].Values[0] = describeStringCell("PROPRIETARY")
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: 1,
+	}
+}
+
 func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))

@@ -41,6 +41,7 @@ type UnboundStatement struct {
 	ShowCollation   UnboundShowCollation
 	ShowProcesslist UnboundShowProcesslist
 	ShowEngines     UnboundShowEngines
+	ShowPlugins     UnboundShowPlugins
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -94,6 +95,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowProcesslist(context, s.ShowProcesslist)
 	case QueryKindShowEngines:
 		return BindShowEngines(context, s.ShowEngines)
+	case QueryKindShowPlugins:
+		return BindShowPlugins(context, s.ShowPlugins)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -286,6 +289,12 @@ type UnboundShowProcesslist struct {
 
 // UnboundShowEngines describes a SHOW ENGINES metadata read before binding.
 type UnboundShowEngines struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowPlugins describes a SHOW PLUGINS metadata read before binding.
+type UnboundShowPlugins struct {
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1292,6 +1301,16 @@ func BindShowEngines(context *BindContext, showStmt UnboundShowEngines) (QueryIR
 	return QueryIR{
 		Kind:     QueryKindShowEngines,
 		Result:   showEnginesResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowPlugins binds parser-neutral SHOW PLUGINS metadata into QueryIR.
+func BindShowPlugins(context *BindContext, showStmt UnboundShowPlugins) (QueryIR, DiagnosticSet) {
+	_ = context
+	return QueryIR{
+		Kind:     QueryKindShowPlugins,
+		Result:   showPluginsResultShape(),
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil
 }

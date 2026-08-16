@@ -523,6 +523,38 @@ func TestSQLRuntimeExecuteSQLShowEnginesReturnsQuantaStreamEngineRow(t *testing.
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowPluginsReturnsQuantaStreamPluginRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show plugins", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW PLUGINS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 5 {
+		t.Fatalf("rows = %#v, want one five-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "QUANTASTREAM" || row[1].Value != "ACTIVE" || row[2].Value != "STORAGE ENGINE" {
+		t.Fatalf("plugin row = %#v, want QUANTASTREAM active storage engine metadata", row)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

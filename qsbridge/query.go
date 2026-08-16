@@ -50,6 +50,8 @@ const (
 	QueryKindShowProcesslist QueryKind = "show_processlist"
 	// QueryKindShowEngines identifies a SHOW ENGINES metadata read statement.
 	QueryKindShowEngines QueryKind = "show_engines"
+	// QueryKindShowPlugins identifies a SHOW PLUGINS metadata read statement.
+	QueryKindShowPlugins QueryKind = "show_plugins"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
