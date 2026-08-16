@@ -1914,6 +1914,47 @@ func TestSimpleParserBridgeParsesHiddenAggregateCallHaving(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCompoundAggregateHaving(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_mktsegment as market_segment, count(*) as customer_count from customer group by c_mktsegment having count(*) > 280 and count(*) < 320 order by market_segment")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Aggregates) != 1 {
+		t.Fatalf("aggregates = %d, want 1", len(statement.Select.Aggregates))
+	}
+	aggregate := statement.Select.Aggregates[0]
+	if aggregate.Function != "count" || !aggregate.CountAll || aggregate.Alias != "customer_count" {
+		t.Fatalf("aggregate = %#v, want projected count(*)", aggregate)
+	}
+	if len(statement.Select.Having) != 1 {
+		t.Fatalf("having = %d, want 1", len(statement.Select.Having))
+	}
+	root, ok := statement.Select.Having[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("having expression = %T, want UnboundBinaryExpr", statement.Select.Having[0].Expr)
+	}
+	if root.Op != BinaryOpAnd {
+		t.Fatalf("having root op = %q, want %q", root.Op, BinaryOpAnd)
+	}
+	left, ok := root.Left.(UnboundBinaryExpr)
+	if !ok || left.Op != BinaryOpGreater {
+		t.Fatalf("having left = %#v, want count(*) > 280", root.Left)
+	}
+	right, ok := root.Right.(UnboundBinaryExpr)
+	if !ok || right.Op != BinaryOpLess {
+		t.Fatalf("having right = %#v, want count(*) < 320", root.Right)
+	}
+	for _, expr := range []UnboundExpr{left.Left, right.Left} {
+		ref, ok := expr.(UnboundAggregateRefExpr)
+		if !ok {
+			t.Fatalf("having comparison left = %T, want UnboundAggregateRefExpr", expr)
+		}
+		if ref.Alias != "customer_count" || ref.Index != 0 {
+			t.Fatalf("having ref = %#v, want projected count ref", ref)
+		}
+	}
+}
+
 func TestSimpleParserBridgeParsesAvgAggregate(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select avg(o.o_totalprice) as avg_total from orders as o where o.o_totalprice >= 101")
 	if diagnostics.BlocksNative() {

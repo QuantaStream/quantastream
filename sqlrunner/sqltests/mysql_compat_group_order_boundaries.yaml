@@ -132,13 +132,12 @@ tests:
         - [RUSSIA]
 
   - id: mysql_compat_group_order_boundaries.007.compound_having_predicate
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: group_by_having_boundary
     compatibility: mysql
     requires: [select, table_scan, group_by, having, count, order_by]
-    issue: "HAVING currently supports one aggregate comparison, not compound boolean expressions."
     sql: |
       select c_mktsegment as market_segment, count(*) as customer_count
       from customer

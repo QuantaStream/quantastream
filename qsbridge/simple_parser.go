@@ -4504,19 +4504,76 @@ func parseSimpleHavingClause(text string, projections []UnboundProjection, aggre
 	if !ok {
 		return text, nil, aggregates, false, Diagnostic{}, true
 	}
-	if hasAnyTopLevelKeyword(right, "where", "join", "group", "having", "order", "limit", "and", "or") {
-		return "", nil, aggregates, false, simpleParserDiagnostic("HAVING supports one aggregate alias comparison literal"), false
+	if hasAnyTopLevelKeyword(right, "where", "join", "group", "having", "order", "limit") {
+		return "", nil, aggregates, false, simpleParserDiagnostic("HAVING only supports aggregate comparison predicates"), false
 	}
-	op, aliasText, literalText, ok := splitBeforeComparisonOperator(right)
+	expr, updatedAggregates, diagnostic, ok := parseSimpleHavingBooleanExpression(right, projections, aggregates)
 	if !ok {
-		return "", nil, aggregates, false, simpleParserDiagnostic("HAVING must compare aggregate alias to literal"), false
+		return "", nil, aggregates, false, diagnostic, false
+	}
+	aggregates = updatedAggregates
+	return left, []UnboundPredicate{{
+		Expr:      expr,
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeHaving,
+	}}, aggregates, true, Diagnostic{}, true
+}
+
+func parseSimpleHavingBooleanExpression(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	return parseSimpleHavingBooleanOr(text, projections, aggregates)
+}
+
+func parseSimpleHavingBooleanOr(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	parts := splitSimpleBooleanParts(text, "or")
+	if len(parts) == 1 {
+		return parseSimpleHavingBooleanAnd(parts[0], projections, aggregates)
+	}
+	return parseSimpleHavingBooleanBinary(parts, BinaryOpOr, parseSimpleHavingBooleanAnd, projections, aggregates)
+}
+
+func parseSimpleHavingBooleanAnd(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	parts := splitSimpleBooleanParts(text, "and")
+	if len(parts) == 1 {
+		return parseSimpleHavingBooleanLeaf(parts[0], projections, aggregates)
+	}
+	return parseSimpleHavingBooleanBinary(parts, BinaryOpAnd, parseSimpleHavingBooleanLeaf, projections, aggregates)
+}
+
+func parseSimpleHavingBooleanBinary(parts []string, op BinaryOp, parsePart func(string, []UnboundProjection, []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool), projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	left, updatedAggregates, diagnostic, ok := parsePart(parts[0], projections, aggregates)
+	if !ok {
+		return nil, aggregates, diagnostic, false
+	}
+	aggregates = updatedAggregates
+	for _, part := range parts[1:] {
+		right, rightAggregates, rightDiagnostic, rightOK := parsePart(part, projections, aggregates)
+		if !rightOK {
+			return nil, aggregates, rightDiagnostic, false
+		}
+		aggregates = rightAggregates
+		left = UnboundBinary(op, left, right)
+	}
+	return left, aggregates, Diagnostic{}, true
+}
+
+func parseSimpleHavingBooleanLeaf(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	trimmed, stripped := stripSimpleEnclosingParensWithStatus(text)
+	if trimmed == "" {
+		return nil, aggregates, simpleParserDiagnostic("HAVING expression contains an empty predicate"), false
+	}
+	if stripped {
+		return parseSimpleHavingBooleanOr(trimmed, projections, aggregates)
+	}
+	op, aliasText, literalText, ok := splitBeforeComparisonOperator(trimmed)
+	if !ok {
+		return nil, aggregates, simpleParserDiagnostic("HAVING must compare aggregate alias to literal"), false
 	}
 	refExpr, updatedAggregates, diagnostic, ok := resolveSimpleHavingAggregateRef(aliasText, projections, aggregates)
 	var leftExpr UnboundExpr = refExpr
 	if !ok {
 		scalarExpr, scalarOK := parseSimpleScalarExpression(aliasText)
 		if !scalarOK {
-			return "", nil, aggregates, false, diagnostic, false
+			return nil, aggregates, diagnostic, false
 		}
 		leftExpr = scalarExpr
 	} else {
@@ -4524,13 +4581,9 @@ func parseSimpleHavingClause(text string, projections []UnboundProjection, aggre
 	}
 	literal, diagnostic, ok := parseSimpleComparisonValueWithScope(strings.TrimSpace(literalText), nil, PredicateScopeHaving)
 	if !ok {
-		return "", nil, aggregates, false, diagnostic, false
+		return nil, aggregates, diagnostic, false
 	}
-	return left, []UnboundPredicate{{
-		Expr:      UnboundBinary(op, leftExpr, literal),
-		Placement: PredicateResidualScan,
-		Scope:     PredicateScopeHaving,
-	}}, aggregates, true, Diagnostic{}, true
+	return UnboundBinary(op, leftExpr, literal), aggregates, Diagnostic{}, true
 }
 
 func parseSimpleComparisonValueWithScope(text string, parameterIndex *int, scope PredicateScope) (UnboundExpr, Diagnostic, bool) {
