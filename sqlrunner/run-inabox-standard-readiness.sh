@@ -82,7 +82,8 @@ wait_for_server() {
       if mysqladmin --connect-timeout=1 -h "${HOST}" -P "${port}" -u "${SQL_USER}" ping >/dev/null 2>&1; then
         return 0
       fi
-    elif (echo >/dev/tcp/"${HOST}"/"${port}") >/dev/null 2>&1; then
+    fi
+    if (echo >/dev/tcp/"${HOST}"/"${port}") >/dev/null 2>&1; then
       sleep 0.25
       return 0
     fi
