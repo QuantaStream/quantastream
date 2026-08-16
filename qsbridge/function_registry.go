@@ -195,6 +195,7 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinScalarFunction("upper", DataTypeString, sqlAndCatalogExpressionFunctionContexts, "ucase"),
 	builtinScalarFunction("length", DataTypeInt, sqlAndCatalogExpressionFunctionContexts, "char_length"),
 	builtinScalarFunction("substr", DataTypeString, sqlExpressionFunctionContexts, "substring", "mid"),
+	builtinScalarFunction("coalesce", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("timediff", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("year", DataTypeInt, sqlExpressionFunctionContexts, "yy"),
 	builtinScalarFunction("mm", DataTypeInt, sqlExpressionFunctionContexts, "monthofyear"),

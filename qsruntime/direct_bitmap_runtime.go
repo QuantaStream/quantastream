@@ -951,6 +951,8 @@ func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materializ
 		return directBitmapEvaluateMaterializedStringTransformCall(call, materialized, index, strings.ToUpper)
 	case "length", "char_length":
 		return directBitmapEvaluateMaterializedLengthCall(call, materialized, index)
+	case "coalesce":
+		return directBitmapEvaluateMaterializedCoalesceCall(call, materialized, index)
 	case "tostring":
 		return directBitmapEvaluateMaterializedToStringCall(call, materialized, index)
 	case "toint":
@@ -1216,6 +1218,22 @@ func directBitmapEvaluateMaterializedSHA256Call(call qsbridge.CallExpr, material
 	}
 	sum := sha256.Sum256([]byte(fmt.Sprint(cell.Value)))
 	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: hex.EncodeToString(sum[:])}, nil
+}
+
+func directBitmapEvaluateMaterializedCoalesceCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) == 0 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects at least one argument", call.Name))
+	}
+	for _, arg := range call.Args {
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(arg, materialized, index)
+		if diagnostics.BlocksNative() {
+			return qsbridge.ResultCell{}, diagnostics
+		}
+		if !directBitmapNullCell(cell) {
+			return cell, nil
+		}
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
 }
 
 func directBitmapMaterializedIntArgument(cell qsbridge.ResultCell) (int, bool) {

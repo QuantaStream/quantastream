@@ -478,6 +478,45 @@ func TestSQLRuntimeExecuteSQLPlansLowersAndRunsSimpleSelect(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLRunsConstantScalarProjection(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select lower('SEATTLE') as city_lower, coalesce(null, 'fallback') as value, substring('alphabet', 4, 2) as part", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("constant scalar projection should not dispatch to the direct executor")
+	}
+	if len(result.Intermediate.Fragments) != 0 {
+		t.Fatalf("fragments = %d, want no bitmap lowering for constant scalar projection", len(result.Intermediate.Fragments))
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 3 {
+		t.Fatalf("rows = %#v, want one three-column row", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "seattle"; got != want {
+		t.Fatalf("city_lower = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][1].Value, "fallback"; got != want {
+		t.Fatalf("coalesce value = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][2].Value, "ha"; got != want {
+		t.Fatalf("substring part = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLExpandsWildcardSelect(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

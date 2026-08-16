@@ -15,20 +15,46 @@ tests:
       rows:
         - [seattle, TACOMA]
 
-  - id: mysql_compat_functions.002.substring_aliases
+  - id: mysql_compat_functions.002.string_case_aliases
     status: supported
     kind: query
     feature: scalar_functions_string
     compatibility: mysql
-    requires: [select, substring, substr]
+    requires: [select, lcase, ucase]
     sql: |
-      select substring('alphabet', 1, 3) as a, substr('alphabet', 4, 2) as b
+      select lcase('SEATTLE') as city_lower, ucase('tacoma') as city_upper
     expect:
-      columns: [a, b]
+      columns: [city_lower, city_upper]
       rows:
-        - [alp, ha]
+        - [seattle, TACOMA]
 
-  - id: mysql_compat_functions.003.length
+  - id: mysql_compat_functions.003.substring_aliases
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, substring, substr, mid]
+    sql: |
+      select substring('alphabet', 1, 3) as a, substr('alphabet', 4, 2) as b, mid('alphabet', 6, 3) as c
+    expect:
+      columns: [a, b, c]
+      rows:
+        - [alp, ha, bet]
+
+  - id: mysql_compat_functions.004.substring_without_length
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, substring]
+    sql: |
+      select substring('alphabet', 4) as value
+    expect:
+      columns: [value]
+      rows:
+        - [habet]
+
+  - id: mysql_compat_functions.005.length
     status: supported
     kind: query
     feature: scalar_functions_string
@@ -41,7 +67,7 @@ tests:
       rows:
         - [3, 5]
 
-  - id: mysql_compat_functions.004.coalesce
+  - id: mysql_compat_functions.006.coalesce
     status: supported
     kind: query
     feature: scalar_functions_null
@@ -53,3 +79,181 @@ tests:
       columns: [value]
       rows:
         - [fallback]
+
+  - id: mysql_compat_functions.007.coalesce_multiple_args
+    status: supported
+    kind: query
+    feature: scalar_functions_null
+    compatibility: mysql
+    requires: [select, coalesce, null]
+    sql: |
+      select coalesce(null, null, 'third') as value
+    expect:
+      columns: [value]
+      rows:
+        - [third]
+
+  - id: mysql_compat_functions.008.coalesce_all_null
+    status: supported
+    kind: query
+    feature: scalar_functions_null
+    compatibility: mysql
+    requires: [select, coalesce, null]
+    sql: |
+      select coalesce(null, null) as value
+    expect:
+      columns: [value]
+      rows:
+        - [null]
+
+  - id: mysql_compat_functions.009.null_argument_propagation
+    status: supported
+    kind: query
+    feature: scalar_functions_null
+    compatibility: mysql
+    requires: [select, lower, upper, length, substring, null]
+    sql: |
+      select lower(null) as lower_value, upper(null) as upper_value, length(null) as len_value, substring(null, 1, 2) as sub_value
+    expect:
+      columns: [lower_value, upper_value, len_value, sub_value]
+      rows:
+        - [null, null, null, null]
+
+  - id: mysql_compat_functions.010.year_literal
+    status: supported
+    kind: query
+    feature: scalar_functions_datetime
+    compatibility: mysql
+    requires: [select, year]
+    sql: |
+      select year('1995-03-15') as ship_year
+    expect:
+      columns: [ship_year]
+      rows:
+        - [1995]
+
+  - id: mysql_compat_functions.020.concat
+    status: xfail
+    kind: query
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, concat]
+    issue: "CONCAT is not registered as a native SQL scalar function yet."
+    sql: |
+      select concat('quanta', 'stream') as value
+    expect:
+      columns: [value]
+      rows:
+        - [quantastream]
+
+  - id: mysql_compat_functions.021.trim
+    status: xfail
+    kind: query
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, trim]
+    issue: "TRIM/LTRIM/RTRIM are not registered as native SQL scalar functions yet."
+    sql: |
+      select trim('  quanta  ') as value
+    expect:
+      columns: [value]
+      rows:
+        - [quanta]
+
+  - id: mysql_compat_functions.022.replace
+    status: xfail
+    kind: query
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, replace]
+    issue: "REPLACE is not registered as a native SQL scalar function yet."
+    sql: |
+      select replace('stream', 's', 'S') as value
+    expect:
+      columns: [value]
+      rows:
+        - [Stream]
+
+  - id: mysql_compat_functions.023.left_right
+    status: xfail
+    kind: query
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, left, right]
+    issue: "LEFT and RIGHT string helpers are not registered as native SQL scalar functions yet."
+    sql: |
+      select left('stream', 3) as left_value, right('stream', 3) as right_value
+    expect:
+      columns: [left_value, right_value]
+      rows:
+        - [str, eam]
+
+  - id: mysql_compat_functions.024.substring_negative_start
+    status: xfail
+    kind: query
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, substring]
+    issue: "MySQL negative SUBSTRING offsets count from the end; the native evaluator currently returns an empty string."
+    sql: |
+      select substring('alphabet', -3) as value
+    expect:
+      columns: [value]
+      rows:
+        - [bet]
+
+  - id: mysql_compat_functions.030.ifnull
+    status: xfail
+    kind: query
+    feature: scalar_functions_null_boundary
+    compatibility: mysql
+    requires: [select, ifnull, null]
+    issue: "IFNULL is not registered as a native SQL scalar function yet."
+    sql: |
+      select ifnull(null, 'fallback') as value
+    expect:
+      columns: [value]
+      rows:
+        - [fallback]
+
+  - id: mysql_compat_functions.031.nullif
+    status: xfail
+    kind: query
+    feature: scalar_functions_null_boundary
+    compatibility: mysql
+    requires: [select, nullif]
+    issue: "NULLIF is not registered as a native SQL scalar function yet."
+    sql: |
+      select nullif('same', 'same') as value
+    expect:
+      columns: [value]
+      rows:
+        - [null]
+
+  - id: mysql_compat_functions.040.numeric_math
+    status: xfail
+    kind: query
+    feature: scalar_functions_numeric_boundary
+    compatibility: mysql
+    requires: [select, abs, round]
+    issue: "Common numeric scalar helpers are not registered as native SQL scalar functions yet."
+    sql: |
+      select abs(-42) as magnitude, round(12345, -2) as rounded
+    expect:
+      columns: [magnitude, rounded]
+      rows:
+        - [42, 12300]
+
+  - id: mysql_compat_functions.050.month_day
+    status: xfail
+    kind: query
+    feature: scalar_functions_datetime_boundary
+    compatibility: mysql
+    requires: [select, month, day]
+    issue: "MONTH and DAY are not registered as MySQL-compatible aliases for QuantaStream time-part helpers yet."
+    sql: |
+      select month('1995-03-15') as ship_month, day('1995-03-15') as ship_day
+    expect:
+      columns: [ship_month, ship_day]
+      rows:
+        - [3, 15]

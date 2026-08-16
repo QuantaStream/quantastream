@@ -299,15 +299,16 @@ func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (Execu
 		ProjectionVectors: make([]qsbridge.QuantaProjectionVector, 0, len(query.Projection)),
 	}
 	for _, projection := range query.Projection {
-		literal, ok := projection.Expr.(qsbridge.LiteralExpr)
-		if !ok {
-			return ExecutionResult{}, qsbridge.DiagnosticSet{
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(projection.Expr, rowSet, 0)
+		if diagnostics.BlocksNative() {
+			constantDiagnostics := qsbridge.DiagnosticSet{
 				qsbridge.ErrorDiagnostic(
 					qsbridge.DiagnosticUnsupportedSQL,
 					qsbridge.PhaseExecute,
-					"projection-only SELECT requires literal projections after scalar materialization",
+					"projection-only SELECT requires constant projections after scalar materialization",
 				),
-			}, true
+			}
+			return ExecutionResult{}, append(constantDiagnostics, diagnostics...), true
 		}
 		column := projection.ResultColumn()
 		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
@@ -316,7 +317,7 @@ func constantProjectionExecutionResult(request qsbridge.ExecutionRequest) (Execu
 				Type:    column.Type,
 				Visible: true,
 			},
-			Values: []qsbridge.ResultCell{{Kind: literal.Kind, Value: literal.Value}},
+			Values: []qsbridge.ResultCell{cell},
 		})
 	}
 	return ExecutionResult{
