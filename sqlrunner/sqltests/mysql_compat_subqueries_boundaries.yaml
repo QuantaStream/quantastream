@@ -1,0 +1,99 @@
+version: 1
+name: mysql_compat_subqueries_boundaries
+
+tests:
+  - id: mysql_compat_subqueries_boundaries.001.derived_table_in_membership
+    status: xfail
+    kind: query
+    order: exact
+    feature: subqueries_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, in_subquery, order_by]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select c.name
+      from (
+        select 1 as cust_id, 'Abe' as name
+        union all select 2, 'Abby'
+        union all select 3, 'Annie'
+      ) as c
+      where c.cust_id in (
+        select o.cust_id
+        from (
+          select 1 as cust_id
+          union all select 3
+        ) as o
+      )
+      order by c.name
+    expect:
+      columns: [name]
+      rows:
+        - [Abe]
+        - [Annie]
+
+  - id: mysql_compat_subqueries_boundaries.002.derived_table_correlated_exists
+    status: xfail
+    kind: query
+    order: exact
+    feature: subqueries_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, correlated_exists]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select c.name
+      from (
+        select 1 as cust_id, 'Abe' as name
+        union all select 2, 'Abby'
+      ) as c
+      where exists (
+        select 1
+        from (
+          select 1 as cust_id
+        ) as o
+        where o.cust_id = c.cust_id
+      )
+    expect:
+      columns: [name]
+      rows:
+        - [Abe]
+
+  - id: mysql_compat_subqueries_boundaries.003.derived_table_scalar_aggregate_predicate
+    status: xfail
+    kind: query
+    order: exact
+    feature: subqueries_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, scalar_subquery, aggregate, comparison]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select item
+      from (
+        select 'small' as item, 5 as amount
+        union all select 'large', 20
+      ) as sales
+      where amount > (select avg(amount) from (select 5 as amount union all select 15) as baseline)
+    expect:
+      columns: [item]
+      rows:
+        - [large]
+
+  - id: mysql_compat_subqueries_boundaries.004.multi_column_in_subquery
+    status: xfail
+    kind: query
+    order: exact
+    feature: subqueries_row_value_boundary
+    compatibility: mysql
+    requires: [select, table_scan, row_value, in_subquery]
+    issue: "Row-value subquery predicates are not parsed yet."
+    sql: |
+      select n_name as nation_name
+      from nation
+      where (n_regionkey, n_nationkey) in (
+        select r_regionkey, 1
+        from region
+        where r_name = 'AMERICA'
+      )
+    expect:
+      columns: [nation_name]
+      rows:
+        - [ARGENTINA]

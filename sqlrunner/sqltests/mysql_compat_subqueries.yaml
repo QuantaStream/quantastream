@@ -5,6 +5,7 @@ tests:
   - id: mysql_compat_subqueries.001.scalar_select_list
     status: supported
     kind: query
+    order: exact
     feature: subqueries_scalar
     compatibility: mysql
     requires: [select, scalar_subquery]
@@ -15,73 +16,131 @@ tests:
       rows:
         - [42]
 
-  - id: mysql_compat_subqueries.002.in_membership
+  - id: mysql_compat_subqueries.002.scalar_aggregate_select_list
+    status: supported
+    kind: query
+    order: exact
+    feature: subqueries_scalar_aggregate
+    compatibility: mysql
+    requires: [select, scalar_subquery, aggregate]
+    sql: |
+      select (select count(*) from region) as region_count
+    expect:
+      columns: [region_count]
+      rows:
+        - [5]
+
+  - id: mysql_compat_subqueries.003.in_membership
     status: supported
     kind: query
     order: exact
     feature: subqueries_membership
     compatibility: mysql
-    requires: [select, derived_table, in_subquery, order_by]
+    requires: [select, table_scan, in_subquery, order_by]
     sql: |
-      select c.name
-      from (
-        select 1 as cust_id, 'Abe' as name
-        union all select 2, 'Abby'
-        union all select 3, 'Annie'
-      ) as c
-      where c.cust_id in (
-        select o.cust_id
-        from (
-          select 1 as cust_id
-          union all select 3
-        ) as o
+      select n_name as nation_name
+      from nation
+      where n_regionkey in (
+        select r_regionkey
+        from region
+        where r_name in ('AMERICA', 'EUROPE')
       )
-      order by c.name
+      order by nation_name
     expect:
-      columns: [name]
+      columns: [nation_name]
       rows:
-        - [Abe]
-        - [Annie]
+        - [ARGENTINA]
+        - [BRAZIL]
+        - [CANADA]
+        - [FRANCE]
+        - [GERMANY]
+        - [PERU]
+        - [ROMANIA]
+        - [RUSSIA]
+        - [UNITED KINGDOM]
+        - [UNITED STATES]
 
-  - id: mysql_compat_subqueries.003.correlated_exists
+  - id: mysql_compat_subqueries.004.not_in_membership
+    status: supported
+    kind: query
+    order: exact
+    feature: subqueries_membership
+    compatibility: mysql
+    requires: [select, table_scan, not_in_subquery]
+    sql: |
+      select count(*) as nation_count
+      from nation
+      where n_regionkey not in (
+        select r_regionkey
+        from region
+        where r_name = 'AMERICA'
+      )
+    expect:
+      columns: [nation_count]
+      rows:
+        - [20]
+
+  - id: mysql_compat_subqueries.005.correlated_exists
     status: supported
     kind: query
     order: exact
     feature: subqueries_exists
     compatibility: mysql
-    requires: [select, derived_table, correlated_exists]
+    requires: [select, table_scan, correlated_exists, order_by]
     sql: |
-      select c.name
-      from (
-        select 1 as cust_id, 'Abe' as name
-        union all select 2, 'Abby'
-      ) as c
+      select n.n_name as nation_name
+      from nation as n
       where exists (
         select 1
-        from (
-          select 1 as cust_id
-        ) as o
-        where o.cust_id = c.cust_id
+        from region as r
+        where r.r_regionkey = n.n_regionkey
+          and r.r_name = 'AMERICA'
       )
+      order by nation_name
     expect:
-      columns: [name]
+      columns: [nation_name]
       rows:
-        - [Abe]
+        - [ARGENTINA]
+        - [BRAZIL]
+        - [CANADA]
+        - [PERU]
+        - [UNITED STATES]
 
-  - id: mysql_compat_subqueries.004.scalar_aggregate_predicate
+  - id: mysql_compat_subqueries.006.correlated_not_exists
     status: supported
     kind: query
+    order: exact
+    feature: subqueries_exists
+    compatibility: mysql
+    requires: [select, table_scan, correlated_not_exists]
+    sql: |
+      select count(*) as nation_count
+      from nation as n
+      where not exists (
+        select 1
+        from region as r
+        where r.r_regionkey = n.n_regionkey
+          and r.r_name = 'AMERICA'
+      )
+    expect:
+      columns: [nation_count]
+      rows:
+        - [20]
+
+  - id: mysql_compat_subqueries.007.scalar_aggregate_predicate
+    status: supported
+    kind: query
+    order: exact
     feature: subqueries_scalar_aggregate
     compatibility: mysql
-    requires: [select, derived_table, scalar_subquery, aggregate, comparison]
+    requires: [select, table_scan, scalar_subquery, aggregate, comparison, order_by]
     sql: |
-      select item
-      from (
-        select 'small' as item, 5 as amount
-        union all select 'large', 20
-      ) as sales
-      where amount > (select avg(amount) from (select 5 as amount union all select 15) as baseline)
+      select r_name as region_name
+      from region
+      where r_regionkey > (select avg(n_regionkey) from nation)
+      order by region_name
     expect:
-      columns: [item]
+      columns: [region_name]
       rows:
-        - [large]
+        - [EUROPE]
+        - [MIDDLE EAST]
