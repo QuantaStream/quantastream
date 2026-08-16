@@ -25,6 +25,7 @@ type UnboundStatement struct {
 	CreateView UnboundCreateView
 	DropView   UnboundDropView
 	ShowView   UnboundShowCreateView
+	Describe   UnboundDescribe
 	Session    UnboundSession
 }
 
@@ -51,6 +52,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindDropView(context, s.DropView)
 	case QueryKindShowCreateView:
 		return BindShowCreateView(context, s.ShowView)
+	case QueryKindDescribe:
+		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
 		return BindSession(context, s.Session)
 	default:
@@ -151,6 +154,13 @@ type UnboundDropView struct {
 // UnboundShowCreateView describes a SHOW CREATE VIEW operation before binding.
 type UnboundShowCreateView struct {
 	View     UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundDescribe describes a DESCRIBE/SHOW COLUMNS metadata read before binding.
+type UnboundDescribe struct {
+	Target   UnboundTable
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -698,6 +708,120 @@ func BindShowCreateView(context *BindContext, showStmt UnboundShowCreateView) (Q
 		query.Mutation.ViewSQL = strings.TrimSpace(view.CanonicalSQL)
 	}
 	return query, nil
+}
+
+// BindDescribe binds parser-neutral DESCRIBE/SHOW COLUMNS metadata into QueryIR.
+func BindDescribe(context *BindContext, describeStmt UnboundDescribe) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindDescribe,
+		Result:   describeStmt.Result,
+		Blockers: append([]NativeBlocker(nil), describeStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	targetName := strings.TrimSpace(describeStmt.Target.Name)
+	if targetName == "" {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "DESCRIBE target is empty"),
+		}
+	}
+	schemaName := strings.TrimSpace(describeStmt.Target.Schema)
+	if schemaName == "" {
+		schemaName = context.DefaultSchema
+	}
+	target := TableInstance{
+		ID:     TableInstanceID(targetName),
+		Schema: schemaName,
+		Table:  targetName,
+		Alias:  describeStmt.Target.Alias,
+		Role:   targetName,
+	}
+	query.Mutation.Target = target
+
+	table, tableDiagnostics := context.Catalog.Table(schemaName, targetName)
+	if !tableDiagnostics.BlocksNative() {
+		query.Mutation.Columns = describeTableFieldRefs(table, target)
+		return query, nil
+	}
+
+	viewCatalog, ok := context.Catalog.(ViewCatalog)
+	if !ok {
+		return query, tableDiagnostics
+	}
+	view, viewDiagnostics := viewCatalog.View(schemaName, targetName)
+	if viewDiagnostics.BlocksNative() {
+		return query, tableDiagnostics
+	}
+	if strings.TrimSpace(view.Schema) != "" {
+		query.Mutation.Target.Schema = strings.TrimSpace(view.Schema)
+	}
+	if strings.TrimSpace(view.Name) != "" {
+		query.Mutation.Target.Table = strings.TrimSpace(view.Name)
+	}
+	viewColumns, diagnostics := describeViewFieldRefs(context, view)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Mutation.Columns = viewColumns
+	return query, nil
+}
+
+func describeTableFieldRefs(table TableDefinition, target TableInstance) []FieldRef {
+	fields := make([]FieldRef, 0, len(table.Fields))
+	for _, field := range table.Fields {
+		fields = append(fields, field.Ref(target, FieldRoleVisible))
+	}
+	return fields
+}
+
+func describeViewFieldRefs(context *BindContext, view SQLViewDefinition) ([]FieldRef, DiagnosticSet) {
+	sql := strings.TrimSpace(view.SQL)
+	if sql == "" {
+		sql = strings.TrimSpace(view.CanonicalSQL)
+	}
+	if sql == "" {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogViewNotFound, PhaseBind, "view SQL is empty: "+qualifiedCatalogName(view.Schema, view.Name)),
+		}
+	}
+	viewStatement, parseDiagnostics := SimpleParserBridge{}.Parse(sql)
+	if parseDiagnostics.BlocksNative() {
+		return nil, parseDiagnostics
+	}
+	expanded, expansionDiagnostics := ExpandStatementViews(context.Catalog, SimpleParserBridge{}, context.DefaultSchema, viewStatement)
+	if expansionDiagnostics.BlocksNative() {
+		return nil, expansionDiagnostics
+	}
+	if expanded.Kind != QueryKindSelect {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "DESCRIBE view target must use a SELECT statement"),
+		}
+	}
+	bindContext := NewBindContext(context.Catalog, context.DefaultSchema)
+	viewQuery, selectDiagnostics := BindSelect(bindContext, expanded.Select)
+	if selectDiagnostics.BlocksNative() {
+		return nil, selectDiagnostics
+	}
+	columns := viewQuery.ResultColumns()
+	fields := make([]FieldRef, 0, len(columns))
+	target := TableInstance{
+		ID:     TableInstanceID(view.Name),
+		Schema: view.Schema,
+		Table:  view.Name,
+		Role:   view.Name,
+	}
+	for _, column := range columns {
+		fields = append(fields, FieldRef{
+			Table:    target,
+			Name:     column.Name,
+			Type:     column.Type,
+			Nullable: column.Nullable,
+		})
+	}
+	return fields, nil
 }
 
 func viewDependenciesFromQuery(query QueryIR) []TableInstance {

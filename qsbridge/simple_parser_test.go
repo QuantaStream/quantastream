@@ -199,6 +199,48 @@ func TestSimpleParserBridgeParsesShowCreateViewStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDescribeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("describe customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDescribe {
+		t.Fatalf("kind = %q, want describe", statement.Kind)
+	}
+	if statement.Describe.Target.Name != "customer" {
+		t.Fatalf("target = %#v, want customer", statement.Describe.Target)
+	}
+	if got := len(statement.Describe.Result.Columns); got != 6 {
+		t.Fatalf("describe result columns = %d, want 6", got)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowColumnsStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show columns from quanta.customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDescribe {
+		t.Fatalf("kind = %q, want describe", statement.Kind)
+	}
+	if statement.Describe.Target.Schema != "quanta" || statement.Describe.Target.Name != "customer" {
+		t.Fatalf("target = %#v, want quanta.customer", statement.Describe.Target)
+	}
+	if statement.Describe.Result.Columns[0].Name != "Field" || statement.Describe.Result.Columns[4].Name != "Default" {
+		t.Fatalf("result columns = %#v", statement.Describe.Result.Columns)
+	}
+}
+
+func TestSimpleParserBridgeParsesDescAlias(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("desc customer")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDescribe || statement.Describe.Target.Name != "customer" {
+		t.Fatalf("statement = %#v, want describe customer", statement)
+	}
+}
+
 func TestSimpleParserBridgeParsesDropViewStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("drop view building_customers;")
 	if diagnostics.BlocksNative() {

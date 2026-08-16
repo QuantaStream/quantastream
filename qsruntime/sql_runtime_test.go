@@ -74,6 +74,66 @@ func TestSQLRuntimeExecuteSQLShowCreateViewReturnsCatalogRow(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLDescribeReturnsCatalogRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true, Encoding: qsbridge.LegacyEncodingProfile("IntBSI", qsbridge.LegacyEncodingOptions{})},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25})},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "describe customer", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("DESCRIBE should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 6 {
+		t.Fatalf("rows = %#v, want two six-column rows", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "c_custkey"; got != want {
+		t.Fatalf("first field = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][1].Value, "int"; got != want {
+		t.Fatalf("first type = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][2].Value, "NO"; got != want {
+		t.Fatalf("first nullability = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][3].Value, "PRI"; got != want {
+		t.Fatalf("first key = %#v, want %q", got, want)
+	}
+	if chunk.Rows[0][4].Kind != qsbridge.ValueNull {
+		t.Fatalf("first default = %#v, want SQL NULL", chunk.Rows[0][4])
+	}
+	if got, want := chunk.Rows[0][5].Value, "mapper=IntBSI"; got != want {
+		t.Fatalf("first extra = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][2].Value, "YES"; got != want {
+		t.Fatalf("second nullability = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][5].Value, "mapper=StringLexBSI"; got != want {
+		t.Fatalf("second extra = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeReturnsExecutionInstrumentationSnapshot(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		recorder := ExecutionInstrumentationFromContext(ctx)

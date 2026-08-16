@@ -650,6 +650,83 @@ func TestUnboundStatementBindShowCreateView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindDescribeTable(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []FieldDefinition{
+				{Name: "c_custkey", Type: DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: DataTypeString, Nullable: true},
+			},
+		}},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "describe customer",
+		Kind: QueryKindDescribe,
+		Describe: UnboundDescribe{
+			Target: UnboundTable{Name: "customer"},
+			Result: describeResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindDescribe {
+		t.Fatalf("Kind = %q, want describe", query.Kind)
+	}
+	if query.Mutation.Target.Table != "customer" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("target = %#v, want quanta.customer", query.Mutation.Target)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if !query.Mutation.Columns[0].PrimaryKey || query.Mutation.Columns[0].Name != "c_custkey" {
+		t.Fatalf("first column = %#v, want primary c_custkey", query.Mutation.Columns[0])
+	}
+	if !query.Mutation.Columns[1].Nullable {
+		t.Fatalf("second column = %#v, want nullable", query.Mutation.Columns[1])
+	}
+}
+
+func TestUnboundStatementBindDescribeViewDerivesColumns(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_names",
+		SQL:    "select c_custkey as customer_key, c_name from customer",
+	}}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "describe customer_names",
+		Kind: QueryKindDescribe,
+		Describe: UnboundDescribe{
+			Target: UnboundTable{Name: "customer_names"},
+			Result: describeResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.Target.Table != "customer_names" {
+		t.Fatalf("target = %#v, want customer_names", query.Mutation.Target)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d: %#v", got, want, query.Mutation.Columns)
+	}
+	if query.Mutation.Columns[0].Name != "customer_key" || query.Mutation.Columns[0].Type != DataTypeInt {
+		t.Fatalf("first view column = %#v, want typed customer_key", query.Mutation.Columns[0])
+	}
+	if query.Mutation.Columns[1].Name != "c_name" || query.Mutation.Columns[1].Type != DataTypeString {
+		t.Fatalf("second view column = %#v, want typed c_name", query.Mutation.Columns[1])
+	}
+}
+
 func TestUnboundStatementBindDropView(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

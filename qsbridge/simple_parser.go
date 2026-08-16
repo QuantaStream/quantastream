@@ -52,10 +52,16 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "show"); ok {
 		return parseSimpleShow(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "describe"); ok {
+		return parseSimpleDescribe(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "desc"); ok {
+		return parseSimpleDescribe(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -597,34 +603,92 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, simpleParserDiagnostic("only SHOW statements are supported"), false
 	}
 	createBody, ok := consumeKeyword(showBody, "create")
-	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW"), false
+	if ok {
+		viewBody, ok := consumeKeyword(createBody, "view")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE only supports VIEW"), false
+		}
+		view, diagnostic, ok := parseSimpleTable(viewBody)
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
+		if view.Alias != "" {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE VIEW aliases are not supported"), false
+		}
+		return UnboundStatement{
+			SQL:  sql,
+			Kind: QueryKindShowCreateView,
+			ShowView: UnboundShowCreateView{
+				View: view,
+				Result: ResultShape{
+					Kind: ResultQuery,
+					Columns: []FieldRef{
+						{Name: "View", Type: DataTypeString},
+						{Name: "Create View", Type: DataTypeString},
+					},
+				},
+			},
+		}, Diagnostic{}, true
 	}
-	viewBody, ok := consumeKeyword(createBody, "view")
+	columnsBody, ok := consumeKeyword(showBody, "columns")
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE only supports VIEW"), false
+		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
-	view, diagnostic, ok := parseSimpleTable(viewBody)
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW or COLUMNS/FIELDS FROM table"), false
+	}
+	targetBody, ok := consumeKeyword(columnsBody, "from")
+	if !ok {
+		targetBody, ok = consumeKeyword(columnsBody, "in")
+	}
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS must include FROM table"), false
+	}
+	return parseSimpleDescribeTarget(sql, targetBody)
+}
+
+func parseSimpleDescribe(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	targetBody, ok := consumeKeyword(trimmed, "describe")
+	if !ok {
+		targetBody, ok = consumeKeyword(trimmed, "desc")
+	}
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only DESCRIBE statements are supported"), false
+	}
+	return parseSimpleDescribeTarget(sql, targetBody)
+}
+
+func parseSimpleDescribeTarget(sql string, targetBody string) (UnboundStatement, Diagnostic, bool) {
+	target, diagnostic, ok := parseSimpleTable(strings.TrimSpace(targetBody))
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
-	if view.Alias != "" {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE VIEW aliases are not supported"), false
+	if target.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DESCRIBE aliases are not supported"), false
 	}
 	return UnboundStatement{
 		SQL:  sql,
-		Kind: QueryKindShowCreateView,
-		ShowView: UnboundShowCreateView{
-			View: view,
-			Result: ResultShape{
-				Kind: ResultQuery,
-				Columns: []FieldRef{
-					{Name: "View", Type: DataTypeString},
-					{Name: "Create View", Type: DataTypeString},
-				},
-			},
+		Kind: QueryKindDescribe,
+		Describe: UnboundDescribe{
+			Target: target,
+			Result: describeResultShape(),
 		},
 	}, Diagnostic{}, true
+}
+
+func describeResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Field", Type: DataTypeString},
+			{Name: "Type", Type: DataTypeString},
+			{Name: "Null", Type: DataTypeString},
+			{Name: "Key", Type: DataTypeString},
+			{Name: "Default", Type: DataTypeString, Nullable: true},
+			{Name: "Extra", Type: DataTypeString},
+		},
+	}
 }
 
 func parseSimpleCommit(sql string) (UnboundStatement, Diagnostic, bool) {

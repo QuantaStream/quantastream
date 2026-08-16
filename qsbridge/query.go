@@ -24,6 +24,8 @@ const (
 	QueryKindDropView QueryKind = "drop_view"
 	// QueryKindShowCreateView identifies a SHOW CREATE VIEW catalog read statement.
 	QueryKindShowCreateView QueryKind = "show_create_view"
+	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
+	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
 	QueryKindSession QueryKind = "session"
 	// QueryKindDDL identifies schema-changing statements.

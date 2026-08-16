@@ -595,7 +595,7 @@ tests:
     feature: views_metadata_boundary
     compatibility: mysql
     requires: [describe, view_reference]
-    issue: "DESCRIBE view compatibility output is not implemented yet."
+    issue: "DESCRIBE view is implemented, but exact MySQL type strings/width metadata are not aligned yet."
     sql: |
       describe qs_mysql_compat_metadata_view
 
