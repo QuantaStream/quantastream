@@ -5,55 +5,216 @@ tests:
   - id: mysql_compat_predicates.001.comparison_and_boolean
     status: supported
     kind: query
+    order: exact
     feature: predicates_comparison
     compatibility: mysql
-    requires: [select, where, comparison, and]
+    requires: [select, table_scan, where, comparison, and]
     sql: |
-      select 1 as matched
-      where 3 > 2 and 2 <= 2
+      select count(*) as matched
+      from nation
+      where n_regionkey >= 1 and n_regionkey <= 2
     expect:
       columns: [matched]
       rows:
-        - [1]
+        - [10]
 
   - id: mysql_compat_predicates.002.between
     status: supported
     kind: query
+    order: exact
     feature: predicates_between
     compatibility: mysql
-    requires: [select, where, between]
+    requires: [select, table_scan, where, between]
     sql: |
-      select 'inside' as bucket
-      where 5 between 1 and 10
+      select count(*) as matched
+      from orders
+      where o_orderdate between '1995-03-01' and '1995-03-31'
     expect:
-      columns: [bucket]
+      columns: [matched]
       rows:
-        - [inside]
+        - [181]
 
   - id: mysql_compat_predicates.003.in_list
     status: supported
     kind: query
+    order: exact
     feature: predicates_membership
     compatibility: mysql
-    requires: [select, where, in]
+    requires: [select, table_scan, where, in, order_by]
     sql: |
-      select 'hit' as result
-      where 'b' in ('a', 'b', 'c')
+      select n_name as nation_name
+      from nation
+      where n_name in ('CANADA', 'BRAZIL', 'FRANCE')
+      order by nation_name
     expect:
-      columns: [result]
+      columns: [nation_name]
       rows:
-        - [hit]
+        - [BRAZIL]
+        - [CANADA]
+        - [FRANCE]
 
   - id: mysql_compat_predicates.004.like_prefix
     status: supported
     kind: query
+    order: exact
     feature: predicates_like
     compatibility: mysql
-    requires: [select, where, like]
+    requires: [select, table_scan, where, like, order_by]
     sql: |
-      select 'match' as result
-      where 'green forest' like 'green%'
+      select n_name as nation_name
+      from nation
+      where n_name like 'UNITED%'
+      order by nation_name
     expect:
-      columns: [result]
+      columns: [nation_name]
       rows:
-        - [match]
+        - [UNITED KINGDOM]
+        - [UNITED STATES]
+
+  - id: mysql_compat_predicates.005.not_equal
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_comparison
+    compatibility: mysql
+    requires: [select, table_scan, where, not_equal]
+    sql: |
+      select count(*) as matched
+      from nation
+      where n_regionkey <> 0
+    expect:
+      columns: [matched]
+      rows:
+        - [20]
+
+  - id: mysql_compat_predicates.006.not_in_list
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_membership
+    compatibility: mysql
+    requires: [select, table_scan, where, not_in]
+    sql: |
+      select count(*) as matched
+      from region
+      where r_name not in ('AFRICA', 'EUROPE')
+    expect:
+      columns: [matched]
+      rows:
+        - [3]
+
+  - id: mysql_compat_predicates.007.not_between
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_between
+    compatibility: mysql
+    requires: [select, table_scan, where, not_between]
+    sql: |
+      select count(*) as matched
+      from nation
+      where n_nationkey not between 5 and 20
+    expect:
+      columns: [matched]
+      rows:
+        - [9]
+
+  - id: mysql_compat_predicates.008.or_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_boolean
+    compatibility: mysql
+    requires: [select, table_scan, where, or, order_by]
+    sql: |
+      select n_name as nation_name
+      from nation
+      where n_name = 'BRAZIL' or n_name = 'CANADA'
+      order by nation_name
+    expect:
+      columns: [nation_name]
+      rows:
+        - [BRAZIL]
+        - [CANADA]
+
+  - id: mysql_compat_predicates.009.parenthesized_boolean
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_boolean
+    compatibility: mysql
+    requires: [select, table_scan, where, and, or, parentheses, order_by]
+    sql: |
+      select n_name as nation_name
+      from nation
+      where n_regionkey = 1 and (n_name = 'ARGENTINA' or n_name = 'BRAZIL')
+      order by nation_name
+    expect:
+      columns: [nation_name]
+      rows:
+        - [ARGENTINA]
+        - [BRAZIL]
+
+  - id: mysql_compat_predicates.010.field_comparison
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_field_comparison
+    compatibility: mysql
+    requires: [select, table_scan, where, field_comparison]
+    sql: |
+      select count(*) as matched
+      from lineitem
+      where l_commitdate < l_receiptdate
+    expect:
+      columns: [matched]
+      rows:
+        - [37897]
+
+  - id: mysql_compat_predicates.011.not_like
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_like
+    compatibility: mysql
+    requires: [select, table_scan, where, not_like]
+    sql: |
+      select count(*) as matched
+      from region
+      where r_name not like 'A%'
+    expect:
+      columns: [matched]
+      rows:
+        - [2]
+
+  - id: mysql_compat_predicates.012.is_not_null
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_null
+    compatibility: mysql
+    requires: [select, table_scan, where, is_not_null]
+    sql: |
+      select count(*) as matched
+      from customer
+      where c_comment is not null
+    expect:
+      columns: [matched]
+      rows:
+        - [1500]
+
+  - id: mysql_compat_predicates.013.is_null_empty_result
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_null
+    compatibility: mysql
+    requires: [select, table_scan, where, is_null]
+    sql: |
+      select count(*) as matched
+      from customer
+      where c_comment is null
+    expect:
+      columns: [matched]
+      rows:
+        - [0]

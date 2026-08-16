@@ -1,0 +1,58 @@
+version: 1
+name: mysql_compat_predicates_boundaries
+
+tests:
+  - id: mysql_compat_predicates_boundaries.001.projection_only_where
+    status: xfail
+    kind: query
+    order: exact
+    feature: predicates_scalar_select_boundary
+    compatibility: mysql
+    requires: [select, where, comparison]
+    issue: "Projection-only SELECT supports scalar projections, but projection-only WHERE predicates are not lowered yet."
+    sql: |
+      select 1 as matched
+      where 3 > 2 and 2 <= 2
+    expect:
+      columns: [matched]
+      rows:
+        - [1]
+
+  - id: mysql_compat_predicates_boundaries.002.row_value_in
+    status: xfail
+    kind: query
+    order: exact
+    feature: predicates_row_value_boundary
+    compatibility: mysql
+    requires: [select, table_scan, where, row_value, in]
+    issue: "Row-value predicates are not parsed yet; scalar IN predicates are supported."
+    sql: |
+      select n_name as nation_name
+      from nation
+      where (n_regionkey, n_nationkey) in ((1, 1), (1, 2))
+      order by nation_name
+    expect:
+      columns: [nation_name]
+      rows:
+        - [ARGENTINA]
+        - [BRAZIL]
+
+  - id: mysql_compat_predicates_boundaries.003.regexp_predicate
+    status: xfail
+    kind: query
+    order: exact
+    feature: predicates_regexp_boundary
+    compatibility: mysql
+    requires: [select, table_scan, where, regexp]
+    issue: "REGEXP predicates are not implemented yet."
+    sql: |
+      select r_name as region_name
+      from region
+      where r_name regexp '^A'
+      order by region_name
+    expect:
+      columns: [region_name]
+      rows:
+        - [AFRICA]
+        - [AMERICA]
+        - [ASIA]
