@@ -1175,9 +1175,6 @@ func (r DirectBitmapRuntime) directBitmapReadMembershipBSIVectors(ctx context.Co
 	if len(rownums) == 0 || len(requests) == 0 {
 		return vectors, nil, nil, nil
 	}
-	if int64Reader, ok := r.ProjectionBSIReader.(NativeProjectionBSIInt64ValueBatchReader); ok && nativeProjectionTypedBSIValuesEnabled(int64Reader) {
-		return directBitmapReadMembershipBSIInt64ValueVectors(ctx, int64Reader, requests, positions, vectors)
-	}
 	if valueReader, ok := r.ProjectionBSIReader.(NativeProjectionBSIValueBatchReader); ok {
 		return directBitmapReadMembershipBSIValueVectors(ctx, valueReader, requests, positions, vectors)
 	}

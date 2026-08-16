@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"math/big"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,12 +98,6 @@ type NativeProjectionBSIInt64ValueBatchReader interface {
 	ReadProjectionBSIInt64Values(context.Context, []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIInt64ValueReadResult, qsbridge.DiagnosticSet, error)
 }
 
-// NativeProjectionBSIInt64ValueCapability lets a reader expose whether typed
-// scalar BSI reads are backed by storage instead of a compatibility fallback.
-type NativeProjectionBSIInt64ValueCapability interface {
-	SupportsProjectionBSIInt64Values() bool
-}
-
 // NativeProjectionBSIReaderFunc adapts a function to NativeProjectionBSIReader.
 type NativeProjectionBSIReaderFunc func(context.Context, NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error)
 
@@ -166,25 +159,6 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionField(ctx context.Context,
 		Rownums:         append([]qsbridge.QuantaRownum(nil), request.Rownums...),
 		FromEpochMillis: request.FromEpochMillis,
 		ToEpochMillis:   request.ToEpochMillis,
-	}
-	if int64Reader, ok := r.Reader.(NativeProjectionBSIInt64ValueBatchReader); ok && nativeProjectionTypedBSIValuesEnabled(int64Reader) && nativeProjectionCanUseInt64Values(attr, request.Field) {
-		readResults, readDiagnostics, err := int64Reader.ReadProjectionBSIInt64Values(ctx, []NativeProjectionBSIReadRequest{bsiRequest})
-		if err != nil || readDiagnostics.BlocksNative() {
-			probes := []ExecutionProbe(nil)
-			if len(readResults) > 0 {
-				probes = readResults[0].Probes
-			}
-			return NativeProjectionFieldReadResult{Probes: probes}, readDiagnostics, err
-		}
-		if len(readResults) == 1 {
-			result, resultDiagnostics := nativeProjectionBSIFieldResultFromInt64Values(nativeProjectionBSIFieldReadPlan{
-				Request:    request,
-				BSIRequest: bsiRequest,
-				Table:      table,
-				Attribute:  attr,
-			}, readResults[0])
-			return result, resultDiagnostics, nil
-		}
 	}
 	if valueReader, ok := r.Reader.(NativeProjectionBSIValueBatchReader); ok {
 		readResults, readDiagnostics, err := valueReader.ReadProjectionBSIValues(ctx, []NativeProjectionBSIReadRequest{bsiRequest})
@@ -253,39 +227,7 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionFields(ctx context.Context
 	}
 	batchReader, batchOK := r.Reader.(NativeProjectionBSIBatchReader)
 	valueReader, valueOK := r.Reader.(NativeProjectionBSIValueBatchReader)
-	int64Reader, int64OK := r.Reader.(NativeProjectionBSIInt64ValueBatchReader)
-	if !nativeProjectionTypedBSIValuesEnabled(int64Reader) {
-		int64OK = false
-	}
 	for _, group := range nativeProjectionBSIFieldReadPlanGroups(pending) {
-		if int64OK && nativeProjectionBSIFieldReadPlansCanUseInt64Values(group) {
-			valueRequests := make([]NativeProjectionBSIReadRequest, 0, len(group))
-			for _, plan := range group {
-				valueRequests = append(valueRequests, plan.BSIRequest)
-			}
-			readResults, readDiagnostics, err := int64Reader.ReadProjectionBSIInt64Values(ctx, valueRequests)
-			diagnostics = append(diagnostics, readDiagnostics...)
-			if err != nil || diagnostics.BlocksNative() {
-				return results, diagnostics, err
-			}
-			if len(readResults) != len(group) {
-				diagnostics = append(diagnostics, qsbridge.ErrorDiagnostic(
-					qsbridge.DiagnosticInternalInvariant,
-					qsbridge.PhaseExecute,
-					"native BSI int64 value batch reader returned "+strconv.Itoa(len(readResults))+" field reads for "+strconv.Itoa(len(group))+" requests",
-				))
-				return results, diagnostics, nil
-			}
-			for i, readResult := range readResults {
-				result, resultDiagnostics := nativeProjectionBSIFieldResultFromInt64Values(group[i], readResult)
-				results[group[i].Position] = result
-				diagnostics = append(diagnostics, resultDiagnostics...)
-				if diagnostics.BlocksNative() {
-					return results, diagnostics, nil
-				}
-			}
-			continue
-		}
 		if valueOK {
 			valueRequests := make([]NativeProjectionBSIReadRequest, 0, len(group))
 			for _, plan := range group {
@@ -383,11 +325,11 @@ func (r NativeProjectionBSIFieldReader) ReadProjectionExpression(ctx context.Con
 	if !nativeProjectionAttributeIsTimeBSI(plan.Attribute) {
 		return NativeProjectionExpressionReadResult{}, nativeProjectionUnsupported("native expression projection year() requires TimestampBSI source field " + index + "." + nativeProjectionPhysicalField(fieldReadRequest.Field)), nil
 	}
-	values, exists, probes, diagnostics, err := r.readProjectionBSIInt64Values(ctx, plan)
+	values, probes, diagnostics, err := r.readProjectionBSIValues(ctx, plan)
 	if err != nil || diagnostics.BlocksNative() {
 		return NativeProjectionExpressionReadResult{Probes: probes}, diagnostics, err
 	}
-	cells, valueDiagnostics := nativeProjectionYearCellsFromInt64(plan.Table, plan.Attribute, values, exists)
+	cells, valueDiagnostics := nativeProjectionYearCells(plan.Table, plan.Attribute, values)
 	if valueDiagnostics.BlocksNative() {
 		return NativeProjectionExpressionReadResult{Probes: probes}, valueDiagnostics, nil
 	}
@@ -491,54 +433,6 @@ func nativeProjectionSameRownums(left, right []qsbridge.QuantaRownum) bool {
 	return true
 }
 
-func nativeProjectionBSIFieldReadPlansCanUseInt64Values(plans []nativeProjectionBSIFieldReadPlan) bool {
-	for _, plan := range plans {
-		if !nativeProjectionCanUseInt64Values(plan.Attribute, plan.Request.Field) {
-			return false
-		}
-	}
-	return true
-}
-
-func nativeProjectionCanUseInt64Values(attr *core.Attribute, field qsbridge.QuantaProjectionField) bool {
-	if attr == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
-	case "floatscalebsi", "intbsi":
-		return false
-	}
-	dataType := field.Type
-	if dataType == "" {
-		dataType = legacyDataType(attr.Type)
-	}
-	switch dataType {
-	case qsbridge.DataTypeInt, qsbridge.DataTypeFloat, qsbridge.DataTypeTime, qsbridge.DataTypeBool:
-		return true
-	default:
-		return false
-	}
-}
-
-func nativeProjectionTypedBSIValuesDisabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("QUANTASTREAM_DISABLE_TYPED_BSI_VALUES"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func nativeProjectionTypedBSIValuesEnabled(reader NativeProjectionBSIInt64ValueBatchReader) bool {
-	if nativeProjectionTypedBSIValuesDisabled() {
-		return false
-	}
-	if capability, ok := reader.(NativeProjectionBSIInt64ValueCapability); ok {
-		return capability.SupportsProjectionBSIInt64Values()
-	}
-	return true
-}
-
 func nativeProjectionBSIFieldResult(plan nativeProjectionBSIFieldReadPlan, readResult NativeProjectionBSIReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet) {
 	if readResult.BSI == nil {
 		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, nativeProjectionUnsupported("native BSI projection returned no BSI for " + plan.BSIRequest.Index + "." + plan.BSIRequest.PhysicalField)
@@ -571,27 +465,6 @@ func nativeProjectionBSIFieldResultFromValues(plan nativeProjectionBSIFieldReadP
 			continue
 		}
 		values = append(values, nativeProjectionBSICell(plan.Table, plan.Attribute, plan.Request.Field, value))
-	}
-	return NativeProjectionFieldReadResult{
-		Field:  plan.Request.Field,
-		Values: values,
-		Probes: readResult.Probes,
-	}, nil
-}
-
-func nativeProjectionBSIFieldResultFromInt64Values(plan nativeProjectionBSIFieldReadPlan, readResult NativeProjectionBSIInt64ValueReadResult) (NativeProjectionFieldReadResult, qsbridge.DiagnosticSet) {
-	if len(readResult.Values) != len(plan.BSIRequest.Rownums) || len(readResult.Exists) != len(plan.BSIRequest.Rownums) {
-		return NativeProjectionFieldReadResult{Probes: readResult.Probes}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI int64 value projection returned "+strconv.Itoa(len(readResult.Values))+" values and "+strconv.Itoa(len(readResult.Exists))+" existence flags for "+strconv.Itoa(len(plan.BSIRequest.Rownums))+" rownums"),
-		}
-	}
-	values := make([]qsbridge.ResultCell, 0, len(readResult.Values))
-	for i, value := range readResult.Values {
-		if !readResult.Exists[i] {
-			values = append(values, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
-			continue
-		}
-		values = append(values, nativeProjectionBSICellFromInt64(plan.Table, plan.Attribute, plan.Request.Field, value))
 	}
 	return NativeProjectionFieldReadResult{
 		Field:  plan.Request.Field,
@@ -633,44 +506,6 @@ func (r NativeProjectionBSIFieldReader) readProjectionBSIValues(ctx context.Cont
 	return values, readResult.Probes, nil, nil
 }
 
-func (r NativeProjectionBSIFieldReader) readProjectionBSIInt64Values(ctx context.Context, plan nativeProjectionBSIFieldReadPlan) ([]int64, []bool, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
-	if int64Reader, ok := r.Reader.(NativeProjectionBSIInt64ValueBatchReader); ok && nativeProjectionTypedBSIValuesEnabled(int64Reader) && nativeProjectionCanUseInt64Values(plan.Attribute, plan.Request.Field) {
-		readResults, diagnostics, err := int64Reader.ReadProjectionBSIInt64Values(ctx, []NativeProjectionBSIReadRequest{plan.BSIRequest})
-		if err != nil || diagnostics.BlocksNative() {
-			probes := []ExecutionProbe(nil)
-			if len(readResults) > 0 {
-				probes = readResults[0].Probes
-			}
-			return nil, nil, probes, diagnostics, err
-		}
-		if len(readResults) != 1 {
-			return nil, nil, nil, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI int64 value projection returned "+strconv.Itoa(len(readResults))+" field reads for expression projection"),
-			}, nil
-		}
-		if len(readResults[0].Values) != len(plan.BSIRequest.Rownums) || len(readResults[0].Exists) != len(plan.BSIRequest.Rownums) {
-			return nil, nil, readResults[0].Probes, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI int64 value projection returned "+strconv.Itoa(len(readResults[0].Values))+" values and "+strconv.Itoa(len(readResults[0].Exists))+" existence flags for "+strconv.Itoa(len(plan.BSIRequest.Rownums))+" rownums"),
-			}, nil
-		}
-		return append([]int64(nil), readResults[0].Values...), append([]bool(nil), readResults[0].Exists...), readResults[0].Probes, nil, nil
-	}
-	values, probes, diagnostics, err := r.readProjectionBSIValues(ctx, plan)
-	if err != nil || diagnostics.BlocksNative() {
-		return nil, nil, probes, diagnostics, err
-	}
-	intValues := make([]int64, len(values))
-	exists := make([]bool, len(values))
-	for i, value := range values {
-		if value == nil {
-			continue
-		}
-		intValues[i] = value.Int64()
-		exists[i] = true
-	}
-	return intValues, exists, probes, nil, nil
-}
-
 func nativeProjectionYearCells(table *core.Table, attr *core.Attribute, values []*big.Int) ([]qsbridge.ResultCell, qsbridge.DiagnosticSet) {
 	cells := make([]qsbridge.ResultCell, 0, len(values))
 	for _, value := range values {
@@ -679,24 +514,6 @@ func nativeProjectionYearCells(table *core.Table, attr *core.Attribute, values [
 			continue
 		}
 		nanos := legacyDirectRelationshipEncodedTimeToNanos(table, attr.FieldName, value.Int64())
-		cells = append(cells, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(time.Unix(0, nanos).UTC().Year())})
-	}
-	return cells, nil
-}
-
-func nativeProjectionYearCellsFromInt64(table *core.Table, attr *core.Attribute, values []int64, exists []bool) ([]qsbridge.ResultCell, qsbridge.DiagnosticSet) {
-	if len(values) != len(exists) {
-		return nil, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native BSI year projection received mismatched int64 values and existence flags"),
-		}
-	}
-	cells := make([]qsbridge.ResultCell, 0, len(values))
-	for i, value := range values {
-		if !exists[i] {
-			cells = append(cells, qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil})
-			continue
-		}
-		nanos := legacyDirectRelationshipEncodedTimeToNanos(table, attr.FieldName, value)
 		cells = append(cells, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(time.Unix(0, nanos).UTC().Year())})
 	}
 	return cells, nil

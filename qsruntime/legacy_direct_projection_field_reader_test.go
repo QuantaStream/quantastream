@@ -260,6 +260,45 @@ func TestLegacyDirectProjectionBSIFieldReaderAvoidsTypedInt64ForSignedFloatScale
 	}
 }
 
+func TestLegacyDirectProjectionBSIFieldReaderAvoidsTypedInt64ForProjectionValues(t *testing.T) {
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"orders": {
+			BasicTable: &shared.BasicTable{Name: "orders"},
+			AttributeNameMap: map[string]*core.Attribute{
+				"o_orderkey": {BasicAttribute: &shared.BasicAttribute{FieldName: "o_orderkey", Type: "Integer", MappingStrategy: "IntBSI"}},
+			},
+		},
+	}}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(7, big.NewInt(42))
+	storage := &typedProjectionGateReader{bsi: bsi}
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader:     storage,
+	}
+
+	result, diagnostics, err := reader.ReadProjectionField(context.Background(), NativeProjectionFieldReadRequest{
+		Index:   "orders",
+		Field:   qsbridge.QuantaProjectionField{Index: "orders", Field: "o_orderkey", Type: qsbridge.DataTypeInt},
+		Rownums: []qsbridge.QuantaRownum{7},
+	})
+	if err != nil {
+		t.Fatalf("ReadProjectionField error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if storage.int64Calls != 0 {
+		t.Fatalf("typed int64 reads = %d, want 0", storage.int64Calls)
+	}
+	if storage.rawCalls != 1 {
+		t.Fatalf("raw BSI reads = %d, want 1", storage.rawCalls)
+	}
+	if got := result.Values[0].Value; got != int64(42) {
+		t.Fatalf("projected value = %#v, want 42", got)
+	}
+}
+
 func TestLegacyDirectProjectionBSIFieldReaderDecodesTimeGranularity(t *testing.T) {
 	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
 		"orders_qa": {
