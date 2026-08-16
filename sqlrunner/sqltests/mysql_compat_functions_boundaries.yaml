@@ -85,3 +85,22 @@ tests:
       columns: [value]
       rows:
         - [42]
+
+  - id: mysql_compat_functions_boundaries.007.numeric_literal_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_numeric_boundary
+    compatibility: mysql
+    requires: [select, floor, ceiling, truncate, mod, power, sign]
+    sql: |
+      select floor(3.8) as floor_value,
+             ceiling(3.2) as ceiling_value,
+             truncate(3.14159, 2) as truncate_value,
+             mod(17, 5) as mod_value,
+             power(2, 3) as power_value,
+             sign(0 - 7) as sign_value
+    expect:
+      columns: [floor_value, ceiling_value, truncate_value, mod_value, power_value, sign_value]
+      rows:
+        - [3, 4, 3.14, 2, 8, -1]

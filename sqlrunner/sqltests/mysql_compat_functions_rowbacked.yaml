@@ -65,3 +65,29 @@ tests:
         - [1, 17, 17, 10]
         - [1, 36, 36, 10]
         - [1, 8, 10, 8]
+
+  - id: mysql_compat_functions_rowbacked.004.lineitem_numeric_math_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_numeric_rowbacked
+    compatibility: mysql
+    requires: [select, floor, ceiling, truncate, mod, power, sign]
+    sql: |
+      select l_orderkey,
+             l_linenumber,
+             floor(l_quantity) as quantity_floor,
+             ceiling(l_quantity) as quantity_ceiling,
+             truncate(l_extendedprice, 0) as price_truncated,
+             mod(l_linenumber, 3) as line_mod,
+             power(l_linenumber, 2) as line_power,
+             sign(l_quantity) as quantity_sign
+      from lineitem
+      order by l_orderkey, l_linenumber
+      limit 3
+    expect:
+      columns: [l_orderkey, l_linenumber, quantity_floor, quantity_ceiling, price_truncated, line_mod, line_power, quantity_sign]
+      rows:
+        - [1, 1, 17, 17, 24710, 1, 1, 1]
+        - [1, 2, 36, 36, 56688, 2, 4, 1]
+        - [1, 3, 8, 8, 12301, 0, 9, 1]

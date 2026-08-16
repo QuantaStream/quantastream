@@ -129,6 +129,57 @@ func TestDirectBitmapEvaluateMaterializedDateFormatCall(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedNumericScalarCalls(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{}
+	tests := []struct {
+		name string
+		call qsbridge.CallExpr
+		want qsbridge.ResultCell
+	}{
+		{
+			name: "floor",
+			call: qsbridge.Call("floor", qsbridge.Literal(qsbridge.ValueFloat, 3.8)),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 3.0},
+		},
+		{
+			name: "ceiling",
+			call: qsbridge.Call("ceiling", qsbridge.Literal(qsbridge.ValueFloat, 3.2)),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 4.0},
+		},
+		{
+			name: "truncate",
+			call: qsbridge.Call("truncate", qsbridge.Literal(qsbridge.ValueFloat, 3.14159), qsbridge.Literal(qsbridge.ValueInt, int64(2))),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 3.14},
+		},
+		{
+			name: "mod",
+			call: qsbridge.Call("mod", qsbridge.Literal(qsbridge.ValueInt, int64(17)), qsbridge.Literal(qsbridge.ValueInt, int64(5))),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 2.0},
+		},
+		{
+			name: "power",
+			call: qsbridge.Call("power", qsbridge.Literal(qsbridge.ValueInt, int64(2)), qsbridge.Literal(qsbridge.ValueInt, int64(3))),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 8.0},
+		},
+		{
+			name: "sign",
+			call: qsbridge.Call("sign", qsbridge.Literal(qsbridge.ValueFloat, -7.5)),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(-1)},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(test.call, rowSet, 0)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", diagnostics)
+			}
+			if cell.Kind != test.want.Kind || cell.Value != test.want.Value {
+				t.Fatalf("cell = %#v, want %#v", cell, test.want)
+			}
+		})
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}
