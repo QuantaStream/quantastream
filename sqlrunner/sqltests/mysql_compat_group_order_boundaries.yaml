@@ -113,13 +113,12 @@ tests:
         - [4, 5]
 
   - id: mysql_compat_group_order_boundaries.006.order_by_expression_not_projected
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: order_by_expression_boundary
     compatibility: mysql
     requires: [select, table_scan, expression_projection, order_by, limit]
-    issue: "ORDER BY expressions are only resolved when they are projected or simple aggregate references."
     sql: |
       select n_name as nation_name
       from nation

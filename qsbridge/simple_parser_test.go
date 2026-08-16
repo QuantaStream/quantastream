@@ -1693,6 +1693,35 @@ func TestSimpleParserBridgeParsesOrderByOrdinal(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesOrderByUnprojectedExpression(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select n_name as nation_name from nation order by n_nationkey + 1 desc limit 3")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.OrderBy) != 1 {
+		t.Fatalf("order by = %d, want 1", len(statement.Select.OrderBy))
+	}
+	expr, ok := statement.Select.OrderBy[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("order by expression = %T, want UnboundBinaryExpr", statement.Select.OrderBy[0].Expr)
+	}
+	if expr.Op != BinaryOpAdd {
+		t.Fatalf("order by op = %q, want %q", expr.Op, BinaryOpAdd)
+	}
+	if field, ok := expr.Left.(UnboundFieldExpr); !ok || field.Name != "n_nationkey" {
+		t.Fatalf("order by left = %#v, want n_nationkey field", expr.Left)
+	}
+	if literal, ok := expr.Right.(UnboundLiteralExpr); !ok || literal.Kind != ValueInt || literal.Value != int64(1) {
+		t.Fatalf("order by right = %#v, want int literal 1", expr.Right)
+	}
+	if statement.Select.OrderBy[0].Direction != SortDescending {
+		t.Fatalf("order by direction = %q, want desc", statement.Select.OrderBy[0].Direction)
+	}
+	if statement.Select.Result.Limit != 3 {
+		t.Fatalf("limit = %d, want 3", statement.Select.Result.Limit)
+	}
+}
+
 func TestSimpleParserBridgeParsesComputedProjectionAliasOrderBy(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select year(l_shipdate) as l_year, count(*) as line_count from lineitem group by year(l_shipdate) order by l_year")
 	if diagnostics.BlocksNative() {

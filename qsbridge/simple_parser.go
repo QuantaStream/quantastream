@@ -4443,28 +4443,28 @@ func parseSimpleOrderByClause(text string) (string, []UnboundSort, bool, Diagnos
 }
 
 func parseSimpleOrderByTerm(text string) (UnboundSort, Diagnostic, bool) {
-	fields := strings.Fields(text)
-	if len(fields) == 0 || len(fields) > 2 {
-		return UnboundSort{}, simpleParserDiagnostic("ORDER BY term must contain one field and optional direction"), false
+	exprText := strings.TrimSpace(text)
+	if exprText == "" {
+		return UnboundSort{}, simpleParserDiagnostic("ORDER BY term must contain an expression"), false
 	}
 	direction := SortAscending
-	if len(fields) == 2 {
-		switch {
-		case strings.EqualFold(fields[1], "asc"):
-			direction = SortAscending
-		case strings.EqualFold(fields[1], "desc"):
-			direction = SortDescending
-		default:
-			return UnboundSort{}, simpleParserDiagnostic("ORDER BY direction must be ASC or DESC"), false
-		}
+	if remaining, ok := consumeTrailingKeyword(exprText, "asc"); ok {
+		exprText = remaining
+		direction = SortAscending
+	} else if remaining, ok := consumeTrailingKeyword(exprText, "desc"); ok {
+		exprText = remaining
+		direction = SortDescending
 	}
-	if expr, ok := parseSimpleOrderByAggregateExpression(fields[0]); ok {
+	if exprText == "" {
+		return UnboundSort{}, simpleParserDiagnostic("ORDER BY expression is empty"), false
+	}
+	if expr, ok := parseSimpleOrderByAggregateExpression(exprText); ok {
 		return UnboundSort{Expr: expr, Direction: direction}, Diagnostic{}, true
 	}
-	if expr, ok := parseSimpleScalarExpression(fields[0]); ok {
+	if expr, ok := parseSimpleScalarExpression(exprText); ok {
 		return UnboundSort{Expr: expr, Direction: direction}, Diagnostic{}, true
 	}
-	qualifier, field := splitProjectionField(fields[0])
+	qualifier, field := splitProjectionField(exprText)
 	if field == "" || field == "*" {
 		return UnboundSort{}, simpleParserDiagnostic("ORDER BY field is invalid"), false
 	}
