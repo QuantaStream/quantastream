@@ -555,6 +555,40 @@ func TestSQLRuntimeExecuteSQLShowPluginsReturnsQuantaStreamPluginRow(t *testing.
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowPrivilegesReturnsStaticPrivilegeRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show privileges", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW PRIVILEGES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) < 3 || len(chunk.Rows[0]) != 3 {
+		t.Fatalf("rows = %#v, want privilege rows with three columns", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "Alter"; got != want {
+		t.Fatalf("first privilege = %#v, want %q", got, want)
+	}
+	if result.Prepared.Kind != qsbridge.QueryKindShowPrivileges {
+		t.Fatalf("prepared kind = %q, want show_privileges", result.Prepared.Kind)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

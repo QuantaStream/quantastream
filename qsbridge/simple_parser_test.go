@@ -352,6 +352,22 @@ func TestSimpleParserBridgeParsesShowPluginsStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowPrivilegesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show privileges;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowPrivileges {
+		t.Fatalf("kind = %q, want show_privileges", statement.Kind)
+	}
+	if got, want := len(statement.ShowPrivileges.Result.Columns), 3; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.ShowPrivileges.Result.Columns[0].Name, "Privilege"; got != want {
+		t.Fatalf("first column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowIndexStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show index from quanta.customer;")
 	if diagnostics.BlocksNative() {

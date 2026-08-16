@@ -42,6 +42,7 @@ type UnboundStatement struct {
 	ShowProcesslist UnboundShowProcesslist
 	ShowEngines     UnboundShowEngines
 	ShowPlugins     UnboundShowPlugins
+	ShowPrivileges  UnboundShowPrivileges
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -97,6 +98,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowEngines(context, s.ShowEngines)
 	case QueryKindShowPlugins:
 		return BindShowPlugins(context, s.ShowPlugins)
+	case QueryKindShowPrivileges:
+		return BindShowPrivileges(context, s.ShowPrivileges)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -295,6 +298,12 @@ type UnboundShowEngines struct {
 
 // UnboundShowPlugins describes a SHOW PLUGINS metadata read before binding.
 type UnboundShowPlugins struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowPrivileges describes a SHOW PRIVILEGES metadata read before binding.
+type UnboundShowPrivileges struct {
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1311,6 +1320,16 @@ func BindShowPlugins(context *BindContext, showStmt UnboundShowPlugins) (QueryIR
 	return QueryIR{
 		Kind:     QueryKindShowPlugins,
 		Result:   showPluginsResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowPrivileges binds parser-neutral SHOW PRIVILEGES metadata into QueryIR.
+func BindShowPrivileges(context *BindContext, showStmt UnboundShowPrivileges) (QueryIR, DiagnosticSet) {
+	_ = context
+	return QueryIR{
+		Kind:     QueryKindShowPrivileges,
+		Result:   showPrivilegesResultShape(),
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil
 }

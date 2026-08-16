@@ -743,6 +743,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowPlugins(sql, pluginsBody)
 	}
+	privilegesBody, ok := consumeKeyword(showBody, "privileges")
+	if ok {
+		return parseSimpleShowPrivileges(sql, privilegesBody)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -1029,6 +1033,19 @@ func parseSimpleShowPlugins(sql string, pluginsBody string) (UnboundStatement, D
 	}, Diagnostic{}, true
 }
 
+func parseSimpleShowPrivileges(sql string, privilegesBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(privilegesBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW PRIVILEGES does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowPrivileges,
+		ShowPrivileges: UnboundShowPrivileges{
+			Result: showPrivilegesResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
 func parseSimpleOptionalLikePattern(text string, statement string) (string, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -1305,6 +1322,17 @@ func showPluginsResultShape() ResultShape {
 			{Name: "Type", Type: DataTypeString},
 			{Name: "Library", Type: DataTypeString, Nullable: true},
 			{Name: "License", Type: DataTypeString},
+		},
+	}
+}
+
+func showPrivilegesResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Privilege", Type: DataTypeString},
+			{Name: "Context", Type: DataTypeString},
+			{Name: "Comment", Type: DataTypeString},
 		},
 	}
 }

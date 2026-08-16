@@ -52,6 +52,8 @@ const (
 	QueryKindShowEngines QueryKind = "show_engines"
 	// QueryKindShowPlugins identifies a SHOW PLUGINS metadata read statement.
 	QueryKindShowPlugins QueryKind = "show_plugins"
+	// QueryKindShowPrivileges identifies a SHOW PRIVILEGES metadata read statement.
+	QueryKindShowPrivileges QueryKind = "show_privileges"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.

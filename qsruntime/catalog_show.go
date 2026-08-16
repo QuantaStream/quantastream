@@ -608,6 +608,48 @@ func showPluginsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult
 	}
 }
 
+func showPrivilegesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	_ = request
+	rows := []struct {
+		privilege string
+		context   string
+		comment   string
+	}{
+		{privilege: "Alter", context: "Tables", comment: "To alter the table"},
+		{privilege: "Create", context: "Databases,Tables,Indexes", comment: "To create databases and tables"},
+		{privilege: "Create view", context: "Tables", comment: "To create new views"},
+		{privilege: "Delete", context: "Tables", comment: "To delete existing rows"},
+		{privilege: "Drop", context: "Databases,Tables", comment: "To drop databases, tables, and views"},
+		{privilege: "Index", context: "Tables", comment: "To inspect bitmap mapper indexes"},
+		{privilege: "Insert", context: "Tables", comment: "To insert data into tables"},
+		{privilege: "Select", context: "Tables", comment: "To retrieve rows from tables and views"},
+		{privilege: "Show databases", context: "Server Admin", comment: "To see all databases with SHOW DATABASES"},
+		{privilege: "Show view", context: "Tables", comment: "To see views with SHOW CREATE VIEW"},
+		{privilege: "Update", context: "Tables", comment: "To update existing rows"},
+		{privilege: "Usage", context: "Server Admin", comment: "No privileges - allow connect only"},
+	}
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Privilege", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Context", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Comment", qsbridge.DataTypeString, len(rows)),
+	}
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.privilege)
+		vectors[1].Values[i] = describeStringCell(row.context)
+		vectors[2].Values[i] = describeStringCell(row.comment)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
 func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))

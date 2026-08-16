@@ -893,6 +893,28 @@ func TestUnboundStatementBindShowPlugins(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowPrivileges(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show privileges",
+		Kind: QueryKindShowPrivileges,
+		ShowPrivileges: UnboundShowPrivileges{
+			Result: showPrivilegesResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowPrivileges {
+		t.Fatalf("Kind = %q, want show_privileges", query.Kind)
+	}
+	if got, want := len(query.Result.Columns), 3; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowIndex(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{
