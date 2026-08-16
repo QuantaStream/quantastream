@@ -1,0 +1,117 @@
+version: 1
+name: mysql_compat_predicates_edges
+
+tests:
+  - id: mysql_compat_predicates_edges.001.function_in_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_membership_edges
+    compatibility: mysql
+    requires: [select, where, in, lower, order_by, limit]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      where lower(c_mktsegment) in ('building', 'automobile')
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [1, BUILDING]
+        - [2, AUTOMOBILE]
+        - [3, AUTOMOBILE]
+        - [6, AUTOMOBILE]
+        - [7, AUTOMOBILE]
+
+  - id: mysql_compat_predicates_edges.002.quoted_numeric_between_bounds
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_between_edges
+    compatibility: mysql
+    requires: [select, where, between, order_by]
+    sql: |
+      select c_custkey
+      from customer
+      where c_custkey between '1' and '10'
+      order by c_custkey
+    expect:
+      columns: [c_custkey]
+      rows:
+        - [1]
+        - [2]
+        - [3]
+        - [4]
+        - [5]
+        - [6]
+        - [7]
+        - [8]
+        - [9]
+        - [10]
+
+  - id: mysql_compat_predicates_edges.003.like_pattern_from_function
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_like_edges
+    compatibility: mysql
+    requires: [select, where, like, concat, order_by, limit]
+    sql: |
+      select c_custkey, c_name
+      from customer
+      where c_name like concat('Customer#00000000', '%')
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_name]
+      rows:
+        - [1, Customer#000000001]
+        - [2, Customer#000000002]
+        - [3, Customer#000000003]
+        - [4, Customer#000000004]
+        - [5, Customer#000000005]
+
+  - id: mysql_compat_predicates_edges.004.function_like_function_pattern
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_like_edges
+    compatibility: mysql
+    requires: [select, where, like, lower, concat, order_by, limit]
+    sql: |
+      select c_custkey, c_name
+      from customer
+      where lower(c_name) like concat('customer#00000000', '%')
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_name]
+      rows:
+        - [1, Customer#000000001]
+        - [2, Customer#000000002]
+        - [3, Customer#000000003]
+        - [4, Customer#000000004]
+        - [5, Customer#000000005]
+
+  - id: mysql_compat_predicates_edges.005.scaled_numeric_between_quoted_bounds
+    status: supported
+    kind: query
+    order: exact
+    feature: predicates_between_edges
+    compatibility: mysql
+    requires: [select, where, between, order_by, limit]
+    sql: |
+      select l_orderkey, l_linenumber, l_quantity
+      from lineitem
+      where l_quantity between '17' and '19'
+      order by l_orderkey, l_linenumber
+      limit 5
+    expect:
+      columns: [l_orderkey, l_linenumber, l_quantity]
+      rows:
+        - [1, 1, 17]
+        - [69, 3, 17]
+        - [70, 6, 19]
+        - [97, 3, 19]
+        - [130, 3, 18]
