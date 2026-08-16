@@ -2761,6 +2761,12 @@ func parseSimpleProjection(text string, aggregateIndex int) (UnboundProjection, 
 			Alias: alias,
 		}, nil, Diagnostic{}, true
 	}
+	if expr, ok := parseSimpleSearchedCaseExpression(exprText); ok {
+		return UnboundProjection{
+			Expr:  expr,
+			Alias: alias,
+		}, nil, Diagnostic{}, true
+	}
 	if expr, ok := parseSimpleArithmeticExpression(exprText); ok {
 		return UnboundProjection{
 			Expr:  expr,
@@ -5100,7 +5106,9 @@ func splitBeforeOperator(text string, operator string) (string, string, bool) {
 
 func topLevelSimpleOperatorIndex(text string, operator string) int {
 	depth := 0
+	caseDepth := 0
 	inString := false
+	lowered := strings.ToLower(text)
 	for i := 0; i <= len(text)-len(operator); i++ {
 		if text[i] == '\'' {
 			if inString && i+1 < len(text) && text[i+1] == '\'' {
@@ -5112,6 +5120,20 @@ func topLevelSimpleOperatorIndex(text string, operator string) int {
 		}
 		if inString {
 			continue
+		}
+		if depth == 0 {
+			if simpleKeywordAt(text, lowered, "case", i) {
+				caseDepth++
+				i += len("case") - 1
+				continue
+			}
+			if caseDepth > 0 {
+				if simpleKeywordAt(text, lowered, "end", i) {
+					caseDepth--
+					i += len("end") - 1
+				}
+				continue
+			}
 		}
 		switch text[i] {
 		case '(':
@@ -5128,6 +5150,16 @@ func topLevelSimpleOperatorIndex(text string, operator string) int {
 		}
 	}
 	return -1
+}
+
+func simpleKeywordAt(text string, lowered string, keyword string, index int) bool {
+	end := index + len(keyword)
+	if index < 0 || end > len(lowered) {
+		return false
+	}
+	return strings.HasPrefix(lowered[index:], keyword) &&
+		isSimpleKeywordBoundary(text, index-1) &&
+		isSimpleKeywordBoundary(text, end)
 }
 
 func hasAnyKeyword(text string, keywords ...string) bool {
