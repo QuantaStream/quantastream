@@ -61,7 +61,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW TABLES, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -630,12 +630,16 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 			},
 		}, Diagnostic{}, true
 	}
+	tablesBody, ok := consumeKeyword(showBody, "tables")
+	if ok {
+		return parseSimpleShowTables(sql, tablesBody)
+	}
 	columnsBody, ok := consumeKeyword(showBody, "columns")
 	if !ok {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, TABLES, or COLUMNS/FIELDS FROM table"), false
 	}
 	targetBody, ok := consumeKeyword(columnsBody, "from")
 	if !ok {
@@ -645,6 +649,33 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS must include FROM table"), false
 	}
 	return parseSimpleDescribeTarget(sql, targetBody)
+}
+
+func parseSimpleShowTables(sql string, tablesBody string) (UnboundStatement, Diagnostic, bool) {
+	schemaName := ""
+	trimmed := strings.TrimSpace(tablesBody)
+	if trimmed != "" {
+		schemaBody, ok := consumeKeyword(trimmed, "from")
+		if !ok {
+			schemaBody, ok = consumeKeyword(trimmed, "in")
+		}
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES only supports optional FROM/IN schema"), false
+		}
+		fields := strings.Fields(schemaBody)
+		if len(fields) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES schema must be a single name"), false
+		}
+		schemaName = fields[0]
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowTables,
+		ShowTables: UnboundShowTables{
+			Schema: schemaName,
+			Result: showTablesResultShape(schemaName),
+		},
+	}, Diagnostic{}, true
 }
 
 func parseSimpleDescribe(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -689,6 +720,23 @@ func describeResultShape() ResultShape {
 			{Name: "Extra", Type: DataTypeString},
 		},
 	}
+}
+
+func showTablesResultShape(schemaName string) ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: showTablesColumnName(schemaName), Type: DataTypeString},
+		},
+	}
+}
+
+func showTablesColumnName(schemaName string) string {
+	schemaName = strings.TrimSpace(schemaName)
+	if schemaName == "" {
+		return "Tables_in"
+	}
+	return "Tables_in_" + schemaName
 }
 
 func parseSimpleCommit(sql string) (UnboundStatement, Diagnostic, bool) {

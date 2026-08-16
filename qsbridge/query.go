@@ -24,6 +24,8 @@ const (
 	QueryKindDropView QueryKind = "drop_view"
 	// QueryKindShowCreateView identifies a SHOW CREATE VIEW catalog read statement.
 	QueryKindShowCreateView QueryKind = "show_create_view"
+	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
+	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
@@ -74,6 +76,12 @@ type ResultColumn struct {
 	Source   string
 }
 
+// CatalogReadShape records bound metadata-read payloads such as SHOW TABLES.
+type CatalogReadShape struct {
+	Schema  string
+	Objects []TableInstance
+}
+
 // SortSpec describes one ORDER BY expression.
 type SortSpec struct {
 	Expr      Expr
@@ -105,6 +113,7 @@ type QueryIR struct {
 	OrderBy     []SortSpec
 	Result      ResultShape
 	Mutation    MutationShape
+	Catalog     CatalogReadShape
 	Blockers    []NativeBlocker
 }
 

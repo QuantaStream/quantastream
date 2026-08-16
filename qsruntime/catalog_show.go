@@ -46,6 +46,37 @@ func showCreateQualifiedViewName(schema string, viewName string) string {
 	return schema + "." + viewName
 }
 
+func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	tables := query.Catalog.Objects
+	columnName := showTablesRuntimeColumnName(query.Catalog.Schema)
+	if len(query.Result.Columns) > 0 && strings.TrimSpace(query.Result.Columns[0].Name) != "" {
+		columnName = query.Result.Columns[0].Name
+	}
+	rownums := make([]qsbridge.QuantaRownum, len(tables))
+	vector := describeProjectionVector(columnName, qsbridge.DataTypeString, len(tables))
+	for i, table := range tables {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vector.Values[i] = describeStringCell(table.Table)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+		},
+		Count: uint64(len(tables)),
+	}
+}
+
+func showTablesRuntimeColumnName(schemaName string) string {
+	schemaName = strings.TrimSpace(schemaName)
+	if schemaName == "" {
+		return "Tables_in"
+	}
+	return "Tables_in_" + schemaName
+}
+
 func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	columns := request.Bound.Prepared.Query.Mutation.Columns
 	rownums := make([]qsbridge.QuantaRownum, len(columns))

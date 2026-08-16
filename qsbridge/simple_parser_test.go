@@ -199,6 +199,38 @@ func TestSimpleParserBridgeParsesShowCreateViewStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowTablesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show tables;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTables {
+		t.Fatalf("kind = %q, want show_tables", statement.Kind)
+	}
+	if statement.ShowTables.Schema != "" {
+		t.Fatalf("schema = %q, want empty default schema", statement.ShowTables.Schema)
+	}
+	if statement.ShowTables.Result.Kind != ResultQuery || len(statement.ShowTables.Result.Columns) != 1 {
+		t.Fatalf("result = %#v, want one-column query result", statement.ShowTables.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show tables from quanta;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTables {
+		t.Fatalf("kind = %q, want show_tables", statement.Kind)
+	}
+	if statement.ShowTables.Schema != "quanta" {
+		t.Fatalf("schema = %q, want quanta", statement.ShowTables.Schema)
+	}
+	if got, want := statement.ShowTables.Result.Columns[0].Name, "Tables_in_quanta"; got != want {
+		t.Fatalf("result column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesDescribeStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("describe customer;")
 	if diagnostics.BlocksNative() {

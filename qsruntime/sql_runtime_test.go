@@ -74,6 +74,47 @@ func TestSQLRuntimeExecuteSQLShowCreateViewReturnsCatalogRow(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowTablesReturnsCatalogRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{Schema: "quanta", Name: "orders"},
+			{Schema: "quanta", Name: "customer"},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show tables", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW TABLES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want two one-column rows", chunk.Rows)
+	}
+	if got, want := result.Runtime.RowSet.ProjectionVectors[0].Field.Field, "Tables_in_quanta"; got != want {
+		t.Fatalf("column name = %q, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][0].Value, "customer"; got != want {
+		t.Fatalf("first table = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][0].Value, "orders"; got != want {
+		t.Fatalf("second table = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLDescribeReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

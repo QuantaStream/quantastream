@@ -25,6 +25,7 @@ type UnboundStatement struct {
 	CreateView UnboundCreateView
 	DropView   UnboundDropView
 	ShowView   UnboundShowCreateView
+	ShowTables UnboundShowTables
 	Describe   UnboundDescribe
 	Session    UnboundSession
 }
@@ -52,6 +53,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindDropView(context, s.DropView)
 	case QueryKindShowCreateView:
 		return BindShowCreateView(context, s.ShowView)
+	case QueryKindShowTables:
+		return BindShowTables(context, s.ShowTables)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -154,6 +157,13 @@ type UnboundDropView struct {
 // UnboundShowCreateView describes a SHOW CREATE VIEW operation before binding.
 type UnboundShowCreateView struct {
 	View     UnboundTable
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowTables describes a SHOW TABLES metadata read before binding.
+type UnboundShowTables struct {
+	Schema   string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -706,6 +716,58 @@ func BindShowCreateView(context *BindContext, showStmt UnboundShowCreateView) (Q
 	query.Mutation.ViewSQL = strings.TrimSpace(view.SQL)
 	if query.Mutation.ViewSQL == "" {
 		query.Mutation.ViewSQL = strings.TrimSpace(view.CanonicalSQL)
+	}
+	return query, nil
+}
+
+// BindShowTables binds parser-neutral SHOW TABLES metadata into QueryIR.
+func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, DiagnosticSet) {
+	schemaName := strings.TrimSpace(showStmt.Schema)
+	query := QueryIR{
+		Kind:     QueryKindShowTables,
+		Result:   showTablesResultShape(schemaName),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(context.DefaultSchema)
+	}
+	query.Result = showTablesResultShape(schemaName)
+	query.Catalog.Schema = schemaName
+
+	metadata, ok := context.Catalog.(CatalogMetadata)
+	if !ok {
+		return query, catalogMetadataUnsupportedDiagnostics()
+	}
+	tables, diagnostics := metadata.ListTables(schemaName)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Catalog.Objects = make([]TableInstance, 0, len(tables))
+	for _, table := range tables {
+		tableName := strings.TrimSpace(table.Name)
+		if tableName == "" {
+			continue
+		}
+		tableSchema := strings.TrimSpace(table.Schema)
+		if tableSchema == "" {
+			tableSchema = schemaName
+		}
+		query.Catalog.Objects = append(query.Catalog.Objects, TableInstance{
+			ID:     TableInstanceID(tableName),
+			Schema: tableSchema,
+			Table:  tableName,
+			Role:   tableName,
+		})
 	}
 	return query, nil
 }

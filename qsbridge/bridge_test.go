@@ -650,6 +650,43 @@ func TestUnboundStatementBindShowCreateView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowTables(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{
+			{Schema: "quanta", Name: "orders"},
+			{Schema: "quanta", Name: "customer"},
+		},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show tables",
+		Kind: QueryKindShowTables,
+		ShowTables: UnboundShowTables{
+			Result: showTablesResultShape(""),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowTables {
+		t.Fatalf("Kind = %q, want show_tables", query.Kind)
+	}
+	if query.Catalog.Schema != "quanta" {
+		t.Fatalf("catalog schema = %q, want quanta", query.Catalog.Schema)
+	}
+	if got, want := len(query.Catalog.Objects), 2; got != want {
+		t.Fatalf("catalog objects = %d, want %d: %#v", got, want, query.Catalog.Objects)
+	}
+	if query.Catalog.Objects[0].Table != "customer" || query.Catalog.Objects[1].Table != "orders" {
+		t.Fatalf("catalog objects = %#v, want customer/orders", query.Catalog.Objects)
+	}
+	if got, want := query.Result.Columns[0].Name, "Tables_in_quanta"; got != want {
+		t.Fatalf("result column = %q, want %q", got, want)
+	}
+}
+
 func TestUnboundStatementBindDescribeTable(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{
