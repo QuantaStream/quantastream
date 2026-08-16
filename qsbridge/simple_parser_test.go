@@ -1201,6 +1201,52 @@ func TestSimpleParserBridgeParsesCommitWork(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTransactionStatements(t *testing.T) {
+	tests := []struct {
+		sql      string
+		wantKind SessionActionKind
+	}{
+		{sql: "begin", wantKind: SessionActionBeginTransaction},
+		{sql: "begin work", wantKind: SessionActionBeginTransaction},
+		{sql: "start transaction", wantKind: SessionActionBeginTransaction},
+		{sql: "start transaction read only", wantKind: SessionActionBeginTransaction},
+		{sql: "rollback", wantKind: SessionActionRollbackTransaction},
+		{sql: "rollback work", wantKind: SessionActionRollbackTransaction},
+	}
+
+	for _, tt := range tests {
+		statement, diagnostics := SimpleParserBridge{}.Parse(tt.sql)
+		if diagnostics.BlocksNative() {
+			t.Fatalf("%s parse diagnostics: %#v", tt.sql, diagnostics)
+		}
+		if statement.Kind != QueryKindSession {
+			t.Fatalf("%s kind = %q, want session", tt.sql, statement.Kind)
+		}
+		if len(statement.Session.Actions) != 1 || statement.Session.Actions[0].Kind != tt.wantKind {
+			t.Fatalf("%s session actions = %#v, want %s", tt.sql, statement.Session.Actions, tt.wantKind)
+		}
+		if statement.Session.Result.Kind != ResultStatement {
+			t.Fatalf("%s result kind = %q, want statement", tt.sql, statement.Session.Result.Kind)
+		}
+	}
+}
+
+func TestSimpleParserBridgeParsesSetTransaction(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("set transaction isolation level read committed")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSession {
+		t.Fatalf("kind = %q, want session", statement.Kind)
+	}
+	if len(statement.Session.Actions) != 0 {
+		t.Fatalf("session actions = %#v, want no-op", statement.Session.Actions)
+	}
+	if statement.Session.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Session.Result.Kind)
+	}
+}
+
 func TestSimpleParserBridgeParsesCountStar(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select count(*) as order_count from orders as o where o.o_totalprice >= 101")
 	if diagnostics.BlocksNative() {

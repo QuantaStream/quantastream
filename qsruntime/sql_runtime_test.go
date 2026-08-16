@@ -1548,13 +1548,51 @@ func TestSQLRuntimeExecuteSQLRunsInsertMutationWithoutLowering(t *testing.T) {
 	}
 }
 
-func TestSQLRuntimeExecuteSQLReturnsCommitStatementWithoutExecution(t *testing.T) {
+func TestSQLRuntimeExecuteSQLReturnsTransactionStatementsWithoutExecution(t *testing.T) {
+	tests := []struct {
+		sql      string
+		wantKind qsbridge.SessionActionKind
+	}{
+		{sql: "begin", wantKind: qsbridge.SessionActionBeginTransaction},
+		{sql: "start transaction", wantKind: qsbridge.SessionActionBeginTransaction},
+		{sql: "rollback", wantKind: qsbridge.SessionActionRollbackTransaction},
+		{sql: "commit", wantKind: qsbridge.SessionActionCommitTransaction},
+	}
+
+	for _, tt := range tests {
+		runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+			t.Fatalf("%s should not execute direct runtime", tt.sql)
+			return ExecutionResult{}, nil
+		})
+
+		result, err := runtime.ExecuteSQL(context.Background(), tt.sql, qsbridge.ExecutionOptions{})
+
+		if err != nil {
+			t.Fatalf("%s execute sql: %v", tt.sql, err)
+		}
+		if !result.Supported() {
+			t.Fatalf("%s result diagnostics = %#v / runtime %#v, want supported", tt.sql, result.Diagnostics, result.Runtime.Diagnostics)
+		}
+		if result.Prepared.Kind != qsbridge.QueryKindSession {
+			t.Fatalf("%s prepared kind = %s, want session", tt.sql, result.Prepared.Kind)
+		}
+		actions := result.Runtime.Statement.SessionActions
+		if len(actions) != 1 || actions[0].Kind != tt.wantKind {
+			t.Fatalf("%s runtime session actions = %#v, want %s", tt.sql, actions, tt.wantKind)
+		}
+		if len(result.Intermediate.Fragments) != 0 {
+			t.Fatalf("%s fragments = %d, want no SELECT lowering", tt.sql, len(result.Intermediate.Fragments))
+		}
+	}
+}
+
+func TestSQLRuntimeExecuteSQLReturnsSetTransactionWithoutExecution(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
-		t.Fatalf("commit should not execute direct runtime")
+		t.Fatalf("set transaction should not execute direct runtime")
 		return ExecutionResult{}, nil
 	})
 
-	result, err := runtime.ExecuteSQL(context.Background(), "commit", qsbridge.ExecutionOptions{})
+	result, err := runtime.ExecuteSQL(context.Background(), "set transaction read only", qsbridge.ExecutionOptions{})
 
 	if err != nil {
 		t.Fatalf("execute sql: %v", err)
@@ -1565,12 +1603,11 @@ func TestSQLRuntimeExecuteSQLReturnsCommitStatementWithoutExecution(t *testing.T
 	if result.Prepared.Kind != qsbridge.QueryKindSession {
 		t.Fatalf("prepared kind = %s, want session", result.Prepared.Kind)
 	}
-	actions := result.Runtime.Statement.SessionActions
-	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionCommitTransaction {
-		t.Fatalf("runtime session actions = %#v, want commit", actions)
+	if len(result.Runtime.Statement.SessionActions) != 0 {
+		t.Fatalf("runtime session actions = %#v, want no-op", result.Runtime.Statement.SessionActions)
 	}
 	if len(result.Intermediate.Fragments) != 0 {
-		t.Fatalf("fragments = %d, want no SELECT lowering for commit", len(result.Intermediate.Fragments))
+		t.Fatalf("fragments = %d, want no SELECT lowering", len(result.Intermediate.Fragments))
 	}
 }
 

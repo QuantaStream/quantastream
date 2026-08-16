@@ -65,10 +65,19 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "set"); ok {
 		return parseSimpleSet(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "begin"); ok {
+		return parseSimpleBegin(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "start"); ok {
+		return parseSimpleStartTransaction(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "rollback"); ok {
+		return parseSimpleRollback(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, SET, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1205,6 +1214,43 @@ func showTablesColumnName(schemaName string) string {
 	return "Tables_in_" + schemaName
 }
 
+func parseSimpleBegin(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	beginBody, ok := consumeKeyword(trimmed, "begin")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only BEGIN statements are supported"), false
+	}
+	if beginBody != "" && !strings.EqualFold(beginBody, "work") {
+		return UnboundStatement{}, simpleParserDiagnostic("BEGIN only supports optional WORK"), false
+	}
+	return simpleTransactionStatement(sql, BeginTransactionAction()), Diagnostic{}, true
+}
+
+func parseSimpleStartTransaction(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	startBody, ok := consumeKeyword(trimmed, "start")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only START TRANSACTION statements are supported"), false
+	}
+	_, ok = consumeKeyword(startBody, "transaction")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("START only supports TRANSACTION"), false
+	}
+	return simpleTransactionStatement(sql, BeginTransactionAction()), Diagnostic{}, true
+}
+
+func parseSimpleRollback(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	rollbackBody, ok := consumeKeyword(trimmed, "rollback")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only ROLLBACK statements are supported"), false
+	}
+	if rollbackBody != "" && !strings.EqualFold(rollbackBody, "work") {
+		return UnboundStatement{}, simpleParserDiagnostic("ROLLBACK only supports optional WORK"), false
+	}
+	return simpleTransactionStatement(sql, RollbackTransactionAction()), Diagnostic{}, true
+}
+
 func parseSimpleCommit(sql string) (UnboundStatement, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
 	commitBody, ok := consumeKeyword(trimmed, "commit")
@@ -1214,14 +1260,18 @@ func parseSimpleCommit(sql string) (UnboundStatement, Diagnostic, bool) {
 	if commitBody != "" && !strings.EqualFold(commitBody, "work") {
 		return UnboundStatement{}, simpleParserDiagnostic("COMMIT only supports optional WORK"), false
 	}
+	return simpleTransactionStatement(sql, CommitTransactionAction()), Diagnostic{}, true
+}
+
+func simpleTransactionStatement(sql string, action SessionAction) UnboundStatement {
 	return UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindSession,
 		Session: UnboundSession{
-			Actions: []SessionAction{CommitTransactionAction()},
+			Actions: []SessionAction{action},
 			Result:  ResultShape{Kind: ResultStatement},
 		},
-	}, Diagnostic{}, true
+	}
 }
 
 func parseSimpleUse(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1257,6 +1307,10 @@ func parseSimpleSet(sql string) (UnboundStatement, Diagnostic, bool) {
 	namesBody, ok := consumeKeyword(setBody, "names")
 	if ok {
 		return parseSimpleSetNames(sql, namesBody)
+	}
+	transactionBody, ok := consumeKeyword(setBody, "transaction")
+	if ok {
+		return parseSimpleSetTransaction(sql, transactionBody)
 	}
 	actions, diagnostic, ok := parseSimpleSetAssignments(setBody)
 	if !ok {
@@ -1304,6 +1358,22 @@ func parseSimpleSetNames(sql string, namesBody string) (UnboundStatement, Diagno
 		Kind: QueryKindSession,
 		Session: UnboundSession{
 			Actions: actions,
+			Result: ResultShape{
+				Kind:      ResultStatement,
+				Statement: StatementResult{Status: "Query OK"},
+			},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleSetTransaction(sql string, transactionBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(transactionBody) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SET TRANSACTION must include transaction characteristics"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSession,
+		Session: UnboundSession{
 			Result: ResultShape{
 				Kind:      ResultStatement,
 				Statement: StatementResult{Status: "Query OK"},

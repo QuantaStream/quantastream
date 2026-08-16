@@ -61,3 +61,48 @@ tests:
       show variables like 'autocommit'
     expect:
       columns: [variable_name, value]
+
+  - id: mysql_compat_session.020.set_transaction_read_only
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [set_transaction]
+    sql: |
+      set transaction read only
+
+  - id: mysql_compat_session.021.start_transaction
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [start_transaction]
+    sql: |
+      start transaction
+
+  - id: mysql_compat_session.022.commit_transaction
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [commit]
+    sql: |
+      commit
+
+  - id: mysql_compat_session.023.begin_transaction
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [begin]
+    sql: |
+      begin
+
+  - id: mysql_compat_session.024.rollback_transaction
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [rollback]
+    sql: |
+      rollback
