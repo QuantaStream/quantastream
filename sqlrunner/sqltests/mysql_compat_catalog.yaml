@@ -1,0 +1,109 @@
+version: 1
+name: mysql_compat_catalog
+
+tests:
+  - id: mysql_compat_catalog.001.show_databases
+    status: supported
+    kind: query
+    feature: catalog_schemas
+    compatibility: mysql
+    requires: [show_databases, metadata_columns]
+    sql: |
+      show databases
+    expect:
+      columns: [Database]
+
+  - id: mysql_compat_catalog.010.show_tables
+    status: supported
+    kind: query
+    feature: catalog_tables
+    compatibility: mysql
+    requires: [show_tables]
+    sql: |
+      show tables
+
+  - id: mysql_compat_catalog.020.describe_table
+    status: supported
+    kind: query
+    feature: catalog_columns
+    compatibility: mysql
+    requires: [describe, metadata_columns]
+    sql: |
+      describe customer
+    expect:
+      columns: [Field, Type, Null, Key, Default, Extra]
+
+  - id: mysql_compat_catalog.021.show_columns_from_table
+    status: supported
+    kind: query
+    feature: catalog_columns
+    compatibility: mysql
+    requires: [show_columns, metadata_columns]
+    sql: |
+      show columns from customer
+    expect:
+      columns: [Field, Type, Null, Key, Default, Extra]
+
+  - id: mysql_compat_catalog.030.show_create_table
+    status: supported
+    kind: query
+    feature: catalog_create_table
+    compatibility: mysql
+    requires: [show_create_table, metadata_columns]
+    sql: |
+      show create table customer
+    expect:
+      columns: [Table, Create Table]
+      row_count: 1
+
+  - id: mysql_compat_catalog.040.show_index_from_table
+    status: supported
+    kind: query
+    feature: catalog_indexes
+    compatibility: mysql
+    requires: [show_index, metadata_columns, mapper_metadata]
+    sql: |
+      show index from customer
+    expect:
+      columns:
+        - Table
+        - Non_unique
+        - Key_name
+        - Seq_in_index
+        - Column_name
+        - Collation
+        - Cardinality
+        - Sub_part
+        - Packed
+        - Null
+        - Index_type
+        - Comment
+        - Index_comment
+        - Visible
+        - Expression
+
+  - id: mysql_compat_catalog.041.show_keys_alias
+    status: supported
+    kind: query
+    feature: catalog_indexes
+    compatibility: mysql
+    requires: [show_keys, metadata_columns, mapper_metadata]
+    sql: |
+      show keys from customer
+    expect:
+      columns:
+        - Table
+        - Non_unique
+        - Key_name
+        - Seq_in_index
+        - Column_name
+        - Collation
+        - Cardinality
+        - Sub_part
+        - Packed
+        - Null
+        - Index_type
+        - Comment
+        - Index_comment
+        - Visible
+        - Expression

@@ -31,6 +31,13 @@ The current seed suites are:
 - `mysql_compat_subqueries.yaml`
 - `mysql_compat_mutations.yaml`
 - `mysql_compat_views.yaml`
+- `mysql_compat_catalog.yaml`
+
+`mysql_compat_catalog.yaml` is shape-oriented rather than exact-row oriented:
+catalog rows vary by schema name, table inventory, backing DDL, and
+QuantaStream mapper metadata. It is useful as a direct target smoke suite, but
+is intentionally not part of `MYSQL_COMPAT_SUITE=all`, whose differential mode
+captures exact MySQL reference rows before running the target.
 
 Boundary suites such as `mysql_compat_views_boundaries.yaml` and
 `mysql_compat_group_order_boundaries.yaml` intentionally track MySQL-compatible
@@ -81,4 +88,5 @@ Run the view boundary suite directly against QuantaStream targets:
 ```bash
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_views_boundaries.yaml -compat_report
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_group_order_boundaries.yaml -compat_report
+go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_catalog.yaml -compat_report
 ```
