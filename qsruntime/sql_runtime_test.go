@@ -491,6 +491,38 @@ func TestSQLRuntimeExecuteSQLShowProcesslistReturnsCurrentSessionRow(t *testing.
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowEnginesReturnsQuantaStreamEngineRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show engines", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW ENGINES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 6 {
+		t.Fatalf("rows = %#v, want one six-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "QUANTASTREAM" || row[1].Value != "DEFAULT" || row[3].Value != "NO" {
+		t.Fatalf("engine row = %#v, want QUANTASTREAM default engine metadata", row)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
@@ -858,14 +890,14 @@ func TestSQLRuntimeExecuteSQLShowIndexReturnsPKAndMapperRows(t *testing.T) {
 	if pk[0].Value != "customer" || pk[1].Value != int64(0) || pk[2].Value != "PRIMARY" || pk[3].Value != int64(1) || pk[4].Value != "c_custkey" {
 		t.Fatalf("primary row = %#v", pk)
 	}
-	if pk[10].Value != "QUANTA" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true mapper=IntBSI" {
+	if pk[10].Value != "QUANTASTREAM" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true mapper=IntBSI" {
 		t.Fatalf("primary row mapper metadata = %#v", pk)
 	}
 	mapped := chunk.Rows[1]
 	if mapped[1].Value != int64(1) || mapped[2].Value != "qs_c_name" || mapped[4].Value != "c_name" {
 		t.Fatalf("mapper row = %#v", mapped)
 	}
-	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTA" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "mapper=StringLexBSI" {
+	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTASTREAM" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "mapper=StringLexBSI" {
 		t.Fatalf("mapper row metadata = %#v", mapped)
 	}
 	if mapped[14].Kind != qsbridge.ValueNull {
@@ -956,7 +988,7 @@ func TestSQLRuntimeExecuteSQLShowTableStatusReturnsCatalogRows(t *testing.T) {
 	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 18 {
 		t.Fatalf("rows = %#v, want two eighteen-column rows", chunk.Rows)
 	}
-	if chunk.Rows[0][0].Value != "customer" || chunk.Rows[0][1].Value != "QUANTA" || chunk.Rows[0][17].Value != "BASE TABLE" {
+	if chunk.Rows[0][0].Value != "customer" || chunk.Rows[0][1].Value != "QUANTASTREAM" || chunk.Rows[0][17].Value != "BASE TABLE" {
 		t.Fatalf("base table status row = %#v", chunk.Rows[0])
 	}
 	if chunk.Rows[1][0].Value != "customer_projection" || chunk.Rows[1][1].Kind != qsbridge.ValueNull || chunk.Rows[1][17].Value != "VIEW" {

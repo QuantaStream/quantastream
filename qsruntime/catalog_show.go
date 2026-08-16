@@ -261,7 +261,7 @@ func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName s
 		ColumnName:   column.Name,
 		Collation:    "A",
 		Null:         nullValue,
-		IndexType:    "QUANTA",
+		IndexType:    "QUANTASTREAM",
 		Comment:      comment,
 		IndexComment: indexComment,
 	}
@@ -319,7 +319,7 @@ func showTableStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 			vectors[2].Values[i] = describeNullCell()
 			vectors[3].Values[i] = describeNullCell()
 		} else {
-			vectors[1].Values[i] = describeStringCell("QUANTA")
+			vectors[1].Values[i] = describeStringCell("QUANTASTREAM")
 			vectors[2].Values[i] = describeIntCell(10)
 			vectors[3].Values[i] = describeStringCell("Compressed")
 		}
@@ -546,6 +546,33 @@ func showProcesslistRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 	vectors[5].Values[0] = describeIntCell(0)
 	vectors[6].Values[0] = describeStringCell("executing")
 	vectors[7].Values[0] = describeStringCell(info)
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: 1,
+	}
+}
+
+func showEnginesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	_ = request
+	rownums := []qsbridge.QuantaRownum{1}
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Engine", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Support", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Comment", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Transactions", qsbridge.DataTypeString, 1),
+		describeProjectionVector("XA", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Savepoints", qsbridge.DataTypeString, 1),
+	}
+	vectors[0].Values[0] = describeStringCell("QUANTASTREAM")
+	vectors[1].Values[0] = describeStringCell("DEFAULT")
+	vectors[2].Values[0] = describeStringCell("QuantaStream bitmap-native storage engine")
+	vectors[3].Values[0] = describeStringCell("NO")
+	vectors[4].Values[0] = describeStringCell("NO")
+	vectors[5].Values[0] = describeStringCell("NO")
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
 			Index:             "catalog",

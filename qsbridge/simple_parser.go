@@ -735,6 +735,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowProcesslist(sql, processlistBody, false)
 	}
+	enginesBody, ok := consumeKeyword(showBody, "engines")
+	if ok {
+		return parseSimpleShowEngines(sql, enginesBody)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -750,7 +754,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, ENGINES, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
 }
@@ -991,6 +995,19 @@ func parseSimpleShowProcesslist(sql string, processlistBody string, full bool) (
 		ShowProcesslist: UnboundShowProcesslist{
 			Full:   full,
 			Result: showProcesslistResultShape(full),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowEngines(sql string, enginesBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(enginesBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW ENGINES does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowEngines,
+		ShowEngines: UnboundShowEngines{
+			Result: showEnginesResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1244,6 +1261,20 @@ func showProcesslistResultShape(full bool) ResultShape {
 			{Name: "Time", Type: DataTypeInt},
 			{Name: "State", Type: DataTypeString, Nullable: true},
 			{Name: "Info", Type: DataTypeString, Nullable: true, Encoding: EncodingProfile{MaxLength: infoLength}},
+		},
+	}
+}
+
+func showEnginesResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Engine", Type: DataTypeString},
+			{Name: "Support", Type: DataTypeString},
+			{Name: "Comment", Type: DataTypeString},
+			{Name: "Transactions", Type: DataTypeString},
+			{Name: "XA", Type: DataTypeString},
+			{Name: "Savepoints", Type: DataTypeString},
 		},
 	}
 }

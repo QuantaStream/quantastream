@@ -320,6 +320,22 @@ func TestSimpleParserBridgeParsesShowProcesslistStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowEnginesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show engines;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowEngines {
+		t.Fatalf("kind = %q, want show_engines", statement.Kind)
+	}
+	if got, want := len(statement.ShowEngines.Result.Columns), 6; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.ShowEngines.Result.Columns[0].Name, "Engine"; got != want {
+		t.Fatalf("first column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowIndexStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show index from quanta.customer;")
 	if diagnostics.BlocksNative() {
