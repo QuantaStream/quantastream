@@ -32,6 +32,8 @@ const (
 	QueryKindShowIndex QueryKind = "show_index"
 	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
 	QueryKindShowTables QueryKind = "show_tables"
+	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.
+	QueryKindShowVariables QueryKind = "show_variables"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.
@@ -84,9 +86,12 @@ type ResultColumn struct {
 
 // CatalogReadShape records bound metadata-read payloads such as SHOW TABLES.
 type CatalogReadShape struct {
-	Schema  string
-	Schemas []string
-	Objects []TableInstance
+	Schema      string
+	Schemas     []string
+	Objects     []TableInstance
+	ObjectTypes []string
+	Full        bool
+	Pattern     string
 }
 
 // SortSpec describes one ORDER BY expression.

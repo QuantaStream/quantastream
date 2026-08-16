@@ -17,6 +17,11 @@ type CatalogMetadata interface {
 	ListColumns(schema string, table string) ([]FieldDefinition, DiagnosticSet)
 }
 
+// CatalogViewMetadata optionally exposes enumerable view metadata for adapters.
+type CatalogViewMetadata interface {
+	ListViews(schema string) ([]SQLViewDefinition, DiagnosticSet)
+}
+
 // CatalogFunctionMetadata optionally exposes enumerable function metadata for adapters.
 type CatalogFunctionMetadata interface {
 	ListFunctions() ([]FunctionDefinition, DiagnosticSet)
@@ -41,6 +46,15 @@ func (c MemoryCatalog) ListSchemas() ([]CatalogSchemaDefinition, DiagnosticSet) 
 		key := strings.ToLower(table.Schema)
 		if _, ok := seen[key]; !ok {
 			seen[key] = table.Schema
+		}
+	}
+	for _, view := range c.Views {
+		if view.Schema == "" {
+			continue
+		}
+		key := strings.ToLower(view.Schema)
+		if _, ok := seen[key]; !ok {
+			seen[key] = view.Schema
 		}
 	}
 	keys := sortedStringKeys(seen)
@@ -82,7 +96,42 @@ func (c MemoryCatalog) schemaExists(schema string) bool {
 			return true
 		}
 	}
+	for _, table := range c.Tables {
+		if strings.EqualFold(table.Schema, schema) {
+			return true
+		}
+	}
+	for _, view := range c.Views {
+		if strings.EqualFold(view.Schema, schema) {
+			return true
+		}
+	}
 	return false
+}
+
+// ListViews returns logical view definitions for one schema.
+func (c MemoryCatalog) ListViews(schema string) ([]SQLViewDefinition, DiagnosticSet) {
+	views := make([]SQLViewDefinition, 0)
+	schemaKnown := schema == "" || c.schemaExists(schema)
+	for _, view := range c.Views {
+		if schema != "" && view.Schema != "" && !strings.EqualFold(view.Schema, schema) {
+			continue
+		}
+		schemaKnown = true
+		views = append(views, cloneSQLViewDefinition(view))
+	}
+	sort.Slice(views, func(i, j int) bool {
+		if !strings.EqualFold(views[i].Schema, views[j].Schema) {
+			return strings.ToLower(views[i].Schema) < strings.ToLower(views[j].Schema)
+		}
+		return strings.ToLower(views[i].Name) < strings.ToLower(views[j].Name)
+	})
+	if schema != "" && !schemaKnown {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogSchemaNotFound, PhaseBind, "schema not found: "+schema),
+		}
+	}
+	return views, nil
 }
 
 // ListColumns returns field definitions for one table.
@@ -140,6 +189,16 @@ func (c *CachedCatalog) ListColumns(schema string, table string) ([]FieldDefinit
 	return cloneFieldDefinitions(fields), cloneDiagnosticSet(diagnostics)
 }
 
+// ListViews delegates view enumeration to a metadata-capable backend.
+func (c *CachedCatalog) ListViews(schema string) ([]SQLViewDefinition, DiagnosticSet) {
+	metadata, ok := c.backend.(CatalogViewMetadata)
+	if !ok {
+		return nil, catalogMetadataUnsupportedDiagnostics()
+	}
+	views, diagnostics := metadata.ListViews(schema)
+	return cloneSQLViewDefinitions(views), cloneDiagnosticSet(diagnostics)
+}
+
 // ListFunctions delegates function enumeration to a metadata-capable backend.
 func (c *CachedCatalog) ListFunctions() ([]FunctionDefinition, DiagnosticSet) {
 	metadata, ok := c.backend.(CatalogFunctionMetadata)
@@ -178,6 +237,17 @@ func cloneFieldDefinitions(fields []FieldDefinition) []FieldDefinition {
 	cloned := make([]FieldDefinition, 0, len(fields))
 	for _, field := range fields {
 		cloned = append(cloned, cloneFieldDefinition(field))
+	}
+	return cloned
+}
+
+func cloneSQLViewDefinitions(views []SQLViewDefinition) []SQLViewDefinition {
+	if len(views) == 0 {
+		return nil
+	}
+	cloned := make([]SQLViewDefinition, 0, len(views))
+	for _, view := range views {
+		cloned = append(cloned, cloneSQLViewDefinition(view))
 	}
 	return cloned
 }

@@ -1,6 +1,9 @@
 package qsbridge
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // ParserBridge converts SQL text into parser-neutral unbound statements.
 //
@@ -29,6 +32,7 @@ type UnboundStatement struct {
 	ShowDBs    UnboundShowDatabases
 	ShowIndex  UnboundShowIndex
 	ShowTables UnboundShowTables
+	ShowVars   UnboundShowVariables
 	Describe   UnboundDescribe
 	Session    UnboundSession
 }
@@ -64,6 +68,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowIndex(context, s.ShowIndex)
 	case QueryKindShowTables:
 		return BindShowTables(context, s.ShowTables)
+	case QueryKindShowVariables:
+		return BindShowVariables(context, s.ShowVars)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -193,6 +199,14 @@ type UnboundShowIndex struct {
 // UnboundShowTables describes a SHOW TABLES metadata read before binding.
 type UnboundShowTables struct {
 	Schema   string
+	Full     bool
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowVariables describes a SHOW VARIABLES metadata read before binding.
+type UnboundShowVariables struct {
+	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -888,7 +902,7 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	schemaName := strings.TrimSpace(showStmt.Schema)
 	query := QueryIR{
 		Kind:     QueryKindShowTables,
-		Result:   showTablesResultShape(schemaName),
+		Result:   showTablesResultShape(schemaName, showStmt.Full),
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	if context == nil {
@@ -904,8 +918,9 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	if schemaName == "" {
 		schemaName = strings.TrimSpace(context.DefaultSchema)
 	}
-	query.Result = showTablesResultShape(schemaName)
+	query.Result = showTablesResultShape(schemaName, showStmt.Full)
 	query.Catalog.Schema = schemaName
+	query.Catalog.Full = showStmt.Full
 
 	metadata, ok := context.Catalog.(CatalogMetadata)
 	if !ok {
@@ -915,7 +930,11 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
-	query.Catalog.Objects = make([]TableInstance, 0, len(tables))
+	type catalogTableObject struct {
+		instance   TableInstance
+		objectType string
+	}
+	objects := make([]catalogTableObject, 0, len(tables))
 	for _, table := range tables {
 		tableName := strings.TrimSpace(table.Name)
 		if tableName == "" {
@@ -925,13 +944,74 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 		if tableSchema == "" {
 			tableSchema = schemaName
 		}
-		query.Catalog.Objects = append(query.Catalog.Objects, TableInstance{
-			ID:     TableInstanceID(tableName),
-			Schema: tableSchema,
-			Table:  tableName,
-			Role:   tableName,
+		objects = append(objects, catalogTableObject{
+			instance: TableInstance{
+				ID:     TableInstanceID(tableName),
+				Schema: tableSchema,
+				Table:  tableName,
+				Role:   tableName,
+			},
+			objectType: "BASE TABLE",
 		})
 	}
+	if showStmt.Full {
+		if viewMetadata, ok := context.Catalog.(CatalogViewMetadata); ok {
+			views, viewDiagnostics := viewMetadata.ListViews(schemaName)
+			if viewDiagnostics.BlocksNative() {
+				return query, viewDiagnostics
+			}
+			for _, view := range views {
+				viewName := strings.TrimSpace(view.Name)
+				if viewName == "" {
+					continue
+				}
+				viewSchema := strings.TrimSpace(view.Schema)
+				if viewSchema == "" {
+					viewSchema = schemaName
+				}
+				objects = append(objects, catalogTableObject{
+					instance: TableInstance{
+						ID:     TableInstanceID(viewName),
+						Schema: viewSchema,
+						Table:  viewName,
+						Role:   viewName,
+					},
+					objectType: "VIEW",
+				})
+			}
+		}
+	}
+	sort.SliceStable(objects, func(i, j int) bool {
+		if !strings.EqualFold(objects[i].instance.Schema, objects[j].instance.Schema) {
+			return strings.ToLower(objects[i].instance.Schema) < strings.ToLower(objects[j].instance.Schema)
+		}
+		if !strings.EqualFold(objects[i].instance.Table, objects[j].instance.Table) {
+			return strings.ToLower(objects[i].instance.Table) < strings.ToLower(objects[j].instance.Table)
+		}
+		return objects[i].objectType < objects[j].objectType
+	})
+	query.Catalog.Objects = make([]TableInstance, 0, len(objects))
+	query.Catalog.ObjectTypes = make([]string, 0, len(objects))
+	for _, object := range objects {
+		query.Catalog.Objects = append(query.Catalog.Objects, object.instance)
+		query.Catalog.ObjectTypes = append(query.Catalog.ObjectTypes, object.objectType)
+	}
+	return query, nil
+}
+
+// BindShowVariables binds parser-neutral SHOW VARIABLES metadata into QueryIR.
+func BindShowVariables(context *BindContext, showStmt UnboundShowVariables) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowVariables,
+		Result:   showVariablesResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
 	return query, nil
 }
 

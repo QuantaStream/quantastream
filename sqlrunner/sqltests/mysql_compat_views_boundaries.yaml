@@ -580,24 +580,27 @@ tests:
       from region
 
   - id: mysql_compat_views_boundaries.141.show_create_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_metadata_boundary
     compatibility: mysql
     requires: [show_create_view]
-    issue: "SHOW CREATE VIEW compatibility output is not aligned with MySQL yet."
     sql: |
       show create view qs_mysql_compat_metadata_view
+    expect:
+      columns: [View, Create View, character_set_client, collation_connection]
+      row_count: 1
 
   - id: mysql_compat_views_boundaries.142.describe_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_metadata_boundary
     compatibility: mysql
     requires: [describe, view_reference]
-    issue: "DESCRIBE view is implemented, but exact MySQL type strings/width metadata are not aligned yet."
     sql: |
       describe qs_mysql_compat_metadata_view
+    expect:
+      columns: [Field, Type, "Null", Key, Default, Extra]
 
   - id: mysql_compat_views_boundaries.143.drop_metadata_view
     status: supported

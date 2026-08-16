@@ -182,6 +182,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showTablesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowVariables {
+		result.Runtime = showVariablesRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindDescribe {
 		result.Runtime = describeRuntimeResult(request)
 		return result, nil
@@ -204,6 +208,11 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 
 	if runtimeResult, diagnostics, ok := constantProjectionExecutionResult(request); ok {
+		result.Runtime = runtimeResult
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		return result, nil
+	}
+	if runtimeResult, diagnostics, ok := r.informationSchemaExecutionResult(request); ok {
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		return result, nil

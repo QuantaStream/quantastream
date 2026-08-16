@@ -22,6 +22,57 @@ tests:
     sql: |
       show tables
 
+  - id: mysql_compat_catalog.011.show_full_tables
+    status: supported
+    kind: query
+    feature: catalog_tables
+    compatibility: mysql
+    requires: [show_full_tables, metadata_columns]
+    sql: |
+      show full tables
+    expect:
+      columns: [Tables_in_quanta, Table_type]
+
+  - id: mysql_compat_catalog.012.information_schema_tables
+    status: supported
+    kind: query
+    feature: information_schema_tables
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select table_name, table_type
+      from information_schema.tables
+      where table_schema = 'quanta'
+      limit 5
+    expect:
+      columns: [TABLE_NAME, TABLE_TYPE]
+
+  - id: mysql_compat_catalog.013.information_schema_columns
+    status: supported
+    kind: query
+    feature: information_schema_columns
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select column_name, data_type, column_key, extra
+      from information_schema.columns
+      where table_schema = 'quanta' and table_name = 'customer'
+      order by ordinal_position
+      limit 5
+    expect:
+      columns: [COLUMN_NAME, DATA_TYPE, COLUMN_KEY, EXTRA]
+
+  - id: mysql_compat_catalog.014.show_variables
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables]
+    sql: |
+      show variables like 'character_set_%'
+    expect:
+      columns: [Variable_name, Value]
+
   - id: mysql_compat_catalog.020.describe_table
     status: supported
     kind: query
@@ -31,7 +82,7 @@ tests:
     sql: |
       describe customer
     expect:
-      columns: [Field, Type, Null, Key, Default, Extra]
+      columns: [Field, Type, "Null", Key, Default, Extra]
 
   - id: mysql_compat_catalog.021.show_columns_from_table
     status: supported
@@ -42,7 +93,7 @@ tests:
     sql: |
       show columns from customer
     expect:
-      columns: [Field, Type, Null, Key, Default, Extra]
+      columns: [Field, Type, "Null", Key, Default, Extra]
 
   - id: mysql_compat_catalog.030.show_create_table
     status: supported
@@ -75,7 +126,7 @@ tests:
         - Cardinality
         - Sub_part
         - Packed
-        - Null
+        - "Null"
         - Index_type
         - Comment
         - Index_comment
@@ -101,7 +152,7 @@ tests:
         - Cardinality
         - Sub_part
         - Packed
-        - Null
+        - "Null"
         - Index_type
         - Comment
         - Index_comment

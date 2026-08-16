@@ -144,6 +144,11 @@ dictionary, rehydration, multiplicity, function, and relationship definitions.
 This keeps node metadata needs expressible without making
 `core.BasicTable` or `shared.Table` authoritative in the refactor.
 
+`information_schema.go` defines the small virtual MySQL metadata tables exposed
+to binding for `INFORMATION_SCHEMA.TABLES` and `INFORMATION_SCHEMA.COLUMNS`.
+Runtime supplies the rows from catalog metadata rather than backing these names
+with physical Quanta tables.
+
 `bridge.go` contains parser-neutral unbound statement and expression shapes that
 can be populated by SQL parsers before binding, including
 projection, inner/outer join, semi/anti membership, predicate, aggregate,

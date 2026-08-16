@@ -194,8 +194,8 @@ func TestSimpleParserBridgeParsesShowCreateViewStatement(t *testing.T) {
 	if statement.ShowView.View.Name != "building_customers" {
 		t.Fatalf("view = %#v, want building_customers", statement.ShowView.View)
 	}
-	if statement.ShowView.Result.Kind != ResultQuery || len(statement.ShowView.Result.Columns) != 2 {
-		t.Fatalf("result = %#v, want two-column query result", statement.ShowView.Result)
+	if statement.ShowView.Result.Kind != ResultQuery || len(statement.ShowView.Result.Columns) != 4 {
+		t.Fatalf("result = %#v, want four-column query result", statement.ShowView.Result)
 	}
 }
 
@@ -247,6 +247,28 @@ func TestSimpleParserBridgeParsesShowTablesStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowFullTablesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show full tables from quanta;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTables {
+		t.Fatalf("kind = %q, want show_tables", statement.Kind)
+	}
+	if !statement.ShowTables.Full {
+		t.Fatalf("show full flag = false, want true")
+	}
+	if statement.ShowTables.Schema != "quanta" {
+		t.Fatalf("schema = %q, want quanta", statement.ShowTables.Schema)
+	}
+	if got, want := len(statement.ShowTables.Result.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.ShowTables.Result.Columns[1].Name, "Table_type"; got != want {
+		t.Fatalf("second result column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show tables from quanta;")
 	if diagnostics.BlocksNative() {
@@ -260,6 +282,22 @@ func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
 	}
 	if got, want := statement.ShowTables.Result.Columns[0].Name, "Tables_in_quanta"; got != want {
 		t.Fatalf("result column = %q, want %q", got, want)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show variables like 'character_set_%';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowVariables {
+		t.Fatalf("kind = %q, want show_variables", statement.Kind)
+	}
+	if got, want := statement.ShowVars.Pattern, "character_set_%"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got, want := len(statement.ShowVars.Result.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
 	}
 }
 

@@ -31,6 +31,14 @@ func showCreateViewRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRes
 					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "Create View", Type: qsbridge.DataTypeString, Visible: true},
 					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: createSQL}},
 				},
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "character_set_client", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "utf8mb4"}},
+				},
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "collation_connection", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "utf8mb4_0900_ai_ci"}},
+				},
 			},
 		},
 		Count: 1,
@@ -257,16 +265,32 @@ func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 		columnName = query.Result.Columns[0].Name
 	}
 	rownums := make([]qsbridge.QuantaRownum, len(tables))
-	vector := describeProjectionVector(columnName, qsbridge.DataTypeString, len(tables))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector(columnName, qsbridge.DataTypeString, len(tables)),
+	}
+	if query.Catalog.Full {
+		typeColumn := "Table_type"
+		if len(query.Result.Columns) > 1 && strings.TrimSpace(query.Result.Columns[1].Name) != "" {
+			typeColumn = query.Result.Columns[1].Name
+		}
+		vectors = append(vectors, describeProjectionVector(typeColumn, qsbridge.DataTypeString, len(tables)))
+	}
 	for i, table := range tables {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)
-		vector.Values[i] = describeStringCell(table.Table)
+		vectors[0].Values[i] = describeStringCell(table.Table)
+		if query.Catalog.Full && len(vectors) > 1 {
+			objectType := "BASE TABLE"
+			if i < len(query.Catalog.ObjectTypes) && strings.TrimSpace(query.Catalog.ObjectTypes[i]) != "" {
+				objectType = query.Catalog.ObjectTypes[i]
+			}
+			vectors[1].Values[i] = describeStringCell(objectType)
+		}
 	}
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
 			Index:             "catalog",
 			Rownums:           rownums,
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+			ProjectionVectors: vectors,
 		},
 		Count: uint64(len(tables)),
 	}
@@ -278,6 +302,89 @@ func showTablesRuntimeColumnName(schemaName string) string {
 		return "Tables_in"
 	}
 	return "Tables_in_" + schemaName
+}
+
+func showVariablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	rows := showVariableRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
+	}
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.name)
+		vectors[1].Values[i] = describeStringCell(row.value)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+type showVariableRow struct {
+	name  string
+	value string
+}
+
+func showVariableRows(pattern string) []showVariableRow {
+	all := []showVariableRow{
+		{name: "autocommit", value: "ON"},
+		{name: "character_set_client", value: "utf8mb4"},
+		{name: "character_set_connection", value: "utf8mb4"},
+		{name: "character_set_results", value: "utf8mb4"},
+		{name: "collation_connection", value: "utf8mb4_0900_ai_ci"},
+		{name: "lower_case_table_names", value: "0"},
+		{name: "sql_mode", value: ""},
+		{name: "version", value: "8.0.0-quantastream"},
+		{name: "version_comment", value: "QuantaStream"},
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return all
+	}
+	filtered := make([]showVariableRow, 0, len(all))
+	for _, row := range all {
+		if sqlLikeMatch(row.name, pattern) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func sqlLikeMatch(value string, pattern string) bool {
+	value = strings.ToLower(value)
+	pattern = strings.ToLower(pattern)
+	if pattern == "%" {
+		return true
+	}
+	if !strings.Contains(pattern, "%") {
+		return value == pattern
+	}
+	parts := strings.Split(pattern, "%")
+	position := 0
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		found := strings.Index(value[position:], part)
+		if found < 0 {
+			return false
+		}
+		if i == 0 && !strings.HasPrefix(pattern, "%") && found != 0 {
+			return false
+		}
+		position += found + len(part)
+	}
+	last := parts[len(parts)-1]
+	if last != "" && !strings.HasSuffix(pattern, "%") && !strings.HasSuffix(value, last) {
+		return false
+	}
+	return true
 }
 
 func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {

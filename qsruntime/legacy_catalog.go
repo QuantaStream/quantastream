@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -127,6 +129,151 @@ func (c LegacyTableCacheCatalog) View(schema string, name string) (qsbridge.SQLV
 	return legacyCatalogSQLViewDefinition(schema, view), nil
 }
 
+// ListSchemas returns schemas visible through the legacy adapter.
+func (c LegacyTableCacheCatalog) ListSchemas() ([]qsbridge.CatalogSchemaDefinition, qsbridge.DiagnosticSet) {
+	seen := map[string]string{"quanta": "quanta"}
+	for _, table := range c.cachedTables() {
+		_ = table
+		seen["quanta"] = "quanta"
+	}
+	if strings.TrimSpace(c.ConfigDir) != "" {
+		catalog, err := shared.LoadCatalogObjectsFile(c.ConfigDir)
+		if err != nil {
+			return nil, legacyCatalogMetadataDiagnostic("list schemas", err)
+		}
+		for _, object := range catalog.Objects {
+			schema := strings.TrimSpace(object.SchemaName)
+			if schema == "" {
+				continue
+			}
+			seen[strings.ToLower(schema)] = schema
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for key := range seen {
+		names = append(names, key)
+	}
+	sort.Strings(names)
+	schemas := make([]qsbridge.CatalogSchemaDefinition, 0, len(names))
+	for _, key := range names {
+		schemas = append(schemas, qsbridge.CatalogSchemaDefinition{Name: seen[key]})
+	}
+	return schemas, nil
+}
+
+// ListTables returns loaded or file-catalog-active tables for one schema.
+func (c LegacyTableCacheCatalog) ListTables(schema string) ([]qsbridge.TableDefinition, qsbridge.DiagnosticSet) {
+	schema = strings.TrimSpace(schema)
+	seen := make(map[string]qsbridge.TableDefinition)
+	for _, table := range c.cachedTables() {
+		if table == nil || strings.TrimSpace(table.Name) == "" {
+			continue
+		}
+		seen[strings.ToLower(table.Name)] = c.tableDefinition(schema, table)
+	}
+	if strings.TrimSpace(c.ConfigDir) != "" {
+		names, err := shared.ActiveCatalogTables(c.ConfigDir, schema)
+		if err != nil {
+			return nil, legacyCatalogMetadataDiagnostic("list tables", err)
+		}
+		for _, name := range names {
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			table, diagnostics := c.Table(schema, name)
+			if diagnostics.BlocksNative() {
+				continue
+			}
+			seen[key] = table
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	tables := make([]qsbridge.TableDefinition, 0, len(keys))
+	for _, key := range keys {
+		tables = append(tables, seen[key])
+	}
+	return tables, nil
+}
+
+// ListColumns returns field metadata for a table.
+func (c LegacyTableCacheCatalog) ListColumns(schema string, table string) ([]qsbridge.FieldDefinition, qsbridge.DiagnosticSet) {
+	definition, diagnostics := c.Table(schema, table)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	fields := make([]qsbridge.FieldDefinition, 0, len(definition.Fields))
+	for _, field := range definition.Fields {
+		fields = append(fields, field)
+	}
+	return fields, nil
+}
+
+// ListViews returns active logical views for one schema.
+func (c LegacyTableCacheCatalog) ListViews(schema string) ([]qsbridge.SQLViewDefinition, qsbridge.DiagnosticSet) {
+	if c.Consul != nil {
+		pairs, _, err := c.Consul.KV().List(shared.ConsulCatalogViewsPrefix+"/", nil)
+		if err != nil {
+			return nil, legacyCatalogMetadataDiagnostic("list views", err)
+		}
+		seen := make(map[string]struct{})
+		views := make([]qsbridge.SQLViewDefinition, 0)
+		for _, pair := range pairs {
+			if pair == nil || path.Base(pair.Key) != "definition.yaml" {
+				continue
+			}
+			name := path.Base(path.Dir(pair.Key))
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			view, err := shared.LoadViewDefinitionConsul(c.Consul, name)
+			if err != nil {
+				return nil, legacyCatalogMetadataDiagnostic("list views", err)
+			}
+			if schema != "" && view.SchemaName != "" && !strings.EqualFold(view.SchemaName, schema) {
+				continue
+			}
+			views = append(views, legacyCatalogSQLViewDefinition(schema, view))
+		}
+		sort.Slice(views, func(i, j int) bool {
+			return strings.ToLower(views[i].Name) < strings.ToLower(views[j].Name)
+		})
+		return views, nil
+	}
+	configDir := strings.TrimSpace(c.ConfigDir)
+	if configDir == "" {
+		return nil, nil
+	}
+	names, err := shared.ActiveCatalogViews(configDir, schema)
+	if err != nil {
+		return nil, legacyCatalogMetadataDiagnostic("list views", err)
+	}
+	views := make([]qsbridge.SQLViewDefinition, 0, len(names))
+	for _, name := range names {
+		view, err := shared.LoadViewDefinition(configDir, name)
+		if err != nil {
+			return nil, legacyCatalogMetadataDiagnostic("list views", err)
+		}
+		views = append(views, legacyCatalogSQLViewDefinition(schema, view))
+	}
+	sort.Slice(views, func(i, j int) bool {
+		return strings.ToLower(views[i].Name) < strings.ToLower(views[j].Name)
+	})
+	return views, nil
+}
+
 // Relationship looks up a relationship by name from cached table metadata.
 func (c LegacyTableCacheCatalog) Relationship(name string) (qsbridge.RelationshipDefinition, qsbridge.DiagnosticSet) {
 	for _, table := range c.cachedTables() {
@@ -199,6 +346,16 @@ func legacyCatalogViewDiagnostic(schema string, name string, err error) qsbridge
 	}
 	return qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticCatalogViewNotFound, qsbridge.PhaseBind, message),
+	}
+}
+
+func legacyCatalogMetadataDiagnostic(action string, err error) qsbridge.DiagnosticSet {
+	message := action
+	if err != nil {
+		message += ": " + err.Error()
+	}
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseBind, message),
 	}
 }
 

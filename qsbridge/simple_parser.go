@@ -61,7 +61,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW DATABASES, SHOW TABLES, SHOW INDEX, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW DATABASES, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW INDEX, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -617,14 +617,8 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 				SQL:  sql,
 				Kind: QueryKindShowCreateView,
 				ShowView: UnboundShowCreateView{
-					View: view,
-					Result: ResultShape{
-						Kind: ResultQuery,
-						Columns: []FieldRef{
-							{Name: "View", Type: DataTypeString},
-							{Name: "Create View", Type: DataTypeString},
-						},
-					},
+					View:   view,
+					Result: showCreateViewResultShape(),
 				},
 			}, Diagnostic{}, true
 		}
@@ -657,7 +651,19 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	tablesBody, ok := consumeKeyword(showBody, "tables")
 	if ok {
-		return parseSimpleShowTables(sql, tablesBody)
+		return parseSimpleShowTables(sql, tablesBody, false)
+	}
+	fullBody, ok := consumeKeyword(showBody, "full")
+	if ok {
+		tablesBody, ok := consumeKeyword(fullBody, "tables")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW FULL only supports TABLES"), false
+		}
+		return parseSimpleShowTables(sql, tablesBody, true)
+	}
+	variablesBody, ok := consumeKeyword(showBody, "variables")
+	if ok {
+		return parseSimpleShowVariables(sql, variablesBody)
 	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
@@ -674,7 +680,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	targetBody, ok := consumeKeyword(columnsBody, "from")
 	if !ok {
@@ -724,7 +730,7 @@ func parseSimpleShowDatabases(sql string, databasesBody string) (UnboundStatemen
 	}, Diagnostic{}, true
 }
 
-func parseSimpleShowTables(sql string, tablesBody string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundStatement, Diagnostic, bool) {
 	schemaName := ""
 	trimmed := strings.TrimSpace(tablesBody)
 	if trimmed != "" {
@@ -746,7 +752,32 @@ func parseSimpleShowTables(sql string, tablesBody string) (UnboundStatement, Dia
 		Kind: QueryKindShowTables,
 		ShowTables: UnboundShowTables{
 			Schema: schemaName,
-			Result: showTablesResultShape(schemaName),
+			Full:   full,
+			Result: showTablesResultShape(schemaName, full),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern := ""
+	trimmed := strings.TrimSpace(variablesBody)
+	if trimmed != "" {
+		likeBody, ok := consumeKeyword(trimmed, "like")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW VARIABLES only supports optional LIKE pattern"), false
+		}
+		fields := strings.Fields(likeBody)
+		if len(fields) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW VARIABLES LIKE must use one literal pattern"), false
+		}
+		pattern = strings.Trim(fields[0], "'\"")
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowVariables,
+		ShowVars: UnboundShowVariables{
+			Pattern: pattern,
+			Result:  showVariablesResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -795,6 +826,18 @@ func describeResultShape() ResultShape {
 	}
 }
 
+func showCreateViewResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "View", Type: DataTypeString},
+			{Name: "Create View", Type: DataTypeString},
+			{Name: "character_set_client", Type: DataTypeString},
+			{Name: "collation_connection", Type: DataTypeString},
+		},
+	}
+}
+
 func showCreateTableResultShape() ResultShape {
 	return ResultShape{
 		Kind: ResultQuery,
@@ -837,11 +880,25 @@ func showIndexResultShape() ResultShape {
 	}
 }
 
-func showTablesResultShape(schemaName string) ResultShape {
+func showTablesResultShape(schemaName string, full bool) ResultShape {
+	columns := []FieldRef{
+		{Name: showTablesColumnName(schemaName), Type: DataTypeString},
+	}
+	if full {
+		columns = append(columns, FieldRef{Name: "Table_type", Type: DataTypeString})
+	}
+	return ResultShape{
+		Kind:    ResultQuery,
+		Columns: columns,
+	}
+}
+
+func showVariablesResultShape() ResultShape {
 	return ResultShape{
 		Kind: ResultQuery,
 		Columns: []FieldRef{
-			{Name: showTablesColumnName(schemaName), Type: DataTypeString},
+			{Name: "Variable_name", Type: DataTypeString},
+			{Name: "Value", Type: DataTypeString},
 		},
 	}
 }

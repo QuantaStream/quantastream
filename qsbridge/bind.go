@@ -95,7 +95,12 @@ func (c *BindContext) AddTable(table UnboundTable) (BoundTable, DiagnosticSet) {
 	}
 	definition, diagnostics := c.Catalog.Table(schema, table.Name)
 	if diagnostics.BlocksNative() {
-		return BoundTable{}, c.record(diagnostics)
+		if virtual, ok := InformationSchemaTableDefinition(schema, table.Name); ok {
+			definition = virtual
+			diagnostics = nil
+		} else {
+			return BoundTable{}, c.record(diagnostics)
+		}
 	}
 
 	c.nextTableID++
