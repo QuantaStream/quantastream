@@ -37,6 +37,33 @@ func showCreateViewRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRes
 	}
 }
 
+func showCreateTableRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	target := query.Mutation.Target
+	tableName := strings.TrimSpace(target.Table)
+	if tableName == "" {
+		tableName = strings.TrimSpace(string(target.ID))
+	}
+	createSQL := renderCreateTableSQL(tableName, query.Mutation.Columns)
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:   "catalog",
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "Table", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: tableName}},
+				},
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "Create Table", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: createSQL}},
+				},
+			},
+		},
+		Count: 1,
+	}
+}
+
 func showCreateQualifiedViewName(schema string, viewName string) string {
 	schema = strings.TrimSpace(schema)
 	viewName = strings.TrimSpace(viewName)
@@ -44,6 +71,60 @@ func showCreateQualifiedViewName(schema string, viewName string) string {
 		return viewName
 	}
 	return schema + "." + viewName
+}
+
+func renderCreateTableSQL(tableName string, columns []qsbridge.FieldRef) string {
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		tableName = "unknown"
+	}
+	lines := make([]string, 0, len(columns)+1)
+	primaryKeys := make([]string, 0)
+	for _, column := range columns {
+		columnName := strings.TrimSpace(column.Name)
+		if columnName == "" {
+			continue
+		}
+		line := "  " + quoteSQLIdentifier(columnName) + " " + describeSQLType(column)
+		if column.PrimaryKey || !column.Nullable {
+			line += " NOT NULL"
+		} else {
+			line += " DEFAULT NULL"
+		}
+		lines = append(lines, line)
+		if column.PrimaryKey {
+			primaryKeys = append(primaryKeys, quoteSQLIdentifier(columnName))
+		}
+	}
+	if len(primaryKeys) > 0 {
+		lines = append(lines, "  PRIMARY KEY ("+strings.Join(primaryKeys, ", ")+")")
+	}
+	if len(lines) == 0 {
+		return "CREATE TABLE " + quoteSQLIdentifier(tableName) + " ()"
+	}
+	return "CREATE TABLE " + quoteSQLIdentifier(tableName) + " (\n" + strings.Join(lines, ",\n") + "\n)"
+}
+
+func quoteSQLIdentifier(identifier string) string {
+	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
+}
+
+func showDatabasesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	schemas := request.Bound.Prepared.Query.Catalog.Schemas
+	rownums := make([]qsbridge.QuantaRownum, len(schemas))
+	vector := describeProjectionVector("Database", qsbridge.DataTypeString, len(schemas))
+	for i, schema := range schemas {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vector.Values[i] = describeStringCell(schema)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+		},
+		Count: uint64(len(schemas)),
+	}
 }
 
 func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {

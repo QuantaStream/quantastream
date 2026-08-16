@@ -650,6 +650,77 @@ func TestUnboundStatementBindShowCreateView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowCreateTable(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []FieldDefinition{
+				{Name: "c_custkey", Type: DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: DataTypeString, Nullable: true},
+			},
+		}},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show create table customer",
+		Kind: QueryKindShowCreateTable,
+		ShowTable: UnboundShowCreateTable{
+			Table:  UnboundTable{Name: "customer"},
+			Result: showCreateTableResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowCreateTable {
+		t.Fatalf("Kind = %q, want show_create_table", query.Kind)
+	}
+	if query.Mutation.Target.Table != "customer" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("target = %#v, want quanta.customer", query.Mutation.Target)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if !query.Mutation.Columns[0].PrimaryKey || query.Mutation.Columns[0].Name != "c_custkey" {
+		t.Fatalf("first column = %#v, want primary c_custkey", query.Mutation.Columns[0])
+	}
+}
+
+func TestUnboundStatementBindShowDatabases(t *testing.T) {
+	catalog := MemoryCatalog{
+		Schemas: []CatalogSchemaDefinition{{Name: "quanta"}, {Name: "analytics"}},
+		Tables:  []TableDefinition{{Schema: "archive", Name: "events"}},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show databases",
+		Kind: QueryKindShowDatabases,
+		ShowDBs: UnboundShowDatabases{
+			Result: showDatabasesResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowDatabases {
+		t.Fatalf("Kind = %q, want show_databases", query.Kind)
+	}
+	if got, want := len(query.Catalog.Schemas), 3; got != want {
+		t.Fatalf("schemas = %d, want %d: %#v", got, want, query.Catalog.Schemas)
+	}
+	if query.Catalog.Schemas[0] != "analytics" || query.Catalog.Schemas[1] != "archive" || query.Catalog.Schemas[2] != "quanta" {
+		t.Fatalf("schemas = %#v, want sorted analytics/archive/quanta", query.Catalog.Schemas)
+	}
+	if got, want := query.Result.Columns[0].Name, "Database"; got != want {
+		t.Fatalf("result column = %q, want %q", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowTables(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{

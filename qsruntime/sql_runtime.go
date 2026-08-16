@@ -166,6 +166,14 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showCreateViewRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowCreateTable {
+		result.Runtime = showCreateTableRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowDatabases {
+		result.Runtime = showDatabasesRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindShowTables {
 		result.Runtime = showTablesRuntimeResult(request)
 		return result, nil

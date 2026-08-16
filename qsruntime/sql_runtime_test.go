@@ -74,6 +74,85 @@ func TestSQLRuntimeExecuteSQLShowCreateViewReturnsCatalogRow(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowCreateTableReturnsCatalogRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25})},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show create table customer", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW CREATE TABLE should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("rows = %#v, want one two-column row", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "customer"; got != want {
+		t.Fatalf("table name = %#v, want %q", got, want)
+	}
+	wantSQL := "CREATE TABLE `customer` (\n  `c_custkey` int NOT NULL,\n  `c_name` varchar(25) DEFAULT NULL,\n  PRIMARY KEY (`c_custkey`)\n)"
+	if got := chunk.Rows[0][1].Value; got != wantSQL {
+		t.Fatalf("create table SQL = %#v, want %q", got, wantSQL)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowDatabasesReturnsCatalogRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}, {Name: "analytics"}},
+		Tables:    []qsbridge.TableDefinition{{Schema: "archive", Name: "events"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show databases", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW DATABASES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if got, want := result.Runtime.RowSet.ProjectionVectors[0].Field.Field, "Database"; got != want {
+		t.Fatalf("column name = %q, want %q", got, want)
+	}
+	if len(chunk.Rows) != 3 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want three one-column rows", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != "analytics" || chunk.Rows[1][0].Value != "archive" || chunk.Rows[2][0].Value != "quanta" {
+		t.Fatalf("database rows = %#v, want sorted analytics/archive/quanta", chunk.Rows)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowTablesReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

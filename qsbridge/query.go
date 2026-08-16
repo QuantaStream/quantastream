@@ -24,6 +24,10 @@ const (
 	QueryKindDropView QueryKind = "drop_view"
 	// QueryKindShowCreateView identifies a SHOW CREATE VIEW catalog read statement.
 	QueryKindShowCreateView QueryKind = "show_create_view"
+	// QueryKindShowCreateTable identifies a SHOW CREATE TABLE catalog read statement.
+	QueryKindShowCreateTable QueryKind = "show_create_table"
+	// QueryKindShowDatabases identifies a SHOW DATABASES catalog read statement.
+	QueryKindShowDatabases QueryKind = "show_databases"
 	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
@@ -79,6 +83,7 @@ type ResultColumn struct {
 // CatalogReadShape records bound metadata-read payloads such as SHOW TABLES.
 type CatalogReadShape struct {
 	Schema  string
+	Schemas []string
 	Objects []TableInstance
 }
 

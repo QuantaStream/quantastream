@@ -199,6 +199,38 @@ func TestSimpleParserBridgeParsesShowCreateViewStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowCreateTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show create table customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowCreateTable {
+		t.Fatalf("kind = %q, want show_create_table", statement.Kind)
+	}
+	if statement.ShowTable.Table.Name != "customer" {
+		t.Fatalf("table = %#v, want customer", statement.ShowTable.Table)
+	}
+	if statement.ShowTable.Result.Kind != ResultQuery || len(statement.ShowTable.Result.Columns) != 2 {
+		t.Fatalf("result = %#v, want two-column query result", statement.ShowTable.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowDatabasesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show databases;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowDatabases {
+		t.Fatalf("kind = %q, want show_databases", statement.Kind)
+	}
+	if statement.ShowDBs.Result.Kind != ResultQuery || len(statement.ShowDBs.Result.Columns) != 1 {
+		t.Fatalf("result = %#v, want one-column query result", statement.ShowDBs.Result)
+	}
+	if got, want := statement.ShowDBs.Result.Columns[0].Name, "Database"; got != want {
+		t.Fatalf("result column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowTablesStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show tables;")
 	if diagnostics.BlocksNative() {
