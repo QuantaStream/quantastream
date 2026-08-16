@@ -141,3 +141,21 @@ tests:
       columns: [date_value, day_name, month_name, quarter_value, week_value]
       rows:
         - ["1995-03-15", Wednesday, March, 1, 11]
+
+  - id: mysql_compat_functions_boundaries.010.null_control_literal_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_null_control_boundary
+    compatibility: mysql
+    requires: [select, isnull, if]
+    sql: |
+      select isnull(null) as null_check,
+             isnull('value') as value_check,
+             if(1, 'yes', 'no') as true_value,
+             if(0, 'yes', 'no') as false_value,
+             if(null, 'yes', 'no') as null_value
+    expect:
+      columns: [null_check, value_check, true_value, false_value, null_value]
+      rows:
+        - [1, 0, yes, no, no]

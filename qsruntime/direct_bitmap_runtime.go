@@ -992,6 +992,10 @@ func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materializ
 		return directBitmapEvaluateMaterializedIfNullCall(call, materialized, index)
 	case "nullif":
 		return directBitmapEvaluateMaterializedNullIfCall(call, materialized, index)
+	case "isnull":
+		return directBitmapEvaluateMaterializedIsNullCall(call, materialized, index)
+	case "if":
+		return directBitmapEvaluateMaterializedIfCall(call, materialized, index)
 	case "greatest", "least":
 		return directBitmapEvaluateMaterializedGreatestLeastCall(call, materialized, index)
 	case "abs":
@@ -1877,6 +1881,72 @@ func directBitmapEvaluateMaterializedNullIfCall(call qsbridge.CallExpr, material
 		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
 	}
 	return left, nil
+}
+
+func directBitmapEvaluateMaterializedIsNullCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) != 1 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects one argument", call.Name))
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(cell) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(1)}, nil
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(0)}, nil
+}
+
+func directBitmapEvaluateMaterializedIfCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) != 3 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects three arguments", call.Name))
+	}
+	matched, diagnostics := directBitmapEvaluateMaterializedConditionExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if matched {
+		return directBitmapEvaluateMaterializedExpr(call.Args[1], materialized, index)
+	}
+	return directBitmapEvaluateMaterializedExpr(call.Args[2], materialized, index)
+}
+
+func directBitmapEvaluateMaterializedConditionExpr(expr qsbridge.Expr, materialized qsbridge.QuantaProjectedRowSet, index int) (bool, qsbridge.DiagnosticSet) {
+	if binary, ok := directBitmapBinaryExpr(expr); ok && directBitmapConditionBinaryOp(binary.Op) {
+		return directBitmapEvaluateResidualBoolExpr(binary, materialized, index)
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(expr, materialized, index)
+	if diagnostics.BlocksNative() {
+		return false, diagnostics
+	}
+	return directBitmapCellTruthy(cell), nil
+}
+
+func directBitmapConditionBinaryOp(op qsbridge.BinaryOp) bool {
+	switch op {
+	case qsbridge.BinaryOpAnd, qsbridge.BinaryOpOr,
+		qsbridge.BinaryOpEqual, qsbridge.BinaryOpNotEqual,
+		qsbridge.BinaryOpLess, qsbridge.BinaryOpLessEqual,
+		qsbridge.BinaryOpGreater, qsbridge.BinaryOpGreaterEqual,
+		qsbridge.BinaryOpLike, qsbridge.BinaryOpNotLike,
+		qsbridge.BinaryOpIn, qsbridge.BinaryOpNotIn,
+		qsbridge.BinaryOpBetween, qsbridge.BinaryOpNotBetween:
+		return true
+	default:
+		return false
+	}
+}
+
+func directBitmapCellTruthy(cell qsbridge.ResultCell) bool {
+	if directBitmapNullCell(cell) {
+		return false
+	}
+	if cell.Kind == qsbridge.ValueBool {
+		value, ok := cell.Value.(bool)
+		return ok && value
+	}
+	number, ok := directBitmapNumericCellValue(cell)
+	return ok && number != 0
 }
 
 func directBitmapEvaluateMaterializedGreatestLeastCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {

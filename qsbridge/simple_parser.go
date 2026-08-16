@@ -2965,6 +2965,9 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 	if function == "cast" {
 		return parseSimpleCastCallExpression(inputText)
 	}
+	if function == "if" {
+		return parseSimpleIfCallExpression(inputText)
+	}
 	if !simpleScalarFunctionName(function) {
 		return UnboundCallExpr{}, false
 	}
@@ -3002,6 +3005,35 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 		args = append(args, arg)
 	}
 	return UnboundCall(function, args...), true
+}
+
+func parseSimpleIfCallExpression(inputText string) (UnboundCallExpr, bool) {
+	argTexts := splitSimpleCommaList(inputText)
+	if len(argTexts) != 3 {
+		return UnboundCallExpr{}, false
+	}
+	conditionText := strings.TrimSpace(argTexts[0])
+	parameterIndex := 1
+	predicates, _, predicateOK := parseSimplePredicate(conditionText, &parameterIndex)
+	var condition UnboundExpr
+	if predicateOK && len(predicates) == 1 {
+		condition = predicates[0].Expr
+	} else {
+		var ok bool
+		condition, ok = parseSimpleScalarExpression(conditionText)
+		if !ok {
+			return UnboundCallExpr{}, false
+		}
+	}
+	trueExpr, ok := parseSimpleScalarExpression(argTexts[1])
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	falseExpr, ok := parseSimpleScalarExpression(argTexts[2])
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	return UnboundCall("if", condition, trueExpr, falseExpr), true
 }
 
 func parseSimpleSubstringFromForCallExpression(function, inputText string) (UnboundCallExpr, bool) {

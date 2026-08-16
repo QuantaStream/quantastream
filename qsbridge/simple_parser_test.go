@@ -1894,6 +1894,24 @@ func TestSimpleParserBridgeParsesMySQLScalarFunctionBoundarySyntax(t *testing.T)
 	}
 }
 
+func TestSimpleParserBridgeParsesIfPredicateCondition(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select if(l_quantity > 10, 'big', 'small') as bucket from lineitem")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 1 {
+		t.Fatalf("projection count = %d, want 1", len(statement.Select.Projection))
+	}
+	call, ok := statement.Select.Projection[0].Expr.(UnboundCallExpr)
+	if !ok || call.Name != "if" || len(call.Args) != 3 {
+		t.Fatalf("projection = %#v, want if call", statement.Select.Projection[0].Expr)
+	}
+	condition, ok := call.Args[0].(UnboundBinaryExpr)
+	if !ok || condition.Op != BinaryOpGreater {
+		t.Fatalf("if condition = %#v, want greater-than binary expression", call.Args[0])
+	}
+}
+
 func TestSimpleParserBridgeParsesScalarSubqueryHaving(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`select o_orderpriority, count(*) as c
 from orders

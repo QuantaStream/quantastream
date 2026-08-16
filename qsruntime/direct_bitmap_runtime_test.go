@@ -282,6 +282,57 @@ func TestDirectBitmapEvaluateMaterializedStringBreadthCalls(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedNullControlCalls(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{}
+	tests := []struct {
+		name string
+		call qsbridge.CallExpr
+		want qsbridge.ResultCell
+	}{
+		{
+			name: "isnull_true",
+			call: qsbridge.Call("isnull", qsbridge.Literal(qsbridge.ValueNull, nil)),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(1)},
+		},
+		{
+			name: "isnull_false",
+			call: qsbridge.Call("isnull", qsbridge.Literal(qsbridge.ValueString, "value")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(0)},
+		},
+		{
+			name: "if_numeric_true",
+			call: qsbridge.Call("if", qsbridge.Literal(qsbridge.ValueInt, int64(1)), qsbridge.Literal(qsbridge.ValueString, "yes"), qsbridge.Literal(qsbridge.ValueString, "no")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "yes"},
+		},
+		{
+			name: "if_numeric_false",
+			call: qsbridge.Call("if", qsbridge.Literal(qsbridge.ValueInt, int64(0)), qsbridge.Literal(qsbridge.ValueString, "yes"), qsbridge.Literal(qsbridge.ValueString, "no")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "no"},
+		},
+		{
+			name: "if_predicate_true",
+			call: qsbridge.Call(
+				"if",
+				qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.Literal(qsbridge.ValueInt, int64(17)), qsbridge.Literal(qsbridge.ValueInt, int64(10))),
+				qsbridge.Literal(qsbridge.ValueString, "big"),
+				qsbridge.Literal(qsbridge.ValueString, "small"),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "big"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(test.call, rowSet, 0)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", diagnostics)
+			}
+			if cell.Kind != test.want.Kind || cell.Value != test.want.Value {
+				t.Fatalf("cell = %#v, want %#v", cell, test.want)
+			}
+		})
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}

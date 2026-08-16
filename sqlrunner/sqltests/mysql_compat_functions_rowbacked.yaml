@@ -140,3 +140,26 @@ tests:
         - [1, "1996-01-02", Tuesday, January, 1, 0]
         - [2, "1996-12-01", Sunday, December, 4, 48]
         - [3, "1993-10-14", Thursday, October, 4, 41]
+
+  - id: mysql_compat_functions_rowbacked.007.lineitem_null_control_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_null_control_rowbacked
+    compatibility: mysql
+    requires: [select, isnull, if]
+    sql: |
+      select l_orderkey,
+             l_linenumber,
+             isnull(l_comment) as comment_null,
+             if(l_quantity > 10, 'big', 'small') as quantity_bucket,
+             if(l_discount, 'discounted', 'free') as discount_bucket
+      from lineitem
+      order by l_orderkey, l_linenumber
+      limit 3
+    expect:
+      columns: [l_orderkey, l_linenumber, comment_null, quantity_bucket, discount_bucket]
+      rows:
+        - [1, 1, 0, big, discounted]
+        - [1, 2, 0, big, discounted]
+        - [1, 3, 0, small, discounted]

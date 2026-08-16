@@ -219,6 +219,8 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinScalarFunction("coalesce", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("ifnull", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("nullif", DataTypeUnknown, sqlExpressionFunctionContexts),
+	builtinScalarFunction("isnull", DataTypeInt, sqlExpressionFunctionContexts),
+	builtinScalarFunction("if", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("greatest", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("least", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("abs", DataTypeFloat, sqlExpressionFunctionContexts),
