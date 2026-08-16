@@ -176,6 +176,19 @@ For every benchmark run, record:
 A benchmark run should be reproducible from the recorded metadata without
 relying on chat history or local memory.
 
+## Baseline Protection
+
+Compatibility work is allowed to widen the SQL surface, but it must not redefine
+top-line performance by accident. Before landing parser, planner, runtime, or
+storage changes that affect TPC-H query paths, compare the affected suite against
+the saved reference reports or rerun a focused TPC-H profile on an already-loaded
+dataset.
+
+Treat small compatibility-only additions as correctness work. Treat changes to
+joins, grouped aggregation, relationship artifacts, fanout/routing, shard
+ownership, cache warming, and shared expression or predicate evaluation as
+benchmark-relevant until proven otherwise.
+
 SQLRunner benchmark reports automatically add best-effort local metadata for
 developer and `inabox-standard` runs, including host OS/architecture/CPU count,
 Go version, current repository commit/branch/dirty status, working directory,

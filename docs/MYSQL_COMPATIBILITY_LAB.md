@@ -162,6 +162,25 @@ should not treat MySQL-vs-QuantaStream timing as a compatibility decision.
 Benchmark timing comparisons are tracked separately in
 [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md).
 
+## Performance Guardrail
+
+Compatibility work should not quietly move QuantaStream away from the TPC-H
+benchmark baseline. The risk level depends on where the change lands:
+
+- SQLRunner suites, expected files, docs, and parser-only cases usually need the
+  local compatibility diff and focused tests.
+- Expression evaluation, row projection, predicate handling, ordering, limiting,
+  grouping, or shared runtime helpers need a small local TPC-H correctness or
+  profile smoke when they touch paths used by benchmark suites.
+- Joins, relationship artifacts, fanout/routing, shard ownership, cache warming,
+  grouped aggregation, or known TPC-H hot paths need comparison against the saved
+  benchmark reports or a rerun of the affected TPC-H profile before the change is
+  treated as performance-neutral.
+
+If a compatibility fix intentionally chooses a slower general path, record that
+as follow-up debt instead of letting it become the new benchmark baseline by
+accident.
+
 ## Generated Suite Convention
 
 Generated compatibility suites should default to ignored local paths such as
