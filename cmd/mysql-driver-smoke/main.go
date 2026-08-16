@@ -68,6 +68,9 @@ func run(args []string) int {
 		{Label: "tables", SQL: "show full tables"},
 		{Label: "views", SQL: "show full tables where Table_type = 'VIEW'"},
 		{Label: "warnings", SQL: "show warnings limit 10"},
+		{Label: "errors", SQL: "show errors limit 10"},
+		{Label: "warning_count", SQL: "show count(*) warnings"},
+		{Label: "error_count", SQL: "show count(*) errors"},
 		{Label: "explain", SQL: "explain select count(*) from lineitem"},
 		{Label: "lineitem_count", SQL: "select count(*) as lineitem_count from lineitem"},
 	}

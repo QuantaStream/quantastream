@@ -552,6 +552,18 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	if len(timeZoneChunk.Rows) != 1 || timeZoneChunk.Rows[0][0].Value != "time_zone" || timeZoneChunk.Rows[0][1].Value != "+00:00" {
 		t.Fatalf("time zone rows = %#v", timeZoneChunk.Rows)
 	}
+
+	version, err := runtime.ExecuteSQL(context.Background(), "show variables where Variable_name = 'version'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW VARIABLES WHERE version failed: %v", err)
+	}
+	versionChunk, diagnostics := version.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("version chunk diagnostics = %#v", diagnostics)
+	}
+	if len(versionChunk.Rows) != 1 || versionChunk.Rows[0][0].Value != "version" || versionChunk.Rows[0][1].Value != "8.0.0-quantastream" {
+		t.Fatalf("version rows = %#v", versionChunk.Rows)
+	}
 }
 
 func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
@@ -582,6 +594,18 @@ func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
 	}
 	if got, want := chunk.Rows[0][0].Value, "Threads_connected"; got != want {
 		t.Fatalf("status variable = %#v, want %q", got, want)
+	}
+
+	where, err := runtime.ExecuteSQL(context.Background(), "show status where Variable_name = 'Threads_connected'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW STATUS WHERE failed: %v", err)
+	}
+	whereChunk, diagnostics := where.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("where chunk diagnostics = %#v", diagnostics)
+	}
+	if len(whereChunk.Rows) != 1 || whereChunk.Rows[0][0].Value != "Threads_connected" {
+		t.Fatalf("where status rows = %#v", whereChunk.Rows)
 	}
 }
 
@@ -1000,6 +1024,47 @@ func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
 	}
 	if got, want := limitedWarnings.Runtime.Count, uint64(0); got != want {
 		t.Fatalf("limited warning count = %d, want %d", got, want)
+	}
+
+	errors, err := runtime.ExecuteSQL(context.Background(), "show errors limit 10", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW ERRORS LIMIT failed: %v", err)
+	}
+	if errors.Diagnostics.BlocksNative() || errors.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("errors diagnostics = %#v runtime=%#v", errors.Diagnostics, errors.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW ERRORS LIMIT should not dispatch to the direct executor")
+	}
+	if got, want := len(errors.Runtime.RowSet.ProjectionVectors), 3; got != want {
+		t.Fatalf("error columns = %d, want %d", got, want)
+	}
+	if got, want := errors.Runtime.Count, uint64(0); got != want {
+		t.Fatalf("error count = %d, want %d", got, want)
+	}
+
+	warningCount, err := runtime.ExecuteSQL(context.Background(), "show count(*) warnings", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW COUNT(*) WARNINGS failed: %v", err)
+	}
+	warningCountChunk, diagnostics := warningCount.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("warning count chunk diagnostics = %#v", diagnostics)
+	}
+	if len(warningCountChunk.Rows) != 1 || len(warningCountChunk.Rows[0]) != 1 || warningCountChunk.Rows[0][0].Value != int64(0) {
+		t.Fatalf("warning count rows = %#v", warningCountChunk.Rows)
+	}
+
+	errorCount, err := runtime.ExecuteSQL(context.Background(), "show count(*) errors", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW COUNT(*) ERRORS failed: %v", err)
+	}
+	errorCountChunk, diagnostics := errorCount.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("error count chunk diagnostics = %#v", diagnostics)
+	}
+	if len(errorCountChunk.Rows) != 1 || len(errorCountChunk.Rows[0]) != 1 || errorCountChunk.Rows[0][0].Value != int64(0) {
+		t.Fatalf("error count rows = %#v", errorCountChunk.Rows)
 	}
 
 	charset, err := runtime.ExecuteSQL(context.Background(), "show character set like 'utf8mb4'", qsbridge.ExecutionOptions{})

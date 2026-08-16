@@ -80,7 +80,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW ERRORS, SHOW COUNT, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -754,6 +754,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowEvents(sql, eventsBody)
 	}
+	countBody, ok := consumeKeyword(showBody, "count")
+	if ok {
+		return parseSimpleShowCount(sql, countBody)
+	}
 	variablesBody, ok := consumeKeyword(showBody, "variables")
 	if ok {
 		return parseSimpleShowVariables(sql, variablesBody)
@@ -765,6 +769,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	warningsBody, ok := consumeKeyword(showBody, "warnings")
 	if ok {
 		return parseSimpleShowWarnings(sql, warningsBody)
+	}
+	errorsBody, ok := consumeKeyword(showBody, "errors")
+	if ok {
+		return parseSimpleShowErrors(sql, errorsBody)
 	}
 	characterBody, ok := consumeKeyword(showBody, "character")
 	if ok {
@@ -817,7 +825,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, ENGINES, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, ENGINES, VARIABLES, STATUS, WARNINGS, ERRORS, COUNT, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
 }
@@ -1166,18 +1174,9 @@ func parseSimpleShowSchemaAndLike(body string, statement string) (string, string
 }
 
 func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatement, Diagnostic, bool) {
-	pattern := ""
-	trimmed := strings.TrimSpace(variablesBody)
-	if trimmed != "" {
-		likeBody, ok := consumeKeyword(trimmed, "like")
-		if !ok {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW VARIABLES only supports optional LIKE pattern"), false
-		}
-		fields := strings.Fields(likeBody)
-		if len(fields) != 1 {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW VARIABLES LIKE must use one literal pattern"), false
-		}
-		pattern = strings.Trim(fields[0], "'\"")
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(variablesBody, "SHOW VARIABLES")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
 	}
 	return UnboundStatement{
 		SQL:  sql,
@@ -1204,6 +1203,30 @@ func parseSimpleShowStatus(sql string, statusBody string) (UnboundStatement, Dia
 	}, Diagnostic{}, true
 }
 
+func parseSimpleShowCount(sql string, countBody string) (UnboundStatement, Diagnostic, bool) {
+	compact := strings.ToLower(strings.Join(strings.Fields(countBody), ""))
+	switch compact {
+	case "(*)warnings":
+		return UnboundStatement{
+			SQL:  sql,
+			Kind: QueryKindShowWarningCount,
+			ShowWarnCount: UnboundShowWarningCount{
+				Result: showWarningCountResultShape(),
+			},
+		}, Diagnostic{}, true
+	case "(*)errors":
+		return UnboundStatement{
+			SQL:  sql,
+			Kind: QueryKindShowErrorCount,
+			ShowErrorCount: UnboundShowErrorCount{
+				Result: showErrorCountResultShape(),
+			},
+		}, Diagnostic{}, true
+	default:
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW COUNT only supports COUNT(*) WARNINGS or COUNT(*) ERRORS"), false
+	}
+}
+
 func parseSimpleShowWarnings(sql string, warningsBody string) (UnboundStatement, Diagnostic, bool) {
 	limit, offset, hasLimit, diagnostic, ok := parseSimpleOptionalLimitOnlyClause(warningsBody, "SHOW WARNINGS")
 	if !ok {
@@ -1217,6 +1240,24 @@ func parseSimpleShowWarnings(sql string, warningsBody string) (UnboundStatement,
 		SQL:  sql,
 		Kind: QueryKindShowWarnings,
 		ShowWarnings: UnboundShowWarnings{
+			Result: result,
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowErrors(sql string, errorsBody string) (UnboundStatement, Diagnostic, bool) {
+	limit, offset, hasLimit, diagnostic, ok := parseSimpleOptionalLimitOnlyClause(errorsBody, "SHOW ERRORS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	result := showErrorsResultShape()
+	result.Limit = limit
+	result.Offset = offset
+	result.HasLimit = hasLimit
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowErrors,
+		ShowErrors: UnboundShowErrors{
 			Result: result,
 		},
 	}, Diagnostic{}, true
@@ -1634,6 +1675,28 @@ func showWarningsResultShape() ResultShape {
 			{Name: "Level", Type: DataTypeString},
 			{Name: "Code", Type: DataTypeInt},
 			{Name: "Message", Type: DataTypeString},
+		},
+	}
+}
+
+func showErrorsResultShape() ResultShape {
+	return showWarningsResultShape()
+}
+
+func showWarningCountResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "@@session.warning_count", Type: DataTypeInt},
+		},
+	}
+}
+
+func showErrorCountResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "@@session.error_count", Type: DataTypeInt},
 		},
 	}
 }

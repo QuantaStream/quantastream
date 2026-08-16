@@ -54,6 +54,12 @@ const (
 	QueryKindShowStatus QueryKind = "show_status"
 	// QueryKindShowWarnings identifies a SHOW WARNINGS metadata read statement.
 	QueryKindShowWarnings QueryKind = "show_warnings"
+	// QueryKindShowErrors identifies a SHOW ERRORS metadata read statement.
+	QueryKindShowErrors QueryKind = "show_errors"
+	// QueryKindShowWarningCount identifies a SHOW COUNT(*) WARNINGS metadata read statement.
+	QueryKindShowWarningCount QueryKind = "show_warning_count"
+	// QueryKindShowErrorCount identifies a SHOW COUNT(*) ERRORS metadata read statement.
+	QueryKindShowErrorCount QueryKind = "show_error_count"
 	// QueryKindShowCharacterSet identifies a SHOW CHARACTER SET metadata read statement.
 	QueryKindShowCharacterSet QueryKind = "show_character_set"
 	// QueryKindShowCollation identifies a SHOW COLLATION metadata read statement.

@@ -398,9 +398,20 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	if got, want := len(statement.ShowVars.Result.Columns), 2; got != want {
 		t.Fatalf("columns = %d, want %d", got, want)
 	}
+
+	whereStatement, diagnostics := SimpleParserBridge{}.Parse("show variables where Variable_name = 'version';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse where diagnostics: %#v", diagnostics)
+	}
+	if whereStatement.Kind != QueryKindShowVariables {
+		t.Fatalf("where kind = %q, want show_variables", whereStatement.Kind)
+	}
+	if got, want := whereStatement.ShowVars.Pattern, "version"; got != want {
+		t.Fatalf("where pattern = %q, want %q", got, want)
+	}
 }
 
-func TestSimpleParserBridgeParsesShowWarningsLimitStatement(t *testing.T) {
+func TestSimpleParserBridgeParsesShowDiagnosticsStatements(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show warnings limit 5 offset 2;")
 	if diagnostics.BlocksNative() {
 		t.Fatalf("parse diagnostics: %#v", diagnostics)
@@ -413,6 +424,42 @@ func TestSimpleParserBridgeParsesShowWarningsLimitStatement(t *testing.T) {
 	}
 	if got, want := len(statement.ShowWarnings.Result.Columns), 3; got != want {
 		t.Fatalf("columns = %d, want %d", got, want)
+	}
+
+	errors, diagnostics := SimpleParserBridge{}.Parse("show errors limit 3;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse errors diagnostics: %#v", diagnostics)
+	}
+	if errors.Kind != QueryKindShowErrors {
+		t.Fatalf("errors kind = %q, want show_errors", errors.Kind)
+	}
+	if !errors.ShowErrors.Result.HasLimit || errors.ShowErrors.Result.Limit != 3 {
+		t.Fatalf("errors result window = %#v, want limit 3", errors.ShowErrors.Result)
+	}
+	if got, want := len(errors.ShowErrors.Result.Columns), 3; got != want {
+		t.Fatalf("errors columns = %d, want %d", got, want)
+	}
+
+	warningCount, diagnostics := SimpleParserBridge{}.Parse("show count(*) warnings;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse warning count diagnostics: %#v", diagnostics)
+	}
+	if warningCount.Kind != QueryKindShowWarningCount {
+		t.Fatalf("warning count kind = %q, want show_warning_count", warningCount.Kind)
+	}
+	if got, want := warningCount.ShowWarnCount.Result.Columns[0].Name, "@@session.warning_count"; got != want {
+		t.Fatalf("warning count column = %q, want %q", got, want)
+	}
+
+	errorCount, diagnostics := SimpleParserBridge{}.Parse("show count(*) errors;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse error count diagnostics: %#v", diagnostics)
+	}
+	if errorCount.Kind != QueryKindShowErrorCount {
+		t.Fatalf("error count kind = %q, want show_error_count", errorCount.Kind)
+	}
+	if got, want := errorCount.ShowErrorCount.Result.Columns[0].Name, "@@session.error_count"; got != want {
+		t.Fatalf("error count column = %q, want %q", got, want)
 	}
 }
 

@@ -658,18 +658,49 @@ func showStatusRows(pattern string) []showStatusRow {
 }
 
 func showWarningsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	_ = request
+	return emptyDiagnosticMetadataRuntimeResult(request.Bound.Prepared.Query.Result.Columns)
+}
+
+func showErrorsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	return emptyDiagnosticMetadataRuntimeResult(request.Bound.Prepared.Query.Result.Columns)
+}
+
+func emptyDiagnosticMetadataRuntimeResult(columns []qsbridge.FieldRef) ExecutionResult {
+	if len(columns) == 0 {
+		columns = []qsbridge.FieldRef{
+			{Name: "Level", Type: qsbridge.DataTypeString},
+			{Name: "Code", Type: qsbridge.DataTypeInt},
+			{Name: "Message", Type: qsbridge.DataTypeString},
+		}
+	}
+	vectors := make([]qsbridge.QuantaProjectionVector, 0, len(columns))
+	for _, column := range columns {
+		vectors = append(vectors, describeProjectionVector(column.Name, column.Type, 0))
+	}
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
-			Index:   "catalog",
-			Rownums: []qsbridge.QuantaRownum{},
-			ProjectionVectors: []qsbridge.QuantaProjectionVector{
-				describeProjectionVector("Level", qsbridge.DataTypeString, 0),
-				describeProjectionVector("Code", qsbridge.DataTypeInt, 0),
-				describeProjectionVector("Message", qsbridge.DataTypeString, 0),
-			},
+			Index:             "catalog",
+			Rownums:           []qsbridge.QuantaRownum{},
+			ProjectionVectors: vectors,
 		},
 		Count: 0,
+	}
+}
+
+func showDiagnosticCountRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	columnName := "@@session.warning_count"
+	if columns := request.Bound.Prepared.Query.Result.Columns; len(columns) > 0 && strings.TrimSpace(columns[0].Name) != "" {
+		columnName = columns[0].Name
+	}
+	vector := describeProjectionVector(columnName, qsbridge.DataTypeInt, 1)
+	vector.Values[0] = describeIntCell(0)
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+		},
+		Count: 1,
 	}
 }
 

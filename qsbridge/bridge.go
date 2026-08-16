@@ -43,6 +43,9 @@ type UnboundStatement struct {
 	ShowVars        UnboundShowVariables
 	ShowStatus      UnboundShowStatus
 	ShowWarnings    UnboundShowWarnings
+	ShowErrors      UnboundShowErrors
+	ShowWarnCount   UnboundShowWarningCount
+	ShowErrorCount  UnboundShowErrorCount
 	ShowCharset     UnboundShowCharacterSet
 	ShowCollation   UnboundShowCollation
 	ShowProcesslist UnboundShowProcesslist
@@ -108,6 +111,12 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowStatus(context, s.ShowStatus)
 	case QueryKindShowWarnings:
 		return BindShowWarnings(context, s.ShowWarnings)
+	case QueryKindShowErrors:
+		return BindShowErrors(context, s.ShowErrors)
+	case QueryKindShowWarningCount:
+		return BindShowWarningCount(context, s.ShowWarnCount)
+	case QueryKindShowErrorCount:
+		return BindShowErrorCount(context, s.ShowErrorCount)
 	case QueryKindShowCharacterSet:
 		return BindShowCharacterSet(context, s.ShowCharset)
 	case QueryKindShowCollation:
@@ -334,6 +343,24 @@ type UnboundShowStatus struct {
 
 // UnboundShowWarnings describes a SHOW WARNINGS metadata read before binding.
 type UnboundShowWarnings struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowErrors describes a SHOW ERRORS metadata read before binding.
+type UnboundShowErrors struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowWarningCount describes a SHOW COUNT(*) WARNINGS metadata read before binding.
+type UnboundShowWarningCount struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowErrorCount describes a SHOW COUNT(*) ERRORS metadata read before binding.
+type UnboundShowErrorCount struct {
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1495,6 +1522,48 @@ func BindShowWarnings(context *BindContext, showStmt UnboundShowWarnings) (Query
 	}
 	return QueryIR{
 		Kind:     QueryKindShowWarnings,
+		Result:   result,
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowErrors binds parser-neutral SHOW ERRORS metadata into QueryIR.
+func BindShowErrors(context *BindContext, showStmt UnboundShowErrors) (QueryIR, DiagnosticSet) {
+	_ = context
+	result := showStmt.Result
+	if result.Kind == "" {
+		result = showErrorsResultShape()
+	}
+	return QueryIR{
+		Kind:     QueryKindShowErrors,
+		Result:   result,
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowWarningCount binds parser-neutral SHOW COUNT(*) WARNINGS metadata into QueryIR.
+func BindShowWarningCount(context *BindContext, showStmt UnboundShowWarningCount) (QueryIR, DiagnosticSet) {
+	_ = context
+	result := showStmt.Result
+	if result.Kind == "" {
+		result = showWarningCountResultShape()
+	}
+	return QueryIR{
+		Kind:     QueryKindShowWarningCount,
+		Result:   result,
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowErrorCount binds parser-neutral SHOW COUNT(*) ERRORS metadata into QueryIR.
+func BindShowErrorCount(context *BindContext, showStmt UnboundShowErrorCount) (QueryIR, DiagnosticSet) {
+	_ = context
+	result := showStmt.Result
+	if result.Kind == "" {
+		result = showErrorCountResultShape()
+	}
+	return QueryIR{
+		Kind:     QueryKindShowErrorCount,
 		Result:   result,
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil

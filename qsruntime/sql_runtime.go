@@ -228,6 +228,14 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showWarningsRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowErrors {
+		result.Runtime = showErrorsRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowWarningCount || prepared.Kind == qsbridge.QueryKindShowErrorCount {
+		result.Runtime = showDiagnosticCountRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindShowCharacterSet {
 		result.Runtime = showCharacterSetRuntimeResult(request)
 		return result, nil
