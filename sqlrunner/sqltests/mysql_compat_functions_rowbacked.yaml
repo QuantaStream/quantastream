@@ -91,3 +91,28 @@ tests:
         - [1, 1, 17, 17, 24710, 1, 1, 1]
         - [1, 2, 36, 36, 56688, 2, 4, 1]
         - [1, 3, 8, 8, 12301, 0, 9, 1]
+
+  - id: mysql_compat_functions_rowbacked.005.customer_string_breadth_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_string_rowbacked
+    compatibility: mysql
+    requires: [select, concat_ws, repeat, reverse, lpad, rpad, ascii]
+    sql: |
+      select c_custkey,
+             concat_ws(':', c_name, c_mktsegment) as joined_value,
+             repeat(substring(c_mktsegment from 1 for 1), 3) as repeat_value,
+             reverse(substring(c_name from 1 for 8)) as reverse_value,
+             lpad(c_custkey, 4, '0') as padded_key,
+             rpad(substring(c_mktsegment from 1 for 3), 5, '.') as padded_segment,
+             ascii(c_name) as ascii_value
+      from customer
+      order by c_custkey
+      limit 3
+    expect:
+      columns: [c_custkey, joined_value, repeat_value, reverse_value, padded_key, padded_segment, ascii_value]
+      rows:
+        - [1, Customer#000000001:BUILDING, BBB, remotsuC, "0001", BUI.., 67]
+        - [2, Customer#000000002:AUTOMOBILE, AAA, remotsuC, "0002", AUT.., 67]
+        - [3, Customer#000000003:AUTOMOBILE, AAA, remotsuC, "0003", AUT.., 67]

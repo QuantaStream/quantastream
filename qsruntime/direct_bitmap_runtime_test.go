@@ -180,6 +180,57 @@ func TestDirectBitmapEvaluateMaterializedNumericScalarCalls(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedStringBreadthCalls(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{}
+	tests := []struct {
+		name string
+		call qsbridge.CallExpr
+		want qsbridge.ResultCell
+	}{
+		{
+			name: "concat_ws",
+			call: qsbridge.Call("concat_ws", qsbridge.Literal(qsbridge.ValueString, "|"), qsbridge.Literal(qsbridge.ValueString, "quanta"), qsbridge.Literal(qsbridge.ValueString, "stream")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "quanta|stream"},
+		},
+		{
+			name: "repeat",
+			call: qsbridge.Call("repeat", qsbridge.Literal(qsbridge.ValueString, "ha"), qsbridge.Literal(qsbridge.ValueInt, int64(3))),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "hahaha"},
+		},
+		{
+			name: "reverse",
+			call: qsbridge.Call("reverse", qsbridge.Literal(qsbridge.ValueString, "stream")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "maerts"},
+		},
+		{
+			name: "lpad",
+			call: qsbridge.Call("lpad", qsbridge.Literal(qsbridge.ValueString, "42"), qsbridge.Literal(qsbridge.ValueInt, int64(5)), qsbridge.Literal(qsbridge.ValueString, "0")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "00042"},
+		},
+		{
+			name: "rpad",
+			call: qsbridge.Call("rpad", qsbridge.Literal(qsbridge.ValueString, "QS"), qsbridge.Literal(qsbridge.ValueInt, int64(5)), qsbridge.Literal(qsbridge.ValueString, ".")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "QS..."},
+		},
+		{
+			name: "ascii",
+			call: qsbridge.Call("ascii", qsbridge.Literal(qsbridge.ValueString, "QuantaStream")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(81)},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(test.call, rowSet, 0)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", diagnostics)
+			}
+			if cell.Kind != test.want.Kind || cell.Value != test.want.Value {
+				t.Fatalf("cell = %#v, want %#v", cell, test.want)
+			}
+		})
+	}
+}
+
 func TestDirectBitmapRuntimeAppliesRelationshipVectorMembership(t *testing.T) {
 	customers := qsbridge.TableInstance{Table: "customers_qa", Alias: "c"}
 	orders := qsbridge.TableInstance{Table: "orders_qa", Alias: "o"}

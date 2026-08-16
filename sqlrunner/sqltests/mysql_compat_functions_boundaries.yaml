@@ -104,3 +104,22 @@ tests:
       columns: [floor_value, ceiling_value, truncate_value, mod_value, power_value, sign_value]
       rows:
         - [3, 4, 3.14, 2, 8, -1]
+
+  - id: mysql_compat_functions_boundaries.008.string_breadth_literal_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_string_boundary
+    compatibility: mysql
+    requires: [select, concat_ws, repeat, reverse, lpad, rpad, ascii]
+    sql: |
+      select concat_ws('|', 'quanta', 'stream') as joined_value,
+             repeat('ha', 3) as repeat_value,
+             reverse('stream') as reverse_value,
+             lpad('42', 5, '0') as lpad_value,
+             rpad('QS', 5, '.') as rpad_value,
+             ascii('QuantaStream') as ascii_value
+    expect:
+      columns: [joined_value, repeat_value, reverse_value, lpad_value, rpad_value, ascii_value]
+      rows:
+        - [quanta|stream, hahaha, maerts, "00042", QS..., 81]
