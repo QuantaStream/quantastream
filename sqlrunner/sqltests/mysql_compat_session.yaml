@@ -123,6 +123,33 @@ tests:
     expect:
       columns: [autocommit_value, sql_mode_value, time_zone_value]
 
+  - id: mysql_compat_session.0101.select_version_variables
+    status: supported
+    kind: query
+    feature: session_variables
+    compatibility: mysql
+    requires: [select, system_variables, version]
+    sql: |
+      select @@version as version_value,
+             @@version_comment as version_comment
+    expect:
+      columns: [version_value, version_comment]
+
+  - id: mysql_compat_session.0102.select_connection_metadata_functions
+    status: supported
+    kind: query
+    feature: session_metadata
+    compatibility: mysql
+    requires: [select, database, schema, user, current_user, connection_id]
+    sql: |
+      select database() as db_name,
+             schema() as schema_name,
+             user() as user_value,
+             current_user() as current_user_value,
+             connection_id() as connection_id_value
+    expect:
+      columns: [db_name, schema_name, user_value, current_user_value, connection_id_value]
+
   - id: mysql_compat_session.011.show_autocommit_variable
     status: supported
     kind: query

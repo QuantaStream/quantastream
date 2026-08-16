@@ -65,6 +65,8 @@ func run(args []string) int {
 	installedViews := map[string]bool{}
 	queries := []smokeQuery{
 		{Label: "version", SQL: "select @@version as version_value, @@version_comment as version_comment"},
+		{Label: "database", SQL: "select database() as database_value, schema() as schema_value"},
+		{Label: "session_identity", SQL: "select user() as user_value, current_user() as current_user_value, connection_id() as connection_id_value"},
 		{Label: "tables", SQL: "show full tables"},
 		{Label: "views", SQL: "show full tables where Table_type = 'VIEW'"},
 		{Label: "warnings", SQL: "show warnings limit 10"},
