@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -210,6 +211,58 @@ func DeleteView(consul *api.Client, viewName string) error {
 	return nil
 }
 
+// CheckViewDependenciesInCatalog returns active file-backed views that depend on tableName.
+func CheckViewDependenciesInCatalog(configDir string, schemaName string, tableName string) ([]string, error) {
+	views, err := ActiveCatalogViews(configDir, schemaName)
+	if err != nil {
+		return nil, err
+	}
+	dependencies := make([]string, 0)
+	for _, viewName := range views {
+		view, err := LoadViewDefinition(configDir, viewName)
+		if err != nil {
+			return nil, err
+		}
+		if viewDependsOnTable(view, schemaName, tableName) {
+			dependencies = append(dependencies, viewName)
+		}
+	}
+	sort.Strings(dependencies)
+	return dependencies, nil
+}
+
+// CheckViewDependencies returns active Consul-backed views that depend on tableName.
+func CheckViewDependencies(consul *api.Client, schemaName string, tableName string) ([]string, error) {
+	if consul == nil {
+		return nil, fmt.Errorf("consul client must not be nil")
+	}
+	pairs, _, err := consul.KV().List(ConsulCatalogViewsPrefix+"/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog views from consul: %w", err)
+	}
+	dependencies := make([]string, 0)
+	for _, pair := range pairs {
+		if pair == nil || path.Base(pair.Key) != "definition.yaml" {
+			continue
+		}
+		var view ViewDefinition
+		if err := yaml.Unmarshal(pair.Value, &view); err != nil {
+			return nil, fmt.Errorf("parse view definition %s from consul: %w", pair.Key, err)
+		}
+		if strings.TrimSpace(view.ViewName) == "" {
+			view.ViewName = path.Base(path.Dir(pair.Key))
+		}
+		if err := ValidateViewDefinition(view); err != nil {
+			return nil, err
+		}
+		if viewDependsOnTable(view, schemaName, tableName) {
+			dependencies = append(dependencies, view.ViewName)
+		}
+	}
+	sort.Strings(dependencies)
+	return dependencies, nil
+}
+
 // ValidateViewDefinition applies filesystem catalog checks for a logical view.
 func ValidateViewDefinition(view ViewDefinition) error {
 	if strings.TrimSpace(view.ViewName) == "" {
@@ -230,6 +283,22 @@ func ValidateViewDefinition(view ViewDefinition) error {
 		}
 	}
 	return nil
+}
+
+func viewDependsOnTable(view ViewDefinition, schemaName string, tableName string) bool {
+	for _, dependency := range view.Dependencies {
+		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectType), CatalogObjectTypeTable) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectName), strings.TrimSpace(tableName)) {
+			continue
+		}
+		dependencySchema := strings.TrimSpace(dependency.SchemaName)
+		if schemaName == "" || dependencySchema == "" || strings.EqualFold(dependencySchema, schemaName) {
+			return true
+		}
+	}
+	return false
 }
 
 func catalogViewDefinitionPath(configDir string, viewName string) (string, error) {

@@ -3,16 +3,24 @@ name: mysql_compat_mutations_boundaries
 
 tests:
   - id: mysql_compat_mutations_boundaries.001.drop_table_if_exists
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_ddl_boundary
     compatibility: mysql
     requires: [drop_table, if_exists]
-    issue: "DROP TABLE IF EXISTS is not parsed yet; QS currently supports simple YAML-backed DROP TABLE names."
     sql: |
       drop table if exists qs_mysql_compat_mutations
 
-  - id: mysql_compat_mutations_boundaries.002.create_inline_table
+  - id: mysql_compat_mutations_boundaries.002.drop_ctas_table_if_exists
+    status: supported
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_ctas
+
+  - id: mysql_compat_mutations_boundaries.003.create_inline_table
     status: xfail
     kind: statement
     feature: mutations_ddl_boundary
@@ -26,7 +34,7 @@ tests:
         amount int
       )
 
-  - id: mysql_compat_mutations_boundaries.003.multi_row_insert
+  - id: mysql_compat_mutations_boundaries.004.multi_row_insert
     status: xfail
     kind: statement
     feature: mutations_insert_boundary
@@ -39,7 +47,7 @@ tests:
     expect:
       affected_rows: 2
 
-  - id: mysql_compat_mutations_boundaries.004.update_arithmetic_assignment
+  - id: mysql_compat_mutations_boundaries.005.update_arithmetic_assignment
     status: xfail
     kind: statement
     feature: mutations_update_boundary
@@ -53,7 +61,7 @@ tests:
     expect:
       affected_rows: 1
 
-  - id: mysql_compat_mutations_boundaries.005.delete_rows
+  - id: mysql_compat_mutations_boundaries.006.delete_rows
     status: xfail
     kind: statement
     feature: mutations_delete_boundary
@@ -66,7 +74,7 @@ tests:
     expect:
       affected_rows: 1
 
-  - id: mysql_compat_mutations_boundaries.006.select_after_write
+  - id: mysql_compat_mutations_boundaries.007.select_after_write
     status: xfail
     kind: query
     order: exact
@@ -83,7 +91,17 @@ tests:
       rows:
         - [2, Abby, 25]
 
-  - id: mysql_compat_mutations_boundaries.007.create_table_as_select
+  - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
+    status: xfail
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [drop_table, cascade]
+    issue: "DROP TABLE ... CASCADE is a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading catalog changes."
+    sql: |
+      drop table qs_mysql_compat_mutations cascade
+
+  - id: mysql_compat_mutations_boundaries.009.create_table_as_select
     status: xfail
     kind: statement
     feature: mutations_ddl_boundary
@@ -97,11 +115,19 @@ tests:
       where c_custkey <= 3
 
   - id: mysql_compat_mutations_boundaries.900.cleanup
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_ddl_boundary
     compatibility: mysql
     requires: [drop_table, if_exists]
-    issue: "DROP TABLE IF EXISTS is not parsed yet; QS currently supports simple YAML-backed DROP TABLE names."
     sql: |
       drop table if exists qs_mysql_compat_mutations
+
+  - id: mysql_compat_mutations_boundaries.901.cleanup_ctas
+    status: supported
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_ctas

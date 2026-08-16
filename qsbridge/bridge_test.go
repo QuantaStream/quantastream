@@ -585,6 +585,30 @@ func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindDropTableIfExists(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "drop table if exists customer",
+		Kind: QueryKindDropTable,
+		Drop: UnboundDropTable{
+			Table:    UnboundTable{Name: "customer"},
+			IfExists: true,
+			Result:   ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.Kind != MutationDropTable {
+		t.Fatalf("Mutation.Kind = %q, want drop_table", query.Mutation.Kind)
+	}
+	if !query.Mutation.IfExists {
+		t.Fatalf("Mutation.IfExists = false, want true")
+	}
+}
+
 func TestUnboundStatementBindShowCreateView(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

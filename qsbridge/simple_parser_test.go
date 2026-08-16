@@ -132,6 +132,22 @@ func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDropTableIfExistsStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop table if exists customers_qa;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropTable {
+		t.Fatalf("kind = %q, want drop table", statement.Kind)
+	}
+	if statement.Drop.Table.Name != "customers_qa" {
+		t.Fatalf("table = %#v, want customers_qa", statement.Drop.Table)
+	}
+	if !statement.Drop.IfExists {
+		t.Fatalf("IfExists = false, want true")
+	}
+}
+
 func TestSimpleParserBridgeParsesCreateViewStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("create view building_customers as select c_custkey, c_name from customer where c_mktsegment = 'BUILDING';")
 	if diagnostics.BlocksNative() {

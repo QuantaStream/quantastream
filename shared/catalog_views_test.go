@@ -110,6 +110,49 @@ func TestViewDefinitionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCheckViewDependenciesInCatalogReportsActiveDependentViews(t *testing.T) {
+	configDir := t.TempDir()
+	now := time.Date(2026, 8, 16, 10, 30, 0, 0, time.UTC)
+	views := []ViewDefinition{
+		{
+			SchemaName: "quanta",
+			ViewName:   "customer_projection",
+			SQL:        "select c_custkey from customer",
+			Dependencies: []ViewDependency{
+				{SchemaName: "quanta", ObjectName: "customer", ObjectType: CatalogObjectTypeTable},
+			},
+			CreationDate:     now,
+			ModificationDate: now,
+		},
+		{
+			SchemaName: "quanta",
+			ViewName:   "orders_projection",
+			SQL:        "select o_orderkey from orders",
+			Dependencies: []ViewDependency{
+				{SchemaName: "quanta", ObjectName: "orders", ObjectType: CatalogObjectTypeTable},
+			},
+			CreationDate:     now,
+			ModificationDate: now,
+		},
+	}
+	for _, view := range views {
+		if err := SaveViewDefinition(configDir, view); err != nil {
+			t.Fatalf("SaveViewDefinition(%s) error = %v", view.ViewName, err)
+		}
+		if err := ActivateCatalogView(configDir, "quanta", view.ViewName, now); err != nil {
+			t.Fatalf("ActivateCatalogView(%s) error = %v", view.ViewName, err)
+		}
+	}
+
+	dependencies, err := CheckViewDependenciesInCatalog(configDir, "quanta", "customer")
+	if err != nil {
+		t.Fatalf("CheckViewDependenciesInCatalog() error = %v", err)
+	}
+	if len(dependencies) != 1 || dependencies[0] != "customer_projection" {
+		t.Fatalf("dependencies = %#v, want customer_projection", dependencies)
+	}
+}
+
 func TestViewDefinitionRejectsUnsafeFileNames(t *testing.T) {
 	configDir := t.TempDir()
 	err := SaveViewDefinition(configDir, ViewDefinition{

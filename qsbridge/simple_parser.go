@@ -515,7 +515,20 @@ func parseSimpleDrop(sql string) (UnboundStatement, Diagnostic, bool) {
 }
 
 func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
-	if strings.TrimSpace(dropBody) == "" {
+	dropBody = strings.TrimSpace(dropBody)
+	if dropBody == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
+	}
+	ifExists := false
+	if remaining, ok := consumeKeyword(dropBody, "if"); ok {
+		existsRemaining, existsOK := consumeKeyword(remaining, "exists")
+		if !existsOK {
+			return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE IF must be followed by EXISTS"), false
+		}
+		ifExists = true
+		dropBody = strings.TrimSpace(existsRemaining)
+	}
+	if dropBody == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
 	}
 	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
@@ -532,8 +545,9 @@ func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Di
 		SQL:  sql,
 		Kind: QueryKindDropTable,
 		Drop: UnboundDropTable{
-			Table:  table,
-			Result: ResultShape{Kind: ResultStatement},
+			Table:    table,
+			IfExists: ifExists,
+			Result:   ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
 }

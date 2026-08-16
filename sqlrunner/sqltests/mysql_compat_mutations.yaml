@@ -28,3 +28,12 @@ tests:
     requires: [drop_view, if_exists]
     sql: |
       drop view if exists qs_mysql_compat_noop_view
+
+  - id: mysql_compat_mutations.004.drop_table_if_exists
+    status: supported
+    kind: statement
+    feature: mutations_ddl
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_noop_table

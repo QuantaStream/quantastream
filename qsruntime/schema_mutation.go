@@ -71,9 +71,9 @@ func (h LegacyQuantaSessionHandle) DropTable(ctx context.Context, request Execut
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if consul := h.schemaMutationConsul(); consul != nil {
-		return h.dropConsulCatalogTable(ctx, consul, schemaName, tableName)
+		return h.dropConsulCatalogTable(ctx, consul, schemaName, tableName, request.Mutation.IfExists)
 	}
-	return h.dropFileCatalogTable(ctx, schemaName, tableName)
+	return h.dropFileCatalogTable(ctx, schemaName, tableName, request.Mutation.IfExists)
 }
 
 // CreateView persists a logical, non-materialized SQL view definition.
@@ -156,7 +156,7 @@ func (h LegacyQuantaSessionHandle) createFileCatalogTable(ctx context.Context, s
 	}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropFileCatalogTable(ctx context.Context, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropFileCatalogTable(ctx context.Context, schemaName, tableName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil || h.Session.BitIndex == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
@@ -168,7 +168,17 @@ func (h LegacyQuantaSessionHandle) dropFileCatalogTable(ctx context.Context, sch
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if !active {
+		if ifExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s dropped", tableName)}, nil, nil
+		}
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s doesn't exist", tableName)
+	}
+	viewDependencies, err := shared.CheckViewDependenciesInCatalog(configDir, schemaName, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if len(viewDependencies) > 0 {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("cannot drop table referenced by views: %s", strings.Join(viewDependencies, ", "))
 	}
 	dependencies, err := shared.CheckChildRelationInCatalog(configDir, schemaName, tableName)
 	if err != nil {
@@ -345,7 +355,7 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogTable(ctx context.Context,
 	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s created", tableName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, consul *api.Client, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, consul *api.Client, schemaName, tableName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil || h.Session.BitIndex == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
@@ -356,7 +366,17 @@ func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, c
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if !exists {
+		if ifExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s dropped", tableName)}, nil, nil
+		}
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s doesn't exist", tableName)
+	}
+	viewDependencies, err := shared.CheckViewDependencies(consul, schemaName, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if len(viewDependencies) > 0 {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("cannot drop table referenced by views: %s", strings.Join(viewDependencies, ", "))
 	}
 	dependencies, err := shared.CheckChildRelation(consul, tableName)
 	if err != nil {

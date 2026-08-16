@@ -46,6 +46,36 @@ tests:
     sql: |
       drop view qs_mysql_compat_column_list_view
 
+  - id: mysql_compat_views_boundaries.005.create_drop_cascade_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_drop_cascade_view as
+      select c_custkey as customer_key
+      from customer
+
+  - id: mysql_compat_views_boundaries.006.drop_view_cascade
+    status: xfail
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view, cascade]
+    issue: "DROP VIEW ... CASCADE is a post-1.0 compatibility target; QS currently requires explicit dependent-object cleanup."
+    sql: |
+      drop view qs_mysql_compat_drop_cascade_view cascade
+
+  - id: mysql_compat_views_boundaries.007.cleanup_drop_cascade_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view, if_exists]
+    sql: |
+      drop view if exists qs_mysql_compat_drop_cascade_view
+
   - id: mysql_compat_views_boundaries.010.create_aggregate_view
     status: supported
     kind: statement

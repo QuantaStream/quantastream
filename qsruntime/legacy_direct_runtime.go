@@ -347,7 +347,7 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 
 func schemaMutationNeedsSyntheticHandle(kind qsbridge.MutationKind) bool {
 	switch kind {
-	case qsbridge.MutationCreateTable, qsbridge.MutationCreateView, qsbridge.MutationDropView:
+	case qsbridge.MutationCreateTable, qsbridge.MutationDropTable, qsbridge.MutationCreateView, qsbridge.MutationDropView:
 		return true
 	default:
 		return false

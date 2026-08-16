@@ -2,6 +2,8 @@ package qsruntime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -123,6 +125,119 @@ func TestLegacySchemaMutationHandleDropViewIfExistsIgnoresMissingFileCatalogView
 	}
 }
 
+func TestLegacySchemaMutationHandleDropTableIfExistsIgnoresMissingFileCatalogTable(t *testing.T) {
+	configDir := t.TempDir()
+	handle := LegacyQuantaSessionHandle{
+		TableName: "missing_table",
+		Session:   &core.Session{BasePath: configDir, BitIndex: &shared.BitmapIndex{}},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationDropTable,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "missing_table"},
+		},
+	}
+	_, diagnostics, err := handle.DropTable(context.Background(), request)
+	if err == nil {
+		t.Fatalf("DropTable() error = nil, want missing-table error")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropTable() diagnostics = %#v", diagnostics)
+	}
+
+	request.Mutation.IfExists = true
+	statement, diagnostics, err := handle.DropTable(context.Background(), request)
+	if err != nil {
+		t.Fatalf("DropTable(if exists) error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropTable(if exists) diagnostics = %#v", diagnostics)
+	}
+	if statement.Status != "Table missing_table dropped" {
+		t.Fatalf("status = %q, want missing_table dropped", statement.Status)
+	}
+}
+
+func TestLegacySchemaMutationHandleDropTableRejectsActiveDependentView(t *testing.T) {
+	configDir := t.TempDir()
+	now := testSchemaMutationTime()
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "customer", now); err != nil {
+		t.Fatalf("ActivateCatalogTable() error = %v", err)
+	}
+	if err := shared.SaveViewDefinition(configDir, shared.ViewDefinition{
+		SchemaName: "quanta",
+		ViewName:   "customer_projection",
+		SQL:        "select c_custkey from customer",
+		Dependencies: []shared.ViewDependency{
+			{SchemaName: "quanta", ObjectName: "customer", ObjectType: shared.CatalogObjectTypeTable},
+		},
+		CreationDate:     now,
+		ModificationDate: now,
+	}); err != nil {
+		t.Fatalf("SaveViewDefinition() error = %v", err)
+	}
+	if err := shared.ActivateCatalogView(configDir, "quanta", "customer_projection", now); err != nil {
+		t.Fatalf("ActivateCatalogView() error = %v", err)
+	}
+	handle := LegacyQuantaSessionHandle{
+		TableName: "customer",
+		Session:   &core.Session{BasePath: configDir, BitIndex: &shared.BitmapIndex{}},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:     qsbridge.MutationDropTable,
+			Target:   qsbridge.TableInstance{Schema: "quanta", Table: "customer"},
+			IfExists: true,
+		},
+	}
+
+	_, diagnostics, err := handle.DropTable(context.Background(), request)
+	if err == nil {
+		t.Fatalf("DropTable() error = nil, want dependent-view error")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropTable() diagnostics = %#v", diagnostics)
+	}
+	if got := err.Error(); got != "cannot drop table referenced by views: customer_projection" {
+		t.Fatalf("error = %q, want dependent-view error", got)
+	}
+}
+
+func TestLegacySchemaMutationHandleDropTableRejectsActiveChildTable(t *testing.T) {
+	configDir := t.TempDir()
+	now := testSchemaMutationTime()
+	writeSchemaMutationCatalogSchema(t, configDir, "customers", "")
+	writeSchemaMutationCatalogSchema(t, configDir, "orders", "customers.id")
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "customers", now); err != nil {
+		t.Fatalf("ActivateCatalogTable(customers) error = %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "orders", now); err != nil {
+		t.Fatalf("ActivateCatalogTable(orders) error = %v", err)
+	}
+	handle := LegacyQuantaSessionHandle{
+		TableName: "customers",
+		Session:   &core.Session{BasePath: configDir, BitIndex: &shared.BitmapIndex{}},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:     qsbridge.MutationDropTable,
+			Target:   qsbridge.TableInstance{Schema: "quanta", Table: "customers"},
+			IfExists: true,
+		},
+	}
+
+	_, diagnostics, err := handle.DropTable(context.Background(), request)
+	if err == nil {
+		t.Fatalf("DropTable() error = nil, want child-table dependency error")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropTable() diagnostics = %#v", diagnostics)
+	}
+	if got := err.Error(); got != "cannot drop table with dependencies: orders" {
+		t.Fatalf("error = %q, want child-table dependency error", got)
+	}
+}
+
 func TestLegacySchemaMutationHandleCreateViewRejectsTableNameCollision(t *testing.T) {
 	configDir := t.TempDir()
 	if err := shared.ActivateCatalogTable(configDir, "quanta", "customer_names", testSchemaMutationTime()); err != nil {
@@ -150,4 +265,27 @@ func TestLegacySchemaMutationHandleCreateViewRejectsTableNameCollision(t *testin
 
 func testSchemaMutationTime() time.Time {
 	return time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC)
+}
+
+func writeSchemaMutationCatalogSchema(t *testing.T, configDir string, table string, foreignKey string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	fkLine := ""
+	if foreignKey != "" {
+		fkLine = "  foreignKey: " + foreignKey + "\n"
+	}
+	schema := "tableName: " + table + `
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: Integer
+` + fkLine
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
 }

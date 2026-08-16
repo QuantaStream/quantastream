@@ -150,6 +150,12 @@ Temporary table support will need catalog metadata, lifecycle cleanup, session
 visibility rules, and mutation/load semantics that fit Quanta's bitmap storage
 model.
 
+`DROP TABLE ... CASCADE` is a post-1.0 compatibility target. Current `DROP
+TABLE` behavior should preserve catalog integrity by refusing to drop tables
+referenced by active views or parent-to-child table relationships unless those
+dependent objects are removed explicitly. In other words, dropping a parent
+table does not implicitly drop its child tables in the 1.0 surface.
+
 ## View Gaps
 
 Named views, view catalog storage, view expansion, joins inside view
@@ -160,6 +166,7 @@ include:
 - views that reference other views
 - `SHOW CREATE VIEW` output parity with MySQL
 - broader MySQL metadata, privilege, algorithm, definer, and security syntax
+- `DROP VIEW ... CASCADE`
 - materialized views
 
 ## Conditional Expressions
