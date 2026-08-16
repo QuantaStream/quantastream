@@ -27,6 +27,7 @@ type UnboundStatement struct {
 	ShowView   UnboundShowCreateView
 	ShowTable  UnboundShowCreateTable
 	ShowDBs    UnboundShowDatabases
+	ShowIndex  UnboundShowIndex
 	ShowTables UnboundShowTables
 	Describe   UnboundDescribe
 	Session    UnboundSession
@@ -59,6 +60,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowCreateTable(context, s.ShowTable)
 	case QueryKindShowDatabases:
 		return BindShowDatabases(context, s.ShowDBs)
+	case QueryKindShowIndex:
+		return BindShowIndex(context, s.ShowIndex)
 	case QueryKindShowTables:
 		return BindShowTables(context, s.ShowTables)
 	case QueryKindDescribe:
@@ -176,6 +179,13 @@ type UnboundShowCreateTable struct {
 
 // UnboundShowDatabases describes a SHOW DATABASES metadata read before binding.
 type UnboundShowDatabases struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowIndex describes a SHOW INDEX operation before binding.
+type UnboundShowIndex struct {
+	Table    UnboundTable
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -821,6 +831,55 @@ func BindShowDatabases(context *BindContext, showStmt UnboundShowDatabases) (Que
 		}
 		query.Catalog.Schemas = append(query.Catalog.Schemas, name)
 	}
+	return query, nil
+}
+
+// BindShowIndex binds parser-neutral SHOW INDEX metadata into QueryIR.
+func BindShowIndex(context *BindContext, showStmt UnboundShowIndex) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowIndex,
+		Result:   showStmt.Result,
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	tableName := strings.TrimSpace(showStmt.Table.Name)
+	if tableName == "" {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "SHOW INDEX target is empty"),
+		}
+	}
+	schemaName := strings.TrimSpace(showStmt.Table.Schema)
+	if schemaName == "" {
+		schemaName = context.DefaultSchema
+	}
+	target := TableInstance{
+		ID:     TableInstanceID(tableName),
+		Schema: schemaName,
+		Table:  tableName,
+		Alias:  showStmt.Table.Alias,
+		Role:   tableName,
+	}
+	query.Mutation.Target = target
+	table, diagnostics := context.Catalog.Table(schemaName, tableName)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	if strings.TrimSpace(table.Schema) != "" {
+		query.Mutation.Target.Schema = strings.TrimSpace(table.Schema)
+	}
+	if strings.TrimSpace(table.Name) != "" {
+		query.Mutation.Target.Table = strings.TrimSpace(table.Name)
+	}
+	query.Mutation.Columns = describeTableFieldRefs(table, query.Mutation.Target)
 	return query, nil
 }
 

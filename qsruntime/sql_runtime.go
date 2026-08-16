@@ -174,6 +174,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showDatabasesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowIndex {
+		result.Runtime = showIndexRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindShowTables {
 		result.Runtime = showTablesRuntimeResult(request)
 		return result, nil

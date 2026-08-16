@@ -28,6 +28,8 @@ const (
 	QueryKindShowCreateTable QueryKind = "show_create_table"
 	// QueryKindShowDatabases identifies a SHOW DATABASES catalog read statement.
 	QueryKindShowDatabases QueryKind = "show_databases"
+	// QueryKindShowIndex identifies a SHOW INDEX catalog read statement.
+	QueryKindShowIndex QueryKind = "show_index"
 	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.

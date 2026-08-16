@@ -61,7 +61,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW DATABASES, SHOW TABLES, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW DATABASES, SHOW TABLES, SHOW INDEX, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -659,12 +659,22 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowTables(sql, tablesBody)
 	}
+	indexBody, ok := consumeKeyword(showBody, "index")
+	if !ok {
+		indexBody, ok = consumeKeyword(showBody, "indexes")
+	}
+	if !ok {
+		indexBody, ok = consumeKeyword(showBody, "keys")
+	}
+	if ok {
+		return parseSimpleShowIndex(sql, indexBody)
+	}
 	columnsBody, ok := consumeKeyword(showBody, "columns")
 	if !ok {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	targetBody, ok := consumeKeyword(columnsBody, "from")
 	if !ok {
@@ -674,6 +684,31 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS must include FROM table"), false
 	}
 	return parseSimpleDescribeTarget(sql, targetBody)
+}
+
+func parseSimpleShowIndex(sql string, indexBody string) (UnboundStatement, Diagnostic, bool) {
+	targetBody, ok := consumeKeyword(indexBody, "from")
+	if !ok {
+		targetBody, ok = consumeKeyword(indexBody, "in")
+	}
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW INDEX must include FROM table"), false
+	}
+	target, diagnostic, ok := parseSimpleTable(strings.TrimSpace(targetBody))
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if target.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW INDEX aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowIndex,
+		ShowIndex: UnboundShowIndex{
+			Table:  target,
+			Result: showIndexResultShape(),
+		},
+	}, Diagnostic{}, true
 }
 
 func parseSimpleShowDatabases(sql string, databasesBody string) (UnboundStatement, Diagnostic, bool) {
@@ -775,6 +810,29 @@ func showDatabasesResultShape() ResultShape {
 		Kind: ResultQuery,
 		Columns: []FieldRef{
 			{Name: "Database", Type: DataTypeString},
+		},
+	}
+}
+
+func showIndexResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Table", Type: DataTypeString},
+			{Name: "Non_unique", Type: DataTypeInt},
+			{Name: "Key_name", Type: DataTypeString},
+			{Name: "Seq_in_index", Type: DataTypeInt},
+			{Name: "Column_name", Type: DataTypeString},
+			{Name: "Collation", Type: DataTypeString},
+			{Name: "Cardinality", Type: DataTypeInt, Nullable: true},
+			{Name: "Sub_part", Type: DataTypeInt, Nullable: true},
+			{Name: "Packed", Type: DataTypeString, Nullable: true},
+			{Name: "Null", Type: DataTypeString},
+			{Name: "Index_type", Type: DataTypeString},
+			{Name: "Comment", Type: DataTypeString},
+			{Name: "Index_comment", Type: DataTypeString},
+			{Name: "Visible", Type: DataTypeString},
+			{Name: "Expression", Type: DataTypeString, Nullable: true},
 		},
 	}
 }

@@ -127,6 +127,128 @@ func showDatabasesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResu
 	}
 }
 
+func showIndexRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	rows := showIndexRows(query.Mutation.Target, query.Mutation.Columns)
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Table", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Non_unique", qsbridge.DataTypeInt, len(rows)),
+		describeProjectionVector("Key_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Seq_in_index", qsbridge.DataTypeInt, len(rows)),
+		describeProjectionVector("Column_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Collation", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Cardinality", qsbridge.DataTypeInt, len(rows)),
+		describeProjectionVector("Sub_part", qsbridge.DataTypeInt, len(rows)),
+		describeProjectionVector("Packed", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Null", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Index_type", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Comment", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Index_comment", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Visible", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Expression", qsbridge.DataTypeString, len(rows)),
+	}
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.Table)
+		vectors[1].Values[i] = describeIntCell(row.NonUnique)
+		vectors[2].Values[i] = describeStringCell(row.KeyName)
+		vectors[3].Values[i] = describeIntCell(row.SeqInIndex)
+		vectors[4].Values[i] = describeStringCell(row.ColumnName)
+		vectors[5].Values[i] = describeStringCell(row.Collation)
+		vectors[6].Values[i] = describeNullCell()
+		vectors[7].Values[i] = describeNullCell()
+		vectors[8].Values[i] = describeNullCell()
+		vectors[9].Values[i] = describeStringCell(row.Null)
+		vectors[10].Values[i] = describeStringCell(row.IndexType)
+		vectors[11].Values[i] = describeStringCell(row.Comment)
+		vectors[12].Values[i] = describeStringCell(row.IndexComment)
+		vectors[13].Values[i] = describeStringCell("YES")
+		vectors[14].Values[i] = describeNullCell()
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+type showIndexRow struct {
+	Table        string
+	NonUnique    int64
+	KeyName      string
+	SeqInIndex   int64
+	ColumnName   string
+	Collation    string
+	Null         string
+	IndexType    string
+	Comment      string
+	IndexComment string
+}
+
+func showIndexRows(target qsbridge.TableInstance, columns []qsbridge.FieldRef) []showIndexRow {
+	tableName := strings.TrimSpace(target.Table)
+	if tableName == "" {
+		tableName = strings.TrimSpace(string(target.ID))
+	}
+	rows := make([]showIndexRow, 0, len(columns))
+	primarySeq := int64(1)
+	for _, column := range columns {
+		if !column.PrimaryKey {
+			continue
+		}
+		rows = append(rows, showIndexRowForColumn(tableName, column, "PRIMARY", 0, primarySeq, "primary_key=true"))
+		primarySeq++
+	}
+	for _, column := range columns {
+		if column.PrimaryKey || !showIndexColumnHasMapper(column) {
+			continue
+		}
+		keyName := "qs_" + strings.TrimSpace(column.Name)
+		rows = append(rows, showIndexRowForColumn(tableName, column, keyName, 1, 1, ""))
+	}
+	return rows
+}
+
+func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName string, nonUnique int64, seq int64, prefix string) showIndexRow {
+	comment := describeExtra(column)
+	indexComment := strings.TrimSpace(strings.Join(nonEmptyStrings(prefix, comment), " "))
+	nullValue := ""
+	if column.Nullable {
+		nullValue = "YES"
+	}
+	return showIndexRow{
+		Table:        tableName,
+		NonUnique:    nonUnique,
+		KeyName:      keyName,
+		SeqInIndex:   seq,
+		ColumnName:   column.Name,
+		Collation:    "A",
+		Null:         nullValue,
+		IndexType:    "QUANTA",
+		Comment:      comment,
+		IndexComment: indexComment,
+	}
+}
+
+func showIndexColumnHasMapper(column qsbridge.FieldRef) bool {
+	return strings.TrimSpace(describeExtra(column)) != ""
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
 func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	tables := query.Catalog.Objects
@@ -197,6 +319,14 @@ func describeProjectionVector(name string, dataType qsbridge.DataType, rows int)
 
 func describeStringCell(value string) qsbridge.ResultCell {
 	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value}
+}
+
+func describeIntCell(value int64) qsbridge.ResultCell {
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value}
+}
+
+func describeNullCell() qsbridge.ResultCell {
+	return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}
 }
 
 func describeSQLType(field qsbridge.FieldRef) string {

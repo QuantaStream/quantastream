@@ -758,6 +758,48 @@ func TestUnboundStatementBindShowTables(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowIndex(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []FieldDefinition{
+				{Name: "c_custkey", Type: DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: DataTypeString, Nullable: true, Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{MaxLength: 25})},
+			},
+		}},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show index from customer",
+		Kind: QueryKindShowIndex,
+		ShowIndex: UnboundShowIndex{
+			Table:  UnboundTable{Name: "customer"},
+			Result: showIndexResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowIndex {
+		t.Fatalf("Kind = %q, want show_index", query.Kind)
+	}
+	if query.Mutation.Target.Table != "customer" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("target = %#v, want quanta.customer", query.Mutation.Target)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if !query.Mutation.Columns[0].PrimaryKey || query.Mutation.Columns[1].Encoding.LegacyName != "StringLexBSI" {
+		t.Fatalf("columns = %#v, want primary key plus mapper metadata", query.Mutation.Columns)
+	}
+	if got, want := len(query.Result.Columns), 15; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
 func TestUnboundStatementBindDescribeTable(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{

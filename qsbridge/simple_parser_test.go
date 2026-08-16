@@ -263,6 +263,32 @@ func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowIndexStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show index from quanta.customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowIndex {
+		t.Fatalf("kind = %q, want show_index", statement.Kind)
+	}
+	if statement.ShowIndex.Table.Schema != "quanta" || statement.ShowIndex.Table.Name != "customer" {
+		t.Fatalf("target = %#v, want quanta.customer", statement.ShowIndex.Table)
+	}
+	if statement.ShowIndex.Result.Kind != ResultQuery || len(statement.ShowIndex.Result.Columns) != 15 {
+		t.Fatalf("result = %#v, want fifteen-column query result", statement.ShowIndex.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowKeysStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show keys in customer;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowIndex || statement.ShowIndex.Table.Name != "customer" {
+		t.Fatalf("statement = %#v, want show index customer", statement)
+	}
+}
+
 func TestSimpleParserBridgeParsesDescribeStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("describe customer;")
 	if diagnostics.BlocksNative() {

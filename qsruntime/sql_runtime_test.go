@@ -194,6 +194,63 @@ func TestSQLRuntimeExecuteSQLShowTablesReturnsCatalogRows(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowIndexReturnsPKAndMapperRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true, Encoding: qsbridge.LegacyEncodingProfile("IntBSI", qsbridge.LegacyEncodingOptions{})},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25})},
+				{Name: "notes", Type: qsbridge.DataTypeString, Nullable: true},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show index from customer", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW INDEX should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if got, want := len(result.Runtime.RowSet.ProjectionVectors), 15; got != want {
+		t.Fatalf("projection columns = %d, want %d", got, want)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 15 {
+		t.Fatalf("rows = %#v, want two fifteen-column rows", chunk.Rows)
+	}
+	pk := chunk.Rows[0]
+	if pk[0].Value != "customer" || pk[1].Value != int64(0) || pk[2].Value != "PRIMARY" || pk[3].Value != int64(1) || pk[4].Value != "c_custkey" {
+		t.Fatalf("primary row = %#v", pk)
+	}
+	if pk[10].Value != "QUANTA" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true mapper=IntBSI" {
+		t.Fatalf("primary row mapper metadata = %#v", pk)
+	}
+	mapped := chunk.Rows[1]
+	if mapped[1].Value != int64(1) || mapped[2].Value != "qs_c_name" || mapped[4].Value != "c_name" {
+		t.Fatalf("mapper row = %#v", mapped)
+	}
+	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTA" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "mapper=StringLexBSI" {
+		t.Fatalf("mapper row metadata = %#v", mapped)
+	}
+	if mapped[14].Kind != qsbridge.ValueNull {
+		t.Fatalf("expression = %#v, want NULL", mapped[14])
+	}
+}
+
 func TestSQLRuntimeExecuteSQLDescribeReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
