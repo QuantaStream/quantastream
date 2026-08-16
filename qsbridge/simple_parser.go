@@ -954,30 +954,72 @@ func parseSimpleSchemaAndOptionalLike(text string) (string, string, bool) {
 
 func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundStatement, Diagnostic, bool) {
 	schemaName := ""
+	pattern := ""
 	trimmed := strings.TrimSpace(tablesBody)
 	if trimmed != "" {
-		schemaBody, ok := consumeKeyword(trimmed, "from")
-		if !ok {
-			schemaBody, ok = consumeKeyword(trimmed, "in")
+		schemaText := trimmed
+		whereText := ""
+		hasWhere := false
+		if body, ok := consumeKeyword(trimmed, "where"); ok {
+			schemaText = ""
+			whereText = body
+			hasWhere = true
+		} else {
+			schemaText, whereText, hasWhere = splitOptionalKeyword(trimmed, "where")
 		}
-		if !ok {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES only supports optional FROM/IN schema"), false
+		if hasWhere {
+			if !full {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES WHERE Table_type requires SHOW FULL TABLES"), false
+			}
+			var diagnostic Diagnostic
+			var ok bool
+			pattern, diagnostic, ok = parseSimpleShowTablesWherePattern(whereText)
+			if !ok {
+				return UnboundStatement{}, diagnostic, false
+			}
 		}
-		fields := strings.Fields(schemaBody)
-		if len(fields) != 1 {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES schema must be a single name"), false
+		schemaText = strings.TrimSpace(schemaText)
+		if schemaText != "" {
+			schemaBody, ok := consumeKeyword(schemaText, "from")
+			if !ok {
+				schemaBody, ok = consumeKeyword(schemaText, "in")
+			}
+			if !ok {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES only supports optional FROM/IN schema and SHOW FULL TABLES WHERE Table_type = literal"), false
+			}
+			fields := strings.Fields(schemaBody)
+			if len(fields) != 1 {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES schema must be a single name"), false
+			}
+			schemaName = fields[0]
 		}
-		schemaName = fields[0]
 	}
 	return UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindShowTables,
 		ShowTables: UnboundShowTables{
-			Schema: schemaName,
-			Full:   full,
-			Result: showTablesResultShape(schemaName, full),
+			Schema:  schemaName,
+			Full:    full,
+			Pattern: pattern,
+			Result:  showTablesResultShape(schemaName, full),
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleShowTablesWherePattern(whereText string) (string, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(whereText))
+	if len(fields) < 3 {
+		return "", simpleParserDiagnostic("SHOW FULL TABLES WHERE must use Table_type = literal or Table_type LIKE literal"), false
+	}
+	fieldName := strings.Trim(fields[0], "`\"")
+	if !strings.EqualFold(fieldName, "Table_type") {
+		return "", simpleParserDiagnostic("SHOW FULL TABLES WHERE only supports Table_type predicates"), false
+	}
+	op := strings.ToLower(fields[1])
+	if op != "=" && op != "like" {
+		return "", simpleParserDiagnostic("SHOW FULL TABLES WHERE only supports Table_type = literal or Table_type LIKE literal"), false
+	}
+	return strings.Trim(strings.Join(fields[2:], " "), "'\""), Diagnostic{}, true
 }
 
 func parseSimpleShowOpenTables(sql string, tablesBody string) (UnboundStatement, Diagnostic, bool) {

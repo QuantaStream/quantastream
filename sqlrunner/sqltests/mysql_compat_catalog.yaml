@@ -54,6 +54,17 @@ tests:
     expect:
       columns: [Tables_in_quanta, Table_type]
 
+  - id: mysql_compat_catalog.0111.show_full_tables_where_view
+    status: supported
+    kind: query
+    feature: catalog_tables
+    compatibility: mysql
+    requires: [show_full_tables, metadata_columns, where]
+    sql: |
+      show full tables where Table_type = 'VIEW'
+    expect:
+      columns: [Tables_in_quanta, Table_type]
+
   - id: mysql_compat_catalog.015.show_table_status
     status: supported
     kind: query

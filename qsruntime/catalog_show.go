@@ -345,6 +345,10 @@ func showTableStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	tables := query.Catalog.Objects
+	objectTypes := query.Catalog.ObjectTypes
+	if query.Catalog.Full && strings.TrimSpace(query.Catalog.Pattern) != "" {
+		tables, objectTypes = filterShowTablesByObjectType(tables, objectTypes, query.Catalog.Pattern)
+	}
 	columnName := showTablesRuntimeColumnName(query.Catalog.Schema)
 	if len(query.Result.Columns) > 0 && strings.TrimSpace(query.Result.Columns[0].Name) != "" {
 		columnName = query.Result.Columns[0].Name
@@ -365,8 +369,8 @@ func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 		vectors[0].Values[i] = describeStringCell(table.Table)
 		if query.Catalog.Full && len(vectors) > 1 {
 			objectType := "BASE TABLE"
-			if i < len(query.Catalog.ObjectTypes) && strings.TrimSpace(query.Catalog.ObjectTypes[i]) != "" {
-				objectType = query.Catalog.ObjectTypes[i]
+			if i < len(objectTypes) && strings.TrimSpace(objectTypes[i]) != "" {
+				objectType = objectTypes[i]
 			}
 			vectors[1].Values[i] = describeStringCell(objectType)
 		}
@@ -379,6 +383,26 @@ func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 		},
 		Count: uint64(len(tables)),
 	}
+}
+
+func filterShowTablesByObjectType(tables []qsbridge.TableInstance, objectTypes []string, pattern string) ([]qsbridge.TableInstance, []string) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return tables, objectTypes
+	}
+	filteredTables := make([]qsbridge.TableInstance, 0, len(tables))
+	filteredTypes := make([]string, 0, len(tables))
+	for i, table := range tables {
+		objectType := "BASE TABLE"
+		if i < len(objectTypes) && strings.TrimSpace(objectTypes[i]) != "" {
+			objectType = objectTypes[i]
+		}
+		if strings.EqualFold(objectType, pattern) || sqlLikeMatch(objectType, pattern) {
+			filteredTables = append(filteredTables, table)
+			filteredTypes = append(filteredTypes, objectType)
+		}
+	}
+	return filteredTables, filteredTypes
 }
 
 func showOpenTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {

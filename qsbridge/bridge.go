@@ -269,6 +269,7 @@ type UnboundShowTableStatus struct {
 type UnboundShowTables struct {
 	Schema   string
 	Full     bool
+	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1297,6 +1298,7 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	query.Result = showTablesResultShape(schemaName, showStmt.Full)
 	query.Catalog.Schema = schemaName
 	query.Catalog.Full = showStmt.Full
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
 
 	objects, diagnostics := collectCatalogTableObjects(context, schemaName, showStmt.Full)
 	if diagnostics.BlocksNative() {

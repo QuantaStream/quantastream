@@ -269,6 +269,25 @@ func TestSimpleParserBridgeParsesShowFullTablesStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowFullTablesWhereTableTypeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show full tables where Table_type = 'VIEW';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTables {
+		t.Fatalf("kind = %q, want show_tables", statement.Kind)
+	}
+	if !statement.ShowTables.Full {
+		t.Fatalf("show full flag = false, want true")
+	}
+	if got, want := statement.ShowTables.Pattern, "VIEW"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got, want := len(statement.ShowTables.Result.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show tables from quanta;")
 	if diagnostics.BlocksNative() {
