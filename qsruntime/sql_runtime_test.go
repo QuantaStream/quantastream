@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -514,6 +515,61 @@ func TestSQLRuntimeExecuteSQLRunsConstantScalarProjection(t *testing.T) {
 	}
 	if got, want := chunk.Rows[0][2].Value, "ha"; got != want {
 		t.Fatalf("substring part = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLRunsMySQLCompatibleConstantScalarFunctions(t *testing.T) {
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		t.Fatalf("constant scalar projection should not dispatch to the direct executor")
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `select concat('quanta', 'stream') as product,
+		trim('  core  ') as trimmed,
+		left('stream', 3) as left_value,
+		right('stream', 3) as right_value,
+		substring('alphabet', -3) as tail,
+		ifnull(null, 'fallback') as fallback,
+		nullif('same', 'same') as null_value,
+		abs(-42) as magnitude,
+		round(12345, -2) as rounded,
+		month('1995-03-15') as ship_month,
+		day('1995-03-15') as ship_day`, qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 {
+		t.Fatalf("rows = %#v, want one row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	want := []qsbridge.ResultCell{
+		{Kind: qsbridge.ValueString, Value: "quantastream"},
+		{Kind: qsbridge.ValueString, Value: "core"},
+		{Kind: qsbridge.ValueString, Value: "str"},
+		{Kind: qsbridge.ValueString, Value: "eam"},
+		{Kind: qsbridge.ValueString, Value: "bet"},
+		{Kind: qsbridge.ValueString, Value: "fallback"},
+		{Kind: qsbridge.ValueNull, Value: nil},
+		{Kind: qsbridge.ValueFloat, Value: float64(42)},
+		{Kind: qsbridge.ValueFloat, Value: float64(12300)},
+		{Kind: qsbridge.ValueInt, Value: int64(3)},
+		{Kind: qsbridge.ValueInt, Value: int64(15)},
+	}
+	if len(row) != len(want) {
+		t.Fatalf("row width = %d, want %d: %#v", len(row), len(want), row)
+	}
+	for i := range want {
+		if row[i].Kind != want[i].Kind || fmt.Sprint(row[i].Value) != fmt.Sprint(want[i].Value) {
+			t.Fatalf("cell %d = %#v, want %#v", i, row[i], want[i])
+		}
 	}
 }
 

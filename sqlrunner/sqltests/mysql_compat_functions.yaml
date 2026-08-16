@@ -133,12 +133,11 @@ tests:
         - [1995]
 
   - id: mysql_compat_functions.020.concat
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_string_boundary
+    feature: scalar_functions_string
     compatibility: mysql
     requires: [select, concat]
-    issue: "CONCAT is not registered as a native SQL scalar function yet."
     sql: |
       select concat('quanta', 'stream') as value
     expect:
@@ -147,12 +146,11 @@ tests:
         - [quantastream]
 
   - id: mysql_compat_functions.021.trim
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_string_boundary
+    feature: scalar_functions_string
     compatibility: mysql
     requires: [select, trim]
-    issue: "TRIM/LTRIM/RTRIM are not registered as native SQL scalar functions yet."
     sql: |
       select trim('  quanta  ') as value
     expect:
@@ -161,12 +159,11 @@ tests:
         - [quanta]
 
   - id: mysql_compat_functions.022.replace
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_string_boundary
+    feature: scalar_functions_string
     compatibility: mysql
     requires: [select, replace]
-    issue: "REPLACE is not registered as a native SQL scalar function yet."
     sql: |
       select replace('stream', 's', 'S') as value
     expect:
@@ -175,12 +172,11 @@ tests:
         - [Stream]
 
   - id: mysql_compat_functions.023.left_right
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_string_boundary
+    feature: scalar_functions_string
     compatibility: mysql
     requires: [select, left, right]
-    issue: "LEFT and RIGHT string helpers are not registered as native SQL scalar functions yet."
     sql: |
       select left('stream', 3) as left_value, right('stream', 3) as right_value
     expect:
@@ -189,12 +185,11 @@ tests:
         - [str, eam]
 
   - id: mysql_compat_functions.024.substring_negative_start
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_string_boundary
+    feature: scalar_functions_string
     compatibility: mysql
     requires: [select, substring]
-    issue: "MySQL negative SUBSTRING offsets count from the end; the native evaluator currently returns an empty string."
     sql: |
       select substring('alphabet', -3) as value
     expect:
@@ -202,13 +197,38 @@ tests:
       rows:
         - [bet]
 
-  - id: mysql_compat_functions.030.ifnull
-    status: xfail
+  - id: mysql_compat_functions.025.trim_sides
+    status: supported
     kind: query
-    feature: scalar_functions_null_boundary
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, ltrim, rtrim]
+    sql: |
+      select ltrim('  left') as left_trimmed, rtrim('right  ') as right_trimmed
+    expect:
+      columns: [left_trimmed, right_trimmed]
+      rows:
+        - [left, right]
+
+  - id: mysql_compat_functions.026.concat_null
+    status: supported
+    kind: query
+    feature: scalar_functions_string
+    compatibility: mysql
+    requires: [select, concat, null]
+    sql: |
+      select concat('quanta', null) as value
+    expect:
+      columns: [value]
+      rows:
+        - [null]
+
+  - id: mysql_compat_functions.030.ifnull
+    status: supported
+    kind: query
+    feature: scalar_functions_null
     compatibility: mysql
     requires: [select, ifnull, null]
-    issue: "IFNULL is not registered as a native SQL scalar function yet."
     sql: |
       select ifnull(null, 'fallback') as value
     expect:
@@ -217,12 +237,11 @@ tests:
         - [fallback]
 
   - id: mysql_compat_functions.031.nullif
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_null_boundary
+    feature: scalar_functions_null
     compatibility: mysql
     requires: [select, nullif]
-    issue: "NULLIF is not registered as a native SQL scalar function yet."
     sql: |
       select nullif('same', 'same') as value
     expect:
@@ -231,12 +250,11 @@ tests:
         - [null]
 
   - id: mysql_compat_functions.040.numeric_math
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_numeric_boundary
+    feature: scalar_functions_numeric
     compatibility: mysql
     requires: [select, abs, round]
-    issue: "Common numeric scalar helpers are not registered as native SQL scalar functions yet."
     sql: |
       select abs(-42) as magnitude, round(12345, -2) as rounded
     expect:
@@ -245,12 +263,11 @@ tests:
         - [42, 12300]
 
   - id: mysql_compat_functions.050.month_day
-    status: xfail
+    status: supported
     kind: query
-    feature: scalar_functions_datetime_boundary
+    feature: scalar_functions_datetime
     compatibility: mysql
     requires: [select, month, day]
-    issue: "MONTH and DAY are not registered as MySQL-compatible aliases for QuantaStream time-part helpers yet."
     sql: |
       select month('1995-03-15') as ship_month, day('1995-03-15') as ship_day
     expect:
