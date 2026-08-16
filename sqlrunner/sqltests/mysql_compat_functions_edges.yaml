@@ -1,0 +1,71 @@
+version: 1
+name: mysql_compat_functions_edges
+
+tests:
+  - id: mysql_compat_functions_edges.001.greatest_least_null_arguments
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_null_edges
+    compatibility: mysql
+    requires: [select, greatest, least, null]
+    sql: |
+      select greatest(3, null, 7) as greatest_null,
+             least(3, null, 7) as least_null
+    expect:
+      columns: [greatest_null, least_null]
+      rows:
+        - [null, null]
+
+  - id: mysql_compat_functions_edges.002.concat_null_edges
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_string_null_edges
+    compatibility: mysql
+    requires: [select, concat, concat_ws, null]
+    sql: |
+      select concat('a', null, 'b') as concat_null,
+             concat_ws('|', 'a', null, 'b') as concat_ws_skip_null,
+             concat_ws('|', null, null) as concat_ws_all_null_values,
+             concat_ws(null, 'a', 'b') as concat_ws_null_separator
+    expect:
+      columns: [concat_null, concat_ws_skip_null, concat_ws_all_null_values, concat_ws_null_separator]
+      rows:
+        - [null, a|b, "", null]
+
+  - id: mysql_compat_functions_edges.003.pad_null_and_empty_edges
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_string_null_edges
+    compatibility: mysql
+    requires: [select, lpad, rpad, null]
+    sql: |
+      select lpad(null, 4, '0') as lpad_null_value,
+             lpad('x', 4, null) as lpad_null_pad,
+             lpad('x', 4, '') as lpad_empty_pad,
+             rpad('x', 4, '') as rpad_empty_pad
+    expect:
+      columns: [lpad_null_value, lpad_null_pad, lpad_empty_pad, rpad_empty_pad]
+      rows:
+        - [null, null, "", ""]
+
+  - id: mysql_compat_functions_edges.004.numeric_and_control_null_edges
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_null_control_edges
+    compatibility: mysql
+    requires: [select, mod, if, isnull, null]
+    sql: |
+      select mod(17, 0) as mod_zero,
+             if(null, 'yes', 'no') as if_null_condition,
+             if(0, 'yes', 'no') as if_zero_condition,
+             if(2, 'yes', 'no') as if_nonzero_condition,
+             isnull(null) as isnull_null,
+             isnull('x') as isnull_value
+    expect:
+      columns: [mod_zero, if_null_condition, if_zero_condition, if_nonzero_condition, isnull_null, isnull_value]
+      rows:
+        - [null, no, no, yes, 1, 0]

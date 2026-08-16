@@ -1443,7 +1443,7 @@ func directBitmapEvaluateMaterializedPadCall(call qsbridge.CallExpr, materialize
 	}
 	padRunes := []rune(fmt.Sprint(padCell.Value))
 	if len(padRunes) == 0 {
-		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: ""}, nil
 	}
 	padding := directBitmapPadString(padRunes, length-len(valueRunes))
 	if strings.EqualFold(call.Name, "lpad") {

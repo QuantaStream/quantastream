@@ -264,6 +264,16 @@ func TestDirectBitmapEvaluateMaterializedStringBreadthCalls(t *testing.T) {
 			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "QS..."},
 		},
 		{
+			name: "lpad empty pad string",
+			call: qsbridge.Call("lpad", qsbridge.Literal(qsbridge.ValueString, "x"), qsbridge.Literal(qsbridge.ValueInt, int64(4)), qsbridge.Literal(qsbridge.ValueString, "")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: ""},
+		},
+		{
+			name: "rpad empty pad string",
+			call: qsbridge.Call("rpad", qsbridge.Literal(qsbridge.ValueString, "x"), qsbridge.Literal(qsbridge.ValueInt, int64(4)), qsbridge.Literal(qsbridge.ValueString, "")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: ""},
+		},
+		{
 			name: "ascii",
 			call: qsbridge.Call("ascii", qsbridge.Literal(qsbridge.ValueString, "QuantaStream")),
 			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(81)},
