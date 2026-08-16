@@ -570,6 +570,38 @@ func TestSQLRuntimeExecuteSQLShowEnginesReturnsQuantaStreamEngineRow(t *testing.
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowTableTypesReturnsQuantaStreamEngineRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show table types", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW TABLE TYPES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 6 {
+		t.Fatalf("rows = %#v, want one six-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "QUANTASTREAM" || row[1].Value != "DEFAULT" {
+		t.Fatalf("table type row = %#v, want QUANTASTREAM default metadata", row)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowPluginsReturnsQuantaStreamPluginRow(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
@@ -599,6 +631,90 @@ func TestSQLRuntimeExecuteSQLShowPluginsReturnsQuantaStreamPluginRow(t *testing.
 	row := chunk.Rows[0]
 	if row[0].Value != "QUANTASTREAM" || row[1].Value != "ACTIVE" || row[2].Value != "STORAGE ENGINE" {
 		t.Fatalf("plugin row = %#v, want QUANTASTREAM active storage engine metadata", row)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowFunctionStatusReturnsCatalogFunctionRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: []qsbridge.FunctionDefinition{
+			{Name: "lower", Kind: qsbridge.FunctionScalar, Origin: qsbridge.FunctionOriginMySQLCompatible, Placement: qsbridge.FunctionPlacementExpression, ReturnType: qsbridge.DataTypeString, Native: true, Deterministic: true},
+			{Name: "upper", Kind: qsbridge.FunctionScalar, Origin: qsbridge.FunctionOriginMySQLCompatible, Placement: qsbridge.FunctionPlacementExpression, ReturnType: qsbridge.DataTypeString, Native: true, Deterministic: true},
+		},
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{User: "moli", CurrentSchema: "quanta"}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show function status like 'lo%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW FUNCTION STATUS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 11 {
+		t.Fatalf("rows = %#v, want one eleven-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "quanta" || row[1].Value != "lower" || row[2].Value != "FUNCTION" || row[3].Value != "moli@%" {
+		t.Fatalf("function status row = %#v, want lower function metadata", row)
+	}
+	if row[7].Value != "kind=scalar origin=mysql_compatible placement=expression native=true deterministic=true" {
+		t.Fatalf("function comment = %#v", row[7].Value)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowEmptyRoutineTriggerEventStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		columns int
+		kind    qsbridge.QueryKind
+	}{
+		{name: "procedure status", sql: "show procedure status", columns: 11, kind: qsbridge.QueryKindShowProcedureStatus},
+		{name: "triggers", sql: "show triggers from quanta", columns: 11, kind: qsbridge.QueryKindShowTriggers},
+		{name: "events", sql: "show events from quanta", columns: 15, kind: qsbridge.QueryKindShowEvents},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			executed := false
+			runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+				Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+			}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+				executed = true
+				return ExecutionResult{}, nil
+			})
+
+			result, err := runtime.ExecuteSQL(context.Background(), tc.sql, qsbridge.ExecutionOptions{})
+			if err != nil {
+				t.Fatalf("ExecuteSQL failed: %v", err)
+			}
+			if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+			}
+			if executed {
+				t.Fatalf("%s should not dispatch to the direct executor", tc.sql)
+			}
+			chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("chunk diagnostics = %#v", diagnostics)
+			}
+			if len(chunk.Rows) != 0 || len(result.Runtime.RowSet.ProjectionVectors) != tc.columns {
+				t.Fatalf("rows/vectors = %#v/%d, want empty %d-column metadata", chunk.Rows, len(result.Runtime.RowSet.ProjectionVectors), tc.columns)
+			}
+			if result.Prepared.Kind != tc.kind {
+				t.Fatalf("prepared kind = %q, want %q", result.Prepared.Kind, tc.kind)
+			}
+		})
 	}
 }
 

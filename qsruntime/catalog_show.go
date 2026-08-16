@@ -1,6 +1,7 @@
 package qsruntime
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -405,6 +406,114 @@ func showOpenTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRes
 		},
 		Count: uint64(len(objects)),
 	}
+}
+
+func showTableTypesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	return showEnginesRuntimeResult(request)
+}
+
+func showFunctionStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	functions := query.Catalog.Functions
+	rownums := make([]qsbridge.QuantaRownum, len(functions))
+	vectors := routineStatusProjectionVectors(len(functions))
+	dbName := routineStatusDatabase(request)
+	definer := routineStatusDefiner(request)
+	for i, function := range functions {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(dbName)
+		vectors[1].Values[i] = describeStringCell(function.Name)
+		vectors[2].Values[i] = describeStringCell("FUNCTION")
+		vectors[3].Values[i] = describeStringCell(definer)
+		vectors[4].Values[i] = describeNullCell()
+		vectors[5].Values[i] = describeNullCell()
+		vectors[6].Values[i] = describeStringCell("DEFINER")
+		vectors[7].Values[i] = describeStringCell(functionStatusComment(function))
+		vectors[8].Values[i] = describeStringCell("utf8mb4")
+		vectors[9].Values[i] = describeStringCell("utf8mb4_0900_ai_ci")
+		vectors[10].Values[i] = describeStringCell("utf8mb4_0900_ai_ci")
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(functions)),
+	}
+}
+
+func showProcedureStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	return emptyMetadataRuntimeResult(request.Bound.Prepared.Query.Result.Columns)
+}
+
+func showTriggersRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	return emptyMetadataRuntimeResult(request.Bound.Prepared.Query.Result.Columns)
+}
+
+func showEventsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	return emptyMetadataRuntimeResult(request.Bound.Prepared.Query.Result.Columns)
+}
+
+func routineStatusProjectionVectors(count int) []qsbridge.QuantaProjectionVector {
+	return []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Db", qsbridge.DataTypeString, count),
+		describeProjectionVector("Name", qsbridge.DataTypeString, count),
+		describeProjectionVector("Type", qsbridge.DataTypeString, count),
+		describeProjectionVector("Definer", qsbridge.DataTypeString, count),
+		describeProjectionVector("Modified", qsbridge.DataTypeTime, count),
+		describeProjectionVector("Created", qsbridge.DataTypeTime, count),
+		describeProjectionVector("Security_type", qsbridge.DataTypeString, count),
+		describeProjectionVector("Comment", qsbridge.DataTypeString, count),
+		describeProjectionVector("character_set_client", qsbridge.DataTypeString, count),
+		describeProjectionVector("collation_connection", qsbridge.DataTypeString, count),
+		describeProjectionVector("Database Collation", qsbridge.DataTypeString, count),
+	}
+}
+
+func emptyMetadataRuntimeResult(columns []qsbridge.FieldRef) ExecutionResult {
+	vectors := make([]qsbridge.QuantaProjectionVector, 0, len(columns))
+	for _, column := range columns {
+		vectors = append(vectors, describeProjectionVector(column.Name, column.Type, 0))
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           []qsbridge.QuantaRownum{},
+			ProjectionVectors: vectors,
+		},
+		Count: 0,
+	}
+}
+
+func routineStatusDatabase(request qsbridge.ExecutionRequest) string {
+	if schema := strings.TrimSpace(request.Bound.Prepared.Query.Catalog.Schema); schema != "" {
+		return schema
+	}
+	if schema := strings.TrimSpace(request.Bound.Prepared.Session.CurrentSchema); schema != "" {
+		return schema
+	}
+	return "quanta"
+}
+
+func routineStatusDefiner(request qsbridge.ExecutionRequest) string {
+	user := strings.TrimSpace(string(request.Bound.Prepared.Session.User))
+	if user == "" {
+		user = "MOLIG004"
+	}
+	return user + "@%"
+}
+
+func functionStatusComment(function qsbridge.FunctionDefinition) string {
+	origin := strings.TrimSpace(string(function.Origin))
+	if origin == "" {
+		origin = "unknown"
+	}
+	placement := strings.TrimSpace(string(function.EffectivePlacement()))
+	if placement == "" {
+		placement = "unknown"
+	}
+	return fmt.Sprintf("kind=%s origin=%s placement=%s native=%t deterministic=%t", function.Kind, origin, placement, function.Native, function.Deterministic)
 }
 
 func showTablesRuntimeColumnName(schemaName string) string {

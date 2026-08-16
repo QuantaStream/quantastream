@@ -38,6 +38,16 @@ const (
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindShowOpenTables identifies a SHOW OPEN TABLES catalog read statement.
 	QueryKindShowOpenTables QueryKind = "show_open_tables"
+	// QueryKindShowTableTypes identifies a SHOW TABLE TYPES metadata read statement.
+	QueryKindShowTableTypes QueryKind = "show_table_types"
+	// QueryKindShowFunctionStatus identifies a SHOW FUNCTION STATUS metadata read statement.
+	QueryKindShowFunctionStatus QueryKind = "show_function_status"
+	// QueryKindShowProcedureStatus identifies a SHOW PROCEDURE STATUS metadata read statement.
+	QueryKindShowProcedureStatus QueryKind = "show_procedure_status"
+	// QueryKindShowTriggers identifies a SHOW TRIGGERS metadata read statement.
+	QueryKindShowTriggers QueryKind = "show_triggers"
+	// QueryKindShowEvents identifies a SHOW EVENTS metadata read statement.
+	QueryKindShowEvents QueryKind = "show_events"
 	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.
 	QueryKindShowVariables QueryKind = "show_variables"
 	// QueryKindShowStatus identifies a SHOW STATUS metadata read statement.
@@ -114,6 +124,7 @@ type CatalogReadShape struct {
 	Schemas     []string
 	Objects     []TableInstance
 	ObjectTypes []string
+	Functions   []FunctionDefinition
 	Full        bool
 	Pattern     string
 }

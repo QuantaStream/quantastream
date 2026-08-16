@@ -35,6 +35,11 @@ type UnboundStatement struct {
 	ShowTableStatus UnboundShowTableStatus
 	ShowTables      UnboundShowTables
 	ShowOpenTables  UnboundShowOpenTables
+	ShowTableTypes  UnboundShowTableTypes
+	ShowFuncStatus  UnboundShowFunctionStatus
+	ShowProcStatus  UnboundShowProcedureStatus
+	ShowTriggers    UnboundShowTriggers
+	ShowEvents      UnboundShowEvents
 	ShowVars        UnboundShowVariables
 	ShowStatus      UnboundShowStatus
 	ShowWarnings    UnboundShowWarnings
@@ -86,6 +91,16 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowTables(context, s.ShowTables)
 	case QueryKindShowOpenTables:
 		return BindShowOpenTables(context, s.ShowOpenTables)
+	case QueryKindShowTableTypes:
+		return BindShowTableTypes(context, s.ShowTableTypes)
+	case QueryKindShowFunctionStatus:
+		return BindShowFunctionStatus(context, s.ShowFuncStatus)
+	case QueryKindShowProcedureStatus:
+		return BindShowProcedureStatus(context, s.ShowProcStatus)
+	case QueryKindShowTriggers:
+		return BindShowTriggers(context, s.ShowTriggers)
+	case QueryKindShowEvents:
+		return BindShowEvents(context, s.ShowEvents)
 	case QueryKindShowVariables:
 		return BindShowVariables(context, s.ShowVars)
 	case QueryKindShowStatus:
@@ -257,6 +272,42 @@ type UnboundShowTables struct {
 
 // UnboundShowOpenTables describes a SHOW OPEN TABLES metadata read before binding.
 type UnboundShowOpenTables struct {
+	Schema   string
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowTableTypes describes a SHOW TABLE TYPES metadata read before binding.
+type UnboundShowTableTypes struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowFunctionStatus describes a SHOW FUNCTION STATUS metadata read before binding.
+type UnboundShowFunctionStatus struct {
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowProcedureStatus describes a SHOW PROCEDURE STATUS metadata read before binding.
+type UnboundShowProcedureStatus struct {
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowTriggers describes a SHOW TRIGGERS metadata read before binding.
+type UnboundShowTriggers struct {
+	Schema   string
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowEvents describes a SHOW EVENTS metadata read before binding.
+type UnboundShowEvents struct {
 	Schema   string
 	Pattern  string
 	Result   ResultShape
@@ -1286,6 +1337,97 @@ func BindShowOpenTables(context *BindContext, showStmt UnboundShowOpenTables) (Q
 		query.Catalog.Objects = append(query.Catalog.Objects, object.instance)
 		query.Catalog.ObjectTypes = append(query.Catalog.ObjectTypes, object.objectType)
 	}
+	return query, nil
+}
+
+// BindShowTableTypes binds parser-neutral SHOW TABLE TYPES metadata into QueryIR.
+func BindShowTableTypes(context *BindContext, showStmt UnboundShowTableTypes) (QueryIR, DiagnosticSet) {
+	_ = context
+	return QueryIR{
+		Kind:     QueryKindShowTableTypes,
+		Result:   showTableTypesResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowFunctionStatus binds parser-neutral SHOW FUNCTION STATUS metadata into QueryIR.
+func BindShowFunctionStatus(context *BindContext, showStmt UnboundShowFunctionStatus) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowFunctionStatus,
+		Result:   showRoutineStatusResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	metadata, ok := context.Catalog.(CatalogFunctionMetadata)
+	if !ok {
+		return query, catalogMetadataUnsupportedDiagnostics()
+	}
+	query.Catalog.Schema = strings.TrimSpace(context.DefaultSchema)
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	functions, diagnostics := metadata.ListFunctions()
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Catalog.Functions = make([]FunctionDefinition, 0, len(functions))
+	for _, function := range functions {
+		if query.Catalog.Pattern != "" && !sqlCatalogLikeMatch(function.Name, query.Catalog.Pattern) {
+			continue
+		}
+		query.Catalog.Functions = append(query.Catalog.Functions, cloneFunctionDefinition(function))
+	}
+	return query, nil
+}
+
+// BindShowProcedureStatus binds parser-neutral SHOW PROCEDURE STATUS metadata into QueryIR.
+func BindShowProcedureStatus(context *BindContext, showStmt UnboundShowProcedureStatus) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowProcedureStatus,
+		Result:   showRoutineStatusResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context != nil {
+		query.Catalog.Schema = strings.TrimSpace(context.DefaultSchema)
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowTriggers binds parser-neutral SHOW TRIGGERS metadata into QueryIR.
+func BindShowTriggers(context *BindContext, showStmt UnboundShowTriggers) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowTriggers,
+		Result:   showTriggersResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	query.Catalog.Schema = strings.TrimSpace(showStmt.Schema)
+	if query.Catalog.Schema == "" && context != nil {
+		query.Catalog.Schema = strings.TrimSpace(context.DefaultSchema)
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowEvents binds parser-neutral SHOW EVENTS metadata into QueryIR.
+func BindShowEvents(context *BindContext, showStmt UnboundShowEvents) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindShowEvents,
+		Result:   showEventsResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	query.Catalog.Schema = strings.TrimSpace(showStmt.Schema)
+	if query.Catalog.Schema == "" && context != nil {
+		query.Catalog.Schema = strings.TrimSpace(context.DefaultSchema)
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
 	return query, nil
 }
 

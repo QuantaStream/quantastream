@@ -196,6 +196,26 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showOpenTablesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowTableTypes {
+		result.Runtime = showTableTypesRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowFunctionStatus {
+		result.Runtime = showFunctionStatusRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowProcedureStatus {
+		result.Runtime = showProcedureStatusRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowTriggers {
+		result.Runtime = showTriggersRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowEvents {
+		result.Runtime = showEventsRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindShowVariables {
 		result.Runtime = r.showVariablesRuntimeResult(request)
 		return result, nil

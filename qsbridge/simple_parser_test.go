@@ -304,6 +304,67 @@ func TestSimpleParserBridgeParsesShowOpenTablesStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowTableTypesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show table types;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTableTypes {
+		t.Fatalf("kind = %q, want show_table_types", statement.Kind)
+	}
+	if got, want := len(statement.ShowTableTypes.Result.Columns), 6; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowRoutineStatusStatements(t *testing.T) {
+	functions, diagnostics := SimpleParserBridge{}.Parse("show function status like 'lo%';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("function status parse diagnostics: %#v", diagnostics)
+	}
+	if functions.Kind != QueryKindShowFunctionStatus || functions.ShowFuncStatus.Pattern != "lo%" {
+		t.Fatalf("function status = %#v, want function status pattern lo%%", functions)
+	}
+	if got, want := len(functions.ShowFuncStatus.Result.Columns), 11; got != want {
+		t.Fatalf("function status columns = %d, want %d", got, want)
+	}
+
+	procedures, diagnostics := SimpleParserBridge{}.Parse("show procedure status;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("procedure status parse diagnostics: %#v", diagnostics)
+	}
+	if procedures.Kind != QueryKindShowProcedureStatus {
+		t.Fatalf("kind = %q, want show_procedure_status", procedures.Kind)
+	}
+	if got, want := len(procedures.ShowProcStatus.Result.Columns), 11; got != want {
+		t.Fatalf("procedure status columns = %d, want %d", got, want)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowTriggerAndEventStatements(t *testing.T) {
+	triggers, diagnostics := SimpleParserBridge{}.Parse("show triggers from quanta like 'order%';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("triggers parse diagnostics: %#v", diagnostics)
+	}
+	if triggers.Kind != QueryKindShowTriggers || triggers.ShowTriggers.Schema != "quanta" || triggers.ShowTriggers.Pattern != "order%" {
+		t.Fatalf("triggers = %#v, want schema quanta pattern order%%", triggers.ShowTriggers)
+	}
+	if got, want := len(triggers.ShowTriggers.Result.Columns), 11; got != want {
+		t.Fatalf("trigger columns = %d, want %d", got, want)
+	}
+
+	events, diagnostics := SimpleParserBridge{}.Parse("show events in quanta;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("events parse diagnostics: %#v", diagnostics)
+	}
+	if events.Kind != QueryKindShowEvents || events.ShowEvents.Schema != "quanta" {
+		t.Fatalf("events = %#v, want schema quanta", events.ShowEvents)
+	}
+	if got, want := len(events.ShowEvents.Result.Columns), 15; got != want {
+		t.Fatalf("event columns = %d, want %d", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show variables like 'character_set_%';")
 	if diagnostics.BlocksNative() {

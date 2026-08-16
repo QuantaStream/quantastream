@@ -675,10 +675,14 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	tableBody, ok := consumeKeyword(showBody, "table")
 	if ok {
 		statusBody, statusOK := consumeKeyword(tableBody, "status")
-		if !statusOK {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE only supports STATUS"), false
+		if statusOK {
+			return parseSimpleShowTableStatus(sql, statusBody)
 		}
-		return parseSimpleShowTableStatus(sql, statusBody)
+		typesBody, typesOK := consumeKeyword(tableBody, "types")
+		if typesOK {
+			return parseSimpleShowTableTypes(sql, typesBody)
+		}
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE only supports STATUS or TYPES"), false
 	}
 	tablesBody, ok := consumeKeyword(showBody, "tables")
 	if ok {
@@ -710,6 +714,30 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 			return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN only supports TABLES"), false
 		}
 		return parseSimpleShowOpenTables(sql, tablesBody)
+	}
+	functionBody, ok := consumeKeyword(showBody, "function")
+	if ok {
+		statusBody, ok := consumeKeyword(functionBody, "status")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW FUNCTION only supports STATUS"), false
+		}
+		return parseSimpleShowFunctionStatus(sql, statusBody)
+	}
+	procedureBody, ok := consumeKeyword(showBody, "procedure")
+	if ok {
+		statusBody, ok := consumeKeyword(procedureBody, "status")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW PROCEDURE only supports STATUS"), false
+		}
+		return parseSimpleShowProcedureStatus(sql, statusBody)
+	}
+	triggersBody, ok := consumeKeyword(showBody, "triggers")
+	if ok {
+		return parseSimpleShowTriggers(sql, triggersBody)
+	}
+	eventsBody, ok := consumeKeyword(showBody, "events")
+	if ok {
+		return parseSimpleShowEvents(sql, eventsBody)
 	}
 	variablesBody, ok := consumeKeyword(showBody, "variables")
 	if ok {
@@ -957,6 +985,113 @@ func parseSimpleShowOpenTables(sql string, tablesBody string) (UnboundStatement,
 			Result:  showOpenTablesResultShape(),
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleShowTableTypes(sql string, typesBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(typesBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE TYPES does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowTableTypes,
+		ShowTableTypes: UnboundShowTableTypes{
+			Result: showTableTypesResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowFunctionStatus(sql string, statusBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(statusBody, "SHOW FUNCTION STATUS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowFunctionStatus,
+		ShowFuncStatus: UnboundShowFunctionStatus{
+			Pattern: pattern,
+			Result:  showRoutineStatusResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowProcedureStatus(sql string, statusBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(statusBody, "SHOW PROCEDURE STATUS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowProcedureStatus,
+		ShowProcStatus: UnboundShowProcedureStatus{
+			Pattern: pattern,
+			Result:  showRoutineStatusResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowTriggers(sql string, triggersBody string) (UnboundStatement, Diagnostic, bool) {
+	schemaName, pattern, diagnostic, ok := parseSimpleShowSchemaAndLike(triggersBody, "SHOW TRIGGERS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowTriggers,
+		ShowTriggers: UnboundShowTriggers{
+			Schema:  schemaName,
+			Pattern: pattern,
+			Result:  showTriggersResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowEvents(sql string, eventsBody string) (UnboundStatement, Diagnostic, bool) {
+	schemaName, pattern, diagnostic, ok := parseSimpleShowSchemaAndLike(eventsBody, "SHOW EVENTS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowEvents,
+		ShowEvents: UnboundShowEvents{
+			Schema:  schemaName,
+			Pattern: pattern,
+			Result:  showEventsResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowSchemaAndLike(body string, statement string) (string, string, Diagnostic, bool) {
+	schemaName := ""
+	pattern := ""
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return schemaName, pattern, Diagnostic{}, true
+	}
+	if schemaBody, ok := consumeKeyword(trimmed, "from"); ok {
+		schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+		if !ok {
+			return "", "", simpleParserDiagnostic(statement + " FROM schema supports optional LIKE pattern"), false
+		}
+		return schemaName, pattern, Diagnostic{}, true
+	}
+	if schemaBody, ok := consumeKeyword(trimmed, "in"); ok {
+		schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+		if !ok {
+			return "", "", simpleParserDiagnostic(statement + " IN schema supports optional LIKE pattern"), false
+		}
+		return schemaName, pattern, Diagnostic{}, true
+	}
+	if likeBody, ok := consumeKeyword(trimmed, "like"); ok {
+		likeFields := strings.Fields(likeBody)
+		if len(likeFields) != 1 {
+			return "", "", simpleParserDiagnostic(statement + " LIKE must use one literal pattern"), false
+		}
+		pattern = strings.Trim(likeFields[0], "'\"")
+		return schemaName, pattern, Diagnostic{}, true
+	}
+	return "", "", simpleParserDiagnostic(statement + " only supports optional FROM/IN schema and LIKE pattern"), false
 }
 
 func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatement, Diagnostic, bool) {
@@ -1291,6 +1426,71 @@ func showOpenTablesResultShape() ResultShape {
 			{Name: "Table", Type: DataTypeString},
 			{Name: "In_use", Type: DataTypeInt},
 			{Name: "Name_locked", Type: DataTypeInt},
+		},
+	}
+}
+
+func showTableTypesResultShape() ResultShape {
+	return showEnginesResultShape()
+}
+
+func showRoutineStatusResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Db", Type: DataTypeString},
+			{Name: "Name", Type: DataTypeString},
+			{Name: "Type", Type: DataTypeString},
+			{Name: "Definer", Type: DataTypeString},
+			{Name: "Modified", Type: DataTypeTime, Nullable: true},
+			{Name: "Created", Type: DataTypeTime, Nullable: true},
+			{Name: "Security_type", Type: DataTypeString},
+			{Name: "Comment", Type: DataTypeString},
+			{Name: "character_set_client", Type: DataTypeString},
+			{Name: "collation_connection", Type: DataTypeString},
+			{Name: "Database Collation", Type: DataTypeString},
+		},
+	}
+}
+
+func showTriggersResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Trigger", Type: DataTypeString},
+			{Name: "Event", Type: DataTypeString},
+			{Name: "Table", Type: DataTypeString},
+			{Name: "Statement", Type: DataTypeString},
+			{Name: "Timing", Type: DataTypeString},
+			{Name: "Created", Type: DataTypeTime, Nullable: true},
+			{Name: "sql_mode", Type: DataTypeString},
+			{Name: "Definer", Type: DataTypeString},
+			{Name: "character_set_client", Type: DataTypeString},
+			{Name: "collation_connection", Type: DataTypeString},
+			{Name: "Database Collation", Type: DataTypeString},
+		},
+	}
+}
+
+func showEventsResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Db", Type: DataTypeString},
+			{Name: "Name", Type: DataTypeString},
+			{Name: "Definer", Type: DataTypeString},
+			{Name: "Time zone", Type: DataTypeString},
+			{Name: "Type", Type: DataTypeString},
+			{Name: "Execute at", Type: DataTypeTime, Nullable: true},
+			{Name: "Interval value", Type: DataTypeString, Nullable: true},
+			{Name: "Interval field", Type: DataTypeString, Nullable: true},
+			{Name: "Starts", Type: DataTypeTime, Nullable: true},
+			{Name: "Ends", Type: DataTypeTime, Nullable: true},
+			{Name: "Status", Type: DataTypeString},
+			{Name: "Originator", Type: DataTypeInt},
+			{Name: "character_set_client", Type: DataTypeString},
+			{Name: "collation_connection", Type: DataTypeString},
+			{Name: "Database Collation", Type: DataTypeString},
 		},
 	}
 }

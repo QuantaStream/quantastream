@@ -839,6 +839,132 @@ func TestUnboundStatementBindShowOpenTables(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowTableTypes(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show table types",
+		Kind: QueryKindShowTableTypes,
+		ShowTableTypes: UnboundShowTableTypes{
+			Result: showTableTypesResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowTableTypes {
+		t.Fatalf("Kind = %q, want show_table_types", query.Kind)
+	}
+	if got, want := len(query.Result.Columns), 6; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
+func TestUnboundStatementBindShowFunctionStatus(t *testing.T) {
+	catalog := MemoryCatalog{
+		Functions: []FunctionDefinition{
+			{Name: "lower", Kind: FunctionScalar, ReturnType: DataTypeString},
+			{Name: "upper", Kind: FunctionScalar, ReturnType: DataTypeString},
+		},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show function status like 'lo%'",
+		Kind: QueryKindShowFunctionStatus,
+		ShowFuncStatus: UnboundShowFunctionStatus{
+			Pattern: "lo%",
+			Result:  showRoutineStatusResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowFunctionStatus {
+		t.Fatalf("Kind = %q, want show_function_status", query.Kind)
+	}
+	if query.Catalog.Schema != "quanta" || query.Catalog.Pattern != "lo%" {
+		t.Fatalf("catalog = %#v, want schema quanta pattern lo%%", query.Catalog)
+	}
+	if got, want := len(query.Catalog.Functions), 1; got != want {
+		t.Fatalf("functions = %d, want %d", got, want)
+	}
+	if got, want := query.Catalog.Functions[0].Name, "lower"; got != want {
+		t.Fatalf("function = %q, want %q", got, want)
+	}
+	if got, want := len(query.Result.Columns), 11; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
+func TestUnboundStatementBindShowProcedureTriggersAndEvents(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	cases := []struct {
+		name      string
+		statement UnboundStatement
+		kind      QueryKind
+		columns   int
+	}{
+		{
+			name: "procedure status",
+			statement: UnboundStatement{
+				SQL:  "show procedure status",
+				Kind: QueryKindShowProcedureStatus,
+				ShowProcStatus: UnboundShowProcedureStatus{
+					Result: showRoutineStatusResultShape(),
+				},
+			},
+			kind:    QueryKindShowProcedureStatus,
+			columns: 11,
+		},
+		{
+			name: "triggers",
+			statement: UnboundStatement{
+				SQL:  "show triggers from quanta",
+				Kind: QueryKindShowTriggers,
+				ShowTriggers: UnboundShowTriggers{
+					Schema: "quanta",
+					Result: showTriggersResultShape(),
+				},
+			},
+			kind:    QueryKindShowTriggers,
+			columns: 11,
+		},
+		{
+			name: "events",
+			statement: UnboundStatement{
+				SQL:  "show events from quanta",
+				Kind: QueryKindShowEvents,
+				ShowEvents: UnboundShowEvents{
+					Schema: "quanta",
+					Result: showEventsResultShape(),
+				},
+			},
+			kind:    QueryKindShowEvents,
+			columns: 15,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			query, diagnostics := tc.statement.Bind(context)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+			}
+			if query.Kind != tc.kind {
+				t.Fatalf("Kind = %q, want %q", query.Kind, tc.kind)
+			}
+			if query.Catalog.Schema != "quanta" {
+				t.Fatalf("catalog schema = %q, want quanta", query.Catalog.Schema)
+			}
+			if got, want := len(query.Result.Columns), tc.columns; got != want {
+				t.Fatalf("result columns = %d, want %d", got, want)
+			}
+		})
+	}
+}
+
 func TestUnboundStatementBindShowVariables(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{}, "quanta")
 	statement := UnboundStatement{
