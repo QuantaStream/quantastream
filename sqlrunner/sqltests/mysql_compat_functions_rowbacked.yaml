@@ -1,0 +1,67 @@
+version: 1
+name: mysql_compat_functions_rowbacked
+
+tests:
+  - id: mysql_compat_functions_rowbacked.001.customer_string_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_string_rowbacked
+    compatibility: mysql
+    requires: [select, substring, trim, locate]
+    sql: |
+      select c_custkey,
+             substring(c_name from 1 for 8) as prefix,
+             trim(leading 'Customer#' from c_name) as customer_number,
+             locate('#', c_name) as hash_pos
+      from customer
+      order by c_custkey
+      limit 3
+    expect:
+      columns: [c_custkey, prefix, customer_number, hash_pos]
+      rows:
+        - [1, Customer, "000000001", 9]
+        - [2, Customer, "000000002", 9]
+        - [3, Customer, "000000003", 9]
+
+  - id: mysql_compat_functions_rowbacked.002.order_date_format
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_datetime_rowbacked
+    compatibility: mysql
+    requires: [select, date_format]
+    sql: |
+      select o_orderkey,
+             date_format(o_orderdate, '%Y-%m') as order_month
+      from orders
+      order by o_orderkey
+      limit 3
+    expect:
+      columns: [o_orderkey, order_month]
+      rows:
+        - [1, 1996-01]
+        - [2, 1996-12]
+        - [3, 1993-10]
+
+  - id: mysql_compat_functions_rowbacked.003.lineitem_numeric_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_numeric_rowbacked
+    compatibility: mysql
+    requires: [select, cast, greatest, least]
+    sql: |
+      select l_orderkey,
+             cast(l_quantity as signed) as quantity_int,
+             greatest(l_quantity, 10) as quantity_floor,
+             least(l_quantity, 10) as quantity_cap
+      from lineitem
+      order by l_orderkey, l_linenumber
+      limit 3
+    expect:
+      columns: [l_orderkey, quantity_int, quantity_floor, quantity_cap]
+      rows:
+        - [1, 17, 17, 10]
+        - [1, 36, 36, 10]
+        - [1, 8, 10, 8]
