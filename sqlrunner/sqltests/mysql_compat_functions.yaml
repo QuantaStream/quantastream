@@ -414,3 +414,24 @@ tests:
         - [1, 711.6]
         - [2, 121.7]
         - [3, 7498.1]
+
+  - id: mysql_compat_functions.106.row_numeric_predicate_order
+    status: supported
+    kind: query
+    feature: scalar_functions_numeric_predicates
+    compatibility: mysql
+    requires: [select, abs, round, where, order_by, limit, signed_float_scale_bsi]
+    sql: |
+      select c_custkey, round(abs(c_acctbal), 0) as abs_bal
+      from customer
+      where round(abs(c_acctbal), 0) >= 7000
+      order by abs_bal desc, c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, abs_bal]
+      rows:
+        - [213, 9988]
+        - [45, 9983]
+        - [1106, 9978]
+        - [200, 9968]
+        - [140, 9963]

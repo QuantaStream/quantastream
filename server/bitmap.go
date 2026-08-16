@@ -922,7 +922,7 @@ func (m *BitmapIndex) updateBSICache(f *BitmapFragment) {
 		newBSI.PersistTime = applyTime
 	}
 
-	if err := newBSI.UnmarshalBinary(f.BitData); err != nil {
+	if err := shared.UnmarshalBSI(newBSI.BSI, f.BitData); err != nil {
 		u.Errorf("updateBSICache - UnmarshalBinary error - %v", err)
 		return
 	}
@@ -1213,7 +1213,7 @@ func (m *BitmapIndex) calculateMemoryUsage() {
 				if !bsi.Lock.TryRLock() {
 					continue
 				}
-				if b, err := bsi.MarshalBinary(); err == nil {
+				if b, err := shared.MarshalBSI(bsi.BSI); err == nil {
 					for _, x := range b {
 						memoryUsed += len(x)
 					}
@@ -1973,7 +1973,7 @@ func (m *BitmapIndex) PartitionInfo(ctx context.Context,
 		bsi := p.Shard.(*BSIBitmap)
 		r := &pb.PartitionInfoResult{Time: p.Time.UnixNano(), Index: p.Index, Field: p.Field,
 			RowIdOrValue: p.RowIDOrBits * -1, ModTime: bsi.ModTime.UnixNano(), TqType: p.TQType}
-		if b, err := bsi.MarshalBinary(); err == nil {
+		if b, err := shared.MarshalBSI(bsi.BSI); err == nil {
 			for _, x := range b {
 				r.Bytes += uint32(len(x))
 			}

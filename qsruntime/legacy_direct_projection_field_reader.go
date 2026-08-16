@@ -504,6 +504,10 @@ func nativeProjectionCanUseInt64Values(attr *core.Attribute, field qsbridge.Quan
 	if attr == nil {
 		return false
 	}
+	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
+	case "floatscalebsi", "intbsi":
+		return false
+	}
 	dataType := field.Type
 	if dataType == "" {
 		dataType = legacyDataType(attr.Type)

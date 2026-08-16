@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantaStream/quantastream/shared"
 	u "github.com/araddon/gou"
 )
 
@@ -327,7 +328,7 @@ func (m *BitmapIndex) saveCompleteBSIWithTimings(bsi *BSIBitmap, indexName, fiel
 	var timings bsiBundlePersistTimings
 
 	marshalStart := time.Now()
-	data, err := bsi.MarshalBinary()
+	data, err := shared.MarshalBSI(bsi.BSI)
 	timings.marshalElapsed = time.Since(marshalStart)
 	if err != nil {
 		return timings, err
@@ -382,7 +383,7 @@ func (m *BitmapIndex) saveCompleteBSIPackWithTimings(bsis map[string]*BSIBitmap,
 		}
 		bsi.Lock.RLock()
 		marshalStart := time.Now()
-		data, err := bsi.MarshalBinary()
+		data, err := shared.MarshalBSI(bsi.BSI)
 		timings.marshalElapsed += time.Since(marshalStart)
 		modTime := bsi.ModTime
 		bsi.Lock.RUnlock()

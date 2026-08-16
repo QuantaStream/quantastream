@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
@@ -135,6 +136,30 @@ func (r *recordingNativeProjectionBSIBatchReader) ReadProjectionBSIs(_ context.C
 	return results, nil, nil
 }
 
+type typedProjectionGateReader struct {
+	rawCalls   int
+	int64Calls int
+	bsi        *roaring64.BSI
+}
+
+func (r *typedProjectionGateReader) ReadProjectionBSI(context.Context, NativeProjectionBSIReadRequest) (NativeProjectionBSIReadResult, qsbridge.DiagnosticSet, error) {
+	r.rawCalls++
+	return NativeProjectionBSIReadResult{BSI: r.bsi}, nil, nil
+}
+
+func (r *typedProjectionGateReader) ReadProjectionBSIInt64Values(context.Context, []NativeProjectionBSIReadRequest) ([]NativeProjectionBSIInt64ValueReadResult, qsbridge.DiagnosticSet, error) {
+	r.int64Calls++
+	return []NativeProjectionBSIInt64ValueReadResult{{
+		Values: []int64{1046866},
+		Exists: []bool{true},
+		Fast:   true,
+	}}, nil, nil
+}
+
+func (r *typedProjectionGateReader) SupportsProjectionBSIInt64Values() bool {
+	return true
+}
+
 func TestLegacyDirectProjectionBSIFieldReaderReadsRownumPseudoField(t *testing.T) {
 	reader := NativeProjectionBSIFieldReader{}
 
@@ -193,6 +218,45 @@ func TestLegacyDirectProjectionBSIFieldReaderScalesFloats(t *testing.T) {
 	}
 	if got := result.Values[0].Value; got != float64(1234.56) {
 		t.Fatalf("scaled value = %#v, want 1234.56", got)
+	}
+}
+
+func TestLegacyDirectProjectionBSIFieldReaderAvoidsTypedInt64ForSignedFloatScaleBSI(t *testing.T) {
+	tableCache := &core.TableCacheStruct{TableCache: map[string]*core.Table{
+		"customer": {
+			BasicTable: &shared.BasicTable{Name: "customer"},
+			AttributeNameMap: map[string]*core.Attribute{
+				"c_acctbal": {BasicAttribute: &shared.BasicAttribute{FieldName: "c_acctbal", Type: "Float", MappingStrategy: "FloatScaleBSI", Scale: 2}},
+			},
+		},
+	}}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(1193, big.NewInt(-1710))
+	storage := &typedProjectionGateReader{bsi: bsi}
+	reader := NativeProjectionBSIFieldReader{
+		TableCache: tableCache,
+		Reader:     storage,
+	}
+
+	result, diagnostics, err := reader.ReadProjectionField(context.Background(), NativeProjectionFieldReadRequest{
+		Index:   "customer",
+		Field:   qsbridge.QuantaProjectionField{Index: "customer", Field: "c_acctbal", Type: qsbridge.DataTypeFloat},
+		Rownums: []qsbridge.QuantaRownum{1193},
+	})
+	if err != nil {
+		t.Fatalf("ReadProjectionField error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if storage.int64Calls != 0 {
+		t.Fatalf("typed int64 reads = %d, want 0", storage.int64Calls)
+	}
+	if storage.rawCalls != 1 {
+		t.Fatalf("raw BSI reads = %d, want 1", storage.rawCalls)
+	}
+	if got := result.Values[0].Value; got != float64(-17.10) {
+		t.Fatalf("scaled signed value = %#v, want -17.10", got)
 	}
 }
 

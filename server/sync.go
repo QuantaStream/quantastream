@@ -98,7 +98,7 @@ func (m *BitmapIndex) SyncStatus(ctx context.Context, req *pb.SyncStatusRequest)
 		sumDiff := response.BSIChecksum - req.BSIChecksum
 		response.Ok = cardDiff == 0 && sumDiff == 0 && skew.Milliseconds() < 100
 		if !response.Ok && req.SendData {
-			ba, err := v.MarshalBinary()
+			ba, err := shared.MarshalBSI(v.BSI)
 			if err != nil {
 				return response, err
 			}
@@ -248,7 +248,7 @@ func (m *BitmapIndex) Synchronize(ctx context.Context, req *wrappers.StringValue
 					len(res.Data), indexName, fieldName)
 		}
 		if res.Cardinality > 0 {
-			if err := resBsi.UnmarshalBinary(res.Data); err != nil {
+			if err := shared.UnmarshalBSI(resBsi, res.Data); err != nil {
 				return &wrappers.Int64Value{Value: int64(-1)},
 					fmt.Errorf("deserialize sync reponse - BSI UnmarshalBinary error - %v", err)
 			}

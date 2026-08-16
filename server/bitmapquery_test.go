@@ -74,6 +74,55 @@ func TestTimeRangeBSIReadsLocalNonTimeShardRegardlessOfCurrentOwner(t *testing.T
 	}
 }
 
+func TestProjectBSIInt64ValuesCanUseTypedReadDisablesSignedNumericMappers(t *testing.T) {
+	tests := []struct {
+		name string
+		attr *shared.BasicAttribute
+		want bool
+	}{
+		{name: "nil attr", attr: nil, want: false},
+		{name: "float scale bsi", attr: &shared.BasicAttribute{MappingStrategy: "FloatScaleBSI"}, want: false},
+		{name: "int bsi", attr: &shared.BasicAttribute{MappingStrategy: "IntBSI"}, want: false},
+		{name: "case insensitive", attr: &shared.BasicAttribute{MappingStrategy: "floatscalebsi"}, want: false},
+		{name: "timestamp bsi", attr: &shared.BasicAttribute{MappingStrategy: "TimestampBSI"}, want: true},
+		{name: "bool direct", attr: &shared.BasicAttribute{MappingStrategy: "BoolDirect"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := projectBSIInt64ValuesCanUseTypedRead(tt.attr); got != tt.want {
+				t.Fatalf("projectBSIInt64ValuesCanUseTypedRead() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadBSIInt64ValuesSafePathPreservesSignedValues(t *testing.T) {
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(7, big.NewInt(-1710))
+	bsi.SetBigValue(9, big.NewInt(998771))
+
+	values, exists, fast, err := readBSIInt64Values(bsi, []uint64{7, 8, 9}, false)
+	if err != nil {
+		t.Fatalf("readBSIInt64Values() error = %v", err)
+	}
+	if fast {
+		t.Fatal("readBSIInt64Values() fast = true, want false")
+	}
+	if len(values) != 3 || len(exists) != 3 {
+		t.Fatalf("readBSIInt64Values() lengths = values:%d exists:%d, want 3/3", len(values), len(exists))
+	}
+	if values[0] != -1710 || !exists[0] {
+		t.Fatalf("row 7 = value:%d exists:%v, want -1710/true", values[0], exists[0])
+	}
+	if values[1] != 0 || exists[1] {
+		t.Fatalf("row 8 = value:%d exists:%v, want 0/false", values[1], exists[1])
+	}
+	if values[2] != 998771 || !exists[2] {
+		t.Fatalf("row 9 = value:%d exists:%v, want 998771/true", values[2], exists[2])
+	}
+}
+
 func TestQueryPriorIntersectCandidatesSeedBSICompare(t *testing.T) {
 	seed := queryPriorIntersectCandidates{}
 	first := &pb.QueryFragment{

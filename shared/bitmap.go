@@ -566,7 +566,7 @@ func (c *BitmapIndex) splitBSIItemBatchProfile(batch map[string]map[string]map[i
 					bitCount = 1
 				}
 				marshalStart := time.Now()
-				ba, err := bsi.MarshalBinary()
+				ba, err := MarshalBSI(bsi)
 				profile.MarshalElapsed += time.Since(marshalStart)
 				if err != nil {
 					u.Errorf("BSI.MarshalBinary: %v", err)
@@ -655,7 +655,7 @@ func (c *BitmapIndex) batchSetValueLocalProfile(local LocalBitmapIndexBatchServi
 					bitCount = 1
 				}
 				marshalStart := time.Now()
-				ba, err := bsi.MarshalBinary()
+				ba, err := MarshalBSI(bsi)
 				profile.MarshalElapsed += time.Since(marshalStart)
 				if err != nil {
 					u.Errorf("BSI.MarshalBinary: %v", err)
@@ -710,7 +710,7 @@ func (c *BitmapIndex) BatchSetValueNode(client pb.BitmapIndexClient,
 				if bitCount == 0 {
 					bitCount = 1
 				}
-				ba, err := bsi.MarshalBinary()
+				ba, err := MarshalBSI(bsi)
 				if err != nil {
 					u.Errorf("BSI.MarshalBinary: %v", err)
 					return err
@@ -2225,7 +2225,7 @@ func aggregateProjectionResponses(responses []*pb.ProjectionResponse) (map[strin
 			}
 
 			newBsi := roaring64.NewDefaultBSI()
-			if err := newBsi.UnmarshalBinary(v.Bitmaps); err != nil {
+			if err := UnmarshalBSI(newBsi, v.Bitmaps); err != nil {
 				return nil, nil, fmt.Errorf("unmarshalling BSI projection results - %v", err)
 			}
 			bsiResults[v.Field] = append(bsi, newBsi)

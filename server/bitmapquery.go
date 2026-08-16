@@ -1099,14 +1099,14 @@ func (m *BitmapIndex) Projection(ctx context.Context, req *pb.ProjectionRequest)
 				continue
 			}
 			bsir := &pb.BSIResult{Field: v}
-			if bsir.Bitmaps, err2 = bsi.BSI.MarshalBinary(); err2 != nil {
+			if bsir.Bitmaps, err2 = shared.MarshalBSI(bsi.BSI); err2 != nil {
 				return nil, fmt.Errorf("Error marshalling BSI for field %s, [%v]", v, err2)
 			}
 			bsiResults = append(bsiResults, bsir)
 		} else {
 			if attr.IsBSI() || attr.MappingStrategy == "ParentRelation" {
 				bsir := &pb.BSIResult{Field: v}
-				bsir.Bitmaps, _ = m.newBSIBitmap(req.Index, v).MarshalBinary()
+				bsir.Bitmaps, _ = shared.MarshalBSI(m.newBSIBitmap(req.Index, v).BSI)
 				bsiResults = append(bsiResults, bsir)
 			}
 		}
@@ -1775,7 +1775,7 @@ func (m *BitmapIndex) projectBSIInt64ValuesLocked(index, field string, fromTime,
 
 		valueStart := time.Now()
 		retainedRownums := retainSet.ToArray()
-		retainedValues, retainedExists, fast, err := readBSIInt64Values(bsi.BSI, retainedRownums)
+		retainedValues, retainedExists, fast, err := readBSIInt64Values(bsi.BSI, retainedRownums, projectBSIInt64ValuesCanUseTypedRead(attr))
 		if stat != nil {
 			stat.ValueElapsed += time.Since(valueStart)
 		}
@@ -1815,27 +1815,19 @@ func (m *BitmapIndex) projectBSIInt64ValuesLocked(index, field string, fromTime,
 	return result, nil
 }
 
-func readBSIInt64Values(bsi *roaring64.BSI, rownums []uint64) (values []int64, exists []bool, fast bool, err error) {
+func readBSIInt64Values(bsi *roaring64.BSI, rownums []uint64, useTypedRead bool) (values []int64, exists []bool, fast bool, err error) {
 	values = make([]int64, len(rownums))
 	exists = make([]bool, len(rownums))
 	if bsi == nil || len(rownums) == 0 {
 		return values, exists, false, nil
 	}
-	if method := reflect.ValueOf(bsi).MethodByName("GetValues"); method.IsValid() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				values = nil
-				exists = nil
-				err = fmt.Errorf("roaring BSI GetValues failed: %v", recovered)
-			}
-		}()
-		out := method.Call([]reflect.Value{reflect.ValueOf(rownums)})
-		if len(out) == 2 {
-			if typedValues, ok := out[0].Interface().([]int64); ok {
-				if typedExists, ok := out[1].Interface().([]bool); ok && len(typedValues) == len(rownums) && len(typedExists) == len(rownums) {
-					return typedValues, typedExists, true, nil
-				}
-			}
+	if useTypedRead {
+		typedValues, typedExists, ok, typedErr := readBSIInt64ValuesTyped(bsi, rownums)
+		if typedErr != nil {
+			return nil, nil, false, typedErr
+		}
+		if ok {
+			return typedValues, typedExists, true, nil
 		}
 	}
 	bigValues := bsi.GetBigValues(rownums)
@@ -1853,6 +1845,39 @@ func readBSIInt64Values(bsi *roaring64.BSI, rownums []uint64) (values []int64, e
 		exists[i] = true
 	}
 	return values, exists, false, nil
+}
+
+func projectBSIInt64ValuesCanUseTypedRead(attr *shared.BasicAttribute) bool {
+	if attr == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(attr.MappingStrategy)) {
+	case "floatscalebsi", "intbsi":
+		return false
+	default:
+		return true
+	}
+}
+
+func readBSIInt64ValuesTyped(bsi *roaring64.BSI, rownums []uint64) (values []int64, exists []bool, ok bool, err error) {
+	if method := reflect.ValueOf(bsi).MethodByName("GetValues"); method.IsValid() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				values = nil
+				exists = nil
+				err = fmt.Errorf("roaring BSI GetValues failed: %v", recovered)
+			}
+		}()
+		out := method.Call([]reflect.Value{reflect.ValueOf(rownums)})
+		if len(out) == 2 {
+			if typedValues, ok := out[0].Interface().([]int64); ok {
+				if typedExists, ok := out[1].Interface().([]bool); ok && len(typedValues) == len(rownums) && len(typedExists) == len(rownums) {
+					return typedValues, typedExists, true, nil
+				}
+			}
+		}
+	}
+	return nil, nil, false, nil
 }
 
 func (m *BitmapIndex) projectBSIWithStats(index, field string, fromTime, toTime int64, foundSet *roaring64.Bitmap, negate bool, ownedOnly bool) (*roaring64.BSI, ProjectBSIStats, error) {
