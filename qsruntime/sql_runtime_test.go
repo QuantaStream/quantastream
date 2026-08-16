@@ -364,6 +364,53 @@ func TestSQLRuntimeExecuteSQLShowFullTablesReturnsViewsAndTypes(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowOpenTablesReturnsZeroUseCatalogRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{Schema: "quanta", Name: "orders"},
+			{Schema: "quanta", Name: "customer"},
+		},
+		Views: []qsbridge.SQLViewDefinition{
+			{Schema: "quanta", Name: "order_summary", SQL: "select o_orderkey from orders"},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show open tables from quanta like 'ord%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW OPEN TABLES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 4 {
+		t.Fatalf("rows = %#v, want two four-column rows", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "quanta"; got != want {
+		t.Fatalf("database = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][1].Value, "order_summary"; got != want {
+		t.Fatalf("first object = %#v, want %q", got, want)
+	}
+	if chunk.Rows[0][2].Value != int64(0) || chunk.Rows[0][3].Value != int64(0) {
+		t.Fatalf("open table counters = %#v, want zero use/locked", chunk.Rows[0])
+	}
+	if got, want := chunk.Rows[1][1].Value, "orders"; got != want {
+		t.Fatalf("second object = %#v, want %q", got, want)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

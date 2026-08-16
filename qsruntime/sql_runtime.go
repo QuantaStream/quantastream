@@ -192,6 +192,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showTablesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowOpenTables {
+		result.Runtime = showOpenTablesRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindShowVariables {
 		result.Runtime = r.showVariablesRuntimeResult(request)
 		return result, nil

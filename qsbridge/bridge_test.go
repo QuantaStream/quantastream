@@ -797,6 +797,48 @@ func TestUnboundStatementBindShowFullTablesIncludesViews(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowOpenTables(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{
+			{Schema: "quanta", Name: "orders"},
+			{Schema: "quanta", Name: "customer"},
+		},
+		Views: []SQLViewDefinition{
+			{Schema: "quanta", Name: "order_summary", SQL: "select o_orderkey from orders"},
+		},
+	}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show open tables from quanta like 'ord%'",
+		Kind: QueryKindShowOpenTables,
+		ShowOpenTables: UnboundShowOpenTables{
+			Schema:  "quanta",
+			Pattern: "ord%",
+			Result:  showOpenTablesResultShape(),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowOpenTables {
+		t.Fatalf("Kind = %q, want show_open_tables", query.Kind)
+	}
+	if query.Catalog.Schema != "quanta" || query.Catalog.Pattern != "ord%" {
+		t.Fatalf("catalog = %#v, want schema quanta pattern ord%%", query.Catalog)
+	}
+	if got, want := len(query.Catalog.Objects), 2; got != want {
+		t.Fatalf("objects = %d, want %d", got, want)
+	}
+	if got, want := query.Catalog.Objects[0].Table, "order_summary"; got != want {
+		t.Fatalf("first object = %q, want %q", got, want)
+	}
+	if got, want := len(query.Result.Columns), 4; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowVariables(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{}, "quanta")
 	statement := UnboundStatement{

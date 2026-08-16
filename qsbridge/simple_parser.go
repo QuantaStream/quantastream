@@ -703,6 +703,14 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		}
 		return parseSimpleShowColumns(sql, columnsBody, true)
 	}
+	openBody, ok := consumeKeyword(showBody, "open")
+	if ok {
+		tablesBody, ok := consumeKeyword(openBody, "tables")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN only supports TABLES"), false
+		}
+		return parseSimpleShowOpenTables(sql, tablesBody)
+	}
 	variablesBody, ok := consumeKeyword(showBody, "variables")
 	if ok {
 		return parseSimpleShowVariables(sql, variablesBody)
@@ -911,6 +919,42 @@ func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundSta
 			Schema: schemaName,
 			Full:   full,
 			Result: showTablesResultShape(schemaName, full),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowOpenTables(sql string, tablesBody string) (UnboundStatement, Diagnostic, bool) {
+	schemaName := ""
+	pattern := ""
+	trimmed := strings.TrimSpace(tablesBody)
+	if trimmed != "" {
+		if schemaBody, ok := consumeKeyword(trimmed, "from"); ok {
+			schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+			if !ok {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN TABLES FROM schema supports optional LIKE pattern"), false
+			}
+		} else if schemaBody, ok := consumeKeyword(trimmed, "in"); ok {
+			schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+			if !ok {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN TABLES IN schema supports optional LIKE pattern"), false
+			}
+		} else if likeBody, ok := consumeKeyword(trimmed, "like"); ok {
+			likeFields := strings.Fields(likeBody)
+			if len(likeFields) != 1 {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN TABLES LIKE must use one literal pattern"), false
+			}
+			pattern = strings.Trim(likeFields[0], "'\"")
+		} else {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW OPEN TABLES only supports optional FROM/IN schema and LIKE pattern"), false
+		}
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowOpenTables,
+		ShowOpenTables: UnboundShowOpenTables{
+			Schema:  schemaName,
+			Pattern: pattern,
+			Result:  showOpenTablesResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1236,6 +1280,18 @@ func showTablesResultShape(schemaName string, full bool) ResultShape {
 	return ResultShape{
 		Kind:    ResultQuery,
 		Columns: columns,
+	}
+}
+
+func showOpenTablesResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Database", Type: DataTypeString},
+			{Name: "Table", Type: DataTypeString},
+			{Name: "In_use", Type: DataTypeInt},
+			{Name: "Name_locked", Type: DataTypeInt},
+		},
 	}
 }
 

@@ -36,6 +36,8 @@ const (
 	QueryKindShowTableStatus QueryKind = "show_table_status"
 	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
 	QueryKindShowTables QueryKind = "show_tables"
+	// QueryKindShowOpenTables identifies a SHOW OPEN TABLES catalog read statement.
+	QueryKindShowOpenTables QueryKind = "show_open_tables"
 	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.
 	QueryKindShowVariables QueryKind = "show_variables"
 	// QueryKindShowStatus identifies a SHOW STATUS metadata read statement.

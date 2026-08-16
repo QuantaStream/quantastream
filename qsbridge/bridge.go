@@ -34,6 +34,7 @@ type UnboundStatement struct {
 	ShowIndex       UnboundShowIndex
 	ShowTableStatus UnboundShowTableStatus
 	ShowTables      UnboundShowTables
+	ShowOpenTables  UnboundShowOpenTables
 	ShowVars        UnboundShowVariables
 	ShowStatus      UnboundShowStatus
 	ShowWarnings    UnboundShowWarnings
@@ -83,6 +84,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowTableStatus(context, s.ShowTableStatus)
 	case QueryKindShowTables:
 		return BindShowTables(context, s.ShowTables)
+	case QueryKindShowOpenTables:
+		return BindShowOpenTables(context, s.ShowOpenTables)
 	case QueryKindShowVariables:
 		return BindShowVariables(context, s.ShowVars)
 	case QueryKindShowStatus:
@@ -248,6 +251,14 @@ type UnboundShowTableStatus struct {
 type UnboundShowTables struct {
 	Schema   string
 	Full     bool
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowOpenTables describes a SHOW OPEN TABLES metadata read before binding.
+type UnboundShowOpenTables struct {
+	Schema   string
+	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1233,6 +1244,45 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	query.Catalog.Objects = make([]TableInstance, 0, len(objects))
 	query.Catalog.ObjectTypes = make([]string, 0, len(objects))
 	for _, object := range objects {
+		query.Catalog.Objects = append(query.Catalog.Objects, object.instance)
+		query.Catalog.ObjectTypes = append(query.Catalog.ObjectTypes, object.objectType)
+	}
+	return query, nil
+}
+
+// BindShowOpenTables binds parser-neutral SHOW OPEN TABLES metadata into QueryIR.
+func BindShowOpenTables(context *BindContext, showStmt UnboundShowOpenTables) (QueryIR, DiagnosticSet) {
+	schemaName := strings.TrimSpace(showStmt.Schema)
+	query := QueryIR{
+		Kind:     QueryKindShowOpenTables,
+		Result:   showOpenTablesResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(context.DefaultSchema)
+	}
+	query.Catalog.Schema = schemaName
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	objects, diagnostics := collectCatalogTableObjects(context, schemaName, true)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Catalog.Objects = make([]TableInstance, 0, len(objects))
+	query.Catalog.ObjectTypes = make([]string, 0, len(objects))
+	for _, object := range objects {
+		if query.Catalog.Pattern != "" && !sqlCatalogLikeMatch(object.instance.Table, query.Catalog.Pattern) {
+			continue
+		}
 		query.Catalog.Objects = append(query.Catalog.Objects, object.instance)
 		query.Catalog.ObjectTypes = append(query.Catalog.ObjectTypes, object.objectType)
 	}

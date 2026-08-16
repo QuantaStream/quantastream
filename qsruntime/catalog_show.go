@@ -380,6 +380,33 @@ func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 	}
 }
 
+func showOpenTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	objects := query.Catalog.Objects
+	rownums := make([]qsbridge.QuantaRownum, len(objects))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Database", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Table", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("In_use", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Name_locked", qsbridge.DataTypeInt, len(objects)),
+	}
+	for i, object := range objects {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(object.Schema)
+		vectors[1].Values[i] = describeStringCell(object.Table)
+		vectors[2].Values[i] = describeIntCell(0)
+		vectors[3].Values[i] = describeIntCell(0)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(objects)),
+	}
+}
+
 func showTablesRuntimeColumnName(schemaName string) string {
 	schemaName = strings.TrimSpace(schemaName)
 	if schemaName == "" {

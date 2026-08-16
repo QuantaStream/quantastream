@@ -285,6 +285,25 @@ func TestSimpleParserBridgeParsesShowTablesFromSchemaStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowOpenTablesStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show open tables from quanta like 'ord%';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowOpenTables {
+		t.Fatalf("kind = %q, want show_open_tables", statement.Kind)
+	}
+	if statement.ShowOpenTables.Schema != "quanta" || statement.ShowOpenTables.Pattern != "ord%" {
+		t.Fatalf("show open tables = %#v, want schema quanta pattern ord%%", statement.ShowOpenTables)
+	}
+	if got, want := len(statement.ShowOpenTables.Result.Columns), 4; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.ShowOpenTables.Result.Columns[0].Name, "Database"; got != want {
+		t.Fatalf("first column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show variables like 'character_set_%';")
 	if diagnostics.BlocksNative() {
