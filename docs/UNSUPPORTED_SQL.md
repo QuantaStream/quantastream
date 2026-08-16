@@ -133,23 +133,34 @@ two roles, such as supplier nation and customer nation. Those query shapes
 should remain outside executable suites until the planner, join graph, and
 projection metadata can distinguish repeated base-table aliases reliably.
 
-## Views And Temporary Tables
+## Temporary Tables And Materialized SELECT
 
-`CREATE VIEW`, querying named views, and view expansion are not currently
-supported. TPC-H queries that depend on view definitions, such as Q15, should be
-tracked here until Quanta has explicit view catalog and planner support.
-
-Temporary tables are also unsupported. Today, `SELECT INTO` is used for export
-file workflows rather than materializing temporary relational tables that can be
+Temporary tables are unsupported. `CREATE TABLE ... AS SELECT ...` is also
+unsupported because it needs both result-schema inference and materializing a
+new table from a query result. Today, `SELECT INTO` is used for export file
+workflows rather than materializing temporary relational tables that can be
 queried later in the same session. Future support should distinguish:
 
 - export-oriented `SELECT INTO` file output
 - session-scoped temporary tables
+- persistent `CREATE TABLE ... AS SELECT ...`
 - any persisted or shared materialized result shape
 
 Temporary table support will need catalog metadata, lifecycle cleanup, session
 visibility rules, and mutation/load semantics that fit Quanta's bitmap storage
 model.
+
+## View Gaps
+
+Named views, view catalog storage, view expansion, joins inside view
+definitions, and MySQL compatibility coverage are supported for the current
+single-node and direct-cluster compatibility surface. Remaining view gaps
+include:
+
+- views that reference other views
+- `SHOW CREATE VIEW` output parity with MySQL
+- broader MySQL metadata, privilege, algorithm, definer, and security syntax
+- materialized views
 
 ## Conditional Expressions
 

@@ -242,6 +242,13 @@ func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeRejectsCreateTableAsSelect(t *testing.T) {
+	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_copy as select customer_id from customers_qa")
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("expected parser diagnostic for CREATE TABLE AS SELECT")
+	}
+}
+
 func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id, o.o_totalprice total_price from orders as o where o.o_totalprice >= 101 and o.o_orderkey <= 8 order by o.o_totalprice desc limit 2")
 	if diagnostics.BlocksNative() {

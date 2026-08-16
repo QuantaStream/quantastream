@@ -89,6 +89,22 @@ These functions are inherited from the current expression layer. Coverage
 should be expanded deliberately when adding aliases or broader mixed-projection,
 join, grouping, and aggregate shapes.
 
+## Views
+
+QuantaStream supports named views for the current MySQL compatibility surface:
+
+- `CREATE VIEW ... AS SELECT ...`
+- `CREATE OR REPLACE VIEW ... AS SELECT ...`
+- optional inline view column aliases, such as
+  `CREATE VIEW v (a, b) AS SELECT ...`
+- `DROP VIEW` and `DROP VIEW IF EXISTS`
+- querying named views through the normal SELECT path
+- joins inside supported view definitions
+
+Views are stored in the catalog and expanded at query-planning time. They are
+logical views, not materialized views. Remaining MySQL metadata and advanced
+view syntax gaps are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+
 ## Quanta Custom SQL
 
 ### `timediff(end_time, start_time, unit)`

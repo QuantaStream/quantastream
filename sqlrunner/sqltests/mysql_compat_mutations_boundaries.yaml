@@ -83,6 +83,19 @@ tests:
       rows:
         - [2, Abby, 25]
 
+  - id: mysql_compat_mutations_boundaries.007.create_table_as_select
+    status: xfail
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [create_table_as, select]
+    issue: "CREATE TABLE AS SELECT requires result-schema inference plus materializing a new table from a SELECT result; QS table creation is still catalog/YAML-backed."
+    sql: |
+      create table qs_mysql_compat_mutations_ctas as
+      select c_custkey as id, c_name as name
+      from customer
+      where c_custkey <= 3
+
   - id: mysql_compat_mutations_boundaries.900.cleanup
     status: xfail
     kind: statement
