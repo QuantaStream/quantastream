@@ -46,6 +46,8 @@ const (
 	QueryKindShowCharacterSet QueryKind = "show_character_set"
 	// QueryKindShowCollation identifies a SHOW COLLATION metadata read statement.
 	QueryKindShowCollation QueryKind = "show_collation"
+	// QueryKindShowProcesslist identifies a SHOW PROCESSLIST metadata read statement.
+	QueryKindShowProcesslist QueryKind = "show_processlist"
 	// QueryKindDescribe identifies a DESCRIBE/SHOW COLUMNS catalog read statement.
 	QueryKindDescribe QueryKind = "describe"
 	// QueryKindSession identifies a session-affecting statement such as USE or SET.

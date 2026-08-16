@@ -455,6 +455,42 @@ func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowProcesslistReturnsCurrentSessionRow(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{User: "moli", CurrentSchema: "quanta"}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show full processlist", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW PROCESSLIST should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 8 {
+		t.Fatalf("rows = %#v, want one eight-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[1].Value != "moli" || row[3].Value != "quanta" || row[4].Value != "Query" || row[7].Value != "show full processlist" {
+		t.Fatalf("processlist row = %#v, want current session metadata", row)
+	}
+	if result.Prepared.Kind != qsbridge.QueryKindShowProcesslist || !result.Prepared.Query.Catalog.Full {
+		t.Fatalf("prepared query = %#v, want full processlist", result.Prepared.Query)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

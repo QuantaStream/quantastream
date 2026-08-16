@@ -690,12 +690,16 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		if ok {
 			return parseSimpleShowTables(sql, tablesBody, true)
 		}
+		processlistBody, ok := consumeKeyword(fullBody, "processlist")
+		if ok {
+			return parseSimpleShowProcesslist(sql, processlistBody, true)
+		}
 		columnsBody, ok := consumeKeyword(fullBody, "columns")
 		if !ok {
 			columnsBody, ok = consumeKeyword(fullBody, "fields")
 		}
 		if !ok {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW FULL only supports TABLES or COLUMNS/FIELDS"), false
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW FULL only supports TABLES, PROCESSLIST, or COLUMNS/FIELDS"), false
 		}
 		return parseSimpleShowColumns(sql, columnsBody, true)
 	}
@@ -727,6 +731,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowCollation(sql, collationBody)
 	}
+	processlistBody, ok := consumeKeyword(showBody, "processlist")
+	if ok {
+		return parseSimpleShowProcesslist(sql, processlistBody, false)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -742,7 +750,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
 }
@@ -969,6 +977,20 @@ func parseSimpleShowCollation(sql string, collationBody string) (UnboundStatemen
 		ShowCollation: UnboundShowCollation{
 			Pattern: pattern,
 			Result:  showCollationResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowProcesslist(sql string, processlistBody string, full bool) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(processlistBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW PROCESSLIST does not support additional clauses yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowProcesslist,
+		ShowProcesslist: UnboundShowProcesslist{
+			Full:   full,
+			Result: showProcesslistResultShape(full),
 		},
 	}, Diagnostic{}, true
 }
@@ -1202,6 +1224,26 @@ func showCollationResultShape() ResultShape {
 			{Name: "Default", Type: DataTypeString},
 			{Name: "Compiled", Type: DataTypeString},
 			{Name: "Sortlen", Type: DataTypeInt},
+		},
+	}
+}
+
+func showProcesslistResultShape(full bool) ResultShape {
+	infoLength := 100
+	if full {
+		infoLength = 0
+	}
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Id", Type: DataTypeInt},
+			{Name: "User", Type: DataTypeString},
+			{Name: "Host", Type: DataTypeString},
+			{Name: "db", Type: DataTypeString, Nullable: true},
+			{Name: "Command", Type: DataTypeString},
+			{Name: "Time", Type: DataTypeInt},
+			{Name: "State", Type: DataTypeString, Nullable: true},
+			{Name: "Info", Type: DataTypeString, Nullable: true, Encoding: EncodingProfile{MaxLength: infoLength}},
 		},
 	}
 }

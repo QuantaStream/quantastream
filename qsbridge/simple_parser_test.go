@@ -301,6 +301,25 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowProcesslistStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show full processlist;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowProcesslist {
+		t.Fatalf("kind = %q, want show_processlist", statement.Kind)
+	}
+	if !statement.ShowProcesslist.Full {
+		t.Fatalf("full = false, want true")
+	}
+	if got, want := len(statement.ShowProcesslist.Result.Columns), 8; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.ShowProcesslist.Result.Columns[7].Name, "Info"; got != want {
+		t.Fatalf("info column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowIndexStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show index from quanta.customer;")
 	if diagnostics.BlocksNative() {

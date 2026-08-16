@@ -823,6 +823,32 @@ func TestUnboundStatementBindShowVariables(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindShowProcesslist(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement := UnboundStatement{
+		SQL:  "show full processlist",
+		Kind: QueryKindShowProcesslist,
+		ShowProcesslist: UnboundShowProcesslist{
+			Full:   true,
+			Result: showProcesslistResultShape(true),
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindShowProcesslist {
+		t.Fatalf("Kind = %q, want show_processlist", query.Kind)
+	}
+	if !query.Catalog.Full {
+		t.Fatalf("catalog full = false, want true")
+	}
+	if got, want := len(query.Result.Columns), 8; got != want {
+		t.Fatalf("result columns = %d, want %d", got, want)
+	}
+}
+
 func TestUnboundStatementBindShowIndex(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{

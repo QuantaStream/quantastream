@@ -513,6 +513,49 @@ func showWarningsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResul
 	}
 }
 
+func showProcesslistRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	session := request.Bound.Prepared.Session
+	user := strings.TrimSpace(string(session.User))
+	if user == "" {
+		user = "MOLIG004"
+	}
+	info := strings.TrimSpace(request.Bound.Prepared.SQL)
+	if !request.Bound.Prepared.Query.Catalog.Full && len(info) > 100 {
+		info = info[:100]
+	}
+	rownums := []qsbridge.QuantaRownum{1}
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Id", qsbridge.DataTypeInt, 1),
+		describeProjectionVector("User", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Host", qsbridge.DataTypeString, 1),
+		describeProjectionVector("db", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Command", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Time", qsbridge.DataTypeInt, 1),
+		describeProjectionVector("State", qsbridge.DataTypeString, 1),
+		describeProjectionVector("Info", qsbridge.DataTypeString, 1),
+	}
+	vectors[0].Values[0] = describeIntCell(1)
+	vectors[1].Values[0] = describeStringCell(user)
+	vectors[2].Values[0] = describeStringCell("localhost")
+	if strings.TrimSpace(session.CurrentSchema) == "" {
+		vectors[3].Values[0] = describeNullCell()
+	} else {
+		vectors[3].Values[0] = describeStringCell(session.CurrentSchema)
+	}
+	vectors[4].Values[0] = describeStringCell("Query")
+	vectors[5].Values[0] = describeIntCell(0)
+	vectors[6].Values[0] = describeStringCell("executing")
+	vectors[7].Values[0] = describeStringCell(info)
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: 1,
+	}
+}
+
 func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))

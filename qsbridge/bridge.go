@@ -39,6 +39,7 @@ type UnboundStatement struct {
 	ShowWarnings    UnboundShowWarnings
 	ShowCharset     UnboundShowCharacterSet
 	ShowCollation   UnboundShowCollation
+	ShowProcesslist UnboundShowProcesslist
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -88,6 +89,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowCharacterSet(context, s.ShowCharset)
 	case QueryKindShowCollation:
 		return BindShowCollation(context, s.ShowCollation)
+	case QueryKindShowProcesslist:
+		return BindShowProcesslist(context, s.ShowProcesslist)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -267,6 +270,13 @@ type UnboundShowCharacterSet struct {
 // UnboundShowCollation describes a SHOW COLLATION metadata read before binding.
 type UnboundShowCollation struct {
 	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowProcesslist describes a SHOW PROCESSLIST metadata read before binding.
+type UnboundShowProcesslist struct {
+	Full     bool
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1252,6 +1262,18 @@ func BindShowCollation(context *BindContext, showStmt UnboundShowCollation) (Que
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowProcesslist binds parser-neutral SHOW PROCESSLIST metadata into QueryIR.
+func BindShowProcesslist(context *BindContext, showStmt UnboundShowProcesslist) (QueryIR, DiagnosticSet) {
+	_ = context
+	query := QueryIR{
+		Kind:     QueryKindShowProcesslist,
+		Result:   showProcesslistResultShape(showStmt.Full),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}
+	query.Catalog.Full = showStmt.Full
 	return query, nil
 }
 
