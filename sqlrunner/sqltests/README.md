@@ -30,6 +30,7 @@ The current seed suites are:
 - `mysql_compat_joins.yaml`
 - `mysql_compat_subqueries.yaml`
 - `mysql_compat_mutations.yaml`
+- `mysql_compat_views.yaml`
 
 ## Capturing MySQL Reference Results
 
@@ -64,4 +65,6 @@ available, `run-mysql-compat.sh` standardizes capture and diff commands from the
 ```bash
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' ./run-mysql-compat.sh
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-direct ./run-mysql-compat.sh
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_SUITE=sqltests/mysql_compat_views.yaml MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-standard ./run-mysql-compat.sh
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_SUITE=all MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-standard ./run-mysql-compat.sh
 ```

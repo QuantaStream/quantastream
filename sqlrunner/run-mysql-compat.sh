@@ -6,10 +6,11 @@ usage() {
 Usage:
   MYSQL_DSN='user:pass@tcp(host:3306)/db' ./run-mysql-compat.sh
   MYSQL_DSN='user:pass@tcp(host:3306)/db' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-direct ./run-mysql-compat.sh
+  MYSQL_DSN='user:pass@tcp(host:3306)/db' MYSQL_COMPAT_SUITE=all MYSQL_COMPAT_MODE=diff ./run-mysql-compat.sh
 
 Environment:
   MYSQL_DSN              Required database/sql DSN for the stock MySQL reference.
-  MYSQL_COMPAT_SUITE     Suite path. Defaults to sqltests/mysql_compat_select.yaml.
+  MYSQL_COMPAT_SUITE     Suite path, or "all". Defaults to sqltests/mysql_compat_select.yaml.
   MYSQL_COMPAT_OUTPUT    Capture output path. Defaults to expected/local/<suite basename>.
   MYSQL_COMPAT_MODE      capture or diff. Defaults to capture.
   TARGET_ENGINE          Diff target engine. Defaults to inabox-direct.
@@ -29,37 +30,65 @@ if [[ -z "${MYSQL_DSN:-}" ]]; then
   exit 2
 fi
 
+default_suites=(
+  sqltests/mysql_compat_select.yaml
+  sqltests/mysql_compat_predicates.yaml
+  sqltests/mysql_compat_functions.yaml
+  sqltests/mysql_compat_group_order.yaml
+  sqltests/mysql_compat_joins.yaml
+  sqltests/mysql_compat_subqueries.yaml
+  sqltests/mysql_compat_mutations.yaml
+  sqltests/mysql_compat_views.yaml
+)
+
 suite="${MYSQL_COMPAT_SUITE:-sqltests/mysql_compat_select.yaml}"
 mode="${MYSQL_COMPAT_MODE:-capture}"
 target="${TARGET_ENGINE:-inabox-direct}"
 driver="${MYSQL_DRIVER:-mysql}"
 consul="${CONSUL:-127.0.0.1:8500}"
-base="$(basename "${suite}")"
-output="${MYSQL_COMPAT_OUTPUT:-expected/local/${base}}"
 
-mkdir -p "$(dirname "${output}")"
+run_suite() {
+  local suite_path="$1"
+  local base
+  local output
+  base="$(basename "${suite_path}")"
+  output="${MYSQL_COMPAT_OUTPUT:-expected/local/${base}}"
+  mkdir -p "$(dirname "${output}")"
 
-case "${mode}" in
-  capture)
-    go run . \
-      -engine mysql-reference \
-      -suite_file "${suite}" \
-      -mysql_driver "${driver}" \
-      -mysql_dsn "${MYSQL_DSN}" \
-      -capture_expected "${output}"
-    ;;
-  diff)
-    go run . \
-      -engine_diff "mysql-reference,${target}" \
-      -suite_file "${suite}" \
-      -mysql_driver "${driver}" \
-      -mysql_dsn "${MYSQL_DSN}" \
-      -consul "${consul}" \
-      -compat_report
-    ;;
-  *)
-    echo "Unsupported MYSQL_COMPAT_MODE: ${mode}" >&2
-    usage >&2
+  case "${mode}" in
+    capture)
+      go run . \
+        -engine mysql-reference \
+        -suite_file "${suite_path}" \
+        -mysql_driver "${driver}" \
+        -mysql_dsn "${MYSQL_DSN}" \
+        -capture_expected "${output}"
+      ;;
+    diff)
+      go run . \
+        -engine_diff "mysql-reference,${target}" \
+        -suite_file "${suite_path}" \
+        -mysql_driver "${driver}" \
+        -mysql_dsn "${MYSQL_DSN}" \
+        -consul "${consul}" \
+        -compat_report
+      ;;
+    *)
+      echo "Unsupported MYSQL_COMPAT_MODE: ${mode}" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [[ "${suite}" == "all" ]]; then
+  if [[ -n "${MYSQL_COMPAT_OUTPUT:-}" ]]; then
+    echo "MYSQL_COMPAT_OUTPUT cannot be used with MYSQL_COMPAT_SUITE=all." >&2
     exit 2
-    ;;
-esac
+  fi
+  for suite_path in "${default_suites[@]}"; do
+    run_suite "${suite_path}"
+  done
+else
+  run_suite "${suite}"
+fi

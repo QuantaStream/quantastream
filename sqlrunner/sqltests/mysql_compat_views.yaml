@@ -1,0 +1,113 @@
+version: 1
+name: mysql_compat_views
+
+tests:
+  - id: mysql_compat_views.001.create_customer_projection_view
+    status: supported
+    kind: statement
+    feature: views_ddl
+    compatibility: mysql
+    requires: [create_view, create_or_replace_view, select, aliases]
+    sql: |
+      create or replace view qs_mysql_compat_customer_view as
+      select
+        c_custkey as customer_key,
+        c_name as customer_name,
+        c_mktsegment as market_segment
+      from customer
+
+  - id: mysql_compat_views.002.select_customer_projection_view
+    status: supported
+    kind: query
+    order: exact
+    feature: views_select
+    compatibility: mysql
+    requires: [select, view_reference, where, order_by]
+    sql: |
+      select customer_key, customer_name, market_segment
+      from qs_mysql_compat_customer_view
+      where customer_key in (1, 2, 3)
+      order by customer_key
+    expect:
+      columns: [customer_key, customer_name, market_segment]
+      rows:
+        - [1, "Customer#000000001", BUILDING]
+        - [2, "Customer#000000002", AUTOMOBILE]
+        - [3, "Customer#000000003", AUTOMOBILE]
+
+  - id: mysql_compat_views.003.view_alias_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: views_predicates
+    compatibility: mysql
+    requires: [select, view_reference, aliases, where, comparison]
+    sql: |
+      select customer_key, market_segment
+      from qs_mysql_compat_customer_view
+      where customer_key = 1
+        and market_segment = 'BUILDING'
+    expect:
+      columns: [customer_key, market_segment]
+      rows:
+        - [1, BUILDING]
+
+  - id: mysql_compat_views.010.create_q3_join_view
+    status: supported
+    kind: statement
+    timeout: 60s
+    feature: views_join_definition
+    compatibility: mysql
+    requires: [create_view, create_or_replace_view, inner_join, aliases]
+    sql: |
+      create or replace view qs_mysql_compat_q3_order_line_base as
+      select
+        c.c_mktsegment as market_segment,
+        o.o_orderkey as order_key,
+        o.o_orderdate as order_date,
+        o.o_shippriority as ship_priority,
+        l.l_extendedprice as extended_price,
+        l.l_discount as discount,
+        l.l_shipdate as ship_date
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on o.o_orderkey = l.l_orderkey
+
+  - id: mysql_compat_views.011.grouped_count_over_join_view
+    status: supported
+    kind: query
+    timeout: 180s
+    order: exact
+    feature: views_join_query
+    compatibility: mysql
+    requires: [select, view_reference, where, group_by, aggregate]
+    sql: |
+      select
+        order_key,
+        count(*) as line_count,
+        ship_priority
+      from qs_mysql_compat_q3_order_line_base
+      where order_key = 1
+      group by order_key, ship_priority
+    expect:
+      columns: [order_key, line_count, ship_priority]
+      rows:
+        - [1, 6, 0]
+
+  - id: mysql_compat_views.020.drop_customer_projection_view
+    status: supported
+    kind: statement
+    feature: views_ddl
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_customer_view
+
+  - id: mysql_compat_views.021.drop_q3_join_view
+    status: supported
+    kind: statement
+    feature: views_ddl
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_q3_order_line_base
