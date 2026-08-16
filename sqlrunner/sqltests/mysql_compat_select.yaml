@@ -28,19 +28,19 @@ tests:
       rows:
         - [null]
 
-  - id: mysql_compat_select.003.order_by_limit
+  - id: mysql_compat_select.003.table_order_by_limit
     status: supported
     kind: query
     feature: select_order_limit
     compatibility: mysql
-    requires: [select, order_by, limit]
+    requires: [select, table_scan, order_by, limit]
     sql: |
-      select 2 as n
-      union all
-      select 1 as n
-      order by n
-      limit 1
+      select n_name as nation_name
+      from nation
+      order by n_name
+      limit 2
     expect:
-      columns: [n]
+      columns: [nation_name]
       rows:
-        - [1]
+        - [ALGERIA]
+        - [ARGENTINA]

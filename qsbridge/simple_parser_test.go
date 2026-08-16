@@ -329,6 +329,34 @@ func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *tes
 	}
 }
 
+func TestSimpleParserBridgeParsesProjectionOnlyLiterals(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select 1 as one, 'alpha' as label, null as missing_value")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Tables) != 0 {
+		t.Fatalf("tables = %#v, want projection-only select", statement.Select.Tables)
+	}
+	if got, want := len(statement.Select.Projection), 3; got != want {
+		t.Fatalf("projection count = %d, want %d", got, want)
+	}
+	first, ok := statement.Select.Projection[0].Expr.(UnboundLiteralExpr)
+	if !ok || first.Kind != ValueInt || first.Value != int64(1) {
+		t.Fatalf("first projection = %#v, want int literal 1", statement.Select.Projection[0].Expr)
+	}
+	second, ok := statement.Select.Projection[1].Expr.(UnboundLiteralExpr)
+	if !ok || second.Kind != ValueString || second.Value != "alpha" {
+		t.Fatalf("second projection = %#v, want string literal alpha", statement.Select.Projection[1].Expr)
+	}
+	third, ok := statement.Select.Projection[2].Expr.(UnboundLiteralExpr)
+	if !ok || third.Kind != ValueNull || third.Value != nil {
+		t.Fatalf("third projection = %#v, want null literal", statement.Select.Projection[2].Expr)
+	}
+}
+
 func TestSimpleParserBridgeParsesQ17CorrelatedAggregateIntent(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 select count(*)

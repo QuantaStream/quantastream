@@ -1,0 +1,22 @@
+version: 1
+name: mysql_compat_select_boundaries
+
+tests:
+  - id: mysql_compat_select_boundaries.001.union_all_order_by_limit
+    status: xfail
+    kind: query
+    order: exact
+    feature: select_union_boundary
+    compatibility: mysql
+    requires: [select, union_all, order_by, limit]
+    issue: "UNION/UNION ALL SELECT composition is not parsed yet."
+    sql: |
+      select 2 as n
+      union all
+      select 1 as n
+      order by n
+      limit 1
+    expect:
+      columns: [n]
+      rows:
+        - [1]

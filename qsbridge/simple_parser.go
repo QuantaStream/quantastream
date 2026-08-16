@@ -1083,6 +1083,12 @@ func parseSimpleProjection(text string, aggregateIndex int) (UnboundProjection, 
 	if aggregates, projection, ok := parseSimpleAggregateArithmeticProjection(exprText, alias, aggregateIndex); ok {
 		return projection, aggregates, Diagnostic{}, true
 	}
+	if literal, _, ok := parseSimpleLiteral(exprText); ok {
+		return UnboundProjection{
+			Expr:  literal,
+			Alias: alias,
+		}, nil, Diagnostic{}, true
+	}
 	if expr, ok := parseSimpleArithmeticExpression(exprText); ok {
 		return UnboundProjection{
 			Expr:  expr,
