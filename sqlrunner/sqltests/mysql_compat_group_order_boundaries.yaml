@@ -90,3 +90,87 @@ tests:
       rows:
         - [b, 14]
         - [a, 8]
+
+  - id: mysql_compat_group_order_boundaries.005.group_by_ordinal_position
+    status: xfail
+    kind: query
+    order: exact
+    feature: group_by_ordinal_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by]
+    issue: "GROUP BY ordinal references are not resolved to SELECT projection expressions yet."
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by 1
+      order by 1
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [AUTOMOBILE, 302]
+        - [BUILDING, 337]
+        - [FURNITURE, 279]
+        - [HOUSEHOLD, 294]
+        - [MACHINERY, 288]
+
+  - id: mysql_compat_group_order_boundaries.006.order_by_expression_not_projected
+    status: xfail
+    kind: query
+    order: exact
+    feature: order_by_expression_boundary
+    compatibility: mysql
+    requires: [select, table_scan, expression_projection, order_by, limit]
+    issue: "ORDER BY expressions are only resolved when they are projected or simple aggregate references."
+    sql: |
+      select n_name as nation_name
+      from nation
+      order by n_nationkey + 1 desc
+      limit 3
+    expect:
+      columns: [nation_name]
+      rows:
+        - [UNITED STATES]
+        - [UNITED KINGDOM]
+        - [RUSSIA]
+
+  - id: mysql_compat_group_order_boundaries.007.compound_having_predicate
+    status: xfail
+    kind: query
+    order: exact
+    feature: group_by_having_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, having, count, order_by]
+    issue: "HAVING currently supports one aggregate comparison, not compound boolean expressions."
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      having count(*) > 280 and count(*) < 320
+      order by market_segment
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [AUTOMOBILE, 302]
+        - [HOUSEHOLD, 294]
+        - [MACHINERY, 288]
+
+  - id: mysql_compat_group_order_boundaries.008.having_aggregate_arithmetic
+    status: xfail
+    kind: query
+    order: exact
+    feature: group_by_having_boundary
+    compatibility: mysql
+    requires: [select, table_scan, group_by, having, sum, count, arithmetic, order_by]
+    issue: "HAVING aggregate arithmetic is not lowered to aggregate refs yet."
+    sql: |
+      select n_regionkey as region_key, sum(n_nationkey) as nation_key_sum
+      from nation
+      group by n_regionkey
+      having sum(n_nationkey) / count(*) > 10
+      order by region_key
+    expect:
+      columns: [region_key, nation_key_sum]
+      rows:
+        - [2, 68]
+        - [3, 77]
+        - [4, 58]
