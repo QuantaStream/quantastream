@@ -172,6 +172,9 @@ func directBitmapBitmapGroupCountExpressions(groupExpressions []directBitmapGrou
 		if expression.Expr == nil || expression.Field.Name == "" {
 			return false
 		}
+		if !directBitmapGroupExpressionIsField(expression) {
+			return false
+		}
 		if expression.Field.Index != qsbridge.IndexStringEnum && expression.Field.Index != qsbridge.IndexBitmap {
 			return false
 		}

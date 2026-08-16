@@ -105,13 +105,16 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			},
 		}, Diagnostic{}, true
 	}
-	sourceText, having, hasHaving, diagnostic, ok := parseSimpleHavingClause(sourceText, projections, aggregates)
+	sourceText, having, aggregates, hasHaving, diagnostic, ok := parseSimpleHavingClause(sourceText, projections, aggregates)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
 	sourceText, groupBy, hasGroupBy, diagnostic, ok := parseSimpleGroupByClause(sourceText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
+	}
+	if hasGroupBy {
+		groupBy = resolveSimpleGroupByProjections(groupBy, projections)
 	}
 	sourceOnlyText, whereText, hasWhere := splitOptionalKeyword(sourceText, "where")
 	tables, joins, diagnostic, ok := parseSimpleSources(sourceOnlyText)
@@ -790,6 +793,13 @@ func resolveSimpleOrderByProjection(sort UnboundSort, projections []UnboundProje
 		sort.Expr = aggregateRef
 		return sort, Diagnostic{}, true
 	}
+	if ordinal, ok := simpleUnboundIntegerOrdinal(sort.Expr); ok {
+		if ordinal < 1 || ordinal > len(projections) {
+			return UnboundSort{}, simpleParserDiagnostic("ORDER BY ordinal is out of range"), false
+		}
+		sort.Expr = projections[ordinal-1].Expr
+		return sort, Diagnostic{}, true
+	}
 	field, ok := sort.Expr.(UnboundFieldExpr)
 	if !ok || field.Qualifier != "" {
 		return sort, Diagnostic{}, true
@@ -802,6 +812,42 @@ func resolveSimpleOrderByProjection(sort UnboundSort, projections []UnboundProje
 		return sort, Diagnostic{}, true
 	}
 	return sort, Diagnostic{}, true
+}
+
+func simpleUnboundIntegerOrdinal(expr UnboundExpr) (int, bool) {
+	literal, ok := expr.(UnboundLiteralExpr)
+	if !ok || literal.Kind != ValueInt {
+		return 0, false
+	}
+	value, ok := literal.Value.(int64)
+	if !ok {
+		return 0, false
+	}
+	return int(value), true
+}
+
+func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []UnboundProjection) []UnboundExpr {
+	resolved := make([]UnboundExpr, 0, len(expressions))
+	for _, expr := range expressions {
+		field, ok := expr.(UnboundFieldExpr)
+		if !ok || field.Qualifier != "" {
+			resolved = append(resolved, expr)
+			continue
+		}
+		replacement := expr
+		for _, projection := range projections {
+			if projection.Alias == "" || !strings.EqualFold(projection.Alias, field.Name) {
+				continue
+			}
+			if _, aggregateRef := projection.Expr.(UnboundAggregateRefExpr); aggregateRef {
+				break
+			}
+			replacement = projection.Expr
+			break
+		}
+		resolved = append(resolved, replacement)
+	}
+	return resolved
 }
 
 func resolveSimpleOrderByAggregateCall(expr UnboundExpr, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, Diagnostic, bool) {
@@ -819,21 +865,28 @@ func resolveSimpleAggregateCall(expr UnboundExpr, aggregates []UnboundAggregate,
 	if len(call.Args) != 1 {
 		return UnboundAggregateRefExpr{}, simpleParserDiagnostic(clause + " aggregate call must match a SELECT aggregate"), false
 	}
+	if ref, ok := findSimpleAggregateCallRef(call, aggregates); ok {
+		return ref, Diagnostic{}, true
+	}
+	return UnboundAggregateRefExpr{}, simpleParserDiagnostic(clause + " aggregate call must match a SELECT aggregate"), false
+}
+
+func findSimpleAggregateCallRef(call UnboundCallExpr, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, bool) {
 	for index, aggregate := range aggregates {
 		if !strings.EqualFold(aggregate.Function, call.Name) {
 			continue
 		}
 		if strings.EqualFold(aggregate.Function, "count") && aggregate.CountAll {
 			if _, ok := call.Args[0].(simpleUnboundWildcardExpr); ok {
-				return UnboundAggregateRef(aggregate.Alias, index), Diagnostic{}, true
+				return UnboundAggregateRef(aggregate.Alias, index), true
 			}
 			continue
 		}
 		if simpleUnboundExprEqual(aggregate.Input, call.Args[0]) {
-			return UnboundAggregateRef(aggregate.Alias, index), Diagnostic{}, true
+			return UnboundAggregateRef(aggregate.Alias, index), true
 		}
 	}
-	return UnboundAggregateRefExpr{}, simpleParserDiagnostic(clause + " aggregate call must match a SELECT aggregate"), false
+	return UnboundAggregateRefExpr{}, false
 }
 
 func parseSimpleSources(sourceText string) ([]UnboundTable, []UnboundJoin, Diagnostic, bool) {
@@ -2731,36 +2784,38 @@ func parseSimpleGroupByClause(text string) (string, []UnboundExpr, bool, Diagnos
 	return left, expressions, true, Diagnostic{}, true
 }
 
-func parseSimpleHavingClause(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (string, []UnboundPredicate, bool, Diagnostic, bool) {
+func parseSimpleHavingClause(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (string, []UnboundPredicate, []UnboundAggregate, bool, Diagnostic, bool) {
 	left, right, ok := splitBeforeKeyword(text, "having")
 	if !ok {
-		return text, nil, false, Diagnostic{}, true
+		return text, nil, aggregates, false, Diagnostic{}, true
 	}
 	if hasAnyTopLevelKeyword(right, "where", "join", "group", "having", "order", "limit", "and", "or") {
-		return "", nil, false, simpleParserDiagnostic("HAVING supports one aggregate alias comparison literal"), false
+		return "", nil, aggregates, false, simpleParserDiagnostic("HAVING supports one aggregate alias comparison literal"), false
 	}
 	op, aliasText, literalText, ok := splitBeforeComparisonOperator(right)
 	if !ok {
-		return "", nil, false, simpleParserDiagnostic("HAVING must compare aggregate alias to literal"), false
+		return "", nil, aggregates, false, simpleParserDiagnostic("HAVING must compare aggregate alias to literal"), false
 	}
-	refExpr, diagnostic, ok := resolveSimpleHavingAggregateRef(aliasText, projections, aggregates)
+	refExpr, updatedAggregates, diagnostic, ok := resolveSimpleHavingAggregateRef(aliasText, projections, aggregates)
 	var leftExpr UnboundExpr = refExpr
 	if !ok {
 		scalarExpr, scalarOK := parseSimpleScalarExpression(aliasText)
 		if !scalarOK {
-			return "", nil, false, diagnostic, false
+			return "", nil, aggregates, false, diagnostic, false
 		}
 		leftExpr = scalarExpr
+	} else {
+		aggregates = updatedAggregates
 	}
 	literal, diagnostic, ok := parseSimpleComparisonValueWithScope(strings.TrimSpace(literalText), nil, PredicateScopeHaving)
 	if !ok {
-		return "", nil, false, diagnostic, false
+		return "", nil, aggregates, false, diagnostic, false
 	}
 	return left, []UnboundPredicate{{
 		Expr:      UnboundBinary(op, leftExpr, literal),
 		Placement: PredicateResidualScan,
 		Scope:     PredicateScopeHaving,
-	}}, true, Diagnostic{}, true
+	}}, aggregates, true, Diagnostic{}, true
 }
 
 func parseSimpleComparisonValueWithScope(text string, parameterIndex *int, scope PredicateScope) (UnboundExpr, Diagnostic, bool) {
@@ -2770,14 +2825,25 @@ func parseSimpleComparisonValueWithScope(text string, parameterIndex *int, scope
 	return parseSimpleComparisonValue(text, parameterIndex)
 }
 
-func resolveSimpleHavingAggregateRef(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, Diagnostic, bool) {
+func resolveSimpleHavingAggregateRef(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, []UnboundAggregate, Diagnostic, bool) {
 	if ref, ok := resolveSimpleAggregateAlias(text, projections); ok {
-		return ref, Diagnostic{}, true
+		return ref, aggregates, Diagnostic{}, true
 	}
 	if expr, ok := parseSimpleOrderByAggregateExpression(strings.TrimSpace(text)); ok {
-		return resolveSimpleAggregateCall(expr, aggregates, "HAVING")
+		call, callOK := expr.(UnboundCallExpr)
+		if !callOK {
+			return UnboundAggregateRefExpr{}, aggregates, simpleParserDiagnostic("HAVING aggregate call is invalid"), false
+		}
+		if ref, ok := findSimpleAggregateCallRef(call, aggregates); ok {
+			return ref, aggregates, Diagnostic{}, true
+		}
+		aggregate, ref, diagnostic, ok := simpleHiddenAggregateFromCall(call, len(aggregates), "__having_agg_")
+		if !ok {
+			return UnboundAggregateRefExpr{}, aggregates, diagnostic, false
+		}
+		return ref, append(aggregates, aggregate), Diagnostic{}, true
 	}
-	return UnboundAggregateRefExpr{}, simpleParserDiagnostic("HAVING must reference an aggregate alias or matching aggregate call"), false
+	return UnboundAggregateRefExpr{}, aggregates, simpleParserDiagnostic("HAVING must reference an aggregate alias or matching aggregate call"), false
 }
 
 func resolveSimpleAggregateAlias(aliasText string, projections []UnboundProjection) (UnboundAggregateRefExpr, bool) {
@@ -2793,6 +2859,29 @@ func resolveSimpleAggregateAlias(aliasText string, projections []UnboundProjecti
 		return ref, ok
 	}
 	return UnboundAggregateRefExpr{}, false
+}
+
+func simpleHiddenAggregateFromCall(call UnboundCallExpr, aggregateIndex int, aliasPrefix string) (UnboundAggregate, UnboundAggregateRefExpr, Diagnostic, bool) {
+	if len(call.Args) != 1 || !simpleAggregateFunctionName(call.Name) {
+		return UnboundAggregate{}, UnboundAggregateRefExpr{}, simpleParserDiagnostic("HAVING aggregate call is invalid"), false
+	}
+	alias := aliasPrefix + strconv.Itoa(aggregateIndex)
+	aggregate := UnboundAggregate{
+		Function: call.Name,
+		Alias:    alias,
+		Type:     simpleAggregateReturnType(call.Name),
+	}
+	if strings.EqualFold(call.Name, "count") {
+		aggregate.Type = DataTypeInt
+		if _, ok := call.Args[0].(simpleUnboundWildcardExpr); ok {
+			aggregate.CountAll = true
+		} else {
+			aggregate.Input = call.Args[0]
+		}
+	} else {
+		aggregate.Input = call.Args[0]
+	}
+	return aggregate, UnboundAggregateRef(alias, aggregateIndex), Diagnostic{}, true
 }
 
 func simpleUnboundExprEqual(left UnboundExpr, right UnboundExpr) bool {
@@ -2852,6 +2941,21 @@ func parseSimpleLimitClause(text string) (string, int, int, bool, Diagnostic, bo
 	left, right, ok := splitBeforeKeyword(text, "limit")
 	if !ok {
 		return text, 0, 0, false, Diagnostic{}, true
+	}
+	commaParts := splitSimpleCommaList(right)
+	if len(commaParts) == 2 {
+		offset, err := strconv.Atoi(strings.TrimSpace(commaParts[0]))
+		if err != nil || offset < 0 {
+			return "", 0, 0, false, simpleParserDiagnostic("LIMIT offset must be a non-negative integer"), false
+		}
+		limit, err := strconv.Atoi(strings.TrimSpace(commaParts[1]))
+		if err != nil || limit < 0 {
+			return "", 0, 0, false, simpleParserDiagnostic("LIMIT must be a non-negative integer"), false
+		}
+		return left, limit, offset, true, Diagnostic{}, true
+	}
+	if len(commaParts) > 2 {
+		return "", 0, 0, false, simpleParserDiagnostic("LIMIT must contain one integer and optional OFFSET integer"), false
 	}
 	fields := strings.Fields(right)
 	if len(fields) != 1 && len(fields) != 3 {

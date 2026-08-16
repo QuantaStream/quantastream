@@ -396,6 +396,22 @@ func TestSimpleParserBridgeParsesLimitOffset(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCommaLimitOffset(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id from orders as o order by o.o_orderkey limit 2, 3")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if !statement.Select.Result.HasResultLimit() {
+		t.Fatalf("has limit = false, want true")
+	}
+	if statement.Select.Result.Limit != 3 {
+		t.Fatalf("limit = %d, want 3", statement.Select.Result.Limit)
+	}
+	if statement.Select.Result.Offset != 2 {
+		t.Fatalf("offset = %d, want 2", statement.Select.Result.Offset)
+	}
+}
+
 func TestSimpleParserBridgeParsesLimitZero(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id from orders as o order by o.o_orderkey limit 0")
 	if diagnostics.BlocksNative() {
@@ -1088,6 +1104,26 @@ func TestSimpleParserBridgeParsesAggregateAliasOrderBy(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesOrderByOrdinal(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select n_name as nation_name, n_nationkey as nation_key from nation order by 2 desc")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.OrderBy) != 1 {
+		t.Fatalf("order by = %d, want 1", len(statement.Select.OrderBy))
+	}
+	field, ok := statement.Select.OrderBy[0].Expr.(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("order by expression = %T, want UnboundFieldExpr", statement.Select.OrderBy[0].Expr)
+	}
+	if field.Name != "n_nationkey" {
+		t.Fatalf("order by field = %#v, want n_nationkey", field)
+	}
+	if statement.Select.OrderBy[0].Direction != SortDescending {
+		t.Fatalf("order by direction = %q, want desc", statement.Select.OrderBy[0].Direction)
+	}
+}
+
 func TestSimpleParserBridgeParsesComputedProjectionAliasOrderBy(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select year(l_shipdate) as l_year, count(*) as line_count from lineitem group by year(l_shipdate) order by l_year")
 	if diagnostics.BlocksNative() {
@@ -1252,6 +1288,31 @@ func TestSimpleParserBridgeParsesAggregateCallHaving(t *testing.T) {
 	}
 	if ref.Alias != "total_revenue" || ref.Index != 0 {
 		t.Fatalf("having ref = %#v, want total_revenue[0]", ref)
+	}
+}
+
+func TestSimpleParserBridgeParsesHiddenAggregateCallHaving(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_mktsegment as market_segment from customer group by c_mktsegment having count(*) > 300 order by market_segment")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Aggregates) != 1 {
+		t.Fatalf("aggregates = %d, want 1", len(statement.Select.Aggregates))
+	}
+	aggregate := statement.Select.Aggregates[0]
+	if aggregate.Function != "count" || !aggregate.CountAll || aggregate.Alias != "__having_agg_0" {
+		t.Fatalf("aggregate = %#v, want hidden count(*)", aggregate)
+	}
+	predicate, ok := statement.Select.Having[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("having expression = %T, want UnboundBinaryExpr", statement.Select.Having[0].Expr)
+	}
+	ref, ok := predicate.Left.(UnboundAggregateRefExpr)
+	if !ok {
+		t.Fatalf("having left = %T, want UnboundAggregateRefExpr", predicate.Left)
+	}
+	if ref.Alias != "__having_agg_0" || ref.Index != 0 {
+		t.Fatalf("having ref = %#v, want hidden count ref", ref)
 	}
 }
 
@@ -1458,6 +1519,23 @@ func TestSimpleParserBridgeParsesGroupedCount(t *testing.T) {
 	}
 	if statement.Select.Aggregates[0].Function != "count" || !statement.Select.Aggregates[0].CountAll {
 		t.Fatalf("aggregate = %#v, want count(*)", statement.Select.Aggregates[0])
+	}
+}
+
+func TestSimpleParserBridgeParsesGroupByProjectionAlias(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_mktsegment as market_segment, count(*) as customer_count from customer group by market_segment order by market_segment")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.GroupBy) != 1 {
+		t.Fatalf("group by = %d, want 1", len(statement.Select.GroupBy))
+	}
+	group, ok := statement.Select.GroupBy[0].(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("group expression = %T, want UnboundFieldExpr", statement.Select.GroupBy[0])
+	}
+	if group.Name != "c_mktsegment" {
+		t.Fatalf("group expression = %#v, want c_mktsegment", group)
 	}
 }
 

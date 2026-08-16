@@ -2863,6 +2863,24 @@ func TestDirectBitmapRuntimeUsesBitmapGroupCountReader(t *testing.T) {
 	assertExecutionProbe(t, result.Probes, "grouped_aggregate", "bitmap_group_count_mode", "test_bitmap_group_count")
 }
 
+func TestDirectBitmapBitmapGroupCountRejectsComputedGroupExpressions(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "customer", Table: "customer"}
+	segment := qsbridge.FieldRef{Table: table, Name: "c_mktsegment", PhysicalName: "c_mktsegment", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum}
+	prefixExpr := qsbridge.FunctionCall(
+		qsbridge.FunctionDefinition{Name: "substr", Kind: qsbridge.FunctionScalar, ReturnType: qsbridge.DataTypeString},
+		qsbridge.Field(segment),
+		qsbridge.Literal(qsbridge.ValueInt, int64(1)),
+		qsbridge.Literal(qsbridge.ValueInt, int64(1)),
+	)
+	groupExpressions := []directBitmapGroupExpression{{
+		Expr:  prefixExpr,
+		Field: segment,
+	}}
+	if directBitmapBitmapGroupCountExpressions(groupExpressions) {
+		t.Fatalf("bitmap group count accepted computed group expression")
+	}
+}
+
 func TestDirectBitmapRuntimeUsesBitmapGroupAggregateReader(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
 	returnFlag := qsbridge.FieldRef{Table: table, Name: "l_returnflag", PhysicalName: "l_returnflag", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum}

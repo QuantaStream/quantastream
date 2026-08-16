@@ -171,3 +171,121 @@ tests:
     expect:
       columns: [nation_name]
       rows: []
+
+  - id: mysql_compat_group_order.010.limit_offset_comma_syntax
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, order_by, limit, offset]
+    sql: |
+      select n_name as nation_name
+      from nation
+      order by n_name
+      limit 1, 2
+    expect:
+      columns: [nation_name]
+      rows:
+        - [ARGENTINA]
+        - [BRAZIL]
+
+  - id: mysql_compat_group_order.011.order_by_ordinal_position
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, order_by, limit]
+    sql: |
+      select n_name as nation_name, n_nationkey as nation_key
+      from nation
+      order by 2 desc
+      limit 3
+    expect:
+      columns: [nation_name, nation_key]
+      rows:
+        - [UNITED STATES, 24]
+        - [UNITED KINGDOM, 23]
+        - [RUSSIA, 22]
+
+  - id: mysql_compat_group_order.012.group_by_alias
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_alias
+    compatibility: mysql
+    requires: [select, table_scan, aliases, group_by, count, order_by]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by market_segment
+      order by market_segment
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [AUTOMOBILE, 302]
+        - [BUILDING, 337]
+        - [FURNITURE, 279]
+        - [HOUSEHOLD, 294]
+        - [MACHINERY, 288]
+
+  - id: mysql_compat_group_order.013.group_by_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_expression
+    compatibility: mysql
+    requires: [select, table_scan, expression_projection, group_by, count, order_by]
+    sql: |
+      select substr(c_mktsegment, 1, 1) as segment_initial, count(*) as customer_count
+      from customer
+      group by substr(c_mktsegment, 1, 1)
+      order by segment_initial
+    expect:
+      columns: [segment_initial, customer_count]
+      rows:
+        - [A, 302]
+        - [B, 337]
+        - [F, 279]
+        - [H, 294]
+        - [M, 288]
+
+  - id: mysql_compat_group_order.014.having_aggregate_not_selected
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_having
+    compatibility: mysql
+    requires: [select, table_scan, group_by, having, count, order_by]
+    sql: |
+      select c_mktsegment as market_segment
+      from customer
+      group by c_mktsegment
+      having count(*) > 300
+      order by market_segment
+    expect:
+      columns: [market_segment]
+      rows:
+        - [AUTOMOBILE]
+        - [BUILDING]
+
+  - id: mysql_compat_group_order.015.order_by_aggregate_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by count(*) desc, market_segment
+      limit 3
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [BUILDING, 337]
+        - [AUTOMOBILE, 302]
+        - [HOUSEHOLD, 294]
