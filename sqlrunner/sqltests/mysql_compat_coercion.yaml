@@ -1,0 +1,91 @@
+version: 1
+name: mysql_compat_coercion
+
+tests:
+  - id: mysql_compat_coercion.001.numeric_string_literal_comparisons
+    status: supported
+    kind: query
+    order: exact
+    feature: type_coercion_comparisons
+    compatibility: mysql
+    requires: [select, case]
+    sql: |
+      select case when '10' = 10 then 'yes' else 'no' end as string_int_equal,
+             case when '10' > 2 then 'yes' else 'no' end as string_int_greater,
+             case when '10.5' > 10 then 'yes' else 'no' end as decimal_string_greater
+    expect:
+      columns: [string_int_equal, string_int_greater, decimal_string_greater]
+      rows:
+        - [yes, yes, yes]
+
+  - id: mysql_compat_coercion.002.string_truthiness
+    status: supported
+    kind: query
+    order: exact
+    feature: type_coercion_truthiness
+    compatibility: mysql
+    requires: [select, if]
+    sql: |
+      select if('0', 'yes', 'no') as if_string_zero,
+             if('2', 'yes', 'no') as if_string_two,
+             if('abc', 'yes', 'no') as if_string_alpha,
+             if('', 'yes', 'no') as if_empty_string
+    expect:
+      columns: [if_string_zero, if_string_two, if_string_alpha, if_empty_string]
+      rows:
+        - [no, yes, no, no]
+
+  - id: mysql_compat_coercion.010.numeric_field_equals_quoted_integer
+    status: supported
+    kind: query
+    order: exact
+    feature: type_coercion_predicates
+    compatibility: mysql
+    requires: [select, where]
+    sql: |
+      select c_custkey
+      from customer
+      where c_custkey = '1'
+    expect:
+      columns: [c_custkey]
+      rows:
+        - [1]
+
+  - id: mysql_compat_coercion.011.numeric_field_in_quoted_integer_list
+    status: supported
+    kind: query
+    order: exact
+    feature: type_coercion_predicates
+    compatibility: mysql
+    requires: [select, where, in, order_by]
+    sql: |
+      select c_custkey
+      from customer
+      where c_custkey in ('1', '2', '3')
+      order by c_custkey
+    expect:
+      columns: [c_custkey]
+      rows:
+        - [1]
+        - [2]
+        - [3]
+
+  - id: mysql_compat_coercion.012.scaled_numeric_field_equals_quoted_integer
+    status: supported
+    kind: query
+    order: exact
+    feature: type_coercion_predicates
+    compatibility: mysql
+    requires: [select, where, order_by, limit]
+    sql: |
+      select l_orderkey, l_linenumber
+      from lineitem
+      where l_quantity = '17'
+      order by l_orderkey, l_linenumber
+      limit 3
+    expect:
+      columns: [l_orderkey, l_linenumber]
+      rows:
+        - [1, 1]
+        - [69, 3]
+        - [194, 1]
