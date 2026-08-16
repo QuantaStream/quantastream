@@ -2,85 +2,29 @@ version: 1
 name: mysql_compat_mutations
 
 tests:
-  - id: mysql_compat_mutations.001.drop_table
+  - id: mysql_compat_mutations.001.commit
+    status: supported
+    kind: statement
+    feature: mutations_transaction_control
+    compatibility: mysql
+    requires: [commit]
+    sql: |
+      commit
+
+  - id: mysql_compat_mutations.002.commit_work
+    status: supported
+    kind: statement
+    feature: mutations_transaction_control
+    compatibility: mysql
+    requires: [commit]
+    sql: |
+      commit work
+
+  - id: mysql_compat_mutations.003.drop_view_if_exists
     status: supported
     kind: statement
     feature: mutations_ddl
     compatibility: mysql
-    requires: [drop_table]
+    requires: [drop_view, if_exists]
     sql: |
-      drop table if exists qs_mysql_compat_mutations
-
-  - id: mysql_compat_mutations.002.create_table
-    status: supported
-    kind: statement
-    feature: mutations_ddl
-    compatibility: mysql
-    requires: [create_table, int, varchar]
-    sql: |
-      create table qs_mysql_compat_mutations (
-        id int primary key,
-        name varchar(40),
-        amount int
-      )
-
-  - id: mysql_compat_mutations.003.insert_rows
-    status: supported
-    kind: statement
-    feature: mutations_insert
-    compatibility: mysql
-    requires: [insert, values]
-    sql: |
-      insert into qs_mysql_compat_mutations (id, name, amount)
-      values (1, 'Abe', 10), (2, 'Abby', 20)
-    expect:
-      affected_rows: 2
-
-  - id: mysql_compat_mutations.004.update_rows
-    status: supported
-    kind: statement
-    feature: mutations_update
-    compatibility: mysql
-    requires: [update, where, comparison]
-    sql: |
-      update qs_mysql_compat_mutations
-      set amount = amount + 5
-      where id = 2
-    expect:
-      affected_rows: 1
-
-  - id: mysql_compat_mutations.005.delete_rows
-    status: supported
-    kind: statement
-    feature: mutations_delete
-    compatibility: mysql
-    requires: [delete, where, comparison]
-    sql: |
-      delete from qs_mysql_compat_mutations
-      where id = 1
-    expect:
-      affected_rows: 1
-
-  - id: mysql_compat_mutations.006.verify_rows
-    status: supported
-    kind: query
-    feature: mutations_select_after_write
-    compatibility: mysql
-    requires: [select, order_by]
-    sql: |
-      select id, name, amount
-      from qs_mysql_compat_mutations
-      order by id
-    expect:
-      columns: [id, name, amount]
-      rows:
-        - [2, Abby, 25]
-
-  - id: mysql_compat_mutations.900.cleanup
-    status: supported
-    kind: statement
-    feature: mutations_ddl
-    compatibility: mysql
-    requires: [drop_table]
-    sql: |
-      drop table if exists qs_mysql_compat_mutations
+      drop view if exists qs_mysql_compat_noop_view

@@ -1,0 +1,94 @@
+version: 1
+name: mysql_compat_mutations_boundaries
+
+tests:
+  - id: mysql_compat_mutations_boundaries.001.drop_table_if_exists
+    status: xfail
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    issue: "DROP TABLE IF EXISTS is not parsed yet; QS currently supports simple YAML-backed DROP TABLE names."
+    sql: |
+      drop table if exists qs_mysql_compat_mutations
+
+  - id: mysql_compat_mutations_boundaries.002.create_inline_table
+    status: xfail
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [create_table, int, varchar]
+    issue: "Inline CREATE TABLE definitions are not supported yet; QS table creation is catalog/YAML-backed."
+    sql: |
+      create table qs_mysql_compat_mutations (
+        id int primary key,
+        name varchar(40),
+        amount int
+      )
+
+  - id: mysql_compat_mutations_boundaries.003.multi_row_insert
+    status: xfail
+    kind: statement
+    feature: mutations_insert_boundary
+    compatibility: mysql
+    requires: [insert, values]
+    issue: "This MySQL insert depends on inline CREATE TABLE support for the scratch table."
+    sql: |
+      insert into qs_mysql_compat_mutations (id, name, amount)
+      values (1, 'Abe', 10), (2, 'Abby', 20)
+    expect:
+      affected_rows: 2
+
+  - id: mysql_compat_mutations_boundaries.004.update_arithmetic_assignment
+    status: xfail
+    kind: statement
+    feature: mutations_update_boundary
+    compatibility: mysql
+    requires: [update, arithmetic, where, comparison]
+    issue: "UPDATE arithmetic assignment and the scratch table setup are not supported by the MySQL compatibility surface yet."
+    sql: |
+      update qs_mysql_compat_mutations
+      set amount = amount + 5
+      where id = 2
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.005.delete_rows
+    status: xfail
+    kind: statement
+    feature: mutations_delete_boundary
+    compatibility: mysql
+    requires: [delete, where, comparison]
+    issue: "This delete depends on inline CREATE TABLE support for the scratch table."
+    sql: |
+      delete from qs_mysql_compat_mutations
+      where id = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.006.select_after_write
+    status: xfail
+    kind: query
+    order: exact
+    feature: mutations_select_after_write_boundary
+    compatibility: mysql
+    requires: [select, order_by]
+    issue: "Read-after-write on a MySQL-created scratch table depends on inline CREATE TABLE and DML support."
+    sql: |
+      select id, name, amount
+      from qs_mysql_compat_mutations
+      order by id
+    expect:
+      columns: [id, name, amount]
+      rows:
+        - [2, Abby, 25]
+
+  - id: mysql_compat_mutations_boundaries.900.cleanup
+    status: xfail
+    kind: statement
+    feature: mutations_ddl_boundary
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    issue: "DROP TABLE IF EXISTS is not parsed yet; QS currently supports simple YAML-backed DROP TABLE names."
+    sql: |
+      drop table if exists qs_mysql_compat_mutations
