@@ -234,6 +234,24 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 		t.Fatalf("SET CHARSET actions = %#v", actions)
 	}
 
+	characterSetDefault, err := runtime.ExecuteSQL(context.Background(), "set character set default", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET CHARACTER SET DEFAULT failed: %v", err)
+	}
+	actions = characterSetDefault.Runtime.Statement.SessionActions
+	if len(actions) != 3 || actions[0].Name != "character_set_client" || actions[0].Value != "default" {
+		t.Fatalf("SET CHARACTER SET DEFAULT actions = %#v", actions)
+	}
+
+	characterSetResultsNull, err := runtime.ExecuteSQL(context.Background(), "set character_set_results = NULL", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET character_set_results NULL failed: %v", err)
+	}
+	actions = characterSetResultsNull.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetVariable || actions[0].Name != "character_set_results" || actions[0].Value != "NULL" {
+		t.Fatalf("SET character_set_results NULL actions = %#v", actions)
+	}
+
 	autocommit, err := runtime.ExecuteSQL(context.Background(), "set autocommit = 1", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("SET autocommit failed: %v", err)
@@ -241,6 +259,15 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 	actions = autocommit.Runtime.Statement.SessionActions
 	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetVariable || actions[0].Name != "autocommit" || actions[0].Value != "1" {
 		t.Fatalf("SET autocommit actions = %#v", actions)
+	}
+
+	autocommitOn, err := runtime.ExecuteSQL(context.Background(), "set autocommit = ON", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET autocommit ON failed: %v", err)
+	}
+	actions = autocommitOn.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetVariable || actions[0].Name != "autocommit" || actions[0].Value != "ON" {
+		t.Fatalf("SET autocommit ON actions = %#v", actions)
 	}
 
 	sqlMode, err := runtime.ExecuteSQL(context.Background(), "set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE'", qsbridge.ExecutionOptions{})
@@ -313,6 +340,18 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 	actions = sessionVarSQLMode.Runtime.Statement.SessionActions
 	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "NO_ENGINE_SUBSTITUTION" {
 		t.Fatalf("SET @@session.sql_mode actions = %#v", actions)
+	}
+
+	mixedScoped, err := runtime.ExecuteSQL(context.Background(), "set character_set_results = NULL, session sql_mode = 'ANSI_QUOTES', session sql_select_limit = DEFAULT", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET mixed scoped assignments failed: %v", err)
+	}
+	actions = mixedScoped.Runtime.Statement.SessionActions
+	if len(actions) != 3 ||
+		actions[0].Name != "character_set_results" || actions[0].Value != "NULL" ||
+		actions[1].Kind != qsbridge.SessionActionSetSQLMode || actions[1].Name != "sql_mode" || actions[1].Value != "ANSI_QUOTES" ||
+		actions[2].Name != "sql_select_limit" || actions[2].Value != "DEFAULT" {
+		t.Fatalf("SET mixed scoped assignment actions = %#v", actions)
 	}
 
 	transaction, err := runtime.ExecuteSQL(context.Background(), "set session transaction isolation level repeatable read", qsbridge.ExecutionOptions{})

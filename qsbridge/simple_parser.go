@@ -2078,7 +2078,7 @@ func parseSimpleSetAssignment(text string) (string, string, Diagnostic, bool) {
 	if !ok {
 		return "", "", simpleParserDiagnostic("SET assignment must use name = value"), false
 	}
-	name := normalizeSimpleSystemVariableName(nameText)
+	name := normalizeSimpleSetAssignmentName(nameText)
 	if name == "" {
 		return "", "", simpleParserDiagnostic("SET variable name is empty"), false
 	}
@@ -2086,10 +2086,7 @@ func parseSimpleSetAssignment(text string) (string, string, Diagnostic, bool) {
 	if value == "" {
 		return "", "", simpleParserDiagnostic("SET assignment value is empty"), false
 	}
-	if literal, _, ok := parseSimpleLiteral(value); ok {
-		return name, simpleLiteralSessionValue(literal), Diagnostic{}, true
-	}
-	return name, strings.Trim(value, "'\""), Diagnostic{}, true
+	return name, simpleSessionAssignmentValue(value), Diagnostic{}, true
 }
 
 func splitSimpleSetAssignment(text string) (string, string, bool) {
@@ -2115,9 +2112,45 @@ func sessionActionForSetAssignment(name string, value string) SessionAction {
 	}
 }
 
+func normalizeSimpleSetAssignmentName(text string) string {
+	trimmed := strings.TrimSpace(text)
+	for {
+		next, ok := consumeKeyword(trimmed, "session")
+		if !ok {
+			next, ok = consumeKeyword(trimmed, "global")
+		}
+		if !ok {
+			next, ok = consumeKeyword(trimmed, "local")
+		}
+		if !ok {
+			break
+		}
+		trimmed = strings.TrimSpace(next)
+	}
+	return normalizeSimpleSystemVariableName(trimmed)
+}
+
+func simpleSessionAssignmentValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch strings.ToLower(trimmed) {
+	case "null":
+		return "NULL"
+	case "default":
+		return "DEFAULT"
+	case "on":
+		return "ON"
+	case "off":
+		return "OFF"
+	}
+	if literal, _, ok := parseSimpleLiteral(trimmed); ok {
+		return simpleLiteralSessionValue(literal)
+	}
+	return strings.Trim(trimmed, "'\"")
+}
+
 func simpleLiteralSessionValue(literal UnboundLiteralExpr) string {
 	if literal.Kind == ValueNull || literal.Value == nil {
-		return ""
+		return "NULL"
 	}
 	return strings.TrimSpace(strings.Trim(fmt.Sprint(literal.Value), "'\""))
 }
