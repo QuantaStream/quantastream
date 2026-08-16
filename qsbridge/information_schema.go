@@ -13,6 +13,10 @@ const (
 	InformationSchemaColumnsName = "columns"
 	// InformationSchemaStatisticsName identifies INFORMATION_SCHEMA.STATISTICS.
 	InformationSchemaStatisticsName = "statistics"
+	// InformationSchemaCharacterSetsName identifies INFORMATION_SCHEMA.CHARACTER_SETS.
+	InformationSchemaCharacterSetsName = "character_sets"
+	// InformationSchemaCollationsName identifies INFORMATION_SCHEMA.COLLATIONS.
+	InformationSchemaCollationsName = "collations"
 )
 
 // InformationSchemaTableDefinition returns the small virtual catalog surface
@@ -84,6 +88,31 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 				{Name: "INDEX_COMMENT", Type: DataTypeString},
 				{Name: "IS_VISIBLE", Type: DataTypeString},
 				{Name: "EXPRESSION", Type: DataTypeString, Nullable: true},
+			},
+		}, true
+	case InformationSchemaCharacterSetsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaCharacterSetsName,
+			Fields: []FieldDefinition{
+				{Name: "CHARACTER_SET_NAME", Type: DataTypeString},
+				{Name: "DEFAULT_COLLATE_NAME", Type: DataTypeString},
+				{Name: "DESCRIPTION", Type: DataTypeString},
+				{Name: "MAXLEN", Type: DataTypeInt},
+			},
+		}, true
+	case InformationSchemaCollationsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaCollationsName,
+			Fields: []FieldDefinition{
+				{Name: "COLLATION_NAME", Type: DataTypeString},
+				{Name: "CHARACTER_SET_NAME", Type: DataTypeString},
+				{Name: "ID", Type: DataTypeInt},
+				{Name: "IS_DEFAULT", Type: DataTypeString},
+				{Name: "IS_COMPILED", Type: DataTypeString},
+				{Name: "SORTLEN", Type: DataTypeInt},
+				{Name: "PAD_ATTRIBUTE", Type: DataTypeString},
 			},
 		}, true
 	default:

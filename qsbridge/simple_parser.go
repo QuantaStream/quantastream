@@ -1429,14 +1429,27 @@ func parseSimpleOptionalLikePatternSet(text string, statement string) (simpleSho
 }
 
 func parseSimpleShowWherePatternSet(whereBody string, statement string) (simpleShowPatternSet, Diagnostic, bool) {
-	fields := strings.Fields(strings.TrimSpace(whereBody))
+	orParts := splitSimpleBooleanParts(whereBody, "or")
+	if len(orParts) > 1 {
+		filter := simpleShowPatternSet{}
+		for _, part := range orParts {
+			partFilter, diagnostic, ok := parseSimpleShowWherePatternSet(part, statement)
+			if !ok {
+				return simpleShowPatternSet{}, diagnostic, false
+			}
+			filter = mergeSimpleShowPatternSet(filter, partFilter)
+		}
+		return filter, Diagnostic{}, true
+	}
+	trimmed := stripSimpleEnclosingParens(strings.TrimSpace(whereBody))
+	fields := strings.Fields(trimmed)
 	if len(fields) < 3 {
 		return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE must use field = literal, field LIKE literal, or field IN (literal[, ...])"), false
 	}
 	op := strings.ToLower(fields[1])
 	switch op {
 	case "=", "like":
-		return simpleShowPatternSet{Pattern: strings.Trim(strings.Join(fields[2:], " "), "'\"")}, Diagnostic{}, true
+		return simpleShowPatternSet{Patterns: []string{strings.Trim(strings.Join(fields[2:], " "), "'\"")}}, Diagnostic{}, true
 	case "in":
 		raw := strings.TrimSpace(strings.Join(fields[2:], " "))
 		if !strings.HasPrefix(raw, "(") || !strings.HasSuffix(raw, ")") {
@@ -1450,6 +1463,18 @@ func parseSimpleShowWherePatternSet(whereBody string, statement string) (simpleS
 	default:
 		return simpleShowPatternSet{}, simpleParserDiagnostic(statement + " WHERE only supports field = literal, field LIKE literal, or field IN (literal[, ...])"), false
 	}
+}
+
+func mergeSimpleShowPatternSet(left simpleShowPatternSet, right simpleShowPatternSet) simpleShowPatternSet {
+	if strings.TrimSpace(left.Pattern) != "" {
+		left.Patterns = append(left.Patterns, left.Pattern)
+		left.Pattern = ""
+	}
+	if strings.TrimSpace(right.Pattern) != "" {
+		left.Patterns = append(left.Patterns, right.Pattern)
+	}
+	left.Patterns = append(left.Patterns, right.Patterns...)
+	return left
 }
 
 func parseSimpleShowLiteralList(text string) ([]string, bool) {

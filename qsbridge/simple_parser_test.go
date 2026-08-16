@@ -407,8 +407,8 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	if whereStatement.Kind != QueryKindShowVariables {
 		t.Fatalf("where kind = %q, want show_variables", whereStatement.Kind)
 	}
-	if got, want := whereStatement.ShowVars.Pattern, "version"; got != want {
-		t.Fatalf("where pattern = %q, want %q", got, want)
+	if got, want := whereStatement.ShowVars.Patterns, []string{"version"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("where patterns = %#v, want %#v", got, want)
 	}
 
 	inStatement, diagnostics := SimpleParserBridge{}.Parse("show variables where Variable_name in ('version', 'version_comment');")
@@ -420,6 +420,17 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	}
 	if got, want := inStatement.ShowVars.Patterns, []string{"version", "version_comment"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("in patterns = %#v, want %#v", got, want)
+	}
+
+	orStatement, diagnostics := SimpleParserBridge{}.Parse("show variables where (Variable_name like 'character_set_%') or Variable_name = 'collation_connection';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse or diagnostics: %#v", diagnostics)
+	}
+	if orStatement.Kind != QueryKindShowVariables {
+		t.Fatalf("or kind = %q, want show_variables", orStatement.Kind)
+	}
+	if got, want := orStatement.ShowVars.Patterns, []string{"character_set_%", "collation_connection"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("or patterns = %#v, want %#v", got, want)
 	}
 }
 
@@ -496,7 +507,7 @@ func TestSimpleParserBridgeParsesShowCharacterMetadataWhereStatement(t *testing.
 	if diagnostics.BlocksNative() {
 		t.Fatalf("charset parse diagnostics: %#v", diagnostics)
 	}
-	if charsets.Kind != QueryKindShowCharacterSet || charsets.ShowCharset.Pattern != "utf8mb4" {
+	if charsets.Kind != QueryKindShowCharacterSet || !reflect.DeepEqual(charsets.ShowCharset.Patterns, []string{"utf8mb4"}) {
 		t.Fatalf("charsets = %#v, want character set pattern utf8mb4", charsets.ShowCharset)
 	}
 
@@ -504,7 +515,7 @@ func TestSimpleParserBridgeParsesShowCharacterMetadataWhereStatement(t *testing.
 	if diagnostics.BlocksNative() {
 		t.Fatalf("collation parse diagnostics: %#v", diagnostics)
 	}
-	if collations.Kind != QueryKindShowCollation || collations.ShowCollation.Pattern != "utf8mb4" {
+	if collations.Kind != QueryKindShowCollation || !reflect.DeepEqual(collations.ShowCollation.Patterns, []string{"utf8mb4"}) {
 		t.Fatalf("collations = %#v, want collation pattern utf8mb4", collations.ShowCollation)
 	}
 }

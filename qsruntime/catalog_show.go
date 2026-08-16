@@ -1072,7 +1072,7 @@ func catalogMetadataValueMatches(value string, pattern string, patterns []string
 	}
 	for _, candidate := range patterns {
 		candidate = strings.TrimSpace(candidate)
-		if candidate != "" && strings.EqualFold(value, candidate) {
+		if candidate != "" && sqlLikeMatch(value, candidate) {
 			return true
 		}
 	}

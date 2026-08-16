@@ -615,6 +615,18 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	if len(versionPairChunk.Rows) != 2 || versionPairChunk.Rows[0][0].Value != "version" || versionPairChunk.Rows[1][0].Value != "version_comment" {
 		t.Fatalf("version pair rows = %#v", versionPairChunk.Rows)
 	}
+
+	charsetVariables, err := runtime.ExecuteSQL(context.Background(), "show variables where Variable_name like 'character_set_%' or Variable_name = 'collation_connection'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW VARIABLES WHERE OR failed: %v", err)
+	}
+	charsetVariablesChunk, diagnostics := charsetVariables.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("charset variables chunk diagnostics = %#v", diagnostics)
+	}
+	if len(charsetVariablesChunk.Rows) != 4 || charsetVariablesChunk.Rows[0][0].Value != "character_set_client" || charsetVariablesChunk.Rows[3][0].Value != "collation_connection" {
+		t.Fatalf("charset variables rows = %#v", charsetVariablesChunk.Rows)
+	}
 }
 
 func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
@@ -669,6 +681,18 @@ func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
 	}
 	if len(statusPairChunk.Rows) != 2 || statusPairChunk.Rows[0][0].Value != "Connections" || statusPairChunk.Rows[1][0].Value != "Threads_connected" {
 		t.Fatalf("status pair rows = %#v", statusPairChunk.Rows)
+	}
+
+	statusOr, err := runtime.ExecuteSQL(context.Background(), "show status where Variable_name = 'Connections' or Variable_name like 'Threads_%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW STATUS WHERE OR failed: %v", err)
+	}
+	statusOrChunk, diagnostics := statusOr.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("status or chunk diagnostics = %#v", diagnostics)
+	}
+	if len(statusOrChunk.Rows) != 2 || statusOrChunk.Rows[0][0].Value != "Connections" || statusOrChunk.Rows[1][0].Value != "Threads_connected" {
+		t.Fatalf("status or rows = %#v", statusOrChunk.Rows)
 	}
 }
 
@@ -1286,6 +1310,67 @@ func TestSQLRuntimeExecuteSQLInformationSchemaSchemataReturnsCatalogRows(t *test
 	row := chunk.Rows[0]
 	if row[0].Value != "quanta" || row[1].Value != "utf8mb4" || row[2].Value != "utf8mb4_0900_ai_ci" {
 		t.Fatalf("schema row = %#v", row)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLInformationSchemaCharacterSetsAndCollationsReturnRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	charsets, err := runtime.ExecuteSQL(context.Background(), `
+		select character_set_name, default_collate_name, maxlen
+		from information_schema.character_sets
+		where character_set_name = 'utf8mb4'
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INFORMATION_SCHEMA.CHARACTER_SETS failed: %v", err)
+	}
+	if charsets.Diagnostics.BlocksNative() || charsets.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("charset diagnostics = %#v runtime=%#v", charsets.Diagnostics, charsets.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("INFORMATION_SCHEMA.CHARACTER_SETS should not dispatch to the direct executor")
+	}
+	charsetChunk, diagnostics := charsets.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("charset chunk diagnostics = %#v", diagnostics)
+	}
+	if len(charsetChunk.Rows) != 1 || len(charsetChunk.Rows[0]) != 3 {
+		t.Fatalf("charset rows = %#v, want one three-column row", charsetChunk.Rows)
+	}
+	if charsetChunk.Rows[0][0].Value != "utf8mb4" || charsetChunk.Rows[0][1].Value != "utf8mb4_0900_ai_ci" || charsetChunk.Rows[0][2].Value != int64(4) {
+		t.Fatalf("charset row = %#v", charsetChunk.Rows[0])
+	}
+
+	collations, err := runtime.ExecuteSQL(context.Background(), `
+		select collation_name, is_default, pad_attribute
+		from information_schema.collations
+		where character_set_name in ('utf8mb4')
+		order by collation_name
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INFORMATION_SCHEMA.COLLATIONS failed: %v", err)
+	}
+	if collations.Diagnostics.BlocksNative() || collations.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("collation diagnostics = %#v runtime=%#v", collations.Diagnostics, collations.Runtime.Diagnostics)
+	}
+	collationChunk, diagnostics := collations.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("collation chunk diagnostics = %#v", diagnostics)
+	}
+	if len(collationChunk.Rows) != 2 || len(collationChunk.Rows[0]) != 3 {
+		t.Fatalf("collation rows = %#v, want two three-column rows", collationChunk.Rows)
+	}
+	if collationChunk.Rows[0][0].Value != "utf8mb4_0900_ai_ci" || collationChunk.Rows[0][1].Value != "Yes" || collationChunk.Rows[0][2].Value != "NO PAD" {
+		t.Fatalf("first collation row = %#v", collationChunk.Rows[0])
+	}
+	if collationChunk.Rows[1][0].Value != "utf8mb4_bin" || collationChunk.Rows[1][2].Value != "PAD SPACE" {
+		t.Fatalf("second collation row = %#v", collationChunk.Rows[1])
 	}
 }
 

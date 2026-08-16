@@ -39,6 +39,10 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 		return r.informationSchemaColumnRows()
 	case qsbridge.InformationSchemaStatisticsName:
 		return r.informationSchemaStatisticsRows()
+	case qsbridge.InformationSchemaCharacterSetsName:
+		return informationSchemaCharacterSetRows(), nil
+	case qsbridge.InformationSchemaCollationsName:
+		return informationSchemaCollationRows(), nil
 	default:
 		return nil, nil
 	}
@@ -170,6 +174,42 @@ func (r SQLRuntime) informationSchemaStatisticsRows() ([]informationSchemaRow, q
 	}
 	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "SEQ_IN_INDEX", "COLUMN_NAME")
 	return rows, nil
+}
+
+func informationSchemaCharacterSetRows() []informationSchemaRow {
+	rows := []informationSchemaRow{{
+		"CHARACTER_SET_NAME":   describeStringCell("utf8mb4"),
+		"DEFAULT_COLLATE_NAME": describeStringCell("utf8mb4_0900_ai_ci"),
+		"DESCRIPTION":          describeStringCell("UTF-8 Unicode"),
+		"MAXLEN":               describeIntCell(4),
+	}}
+	sortInformationSchemaRows(rows, "CHARACTER_SET_NAME")
+	return rows
+}
+
+func informationSchemaCollationRows() []informationSchemaRow {
+	rows := []informationSchemaRow{
+		{
+			"COLLATION_NAME":     describeStringCell("utf8mb4_0900_ai_ci"),
+			"CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
+			"ID":                 describeIntCell(255),
+			"IS_DEFAULT":         describeStringCell("Yes"),
+			"IS_COMPILED":        describeStringCell("Yes"),
+			"SORTLEN":            describeIntCell(0),
+			"PAD_ATTRIBUTE":      describeStringCell("NO PAD"),
+		},
+		{
+			"COLLATION_NAME":     describeStringCell("utf8mb4_bin"),
+			"CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
+			"ID":                 describeIntCell(46),
+			"IS_DEFAULT":         describeStringCell(""),
+			"IS_COMPILED":        describeStringCell("Yes"),
+			"SORTLEN":            describeIntCell(1),
+			"PAD_ATTRIBUTE":      describeStringCell("PAD SPACE"),
+		},
+	}
+	sortInformationSchemaRows(rows, "CHARACTER_SET_NAME", "COLLATION_NAME")
+	return rows
 }
 
 func (r SQLRuntime) catalogTablesForInformationSchema() ([]qsbridge.TableDefinition, qsbridge.DiagnosticSet) {
@@ -321,6 +361,17 @@ func informationSchemaPredicateMatches(row informationSchemaRow, expr qsbridge.E
 	if binary.Op == qsbridge.BinaryOpOr {
 		return informationSchemaPredicateMatches(row, binary.Left) || informationSchemaPredicateMatches(row, binary.Right)
 	}
+	if binary.Op == qsbridge.BinaryOpIn || binary.Op == qsbridge.BinaryOpNotIn {
+		field, list, ok := informationSchemaFieldList(binary.Left, binary.Right)
+		if !ok {
+			return true
+		}
+		matches := informationSchemaLiteralListContains(list, resultCellString(rowCell(row, field)))
+		if binary.Op == qsbridge.BinaryOpNotIn {
+			return !matches
+		}
+		return matches
+	}
 	field, literal, ok := informationSchemaFieldLiteral(binary.Left, binary.Right)
 	if !ok {
 		field, literal, ok = informationSchemaFieldLiteral(binary.Right, binary.Left)
@@ -337,6 +388,50 @@ func informationSchemaPredicateMatches(row informationSchemaRow, expr qsbridge.E
 	default:
 		return true
 	}
+}
+
+func informationSchemaFieldList(left qsbridge.Expr, right qsbridge.Expr) (string, qsbridge.ListExpr, bool) {
+	field, ok := left.(qsbridge.FieldExpr)
+	if !ok {
+		if pointer, pointerOK := left.(*qsbridge.FieldExpr); pointerOK && pointer != nil {
+			field = *pointer
+			ok = true
+		}
+	}
+	if !ok {
+		return "", qsbridge.ListExpr{}, false
+	}
+	list, ok := right.(qsbridge.ListExpr)
+	if !ok {
+		if pointer, pointerOK := right.(*qsbridge.ListExpr); pointerOK && pointer != nil {
+			list = *pointer
+			ok = true
+		}
+	}
+	if !ok {
+		return "", qsbridge.ListExpr{}, false
+	}
+	return field.Ref.Name, list, true
+}
+
+func informationSchemaLiteralListContains(list qsbridge.ListExpr, value string) bool {
+	for _, item := range list.Items {
+		literal, ok := item.(qsbridge.LiteralExpr)
+		if !ok {
+			if pointer, pointerOK := item.(*qsbridge.LiteralExpr); pointerOK && pointer != nil {
+				literal = *pointer
+				ok = true
+			}
+		}
+		if !ok {
+			continue
+		}
+		itemValue, _ := literal.Value.(string)
+		if strings.EqualFold(value, itemValue) {
+			return true
+		}
+	}
+	return false
 }
 
 func informationSchemaFieldLiteral(left qsbridge.Expr, right qsbridge.Expr) (string, string, bool) {
