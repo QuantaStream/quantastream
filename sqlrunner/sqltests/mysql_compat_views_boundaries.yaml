@@ -89,16 +89,20 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.021.select_expression_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_query_boundary
     compatibility: mysql
     requires: [select, view_reference, expression_projection]
-    issue: "View expansion currently supports direct field projections only."
     sql: |
       select next_customer_key
       from qs_mysql_compat_expression_view
+      order by next_customer_key
       limit 1
+    expect:
+      columns: [next_customer_key]
+      rows:
+        - [2]
 
   - id: mysql_compat_views_boundaries.022.drop_expression_view
     status: supported

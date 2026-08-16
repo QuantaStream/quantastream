@@ -38,7 +38,7 @@ type viewExpansion struct {
 
 type viewProjectionMap struct {
 	wildcard bool
-	fields   map[string]UnboundFieldExpr
+	exprs    map[string]UnboundExpr
 }
 
 func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelect, DiagnosticSet) {
@@ -207,44 +207,109 @@ func validateExpandableViewSelect(schema string, viewName string, selectStmt Unb
 }
 
 func buildViewProjectionMap(selectStmt UnboundSelect) (viewProjectionMap, DiagnosticSet) {
-	columns := viewProjectionMap{fields: map[string]UnboundFieldExpr{}}
+	columns := viewProjectionMap{exprs: map[string]UnboundExpr{}}
 	sourceRefs := viewSourceRefs(selectStmt.Tables)
 	requireQualified := len(selectStmt.Tables) > 1
 	for _, projection := range selectStmt.Projection {
 		field, ok := projection.Expr.(UnboundFieldExpr)
-		if !ok {
-			return columns, DiagnosticSet{
-				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view expansion only supports direct field projections"),
+		if ok {
+			if field.Name == "*" {
+				columns.wildcard = true
+				continue
 			}
-		}
-		if field.Name == "*" {
-			columns.wildcard = true
-			continue
-		}
-		qualifier := strings.TrimSpace(field.Qualifier)
-		if qualifier == "" && requireQualified {
-			return columns, DiagnosticSet{
-				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "joined view projections must qualify fields: "+field.Name),
-			}
-		}
-		if qualifier != "" {
-			if _, ok := sourceRefs[strings.ToLower(qualifier)]; !ok {
+			qualifier := strings.TrimSpace(field.Qualifier)
+			if qualifier == "" && requireQualified {
 				return columns, DiagnosticSet{
-					ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view projection qualifier does not match a base source: "+field.Qualifier),
+					ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "joined view projections must qualify fields: "+field.Name),
 				}
 			}
-			field.Qualifier = qualifier
-		}
-		if qualifier == "" && len(selectStmt.Tables) == 1 {
-			field.Qualifier = tableRefName(selectStmt.Tables[0].Name, selectStmt.Tables[0].Alias)
+			if qualifier != "" {
+				if _, ok := sourceRefs[strings.ToLower(qualifier)]; !ok {
+					return columns, DiagnosticSet{
+						ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view projection qualifier does not match a base source: "+field.Qualifier),
+					}
+				}
+				field.Qualifier = qualifier
+			}
+			if qualifier == "" && len(selectStmt.Tables) == 1 {
+				field.Qualifier = tableRefName(selectStmt.Tables[0].Name, selectStmt.Tables[0].Alias)
+			}
+			exposed := strings.TrimSpace(projection.Alias)
+			if exposed == "" {
+				exposed = field.Name
+			}
+			columns.exprs[strings.ToLower(exposed)] = field
+			continue
 		}
 		exposed := strings.TrimSpace(projection.Alias)
 		if exposed == "" {
-			exposed = field.Name
+			return columns, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view expression projections must have aliases"),
+			}
 		}
-		columns.fields[strings.ToLower(exposed)] = field
+		expr, diagnostics := normalizeViewProjectionExpr(projection.Expr, selectStmt, sourceRefs, requireQualified)
+		if diagnostics.BlocksNative() {
+			return columns, diagnostics
+		}
+		columns.exprs[strings.ToLower(exposed)] = expr
 	}
 	return columns, nil
+}
+
+func normalizeViewProjectionExpr(expr UnboundExpr, selectStmt UnboundSelect, sourceRefs map[string]struct{}, requireQualified bool) (UnboundExpr, DiagnosticSet) {
+	if len(selectStmt.Tables) == 1 {
+		aliases := tableAliases(selectStmt.Tables[0])
+		var diagnostics DiagnosticSet
+		expr = rewriteBaseQualifierExpr(expr, aliases, tableRefName(selectStmt.Tables[0].Name, selectStmt.Tables[0].Alias), &diagnostics)
+		return expr, diagnostics
+	}
+	var diagnostics DiagnosticSet
+	expr = validateViewProjectionExprQualifiers(expr, sourceRefs, requireQualified, &diagnostics)
+	return expr, diagnostics
+}
+
+func validateViewProjectionExprQualifiers(expr UnboundExpr, sourceRefs map[string]struct{}, requireQualified bool, diagnostics *DiagnosticSet) UnboundExpr {
+	switch typed := expr.(type) {
+	case nil:
+		return nil
+	case UnboundFieldExpr:
+		qualifier := strings.TrimSpace(typed.Qualifier)
+		if qualifier == "" {
+			if requireQualified {
+				*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "joined view expression projections must qualify fields: "+typed.Name))
+			}
+			return typed
+		}
+		if _, ok := sourceRefs[strings.ToLower(qualifier)]; !ok {
+			*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view expression projection qualifier does not match a base source: "+typed.Qualifier))
+			return typed
+		}
+		typed.Qualifier = qualifier
+		return typed
+	case UnboundBinaryExpr:
+		typed.Left = validateViewProjectionExprQualifiers(typed.Left, sourceRefs, requireQualified, diagnostics)
+		typed.Right = validateViewProjectionExprQualifiers(typed.Right, sourceRefs, requireQualified, diagnostics)
+		return typed
+	case UnboundCallExpr:
+		for i, arg := range typed.Args {
+			typed.Args[i] = validateViewProjectionExprQualifiers(arg, sourceRefs, requireQualified, diagnostics)
+		}
+		return typed
+	case UnboundListExpr:
+		for i, item := range typed.Items {
+			typed.Items[i] = validateViewProjectionExprQualifiers(item, sourceRefs, requireQualified, diagnostics)
+		}
+		return typed
+	case UnboundSearchedCaseExpr:
+		for i, when := range typed.Whens {
+			typed.Whens[i].Condition = validateViewProjectionExprQualifiers(when.Condition, sourceRefs, requireQualified, diagnostics)
+			typed.Whens[i].Result = validateViewProjectionExprQualifiers(when.Result, sourceRefs, requireQualified, diagnostics)
+		}
+		typed.Else = validateViewProjectionExprQualifiers(typed.Else, sourceRefs, requireQualified, diagnostics)
+		return typed
+	default:
+		return expr
+	}
 }
 
 func viewSourceRefs(tables []UnboundTable) map[string]struct{} {
@@ -263,19 +328,8 @@ func viewSourceRefs(tables []UnboundTable) map[string]struct{} {
 func rewriteViewProjectionMapSource(columns viewProjectionMap, base UnboundTable, replacementRef string) (viewProjectionMap, DiagnosticSet) {
 	aliases := tableAliases(base)
 	var diagnostics DiagnosticSet
-	for key, field := range columns.fields {
-		qualifier := strings.TrimSpace(field.Qualifier)
-		if qualifier == "" {
-			field.Qualifier = replacementRef
-			columns.fields[key] = field
-			continue
-		}
-		if _, ok := aliases[strings.ToLower(qualifier)]; ok {
-			field.Qualifier = replacementRef
-			columns.fields[key] = field
-			continue
-		}
-		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticTableAliasNotFound, PhaseBind, "view projection qualifier does not match its base source: "+qualifier))
+	for key, expr := range columns.exprs {
+		columns.exprs[key] = rewriteBaseQualifierExpr(expr, aliases, replacementRef, &diagnostics)
 	}
 	return columns, diagnostics
 }
@@ -297,13 +351,13 @@ func expansionWildcardQualifier(expansion viewExpansion) string {
 	return tableRefName(expansion.tables[0].Name, expansion.tables[0].Alias)
 }
 
-func expansionMappedField(expansion viewExpansion, name string) (UnboundFieldExpr, bool) {
-	field, ok := expansion.columns.fields[strings.ToLower(name)]
-	return field, ok
+func expansionMappedExpr(expansion viewExpansion, name string) (UnboundExpr, bool) {
+	expr, ok := expansion.columns.exprs[strings.ToLower(name)]
+	return expr, ok
 }
 
-func rewriteMappedViewField(field UnboundFieldExpr) UnboundFieldExpr {
-	return UnboundField(field.Qualifier, field.Name)
+func rewriteMappedViewExpr(expr UnboundExpr) UnboundExpr {
+	return expr
 }
 
 func rewriteOuterSelectViewReferences(selectStmt UnboundSelect, expansion viewExpansion) (UnboundSelect, DiagnosticSet) {
@@ -343,7 +397,12 @@ func projectionAliasForViewColumn(expr UnboundExpr, expansion viewExpansion) str
 	if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
 		return ""
 	}
-	if mapped, ok := expansion.columns.fields[strings.ToLower(field.Name)]; ok && !strings.EqualFold(mapped.Name, field.Name) {
+	mapped, ok := expansionMappedExpr(expansion, field.Name)
+	if !ok {
+		return ""
+	}
+	mappedField, ok := mapped.(UnboundFieldExpr)
+	if !ok || !strings.EqualFold(mappedField.Name, field.Name) {
 		return field.Name
 	}
 	return ""
@@ -365,12 +424,12 @@ func rewriteViewColumnExpr(expr UnboundExpr, expansion viewExpansion, diagnostic
 			typed.Qualifier = expansionWildcardQualifier(expansion)
 			return typed
 		}
-		field, ok := expansionMappedField(expansion, typed.Name)
+		expr, ok := expansionMappedExpr(expansion, typed.Name)
 		if !ok {
 			*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+typed.Name))
 			return typed
 		}
-		return rewriteMappedViewField(field)
+		return rewriteMappedViewExpr(expr)
 	case UnboundBinaryExpr:
 		typed.Left = rewriteViewColumnExpr(typed.Left, expansion, diagnostics)
 		typed.Right = rewriteViewColumnExpr(typed.Right, expansion, diagnostics)

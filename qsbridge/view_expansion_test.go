@@ -39,6 +39,46 @@ func TestPlannerExpandsSimpleLogicalView(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_next_keys",
+		SQL:    "select c_custkey + 1 as next_customer_key from customer",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan("select next_customer_key from customer_next_keys where next_customer_key = 2")
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "customer" {
+		t.Fatalf("sources = %#v, want customer", result.Query.Sources)
+	}
+	if got := result.Query.Sources[0].RefName(); got != "customer_next_keys" {
+		t.Fatalf("source ref = %q, want customer_next_keys", got)
+	}
+	if len(result.Query.Projection) != 1 || result.Query.Projection[0].Alias != "next_customer_key" {
+		t.Fatalf("projection = %#v, want alias next_customer_key", result.Query.Projection)
+	}
+	if _, ok := result.Query.Projection[0].Expr.(BinaryExpr); !ok {
+		t.Fatalf("projection expr = %T, want BinaryExpr", result.Query.Projection[0].Expr)
+	}
+	if !exprReferencesField(result.Query.Projection[0].Expr, "customer_next_keys", "c_custkey") {
+		t.Fatalf("projection expr = %#v, want customer_next_keys.c_custkey", result.Query.Projection[0].Expr)
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want one outer predicate", len(result.Query.Predicates))
+	}
+	if !predicateReferencesField(result.Query.Predicates[0], "customer_next_keys", "c_custkey") {
+		t.Fatalf("predicate = %#v, want expression over customer_next_keys.c_custkey", result.Query.Predicates[0])
+	}
+}
+
 func TestPlannerExpandsLogicalViewWithInnerJoin(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{
