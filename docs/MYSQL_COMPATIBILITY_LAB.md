@@ -176,6 +176,22 @@ grep -nE "parser_boundary|exception in do_connect|SQL editor could not be connec
   /mnt/c/Users/molin/AppData/Roaming/MySQL/Workbench/log/wb.log | tail -30
 ```
 
+## Go Driver Smoke
+
+The Go `database/sql` smoke exercises the stock MySQL driver against a running
+QuantaStream MySQL-compatible endpoint. It checks connection setup, catalog
+metadata, warnings, `EXPLAIN`, a table count, and the TPC-H Q3 view when that
+view exists:
+
+```bash
+cd ~/projects/quantastream
+go run ./cmd/mysql-driver-smoke \
+  -dsn 'root@tcp(127.0.0.1:4000)/quanta?parseTime=true'
+```
+
+The command also reads `MYSQL_DSN`, so it can be pointed at any compatible
+endpoint without changing flags.
+
 
 Recommended workflow:
 
