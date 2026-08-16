@@ -274,3 +274,130 @@ tests:
       columns: [ship_month, ship_day]
       rows:
         - [3, 15]
+
+  - id: mysql_compat_functions.100.row_string_select_list
+    status: supported
+    kind: query
+    feature: scalar_functions_string_rows
+    compatibility: mysql
+    requires: [select, lower, upper, char_length, substring]
+    sql: |
+      select c_custkey,
+             lower(c_mktsegment) as seg_lower,
+             upper(c_mktsegment) as seg_upper,
+             char_length(c_name) as name_len,
+             substring(c_name, 1, 8) as name_prefix
+      from customer
+      where c_custkey in (1, 2, 3)
+      order by c_custkey
+    expect:
+      columns: [c_custkey, seg_lower, seg_upper, name_len, name_prefix]
+      rows:
+        - [1, building, BUILDING, 18, Customer]
+        - [2, automobile, AUTOMOBILE, 18, Customer]
+        - [3, automobile, AUTOMOBILE, 18, Customer]
+
+  - id: mysql_compat_functions.101.row_nested_string_select_list
+    status: supported
+    kind: query
+    feature: scalar_functions_string_rows
+    compatibility: mysql
+    requires: [select, concat, left, right, replace]
+    sql: |
+      select c_custkey,
+             concat(left(c_name, 8), ':', right(c_phone, 4)) as label,
+             replace(c_mktsegment, 'BUILDING', 'BUILD') as segment_label
+      from customer
+      where c_custkey in (1, 2, 3)
+      order by c_custkey
+    expect:
+      columns: [c_custkey, label, segment_label]
+      rows:
+        - [1, Customer:2988, BUILD]
+        - [2, Customer:3665, AUTOMOBILE]
+        - [3, Customer:3364, AUTOMOBILE]
+
+  - id: mysql_compat_functions.102.row_string_predicate
+    status: supported
+    kind: query
+    feature: scalar_functions_string_predicates
+    compatibility: mysql
+    requires: [select, lower, where]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      where lower(c_mktsegment) = 'building'
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [1, BUILDING]
+        - [8, BUILDING]
+        - [11, BUILDING]
+        - [13, BUILDING]
+        - [18, BUILDING]
+
+  - id: mysql_compat_functions.103.row_datetime_predicate
+    status: supported
+    kind: query
+    feature: scalar_functions_datetime_predicates
+    compatibility: mysql
+    requires: [select, year, month, day, where]
+    sql: |
+      select o_orderkey,
+             year(o_orderdate) as order_year,
+             month(o_orderdate) as order_month,
+             day(o_orderdate) as order_day
+      from orders
+      where year(o_orderdate) = 1995
+        and month(o_orderdate) = 3
+        and day(o_orderdate) = 15
+      order by o_orderkey
+      limit 5
+    expect:
+      columns: [o_orderkey, order_year, order_month, order_day]
+      rows:
+        - [12166, 1995, 3, 15]
+        - [16484, 1995, 3, 15]
+        - [24548, 1995, 3, 15]
+        - [53539, 1995, 3, 15]
+        - [54179, 1995, 3, 15]
+
+  - id: mysql_compat_functions.104.row_null_helpers_select_list
+    status: supported
+    kind: query
+    feature: scalar_functions_null_rows
+    compatibility: mysql
+    requires: [select, nullif, ifnull]
+    sql: |
+      select c_custkey,
+             nullif(c_mktsegment, 'BUILDING') as non_building,
+             ifnull(nullif(c_mktsegment, 'BUILDING'), 'was_building') as segment_fallback
+      from customer
+      where c_custkey in (1, 2, 3)
+      order by c_custkey
+    expect:
+      columns: [c_custkey, non_building, segment_fallback]
+      rows:
+        - [1, null, was_building]
+        - [2, AUTOMOBILE, AUTOMOBILE]
+        - [3, AUTOMOBILE, AUTOMOBILE]
+
+  - id: mysql_compat_functions.105.row_numeric_select_list
+    status: supported
+    kind: query
+    feature: scalar_functions_numeric_rows
+    compatibility: mysql
+    requires: [select, abs, round]
+    sql: |
+      select c_custkey, round(abs(c_acctbal), 1) as abs_bal
+      from customer
+      where c_custkey in (1, 2, 3)
+      order by c_custkey
+    expect:
+      columns: [c_custkey, abs_bal]
+      rows:
+        - [1, 711.6]
+        - [2, 121.7]
+        - [3, 7498.1]
