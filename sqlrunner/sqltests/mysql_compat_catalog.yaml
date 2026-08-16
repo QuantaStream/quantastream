@@ -195,6 +195,17 @@ tests:
     expect:
       columns: [Level, Code, Message]
 
+  - id: mysql_compat_catalog.0171.show_warnings_limit
+    status: supported
+    kind: query
+    feature: catalog_warnings
+    compatibility: mysql
+    requires: [show_warnings, metadata_columns, limit]
+    sql: |
+      show warnings limit 10
+    expect:
+      columns: [Level, Code, Message]
+
   - id: mysql_compat_catalog.018.show_character_set
     status: supported
     kind: query

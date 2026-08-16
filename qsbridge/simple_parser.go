@@ -53,6 +53,9 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "show"); ok {
 		return parseSimpleShow(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "explain"); ok {
+		return parseSimpleExplain(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "describe"); ok {
 		return parseSimpleDescribe(sql)
 	}
@@ -77,7 +80,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1160,14 +1163,39 @@ func parseSimpleShowStatus(sql string, statusBody string) (UnboundStatement, Dia
 }
 
 func parseSimpleShowWarnings(sql string, warningsBody string) (UnboundStatement, Diagnostic, bool) {
-	if strings.TrimSpace(warningsBody) != "" {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW WARNINGS does not support additional clauses yet"), false
+	limit, offset, hasLimit, diagnostic, ok := parseSimpleOptionalLimitOnlyClause(warningsBody, "SHOW WARNINGS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
 	}
+	result := showWarningsResultShape()
+	result.Limit = limit
+	result.Offset = offset
+	result.HasLimit = hasLimit
 	return UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindShowWarnings,
 		ShowWarnings: UnboundShowWarnings{
-			Result: showWarningsResultShape(),
+			Result: result,
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleExplain(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	body, ok := consumeKeyword(trimmed, "explain")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only EXPLAIN statements are supported"), false
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("EXPLAIN must include a statement"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindExplain,
+		Explain: UnboundExplain{
+			SQL:    body,
+			Result: explainResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1564,6 +1592,26 @@ func showWarningsResultShape() ResultShape {
 			{Name: "Level", Type: DataTypeString},
 			{Name: "Code", Type: DataTypeInt},
 			{Name: "Message", Type: DataTypeString},
+		},
+	}
+}
+
+func explainResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "id", Type: DataTypeInt},
+			{Name: "select_type", Type: DataTypeString},
+			{Name: "table", Type: DataTypeString, Nullable: true},
+			{Name: "partitions", Type: DataTypeString, Nullable: true},
+			{Name: "type", Type: DataTypeString, Nullable: true},
+			{Name: "possible_keys", Type: DataTypeString, Nullable: true},
+			{Name: "key", Type: DataTypeString, Nullable: true},
+			{Name: "key_len", Type: DataTypeString, Nullable: true},
+			{Name: "ref", Type: DataTypeString, Nullable: true},
+			{Name: "rows", Type: DataTypeInt, Nullable: true},
+			{Name: "filtered", Type: DataTypeFloat, Nullable: true},
+			{Name: "extra", Type: DataTypeString, Nullable: true},
 		},
 	}
 }
@@ -4327,6 +4375,51 @@ func simpleUnboundExprEqual(left UnboundExpr, right UnboundExpr) bool {
 	default:
 		return false
 	}
+}
+
+func parseSimpleOptionalLimitOnlyClause(text string, statement string) (int, int, bool, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return 0, 0, false, Diagnostic{}, true
+	}
+	body, ok := consumeKeyword(trimmed, "limit")
+	if !ok {
+		return 0, 0, false, simpleParserDiagnostic(statement + " only supports optional LIMIT syntax"), false
+	}
+	commaParts := splitSimpleCommaList(body)
+	if len(commaParts) == 2 {
+		offset, err := strconv.Atoi(strings.TrimSpace(commaParts[0]))
+		if err != nil || offset < 0 {
+			return 0, 0, false, simpleParserDiagnostic("LIMIT offset must be a non-negative integer"), false
+		}
+		limit, err := strconv.Atoi(strings.TrimSpace(commaParts[1]))
+		if err != nil || limit < 0 {
+			return 0, 0, false, simpleParserDiagnostic("LIMIT must be a non-negative integer"), false
+		}
+		return limit, offset, true, Diagnostic{}, true
+	}
+	if len(commaParts) > 2 {
+		return 0, 0, false, simpleParserDiagnostic("LIMIT must contain one integer and optional OFFSET integer"), false
+	}
+	fields := strings.Fields(body)
+	if len(fields) != 1 && len(fields) != 3 {
+		return 0, 0, false, simpleParserDiagnostic("LIMIT must contain one integer and optional OFFSET integer"), false
+	}
+	limit, err := strconv.Atoi(fields[0])
+	if err != nil || limit < 0 {
+		return 0, 0, false, simpleParserDiagnostic("LIMIT must be a non-negative integer"), false
+	}
+	offset := 0
+	if len(fields) == 3 {
+		if !strings.EqualFold(fields[1], "offset") {
+			return 0, 0, false, simpleParserDiagnostic("LIMIT offset syntax must be LIMIT n OFFSET m"), false
+		}
+		offset, err = strconv.Atoi(fields[2])
+		if err != nil || offset < 0 {
+			return 0, 0, false, simpleParserDiagnostic("OFFSET must be a non-negative integer"), false
+		}
+	}
+	return limit, offset, true, Diagnostic{}, true
 }
 
 func parseSimpleLimitClause(text string) (string, int, int, bool, Diagnostic, bool) {

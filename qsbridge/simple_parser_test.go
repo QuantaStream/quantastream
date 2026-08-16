@@ -381,6 +381,38 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowWarningsLimitStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show warnings limit 5 offset 2;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowWarnings {
+		t.Fatalf("kind = %q, want show_warnings", statement.Kind)
+	}
+	if !statement.ShowWarnings.Result.HasLimit || statement.ShowWarnings.Result.Limit != 5 || statement.ShowWarnings.Result.Offset != 2 {
+		t.Fatalf("result window = %#v, want limit 5 offset 2", statement.ShowWarnings.Result)
+	}
+	if got, want := len(statement.ShowWarnings.Result.Columns), 3; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+}
+
+func TestSimpleParserBridgeParsesExplainStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("explain select count(*) from lineitem;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindExplain {
+		t.Fatalf("kind = %q, want explain", statement.Kind)
+	}
+	if got, want := statement.Explain.SQL, "select count(*) from lineitem"; got != want {
+		t.Fatalf("explain SQL = %q, want %q", got, want)
+	}
+	if got, want := len(statement.Explain.Result.Columns), 12; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowCharacterMetadataWhereStatement(t *testing.T) {
 	charsets, diagnostics := SimpleParserBridge{}.Parse("show character set where Charset = 'utf8mb4';")
 	if diagnostics.BlocksNative() {

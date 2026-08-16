@@ -985,6 +985,23 @@ func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
 		t.Fatalf("warning count = %d, want %d", got, want)
 	}
 
+	limitedWarnings, err := runtime.ExecuteSQL(context.Background(), "show warnings limit 10", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW WARNINGS LIMIT failed: %v", err)
+	}
+	if limitedWarnings.Diagnostics.BlocksNative() || limitedWarnings.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("limited warnings diagnostics = %#v runtime=%#v", limitedWarnings.Diagnostics, limitedWarnings.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW WARNINGS LIMIT should not dispatch to the direct executor")
+	}
+	if got, want := len(limitedWarnings.Runtime.RowSet.ProjectionVectors), 3; got != want {
+		t.Fatalf("limited warning columns = %d, want %d", got, want)
+	}
+	if got, want := limitedWarnings.Runtime.Count, uint64(0); got != want {
+		t.Fatalf("limited warning count = %d, want %d", got, want)
+	}
+
 	charset, err := runtime.ExecuteSQL(context.Background(), "show character set like 'utf8mb4'", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("SHOW CHARACTER SET failed: %v", err)
@@ -1013,6 +1030,36 @@ func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
 	}
 	if got, want := collationChunk.Rows[0][0].Value, "utf8mb4_0900_ai_ci"; got != want {
 		t.Fatalf("collation = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLExplainReturnsMetadataShape(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "explain select count(*) from lineitem", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("EXPLAIN failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("EXPLAIN should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 12 {
+		t.Fatalf("rows = %#v, want one twelve-column explain row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != int64(1) || row[1].Value != "SIMPLE" || row[2].Value != "lineitem" || row[4].Value != "QUANTASTREAM" {
+		t.Fatalf("explain row = %#v", row)
 	}
 }
 

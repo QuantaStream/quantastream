@@ -1,0 +1,27 @@
+version: 1
+name: mysql_compat_explain
+
+tests:
+  - id: mysql_compat_explain.001.explain_simple_select
+    status: supported
+    kind: query
+    feature: explain
+    compatibility: mysql
+    requires: [explain, metadata_columns]
+    sql: |
+      explain select 1
+    expect:
+      columns:
+        - id
+        - select_type
+        - table
+        - partitions
+        - type
+        - possible_keys
+        - key
+        - key_len
+        - ref
+        - rows
+        - filtered
+        - extra
+      row_count: 1

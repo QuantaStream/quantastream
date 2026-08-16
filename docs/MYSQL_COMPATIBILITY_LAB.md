@@ -128,6 +128,54 @@ MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENG
 The helper writes local capture output under `expected/local/` by default and
 uses `-engine_diff mysql-reference,<target>` for one-command comparisons.
 
+## MySQL Workbench Smoke
+
+MySQL Workbench is a useful client-compatibility smoke because it sends catalog
+and session probes before opening the SQL editor. For a local QuantaStream
+standard server, use:
+
+- Host: `127.0.0.1`
+- Port: `4000`
+- User: `root` or `MOLIG004`
+- Default schema: `quanta`
+- SSL: disabled or no SSL
+
+After the SQL editor opens, run a small catalog and view smoke:
+
+```sql
+SHOW FULL TABLES;
+SHOW FULL TABLES WHERE Table_type = 'VIEW';
+SHOW WARNINGS LIMIT 10;
+EXPLAIN SELECT COUNT(*) FROM lineitem;
+SELECT COUNT(*) FROM lineitem;
+```
+
+If the TPC-H Q3 view is installed, this checks join-view expansion through the
+Workbench editor path:
+
+```sql
+SELECT
+  order_key,
+  SUM(extended_price * (1 - discount)) AS revenue,
+  order_date,
+  ship_priority
+FROM q3_order_line_base
+WHERE market_segment = 'BUILDING'
+  AND order_date < '1995-03-15'
+  AND ship_date > '1995-03-15'
+GROUP BY order_key, order_date, ship_priority
+ORDER BY revenue DESC, order_date
+LIMIT 10;
+```
+
+Workbench logs parser-boundary failures here on Windows:
+
+```bash
+tail -f /mnt/c/Users/molin/AppData/Roaming/MySQL/Workbench/log/wb.log
+grep -nE "parser_boundary|exception in do_connect|SQL editor could not be connected|connection attempt failed" \
+  /mnt/c/Users/molin/AppData/Roaming/MySQL/Workbench/log/wb.log | tail -30
+```
+
 
 Recommended workflow:
 

@@ -50,6 +50,7 @@ type UnboundStatement struct {
 	ShowPlugins     UnboundShowPlugins
 	ShowPrivileges  UnboundShowPrivileges
 	ShowGrants      UnboundShowGrants
+	Explain         UnboundExplain
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -121,6 +122,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowPrivileges(context, s.ShowPrivileges)
 	case QueryKindShowGrants:
 		return BindShowGrants(context, s.ShowGrants)
+	case QueryKindExplain:
+		return BindExplain(context, s.Explain)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -375,6 +378,13 @@ type UnboundShowPrivileges struct {
 
 // UnboundShowGrants describes a SHOW GRANTS metadata read before binding.
 type UnboundShowGrants struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundExplain describes an EXPLAIN metadata read before binding.
+type UnboundExplain struct {
+	SQL      string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1477,9 +1487,13 @@ func BindShowStatus(context *BindContext, showStmt UnboundShowStatus) (QueryIR, 
 // BindShowWarnings binds parser-neutral SHOW WARNINGS metadata into QueryIR.
 func BindShowWarnings(context *BindContext, showStmt UnboundShowWarnings) (QueryIR, DiagnosticSet) {
 	_ = context
+	result := showStmt.Result
+	if result.Kind == "" {
+		result = showWarningsResultShape()
+	}
 	return QueryIR{
 		Kind:     QueryKindShowWarnings,
-		Result:   showWarningsResultShape(),
+		Result:   result,
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil
 }
@@ -1558,6 +1572,22 @@ func BindShowGrants(context *BindContext, showStmt UnboundShowGrants) (QueryIR, 
 		Result:   showGrantsResultShape(),
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil
+}
+
+// BindExplain binds parser-neutral EXPLAIN metadata into QueryIR.
+func BindExplain(context *BindContext, explainStmt UnboundExplain) (QueryIR, DiagnosticSet) {
+	_ = context
+	result := explainStmt.Result
+	if result.Kind == "" {
+		result = explainResultShape()
+	}
+	query := QueryIR{
+		Kind:     QueryKindExplain,
+		Result:   result,
+		Blockers: append([]NativeBlocker(nil), explainStmt.Blockers...),
+	}
+	query.Catalog.Pattern = strings.TrimSpace(explainStmt.SQL)
+	return query, nil
 }
 
 // BindDescribe binds parser-neutral DESCRIBE/SHOW COLUMNS metadata into QueryIR.

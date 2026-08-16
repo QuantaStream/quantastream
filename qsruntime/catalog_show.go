@@ -649,6 +649,75 @@ func showWarningsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResul
 	}
 }
 
+func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	explainedSQL := strings.TrimSpace(query.Catalog.Pattern)
+	tableName := explainTableName(explainedSQL)
+	rownums := []qsbridge.QuantaRownum{1}
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("id", qsbridge.DataTypeInt, 1),
+		describeProjectionVector("select_type", qsbridge.DataTypeString, 1),
+		describeProjectionVector("table", qsbridge.DataTypeString, 1),
+		describeProjectionVector("partitions", qsbridge.DataTypeString, 1),
+		describeProjectionVector("type", qsbridge.DataTypeString, 1),
+		describeProjectionVector("possible_keys", qsbridge.DataTypeString, 1),
+		describeProjectionVector("key", qsbridge.DataTypeString, 1),
+		describeProjectionVector("key_len", qsbridge.DataTypeString, 1),
+		describeProjectionVector("ref", qsbridge.DataTypeString, 1),
+		describeProjectionVector("rows", qsbridge.DataTypeInt, 1),
+		describeProjectionVector("filtered", qsbridge.DataTypeFloat, 1),
+		describeProjectionVector("extra", qsbridge.DataTypeString, 1),
+	}
+	vectors[0].Values[0] = describeIntCell(1)
+	vectors[1].Values[0] = describeStringCell("SIMPLE")
+	if tableName == "" {
+		vectors[2].Values[0] = describeNullCell()
+		vectors[3].Values[0] = describeNullCell()
+		vectors[4].Values[0] = describeNullCell()
+		vectors[5].Values[0] = describeNullCell()
+		vectors[6].Values[0] = describeNullCell()
+		vectors[7].Values[0] = describeNullCell()
+		vectors[8].Values[0] = describeNullCell()
+		vectors[9].Values[0] = describeNullCell()
+		vectors[10].Values[0] = describeNullCell()
+		vectors[11].Values[0] = describeStringCell("No tables used")
+	} else {
+		vectors[2].Values[0] = describeStringCell(tableName)
+		vectors[3].Values[0] = describeNullCell()
+		vectors[4].Values[0] = describeStringCell("QUANTASTREAM")
+		vectors[5].Values[0] = describeNullCell()
+		vectors[6].Values[0] = describeNullCell()
+		vectors[7].Values[0] = describeNullCell()
+		vectors[8].Values[0] = describeNullCell()
+		vectors[9].Values[0] = describeIntCell(0)
+		vectors[10].Values[0] = describeFloatCell(100)
+		vectors[11].Values[0] = describeStringCell("QuantaStream native plan; use captured profiles for runtime probes")
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: 1,
+	}
+}
+
+func explainTableName(sql string) string {
+	fields := strings.Fields(sql)
+	for i := 0; i+1 < len(fields); i++ {
+		if !strings.EqualFold(fields[i], "from") {
+			continue
+		}
+		name := strings.Trim(fields[i+1], "`\"'(),")
+		if dot := strings.LastIndex(name, "."); dot >= 0 && dot+1 < len(name) {
+			name = name[dot+1:]
+		}
+		return name
+	}
+	return ""
+}
+
 func showProcesslistRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	session := request.Bound.Prepared.Session
 	user := strings.TrimSpace(string(session.User))
@@ -1040,6 +1109,10 @@ func describeStringCell(value string) qsbridge.ResultCell {
 
 func describeIntCell(value int64) qsbridge.ResultCell {
 	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value}
+}
+
+func describeFloatCell(value float64) qsbridge.ResultCell {
+	return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: value}
 }
 
 func describeNullCell() qsbridge.ResultCell {
