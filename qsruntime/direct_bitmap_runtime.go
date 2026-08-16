@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
@@ -958,25 +959,27 @@ func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materializ
 	case "concat":
 		return directBitmapEvaluateMaterializedConcatCall(call, materialized, index)
 	case "trim":
-		return directBitmapEvaluateMaterializedTrimCall(call, materialized, index, func(value string, _ func(rune) bool) string {
-			return strings.TrimSpace(value)
-		})
+		return directBitmapEvaluateMaterializedTrimCall(call, materialized, index)
 	case "ltrim":
-		return directBitmapEvaluateMaterializedTrimCall(call, materialized, index, strings.TrimLeftFunc)
+		return directBitmapEvaluateMaterializedWhitespaceTrimCall(call, materialized, index, strings.TrimLeftFunc)
 	case "rtrim":
-		return directBitmapEvaluateMaterializedTrimCall(call, materialized, index, strings.TrimRightFunc)
+		return directBitmapEvaluateMaterializedWhitespaceTrimCall(call, materialized, index, strings.TrimRightFunc)
 	case "replace":
 		return directBitmapEvaluateMaterializedReplaceCall(call, materialized, index)
 	case "left":
 		return directBitmapEvaluateMaterializedStringSliceCall(call, materialized, index, false)
 	case "right":
 		return directBitmapEvaluateMaterializedStringSliceCall(call, materialized, index, true)
+	case "locate", "instr":
+		return directBitmapEvaluateMaterializedLocateCall(call, materialized, index)
 	case "coalesce":
 		return directBitmapEvaluateMaterializedCoalesceCall(call, materialized, index)
 	case "ifnull":
 		return directBitmapEvaluateMaterializedIfNullCall(call, materialized, index)
 	case "nullif":
 		return directBitmapEvaluateMaterializedNullIfCall(call, materialized, index)
+	case "greatest", "least":
+		return directBitmapEvaluateMaterializedGreatestLeastCall(call, materialized, index)
 	case "abs":
 		return directBitmapEvaluateMaterializedAbsCall(call, materialized, index)
 	case "round":
@@ -1110,7 +1113,55 @@ func directBitmapEvaluateMaterializedConcatCall(call qsbridge.CallExpr, material
 	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: builder.String()}, nil
 }
 
-func directBitmapEvaluateMaterializedTrimCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int, trim func(string, func(rune) bool) string) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+func directBitmapEvaluateMaterializedTrimCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) == 1 {
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+		if diagnostics.BlocksNative() {
+			return qsbridge.ResultCell{}, diagnostics
+		}
+		if directBitmapNullCell(cell) {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+		}
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: strings.TrimSpace(fmt.Sprint(cell.Value))}, nil
+	}
+	if len(call.Args) != 3 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects one argument or MySQL TRIM mode/removal/value arguments", call.Name))
+	}
+	modeCell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	removalCell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[1], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	valueCell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[2], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(modeCell) || directBitmapNullCell(removalCell) || directBitmapNullCell(valueCell) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(fmt.Sprint(modeCell.Value)))
+	removal := fmt.Sprint(removalCell.Value)
+	value := fmt.Sprint(valueCell.Value)
+	if removal == "" {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value}, nil
+	}
+	switch mode {
+	case "leading":
+		value = trimRepeatedPrefix(value, removal)
+	case "trailing":
+		value = trimRepeatedSuffix(value, removal)
+	case "both":
+		value = trimRepeatedSuffix(trimRepeatedPrefix(value, removal), removal)
+	default:
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q does not support trim mode %q", call.Name, mode))
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value}, nil
+}
+
+func directBitmapEvaluateMaterializedWhitespaceTrimCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int, trim func(string, func(rune) bool) string) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
 	if len(call.Args) != 1 {
 		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects one argument", call.Name))
 	}
@@ -1122,6 +1173,20 @@ func directBitmapEvaluateMaterializedTrimCall(call qsbridge.CallExpr, materializ
 		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
 	}
 	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: trim(fmt.Sprint(cell.Value), unicode.IsSpace)}, nil
+}
+
+func trimRepeatedPrefix(value, prefix string) string {
+	for strings.HasPrefix(value, prefix) {
+		value = strings.TrimPrefix(value, prefix)
+	}
+	return value
+}
+
+func trimRepeatedSuffix(value, suffix string) string {
+	for strings.HasSuffix(value, suffix) {
+		value = strings.TrimSuffix(value, suffix)
+	}
+	return value
 }
 
 func directBitmapEvaluateMaterializedReplaceCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
@@ -1175,6 +1240,69 @@ func directBitmapEvaluateMaterializedStringSliceCall(call qsbridge.CallExpr, mat
 		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: string(runes[len(runes)-length:])}, nil
 	}
 	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: string(runes[:length])}, nil
+}
+
+func directBitmapEvaluateMaterializedLocateCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	name := strings.ToLower(call.Name)
+	if name == "instr" && len(call.Args) != 2 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects two arguments", call.Name))
+	}
+	if name == "locate" && len(call.Args) != 2 && len(call.Args) != 3 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects two or three arguments", call.Name))
+	}
+	first, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	second, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[1], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(first) || directBitmapNullCell(second) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	needle := fmt.Sprint(first.Value)
+	haystack := fmt.Sprint(second.Value)
+	start := 1
+	if name == "instr" {
+		haystack = fmt.Sprint(first.Value)
+		needle = fmt.Sprint(second.Value)
+	}
+	if name == "locate" && len(call.Args) == 3 {
+		startCell, startDiagnostics := directBitmapEvaluateMaterializedExpr(call.Args[2], materialized, index)
+		if startDiagnostics.BlocksNative() {
+			return qsbridge.ResultCell{}, startDiagnostics
+		}
+		if directBitmapNullCell(startCell) {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+		}
+		var ok bool
+		start, ok = directBitmapMaterializedIntArgument(startCell)
+		if !ok {
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q requires integer start", call.Name))
+		}
+	}
+	position := locateSubstringPosition(haystack, needle, start)
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(position)}, nil
+}
+
+func locateSubstringPosition(haystack, needle string, start int) int {
+	if start <= 0 {
+		return 0
+	}
+	haystackRunes := []rune(haystack)
+	if start > len(haystackRunes)+1 {
+		return 0
+	}
+	if needle == "" {
+		return start
+	}
+	segment := string(haystackRunes[start-1:])
+	byteIndex := strings.Index(segment, needle)
+	if byteIndex < 0 {
+		return 0
+	}
+	return start + utf8.RuneCountInString(segment[:byteIndex])
 }
 
 func directBitmapEvaluateMaterializedStringTransformCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int, transform func(string) string) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
@@ -1394,6 +1522,51 @@ func directBitmapEvaluateMaterializedNullIfCall(call qsbridge.CallExpr, material
 		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
 	}
 	return left, nil
+}
+
+func directBitmapEvaluateMaterializedGreatestLeastCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) == 0 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects at least one argument", call.Name))
+	}
+	cells := make([]qsbridge.ResultCell, 0, len(call.Args))
+	numbers := make([]float64, 0, len(call.Args))
+	numeric := true
+	for _, arg := range call.Args {
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(arg, materialized, index)
+		if diagnostics.BlocksNative() {
+			return qsbridge.ResultCell{}, diagnostics
+		}
+		if directBitmapNullCell(cell) {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+		}
+		cells = append(cells, cell)
+		number, ok := directBitmapNumericCellValue(cell)
+		if !ok {
+			numeric = false
+		}
+		numbers = append(numbers, number)
+	}
+	best := 0
+	least := strings.EqualFold(call.Name, "least")
+	for i := 1; i < len(cells); i++ {
+		var better bool
+		if numeric {
+			better = numbers[i] > numbers[best]
+			if least {
+				better = numbers[i] < numbers[best]
+			}
+		} else {
+			cmp := strings.Compare(fmt.Sprint(cells[i].Value), fmt.Sprint(cells[best].Value))
+			better = cmp > 0
+			if least {
+				better = cmp < 0
+			}
+		}
+		if better {
+			best = i
+		}
+	}
+	return cells[best], nil
 }
 
 func directBitmapEvaluateMaterializedAbsCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {

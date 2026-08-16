@@ -2843,14 +2843,11 @@ func parseSimpleProjectionAlias(text string) (string, string, Diagnostic, bool) 
 	if len(fields) == 0 {
 		return "", "", simpleParserDiagnostic("empty projection"), false
 	}
-	for index, field := range fields {
-		if !strings.EqualFold(field, "as") {
-			continue
-		}
-		if index == 0 || index != len(fields)-2 {
+	if expr, alias, ok := splitBeforeTopLevelKeyword(trimmed, "as"); ok {
+		if len(strings.Fields(alias)) != 1 {
 			return "", "", simpleParserDiagnostic("unexpected projection alias syntax"), false
 		}
-		return strings.Join(fields[:index], " "), fields[index+1], Diagnostic{}, true
+		return expr, alias, Diagnostic{}, true
 	}
 	if len(fields) == 2 {
 		return fields[0], fields[1], Diagnostic{}, true
@@ -2964,15 +2961,28 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 		return UnboundCallExpr{}, false
 	}
 	function := strings.ToLower(strings.TrimSpace(trimmed[:open]))
+	inputText := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
+	if function == "cast" {
+		return parseSimpleCastCallExpression(inputText)
+	}
 	if !simpleScalarFunctionName(function) {
 		return UnboundCallExpr{}, false
 	}
-	inputText := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
 	if inputText == "" {
 		if simpleZeroArgumentScalarFunctionName(function) {
 			return UnboundCall(function), true
 		}
 		return UnboundCallExpr{}, false
+	}
+	if (function == "substr" || function == "substring" || function == "mid") && strings.Contains(strings.ToLower(inputText), " from ") {
+		if call, ok := parseSimpleSubstringFromForCallExpression(function, inputText); ok {
+			return call, true
+		}
+	}
+	if function == "trim" && strings.Contains(strings.ToLower(inputText), " from ") {
+		if call, ok := parseSimpleTrimFromCallExpression(inputText); ok {
+			return call, true
+		}
 	}
 	argTexts := splitSimpleCommaList(inputText)
 	args := make([]UnboundExpr, 0, len(argTexts))
@@ -2992,6 +3002,86 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 		args = append(args, arg)
 	}
 	return UnboundCall(function, args...), true
+}
+
+func parseSimpleSubstringFromForCallExpression(function, inputText string) (UnboundCallExpr, bool) {
+	valueText, tail, ok := splitBeforeTopLevelKeyword(inputText, "from")
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	startText, lengthText, hasLength := splitBeforeTopLevelKeyword(tail, "for")
+	value, ok := parseSimpleScalarExpression(valueText)
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	start, ok := parseSimpleScalarExpression(startText)
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	args := []UnboundExpr{value, start}
+	if hasLength {
+		length, ok := parseSimpleScalarExpression(lengthText)
+		if !ok {
+			return UnboundCallExpr{}, false
+		}
+		args = append(args, length)
+	}
+	return UnboundCall(function, args...), true
+}
+
+func parseSimpleTrimFromCallExpression(inputText string) (UnboundCallExpr, bool) {
+	specText, valueText, ok := splitBeforeTopLevelKeyword(inputText, "from")
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	mode := "both"
+	removalText := strings.TrimSpace(specText)
+	for _, keyword := range []string{"leading", "trailing", "both"} {
+		if tail, ok := consumeKeyword(removalText, keyword); ok {
+			mode = keyword
+			removalText = strings.TrimSpace(tail)
+			break
+		}
+	}
+	if removalText == "" {
+		removalText = "' '"
+	}
+	removal, ok := parseSimpleScalarExpression(removalText)
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	value, ok := parseSimpleScalarExpression(valueText)
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	return UnboundCall("trim", UnboundLiteral(ValueString, mode), removal, value), true
+}
+
+func parseSimpleCastCallExpression(inputText string) (UnboundCallExpr, bool) {
+	valueText, typeText, ok := splitBeforeTopLevelKeyword(inputText, "as")
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	value, ok := parseSimpleScalarExpression(valueText)
+	if !ok {
+		return UnboundCallExpr{}, false
+	}
+	castType := strings.ToLower(strings.TrimSpace(typeText))
+	if index := strings.Index(castType, "("); index >= 0 {
+		castType = strings.TrimSpace(castType[:index])
+	}
+	switch castType {
+	case "signed", "signed integer", "unsigned", "unsigned integer", "int", "integer", "bigint", "smallint", "tinyint", "mediumint":
+		return UnboundCall("toint", value), true
+	case "decimal", "dec", "numeric", "double", "double precision", "float", "real":
+		return UnboundCall("tonumber", value), true
+	case "char", "varchar", "text", "string":
+		return UnboundCall("tostring", value), true
+	case "date", "datetime", "timestamp":
+		return UnboundCall("todate", value), true
+	default:
+		return UnboundCallExpr{}, false
+	}
 }
 
 func simpleScalarFunctionName(function string) bool {

@@ -3,13 +3,12 @@ name: mysql_compat_functions_boundaries
 
 tests:
   - id: mysql_compat_functions_boundaries.001.substring_from_for_syntax
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_string_boundary
     compatibility: mysql
     requires: [select, substring]
-    issue: "MySQL SUBSTRING(str FROM pos FOR len) syntax is not parsed yet; comma-call syntax is supported."
     sql: |
       select substring('alphabet' from 2 for 3) as value
     expect:
@@ -18,13 +17,12 @@ tests:
         - [lph]
 
   - id: mysql_compat_functions_boundaries.002.trim_leading_from_syntax
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_string_boundary
     compatibility: mysql
     requires: [select, trim]
-    issue: "MySQL TRIM([LEADING|TRAILING|BOTH] remstr FROM str) syntax is not parsed yet; simple trim/ltrim/rtrim calls are supported."
     sql: |
       select trim(leading 'x' from 'xxxstream') as value
     expect:
@@ -48,13 +46,12 @@ tests:
         - [1995-03]
 
   - id: mysql_compat_functions_boundaries.004.locate_literal
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_string_boundary
     compatibility: mysql
     requires: [select, locate]
-    issue: "LOCATE/INSTR-style string search functions are not implemented as scalar functions yet."
     sql: |
       select locate('stream', 'quantastream') as value
     expect:
@@ -63,13 +60,12 @@ tests:
         - [7]
 
   - id: mysql_compat_functions_boundaries.005.greatest_least_literal
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_comparison_boundary
     compatibility: mysql
     requires: [select, greatest, least]
-    issue: "GREATEST and LEAST are not implemented as scalar functions yet."
     sql: |
       select greatest(3, 7, 4) as greatest_value, least(3, 7, 4) as least_value
     expect:
@@ -78,13 +74,12 @@ tests:
         - [7, 3]
 
   - id: mysql_compat_functions_boundaries.006.cast_signed_literal
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: scalar_functions_cast_boundary
     compatibility: mysql
     requires: [select, cast]
-    issue: "CAST(expr AS type) syntax is not parsed yet; explicit toint/tonumber/tostring helpers exist as QuantaStream functions."
     sql: |
       select cast('42' as signed) as value
     expect:

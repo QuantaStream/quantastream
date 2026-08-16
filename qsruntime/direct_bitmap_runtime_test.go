@@ -3060,6 +3060,69 @@ func TestDirectBitmapEvaluateMaterializedSubstringCall(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedMySQLTrimLocateAndComparisonCalls(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{Rownums: []qsbridge.QuantaRownum{1}}
+	for _, test := range []struct {
+		name string
+		call qsbridge.CallExpr
+		want qsbridge.ResultCell
+	}{
+		{
+			name: "trim leading custom string",
+			call: qsbridge.Call("trim",
+				qsbridge.Literal(qsbridge.ValueString, "leading"),
+				qsbridge.Literal(qsbridge.ValueString, "x"),
+				qsbridge.Literal(qsbridge.ValueString, "xxxstream"),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "stream"},
+		},
+		{
+			name: "locate",
+			call: qsbridge.Call("locate",
+				qsbridge.Literal(qsbridge.ValueString, "stream"),
+				qsbridge.Literal(qsbridge.ValueString, "quantastream"),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(7)},
+		},
+		{
+			name: "instr",
+			call: qsbridge.Call("instr",
+				qsbridge.Literal(qsbridge.ValueString, "quantastream"),
+				qsbridge.Literal(qsbridge.ValueString, "stream"),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(7)},
+		},
+		{
+			name: "greatest",
+			call: qsbridge.Call("greatest",
+				qsbridge.Literal(qsbridge.ValueInt, int64(3)),
+				qsbridge.Literal(qsbridge.ValueInt, int64(7)),
+				qsbridge.Literal(qsbridge.ValueInt, int64(4)),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(7)},
+		},
+		{
+			name: "least",
+			call: qsbridge.Call("least",
+				qsbridge.Literal(qsbridge.ValueInt, int64(3)),
+				qsbridge.Literal(qsbridge.ValueInt, int64(7)),
+				qsbridge.Literal(qsbridge.ValueInt, int64(4)),
+			),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(3)},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(test.call, rowSet, 0)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", diagnostics)
+			}
+			if cell.Kind != test.want.Kind || cell.Value != test.want.Value {
+				t.Fatalf("cell = %#v, want %#v", cell, test.want)
+			}
+		})
+	}
+}
+
 func TestDirectBitmapEvaluateMaterializedBinaryExprPropagatesNull(t *testing.T) {
 	field := qsbridge.FieldRef{
 		Table: qsbridge.TableInstance{Table: "lineitem"},

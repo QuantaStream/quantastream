@@ -1868,6 +1868,32 @@ func TestSimpleParserBridgeParsesAggregateAliasHaving(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesMySQLScalarFunctionBoundarySyntax(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select substring('alphabet' from 2 for 3) as sub_value, trim(leading 'x' from 'xxxstream') as trim_value, cast('42' as signed) as cast_value")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 3 {
+		t.Fatalf("projection count = %d, want 3", len(statement.Select.Projection))
+	}
+	substringCall, ok := statement.Select.Projection[0].Expr.(UnboundCallExpr)
+	if !ok || substringCall.Name != "substring" || len(substringCall.Args) != 3 {
+		t.Fatalf("substring projection = %#v, want three-arg substring call", statement.Select.Projection[0].Expr)
+	}
+	trimCall, ok := statement.Select.Projection[1].Expr.(UnboundCallExpr)
+	if !ok || trimCall.Name != "trim" || len(trimCall.Args) != 3 {
+		t.Fatalf("trim projection = %#v, want normalized trim mode/removal/value call", statement.Select.Projection[1].Expr)
+	}
+	mode, ok := trimCall.Args[0].(UnboundLiteralExpr)
+	if !ok || mode.Kind != ValueString || mode.Value != "leading" {
+		t.Fatalf("trim mode = %#v, want leading literal", trimCall.Args[0])
+	}
+	castCall, ok := statement.Select.Projection[2].Expr.(UnboundCallExpr)
+	if !ok || castCall.Name != "toint" || len(castCall.Args) != 1 {
+		t.Fatalf("cast projection = %#v, want normalized toint call", statement.Select.Projection[2].Expr)
+	}
+}
+
 func TestSimpleParserBridgeParsesScalarSubqueryHaving(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`select o_orderpriority, count(*) as c
 from orders
