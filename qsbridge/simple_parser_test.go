@@ -1868,6 +1868,47 @@ func TestSimpleParserBridgeParsesAggregateAliasHaving(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesScalarSubqueryHaving(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`select o_orderpriority, count(*) as c
+from orders
+group by o_orderpriority
+having c > (
+  select o_orderkey
+  from orders
+  where o_orderkey >= 1
+)`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Having) != 1 {
+		t.Fatalf("having = %d, want 1", len(statement.Select.Having))
+	}
+	predicate, ok := statement.Select.Having[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("having expression = %T, want UnboundBinaryExpr", statement.Select.Having[0].Expr)
+	}
+	if predicate.Op != BinaryOpGreater {
+		t.Fatalf("having op = %q, want %q", predicate.Op, BinaryOpGreater)
+	}
+	ref, ok := predicate.Left.(UnboundAggregateRefExpr)
+	if !ok {
+		t.Fatalf("having left = %T, want UnboundAggregateRefExpr", predicate.Left)
+	}
+	if ref.Alias != "c" || ref.Index != 0 {
+		t.Fatalf("having ref = %#v, want c[0]", ref)
+	}
+	subquery, ok := predicate.Right.(UnboundScalarSubqueryExpr)
+	if !ok {
+		t.Fatalf("having right = %T, want UnboundScalarSubqueryExpr", predicate.Right)
+	}
+	if subquery.Scope != PredicateScopeHaving {
+		t.Fatalf("subquery scope = %q, want %q", subquery.Scope, PredicateScopeHaving)
+	}
+	if !strings.Contains(subquery.SQL, "select o_orderkey") {
+		t.Fatalf("subquery SQL = %q, want preserved SELECT body", subquery.SQL)
+	}
+}
+
 func TestSimpleParserBridgeParsesAggregateCallHaving(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_custkey as customer_id, sum(o.o_totalprice) as total_revenue from orders as o group by o.o_custkey having sum(o.o_totalprice) > 150 order by sum(o.o_totalprice) desc")
 	if diagnostics.BlocksNative() {

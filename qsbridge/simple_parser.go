@@ -4586,6 +4586,9 @@ func parseSimpleHavingValueExpression(text string, projections []UnboundProjecti
 	if trimmed == "" {
 		return nil, aggregates, simpleParserDiagnostic("HAVING value expression is empty"), false
 	}
+	if subquery, ok := parseSimpleScalarSubqueryExpression(trimmed, PredicateScopeHaving); ok {
+		return subquery, aggregates, Diagnostic{}, true
+	}
 	if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
 		if inner, ok := simpleStripBalancedParens(trimmed); ok {
 			return parseSimpleHavingValueExpression(inner, projections, aggregates)
