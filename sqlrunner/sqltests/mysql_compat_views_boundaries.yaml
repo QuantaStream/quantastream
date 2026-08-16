@@ -1,0 +1,155 @@
+version: 1
+name: mysql_compat_views_boundaries
+
+tests:
+  - id: mysql_compat_views_boundaries.001.drop_view_if_exists
+    status: xfail
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view, if_exists]
+    issue: "DROP VIEW IF EXISTS is valid MySQL syntax; QS simple parser currently accepts only a single bare view name."
+    sql: |
+      drop view if exists qs_mysql_compat_missing_view
+
+  - id: mysql_compat_views_boundaries.002.create_view_column_list
+    status: xfail
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [create_view, inline_column_list]
+    issue: "CREATE VIEW with an inline column list is valid MySQL syntax; QS currently requires aliases in the SELECT list."
+    sql: |
+      create or replace view qs_mysql_compat_column_list_view (customer_key, customer_name) as
+      select c_custkey, c_name
+      from customer
+
+  - id: mysql_compat_views_boundaries.010.create_aggregate_view
+    status: supported
+    kind: statement
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [create_view, aggregate]
+    sql: |
+      create or replace view qs_mysql_compat_aggregate_view as
+      select count(*) as line_count
+      from lineitem
+
+  - id: mysql_compat_views_boundaries.011.select_aggregate_view
+    status: xfail
+    kind: query
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [select, view_reference, aggregate]
+    issue: "Aggregate view definitions are persisted but not expandable yet."
+    sql: |
+      select line_count
+      from qs_mysql_compat_aggregate_view
+
+  - id: mysql_compat_views_boundaries.012.drop_aggregate_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_aggregate_view
+
+  - id: mysql_compat_views_boundaries.020.create_expression_view
+    status: supported
+    kind: statement
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [create_view, expression_projection]
+    sql: |
+      create or replace view qs_mysql_compat_expression_view as
+      select c_custkey + 1 as next_customer_key
+      from customer
+
+  - id: mysql_compat_views_boundaries.021.select_expression_view
+    status: xfail
+    kind: query
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [select, view_reference, expression_projection]
+    issue: "View expansion currently supports direct field projections only."
+    sql: |
+      select next_customer_key
+      from qs_mysql_compat_expression_view
+      limit 1
+
+  - id: mysql_compat_views_boundaries.022.drop_expression_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_expression_view
+
+  - id: mysql_compat_views_boundaries.030.create_distinct_view
+    status: supported
+    kind: statement
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [create_view, distinct]
+    sql: |
+      create or replace view qs_mysql_compat_distinct_view as
+      select distinct c_mktsegment as market_segment
+      from customer
+
+  - id: mysql_compat_views_boundaries.031.select_distinct_view
+    status: xfail
+    kind: query
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [select, view_reference, distinct]
+    issue: "DISTINCT view definitions are persisted but not expandable yet."
+    sql: |
+      select market_segment
+      from qs_mysql_compat_distinct_view
+      limit 1
+
+  - id: mysql_compat_views_boundaries.032.drop_distinct_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_distinct_view
+
+  - id: mysql_compat_views_boundaries.040.create_outer_join_source_view
+    status: supported
+    kind: statement
+    feature: views_outer_query_boundary
+    compatibility: mysql
+    requires: [create_view, aliases]
+    sql: |
+      create or replace view qs_mysql_compat_customer_source_view as
+      select
+        c_custkey as customer_key,
+        c_name as customer_name
+      from customer
+
+  - id: mysql_compat_views_boundaries.041.join_view_in_outer_query
+    status: xfail
+    kind: query
+    feature: views_outer_query_boundary
+    compatibility: mysql
+    requires: [select, view_reference, inner_join]
+    issue: "View expansion currently supports one view source without additional outer joins."
+    sql: |
+      select v.customer_key, o.o_orderkey
+      from qs_mysql_compat_customer_source_view as v
+      inner join orders as o on o.o_custkey = v.customer_key
+      where o.o_orderkey = 1
+
+  - id: mysql_compat_views_boundaries.042.drop_outer_join_source_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_customer_source_view

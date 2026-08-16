@@ -32,6 +32,12 @@ The current seed suites are:
 - `mysql_compat_mutations.yaml`
 - `mysql_compat_views.yaml`
 
+Boundary suites such as `mysql_compat_views_boundaries.yaml` intentionally
+track MySQL-compatible behavior that QuantaStream does not support yet. Run
+them against a QuantaStream target to see `XFAIL` roadmap gaps. Do not include
+them in MySQL reference captures or `MYSQL_COMPAT_SUITE=all`, because stock
+MySQL success would correctly appear as `XPASS`.
+
 ## Capturing MySQL Reference Results
 
 Compatibility suites can generate runnable SQLRunner suites with `expect`
@@ -67,4 +73,10 @@ MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' ./run-mysql-compat.sh
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-direct ./run-mysql-compat.sh
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_SUITE=sqltests/mysql_compat_views.yaml MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-standard ./run-mysql-compat.sh
 MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' MYSQL_COMPAT_SUITE=all MYSQL_COMPAT_MODE=diff TARGET_ENGINE=inabox-standard ./run-mysql-compat.sh
+```
+
+Run the view boundary suite directly against QuantaStream targets:
+
+```bash
+go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_views_boundaries.yaml -compat_report
 ```
