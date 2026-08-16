@@ -188,3 +188,392 @@ tests:
     requires: [drop_view]
     sql: |
       drop view qs_mysql_compat_customer_source_view
+
+  - id: mysql_compat_views_boundaries.050.create_select_star_view
+    status: supported
+    kind: statement
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [create_view, wildcard_projection]
+    sql: |
+      create or replace view qs_mysql_compat_star_view as
+      select *
+      from region
+
+  - id: mysql_compat_views_boundaries.051.select_star_view
+    status: supported
+    kind: query
+    feature: views_query_boundary
+    compatibility: mysql
+    requires: [select, view_reference, wildcard_projection]
+    sql: |
+      select r_regionkey, r_name
+      from qs_mysql_compat_star_view
+      where r_regionkey = 1
+    expect:
+      columns: [r_regionkey, r_name]
+      rows:
+        - [1, "AMERICA"]
+
+  - id: mysql_compat_views_boundaries.052.drop_select_star_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_star_view
+
+  - id: mysql_compat_views_boundaries.060.create_nested_view_base
+    status: supported
+    kind: statement
+    feature: views_nested_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_nested_base_view as
+      select c_custkey as customer_key, c_name as customer_name
+      from customer
+
+  - id: mysql_compat_views_boundaries.061.create_nested_view
+    status: xfail
+    kind: statement
+    feature: views_nested_boundary
+    compatibility: mysql
+    requires: [create_view, nested_view]
+    issue: "CREATE VIEW definitions that reference another view are not accepted yet."
+    sql: |
+      create or replace view qs_mysql_compat_nested_view as
+      select customer_key, customer_name
+      from qs_mysql_compat_nested_base_view
+
+  - id: mysql_compat_views_boundaries.062.select_nested_view
+    status: xfail
+    kind: query
+    feature: views_nested_boundary
+    compatibility: mysql
+    requires: [select, view_reference, nested_view]
+    issue: "Nested view references are not expandable yet."
+    sql: |
+      select customer_key, customer_name
+      from qs_mysql_compat_nested_view
+      where customer_key = 1
+
+  - id: mysql_compat_views_boundaries.063.drop_nested_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view if exists qs_mysql_compat_nested_view
+
+  - id: mysql_compat_views_boundaries.064.drop_nested_view_base
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_nested_base_view
+
+  - id: mysql_compat_views_boundaries.070.create_grouped_boolean_view
+    status: supported
+    kind: statement
+    feature: views_predicate_boundary
+    compatibility: mysql
+    requires: [create_view, grouped_boolean_predicates]
+    sql: |
+      create or replace view qs_mysql_compat_grouped_boolean_view as
+      select c_custkey as customer_key, c_mktsegment as market_segment
+      from customer
+      where (c_mktsegment = 'BUILDING' or c_mktsegment = 'AUTOMOBILE')
+        and c_custkey > 0
+
+  - id: mysql_compat_views_boundaries.071.select_grouped_boolean_view
+    status: supported
+    kind: query
+    feature: views_predicate_boundary
+    compatibility: mysql
+    requires: [select, view_reference, grouped_boolean_predicates]
+    sql: |
+      select customer_key
+      from qs_mysql_compat_grouped_boolean_view
+      order by customer_key
+      limit 1
+    expect:
+      columns: [customer_key]
+      rows:
+        - [1]
+
+  - id: mysql_compat_views_boundaries.072.drop_grouped_boolean_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_grouped_boolean_view
+
+  - id: mysql_compat_views_boundaries.080.create_grouped_aggregate_view
+    status: supported
+    kind: statement
+    feature: views_group_boundary
+    compatibility: mysql
+    requires: [create_view, group_by, aggregate]
+    sql: |
+      create or replace view qs_mysql_compat_grouped_aggregate_view as
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+
+  - id: mysql_compat_views_boundaries.081.select_grouped_aggregate_view
+    status: xfail
+    kind: query
+    feature: views_group_boundary
+    compatibility: mysql
+    requires: [select, view_reference, group_by, aggregate]
+    issue: "GROUP BY inside view definitions is not expandable yet."
+    sql: |
+      select market_segment, customer_count
+      from qs_mysql_compat_grouped_aggregate_view
+      order by market_segment
+      limit 1
+
+  - id: mysql_compat_views_boundaries.082.drop_grouped_aggregate_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_grouped_aggregate_view
+
+  - id: mysql_compat_views_boundaries.090.create_having_view
+    status: supported
+    kind: statement
+    feature: views_group_boundary
+    compatibility: mysql
+    requires: [create_view, group_by, having]
+    sql: |
+      create or replace view qs_mysql_compat_having_view as
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      having customer_count > 0
+
+  - id: mysql_compat_views_boundaries.091.select_having_view
+    status: xfail
+    kind: query
+    feature: views_group_boundary
+    compatibility: mysql
+    requires: [select, view_reference, group_by, having]
+    issue: "HAVING inside view definitions is not expandable yet."
+    sql: |
+      select market_segment, customer_count
+      from qs_mysql_compat_having_view
+      order by market_segment
+      limit 1
+
+  - id: mysql_compat_views_boundaries.092.drop_having_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_having_view
+
+  - id: mysql_compat_views_boundaries.100.create_order_by_view
+    status: supported
+    kind: statement
+    feature: views_order_limit_boundary
+    compatibility: mysql
+    requires: [create_view, order_by]
+    sql: |
+      create or replace view qs_mysql_compat_ordered_view as
+      select c_custkey as customer_key, c_name as customer_name
+      from customer
+      order by c_custkey
+
+  - id: mysql_compat_views_boundaries.101.select_order_by_view
+    status: xfail
+    kind: query
+    feature: views_order_limit_boundary
+    compatibility: mysql
+    requires: [select, view_reference, order_by]
+    issue: "ORDER BY inside view definitions is not expandable yet."
+    sql: |
+      select customer_key, customer_name
+      from qs_mysql_compat_ordered_view
+      limit 1
+
+  - id: mysql_compat_views_boundaries.102.drop_order_by_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_ordered_view
+
+  - id: mysql_compat_views_boundaries.110.create_limit_view
+    status: supported
+    kind: statement
+    feature: views_order_limit_boundary
+    compatibility: mysql
+    requires: [create_view, limit]
+    sql: |
+      create or replace view qs_mysql_compat_limit_view as
+      select c_custkey as customer_key, c_name as customer_name
+      from customer
+      limit 1
+
+  - id: mysql_compat_views_boundaries.111.select_limit_view
+    status: xfail
+    kind: query
+    feature: views_order_limit_boundary
+    compatibility: mysql
+    requires: [select, view_reference, limit]
+    issue: "LIMIT inside view definitions is not expandable yet."
+    sql: |
+      select customer_key, customer_name
+      from qs_mysql_compat_limit_view
+
+  - id: mysql_compat_views_boundaries.112.drop_limit_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_limit_view
+
+  - id: mysql_compat_views_boundaries.120.create_multi_view_source_left
+    status: supported
+    kind: statement
+    feature: views_multi_source_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_multi_view_left as
+      select c_custkey as customer_key
+      from customer
+
+  - id: mysql_compat_views_boundaries.121.create_multi_view_source_right
+    status: supported
+    kind: statement
+    feature: views_multi_source_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_multi_view_right as
+      select o_orderkey as order_key, o_custkey as customer_key
+      from orders
+
+  - id: mysql_compat_views_boundaries.122.join_two_view_sources
+    status: xfail
+    kind: query
+    feature: views_multi_source_boundary
+    compatibility: mysql
+    requires: [select, view_reference, inner_join]
+    issue: "Outer queries with multiple logical view sources are not expandable yet."
+    sql: |
+      select l.customer_key, r.order_key
+      from qs_mysql_compat_multi_view_left as l
+      inner join qs_mysql_compat_multi_view_right as r on r.customer_key = l.customer_key
+      where r.order_key = 1
+
+  - id: mysql_compat_views_boundaries.123.drop_multi_view_source_right
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_multi_view_right
+
+  - id: mysql_compat_views_boundaries.124.drop_multi_view_source_left
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_multi_view_left
+
+  - id: mysql_compat_views_boundaries.130.create_subquery_view_source
+    status: supported
+    kind: statement
+    feature: views_subquery_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_subquery_view as
+      select c_custkey as customer_key
+      from customer
+
+  - id: mysql_compat_views_boundaries.131.view_used_in_subquery
+    status: xfail
+    kind: query
+    feature: views_subquery_boundary
+    compatibility: mysql
+    requires: [select, view_reference, subquery]
+    issue: "View references inside subqueries are not expandable yet."
+    sql: |
+      select count(*) as customer_count
+      from customer
+      where c_custkey in (
+        select customer_key
+        from qs_mysql_compat_subquery_view
+        where customer_key = 1
+      )
+
+  - id: mysql_compat_views_boundaries.132.drop_subquery_view_source
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_subquery_view
+
+  - id: mysql_compat_views_boundaries.140.create_metadata_view
+    status: supported
+    kind: statement
+    feature: views_metadata_boundary
+    compatibility: mysql
+    requires: [create_view]
+    sql: |
+      create or replace view qs_mysql_compat_metadata_view as
+      select r_regionkey as region_key, r_name as region_name
+      from region
+
+  - id: mysql_compat_views_boundaries.141.show_create_view
+    status: xfail
+    kind: query
+    feature: views_metadata_boundary
+    compatibility: mysql
+    requires: [show_create_view]
+    issue: "SHOW CREATE VIEW compatibility output is not aligned with MySQL yet."
+    sql: |
+      show create view qs_mysql_compat_metadata_view
+
+  - id: mysql_compat_views_boundaries.142.describe_view
+    status: xfail
+    kind: query
+    feature: views_metadata_boundary
+    compatibility: mysql
+    requires: [describe, view_reference]
+    issue: "DESCRIBE view compatibility output is not implemented yet."
+    sql: |
+      describe qs_mysql_compat_metadata_view
+
+  - id: mysql_compat_views_boundaries.143.drop_metadata_view
+    status: supported
+    kind: statement
+    feature: views_ddl_boundary
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_metadata_view
