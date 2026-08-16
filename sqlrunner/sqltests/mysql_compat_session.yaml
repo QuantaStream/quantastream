@@ -20,13 +20,44 @@ tests:
     sql: |
       set autocommit = 1
 
-  - id: mysql_compat_session.010.select_autocommit_system_variable
+  - id: mysql_compat_session.003.set_sql_mode
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set, sql_mode]
+    sql: |
+      set sql_mode = 'ANSI_QUOTES'
+
+  - id: mysql_compat_session.004.set_time_zone
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set, time_zone]
+    sql: |
+      set time_zone = '+00:00'
+
+  - id: mysql_compat_session.010.select_system_variables
     status: supported
     kind: query
     feature: session_variables
     compatibility: mysql
     requires: [select, system_variables]
     sql: |
-      select @@autocommit as autocommit_value
+      select @@autocommit as autocommit_value,
+             @@sql_mode as sql_mode_value,
+             @@time_zone as time_zone_value
     expect:
-      columns: [autocommit_value]
+      columns: [autocommit_value, sql_mode_value, time_zone_value]
+
+  - id: mysql_compat_session.011.show_autocommit_variable
+    status: supported
+    kind: query
+    feature: session_variables
+    compatibility: mysql
+    requires: [show_variables, autocommit]
+    sql: |
+      show variables like 'autocommit'
+    expect:
+      columns: [variable_name, value]

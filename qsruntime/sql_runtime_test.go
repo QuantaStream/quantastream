@@ -224,6 +224,24 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetVariable || actions[0].Name != "autocommit" || actions[0].Value != "1" {
 		t.Fatalf("SET autocommit actions = %#v", actions)
 	}
+
+	sqlMode, err := runtime.ExecuteSQL(context.Background(), "set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET sql_mode failed: %v", err)
+	}
+	actions = sqlMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" {
+		t.Fatalf("SET sql_mode actions = %#v", actions)
+	}
+
+	timeZone, err := runtime.ExecuteSQL(context.Background(), "set time_zone = '+00:00'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET time_zone failed: %v", err)
+	}
+	actions = timeZone.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetTimeZone || actions[0].Name != "time_zone" || actions[0].Value != "+00:00" {
+		t.Fatalf("SET time_zone actions = %#v", actions)
+	}
 }
 
 func TestSQLRuntimeExecuteSQLShowDatabasesReturnsCatalogRows(t *testing.T) {
@@ -354,6 +372,11 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 		executed = true
 		return ExecutionResult{}, nil
 	})
+	runtime.Session = qsbridge.SessionContext{
+		SQLModes:  []qsbridge.SQLMode{"STRICT_TRANS_TABLES", "NO_ZERO_DATE"},
+		TimeZone:  "+00:00",
+		Variables: map[string]string{"autocommit": "0"},
+	}
 
 	result, err := runtime.ExecuteSQL(context.Background(), "show variables like 'version%'", qsbridge.ExecutionOptions{})
 	if err != nil {
@@ -374,6 +397,30 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	}
 	if got, want := chunk.Rows[0][0].Value, "version"; got != want {
 		t.Fatalf("first variable = %#v, want %q", got, want)
+	}
+
+	autocommit, err := runtime.ExecuteSQL(context.Background(), "show variables like 'autocommit'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW VARIABLES autocommit failed: %v", err)
+	}
+	autocommitChunk, diagnostics := autocommit.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("autocommit chunk diagnostics = %#v", diagnostics)
+	}
+	if len(autocommitChunk.Rows) != 1 || autocommitChunk.Rows[0][0].Value != "autocommit" || autocommitChunk.Rows[0][1].Value != "OFF" {
+		t.Fatalf("autocommit rows = %#v", autocommitChunk.Rows)
+	}
+
+	timeZone, err := runtime.ExecuteSQL(context.Background(), "show variables like 'time_zone'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW VARIABLES time_zone failed: %v", err)
+	}
+	timeZoneChunk, diagnostics := timeZone.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("time zone chunk diagnostics = %#v", diagnostics)
+	}
+	if len(timeZoneChunk.Rows) != 1 || timeZoneChunk.Rows[0][0].Value != "time_zone" || timeZoneChunk.Rows[0][1].Value != "+00:00" {
+		t.Fatalf("time zone rows = %#v", timeZoneChunk.Rows)
 	}
 }
 
@@ -460,13 +507,17 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 		return ExecutionResult{}, nil
 	})
 	runtime.Session = qsbridge.SessionContext{
+		SQLModes:  []qsbridge.SQLMode{"STRICT_TRANS_TABLES", "NO_ZERO_DATE"},
+		TimeZone:  "+00:00",
 		Variables: map[string]string{"autocommit": "0"},
 	}
 
 	result, err := runtime.ExecuteSQL(context.Background(), `
 		select @@version as version_value,
 		       @@version_comment as version_comment,
-		       @@autocommit as autocommit_value
+		       @@autocommit as autocommit_value,
+		       @@sql_mode as sql_mode_value,
+		       @@time_zone as time_zone_value
 	`, qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("ExecuteSQL failed: %v", err)
@@ -481,11 +532,11 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 3 {
-		t.Fatalf("rows = %#v, want one three-column row", chunk.Rows)
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 5 {
+		t.Fatalf("rows = %#v, want one five-column row", chunk.Rows)
 	}
 	row := chunk.Rows[0]
-	if row[0].Value != "8.0.0-quantastream" || row[1].Value != "QuantaStream" || row[2].Value != int64(0) {
+	if row[0].Value != "8.0.0-quantastream" || row[1].Value != "QuantaStream" || row[2].Value != int64(0) || row[3].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" || row[4].Value != "+00:00" {
 		t.Fatalf("system variable cells = %#v", row)
 	}
 }

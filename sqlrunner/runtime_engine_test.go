@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/sqlrunner/roadmap"
 )
@@ -101,6 +102,30 @@ func TestRuntimeRoadmapEngineQueryProfileReturnsLastInstrumentationCopy(t *testi
 	rows[0].Value = "mutated"
 	if engine.lastProfile[0].Value != "3ms" {
 		t.Fatalf("QueryProfile returned alias to profile rows")
+	}
+}
+
+func TestRuntimeRoadmapEngineAppliesSessionActionsAcrossCases(t *testing.T) {
+	engine := &runtimeRoadmapEngine{
+		Runtime: qsruntime.SQLRuntime{
+			Parser: qsbridge.SimpleParserBridge{},
+			Environment: qsruntime.RuntimeEnvironment{
+				Catalog: qsbridge.MemoryCatalog{
+					Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+				},
+			},
+		},
+	}
+
+	if _, err := engine.Exec(context.Background(), "set sql_mode = 'ANSI_QUOTES'"); err != nil {
+		t.Fatalf("SET sql_mode failed: %v", err)
+	}
+	result, err := engine.Query(context.Background(), "select @@sql_mode as sql_mode_value")
+	if err != nil {
+		t.Fatalf("SELECT @@sql_mode failed: %v", err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0].Text != "ANSI_QUOTES" {
+		t.Fatalf("rows = %#v, want ANSI_QUOTES", result.Rows)
 	}
 }
 

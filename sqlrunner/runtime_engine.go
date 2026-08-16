@@ -25,10 +25,9 @@ func (e *runtimeRoadmapEngine) WithTestCase(test roadmap.TestCase) roadmap.Engin
 	if e == nil {
 		return e
 	}
-	next := *e
-	next.Test = test
-	next.lastProfile = nil
-	return &next
+	e.Test = test
+	e.lastProfile = nil
+	return e
 }
 
 func (e *runtimeRoadmapEngine) Query(ctx context.Context, statement string) (roadmap.QueryResult, error) {
@@ -47,6 +46,9 @@ func (e *runtimeRoadmapEngine) Query(ctx context.Context, statement string) (roa
 	}
 	if result.Runtime.Diagnostics.BlocksNative() {
 		return roadmap.QueryResult{}, diagnosticsError(result.Runtime.Diagnostics)
+	}
+	if err := e.applySessionActions(result); err != nil {
+		return roadmap.QueryResult{}, err
 	}
 	return runtimeQueryResult(result)
 }
@@ -246,7 +248,36 @@ func (e *runtimeRoadmapEngine) Exec(ctx context.Context, statement string) (int6
 	if result.Runtime.Diagnostics.BlocksNative() {
 		return 0, diagnosticsError(result.Runtime.Diagnostics)
 	}
+	if err := e.applySessionActions(result); err != nil {
+		return 0, err
+	}
 	return int64(result.Runtime.Statement.AffectedRows), nil
+}
+
+func (e *runtimeRoadmapEngine) applySessionActions(result qsruntime.SQLExecutionResult) error {
+	if e == nil {
+		return nil
+	}
+	actions := runtimeRoadmapSessionActions(result)
+	if len(actions) == 0 {
+		return nil
+	}
+	transition := e.Runtime.Session.PreviewSessionTransition(actions)
+	if transition.Diagnostics.BlocksNative() {
+		return diagnosticsError(transition.Diagnostics)
+	}
+	e.Runtime.Session = transition.After
+	return nil
+}
+
+func runtimeRoadmapSessionActions(result qsruntime.SQLExecutionResult) []qsbridge.SessionAction {
+	if len(result.Runtime.Statement.SessionActions) > 0 {
+		return append([]qsbridge.SessionAction(nil), result.Runtime.Statement.SessionActions...)
+	}
+	if len(result.Request.Statement.SessionActions) > 0 {
+		return append([]qsbridge.SessionAction(nil), result.Request.Statement.SessionActions...)
+	}
+	return nil
 }
 
 func runtimeQueryResult(result qsruntime.SQLExecutionResult) (roadmap.QueryResult, error) {

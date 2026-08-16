@@ -193,7 +193,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindShowVariables {
-		result.Runtime = showVariablesRuntimeResult(request)
+		result.Runtime = r.showVariablesRuntimeResult(request)
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindShowStatus {
@@ -482,12 +482,19 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 	case "sql_mode":
 		return qsbridge.Literal(qsbridge.ValueString, strings.Join(sqlModeStrings(r.Session.SQLModes), ",")), true
 	case "time_zone":
-		return qsbridge.Literal(qsbridge.ValueString, strings.TrimSpace(r.Session.TimeZone)), true
+		return qsbridge.Literal(qsbridge.ValueString, runtimeSessionTimeZone(r.Session)), true
 	case "max_allowed_packet":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(67108864)), true
 	default:
 		return qsbridge.Literal(qsbridge.ValueString, ""), true
 	}
+}
+
+func runtimeSessionTimeZone(session qsbridge.SessionContext) string {
+	if value := strings.TrimSpace(session.TimeZone); value != "" {
+		return value
+	}
+	return "SYSTEM"
 }
 
 func metadataVariableLiteral(name string, value string) qsbridge.LiteralExpr {

@@ -1144,8 +1144,8 @@ func showVariablesResultShape() ResultShape {
 	return ResultShape{
 		Kind: ResultQuery,
 		Columns: []FieldRef{
-			{Name: "Variable_name", Type: DataTypeString},
-			{Name: "Value", Type: DataTypeString},
+			{Name: "variable_name", Type: DataTypeString},
+			{Name: "value", Type: DataTypeString},
 		},
 	}
 }
@@ -1154,8 +1154,8 @@ func showStatusResultShape() ResultShape {
 	return ResultShape{
 		Kind: ResultQuery,
 		Columns: []FieldRef{
-			{Name: "Variable_name", Type: DataTypeString},
-			{Name: "Value", Type: DataTypeString},
+			{Name: "variable_name", Type: DataTypeString},
+			{Name: "value", Type: DataTypeString},
 		},
 	}
 }

@@ -149,7 +149,7 @@ tests:
     sql: |
       show variables like 'character_set_%'
     expect:
-      columns: [Variable_name, Value]
+      columns: [variable_name, value]
 
   - id: mysql_compat_catalog.0141.show_status
     status: supported
@@ -160,7 +160,7 @@ tests:
     sql: |
       show status like 'Threads_connected'
     expect:
-      columns: [Variable_name, Value]
+      columns: [variable_name, value]
 
   - id: mysql_compat_catalog.017.show_warnings
     status: supported

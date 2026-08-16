@@ -388,12 +388,12 @@ func showTablesRuntimeColumnName(schemaName string) string {
 	return "Tables_in_" + schemaName
 }
 
-func showVariablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	rows := showVariableRows(request.Bound.Prepared.Query.Catalog.Pattern)
+func (r SQLRuntime) showVariablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	rows := r.showVariableRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
-		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
-		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("value", qsbridge.DataTypeString, len(rows)),
 	}
 	for i, row := range rows {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)
@@ -415,15 +415,16 @@ type showVariableRow struct {
 	value string
 }
 
-func showVariableRows(pattern string) []showVariableRow {
+func (r SQLRuntime) showVariableRows(pattern string) []showVariableRow {
 	all := []showVariableRow{
-		{name: "autocommit", value: "ON"},
+		{name: "autocommit", value: showVariableAutocommit(r.Session.Variables["autocommit"])},
 		{name: "character_set_client", value: "utf8mb4"},
 		{name: "character_set_connection", value: "utf8mb4"},
 		{name: "character_set_results", value: "utf8mb4"},
 		{name: "collation_connection", value: "utf8mb4_0900_ai_ci"},
 		{name: "lower_case_table_names", value: "0"},
-		{name: "sql_mode", value: ""},
+		{name: "sql_mode", value: strings.Join(sqlModeStrings(r.Session.SQLModes), ",")},
+		{name: "time_zone", value: runtimeSessionTimeZone(r.Session)},
 		{name: "version", value: "8.0.0-quantastream"},
 		{name: "version_comment", value: "QuantaStream"},
 	}
@@ -440,12 +441,21 @@ func showVariableRows(pattern string) []showVariableRow {
 	return filtered
 }
 
+func showVariableAutocommit(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "off", "false":
+		return "OFF"
+	default:
+		return "ON"
+	}
+}
+
 func showStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	rows := showStatusRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
-		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
-		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("value", qsbridge.DataTypeString, len(rows)),
 	}
 	for i, row := range rows {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)
