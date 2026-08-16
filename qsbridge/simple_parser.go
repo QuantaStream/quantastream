@@ -747,6 +747,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowPrivileges(sql, privilegesBody)
 	}
+	grantsBody, ok := consumeKeyword(showBody, "grants")
+	if ok {
+		return parseSimpleShowGrants(sql, grantsBody)
+	}
 	indexBody, ok := consumeKeyword(showBody, "index")
 	if !ok {
 		indexBody, ok = consumeKeyword(showBody, "indexes")
@@ -1046,6 +1050,19 @@ func parseSimpleShowPrivileges(sql string, privilegesBody string) (UnboundStatem
 	}, Diagnostic{}, true
 }
 
+func parseSimpleShowGrants(sql string, grantsBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.TrimSpace(grantsBody) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW GRANTS only supports the current session user"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowGrants,
+		ShowGrants: UnboundShowGrants{
+			Result: showGrantsResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
 func parseSimpleOptionalLikePattern(text string, statement string) (string, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -1333,6 +1350,15 @@ func showPrivilegesResultShape() ResultShape {
 			{Name: "Privilege", Type: DataTypeString},
 			{Name: "Context", Type: DataTypeString},
 			{Name: "Comment", Type: DataTypeString},
+		},
+	}
+}
+
+func showGrantsResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Grants for User", Type: DataTypeString},
 		},
 	}
 }

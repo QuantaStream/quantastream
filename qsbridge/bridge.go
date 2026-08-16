@@ -43,6 +43,7 @@ type UnboundStatement struct {
 	ShowEngines     UnboundShowEngines
 	ShowPlugins     UnboundShowPlugins
 	ShowPrivileges  UnboundShowPrivileges
+	ShowGrants      UnboundShowGrants
 	Describe        UnboundDescribe
 	Session         UnboundSession
 }
@@ -100,6 +101,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowPlugins(context, s.ShowPlugins)
 	case QueryKindShowPrivileges:
 		return BindShowPrivileges(context, s.ShowPrivileges)
+	case QueryKindShowGrants:
+		return BindShowGrants(context, s.ShowGrants)
 	case QueryKindDescribe:
 		return BindDescribe(context, s.Describe)
 	case QueryKindSession:
@@ -304,6 +307,12 @@ type UnboundShowPlugins struct {
 
 // UnboundShowPrivileges describes a SHOW PRIVILEGES metadata read before binding.
 type UnboundShowPrivileges struct {
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowGrants describes a SHOW GRANTS metadata read before binding.
+type UnboundShowGrants struct {
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1330,6 +1339,16 @@ func BindShowPrivileges(context *BindContext, showStmt UnboundShowPrivileges) (Q
 	return QueryIR{
 		Kind:     QueryKindShowPrivileges,
 		Result:   showPrivilegesResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
+	}, nil
+}
+
+// BindShowGrants binds parser-neutral SHOW GRANTS metadata into QueryIR.
+func BindShowGrants(context *BindContext, showStmt UnboundShowGrants) (QueryIR, DiagnosticSet) {
+	_ = context
+	return QueryIR{
+		Kind:     QueryKindShowGrants,
+		Result:   showGrantsResultShape(),
 		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}, nil
 }

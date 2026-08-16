@@ -589,6 +589,44 @@ func TestSQLRuntimeExecuteSQLShowPrivilegesReturnsStaticPrivilegeRows(t *testing
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowGrantsReturnsCurrentSessionGrants(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{User: "moli", CurrentSchema: "quanta"}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show grants", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW GRANTS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want two one-column grant rows", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "GRANT USAGE ON *.* TO 'moli'@'%'"; got != want {
+		t.Fatalf("usage grant = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][0].Value, "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, SHOW VIEW ON `quanta`.* TO 'moli'@'%'"; got != want {
+		t.Fatalf("schema grant = %#v, want %q", got, want)
+	}
+	if result.Prepared.Kind != qsbridge.QueryKindShowGrants {
+		t.Fatalf("prepared kind = %q, want show_grants", result.Prepared.Kind)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

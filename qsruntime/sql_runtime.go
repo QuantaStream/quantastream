@@ -228,6 +228,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = showPrivilegesRuntimeResult(request)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindShowGrants {
+		result.Runtime = showGrantsRuntimeResult(request)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindDescribe {
 		result.Runtime = describeRuntimeResult(request)
 		return result, nil

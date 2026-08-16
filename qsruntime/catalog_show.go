@@ -650,6 +650,42 @@ func showPrivilegesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRes
 	}
 }
 
+func showGrantsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	session := request.Bound.Prepared.Session
+	user := strings.TrimSpace(string(session.User))
+	if user == "" {
+		user = "MOLIG004"
+	}
+	account := quoteSQLString(user) + "@'%'"
+	scope := "*.*"
+	if schema := strings.TrimSpace(session.CurrentSchema); schema != "" {
+		scope = quoteSQLIdentifier(schema) + ".*"
+	}
+	rows := []string{
+		"GRANT USAGE ON *.* TO " + account,
+		"GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, SHOW VIEW ON " + scope + " TO " + account,
+	}
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	columnName := "Grants for " + user + "@%"
+	vector := describeProjectionVector(columnName, qsbridge.DataTypeString, len(rows))
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vector.Values[i] = describeStringCell(row)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+func quoteSQLString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 func showCharacterSetRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	rows := showCharacterSetRows(request.Bound.Prepared.Query.Catalog.Pattern)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
