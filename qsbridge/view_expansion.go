@@ -60,23 +60,49 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if viewCount == 0 {
 		return selectStmt, nil
 	}
-	if len(selectStmt.Tables) != 1 || len(selectStmt.Joins) > 0 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+	if viewCount > 1 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
 		return selectStmt, DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical view expansion currently supports one view source without joins, memberships, or subqueries"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical view expansion currently supports one view source without memberships or subqueries"),
 		}
 	}
-	expansion, diagnostics, ok := s.expandTableView(selectStmt.Tables[0])
-	if diagnostics.BlocksNative() || !ok {
-		return selectStmt, diagnostics
+	var expansion viewExpansion
+	var foundView bool
+	tables := make([]UnboundTable, 0, len(selectStmt.Tables))
+	joins := make([]UnboundJoin, 0, len(selectStmt.Joins))
+	predicates := make([]UnboundPredicate, 0)
+	for _, table := range selectStmt.Tables {
+		if s.tableExists(table) {
+			tables = append(tables, table)
+			continue
+		}
+		if _, diagnostics, ok := s.lookupView(table); diagnostics.BlocksNative() || !ok {
+			if diagnostics.BlocksNative() {
+				return selectStmt, diagnostics
+			}
+			tables = append(tables, table)
+			continue
+		}
+		nextExpansion, diagnostics, ok := s.expandTableView(table)
+		if diagnostics.BlocksNative() || !ok {
+			return selectStmt, diagnostics
+		}
+		expansion = nextExpansion
+		foundView = true
+		tables = append(tables, nextExpansion.tables...)
+		joins = append(joins, nextExpansion.joins...)
+		predicates = append(predicates, nextExpansion.predicates...)
 	}
-	selectStmt.Tables = expansion.tables
-	selectStmt.Joins = expansion.joins
+	if !foundView {
+		return selectStmt, nil
+	}
+	selectStmt.Tables = tables
+	selectStmt.Joins = append(joins, selectStmt.Joins...)
 	var rewriteDiagnostics DiagnosticSet
 	selectStmt, rewriteDiagnostics = rewriteOuterSelectViewReferences(selectStmt, expansion)
 	if rewriteDiagnostics.BlocksNative() {
 		return selectStmt, rewriteDiagnostics
 	}
-	selectStmt.Predicates = append(append([]UnboundPredicate(nil), expansion.predicates...), selectStmt.Predicates...)
+	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
 	return selectStmt, nil
 }
 
@@ -373,6 +399,9 @@ func rewriteOuterSelectViewReferences(selectStmt UnboundSelect, expansion viewEx
 		selectStmt.Predicates[i].Expr = rewriteViewColumnExpr(predicate.Expr, expansion, &diagnostics)
 	}
 	selectStmt.WhereExpr = rewriteViewColumnExpr(selectStmt.WhereExpr, expansion, &diagnostics)
+	for i, join := range selectStmt.Joins {
+		selectStmt.Joins[i] = rewriteViewColumnJoin(join, expansion, &diagnostics)
+	}
 	for i, expr := range selectStmt.GroupBy {
 		selectStmt.GroupBy[i] = rewriteViewColumnExpr(expr, expansion, &diagnostics)
 	}
@@ -387,6 +416,35 @@ func rewriteOuterSelectViewReferences(selectStmt UnboundSelect, expansion viewEx
 		selectStmt.OrderBy[i].Expr = rewriteViewColumnExpr(sort.Expr, expansion, &diagnostics)
 	}
 	return selectStmt, diagnostics
+}
+
+func rewriteViewColumnJoin(join UnboundJoin, expansion viewExpansion, diagnostics *DiagnosticSet) UnboundJoin {
+	join.LeftQualifier, join.LeftField = rewriteViewColumnJoinField(join.LeftQualifier, join.LeftField, expansion, diagnostics)
+	join.RightQualifier, join.RightField = rewriteViewColumnJoinField(join.RightQualifier, join.RightField, expansion, diagnostics)
+	for i, predicate := range join.Predicates {
+		join.Predicates[i].Expr = rewriteViewColumnExpr(predicate.Expr, expansion, diagnostics)
+	}
+	return join
+}
+
+func rewriteViewColumnJoinField(qualifier string, name string, expansion viewExpansion, diagnostics *DiagnosticSet) (string, string) {
+	if qualifier != "" && !strings.EqualFold(qualifier, expansion.viewRef) {
+		return qualifier, name
+	}
+	if qualifier == "" {
+		return qualifier, name
+	}
+	expr, ok := expansionMappedExpr(expansion, name)
+	if !ok {
+		*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view join column not found: "+expansion.viewRef+"."+name))
+		return qualifier, name
+	}
+	field, ok := expr.(UnboundFieldExpr)
+	if !ok {
+		*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view join column must expand to a base field: "+expansion.viewRef+"."+name))
+		return qualifier, name
+	}
+	return field.Qualifier, field.Name
 }
 
 func projectionAliasForViewColumn(expr UnboundExpr, expansion viewExpansion) string {

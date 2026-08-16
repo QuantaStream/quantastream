@@ -158,17 +158,20 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.041.join_view_in_outer_query
-    status: xfail
+    status: supported
     kind: query
     feature: views_outer_query_boundary
     compatibility: mysql
     requires: [select, view_reference, inner_join]
-    issue: "View expansion currently supports one view source without additional outer joins."
     sql: |
       select v.customer_key, o.o_orderkey
       from qs_mysql_compat_customer_source_view as v
       inner join orders as o on o.o_custkey = v.customer_key
       where o.o_orderkey = 1
+    expect:
+      columns: [customer_key, o_orderkey]
+      rows:
+        - [370, 1]
 
   - id: mysql_compat_views_boundaries.042.drop_outer_join_source_view
     status: supported
