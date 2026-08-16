@@ -26,10 +26,14 @@ const (
 	QueryKindShowCreateView QueryKind = "show_create_view"
 	// QueryKindShowCreateTable identifies a SHOW CREATE TABLE catalog read statement.
 	QueryKindShowCreateTable QueryKind = "show_create_table"
+	// QueryKindShowCreateDatabase identifies a SHOW CREATE DATABASE catalog read statement.
+	QueryKindShowCreateDatabase QueryKind = "show_create_database"
 	// QueryKindShowDatabases identifies a SHOW DATABASES catalog read statement.
 	QueryKindShowDatabases QueryKind = "show_databases"
 	// QueryKindShowIndex identifies a SHOW INDEX catalog read statement.
 	QueryKindShowIndex QueryKind = "show_index"
+	// QueryKindShowTableStatus identifies a SHOW TABLE STATUS catalog read statement.
+	QueryKindShowTableStatus QueryKind = "show_table_status"
 	// QueryKindShowTables identifies a SHOW TABLES catalog read statement.
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.

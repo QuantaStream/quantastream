@@ -9,6 +9,8 @@ const (
 	InformationSchemaTablesName = "tables"
 	// InformationSchemaColumnsName identifies INFORMATION_SCHEMA.COLUMNS.
 	InformationSchemaColumnsName = "columns"
+	// InformationSchemaStatisticsName identifies INFORMATION_SCHEMA.STATISTICS.
+	InformationSchemaStatisticsName = "statistics"
 )
 
 // InformationSchemaTableDefinition returns the small virtual catalog surface
@@ -43,6 +45,30 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 				{Name: "COLUMN_TYPE", Type: DataTypeString},
 				{Name: "COLUMN_KEY", Type: DataTypeString},
 				{Name: "EXTRA", Type: DataTypeString},
+			},
+		}, true
+	case InformationSchemaStatisticsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaStatisticsName,
+			Fields: []FieldDefinition{
+				{Name: "TABLE_SCHEMA", Type: DataTypeString},
+				{Name: "TABLE_NAME", Type: DataTypeString},
+				{Name: "NON_UNIQUE", Type: DataTypeInt},
+				{Name: "INDEX_SCHEMA", Type: DataTypeString},
+				{Name: "INDEX_NAME", Type: DataTypeString},
+				{Name: "SEQ_IN_INDEX", Type: DataTypeInt},
+				{Name: "COLUMN_NAME", Type: DataTypeString},
+				{Name: "COLLATION", Type: DataTypeString, Nullable: true},
+				{Name: "CARDINALITY", Type: DataTypeInt, Nullable: true},
+				{Name: "SUB_PART", Type: DataTypeInt, Nullable: true},
+				{Name: "PACKED", Type: DataTypeString, Nullable: true},
+				{Name: "NULLABLE", Type: DataTypeString},
+				{Name: "INDEX_TYPE", Type: DataTypeString},
+				{Name: "COMMENT", Type: DataTypeString},
+				{Name: "INDEX_COMMENT", Type: DataTypeString},
+				{Name: "IS_VISIBLE", Type: DataTypeString},
+				{Name: "EXPRESSION", Type: DataTypeString, Nullable: true},
 			},
 		}, true
 	default:

@@ -72,6 +72,31 @@ func showCreateTableRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 	}
 }
 
+func showCreateDatabaseRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	schemaName := strings.TrimSpace(request.Bound.Prepared.Query.Catalog.Schema)
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(request.Bound.Prepared.Session.CurrentSchema)
+	}
+	createSQL := "CREATE DATABASE " + quoteSQLIdentifier(schemaName) + " /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */"
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:   "catalog",
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "Database", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: schemaName}},
+				},
+				{
+					Field:  qsbridge.QuantaProjectionField{Index: "catalog", Field: "Create Database", Type: qsbridge.DataTypeString, Visible: true},
+					Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: createSQL}},
+				},
+			},
+		},
+		Count: 1,
+	}
+}
+
 func showCreateQualifiedViewName(schema string, viewName string) string {
 	schema = strings.TrimSpace(schema)
 	viewName = strings.TrimSpace(viewName)
@@ -257,6 +282,65 @@ func nonEmptyStrings(values ...string) []string {
 	return out
 }
 
+func showTableStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	query := request.Bound.Prepared.Query
+	objects := query.Catalog.Objects
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Name", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Engine", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Version", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Row_format", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Rows", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Avg_row_length", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Data_length", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Max_data_length", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Index_length", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Data_free", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Auto_increment", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Create_time", qsbridge.DataTypeTime, len(objects)),
+		describeProjectionVector("Update_time", qsbridge.DataTypeTime, len(objects)),
+		describeProjectionVector("Check_time", qsbridge.DataTypeTime, len(objects)),
+		describeProjectionVector("Collation", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Checksum", qsbridge.DataTypeInt, len(objects)),
+		describeProjectionVector("Create_options", qsbridge.DataTypeString, len(objects)),
+		describeProjectionVector("Comment", qsbridge.DataTypeString, len(objects)),
+	}
+	rownums := make([]qsbridge.QuantaRownum, len(objects))
+	for i, object := range objects {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		objectType := "BASE TABLE"
+		if i < len(query.Catalog.ObjectTypes) && strings.TrimSpace(query.Catalog.ObjectTypes[i]) != "" {
+			objectType = query.Catalog.ObjectTypes[i]
+		}
+		isView := strings.EqualFold(objectType, "VIEW")
+		vectors[0].Values[i] = describeStringCell(object.Table)
+		if isView {
+			vectors[1].Values[i] = describeNullCell()
+			vectors[2].Values[i] = describeNullCell()
+			vectors[3].Values[i] = describeNullCell()
+		} else {
+			vectors[1].Values[i] = describeStringCell("QUANTA")
+			vectors[2].Values[i] = describeIntCell(10)
+			vectors[3].Values[i] = describeStringCell("Compressed")
+		}
+		for column := 4; column <= 13; column++ {
+			vectors[column].Values[i] = describeNullCell()
+		}
+		vectors[14].Values[i] = describeStringCell("utf8mb4_0900_ai_ci")
+		vectors[15].Values[i] = describeNullCell()
+		vectors[16].Values[i] = describeStringCell("")
+		vectors[17].Values[i] = describeStringCell(objectType)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(objects)),
+	}
+}
+
 func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	tables := query.Catalog.Objects
@@ -388,24 +472,46 @@ func sqlLikeMatch(value string, pattern string) bool {
 }
 
 func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
-	columns := request.Bound.Prepared.Query.Mutation.Columns
+	query := request.Bound.Prepared.Query
+	columns := query.Mutation.Columns
+	full := query.Catalog.Full
 	rownums := make([]qsbridge.QuantaRownum, len(columns))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("Field", qsbridge.DataTypeString, len(columns)),
 		describeProjectionVector("Type", qsbridge.DataTypeString, len(columns)),
+	}
+	if full {
+		vectors = append(vectors, describeProjectionVector("Collation", qsbridge.DataTypeString, len(columns)))
+	}
+	vectors = append(vectors,
 		describeProjectionVector("Null", qsbridge.DataTypeString, len(columns)),
 		describeProjectionVector("Key", qsbridge.DataTypeString, len(columns)),
 		describeProjectionVector("Default", qsbridge.DataTypeString, len(columns)),
 		describeProjectionVector("Extra", qsbridge.DataTypeString, len(columns)),
+	)
+	if full {
+		vectors = append(vectors,
+			describeProjectionVector("Privileges", qsbridge.DataTypeString, len(columns)),
+			describeProjectionVector("Comment", qsbridge.DataTypeString, len(columns)),
+		)
 	}
 	for i, column := range columns {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)
 		vectors[0].Values[i] = describeStringCell(column.Name)
 		vectors[1].Values[i] = describeStringCell(describeSQLType(column))
-		vectors[2].Values[i] = describeStringCell(describeNullability(column))
-		vectors[3].Values[i] = describeStringCell(describeKey(column))
-		vectors[4].Values[i] = qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}
-		vectors[5].Values[i] = describeStringCell(describeExtra(column))
+		offset := 2
+		if full {
+			vectors[offset].Values[i] = describeCollation(column)
+			offset++
+		}
+		vectors[offset].Values[i] = describeStringCell(describeNullability(column))
+		vectors[offset+1].Values[i] = describeStringCell(describeKey(column))
+		vectors[offset+2].Values[i] = describeNullCell()
+		vectors[offset+3].Values[i] = describeStringCell(describeExtra(column))
+		if full {
+			vectors[offset+4].Values[i] = describeStringCell("select,insert,update,references")
+			vectors[offset+5].Values[i] = describeStringCell("")
+		}
 	}
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
@@ -415,6 +521,13 @@ func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 		},
 		Count: uint64(len(columns)),
 	}
+}
+
+func describeCollation(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type == qsbridge.DataTypeString {
+		return describeStringCell("utf8mb4_0900_ai_ci")
+	}
+	return describeNullCell()
 }
 
 func describeProjectionVector(name string, dataType qsbridge.DataType, rows int) qsbridge.QuantaProjectionVector {

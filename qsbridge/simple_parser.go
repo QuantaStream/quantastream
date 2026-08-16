@@ -58,10 +58,13 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "desc"); ok {
 		return parseSimpleDescribe(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "use"); ok {
+		return parseSimpleUse(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW DATABASES, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW INDEX, SHOW COLUMNS, DESCRIBE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -604,6 +607,13 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	createBody, ok := consumeKeyword(showBody, "create")
 	if ok {
+		databaseBody, databaseOK := consumeKeyword(createBody, "database")
+		if !databaseOK {
+			databaseBody, databaseOK = consumeKeyword(createBody, "schema")
+		}
+		if databaseOK {
+			return parseSimpleShowCreateDatabase(sql, databaseBody)
+		}
 		viewBody, viewOK := consumeKeyword(createBody, "view")
 		if viewOK {
 			view, diagnostic, ok := parseSimpleTable(viewBody)
@@ -640,7 +650,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 				},
 			}, Diagnostic{}, true
 		}
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE only supports VIEW or TABLE"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE only supports DATABASE, SCHEMA, VIEW, or TABLE"), false
 	}
 	databasesBody, ok := consumeKeyword(showBody, "databases")
 	if !ok {
@@ -649,6 +659,14 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowDatabases(sql, databasesBody)
 	}
+	tableBody, ok := consumeKeyword(showBody, "table")
+	if ok {
+		statusBody, statusOK := consumeKeyword(tableBody, "status")
+		if !statusOK {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE only supports STATUS"), false
+		}
+		return parseSimpleShowTableStatus(sql, statusBody)
+	}
 	tablesBody, ok := consumeKeyword(showBody, "tables")
 	if ok {
 		return parseSimpleShowTables(sql, tablesBody, false)
@@ -656,10 +674,17 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	fullBody, ok := consumeKeyword(showBody, "full")
 	if ok {
 		tablesBody, ok := consumeKeyword(fullBody, "tables")
-		if !ok {
-			return UnboundStatement{}, simpleParserDiagnostic("SHOW FULL only supports TABLES"), false
+		if ok {
+			return parseSimpleShowTables(sql, tablesBody, true)
 		}
-		return parseSimpleShowTables(sql, tablesBody, true)
+		columnsBody, ok := consumeKeyword(fullBody, "columns")
+		if !ok {
+			columnsBody, ok = consumeKeyword(fullBody, "fields")
+		}
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW FULL only supports TABLES or COLUMNS/FIELDS"), false
+		}
+		return parseSimpleShowColumns(sql, columnsBody, true)
 	}
 	variablesBody, ok := consumeKeyword(showBody, "variables")
 	if ok {
@@ -682,6 +707,25 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
+	return parseSimpleShowColumns(sql, columnsBody, false)
+}
+
+func parseSimpleShowCreateDatabase(sql string, databaseBody string) (UnboundStatement, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(databaseBody))
+	if len(fields) != 1 {
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW CREATE DATABASE must include one schema name"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowCreateDatabase,
+		ShowCreateDB: UnboundShowCreateDatabase{
+			Schema: fields[0],
+			Result: showCreateDatabaseResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowColumns(sql string, columnsBody string, full bool) (UnboundStatement, Diagnostic, bool) {
 	targetBody, ok := consumeKeyword(columnsBody, "from")
 	if !ok {
 		targetBody, ok = consumeKeyword(columnsBody, "in")
@@ -689,7 +733,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS must include FROM table"), false
 	}
-	return parseSimpleDescribeTarget(sql, targetBody)
+	return parseSimpleDescribeTarget(sql, targetBody, full)
 }
 
 func parseSimpleShowIndex(sql string, indexBody string) (UnboundStatement, Diagnostic, bool) {
@@ -728,6 +772,58 @@ func parseSimpleShowDatabases(sql string, databasesBody string) (UnboundStatemen
 			Result: showDatabasesResultShape(),
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleShowTableStatus(sql string, statusBody string) (UnboundStatement, Diagnostic, bool) {
+	schemaName := ""
+	pattern := ""
+	trimmed := strings.TrimSpace(statusBody)
+	if trimmed != "" {
+		if schemaBody, ok := consumeKeyword(trimmed, "from"); ok {
+			schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+			if !ok {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE STATUS FROM schema supports optional LIKE pattern"), false
+			}
+		} else if schemaBody, ok := consumeKeyword(trimmed, "in"); ok {
+			schemaName, pattern, ok = parseSimpleSchemaAndOptionalLike(schemaBody)
+			if !ok {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE STATUS IN schema supports optional LIKE pattern"), false
+			}
+		} else if likeBody, ok := consumeKeyword(trimmed, "like"); ok {
+			likeFields := strings.Fields(likeBody)
+			if len(likeFields) != 1 {
+				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE STATUS LIKE must use one literal pattern"), false
+			}
+			pattern = strings.Trim(likeFields[0], "'\"")
+		} else {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLE STATUS only supports optional FROM/IN schema and LIKE pattern"), false
+		}
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowTableStatus,
+		ShowTableStatus: UnboundShowTableStatus{
+			Schema:  schemaName,
+			Pattern: pattern,
+			Result:  showTableStatusResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleSchemaAndOptionalLike(text string) (string, string, bool) {
+	schemaText, likeText, hasLike := splitOptionalKeyword(text, "like")
+	schemaFields := strings.Fields(schemaText)
+	if len(schemaFields) != 1 {
+		return "", "", false
+	}
+	if !hasLike {
+		return schemaFields[0], "", true
+	}
+	likeFields := strings.Fields(likeText)
+	if len(likeFields) != 1 {
+		return "", "", false
+	}
+	return schemaFields[0], strings.Trim(likeFields[0], "'\""), true
 }
 
 func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundStatement, Diagnostic, bool) {
@@ -794,7 +890,7 @@ func parseSimpleDescribe(sql string) (UnboundStatement, Diagnostic, bool) {
 	return parseSimpleDescribeTarget(sql, targetBody)
 }
 
-func parseSimpleDescribeTarget(sql string, targetBody string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleDescribeTarget(sql string, targetBody string, full ...bool) (UnboundStatement, Diagnostic, bool) {
 	target, diagnostic, ok := parseSimpleTable(strings.TrimSpace(targetBody))
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -807,22 +903,35 @@ func parseSimpleDescribeTarget(sql string, targetBody string) (UnboundStatement,
 		Kind: QueryKindDescribe,
 		Describe: UnboundDescribe{
 			Target: target,
-			Result: describeResultShape(),
+			Full:   len(full) > 0 && full[0],
+			Result: describeResultShape(full...),
 		},
 	}, Diagnostic{}, true
 }
 
-func describeResultShape() ResultShape {
+func describeResultShape(full ...bool) ResultShape {
+	columns := []FieldRef{
+		{Name: "Field", Type: DataTypeString},
+		{Name: "Type", Type: DataTypeString},
+	}
+	if len(full) > 0 && full[0] {
+		columns = append(columns, FieldRef{Name: "Collation", Type: DataTypeString, Nullable: true})
+	}
+	columns = append(columns,
+		FieldRef{Name: "Null", Type: DataTypeString},
+		FieldRef{Name: "Key", Type: DataTypeString},
+		FieldRef{Name: "Default", Type: DataTypeString, Nullable: true},
+		FieldRef{Name: "Extra", Type: DataTypeString},
+	)
+	if len(full) > 0 && full[0] {
+		columns = append(columns,
+			FieldRef{Name: "Privileges", Type: DataTypeString},
+			FieldRef{Name: "Comment", Type: DataTypeString},
+		)
+	}
 	return ResultShape{
-		Kind: ResultQuery,
-		Columns: []FieldRef{
-			{Name: "Field", Type: DataTypeString},
-			{Name: "Type", Type: DataTypeString},
-			{Name: "Null", Type: DataTypeString},
-			{Name: "Key", Type: DataTypeString},
-			{Name: "Default", Type: DataTypeString, Nullable: true},
-			{Name: "Extra", Type: DataTypeString},
-		},
+		Kind:    ResultQuery,
+		Columns: columns,
 	}
 }
 
@@ -844,6 +953,16 @@ func showCreateTableResultShape() ResultShape {
 		Columns: []FieldRef{
 			{Name: "Table", Type: DataTypeString},
 			{Name: "Create Table", Type: DataTypeString},
+		},
+	}
+}
+
+func showCreateDatabaseResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Database", Type: DataTypeString},
+			{Name: "Create Database", Type: DataTypeString},
 		},
 	}
 }
@@ -876,6 +995,32 @@ func showIndexResultShape() ResultShape {
 			{Name: "Index_comment", Type: DataTypeString},
 			{Name: "Visible", Type: DataTypeString},
 			{Name: "Expression", Type: DataTypeString, Nullable: true},
+		},
+	}
+}
+
+func showTableStatusResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Name", Type: DataTypeString},
+			{Name: "Engine", Type: DataTypeString, Nullable: true},
+			{Name: "Version", Type: DataTypeInt, Nullable: true},
+			{Name: "Row_format", Type: DataTypeString, Nullable: true},
+			{Name: "Rows", Type: DataTypeInt, Nullable: true},
+			{Name: "Avg_row_length", Type: DataTypeInt, Nullable: true},
+			{Name: "Data_length", Type: DataTypeInt, Nullable: true},
+			{Name: "Max_data_length", Type: DataTypeInt, Nullable: true},
+			{Name: "Index_length", Type: DataTypeInt, Nullable: true},
+			{Name: "Data_free", Type: DataTypeInt, Nullable: true},
+			{Name: "Auto_increment", Type: DataTypeInt, Nullable: true},
+			{Name: "Create_time", Type: DataTypeTime, Nullable: true},
+			{Name: "Update_time", Type: DataTypeTime, Nullable: true},
+			{Name: "Check_time", Type: DataTypeTime, Nullable: true},
+			{Name: "Collation", Type: DataTypeString, Nullable: true},
+			{Name: "Checksum", Type: DataTypeInt, Nullable: true},
+			{Name: "Create_options", Type: DataTypeString},
+			{Name: "Comment", Type: DataTypeString},
 		},
 	}
 }
@@ -926,6 +1071,30 @@ func parseSimpleCommit(sql string) (UnboundStatement, Diagnostic, bool) {
 		Session: UnboundSession{
 			Actions: []SessionAction{CommitTransactionAction()},
 			Result:  ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleUse(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	useBody, ok := consumeKeyword(trimmed, "use")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only USE statements are supported"), false
+	}
+	fields := strings.Fields(useBody)
+	if len(fields) != 1 {
+		return UnboundStatement{}, simpleParserDiagnostic("USE must include one schema name"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSession,
+		Session: UnboundSession{
+			Actions:         []SessionAction{{Kind: SessionActionUseSchema, Value: fields[0]}},
+			ValidateCatalog: true,
+			Result: ResultShape{
+				Kind:      ResultStatement,
+				Statement: StatementResult{Status: "Database changed"},
+			},
 		},
 	}, Diagnostic{}, true
 }

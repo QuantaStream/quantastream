@@ -35,6 +35,8 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 		return r.informationSchemaTableRows()
 	case qsbridge.InformationSchemaColumnsName:
 		return r.informationSchemaColumnRows()
+	case qsbridge.InformationSchemaStatisticsName:
+		return r.informationSchemaStatisticsRows()
 	default:
 		return nil, nil
 	}
@@ -100,6 +102,54 @@ func (r SQLRuntime) informationSchemaColumnRows() ([]informationSchemaRow, qsbri
 		}
 	}
 	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "ORDINAL_POSITION")
+	return rows, nil
+}
+
+func (r SQLRuntime) informationSchemaStatisticsRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	tables, diagnostics := r.catalogTablesForInformationSchema()
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	rows := make([]informationSchemaRow, 0)
+	for _, table := range tables {
+		schemaName := strings.TrimSpace(table.Schema)
+		if schemaName == "" {
+			schemaName = r.DefaultSchema
+		}
+		tableName := strings.TrimSpace(table.Name)
+		target := qsbridge.TableInstance{
+			ID:     qsbridge.TableInstanceID(tableName),
+			Schema: schemaName,
+			Table:  tableName,
+			Role:   tableName,
+		}
+		columns := make([]qsbridge.FieldRef, 0, len(table.Fields))
+		for _, field := range table.Fields {
+			columns = append(columns, field.Ref(target, qsbridge.FieldRoleVisible))
+		}
+		for _, indexRow := range showIndexRows(target, columns) {
+			rows = append(rows, informationSchemaRow{
+				"TABLE_SCHEMA":  describeStringCell(schemaName),
+				"TABLE_NAME":    describeStringCell(tableName),
+				"NON_UNIQUE":    describeIntCell(indexRow.NonUnique),
+				"INDEX_SCHEMA":  describeStringCell(schemaName),
+				"INDEX_NAME":    describeStringCell(indexRow.KeyName),
+				"SEQ_IN_INDEX":  describeIntCell(indexRow.SeqInIndex),
+				"COLUMN_NAME":   describeStringCell(indexRow.ColumnName),
+				"COLLATION":     describeStringCell(indexRow.Collation),
+				"CARDINALITY":   describeNullCell(),
+				"SUB_PART":      describeNullCell(),
+				"PACKED":        describeNullCell(),
+				"NULLABLE":      describeStringCell(indexRow.Null),
+				"INDEX_TYPE":    describeStringCell(indexRow.IndexType),
+				"COMMENT":       describeStringCell(indexRow.Comment),
+				"INDEX_COMMENT": describeStringCell(indexRow.IndexComment),
+				"IS_VISIBLE":    describeStringCell("YES"),
+				"EXPRESSION":    describeNullCell(),
+			})
+		}
+	}
+	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "SEQ_IN_INDEX", "COLUMN_NAME")
 	return rows, nil
 }
 

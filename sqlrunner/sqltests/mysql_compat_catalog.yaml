@@ -13,6 +13,27 @@ tests:
     expect:
       columns: [Database]
 
+  - id: mysql_compat_catalog.002.show_create_database
+    status: supported
+    kind: query
+    feature: catalog_schemas
+    compatibility: mysql
+    requires: [show_create_database, metadata_columns]
+    sql: |
+      show create database quanta
+    expect:
+      columns: [Database, Create Database]
+      row_count: 1
+
+  - id: mysql_compat_catalog.003.use_database
+    status: supported
+    kind: statement
+    feature: catalog_schemas
+    compatibility: mysql
+    requires: [use_database]
+    sql: |
+      use quanta
+
   - id: mysql_compat_catalog.010.show_tables
     status: supported
     kind: query
@@ -32,6 +53,35 @@ tests:
       show full tables
     expect:
       columns: [Tables_in_quanta, Table_type]
+
+  - id: mysql_compat_catalog.015.show_table_status
+    status: supported
+    kind: query
+    feature: catalog_tables
+    compatibility: mysql
+    requires: [show_table_status, metadata_columns]
+    sql: |
+      show table status like 'customer'
+    expect:
+      columns:
+        - Name
+        - Engine
+        - Version
+        - Row_format
+        - Rows
+        - Avg_row_length
+        - Data_length
+        - Max_data_length
+        - Index_length
+        - Data_free
+        - Auto_increment
+        - Create_time
+        - Update_time
+        - Check_time
+        - Collation
+        - Checksum
+        - Create_options
+        - Comment
 
   - id: mysql_compat_catalog.012.information_schema_tables
     status: supported
@@ -61,6 +111,21 @@ tests:
       limit 5
     expect:
       columns: [COLUMN_NAME, DATA_TYPE, COLUMN_KEY, EXTRA]
+
+  - id: mysql_compat_catalog.016.information_schema_statistics
+    status: supported
+    kind: query
+    feature: information_schema_statistics
+    compatibility: mysql
+    requires: [information_schema, metadata_columns, mapper_metadata]
+    sql: |
+      select index_name, seq_in_index, column_name, index_comment
+      from information_schema.statistics
+      where table_schema = 'quanta' and table_name = 'customer'
+      order by index_name, seq_in_index
+      limit 5
+    expect:
+      columns: [INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME, INDEX_COMMENT]
 
   - id: mysql_compat_catalog.014.show_variables
     status: supported
@@ -94,6 +159,17 @@ tests:
       show columns from customer
     expect:
       columns: [Field, Type, "Null", Key, Default, Extra]
+
+  - id: mysql_compat_catalog.022.show_full_columns_from_table
+    status: supported
+    kind: query
+    feature: catalog_columns
+    compatibility: mysql
+    requires: [show_full_columns, metadata_columns]
+    sql: |
+      show full columns from customer
+    expect:
+      columns: [Field, Type, Collation, "Null", Key, Default, Extra, Privileges, Comment]
 
   - id: mysql_compat_catalog.030.show_create_table
     status: supported

@@ -6,7 +6,14 @@ package qsbridge
 // metadata. qsbridge does not apply the actions; protocol/session owners decide
 // whether the authenticated session may change and then mutate their own state.
 func BindSession(context *BindContext, sessionStmt UnboundSession) (QueryIR, DiagnosticSet) {
-	_ = context
+	diagnostics := make(DiagnosticSet, 0)
+	if context != nil && sessionStmt.ValidateCatalog {
+		for _, action := range sessionStmt.Actions {
+			if action.Kind == SessionActionUseSchema {
+				diagnostics = append(diagnostics, validateCatalogSchema(context, action.Value)...)
+			}
+		}
+	}
 	result := sessionStmt.Result
 	if result.Kind == "" {
 		result.Kind = ResultStatement
@@ -16,7 +23,7 @@ func BindSession(context *BindContext, sessionStmt UnboundSession) (QueryIR, Dia
 		Kind:     QueryKindSession,
 		Result:   result,
 		Blockers: append([]NativeBlocker(nil), sessionStmt.Blockers...),
-	}, nil
+	}, diagnostics
 }
 
 // SessionActions returns session changes requested by this statement.
