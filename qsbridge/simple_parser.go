@@ -672,6 +672,18 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowDatabases(sql, databasesBody)
 	}
+	scopedShowBody, scopedShow := stripSimpleShowScope(showBody)
+	if scopedShow {
+		variablesBody, ok := consumeKeyword(scopedShowBody, "variables")
+		if ok {
+			return parseSimpleShowVariables(sql, variablesBody)
+		}
+		statusBody, ok := consumeKeyword(scopedShowBody, "status")
+		if ok {
+			return parseSimpleShowStatus(sql, statusBody)
+		}
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW scoped prefix only supports VARIABLES or STATUS"), false
+	}
 	tableBody, ok := consumeKeyword(showBody, "table")
 	if ok {
 		statusBody, statusOK := consumeKeyword(tableBody, "status")
@@ -805,6 +817,20 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, PROCESSLIST, ENGINES, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
+}
+
+func stripSimpleShowScope(showBody string) (string, bool) {
+	trimmed := strings.TrimSpace(showBody)
+	if next, ok := consumeKeyword(trimmed, "session"); ok {
+		return strings.TrimSpace(next), true
+	}
+	if next, ok := consumeKeyword(trimmed, "global"); ok {
+		return strings.TrimSpace(next), true
+	}
+	if next, ok := consumeKeyword(trimmed, "local"); ok {
+		return strings.TrimSpace(next), true
+	}
+	return trimmed, false
 }
 
 func parseSimpleShowCreateDatabase(sql string, databaseBody string) (UnboundStatement, Diagnostic, bool) {
@@ -1248,14 +1274,30 @@ func parseSimpleOptionalLikePattern(text string, statement string) (string, Diag
 		return "", Diagnostic{}, true
 	}
 	likeBody, ok := consumeKeyword(trimmed, "like")
+	if ok {
+		fields := strings.Fields(likeBody)
+		if len(fields) != 1 {
+			return "", simpleParserDiagnostic(statement + " LIKE must use one literal pattern"), false
+		}
+		return strings.Trim(fields[0], "'\""), Diagnostic{}, true
+	}
+	whereBody, ok := consumeKeyword(trimmed, "where")
 	if !ok {
-		return "", simpleParserDiagnostic(statement + " only supports optional LIKE pattern"), false
+		return "", simpleParserDiagnostic(statement + " only supports optional LIKE pattern or WHERE field = literal"), false
 	}
-	fields := strings.Fields(likeBody)
-	if len(fields) != 1 {
-		return "", simpleParserDiagnostic(statement + " LIKE must use one literal pattern"), false
+	return parseSimpleShowWherePattern(whereBody, statement)
+}
+
+func parseSimpleShowWherePattern(whereBody string, statement string) (string, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(whereBody))
+	if len(fields) < 3 {
+		return "", simpleParserDiagnostic(statement + " WHERE must use field = literal or field LIKE literal"), false
 	}
-	return strings.Trim(fields[0], "'\""), Diagnostic{}, true
+	op := strings.ToLower(fields[1])
+	if op != "=" && op != "like" {
+		return "", simpleParserDiagnostic(statement + " WHERE only supports field = literal or field LIKE literal"), false
+	}
+	return strings.Trim(strings.Join(fields[2:], " "), "'\""), Diagnostic{}, true
 }
 
 func parseSimpleDescribe(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1721,11 +1763,24 @@ func parseSimpleSet(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleSetNames(sql, namesBody)
 	}
-	transactionBody, ok := consumeKeyword(setBody, "transaction")
+	characterBody, ok := consumeKeyword(setBody, "character")
+	if ok {
+		characterSetBody, ok := consumeKeyword(characterBody, "set")
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("SET CHARACTER only supports SET"), false
+		}
+		return parseSimpleSetCharacterSet(sql, characterSetBody)
+	}
+	charsetBody, ok := consumeKeyword(setBody, "charset")
+	if ok {
+		return parseSimpleSetCharacterSet(sql, charsetBody)
+	}
+	scopedBody := stripSimpleSetScope(setBody)
+	transactionBody, ok := consumeKeyword(scopedBody, "transaction")
 	if ok {
 		return parseSimpleSetTransaction(sql, transactionBody)
 	}
-	actions, diagnostic, ok := parseSimpleSetAssignments(setBody)
+	actions, diagnostic, ok := parseSimpleSetAssignments(scopedBody)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1740,6 +1795,26 @@ func parseSimpleSet(sql string) (UnboundStatement, Diagnostic, bool) {
 			},
 		},
 	}, Diagnostic{}, true
+}
+
+func stripSimpleSetScope(setBody string) string {
+	trimmed := strings.TrimSpace(setBody)
+	for {
+		next, ok := consumeKeyword(trimmed, "session")
+		if !ok {
+			next, ok = consumeKeyword(trimmed, "global")
+		}
+		if !ok {
+			next, ok = consumeKeyword(trimmed, "local")
+		}
+		if !ok {
+			next, ok = consumeKeyword(trimmed, "option")
+		}
+		if !ok {
+			return trimmed
+		}
+		trimmed = strings.TrimSpace(next)
+	}
 }
 
 func parseSimpleSetNames(sql string, namesBody string) (UnboundStatement, Diagnostic, bool) {
@@ -1779,6 +1854,33 @@ func parseSimpleSetNames(sql string, namesBody string) (UnboundStatement, Diagno
 	}, Diagnostic{}, true
 }
 
+func parseSimpleSetCharacterSet(sql string, characterSetBody string) (UnboundStatement, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(characterSetBody))
+	if len(fields) != 1 {
+		return UnboundStatement{}, simpleParserDiagnostic("SET CHARACTER SET must include one character set"), false
+	}
+	charset := strings.Trim(fields[0], "'\"")
+	if charset == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SET CHARACTER SET character set is empty"), false
+	}
+	actions := []SessionAction{
+		{Kind: SessionActionSetVariable, Name: "character_set_client", Value: charset},
+		{Kind: SessionActionSetVariable, Name: "character_set_results", Value: charset},
+		{Kind: SessionActionSetVariable, Name: "character_set_connection", Value: charset},
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSession,
+		Session: UnboundSession{
+			Actions: actions,
+			Result: ResultShape{
+				Kind:      ResultStatement,
+				Statement: StatementResult{Status: "Query OK"},
+			},
+		},
+	}, Diagnostic{}, true
+}
+
 func parseSimpleSetTransaction(sql string, transactionBody string) (UnboundStatement, Diagnostic, bool) {
 	if strings.TrimSpace(transactionBody) == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("SET TRANSACTION must include transaction characteristics"), false
@@ -1799,6 +1901,13 @@ func parseSimpleSetAssignments(setBody string) ([]SessionAction, Diagnostic, boo
 	parts := splitSimpleCommaList(setBody)
 	actions := make([]SessionAction, 0, len(parts))
 	for _, part := range parts {
+		if _, _, hasAssignment := splitSimpleSetAssignment(part); !hasAssignment {
+			continuation := strings.TrimSpace(part)
+			if continuation != "" && len(actions) > 0 {
+				actions[len(actions)-1].Value += "," + continuation
+				continue
+			}
+		}
 		name, value, diagnostic, ok := parseSimpleSetAssignment(part)
 		if !ok {
 			return nil, diagnostic, false
@@ -1812,15 +1921,15 @@ func parseSimpleSetAssignments(setBody string) ([]SessionAction, Diagnostic, boo
 }
 
 func parseSimpleSetAssignment(text string) (string, string, Diagnostic, bool) {
-	parts := strings.SplitN(text, "=", 2)
-	if len(parts) != 2 {
+	nameText, valueText, ok := splitSimpleSetAssignment(text)
+	if !ok {
 		return "", "", simpleParserDiagnostic("SET assignment must use name = value"), false
 	}
-	name := normalizeSimpleSystemVariableName(parts[0])
+	name := normalizeSimpleSystemVariableName(nameText)
 	if name == "" {
 		return "", "", simpleParserDiagnostic("SET variable name is empty"), false
 	}
-	value := strings.TrimSpace(parts[1])
+	value := strings.TrimSpace(valueText)
 	if value == "" {
 		return "", "", simpleParserDiagnostic("SET assignment value is empty"), false
 	}
@@ -1828,6 +1937,18 @@ func parseSimpleSetAssignment(text string) (string, string, Diagnostic, bool) {
 		return name, simpleLiteralSessionValue(literal), Diagnostic{}, true
 	}
 	return name, strings.Trim(value, "'\""), Diagnostic{}, true
+}
+
+func splitSimpleSetAssignment(text string) (string, string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if index := strings.Index(trimmed, ":="); index >= 0 {
+		return trimmed[:index], trimmed[index+2:], true
+	}
+	parts := strings.SplitN(trimmed, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func sessionActionForSetAssignment(name string, value string) SessionAction {
@@ -1967,19 +2088,25 @@ func consumeSimpleParenthesized(text string) (string, string, Diagnostic, bool) 
 func splitSimpleCommaList(text string) []string {
 	parts := make([]string, 0, 1)
 	start := 0
-	inString := false
+	var quote byte
 	depth := 0
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
-		if ch == '\'' {
-			if inString && i+1 < len(text) && text[i+1] == '\'' {
+		if ch == '\'' || ch == '"' {
+			if quote == ch && i+1 < len(text) && text[i+1] == ch {
 				i++
 				continue
 			}
-			inString = !inString
+			if quote == ch {
+				quote = 0
+				continue
+			}
+			if quote == 0 {
+				quote = ch
+			}
 			continue
 		}
-		if inString {
+		if quote != 0 {
 			continue
 		}
 		switch ch {

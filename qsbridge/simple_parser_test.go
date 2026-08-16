@@ -381,6 +381,24 @@ func TestSimpleParserBridgeParsesShowVariablesLikeStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowCharacterMetadataWhereStatement(t *testing.T) {
+	charsets, diagnostics := SimpleParserBridge{}.Parse("show character set where Charset = 'utf8mb4';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("charset parse diagnostics: %#v", diagnostics)
+	}
+	if charsets.Kind != QueryKindShowCharacterSet || charsets.ShowCharset.Pattern != "utf8mb4" {
+		t.Fatalf("charsets = %#v, want character set pattern utf8mb4", charsets.ShowCharset)
+	}
+
+	collations, diagnostics := SimpleParserBridge{}.Parse("show collation where Charset = 'utf8mb4';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("collation parse diagnostics: %#v", diagnostics)
+	}
+	if collations.Kind != QueryKindShowCollation || collations.ShowCollation.Pattern != "utf8mb4" {
+		t.Fatalf("collations = %#v, want collation pattern utf8mb4", collations.ShowCollation)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowProcesslistStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show full processlist;")
 	if diagnostics.BlocksNative() {

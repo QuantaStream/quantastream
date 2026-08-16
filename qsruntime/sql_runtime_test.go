@@ -216,6 +216,24 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 		t.Fatalf("SET NAMES actions = %#v", actions)
 	}
 
+	characterSet, err := runtime.ExecuteSQL(context.Background(), "set character set utf8mb4", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET CHARACTER SET failed: %v", err)
+	}
+	actions = characterSet.Runtime.Statement.SessionActions
+	if len(actions) != 3 || actions[0].Name != "character_set_client" || actions[0].Value != "utf8mb4" {
+		t.Fatalf("SET CHARACTER SET actions = %#v", actions)
+	}
+
+	charset, err := runtime.ExecuteSQL(context.Background(), "set charset 'utf8mb4'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET CHARSET failed: %v", err)
+	}
+	actions = charset.Runtime.Statement.SessionActions
+	if len(actions) != 3 || actions[0].Name != "character_set_client" || actions[0].Value != "utf8mb4" {
+		t.Fatalf("SET CHARSET actions = %#v", actions)
+	}
+
 	autocommit, err := runtime.ExecuteSQL(context.Background(), "set autocommit = 1", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("SET autocommit failed: %v", err)
@@ -234,6 +252,42 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 		t.Fatalf("SET sql_mode actions = %#v", actions)
 	}
 
+	doubleQuotedSQLMode, err := runtime.ExecuteSQL(context.Background(), `set sql_mode = "STRICT_TRANS_TABLES,NO_ZERO_DATE"`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET double-quoted sql_mode failed: %v", err)
+	}
+	actions = doubleQuotedSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" {
+		t.Fatalf("SET double-quoted sql_mode actions = %#v", actions)
+	}
+
+	unquotedCommaSQLMode, err := runtime.ExecuteSQL(context.Background(), "set sql_mode = STRICT_TRANS_TABLES,NO_ZERO_DATE", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET unquoted comma sql_mode failed: %v", err)
+	}
+	actions = unquotedCommaSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" {
+		t.Fatalf("SET unquoted comma sql_mode actions = %#v", actions)
+	}
+
+	functionSQLMode, err := runtime.ExecuteSQL(context.Background(), "set sql_mode = replace(@@sql_mode, 'ONLY_FULL_GROUP_BY', '')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET function sql_mode failed: %v", err)
+	}
+	actions = functionSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "replace(@@sql_mode, 'ONLY_FULL_GROUP_BY', '')" {
+		t.Fatalf("SET function sql_mode actions = %#v", actions)
+	}
+
+	colonEqualsSQLMode, err := runtime.ExecuteSQL(context.Background(), "set @saved_sql_mode := @@sql_mode", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET := session variable failed: %v", err)
+	}
+	actions = colonEqualsSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetVariable || actions[0].Name != "@saved_sql_mode" || actions[0].Value != "@@sql_mode" {
+		t.Fatalf("SET := session variable actions = %#v", actions)
+	}
+
 	timeZone, err := runtime.ExecuteSQL(context.Background(), "set time_zone = '+00:00'", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("SET time_zone failed: %v", err)
@@ -241,6 +295,35 @@ func TestSQLRuntimeExecuteSQLSetNamesAndAutocommitReturnSessionActions(t *testin
 	actions = timeZone.Runtime.Statement.SessionActions
 	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetTimeZone || actions[0].Name != "time_zone" || actions[0].Value != "+00:00" {
 		t.Fatalf("SET time_zone actions = %#v", actions)
+	}
+
+	scopedSQLMode, err := runtime.ExecuteSQL(context.Background(), "set session sql_mode = 'ANSI_QUOTES'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET SESSION sql_mode failed: %v", err)
+	}
+	actions = scopedSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "ANSI_QUOTES" {
+		t.Fatalf("SET SESSION sql_mode actions = %#v", actions)
+	}
+
+	sessionVarSQLMode, err := runtime.ExecuteSQL(context.Background(), "set @@session.sql_mode = 'NO_ENGINE_SUBSTITUTION'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET @@session.sql_mode failed: %v", err)
+	}
+	actions = sessionVarSQLMode.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionSetSQLMode || actions[0].Name != "sql_mode" || actions[0].Value != "NO_ENGINE_SUBSTITUTION" {
+		t.Fatalf("SET @@session.sql_mode actions = %#v", actions)
+	}
+
+	transaction, err := runtime.ExecuteSQL(context.Background(), "set session transaction isolation level repeatable read", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SET SESSION TRANSACTION failed: %v", err)
+	}
+	if transaction.Diagnostics.BlocksNative() || transaction.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("transaction diagnostics = %#v runtime=%#v", transaction.Diagnostics, transaction.Runtime.Diagnostics)
+	}
+	if len(transaction.Runtime.Statement.SessionActions) != 0 {
+		t.Fatalf("transaction actions = %#v, want metadata-only statement", transaction.Runtime.Statement.SessionActions)
 	}
 }
 
@@ -2096,6 +2179,18 @@ func newTestSQLRuntime(t *testing.T) SQLRuntime {
 	return newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{Count: 11}, nil
 	})
+}
+
+func TestCatalogCharacterMetadataRowsFilterAcrossDisplayedFields(t *testing.T) {
+	charsets := showCharacterSetRows("utf8mb4_0900_ai_ci")
+	if len(charsets) != 1 || charsets[0].charset != "utf8mb4" {
+		t.Fatalf("charsets = %#v, want utf8mb4 row by default collation", charsets)
+	}
+
+	collations := showCollationRows("utf8mb4")
+	if len(collations) != 2 {
+		t.Fatalf("collations = %#v, want both utf8mb4 collations by charset", collations)
+	}
 }
 
 func newTestSQLRuntimeWithDirect(t *testing.T, execute func(context.Context, ExecutionRequest) (ExecutionResult, error)) SQLRuntime {

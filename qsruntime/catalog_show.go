@@ -865,7 +865,10 @@ func showCharacterSetRows(pattern string) []showCharacterSetRow {
 	}
 	filtered := make([]showCharacterSetRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.charset, pattern) {
+		if sqlLikeMatch(row.charset, pattern) ||
+			sqlLikeMatch(row.description, pattern) ||
+			sqlLikeMatch(row.defaultCollation, pattern) ||
+			sqlLikeMatch(strconv.FormatInt(row.maxlen, 10), pattern) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -922,7 +925,12 @@ func showCollationRows(pattern string) []showCollationRow {
 	}
 	filtered := make([]showCollationRow, 0, len(all))
 	for _, row := range all {
-		if sqlLikeMatch(row.collation, pattern) {
+		if sqlLikeMatch(row.collation, pattern) ||
+			sqlLikeMatch(row.charset, pattern) ||
+			sqlLikeMatch(strconv.FormatInt(row.id, 10), pattern) ||
+			sqlLikeMatch(row.defaultValue, pattern) ||
+			sqlLikeMatch(row.compiled, pattern) ||
+			sqlLikeMatch(strconv.FormatInt(row.sortlen, 10), pattern) {
 			filtered = append(filtered, row)
 		}
 	}

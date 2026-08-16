@@ -151,6 +151,17 @@ tests:
     expect:
       columns: [variable_name, value]
 
+  - id: mysql_compat_catalog.01401.show_session_variables
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables, session_scope]
+    sql: |
+      show session variables like 'character_set_%'
+    expect:
+      columns: [variable_name, value]
+
   - id: mysql_compat_catalog.0141.show_status
     status: supported
     kind: query
@@ -159,6 +170,17 @@ tests:
     requires: [show_status, metadata_columns]
     sql: |
       show status like 'Threads_connected'
+    expect:
+      columns: [variable_name, value]
+
+  - id: mysql_compat_catalog.01411.show_global_status
+    status: supported
+    kind: query
+    feature: catalog_status
+    compatibility: mysql
+    requires: [show_status, session_scope, metadata_columns]
+    sql: |
+      show global status like 'Threads_connected'
     expect:
       columns: [variable_name, value]
 
@@ -184,6 +206,17 @@ tests:
     expect:
       columns: [Charset, Description, "Default collation", Maxlen]
 
+  - id: mysql_compat_catalog.0181.show_character_set_where_charset
+    status: supported
+    kind: query
+    feature: catalog_character_sets
+    compatibility: mysql
+    requires: [show_character_set, metadata_columns]
+    sql: |
+      show character set where Charset = 'utf8mb4'
+    expect:
+      columns: [Charset, Description, "Default collation", Maxlen]
+
   - id: mysql_compat_catalog.019.show_collation
     status: supported
     kind: query
@@ -192,6 +225,17 @@ tests:
     requires: [show_collation, metadata_columns]
     sql: |
       show collation like 'utf8mb4_0900%'
+    expect:
+      columns: [Collation, Charset, Id, "Default", Compiled, Sortlen]
+
+  - id: mysql_compat_catalog.0191.show_collation_where_charset
+    status: supported
+    kind: query
+    feature: catalog_collations
+    compatibility: mysql
+    requires: [show_collation, metadata_columns]
+    sql: |
+      show collation where Charset = 'utf8mb4'
     expect:
       columns: [Collation, Charset, Id, "Default", Compiled, Sortlen]
 

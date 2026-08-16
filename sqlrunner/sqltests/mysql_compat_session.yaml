@@ -11,6 +11,15 @@ tests:
     sql: |
       set names utf8mb4
 
+  - id: mysql_compat_session.0011.set_character_set
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set_character_set, session_variables]
+    sql: |
+      set character set utf8mb4
+
   - id: mysql_compat_session.002.set_autocommit
     status: supported
     kind: statement
@@ -37,6 +46,24 @@ tests:
     requires: [set, time_zone]
     sql: |
       set time_zone = '+00:00'
+
+  - id: mysql_compat_session.005.set_session_scoped_sql_mode
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set, sql_mode, session_scope]
+    sql: |
+      set session sql_mode = 'ANSI_QUOTES'
+
+  - id: mysql_compat_session.006.set_session_variable_sigiled_sql_mode
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set, sql_mode, session_scope]
+    sql: |
+      set @@session.sql_mode = 'NO_ENGINE_SUBSTITUTION'
 
   - id: mysql_compat_session.010.select_system_variables
     status: supported
@@ -70,6 +97,15 @@ tests:
     requires: [set_transaction]
     sql: |
       set transaction read only
+
+  - id: mysql_compat_session.0201.set_session_transaction_isolation
+    status: supported
+    kind: statement
+    feature: transactions
+    compatibility: mysql
+    requires: [set_transaction, session_scope]
+    sql: |
+      set session transaction isolation level repeatable read
 
   - id: mysql_compat_session.021.start_transaction
     status: supported
