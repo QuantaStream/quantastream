@@ -1955,6 +1955,45 @@ func TestSimpleParserBridgeParsesCompoundAggregateHaving(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesAggregateArithmeticHaving(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select n_regionkey as region_key, sum(n_nationkey) as nation_key_sum from nation group by n_regionkey having sum(n_nationkey) / count(*) > 10 order by region_key")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Aggregates) != 2 {
+		t.Fatalf("aggregates = %d, want projected sum plus hidden count", len(statement.Select.Aggregates))
+	}
+	if aggregate := statement.Select.Aggregates[0]; aggregate.Function != "sum" || aggregate.Alias != "nation_key_sum" {
+		t.Fatalf("first aggregate = %#v, want projected sum", aggregate)
+	}
+	if aggregate := statement.Select.Aggregates[1]; aggregate.Function != "count" || !aggregate.CountAll || aggregate.Alias != "__having_agg_1" {
+		t.Fatalf("second aggregate = %#v, want hidden count(*)", aggregate)
+	}
+	if len(statement.Select.Having) != 1 {
+		t.Fatalf("having = %d, want 1", len(statement.Select.Having))
+	}
+	comparison, ok := statement.Select.Having[0].Expr.(UnboundBinaryExpr)
+	if !ok || comparison.Op != BinaryOpGreater {
+		t.Fatalf("having expression = %#v, want arithmetic comparison", statement.Select.Having[0].Expr)
+	}
+	ratio, ok := comparison.Left.(UnboundBinaryExpr)
+	if !ok || ratio.Op != BinaryOpDivide {
+		t.Fatalf("having left = %#v, want aggregate ratio", comparison.Left)
+	}
+	leftRef, ok := ratio.Left.(UnboundAggregateRefExpr)
+	if !ok || leftRef.Alias != "nation_key_sum" || leftRef.Index != 0 {
+		t.Fatalf("ratio left = %#v, want projected sum ref", ratio.Left)
+	}
+	rightRef, ok := ratio.Right.(UnboundAggregateRefExpr)
+	if !ok || rightRef.Alias != "__having_agg_1" || rightRef.Index != 1 {
+		t.Fatalf("ratio right = %#v, want hidden count ref", ratio.Right)
+	}
+	literal, ok := comparison.Right.(UnboundLiteralExpr)
+	if !ok || literal.Kind != ValueInt || literal.Value != int64(10) {
+		t.Fatalf("comparison right = %#v, want int literal 10", comparison.Right)
+	}
+}
+
 func TestSimpleParserBridgeParsesAvgAggregate(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select avg(o.o_totalprice) as avg_total from orders as o where o.o_totalprice >= 101")
 	if diagnostics.BlocksNative() {

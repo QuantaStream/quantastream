@@ -152,13 +152,12 @@ tests:
         - [MACHINERY, 288]
 
   - id: mysql_compat_group_order_boundaries.008.having_aggregate_arithmetic
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: group_by_having_boundary
     compatibility: mysql
     requires: [select, table_scan, group_by, having, sum, count, arithmetic, order_by]
-    issue: "HAVING aggregate arithmetic is not lowered to aggregate refs yet."
     sql: |
       select n_regionkey as region_key, sum(n_nationkey) as nation_key_sum
       from nation

@@ -4568,22 +4568,54 @@ func parseSimpleHavingBooleanLeaf(text string, projections []UnboundProjection, 
 	if !ok {
 		return nil, aggregates, simpleParserDiagnostic("HAVING must compare aggregate alias to literal"), false
 	}
-	refExpr, updatedAggregates, diagnostic, ok := resolveSimpleHavingAggregateRef(aliasText, projections, aggregates)
-	var leftExpr UnboundExpr = refExpr
-	if !ok {
-		scalarExpr, scalarOK := parseSimpleScalarExpression(aliasText)
-		if !scalarOK {
-			return nil, aggregates, diagnostic, false
-		}
-		leftExpr = scalarExpr
-	} else {
-		aggregates = updatedAggregates
-	}
-	literal, diagnostic, ok := parseSimpleComparisonValueWithScope(strings.TrimSpace(literalText), nil, PredicateScopeHaving)
+	leftExpr, updatedAggregates, diagnostic, ok := parseSimpleHavingValueExpression(aliasText, projections, aggregates)
 	if !ok {
 		return nil, aggregates, diagnostic, false
 	}
-	return UnboundBinary(op, leftExpr, literal), aggregates, Diagnostic{}, true
+	aggregates = updatedAggregates
+	rightExpr, updatedAggregates, diagnostic, ok := parseSimpleHavingValueExpression(literalText, projections, aggregates)
+	if !ok {
+		return nil, aggregates, diagnostic, false
+	}
+	aggregates = updatedAggregates
+	return UnboundBinary(op, leftExpr, rightExpr), aggregates, Diagnostic{}, true
+}
+
+func parseSimpleHavingValueExpression(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (UnboundExpr, []UnboundAggregate, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil, aggregates, simpleParserDiagnostic("HAVING value expression is empty"), false
+	}
+	if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
+		if inner, ok := simpleStripBalancedParens(trimmed); ok {
+			return parseSimpleHavingValueExpression(inner, projections, aggregates)
+		}
+	}
+	leftText, op, rightText, ok := splitSimpleTopLevelArithmeticOperator(trimmed)
+	if ok {
+		left, updatedAggregates, diagnostic, leftOK := parseSimpleHavingValueExpression(leftText, projections, aggregates)
+		if !leftOK {
+			return nil, aggregates, diagnostic, false
+		}
+		right, rightAggregates, rightDiagnostic, rightOK := parseSimpleHavingValueExpression(rightText, projections, updatedAggregates)
+		if !rightOK {
+			return nil, updatedAggregates, rightDiagnostic, false
+		}
+		return UnboundBinary(op, left, right), rightAggregates, Diagnostic{}, true
+	}
+	if ref, updatedAggregates, _, ok := resolveSimpleHavingAggregateRef(trimmed, projections, aggregates); ok {
+		return ref, updatedAggregates, Diagnostic{}, true
+	}
+	if value, diagnostic, ok := parseSimpleComparisonValueWithScope(trimmed, nil, PredicateScopeHaving); ok || diagnostic.Code != "" {
+		if !ok {
+			return nil, aggregates, diagnostic, false
+		}
+		return value, aggregates, Diagnostic{}, true
+	}
+	if scalarExpr, scalarOK := parseSimpleScalarExpression(trimmed); scalarOK {
+		return scalarExpr, aggregates, Diagnostic{}, true
+	}
+	return nil, aggregates, simpleParserDiagnostic("HAVING value expression is invalid"), false
 }
 
 func parseSimpleComparisonValueWithScope(text string, parameterIndex *int, scope PredicateScope) (UnboundExpr, Diagnostic, bool) {
