@@ -8,46 +8,36 @@ tests:
     order: exact
     feature: joins_inner
     compatibility: mysql
-    requires: [select, derived_table, inner_join, aliases, order_by]
+    requires: [select, table_scan, inner_join, aliases, order_by, limit]
     sql: |
-      select c.name, o.order_id
-      from (
-        select 1 as cust_id, 'Abe' as name
-        union all select 2, 'Abby'
-      ) as c
-      inner join (
-        select 1001 as order_id, 1 as cust_id
-        union all select 1002, 1
-      ) as o on o.cust_id = c.cust_id
-      order by o.order_id
+      select c.c_name as customer_name, o.o_orderkey as order_key
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_custkey = 1
+      order by o.o_orderkey
+      limit 3
     expect:
-      columns: [name, order_id]
+      columns: [customer_name, order_key]
       rows:
-        - [Abe, 1001]
-        - [Abe, 1002]
+        - [Customer#000000001, 9154]
+        - [Customer#000000001, 14656]
+        - [Customer#000000001, 24322]
 
-  - id: mysql_compat_joins.002.left_join_null_extension
+  - id: mysql_compat_joins.002.left_join_matched_count
     status: supported
     kind: query
     order: exact
     feature: joins_left_outer
     compatibility: mysql
-    requires: [select, derived_table, left_join, null, order_by]
+    requires: [select, table_scan, left_join]
     sql: |
-      select c.name, o.order_id
-      from (
-        select 1 as cust_id, 'Abe' as name
-        union all select 2, 'Abby'
-      ) as c
-      left join (
-        select 1001 as order_id, 1 as cust_id
-      ) as o on o.cust_id = c.cust_id
-      order by c.cust_id
+      select count(*) as joined_rows
+      from region as r
+      left join nation as n on n.n_regionkey = r.r_regionkey
     expect:
-      columns: [name, order_id]
+      columns: [joined_rows]
       rows:
-        - [Abe, 1001]
-        - [Abby, null]
+        - [25]
 
   - id: mysql_compat_joins.003.join_on_predicate
     status: supported
@@ -55,36 +45,58 @@ tests:
     order: exact
     feature: joins_predicates
     compatibility: mysql
-    requires: [select, derived_table, inner_join, on_predicate, comparison]
+    requires: [select, table_scan, inner_join, on_predicate, comparison, order_by]
     sql: |
-      select c.name, o.amount
-      from (
-        select 1 as cust_id, 'Abe' as name
-        union all select 2, 'Abby'
-      ) as c
-      inner join (
-        select 1 as cust_id, 25 as amount
-        union all select 2, 5
-      ) as o on o.cust_id = c.cust_id and o.amount > 10
-      order by c.name
+      select n.n_name as nation_name, r.r_name as region_name
+      from nation as n
+      inner join region as r on r.r_regionkey = n.n_regionkey and r.r_name = 'AMERICA'
+      order by n.n_name
     expect:
-      columns: [name, amount]
+      columns: [nation_name, region_name]
       rows:
-        - [Abe, 25]
+        - [ARGENTINA, AMERICA]
+        - [BRAZIL, AMERICA]
+        - [CANADA, AMERICA]
+        - [PERU, AMERICA]
+        - [UNITED STATES, AMERICA]
 
-  - id: mysql_compat_joins.004_three_table_join
+  - id: mysql_compat_joins.004.three_table_join
     status: supported
     kind: query
     order: exact
     feature: joins_multi_table
     compatibility: mysql
-    requires: [select, derived_table, inner_join, multi_join]
+    requires: [select, table_scan, inner_join, multi_join, where]
     sql: |
-      select c.name, o.order_id, l.sku
-      from (select 1 as cust_id, 'Abe' as name) as c
-      inner join (select 1001 as order_id, 1 as cust_id) as o on o.cust_id = c.cust_id
-      inner join (select 1001 as order_id, 'SKU-1' as sku) as l on l.order_id = o.order_id
+      select count(*) as customer_count
+      from region as r
+      inner join nation as n on n.n_regionkey = r.r_regionkey
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      where r.r_name = 'AMERICA'
     expect:
-      columns: [name, order_id, sku]
+      columns: [customer_count]
       rows:
-        - [Abe, 1001, SKU-1]
+        - [300]
+
+  - id: mysql_compat_joins.005.join_group_count
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_group_by
+    compatibility: mysql
+    requires: [select, table_scan, inner_join, group_by, count, order_by]
+    sql: |
+      select n.n_name as nation_name, count(*) as customer_count
+      from nation as n
+      inner join customer as c on c.c_nationkey = n.n_nationkey
+      where n.n_regionkey = 1
+      group by n.n_name
+      order by n.n_name
+    expect:
+      columns: [nation_name, customer_count]
+      rows:
+        - [ARGENTINA, 59]
+        - [BRAZIL, 68]
+        - [CANADA, 69]
+        - [PERU, 56]
+        - [UNITED STATES, 48]
