@@ -1880,6 +1880,58 @@ func TestSimpleParserBridgeParsesSearchedCasePredicateComparison(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesSimpleCaseProjection(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_custkey, case c_mktsegment when 'BUILDING' then 'build' else lower(c_mktsegment) end as segment_label from customer order by c_custkey limit 5")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 2 {
+		t.Fatalf("projections = %d, want 2", len(statement.Select.Projection))
+	}
+	searchedCase, ok := statement.Select.Projection[1].Expr.(UnboundSearchedCaseExpr)
+	if !ok {
+		t.Fatalf("projection expression = %T, want UnboundSearchedCaseExpr", statement.Select.Projection[1].Expr)
+	}
+	if len(searchedCase.Whens) != 1 || searchedCase.Else == nil {
+		t.Fatalf("simple case lowering = %#v, want one WHEN and ELSE", searchedCase)
+	}
+	condition, ok := searchedCase.Whens[0].Condition.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("simple case condition = %T, want UnboundBinaryExpr", searchedCase.Whens[0].Condition)
+	}
+	if condition.Op != BinaryOpEqual {
+		t.Fatalf("simple case condition op = %q, want %q", condition.Op, BinaryOpEqual)
+	}
+	left, ok := condition.Left.(UnboundFieldExpr)
+	if !ok || left.Name != "c_mktsegment" {
+		t.Fatalf("simple case condition left = %#v, want c_mktsegment field", condition.Left)
+	}
+	right, ok := condition.Right.(UnboundLiteralExpr)
+	if !ok || right.Value != "BUILDING" {
+		t.Fatalf("simple case condition right = %#v, want BUILDING literal", condition.Right)
+	}
+}
+
+func TestSimpleParserBridgeParsesSimpleCasePredicateComparison(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_custkey from customer where case c_mktsegment when 'BUILDING' then 1 else 0 end = 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	predicate, ok := statement.Select.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want UnboundBinaryExpr", statement.Select.Predicates[0].Expr)
+	}
+	if predicate.Op != BinaryOpEqual {
+		t.Fatalf("predicate op = %q, want %q", predicate.Op, BinaryOpEqual)
+	}
+	if _, ok := predicate.Left.(UnboundSearchedCaseExpr); !ok {
+		t.Fatalf("predicate left = %T, want UnboundSearchedCaseExpr", predicate.Left)
+	}
+}
+
 func TestSimpleParserBridgeParsesAggregateAliasHaving(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_custkey as customer_id, sum(o.o_totalprice) as total_revenue from orders as o group by o.o_custkey having total_revenue > 150 order by total_revenue desc")
 	if diagnostics.BlocksNative() {

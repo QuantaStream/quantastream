@@ -47,6 +47,53 @@ tests:
       rows:
         - [fallback]
 
+  - id: mysql_compat_case.004.simple_case_literal_first_match
+    status: supported
+    kind: query
+    order: exact
+    feature: conditional_expressions_case
+    compatibility: mysql
+    requires: [select, case]
+    sql: |
+      select case 'B'
+                  when 'A' then 'alpha'
+                  when 'B' then 'bravo'
+                  else 'other' end as value
+    expect:
+      columns: [value]
+      rows:
+        - [bravo]
+
+  - id: mysql_compat_case.005.simple_case_without_else_returns_null
+    status: supported
+    kind: query
+    order: exact
+    feature: conditional_expressions_case
+    compatibility: mysql
+    requires: [select, case, null]
+    sql: |
+      select case 'Z' when 'A' then 'alpha' end as value
+    expect:
+      columns: [value]
+      rows:
+        - [null]
+
+  - id: mysql_compat_case.006.simple_case_null_equality_is_not_true
+    status: supported
+    kind: query
+    order: exact
+    feature: conditional_expressions_case
+    compatibility: mysql
+    requires: [select, case, null]
+    sql: |
+      select case null
+                  when null then 'null-hit'
+                  else 'fallback' end as value
+    expect:
+      columns: [value]
+      rows:
+        - [fallback]
+
   - id: mysql_compat_case.010.rowbacked_searched_case_projection
     status: supported
     kind: query
@@ -71,6 +118,31 @@ tests:
         - [4, machinery]
         - [5, household]
 
+  - id: mysql_compat_case.011.rowbacked_simple_case_projection
+    status: supported
+    kind: query
+    order: exact
+    feature: conditional_expressions_case_rows
+    compatibility: mysql
+    requires: [select, case, concat, lower, order_by, limit]
+    sql: |
+      select c_custkey,
+             case c_mktsegment
+                  when 'BUILDING' then 'build'
+                  when 'AUTOMOBILE' then concat('auto-', c_custkey)
+                  else lower(c_mktsegment) end as segment_label
+      from customer
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, segment_label]
+      rows:
+        - [1, build]
+        - [2, auto-2]
+        - [3, auto-3]
+        - [4, machinery]
+        - [5, household]
+
   - id: mysql_compat_case.020.searched_case_predicate
     status: supported
     kind: query
@@ -82,6 +154,28 @@ tests:
       select c_custkey, c_mktsegment
       from customer
       where case when c_mktsegment = 'BUILDING' then 1 else 0 end = 1
+      order by c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [1, BUILDING]
+        - [8, BUILDING]
+        - [11, BUILDING]
+        - [13, BUILDING]
+        - [18, BUILDING]
+
+  - id: mysql_compat_case.021.simple_case_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: conditional_expressions_case_predicates
+    compatibility: mysql
+    requires: [select, case, where, order_by, limit]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      where case c_mktsegment when 'BUILDING' then 1 else 0 end = 1
       order by c_custkey
       limit 5
     expect:

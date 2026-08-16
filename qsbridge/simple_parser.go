@@ -2761,7 +2761,7 @@ func parseSimpleProjection(text string, aggregateIndex int) (UnboundProjection, 
 			Alias: alias,
 		}, nil, Diagnostic{}, true
 	}
-	if expr, ok := parseSimpleSearchedCaseExpression(exprText); ok {
+	if expr, ok := parseSimpleCaseExpression(exprText); ok {
 		return UnboundProjection{
 			Expr:  expr,
 			Alias: alias,
@@ -2885,7 +2885,7 @@ func parseSimpleScalarExpression(text string) (UnboundExpr, bool) {
 	if literal, _, ok := parseSimpleLiteral(trimmed); ok {
 		return literal, true
 	}
-	if expr, ok := parseSimpleSearchedCaseExpression(trimmed); ok {
+	if expr, ok := parseSimpleCaseExpression(trimmed); ok {
 		return expr, true
 	}
 	if call, ok := parseSimpleScalarCallExpression(trimmed); ok {
@@ -2899,6 +2899,13 @@ func parseSimpleScalarExpression(text string) (UnboundExpr, bool) {
 		return nil, false
 	}
 	return UnboundField(qualifier, field), true
+}
+
+func parseSimpleCaseExpression(text string) (UnboundSearchedCaseExpr, bool) {
+	if expr, ok := parseSimpleSearchedCaseExpression(text); ok {
+		return expr, true
+	}
+	return parseSimpleSimpleCaseExpression(text)
 }
 
 func parseSimpleSearchedCaseExpression(text string) (UnboundSearchedCaseExpr, bool) {
@@ -2931,6 +2938,75 @@ func parseSimpleSearchedCaseExpression(text string) (UnboundSearchedCaseExpr, bo
 			return UnboundSearchedCaseExpr{}, false
 		}
 		whens = append(whens, UnboundSearchedCaseWhen{Condition: predicates[0].Expr, Result: result})
+		switch keyword {
+		case "when":
+			remaining = "when " + tail
+		case "else":
+			endIndex, endOffset, ok := findSimpleKeyword(tail, "end")
+			if !ok {
+				return UnboundSearchedCaseExpr{}, false
+			}
+			elseText := strings.TrimSpace(tail[:endIndex])
+			endTail := strings.TrimSpace(tail[endOffset:])
+			if elseText == "" || endTail != "" {
+				return UnboundSearchedCaseExpr{}, false
+			}
+			elseExpr, ok := parseSimpleScalarExpression(elseText)
+			if !ok {
+				return UnboundSearchedCaseExpr{}, false
+			}
+			return UnboundSearchedCase(whens, elseExpr), true
+		case "end":
+			if strings.TrimSpace(tail) != "" {
+				return UnboundSearchedCaseExpr{}, false
+			}
+			return UnboundSearchedCase(whens, nil), true
+		default:
+			return UnboundSearchedCaseExpr{}, false
+		}
+	}
+}
+
+func parseSimpleSimpleCaseExpression(text string) (UnboundSearchedCaseExpr, bool) {
+	body, ok := consumeKeyword(text, "case")
+	if !ok {
+		return UnboundSearchedCaseExpr{}, false
+	}
+	operandText, tail, ok := splitBeforeTopLevelKeyword(body, "when")
+	if !ok {
+		return UnboundSearchedCaseExpr{}, false
+	}
+	operand, ok := parseSimpleScalarExpression(operandText)
+	if !ok {
+		return UnboundSearchedCaseExpr{}, false
+	}
+	whens := make([]UnboundSearchedCaseWhen, 0, 1)
+	remaining := "when " + tail
+	for {
+		next, ok := consumeKeyword(remaining, "when")
+		if !ok {
+			return UnboundSearchedCaseExpr{}, false
+		}
+		valueText, thenBody, ok := splitBeforeKeyword(next, "then")
+		if !ok {
+			return UnboundSearchedCaseExpr{}, false
+		}
+		value, ok := parseSimpleScalarExpression(valueText)
+		if !ok {
+			return UnboundSearchedCaseExpr{}, false
+		}
+		resultText, keyword, tail, ok := splitBeforeFirstSimpleKeyword(thenBody, "when", "else", "end")
+		if !ok {
+			return UnboundSearchedCaseExpr{}, false
+		}
+		result, ok := parseSimpleScalarExpression(resultText)
+		if !ok {
+			return UnboundSearchedCaseExpr{}, false
+		}
+		whens = append(whens, UnboundSearchedCaseWhen{
+			Condition: UnboundBinary(BinaryOpEqual, operand, value),
+			Result:    result,
+		})
 		switch keyword {
 		case "when":
 			remaining = "when " + tail
