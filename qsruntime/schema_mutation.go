@@ -111,9 +111,9 @@ func (h LegacyQuantaSessionHandle) DropView(ctx context.Context, request Executi
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if consul := h.schemaMutationConsul(); consul != nil {
-		return h.dropConsulCatalogView(ctx, consul, viewName)
+		return h.dropConsulCatalogView(ctx, consul, viewName, request.Mutation.IfExists)
 	}
-	return h.dropFileCatalogView(ctx, schemaName, viewName)
+	return h.dropFileCatalogView(ctx, schemaName, viewName, request.Mutation.IfExists)
 }
 
 func (h LegacyQuantaSessionHandle) createFileCatalogTable(ctx context.Context, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
@@ -239,7 +239,7 @@ func (h LegacyQuantaSessionHandle) createFileCatalogView(ctx context.Context, sc
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s created", viewName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropFileCatalogView(ctx context.Context, schemaName, viewName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropFileCatalogView(ctx context.Context, schemaName, viewName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
@@ -251,6 +251,9 @@ func (h LegacyQuantaSessionHandle) dropFileCatalogView(ctx context.Context, sche
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if !active {
+		if ifExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
+		}
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("view %s doesn't exist", viewName)
 	}
 	if err := shared.RemoveViewDefinition(configDir, viewName); err != nil {
@@ -426,12 +429,15 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogView(ctx context.Context, 
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s created", viewName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropConsulCatalogView(ctx context.Context, consul *api.Client, viewName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropConsulCatalogView(ctx context.Context, consul *api.Client, viewName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	viewExists, err := shared.ViewExists(consul, viewName)
 	if err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if !viewExists {
+		if ifExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
+		}
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("view %s doesn't exist", viewName)
 	}
 	lock, err := shared.Lock(consul, "admin-tool", "query-engine")

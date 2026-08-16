@@ -565,6 +565,7 @@ type MutationShape struct {
 	Target                 TableInstance
 	ViewSQL                string
 	Replace                bool
+	IfExists               bool
 	ViewDependencies       []TableInstance
 	Columns                []FieldRef
 	Rows                   []MutationRow

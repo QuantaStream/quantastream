@@ -466,7 +466,20 @@ func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Di
 }
 
 func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
-	if strings.TrimSpace(dropBody) == "" {
+	dropBody = strings.TrimSpace(dropBody)
+	if dropBody == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW must include a view"), false
+	}
+	ifExists := false
+	if remaining, ok := consumeKeyword(dropBody, "if"); ok {
+		existsRemaining, existsOK := consumeKeyword(remaining, "exists")
+		if !existsOK {
+			return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW IF must be followed by EXISTS"), false
+		}
+		ifExists = true
+		dropBody = strings.TrimSpace(existsRemaining)
+	}
+	if dropBody == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW must include a view"), false
 	}
 	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
@@ -483,8 +496,9 @@ func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Dia
 		SQL:  sql,
 		Kind: QueryKindDropView,
 		DropView: UnboundDropView{
-			View:   view,
-			Result: ResultShape{Kind: ResultStatement},
+			View:     view,
+			IfExists: ifExists,
+			Result:   ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
 }

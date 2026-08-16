@@ -3,12 +3,11 @@ name: mysql_compat_views_boundaries
 
 tests:
   - id: mysql_compat_views_boundaries.001.drop_view_if_exists
-    status: xfail
+    status: supported
     kind: statement
     feature: views_ddl_boundary
     compatibility: mysql
     requires: [drop_view, if_exists]
-    issue: "DROP VIEW IF EXISTS is valid MySQL syntax; QS simple parser currently accepts only a single bare view name."
     sql: |
       drop view if exists qs_mysql_compat_missing_view
 

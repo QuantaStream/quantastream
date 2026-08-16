@@ -142,6 +142,7 @@ type UnboundDropTable struct {
 // UnboundDropView describes a DROP VIEW operation before binding.
 type UnboundDropView struct {
 	View     UnboundTable
+	IfExists bool
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -637,8 +638,9 @@ func BindDropView(context *BindContext, dropStmt UnboundDropView) (QueryIR, Diag
 		return query, diagnostics
 	}
 	query.Mutation = MutationShape{
-		Kind:   MutationDropView,
-		Target: target,
+		Kind:     MutationDropView,
+		Target:   target,
+		IfExists: dropStmt.IfExists,
 	}
 	return query, diagnostics
 }

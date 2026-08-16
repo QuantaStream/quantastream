@@ -90,6 +90,39 @@ func TestLegacySchemaMutationHandleCreatesAndDropsFileCatalogView(t *testing.T) 
 	}
 }
 
+func TestLegacySchemaMutationHandleDropViewIfExistsIgnoresMissingFileCatalogView(t *testing.T) {
+	configDir := t.TempDir()
+	handle := LegacyQuantaSessionHandle{
+		TableName: "missing_view",
+		Session:   &core.Session{BasePath: configDir},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationDropView,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "missing_view"},
+		},
+	}
+	_, diagnostics, err := handle.DropView(context.Background(), request)
+	if err == nil {
+		t.Fatalf("DropView() error = nil, want missing-view error")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropView() diagnostics = %#v", diagnostics)
+	}
+
+	request.Mutation.IfExists = true
+	statement, diagnostics, err := handle.DropView(context.Background(), request)
+	if err != nil {
+		t.Fatalf("DropView(if exists) error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropView(if exists) diagnostics = %#v", diagnostics)
+	}
+	if statement.Status != "View missing_view dropped" {
+		t.Fatalf("status = %q, want missing_view dropped", statement.Status)
+	}
+}
+
 func TestLegacySchemaMutationHandleCreateViewRejectsTableNameCollision(t *testing.T) {
 	configDir := t.TempDir()
 	if err := shared.ActivateCatalogTable(configDir, "quanta", "customer_names", testSchemaMutationTime()); err != nil {
