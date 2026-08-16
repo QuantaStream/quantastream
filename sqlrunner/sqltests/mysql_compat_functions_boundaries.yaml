@@ -123,3 +123,21 @@ tests:
       columns: [joined_value, repeat_value, reverse_value, lpad_value, rpad_value, ascii_value]
       rows:
         - [quanta|stream, hahaha, maerts, "00042", QS..., 81]
+
+  - id: mysql_compat_functions_boundaries.009.date_helper_literal_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_datetime_boundary
+    compatibility: mysql
+    requires: [select, date, dayname, monthname, quarter, week]
+    sql: |
+      select date('1995-03-15 04:05:06') as date_value,
+             dayname('1995-03-15') as day_name,
+             monthname('1995-03-15') as month_name,
+             quarter('1995-03-15') as quarter_value,
+             week('1995-03-15') as week_value
+    expect:
+      columns: [date_value, day_name, month_name, quarter_value, week_value]
+      rows:
+        - ["1995-03-15", Wednesday, March, 1, 11]

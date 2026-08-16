@@ -129,6 +129,57 @@ func TestDirectBitmapEvaluateMaterializedDateFormatCall(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapEvaluateMaterializedDateHelperCalls(t *testing.T) {
+	rowSet := qsbridge.QuantaProjectedRowSet{}
+	tests := []struct {
+		name string
+		call qsbridge.CallExpr
+		want qsbridge.ResultCell
+	}{
+		{
+			name: "date",
+			call: qsbridge.Call("date", qsbridge.Literal(qsbridge.ValueString, "1995-03-15 04:05:06")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "1995-03-15"},
+		},
+		{
+			name: "dayname",
+			call: qsbridge.Call("dayname", qsbridge.Literal(qsbridge.ValueString, "1995-03-15")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "Wednesday"},
+		},
+		{
+			name: "monthname",
+			call: qsbridge.Call("monthname", qsbridge.Literal(qsbridge.ValueString, "1995-03-15")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "March"},
+		},
+		{
+			name: "quarter",
+			call: qsbridge.Call("quarter", qsbridge.Literal(qsbridge.ValueString, "1995-03-15")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(1)},
+		},
+		{
+			name: "week",
+			call: qsbridge.Call("week", qsbridge.Literal(qsbridge.ValueString, "1995-03-15")),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(11)},
+		},
+		{
+			name: "week_mode_zero_before_first_sunday",
+			call: qsbridge.Call("week", qsbridge.Literal(qsbridge.ValueString, "1996-01-02"), qsbridge.Literal(qsbridge.ValueInt, int64(0))),
+			want: qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(0)},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cell, diagnostics := directBitmapEvaluateMaterializedCallExpr(test.call, rowSet, 0)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want none", diagnostics)
+			}
+			if cell.Kind != test.want.Kind || cell.Value != test.want.Value {
+				t.Fatalf("cell = %#v, want %#v", cell, test.want)
+			}
+		})
+	}
+}
+
 func TestDirectBitmapEvaluateMaterializedNumericScalarCalls(t *testing.T) {
 	rowSet := qsbridge.QuantaProjectedRowSet{}
 	tests := []struct {

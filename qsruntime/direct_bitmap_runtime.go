@@ -946,8 +946,12 @@ func directBitmapEvaluateMaterializedCallExpr(call qsbridge.CallExpr, materializ
 	switch strings.ToLower(call.Name) {
 	case "year", "yy":
 		return directBitmapEvaluateMaterializedTimePartCall(call, materialized, index)
-	case "mm", "monthofyear", "month", "yymm", "day", "dayofmonth", "dayofweek", "hourofday", "hourofweek", "seconds":
+	case "mm", "monthofyear", "month", "monthname", "yymm", "day", "dayofmonth", "dayname", "dayofweek", "quarter", "hourofday", "hourofweek", "seconds":
 		return directBitmapEvaluateMaterializedTimePartCall(call, materialized, index)
+	case "date":
+		return directBitmapEvaluateMaterializedDateCall(call, materialized, index)
+	case "week":
+		return directBitmapEvaluateMaterializedWeekCall(call, materialized, index)
 	case "substr", "substring", "mid":
 		return directBitmapEvaluateMaterializedSubstringCall(call, materialized, index)
 	case "lower", "lcase":
@@ -1046,12 +1050,18 @@ func directBitmapEvaluateMaterializedTimePartCall(call qsbridge.CallExpr, materi
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Year())}, nil
 	case "mm", "monthofyear", "month":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Month())}, nil
+	case "monthname":
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value.Month().String()}, nil
 	case "yymm":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Year()*100 + int(value.Month()))}, nil
 	case "day", "dayofmonth":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Day())}, nil
+	case "dayname":
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value.Weekday().String()}, nil
 	case "dayofweek":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Weekday()) + 1}, nil
+	case "quarter":
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64((int(value.Month())-1)/3 + 1)}, nil
 	case "hourofday":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(value.Hour())}, nil
 	case "hourofweek":
@@ -1065,6 +1075,68 @@ func directBitmapEvaluateMaterializedTimePartCall(call qsbridge.CallExpr, materi
 	default:
 		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q is not supported by direct bitmap runtime", call.Name))
 	}
+}
+
+func directBitmapEvaluateMaterializedDateCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) != 1 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects one argument", call.Name))
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(cell) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	value, ok := directBitmapTimeCellValue(cell)
+	if !ok {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q requires a time value", call.Name))
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: value.UTC().Format("2006-01-02")}, nil
+}
+
+func directBitmapEvaluateMaterializedWeekCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if len(call.Args) != 1 && len(call.Args) != 2 {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q expects one or two arguments", call.Name))
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(call.Args[0], materialized, index)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	if directBitmapNullCell(cell) {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	if len(call.Args) == 2 {
+		modeCell, modeDiagnostics := directBitmapEvaluateMaterializedExpr(call.Args[1], materialized, index)
+		if modeDiagnostics.BlocksNative() {
+			return qsbridge.ResultCell{}, modeDiagnostics
+		}
+		if directBitmapNullCell(modeCell) {
+			return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+		}
+		mode, ok := directBitmapMaterializedIntArgument(modeCell)
+		if !ok {
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q requires integer mode", call.Name))
+		}
+		if mode != 0 {
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q only supports MySQL default mode 0", call.Name))
+		}
+	}
+	value, ok := directBitmapTimeCellValue(cell)
+	if !ok {
+		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized scalar function %q requires a time value", call.Name))
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(directBitmapMySQLWeekModeZero(value.UTC()))}, nil
+}
+
+func directBitmapMySQLWeekModeZero(value time.Time) int {
+	start := time.Date(value.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	daysBeforeFirstSunday := (7 - int(start.Weekday())) % 7
+	dayOfYear := value.YearDay() - 1
+	if dayOfYear < daysBeforeFirstSunday {
+		return 0
+	}
+	return (dayOfYear-daysBeforeFirstSunday)/7 + 1
 }
 
 func directBitmapEvaluateMaterializedSubstringCall(call qsbridge.CallExpr, materialized qsbridge.QuantaProjectedRowSet, index int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {

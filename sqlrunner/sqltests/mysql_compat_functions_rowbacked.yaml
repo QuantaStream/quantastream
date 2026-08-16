@@ -116,3 +116,27 @@ tests:
         - [1, Customer#000000001:BUILDING, BBB, remotsuC, "0001", BUI.., 67]
         - [2, Customer#000000002:AUTOMOBILE, AAA, remotsuC, "0002", AUT.., 67]
         - [3, Customer#000000003:AUTOMOBILE, AAA, remotsuC, "0003", AUT.., 67]
+
+  - id: mysql_compat_functions_rowbacked.006.order_date_helper_functions
+    status: supported
+    kind: query
+    order: exact
+    feature: scalar_functions_datetime_rowbacked
+    compatibility: mysql
+    requires: [select, date, dayname, monthname, quarter, week]
+    sql: |
+      select o_orderkey,
+             date(o_orderdate) as order_date,
+             dayname(o_orderdate) as day_name,
+             monthname(o_orderdate) as month_name,
+             quarter(o_orderdate) as quarter_value,
+             week(o_orderdate) as week_value
+      from orders
+      order by o_orderkey
+      limit 3
+    expect:
+      columns: [o_orderkey, order_date, day_name, month_name, quarter_value, week_value]
+      rows:
+        - [1, "1996-01-02", Tuesday, January, 1, 0]
+        - [2, "1996-12-01", Sunday, December, 4, 48]
+        - [3, "1993-10-14", Thursday, October, 4, 41]
