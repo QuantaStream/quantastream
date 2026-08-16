@@ -8,21 +8,20 @@ tests:
     order: exact
     feature: group_by
     compatibility: mysql
-    requires: [select, derived_table, group_by, count, order_by]
+    requires: [select, table_scan, group_by, count, order_by]
     sql: |
-      select city, count(*) as customer_count
-      from (
-        select 'Seattle' as city
-        union all select 'Seattle'
-        union all select 'Tacoma'
-      ) as customers
-      group by city
-      order by city
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by market_segment
     expect:
-      columns: [city, customer_count]
+      columns: [market_segment, customer_count]
       rows:
-        - [Seattle, 2]
-        - [Tacoma, 1]
+        - [AUTOMOBILE, 302]
+        - [BUILDING, 337]
+        - [FURNITURE, 279]
+        - [HOUSEHOLD, 294]
+        - [MACHINERY, 288]
 
   - id: mysql_compat_group_order.002.having_sum
     status: supported
@@ -30,21 +29,21 @@ tests:
     order: exact
     feature: group_by_having
     compatibility: mysql
-    requires: [select, derived_table, group_by, having, sum, order_by]
+    requires: [select, table_scan, group_by, having, sum, order_by]
     sql: |
-      select region, sum(amount) as total_amount
-      from (
-        select 'north' as region, 10 as amount
-        union all select 'north', 7
-        union all select 'south', 3
-      ) as sales
-      group by region
-      having sum(amount) > 10
-      order by total_amount desc
+      select n_regionkey as region_key, count(*) as nation_count, sum(n_nationkey) as nation_key_sum
+      from nation
+      group by n_regionkey
+      having count(*) >= 5
+      order by region_key
     expect:
-      columns: [region, total_amount]
+      columns: [region_key, nation_count, nation_key_sum]
       rows:
-        - [north, 17]
+        - [0, 5, 50]
+        - [1, 5, 47]
+        - [2, 5, 68]
+        - [3, 5, 77]
+        - [4, 5, 58]
 
   - id: mysql_compat_group_order.003.order_limit_offset
     status: supported
@@ -52,20 +51,16 @@ tests:
     order: exact
     feature: select_order_limit
     compatibility: mysql
-    requires: [select, derived_table, order_by, limit, offset]
+    requires: [select, table_scan, order_by, limit, offset]
     sql: |
-      select n
-      from (
-        select 3 as n
-        union all select 1
-        union all select 2
-      ) as numbers
-      order by n
+      select n_name as nation_name
+      from nation
+      order by n_name
       limit 1 offset 1
     expect:
-      columns: [n]
+      columns: [nation_name]
       rows:
-        - [2]
+        - [ARGENTINA]
 
   - id: mysql_compat_group_order.004.order_by_alias_desc
     status: supported
@@ -73,16 +68,14 @@ tests:
     order: exact
     feature: select_order_limit
     compatibility: mysql
-    requires: [select, derived_table, aliases, order_by]
+    requires: [select, table_scan, aliases, expression_projection, order_by]
     sql: |
-      select label, score * 2 as doubled_score
-      from (
-        select 'a' as label, 4 as score
-        union all select 'b', 7
-      ) as scored
-      order by doubled_score desc
+      select n_name as nation_name, n_nationkey * 2 as doubled_key
+      from nation
+      order by doubled_key desc
+      limit 2
     expect:
-      columns: [label, doubled_score]
+      columns: [nation_name, doubled_key]
       rows:
-        - [b, 14]
-        - [a, 8]
+        - [UNITED STATES, 48]
+        - [UNITED KINGDOM, 46]

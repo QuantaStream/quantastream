@@ -32,11 +32,12 @@ The current seed suites are:
 - `mysql_compat_mutations.yaml`
 - `mysql_compat_views.yaml`
 
-Boundary suites such as `mysql_compat_views_boundaries.yaml` intentionally
-track MySQL-compatible behavior that QuantaStream does not support yet. Run
-them against a QuantaStream target to see `XFAIL` roadmap gaps. Do not include
-them in MySQL reference captures or `MYSQL_COMPAT_SUITE=all`, because stock
-MySQL success would correctly appear as `XPASS`.
+Boundary suites such as `mysql_compat_views_boundaries.yaml` and
+`mysql_compat_group_order_boundaries.yaml` intentionally track MySQL-compatible
+behavior that QuantaStream does not support yet. Run them against a QuantaStream
+target to see `XFAIL` roadmap gaps. Do not include them in MySQL reference
+captures or `MYSQL_COMPAT_SUITE=all`, because stock MySQL success would
+correctly appear as `XPASS`.
 
 ## Capturing MySQL Reference Results
 
@@ -79,4 +80,5 @@ Run the view boundary suite directly against QuantaStream targets:
 
 ```bash
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_views_boundaries.yaml -compat_report
+go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_group_order_boundaries.yaml -compat_report
 ```

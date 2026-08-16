@@ -1,0 +1,92 @@
+version: 1
+name: mysql_compat_group_order_boundaries
+
+tests:
+  - id: mysql_compat_group_order_boundaries.001.derived_table_group_count
+    status: xfail
+    kind: query
+    order: exact
+    feature: group_by_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, group_by, count, order_by]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select city, count(*) as customer_count
+      from (
+        select 'Seattle' as city
+        union all select 'Seattle'
+        union all select 'Tacoma'
+      ) as customers
+      group by city
+      order by city
+    expect:
+      columns: [city, customer_count]
+      rows:
+        - [Seattle, 2]
+        - [Tacoma, 1]
+
+  - id: mysql_compat_group_order_boundaries.002.derived_table_having_sum
+    status: xfail
+    kind: query
+    order: exact
+    feature: group_by_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, group_by, having, sum, order_by]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select region, sum(amount) as total_amount
+      from (
+        select 'north' as region, 10 as amount
+        union all select 'north', 7
+        union all select 'south', 3
+      ) as sales
+      group by region
+      having sum(amount) > 10
+      order by total_amount desc
+    expect:
+      columns: [region, total_amount]
+      rows:
+        - [north, 17]
+
+  - id: mysql_compat_group_order_boundaries.003.derived_table_order_limit_offset
+    status: xfail
+    kind: query
+    order: exact
+    feature: select_order_limit_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, order_by, limit, offset]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select n
+      from (
+        select 3 as n
+        union all select 1
+        union all select 2
+      ) as numbers
+      order by n
+      limit 1 offset 1
+    expect:
+      columns: [n]
+      rows:
+        - [2]
+
+  - id: mysql_compat_group_order_boundaries.004.derived_table_order_by_alias_desc
+    status: xfail
+    kind: query
+    order: exact
+    feature: select_order_limit_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, aliases, expression_projection, order_by]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select label, score * 2 as doubled_score
+      from (
+        select 'a' as label, 4 as score
+        union all select 'b', 7
+      ) as scored
+      order by doubled_score desc
+    expect:
+      columns: [label, doubled_score]
+      rows:
+        - [b, 14]
+        - [a, 8]
