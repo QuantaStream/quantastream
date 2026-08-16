@@ -1,0 +1,32 @@
+version: 1
+name: mysql_compat_session
+
+tests:
+  - id: mysql_compat_session.001.set_names
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set_names, session_variables]
+    sql: |
+      set names utf8mb4
+
+  - id: mysql_compat_session.002.set_autocommit
+    status: supported
+    kind: statement
+    feature: session_variables
+    compatibility: mysql
+    requires: [set, autocommit]
+    sql: |
+      set autocommit = 1
+
+  - id: mysql_compat_session.010.select_autocommit_system_variable
+    status: supported
+    kind: query
+    feature: session_variables
+    compatibility: mysql
+    requires: [select, system_variables]
+    sql: |
+      select @@autocommit as autocommit_value
+    expect:
+      columns: [autocommit_value]

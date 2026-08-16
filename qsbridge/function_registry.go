@@ -196,6 +196,7 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinVolatileScalarFunction("user", DataTypeString, sqlExpressionFunctionContexts),
 	builtinVolatileScalarFunction("current_user", DataTypeString, sqlExpressionFunctionContexts),
 	builtinVolatileScalarFunction("connection_id", DataTypeInt, sqlExpressionFunctionContexts),
+	builtinVolatileScalarFunction("qs_session_variable", DataTypeUnknown, sqlExpressionFunctionContexts),
 	builtinScalarFunction("lower", DataTypeString, sqlAndCatalogExpressionFunctionContexts, "lcase"),
 	builtinScalarFunction("upper", DataTypeString, sqlAndCatalogExpressionFunctionContexts, "ucase"),
 	builtinScalarFunction("length", DataTypeInt, sqlAndCatalogExpressionFunctionContexts, "char_length"),

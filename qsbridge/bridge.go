@@ -35,6 +35,7 @@ type UnboundStatement struct {
 	ShowTableStatus UnboundShowTableStatus
 	ShowTables      UnboundShowTables
 	ShowVars        UnboundShowVariables
+	ShowStatus      UnboundShowStatus
 	ShowWarnings    UnboundShowWarnings
 	ShowCharset     UnboundShowCharacterSet
 	ShowCollation   UnboundShowCollation
@@ -79,6 +80,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindShowTables(context, s.ShowTables)
 	case QueryKindShowVariables:
 		return BindShowVariables(context, s.ShowVars)
+	case QueryKindShowStatus:
+		return BindShowStatus(context, s.ShowStatus)
 	case QueryKindShowWarnings:
 		return BindShowWarnings(context, s.ShowWarnings)
 	case QueryKindShowCharacterSet:
@@ -236,6 +239,13 @@ type UnboundShowTables struct {
 
 // UnboundShowVariables describes a SHOW VARIABLES metadata read before binding.
 type UnboundShowVariables struct {
+	Pattern  string
+	Result   ResultShape
+	Blockers []NativeBlocker
+}
+
+// UnboundShowStatus describes a SHOW STATUS metadata read before binding.
+type UnboundShowStatus struct {
 	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
@@ -1194,6 +1204,18 @@ func BindShowVariables(context *BindContext, showStmt UnboundShowVariables) (Que
 		return query, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
 		}
+	}
+	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	return query, nil
+}
+
+// BindShowStatus binds parser-neutral SHOW STATUS metadata into QueryIR.
+func BindShowStatus(context *BindContext, showStmt UnboundShowStatus) (QueryIR, DiagnosticSet) {
+	_ = context
+	query := QueryIR{
+		Kind:     QueryKindShowStatus,
+		Result:   showStatusResultShape(),
+		Blockers: append([]NativeBlocker(nil), showStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
 	return query, nil

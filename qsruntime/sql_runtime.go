@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,6 +194,10 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	if prepared.Kind == qsbridge.QueryKindShowVariables {
 		result.Runtime = showVariablesRuntimeResult(request)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindShowStatus {
+		result.Runtime = showStatusRuntimeResult(request)
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindShowWarnings {
@@ -412,6 +417,9 @@ func (r SQLRuntime) materializeProjectionMetadataExpr(expr qsbridge.Expr) qsbrid
 }
 
 func (r SQLRuntime) materializeProjectionMetadataCall(call qsbridge.CallExpr) qsbridge.Expr {
+	if literal, ok := r.runtimeMetadataVariableCallLiteral(call); ok {
+		return literal
+	}
 	if literal, ok := r.runtimeMetadataFunctionLiteral(call.Name, len(call.Args)); ok {
 		return literal
 	}
@@ -432,6 +440,76 @@ func (r SQLRuntime) materializeProjectionMetadataSearchedCase(expr qsbridge.Sear
 		expr.Else = r.materializeProjectionMetadataExpr(expr.Else)
 	}
 	return expr
+}
+
+func (r SQLRuntime) runtimeMetadataVariableCallLiteral(call qsbridge.CallExpr) (qsbridge.LiteralExpr, bool) {
+	if !strings.EqualFold(strings.TrimSpace(call.Name), "qs_session_variable") || len(call.Args) != 1 {
+		return qsbridge.LiteralExpr{}, false
+	}
+	literal, ok := call.Args[0].(qsbridge.LiteralExpr)
+	if !ok {
+		if pointer, pointerOK := call.Args[0].(*qsbridge.LiteralExpr); pointerOK && pointer != nil {
+			literal = *pointer
+			ok = true
+		}
+	}
+	if !ok || literal.Kind != qsbridge.ValueString {
+		return qsbridge.LiteralExpr{}, false
+	}
+	name, _ := literal.Value.(string)
+	return r.runtimeMetadataVariableLiteral(name)
+}
+
+func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.LiteralExpr, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" {
+		return qsbridge.LiteralExpr{}, false
+	}
+	if value, ok := r.Session.Variables[normalized]; ok {
+		return metadataVariableLiteral(normalized, value), true
+	}
+	switch normalized {
+	case "version":
+		return qsbridge.Literal(qsbridge.ValueString, "8.0.0-quantastream"), true
+	case "version_comment":
+		return qsbridge.Literal(qsbridge.ValueString, "QuantaStream"), true
+	case "autocommit":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
+	case "character_set_client", "character_set_connection", "character_set_results":
+		return qsbridge.Literal(qsbridge.ValueString, "utf8mb4"), true
+	case "collation_connection":
+		return qsbridge.Literal(qsbridge.ValueString, "utf8mb4_0900_ai_ci"), true
+	case "sql_mode":
+		return qsbridge.Literal(qsbridge.ValueString, strings.Join(sqlModeStrings(r.Session.SQLModes), ",")), true
+	case "time_zone":
+		return qsbridge.Literal(qsbridge.ValueString, strings.TrimSpace(r.Session.TimeZone)), true
+	case "max_allowed_packet":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(67108864)), true
+	default:
+		return qsbridge.Literal(qsbridge.ValueString, ""), true
+	}
+}
+
+func metadataVariableLiteral(name string, value string) qsbridge.LiteralExpr {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "autocommit", "max_allowed_packet":
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return qsbridge.Literal(qsbridge.ValueInt, parsed)
+		}
+	}
+	return qsbridge.Literal(qsbridge.ValueString, value)
+}
+
+func sqlModeStrings(modes []qsbridge.SQLMode) []string {
+	out := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		value := strings.TrimSpace(string(mode))
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (qsbridge.LiteralExpr, bool) {

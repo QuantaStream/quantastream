@@ -112,6 +112,19 @@ tests:
     expect:
       columns: [COLUMN_NAME, DATA_TYPE, COLUMN_KEY, EXTRA]
 
+  - id: mysql_compat_catalog.0131.information_schema_schemata
+    status: supported
+    kind: query
+    feature: information_schema_schemata
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select schema_name, default_character_set_name, default_collation_name
+      from information_schema.schemata
+      where schema_name = 'quanta'
+    expect:
+      columns: [SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME]
+
   - id: mysql_compat_catalog.016.information_schema_statistics
     status: supported
     kind: query
@@ -135,6 +148,17 @@ tests:
     requires: [show_variables]
     sql: |
       show variables like 'character_set_%'
+    expect:
+      columns: [Variable_name, Value]
+
+  - id: mysql_compat_catalog.0141.show_status
+    status: supported
+    kind: query
+    feature: catalog_status
+    compatibility: mysql
+    requires: [show_status, metadata_columns]
+    sql: |
+      show status like 'Threads_connected'
     expect:
       columns: [Variable_name, Value]
 

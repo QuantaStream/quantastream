@@ -7,6 +7,8 @@ const (
 	InformationSchemaName = "information_schema"
 	// InformationSchemaTablesName identifies INFORMATION_SCHEMA.TABLES.
 	InformationSchemaTablesName = "tables"
+	// InformationSchemaSchemataName identifies INFORMATION_SCHEMA.SCHEMATA.
+	InformationSchemaSchemataName = "schemata"
 	// InformationSchemaColumnsName identifies INFORMATION_SCHEMA.COLUMNS.
 	InformationSchemaColumnsName = "columns"
 	// InformationSchemaStatisticsName identifies INFORMATION_SCHEMA.STATISTICS.
@@ -20,6 +22,19 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 		return TableDefinition{}, false
 	}
 	switch strings.ToLower(strings.TrimSpace(name)) {
+	case InformationSchemaSchemataName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaSchemataName,
+			Fields: []FieldDefinition{
+				{Name: "CATALOG_NAME", Type: DataTypeString},
+				{Name: "SCHEMA_NAME", Type: DataTypeString},
+				{Name: "DEFAULT_CHARACTER_SET_NAME", Type: DataTypeString},
+				{Name: "DEFAULT_COLLATION_NAME", Type: DataTypeString},
+				{Name: "SQL_PATH", Type: DataTypeString, Nullable: true},
+				{Name: "DEFAULT_ENCRYPTION", Type: DataTypeString},
+			},
+		}, true
 	case InformationSchemaTablesName:
 		return TableDefinition{
 			Schema: InformationSchemaName,

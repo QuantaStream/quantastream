@@ -31,6 +31,8 @@ type informationSchemaRow map[string]qsbridge.ResultCell
 
 func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]informationSchemaRow, qsbridge.DiagnosticSet) {
 	switch strings.ToLower(strings.TrimSpace(source.Table)) {
+	case qsbridge.InformationSchemaSchemataName:
+		return r.informationSchemaSchemataRows()
 	case qsbridge.InformationSchemaTablesName:
 		return r.informationSchemaTableRows()
 	case qsbridge.InformationSchemaColumnsName:
@@ -40,6 +42,23 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 	default:
 		return nil, nil
 	}
+}
+
+func (r SQLRuntime) informationSchemaSchemataRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	schemas := informationSchemaSchemaNames(r.Environment.Catalog, r.DefaultSchema)
+	rows := make([]informationSchemaRow, 0, len(schemas))
+	for _, schema := range schemas {
+		rows = append(rows, informationSchemaRow{
+			"CATALOG_NAME":               describeStringCell("def"),
+			"SCHEMA_NAME":                describeStringCell(schema),
+			"DEFAULT_CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
+			"DEFAULT_COLLATION_NAME":     describeStringCell("utf8mb4_0900_ai_ci"),
+			"SQL_PATH":                   describeNullCell(),
+			"DEFAULT_ENCRYPTION":         describeStringCell("NO"),
+		})
+	}
+	sortInformationSchemaRows(rows, "SCHEMA_NAME")
+	return rows, nil
 }
 
 func (r SQLRuntime) informationSchemaTableRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {

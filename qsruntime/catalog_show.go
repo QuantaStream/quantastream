@@ -440,6 +440,53 @@ func showVariableRows(pattern string) []showVariableRow {
 	return filtered
 }
 
+func showStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+	rows := showStatusRows(request.Bound.Prepared.Query.Catalog.Pattern)
+	rownums := make([]qsbridge.QuantaRownum, len(rows))
+	vectors := []qsbridge.QuantaProjectionVector{
+		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
+	}
+	for i, row := range rows {
+		rownums[i] = qsbridge.QuantaRownum(i + 1)
+		vectors[0].Values[i] = describeStringCell(row.name)
+		vectors[1].Values[i] = describeStringCell(row.value)
+	}
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           rownums,
+			ProjectionVectors: vectors,
+		},
+		Count: uint64(len(rows)),
+	}
+}
+
+type showStatusRow struct {
+	name  string
+	value string
+}
+
+func showStatusRows(pattern string) []showStatusRow {
+	all := []showStatusRow{
+		{name: "Connections", value: "1"},
+		{name: "Questions", value: "0"},
+		{name: "Threads_connected", value: "1"},
+		{name: "Uptime", value: "0"},
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return all
+	}
+	filtered := make([]showStatusRow, 0, len(all))
+	for _, row := range all {
+		if sqlLikeMatch(row.name, pattern) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
 func showWarningsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	_ = request
 	return ExecutionResult{

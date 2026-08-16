@@ -1,6 +1,7 @@
 package qsbridge
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -61,10 +62,13 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "use"); ok {
 		return parseSimpleUse(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "set"); ok {
+		return parseSimpleSet(sql)
+	}
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, DESCRIBE, USE, SET, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -690,6 +694,10 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 	if ok {
 		return parseSimpleShowVariables(sql, variablesBody)
 	}
+	statusBody, ok := consumeKeyword(showBody, "status")
+	if ok {
+		return parseSimpleShowStatus(sql, statusBody)
+	}
 	warningsBody, ok := consumeKeyword(showBody, "warnings")
 	if ok {
 		return parseSimpleShowWarnings(sql, warningsBody)
@@ -725,7 +733,7 @@ func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
 		columnsBody, ok = consumeKeyword(showBody, "fields")
 	}
 	if !ok {
-		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
+		return UnboundStatement{}, simpleParserDiagnostic("SHOW only supports CREATE VIEW, CREATE TABLE, DATABASES, TABLES, FULL TABLES, VARIABLES, STATUS, WARNINGS, CHARACTER SET, COLLATION, INDEX, or COLUMNS/FIELDS FROM table"), false
 	}
 	return parseSimpleShowColumns(sql, columnsBody, false)
 }
@@ -894,6 +902,21 @@ func parseSimpleShowVariables(sql string, variablesBody string) (UnboundStatemen
 		ShowVars: UnboundShowVariables{
 			Pattern: pattern,
 			Result:  showVariablesResultShape(),
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleShowStatus(sql string, statusBody string) (UnboundStatement, Diagnostic, bool) {
+	pattern, diagnostic, ok := parseSimpleOptionalLikePattern(statusBody, "SHOW STATUS")
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindShowStatus,
+		ShowStatus: UnboundShowStatus{
+			Pattern: pattern,
+			Result:  showStatusResultShape(),
 		},
 	}, Diagnostic{}, true
 }
@@ -1127,6 +1150,16 @@ func showVariablesResultShape() ResultShape {
 	}
 }
 
+func showStatusResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "Variable_name", Type: DataTypeString},
+			{Name: "Value", Type: DataTypeString},
+		},
+	}
+}
+
 func showWarningsResultShape() ResultShape {
 	return ResultShape{
 		Kind: ResultQuery,
@@ -1213,6 +1246,123 @@ func parseSimpleUse(sql string) (UnboundStatement, Diagnostic, bool) {
 			},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleSet(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	setBody, ok := consumeKeyword(trimmed, "set")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only SET statements are supported"), false
+	}
+	namesBody, ok := consumeKeyword(setBody, "names")
+	if ok {
+		return parseSimpleSetNames(sql, namesBody)
+	}
+	actions, diagnostic, ok := parseSimpleSetAssignments(setBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSession,
+		Session: UnboundSession{
+			Actions: actions,
+			Result: ResultShape{
+				Kind:      ResultStatement,
+				Statement: StatementResult{Status: "Query OK"},
+			},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleSetNames(sql string, namesBody string) (UnboundStatement, Diagnostic, bool) {
+	fields := strings.Fields(strings.TrimSpace(namesBody))
+	if len(fields) != 1 && len(fields) != 3 {
+		return UnboundStatement{}, simpleParserDiagnostic("SET NAMES must include one character set and optional COLLATE collation"), false
+	}
+	charset := strings.Trim(fields[0], "'\"")
+	if charset == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("SET NAMES character set is empty"), false
+	}
+	actions := []SessionAction{
+		{Kind: SessionActionSetVariable, Name: "character_set_client", Value: charset},
+		{Kind: SessionActionSetVariable, Name: "character_set_connection", Value: charset},
+		{Kind: SessionActionSetVariable, Name: "character_set_results", Value: charset},
+	}
+	if len(fields) == 3 {
+		if !strings.EqualFold(fields[1], "collate") {
+			return UnboundStatement{}, simpleParserDiagnostic("SET NAMES optional clause must be COLLATE collation"), false
+		}
+		collation := strings.Trim(fields[2], "'\"")
+		if collation == "" {
+			return UnboundStatement{}, simpleParserDiagnostic("SET NAMES collation is empty"), false
+		}
+		actions = append(actions, SessionAction{Kind: SessionActionSetVariable, Name: "collation_connection", Value: collation})
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSession,
+		Session: UnboundSession{
+			Actions: actions,
+			Result: ResultShape{
+				Kind:      ResultStatement,
+				Statement: StatementResult{Status: "Query OK"},
+			},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleSetAssignments(setBody string) ([]SessionAction, Diagnostic, bool) {
+	parts := splitSimpleCommaList(setBody)
+	actions := make([]SessionAction, 0, len(parts))
+	for _, part := range parts {
+		name, value, diagnostic, ok := parseSimpleSetAssignment(part)
+		if !ok {
+			return nil, diagnostic, false
+		}
+		actions = append(actions, sessionActionForSetAssignment(name, value))
+	}
+	if len(actions) == 0 {
+		return nil, simpleParserDiagnostic("SET must include at least one assignment"), false
+	}
+	return actions, Diagnostic{}, true
+}
+
+func parseSimpleSetAssignment(text string) (string, string, Diagnostic, bool) {
+	parts := strings.SplitN(text, "=", 2)
+	if len(parts) != 2 {
+		return "", "", simpleParserDiagnostic("SET assignment must use name = value"), false
+	}
+	name := normalizeSimpleSystemVariableName(parts[0])
+	if name == "" {
+		return "", "", simpleParserDiagnostic("SET variable name is empty"), false
+	}
+	value := strings.TrimSpace(parts[1])
+	if value == "" {
+		return "", "", simpleParserDiagnostic("SET assignment value is empty"), false
+	}
+	if literal, _, ok := parseSimpleLiteral(value); ok {
+		return name, simpleLiteralSessionValue(literal), Diagnostic{}, true
+	}
+	return name, strings.Trim(value, "'\""), Diagnostic{}, true
+}
+
+func sessionActionForSetAssignment(name string, value string) SessionAction {
+	switch strings.ToLower(name) {
+	case "sql_mode":
+		return SessionAction{Kind: SessionActionSetSQLMode, Name: name, Value: value}
+	case "time_zone":
+		return SessionAction{Kind: SessionActionSetTimeZone, Name: name, Value: value}
+	default:
+		return SessionAction{Kind: SessionActionSetVariable, Name: name, Value: value}
+	}
+}
+
+func simpleLiteralSessionValue(literal UnboundLiteralExpr) string {
+	if literal.Kind == ValueNull || literal.Value == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(fmt.Sprint(literal.Value), "'\""))
 }
 
 func parseSimpleInsertTarget(text string) (UnboundTable, []string, Diagnostic, bool) {
@@ -1666,6 +1816,12 @@ func parseSimpleProjection(text string, aggregateIndex int) (UnboundProjection, 
 	if aggregates, projection, ok := parseSimpleAggregateArithmeticProjection(exprText, alias, aggregateIndex); ok {
 		return projection, aggregates, Diagnostic{}, true
 	}
+	if expr, ok := parseSimpleSystemVariableExpression(exprText); ok {
+		return UnboundProjection{
+			Expr:  expr,
+			Alias: alias,
+		}, nil, Diagnostic{}, true
+	}
 	if literal, _, ok := parseSimpleLiteral(exprText); ok {
 		return UnboundProjection{
 			Expr:  literal,
@@ -1786,6 +1942,9 @@ func parseSimpleScalarExpression(text string) (UnboundExpr, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return nil, false
+	}
+	if expr, ok := parseSimpleSystemVariableExpression(trimmed); ok {
+		return expr, true
 	}
 	if literal, _, ok := parseSimpleLiteral(trimmed); ok {
 		return literal, true
@@ -1913,6 +2072,28 @@ func simpleZeroArgumentScalarFunctionName(function string) bool {
 	default:
 		return false
 	}
+}
+
+func parseSimpleSystemVariableExpression(text string) (UnboundExpr, bool) {
+	name := normalizeSimpleSystemVariableName(text)
+	if name == "" || !strings.HasPrefix(strings.TrimSpace(text), "@@") {
+		return nil, false
+	}
+	return UnboundCall("qs_session_variable", UnboundLiteral(ValueString, name)), true
+}
+
+func normalizeSimpleSystemVariableName(text string) string {
+	trimmed := strings.TrimSpace(text)
+	trimmed = strings.TrimPrefix(trimmed, "@@")
+	trimmed = strings.TrimPrefix(strings.TrimSpace(trimmed), "session.")
+	trimmed = strings.TrimPrefix(strings.TrimSpace(trimmed), "SESSION.")
+	trimmed = strings.TrimPrefix(strings.TrimSpace(trimmed), "global.")
+	trimmed = strings.TrimPrefix(strings.TrimSpace(trimmed), "GLOBAL.")
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" || strings.ContainsAny(trimmed, " \t\r\n()") {
+		return ""
+	}
+	return strings.ToLower(trimmed)
 }
 
 func parseSimpleAggregateCallExpression(text string) (UnboundCallExpr, bool) {

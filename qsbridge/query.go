@@ -38,6 +38,8 @@ const (
 	QueryKindShowTables QueryKind = "show_tables"
 	// QueryKindShowVariables identifies a SHOW VARIABLES catalog read statement.
 	QueryKindShowVariables QueryKind = "show_variables"
+	// QueryKindShowStatus identifies a SHOW STATUS metadata read statement.
+	QueryKindShowStatus QueryKind = "show_status"
 	// QueryKindShowWarnings identifies a SHOW WARNINGS metadata read statement.
 	QueryKindShowWarnings QueryKind = "show_warnings"
 	// QueryKindShowCharacterSet identifies a SHOW CHARACTER SET metadata read statement.
