@@ -230,7 +230,7 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 	if request.Result.Distinct {
 		rowSet = directBitmapDistinctProjectedRowSet(rowSet)
 	}
-	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	if len(request.Projection) == 0 {
 		rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)
 	}
@@ -672,8 +672,8 @@ func directBitmapAllAggregatesUseBitmapCount(aggregates []qsbridge.Aggregate) bo
 	return true
 }
 
-func directBitmapLimitProjectedRowSet(rowSet qsbridge.QuantaProjectedRowSet, offset int, limit int) qsbridge.QuantaProjectedRowSet {
-	if offset <= 0 && limit <= 0 {
+func directBitmapLimitProjectedRowSet(rowSet qsbridge.QuantaProjectedRowSet, offset int, limit int, hasLimit bool) qsbridge.QuantaProjectedRowSet {
+	if !hasLimit && offset <= 0 {
 		return rowSet
 	}
 	start := offset
@@ -684,7 +684,9 @@ func directBitmapLimitProjectedRowSet(rowSet qsbridge.QuantaProjectedRowSet, off
 		start = len(rowSet.Rownums)
 	}
 	end := len(rowSet.Rownums)
-	if limit > 0 && start+limit < end {
+	if hasLimit && limit <= 0 {
+		end = start
+	} else if hasLimit && start+limit < end {
 		end = start + limit
 	}
 	rowSet.Rownums = append([]qsbridge.QuantaRownum(nil), rowSet.Rownums[start:end]...)

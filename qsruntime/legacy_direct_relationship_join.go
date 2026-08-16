@@ -2146,7 +2146,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 		return result, nil
 	}
 	if !limitPushed {
-		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	}
 	rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)
 	result.RowSet = rowSet
@@ -4805,7 +4805,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 		rowSet = directBitmapDistinctProjectedRowSet(rowSet)
 	}
 	if !limitPushed {
-		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	}
 	if len(request.Projection) == 0 {
 		rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)
@@ -5238,7 +5238,7 @@ func legacyDirectRelationshipProbeInt(value string) int {
 }
 
 func legacyDirectRelationshipPushProjectionLimit(request ExecutionRequest, joined []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair) ([]qsbridge.QuantaRownum, []legacyDirectRelationshipPair, bool) {
-	if len(request.OrderBy) > 0 || (request.Result.Offset <= 0 && request.Result.Limit <= 0) {
+	if len(request.OrderBy) > 0 || !request.Result.AppliesResultWindow() {
 		return joined, pairs, false
 	}
 	start := request.Result.Offset
@@ -5249,7 +5249,9 @@ func legacyDirectRelationshipPushProjectionLimit(request ExecutionRequest, joine
 		start = len(pairs)
 	}
 	end := len(pairs)
-	if request.Result.Limit > 0 && start+request.Result.Limit < end {
+	if request.Result.HasResultLimit() && request.Result.Limit <= 0 {
+		end = start
+	} else if request.Result.HasResultLimit() && start+request.Result.Limit < end {
 		end = start + request.Result.Limit
 	}
 	return append([]qsbridge.QuantaRownum(nil), joined[start:end]...), append([]legacyDirectRelationshipPair(nil), pairs[start:end]...), true

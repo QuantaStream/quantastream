@@ -114,7 +114,7 @@ func directBitmapMaterializedGroupedAggregateResult(request ExecutionRequest, ma
 		return result
 	}
 	limitStart := time.Now()
-	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	probe.LimitTime = time.Since(limitStart)
 	probe.FinalRows = rowSet.CandidateCount()
 	result.Probes = append(result.Probes, directBitmapGroupedAggregateProbes(probe)...)

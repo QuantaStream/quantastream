@@ -3176,7 +3176,7 @@ func TestDirectBitmapRuntimeLimitsProjectedRowSet(t *testing.T) {
 		}},
 	}
 
-	limited := directBitmapLimitProjectedRowSet(rowSet, 1, 1)
+	limited := directBitmapLimitProjectedRowSet(rowSet, 1, 1, true)
 	if got := limited.CandidateCount(); got != 1 {
 		t.Fatalf("candidate count = %d, want 1", got)
 	}
@@ -3188,6 +3188,14 @@ func TestDirectBitmapRuntimeLimitsProjectedRowSet(t *testing.T) {
 	}
 	if got := rowSet.CandidateCount(); got != 3 {
 		t.Fatalf("source row set was mutated; candidate count = %d, want 3", got)
+	}
+
+	empty := directBitmapLimitProjectedRowSet(rowSet, 0, 0, true)
+	if got := empty.CandidateCount(); got != 0 {
+		t.Fatalf("limit zero candidate count = %d, want 0", got)
+	}
+	if got := rowSet.CandidateCount(); got != 3 {
+		t.Fatalf("source row set was mutated after limit zero; candidate count = %d, want 3", got)
 	}
 }
 

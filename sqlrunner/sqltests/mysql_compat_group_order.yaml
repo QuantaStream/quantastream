@@ -79,3 +79,95 @@ tests:
       rows:
         - [UNITED STATES, 48]
         - [UNITED KINGDOM, 46]
+
+  - id: mysql_compat_group_order.005.group_order_by_aggregate_alias_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, aliases, order_by, limit, offset]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by customer_count desc, market_segment
+      limit 2 offset 1
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [AUTOMOBILE, 302]
+        - [HOUSEHOLD, 294]
+
+  - id: mysql_compat_group_order.006.having_aggregate_alias
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_having
+    compatibility: mysql
+    requires: [select, table_scan, group_by, having, count, aliases, order_by]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      having customer_count > 300
+      order by customer_count desc, market_segment
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [BUILDING, 337]
+        - [AUTOMOBILE, 302]
+
+  - id: mysql_compat_group_order.007.multi_column_group_by_order_limit
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by
+    compatibility: mysql
+    requires: [select, table_scan, group_by, count, aliases, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment, c_nationkey as nation_key, count(*) as customer_count
+      from customer
+      group by c_mktsegment, c_nationkey
+      order by market_segment, nation_key
+      limit 5
+    expect:
+      columns: [market_segment, nation_key, customer_count]
+      rows:
+        - [AUTOMOBILE, 0, 11]
+        - [AUTOMOBILE, 1, 10]
+        - [AUTOMOBILE, 2, 11]
+        - [AUTOMOBILE, 3, 19]
+        - [AUTOMOBILE, 4, 12]
+
+  - id: mysql_compat_group_order.008.limit_zero
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, order_by, limit]
+    sql: |
+      select n_name as nation_name
+      from nation
+      order by n_name
+      limit 0
+    expect:
+      columns: [nation_name]
+      rows: []
+
+  - id: mysql_compat_group_order.009.offset_beyond_result
+    status: supported
+    kind: query
+    order: exact
+    feature: select_order_limit
+    compatibility: mysql
+    requires: [select, table_scan, order_by, limit, offset]
+    sql: |
+      select n_name as nation_name
+      from nation
+      order by n_name
+      limit 2 offset 99
+    expect:
+      columns: [nation_name]
+      rows: []

@@ -385,11 +385,30 @@ func TestSimpleParserBridgeParsesLimitOffset(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("parse diagnostics: %#v", diagnostics)
 	}
+	if !statement.Select.Result.HasResultLimit() {
+		t.Fatalf("has limit = false, want true")
+	}
 	if statement.Select.Result.Limit != 1 {
 		t.Fatalf("limit = %d, want 1", statement.Select.Result.Limit)
 	}
 	if statement.Select.Result.Offset != 2 {
 		t.Fatalf("offset = %d, want 2", statement.Select.Result.Offset)
+	}
+}
+
+func TestSimpleParserBridgeParsesLimitZero(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id from orders as o order by o.o_orderkey limit 0")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if !statement.Select.Result.HasResultLimit() {
+		t.Fatalf("has limit = false, want true")
+	}
+	if statement.Select.Result.Limit != 0 {
+		t.Fatalf("limit = %d, want 0", statement.Select.Result.Limit)
+	}
+	if !statement.Select.Result.AppliesResultWindow() {
+		t.Fatalf("applies result window = false, want true")
 	}
 }
 

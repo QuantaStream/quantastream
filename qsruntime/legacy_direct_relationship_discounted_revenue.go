@@ -122,7 +122,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipDisc
 		return result, true, nil
 	}
 	limitStart := time.Now()
-	outputRowSet = directBitmapLimitProjectedRowSet(outputRowSet, request.Result.Offset, request.Result.Limit)
+	outputRowSet = directBitmapLimitProjectedRowSet(outputRowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	limitElapsed := time.Since(limitStart)
 
 	result.RowSet = outputRowSet

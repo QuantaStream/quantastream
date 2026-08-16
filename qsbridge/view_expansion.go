@@ -240,7 +240,7 @@ func validateExpandableViewSelect(schema string, viewName string, selectStmt Unb
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain grouping, having, or order by yet"),
 		}
 	}
-	if selectStmt.Result.Limit > 0 || selectStmt.Result.Offset > 0 {
+	if selectStmt.Result.AppliesResultWindow() {
 		return DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain limit or offset yet"),
 		}

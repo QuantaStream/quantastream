@@ -452,10 +452,21 @@ type ResultShape struct {
 	Hidden       []FieldRef
 	OrderBy      []Expr
 	Limit        int
+	HasLimit     bool
 	Offset       int
 	Distinct     bool
 	Materialized bool
 	Statement    StatementResult
+}
+
+// HasResultLimit reports whether SQL specified LIMIT, including LIMIT 0.
+func (r ResultShape) HasResultLimit() bool {
+	return r.HasLimit || r.Limit > 0
+}
+
+// AppliesResultWindow reports whether LIMIT/OFFSET semantics must be applied.
+func (r ResultShape) AppliesResultWindow() bool {
+	return r.HasResultLimit() || r.Offset > 0
 }
 
 // StatementNoticeLevel classifies statement warning or note detail.

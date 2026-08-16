@@ -117,7 +117,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipQ18L
 		return result, true, nil
 	}
 	limitStart := time.Now()
-	finalRowSet = directBitmapLimitProjectedRowSet(finalRowSet, request.Result.Offset, request.Result.Limit)
+	finalRowSet = directBitmapLimitProjectedRowSet(finalRowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	limitElapsed := time.Since(limitStart)
 	finalRowSet = directBitmapOrderVisibleProjectedRowSet(finalRowSet, request.ProjectionOrder)
 

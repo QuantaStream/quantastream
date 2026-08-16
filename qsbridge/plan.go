@@ -426,7 +426,7 @@ func BuildLogicalPlan(query QueryIR) LogicalPlan {
 	if len(query.OrderBy) > 0 {
 		root = SortNode{Input: root, OrderBy: query.OrderBy}
 	}
-	if query.Result.Limit > 0 || query.Result.Offset > 0 {
+	if query.Result.AppliesResultWindow() {
 		root = LimitNode{Input: root, Limit: query.Result.Limit, Offset: query.Result.Offset}
 	}
 	if classification.Diagnostics.BlocksNative() {

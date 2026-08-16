@@ -127,7 +127,7 @@ func (r DirectBitmapRuntime) directBitmapBitmapGroupCountAggregateResult(ctx con
 		return result, true
 	}
 	limitStart := time.Now()
-	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	probe.LimitTime = time.Since(limitStart)
 	probe.FinalRows = rowSet.CandidateCount()
 	newProbes := append([]ExecutionProbe{}, groupCounts.Probes...)

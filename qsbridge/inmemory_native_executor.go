@@ -96,8 +96,8 @@ func (e InMemoryNativeExecutor) ExecuteNative(request ExecutionRequest) Executio
 	if !ok {
 		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
 	}
-	filteredCandidates = inMemoryLimitCandidates(filteredCandidates, query.Result.Offset, query.Result.Limit)
-	filteredCandidates = inMemoryLimitCandidates(filteredCandidates, 0, request.Options.MaxRows)
+	filteredCandidates = inMemoryLimitCandidates(filteredCandidates, query.Result.Offset, query.Result.Limit, query.Result.HasResultLimit())
+	filteredCandidates = inMemoryLimitCandidates(filteredCandidates, 0, request.Options.MaxRows, request.Options.MaxRows > 0)
 	if inMemoryNeedsEvaluatedProjection(query) {
 		rows, diagnostic, ok := inMemoryEvaluateProjectionRows(query.Projection, filteredCandidates)
 		if !ok {
@@ -340,7 +340,10 @@ func inMemorySortCandidates(sortSpecs []SortSpec, candidates []inMemoryNativeCan
 	return Diagnostic{}, true
 }
 
-func inMemoryLimitCandidates(candidates []inMemoryNativeCandidate, offset int, limit int) []inMemoryNativeCandidate {
+func inMemoryLimitCandidates(candidates []inMemoryNativeCandidate, offset int, limit int, hasLimit bool) []inMemoryNativeCandidate {
+	if !hasLimit && offset <= 0 {
+		return candidates
+	}
 	if offset < 0 {
 		offset = 0
 	}
@@ -348,7 +351,10 @@ func inMemoryLimitCandidates(candidates []inMemoryNativeCandidate, offset int, l
 		return nil
 	}
 	candidates = candidates[offset:]
-	if limit > 0 && limit < len(candidates) {
+	if hasLimit && limit <= 0 {
+		return nil
+	}
+	if hasLimit && limit < len(candidates) {
 		return candidates[:limit]
 	}
 	return candidates

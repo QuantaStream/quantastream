@@ -100,7 +100,7 @@ func PlanLegacyExecutionCall(request ExecutionRequest) (LegacyExecutionCallPlan,
 		plan.Steps = append(plan.Steps, LegacyExecutionStepAdaptNativeAggregateResult)
 		plan.Notes = append(plan.Notes, "native aggregate handoffs remain explicit runtime adapter calls")
 	}
-	if len(request.SQLAggregates) > 0 || len(request.OrderBy) > 0 || request.Result.Limit > 0 || request.Result.Offset > 0 {
+	if len(request.SQLAggregates) > 0 || len(request.OrderBy) > 0 || request.Result.AppliesResultWindow() {
 		plan.Steps = append(plan.Steps, LegacyExecutionStepApplySQLResultAssembly)
 		plan.Notes = append(plan.Notes, "SQL-visible aggregation, ordering, limit, and offset are assembled after bitmap execution")
 	}

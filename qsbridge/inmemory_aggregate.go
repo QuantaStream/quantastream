@@ -112,7 +112,7 @@ func inMemoryAppendGroupedAggregateChunks(result ExecutionResult, query QueryIR,
 		}
 		rows = append(rows, row)
 	}
-	rows = inMemoryLimitResultRows(rows, query.Result.Offset, query.Result.Limit)
+	rows = inMemoryLimitResultRows(rows, query.Result.Offset, query.Result.Limit, query.Result.HasResultLimit())
 	return inMemoryAppendResultRowsChunks(result, rows, batchSize), Diagnostic{}, true
 }
 
@@ -240,7 +240,10 @@ func inMemorySortGroupedAggregateRows(sortSpecs []SortSpec, rows []inMemoryGroup
 	})
 }
 
-func inMemoryLimitResultRows(rows []ResultRow, offset int, limit int) []ResultRow {
+func inMemoryLimitResultRows(rows []ResultRow, offset int, limit int, hasLimit bool) []ResultRow {
+	if !hasLimit && offset <= 0 {
+		return rows
+	}
 	if offset < 0 {
 		offset = 0
 	}
@@ -248,7 +251,10 @@ func inMemoryLimitResultRows(rows []ResultRow, offset int, limit int) []ResultRo
 		return nil
 	}
 	rows = rows[offset:]
-	if limit > 0 && limit < len(rows) {
+	if hasLimit && limit <= 0 {
+		return nil
+	}
+	if hasLimit && limit < len(rows) {
 		return rows[:limit]
 	}
 	return rows

@@ -79,7 +79,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		}
 		projectionText = strings.TrimSpace(selectBody)
 	}
-	sourceText, limit, offset, diagnostic, ok := parseSimpleLimitClause(sourceText)
+	sourceText, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(sourceText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -101,7 +101,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			Select: UnboundSelect{
 				Projection: projections,
 				Aggregates: aggregates,
-				Result:     ResultShape{Kind: ResultQuery, Limit: limit, Offset: offset, Distinct: distinct},
+				Result:     ResultShape{Kind: ResultQuery, Limit: limit, HasLimit: hasLimit, Offset: offset, Distinct: distinct},
 			},
 		}, Diagnostic{}, true
 	}
@@ -164,7 +164,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			GroupBy:     groupBy,
 			Having:      having,
 			OrderBy:     orderBy,
-			Result:      ResultShape{Kind: ResultQuery, Limit: limit, Offset: offset, Distinct: distinct},
+			Result:      ResultShape{Kind: ResultQuery, Limit: limit, HasLimit: hasLimit, Offset: offset, Distinct: distinct},
 			Blockers:    blockers,
 		},
 	}, Diagnostic{}, true
@@ -2848,30 +2848,30 @@ func simpleUnboundExprEqual(left UnboundExpr, right UnboundExpr) bool {
 	}
 }
 
-func parseSimpleLimitClause(text string) (string, int, int, Diagnostic, bool) {
+func parseSimpleLimitClause(text string) (string, int, int, bool, Diagnostic, bool) {
 	left, right, ok := splitBeforeKeyword(text, "limit")
 	if !ok {
-		return text, 0, 0, Diagnostic{}, true
+		return text, 0, 0, false, Diagnostic{}, true
 	}
 	fields := strings.Fields(right)
 	if len(fields) != 1 && len(fields) != 3 {
-		return "", 0, 0, simpleParserDiagnostic("LIMIT must contain one integer and optional OFFSET integer"), false
+		return "", 0, 0, false, simpleParserDiagnostic("LIMIT must contain one integer and optional OFFSET integer"), false
 	}
 	limit, err := strconv.Atoi(fields[0])
 	if err != nil || limit < 0 {
-		return "", 0, 0, simpleParserDiagnostic("LIMIT must be a non-negative integer"), false
+		return "", 0, 0, false, simpleParserDiagnostic("LIMIT must be a non-negative integer"), false
 	}
 	offset := 0
 	if len(fields) == 3 {
 		if !strings.EqualFold(fields[1], "offset") {
-			return "", 0, 0, simpleParserDiagnostic("LIMIT offset syntax must be LIMIT n OFFSET m"), false
+			return "", 0, 0, false, simpleParserDiagnostic("LIMIT offset syntax must be LIMIT n OFFSET m"), false
 		}
 		offset, err = strconv.Atoi(fields[2])
 		if err != nil || offset < 0 {
-			return "", 0, 0, simpleParserDiagnostic("OFFSET must be a non-negative integer"), false
+			return "", 0, 0, false, simpleParserDiagnostic("OFFSET must be a non-negative integer"), false
 		}
 	}
-	return left, limit, offset, Diagnostic{}, true
+	return left, limit, offset, true, Diagnostic{}, true
 }
 
 func consumeKeyword(text string, keyword string) (string, bool) {

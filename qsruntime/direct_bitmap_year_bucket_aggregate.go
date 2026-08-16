@@ -103,7 +103,7 @@ func (r DirectBitmapRuntime) directBitmapYearBucketCountAggregateResult(ctx cont
 	if result.Diagnostics.BlocksNative() {
 		return result, true
 	}
-	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit)
+	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	result.RowSet = rowSet
 	result.Count = uint64(rowSet.CandidateCount())
 	probes := []ExecutionProbe{
