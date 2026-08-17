@@ -750,3 +750,230 @@ tests:
     expect:
       rows:
         - [0]
+
+  - id: "mutate_body.104.insert_negative_predicate_rows"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, address, state, city, zip, createdAtTimestamp, timestamp_micro, timestamp_millis, hashedCustId, phone, phoneType, isActive, birthdate, isLegalAge, age, height, numFamilyMembers, rownum) values
+        ('500','Yara','Breeze','500 Edge St','CA','Arcata','95521','2020-03-01 00:00:00.000Z','2020-03-01 00:00:00.000Z','2020-03-01 00:00:00.000Z','edge500','500-111-2222','home',true,'2000-01-01',true,25,63,2,31),
+        ('510','Milo','Vale','510 Edge St','OR','Bend','97701','2020-03-02 00:00:00.000Z','2020-03-02 00:00:00.000Z','2020-03-02 00:00:00.000Z','edge510','510-111-2222','cell',true,'2000-01-01',true,35,67,3,32),
+        ('520','Mina','Noble','520 Edge St','WA','Seattle','98101','2020-03-03 00:00:00.000Z','2020-03-03 00:00:00.000Z','2020-03-03 00:00:00.000Z','edge520','520-111-2222','business',false,'2000-01-01',true,45,69,4,33),
+        ('530','Zed','West','530 Edge St','NV','Reno','89501','2020-03-04 00:00:00.000Z','2020-03-04 00:00:00.000Z','2020-03-04 00:00:00.000Z','edge530','530-111-2222','cell;business',true,'2000-01-01',true,65,72,5,34),
+        ('540','Maya','Crest','540 Edge St','AZ','Mesa','85201','2020-03-05 00:00:00.000Z','2020-03-05 00:00:00.000Z','2020-03-05 00:00:00.000Z','edge540','540-111-2222','home',true,'2000-01-01',true,55,64,2,35),
+        ('550','Noel','Frost','550 Edge St','UT','Provo','84601','2020-03-06 00:00:00.000Z','2020-03-06 00:00:00.000Z','2020-03-06 00:00:00.000Z','edge550','550-111-2222','cell',false,'2000-01-01',true,75,71,1,36)
+    expect:
+      affected_rows: 6
+
+  - id: "mutate_body.105.commit_negative_predicate_rows"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.106.update_where_not_in"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set city = 'NonCoastal' where state not in ('CA','NV')
+    expect:
+      affected_rows: 4
+
+  - id: "mutate_body.107.commit_update_where_not_in"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.108.select_after_update_where_not_in"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where city = 'NonCoastal'
+    expect:
+      rows:
+        - [4]
+
+  - id: "mutate_body.109.update_where_not_between"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set phoneType = 'outer-band' where age not between 30 and 70
+    expect:
+      affected_rows: 2
+
+  - id: "mutate_body.110.commit_update_where_not_between"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.111.select_after_update_where_not_between"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where phoneType = 'outer-band'
+    expect:
+      rows:
+        - [2]
+
+  - id: "mutate_body.112.update_where_like"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set last_name = 'LikeMatch' where first_name like 'Mi%'
+    expect:
+      affected_rows: 2
+
+  - id: "mutate_body.113.commit_update_where_like"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.114.select_after_update_where_like"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where last_name = 'LikeMatch'
+    expect:
+      rows:
+        - [2]
+
+  - id: "mutate_body.115.update_where_not_like"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set address = 'NoMPrefix' where first_name not like 'M%'
+    expect:
+      affected_rows: 3
+
+  - id: "mutate_body.116.commit_update_where_not_like"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.117.select_after_update_where_not_like"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where address = 'NoMPrefix'
+    expect:
+      rows:
+        - [3]
+
+  - id: "mutate_body.118.delete_where_like"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where first_name like 'Mi%'
+    expect:
+      affected_rows: 2
+
+  - id: "mutate_body.119.commit_delete_where_like"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.120.select_after_delete_where_like"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [4]
+
+  - id: "mutate_body.121.delete_where_not_in"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where state not in ('CA','NV','AZ')
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.122.commit_delete_where_not_in"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.123.select_after_delete_where_not_in"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [3]
+
+  - id: "mutate_body.124.delete_where_not_between"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where age not between 30 and 70
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.125.commit_delete_where_not_between"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.126.select_after_delete_where_not_between"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [2]
+
+  - id: "mutate_body.127.delete_where_not_like"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where first_name not like 'M%'
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.128.commit_delete_where_not_like"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.129.select_after_delete_where_not_like"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.130.delete_negative_predicate_remainder"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where cust_id is not null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.131.commit_negative_predicate_remainder"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.132.select_after_negative_predicate_cleanup"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [0]

@@ -127,6 +127,7 @@ func NewLegacyDirectBitmapRuntimeFromSource(quantaSource *source.QuantaSource, t
 			},
 		},
 	}
+	sessions.Materialization = materialization
 	sameRowComparison := LegacyDirectSameRowBSIComparisonKernel{
 		Source:     quantaSource,
 		TableCache: tableCache,
@@ -289,6 +290,7 @@ type LegacyQuantaSourceSessionProvider struct {
 	SchemaDir                 string
 	DictionaryInvalidator     RuntimeDictionaryInvalidator
 	PrimaryKeyResolverFactory core.SessionPrimaryKeyResolverFactory
+	Materialization           ProjectionMaterializationKernel
 }
 
 // BorrowDirectSession borrows a table-scoped session from the source session pool.
@@ -342,6 +344,7 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 		Pool:                  pool,
 		Session:               session,
 		DictionaryInvalidator: p.DictionaryInvalidator,
+		Materialization:       p.Materialization,
 	}, nil, nil
 }
 
@@ -867,6 +870,7 @@ type LegacyQuantaSessionHandle struct {
 	Result                LegacyBitmapQueryResultAdapter
 	Synthetic             bool
 	DictionaryInvalidator RuntimeDictionaryInvalidator
+	Materialization       ProjectionMaterializationKernel
 }
 
 // QueryBitmap executes a neutral request through the legacy session BitmapIndex.
@@ -1570,6 +1574,10 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 	if err != nil || queryDiagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, queryDiagnostics, err
 	}
+	bitmapResult, residualDiagnostics, err := h.filterMutationResiduals(ctx, request, bitmapResult)
+	if err != nil || residualDiagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, residualDiagnostics, err
+	}
 	tableName := h.TableName
 	if request.Mutation.Target.Table != "" {
 		tableName = request.Mutation.Target.Table
@@ -1630,6 +1638,10 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 	if err != nil || queryDiagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, queryDiagnostics, err
 	}
+	bitmapResult, residualDiagnostics, err := h.filterMutationResiduals(ctx, request, bitmapResult)
+	if err != nil || residualDiagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, residualDiagnostics, err
+	}
 	tableName := h.TableName
 	if request.Mutation.Target.Table != "" {
 		tableName = request.Mutation.Target.Table
@@ -1654,6 +1666,50 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 		AffectedRows: uint64(len(bitmapResult.Rownums)),
 		Status:       fmt.Sprintf("Rows deleted: %d", len(bitmapResult.Rownums)),
 	}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) filterMutationResiduals(ctx context.Context, request ExecutionRequest, bitmapResult BitmapQueryResult) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	residualRequest, hasResiduals := legacyDirectMutationResidualRequest(request)
+	if !hasResiduals {
+		return bitmapResult, nil, nil
+	}
+	if h.Materialization == nil {
+		return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"mutation residual predicates require a projection materialization kernel",
+			),
+		}, nil
+	}
+	materialization, diagnostics := MaterializationRequestFromExecution(residualRequest, bitmapResult)
+	if diagnostics.BlocksNative() {
+		return BitmapQueryResult{}, diagnostics, nil
+	}
+	rowSet, materializationDiagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, materialization)
+	if err != nil || materializationDiagnostics.BlocksNative() {
+		return BitmapQueryResult{}, materializationDiagnostics, err
+	}
+	rowSet, residualDiagnostics := directBitmapFilterResidualScanPredicates(residualRequest, rowSet)
+	if residualDiagnostics.BlocksNative() {
+		return BitmapQueryResult{}, residualDiagnostics, nil
+	}
+	filtered := bitmapResult.Clone()
+	filtered.Rownums = append([]qsbridge.QuantaRownum(nil), rowSet.Rownums...)
+	filtered.Count = uint64(len(filtered.Rownums))
+	return filtered, nil, nil
+}
+
+func legacyDirectMutationResidualRequest(request ExecutionRequest) (ExecutionRequest, bool) {
+	if directBitmapHasResidualScanPredicates(request) {
+		return request, true
+	}
+	residuals := residualMutationPredicates(request.Mutation)
+	if len(residuals) == 0 {
+		return request, false
+	}
+	request.Predicates = append(append([]qsbridge.Predicate(nil), request.Predicates...), residuals...)
+	return request, true
 }
 
 func (h LegacyQuantaSessionHandle) mutationTimeWindow(request ExecutionRequest) (string, string) {

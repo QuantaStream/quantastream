@@ -71,6 +71,7 @@ func NewSQLExecutionRequest(query qsbridge.QuantaIntermediateQuery, request qsbr
 	runtimeRequest.Projection = cloneProjectionColumns(preparedQuery.Projection)
 	runtimeRequest.Predicates = append([]qsbridge.Predicate(nil), preparedQuery.Predicates...)
 	runtimeRequest.Predicates = append(runtimeRequest.Predicates, residualWhereExprPredicate(preparedQuery)...)
+	runtimeRequest.Predicates = append(runtimeRequest.Predicates, residualMutationPredicates(preparedQuery.Mutation)...)
 	runtimeRequest.GroupBy = append([]qsbridge.Expr(nil), preparedQuery.GroupBy...)
 	runtimeRequest.Having = append([]qsbridge.Predicate(nil), preparedQuery.Having...)
 	runtimeRequest.ProjectionOrder = projectionOrder(preparedQuery.Projection)
@@ -104,6 +105,16 @@ func residualWhereExprPredicate(query qsbridge.QueryIR) []qsbridge.Predicate {
 		Placement: qsbridge.PredicateResidualScan,
 		Scope:     qsbridge.PredicateScopeWhere,
 	}}
+}
+
+func residualMutationPredicates(mutation qsbridge.MutationShape) []qsbridge.Predicate {
+	residuals := make([]qsbridge.Predicate, 0, len(mutation.Predicates))
+	for _, predicate := range mutation.Predicates {
+		if predicate.Placement == qsbridge.PredicateResidualScan || predicate.Placement == qsbridge.PredicateResidualJoin {
+			residuals = append(residuals, predicate)
+		}
+	}
+	return residuals
 }
 
 func cloneProjectionColumns(columns []qsbridge.ProjectionColumn) []qsbridge.ProjectionColumn {

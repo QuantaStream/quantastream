@@ -359,6 +359,69 @@ func TestLegacyDirectMutationBitmapCopiesRownums(t *testing.T) {
 	}
 }
 
+func TestLegacyDirectMutationResidualFilterNarrowsBitmapResult(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "c", Table: "customers_qa"}
+	field := qsbridge.FieldRef{Table: table, Name: "first_name", Type: qsbridge.DataTypeString}
+	predicate := qsbridge.Predicate{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpLike, qsbridge.Field(field), qsbridge.Literal(qsbridge.ValueString, "Mi%")),
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "customers_qa",
+			Role:  "c",
+			Field: "first_name",
+			Type:  qsbridge.DataTypeString,
+		}},
+	})
+	request.SourceIndexes = []string{"customers_qa"}
+	request.Mutation = qsbridge.MutationShape{
+		Kind:       qsbridge.MutationUpdate,
+		Target:     table,
+		Predicates: []qsbridge.Predicate{predicate},
+	}
+	handle := LegacyQuantaSessionHandle{
+		Materialization: qsruntimeMaterializationKernelFunc(func(ctx context.Context, kernelRequest qsbridge.ProjectionMaterializationKernelRequest) (qsbridge.ProjectionMaterializationKernelResult, error) {
+			materialization := kernelRequest.Requests[0]
+			return qsbridge.ProjectionMaterializationKernelResult{
+				ID: kernelRequest.ID,
+				Results: []qsbridge.ProjectionMaterializationResult{{
+					ID:      kernelRequest.ID,
+					Request: materialization,
+					RowSet: qsbridge.QuantaProjectedRowSet{
+						Index:   materialization.Index,
+						Rownums: append([]qsbridge.QuantaRownum(nil), materialization.Rownums...),
+						ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+							Field: materialization.ProjectionFields[0],
+							Values: []qsbridge.ResultCell{
+								{Kind: qsbridge.ValueString, Value: "Milo"},
+								{Kind: qsbridge.ValueString, Value: "Yara"},
+								{Kind: qsbridge.ValueString, Value: "Mina"},
+							},
+						}},
+					},
+				}},
+			}, nil
+		}),
+	}
+
+	filtered, diagnostics, err := handle.filterMutationResiduals(context.Background(), request, BitmapQueryResult{
+		Success: true,
+		Count:   3,
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+	})
+	if err != nil {
+		t.Fatalf("filter mutation residuals: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if filtered.Count != 2 || len(filtered.Rownums) != 2 || filtered.Rownums[0] != 1 || filtered.Rownums[1] != 3 {
+		t.Fatalf("filtered result = %#v, want rownums 1 and 3", filtered)
+	}
+}
+
 func TestLegacyQuantaSessionHandleFindsCachedRootTableFromSessionBuffer(t *testing.T) {
 	table := &core.Table{BasicTable: &shared.BasicTable{Name: "customers_qa"}}
 	handle := LegacyQuantaSessionHandle{

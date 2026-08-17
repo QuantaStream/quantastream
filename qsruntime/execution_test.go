@@ -107,6 +107,49 @@ func TestExecutionRequestWithCandidateSetClearsFilterDomainTranslation(t *testin
 	}
 }
 
+func TestNewSQLExecutionRequestAddsMutationResidualPredicates(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "c", Table: "customers_qa"}
+	field := qsbridge.FieldRef{Table: table, Name: "first_name", Type: qsbridge.DataTypeString}
+	residual := qsbridge.Predicate{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpLike, qsbridge.Field(field), qsbridge.Literal(qsbridge.ValueString, "Mi%")),
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}
+	pushdown := qsbridge.Predicate{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(field), qsbridge.Literal(qsbridge.ValueString, "Milo")),
+		Placement: qsbridge.PredicatePushdown,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}
+	request := qsbridge.ExecutionRequest{
+		Bound: qsbridge.BoundPlan{
+			Prepared: qsbridge.PreparedPlan{
+				Query: qsbridge.QueryIR{
+					Kind:    qsbridge.QueryKindUpdate,
+					Sources: []qsbridge.TableInstance{table},
+					Mutation: qsbridge.MutationShape{
+						Kind:       qsbridge.MutationUpdate,
+						Target:     table,
+						Predicates: []qsbridge.Predicate{pushdown, residual},
+					},
+				},
+			},
+		},
+	}
+
+	runtimeRequest := NewSQLExecutionRequest(qsbridge.QuantaIntermediateQuery{}, request)
+
+	if len(runtimeRequest.Predicates) != 1 {
+		t.Fatalf("runtime predicates = %#v, want only mutation residual", runtimeRequest.Predicates)
+	}
+	binary, ok := runtimeRequest.Predicates[0].Expr.(qsbridge.BinaryExpr)
+	if !ok {
+		t.Fatalf("runtime predicate expr = %T, want BinaryExpr", runtimeRequest.Predicates[0].Expr)
+	}
+	if binary.Op != qsbridge.BinaryOpLike || runtimeRequest.Predicates[0].Placement != qsbridge.PredicateResidualScan {
+		t.Fatalf("runtime predicate = %#v, want residual LIKE predicate", runtimeRequest.Predicates[0])
+	}
+}
+
 func TestLegacyBitmapQueryAdapterConvertsExecutionRequestToProto(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		Fragments: []qsbridge.QuantaQueryFragment{{
