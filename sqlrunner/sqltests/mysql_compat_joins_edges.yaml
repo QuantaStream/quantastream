@@ -203,3 +203,70 @@ tests:
       rows:
         - [BUILDING, 45293229]
         - [AUTOMOBILE, 35592782]
+
+  - id: mysql_compat_joins_edges.010.grouped_join_having_aggregate_alias
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_having_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, having, count, aliases, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             count(*) as order_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      group by c.c_mktsegment
+      having order_count > 1400
+      order by order_count desc, market_segment
+    expect:
+      columns: [market_segment, order_count]
+      rows:
+        - [BUILDING, 3706]
+        - [FURNITURE, 3007]
+        - [AUTOMOBILE, 2979]
+        - [HOUSEHOLD, 2772]
+        - [MACHINERY, 2536]
+
+  - id: mysql_compat_joins_edges.011.grouped_join_having_aggregate_not_selected
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_having_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, having, count, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      group by c.c_mktsegment
+      having count(*) > 1400
+      order by c.c_mktsegment
+    expect:
+      columns: [market_segment]
+      rows:
+        - [AUTOMOBILE]
+        - [BUILDING]
+        - [FURNITURE]
+        - [HOUSEHOLD]
+        - [MACHINERY]
+
+  - id: mysql_compat_joins_edges.012.grouped_join_having_aggregate_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_having_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, having, sum, arithmetic, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(o.o_orderkey) as orderkey_sum
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      group by c.c_mktsegment
+      having sum(o.o_orderkey * 2) > 180000000
+      order by orderkey_sum desc, market_segment
+    expect:
+      columns: [market_segment, orderkey_sum]
+      rows:
+        - [BUILDING, 111721736]
