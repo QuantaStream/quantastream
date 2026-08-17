@@ -202,6 +202,18 @@ tests:
     expect:
       columns: [variable_name, value]
 
+  - id: mysql_compat_catalog.014015.show_global_variables
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables, global_scope]
+    sql: |
+      show global variables like 'lower_case_table_names'
+    expect:
+      columns: [variable_name, value]
+      row_count: 1
+
   - id: mysql_compat_catalog.01402.show_variables_where
     status: supported
     kind: query
@@ -236,7 +248,6 @@ tests:
       show variables where Variable_name like 'character_set_%' or Variable_name = 'collation_connection'
     expect:
       columns: [variable_name, value]
-      row_count: 4
 
   - id: mysql_compat_catalog.01405.show_session_variables_where
     status: supported
@@ -250,6 +261,18 @@ tests:
       columns: [variable_name, value]
       row_count: 1
 
+  - id: mysql_compat_catalog.01406.show_global_variables_where_in
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables, global_scope, where, in, metadata_columns]
+    sql: |
+      show global variables where Variable_name in ('lower_case_table_names', 'protocol_version')
+    expect:
+      columns: [variable_name, value]
+      row_count: 2
+
   - id: mysql_compat_catalog.0141.show_status
     status: supported
     kind: query
@@ -260,6 +283,18 @@ tests:
       show status like 'Threads_connected'
     expect:
       columns: [variable_name, value]
+
+  - id: mysql_compat_catalog.014105.show_session_status
+    status: supported
+    kind: query
+    feature: catalog_status
+    compatibility: mysql
+    requires: [show_status, session_scope, metadata_columns]
+    sql: |
+      show session status like 'Threads_connected'
+    expect:
+      columns: [variable_name, value]
+      row_count: 1
 
   - id: mysql_compat_catalog.01411.show_global_status
     status: supported

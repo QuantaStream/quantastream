@@ -561,8 +561,8 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 2 {
-		t.Fatalf("rows = %#v, want two two-column rows", chunk.Rows)
+	if len(chunk.Rows) != 4 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("rows = %#v, want four two-column rows", chunk.Rows)
 	}
 	if got, want := chunk.Rows[0][0].Value, "version"; got != want {
 		t.Fatalf("first variable = %#v, want %q", got, want)
@@ -624,8 +624,20 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("charset variables chunk diagnostics = %#v", diagnostics)
 	}
-	if len(charsetVariablesChunk.Rows) != 4 || charsetVariablesChunk.Rows[0][0].Value != "character_set_client" || charsetVariablesChunk.Rows[3][0].Value != "collation_connection" {
+	if len(charsetVariablesChunk.Rows) != 5 || charsetVariablesChunk.Rows[0][0].Value != "character_set_client" || charsetVariablesChunk.Rows[4][0].Value != "collation_connection" {
 		t.Fatalf("charset variables rows = %#v", charsetVariablesChunk.Rows)
+	}
+
+	globalVersion, err := runtime.ExecuteSQL(context.Background(), "show global variables like 'version_compile_%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW GLOBAL VARIABLES failed: %v", err)
+	}
+	globalVersionChunk, diagnostics := globalVersion.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("global version chunk diagnostics = %#v", diagnostics)
+	}
+	if len(globalVersionChunk.Rows) != 2 || globalVersionChunk.Rows[0][0].Value != "version_compile_machine" || globalVersionChunk.Rows[1][0].Value != "version_compile_os" {
+		t.Fatalf("global version rows = %#v", globalVersionChunk.Rows)
 	}
 }
 
@@ -693,6 +705,18 @@ func TestSQLRuntimeExecuteSQLShowStatusLikeReturnsCatalogRows(t *testing.T) {
 	}
 	if len(statusOrChunk.Rows) != 2 || statusOrChunk.Rows[0][0].Value != "Connections" || statusOrChunk.Rows[1][0].Value != "Threads_connected" {
 		t.Fatalf("status or rows = %#v", statusOrChunk.Rows)
+	}
+
+	sessionStatus, err := runtime.ExecuteSQL(context.Background(), "show session status like 'Threads_connected'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW SESSION STATUS failed: %v", err)
+	}
+	sessionStatusChunk, diagnostics := sessionStatus.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("session status chunk diagnostics = %#v", diagnostics)
+	}
+	if len(sessionStatusChunk.Rows) != 1 || sessionStatusChunk.Rows[0][0].Value != "Threads_connected" {
+		t.Fatalf("session status rows = %#v", sessionStatusChunk.Rows)
 	}
 }
 

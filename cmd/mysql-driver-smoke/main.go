@@ -68,6 +68,8 @@ func run(args []string) int {
 		{Label: "database", SQL: "select database() as database_value, schema() as schema_value"},
 		{Label: "session_identity", SQL: "select user() as user_value, current_user() as current_user_value, connection_id() as connection_id_value"},
 		{Label: "charset_variables", SQL: "show variables where Variable_name like 'character_set_%' or Variable_name = 'collation_connection'"},
+		{Label: "client_variables", SQL: "show global variables where Variable_name in ('lower_case_table_names', 'protocol_version', 'version_compile_machine', 'version_compile_os')"},
+		{Label: "session_status", SQL: "show session status like 'Threads_connected'"},
 		{Label: "information_schema_character_sets", SQL: "select character_set_name, default_collate_name, maxlen from information_schema.character_sets where character_set_name = 'utf8mb4'"},
 		{Label: "information_schema_collations", SQL: "select collation_name, character_set_name, is_default, pad_attribute from information_schema.collations where character_set_name in ('utf8mb4') order by collation_name"},
 		{Label: "tables", SQL: "show full tables"},

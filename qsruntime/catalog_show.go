@@ -612,12 +612,19 @@ func (r SQLRuntime) showVariableRows(pattern string, patterns []string) []showVa
 		{name: "character_set_client", value: "utf8mb4"},
 		{name: "character_set_connection", value: "utf8mb4"},
 		{name: "character_set_results", value: "utf8mb4"},
+		{name: "character_set_server", value: "utf8mb4"},
 		{name: "collation_connection", value: "utf8mb4_0900_ai_ci"},
+		{name: "collation_server", value: "utf8mb4_0900_ai_ci"},
+		{name: "license", value: "Apache-2.0"},
 		{name: "lower_case_table_names", value: "0"},
+		{name: "max_allowed_packet", value: "67108864"},
+		{name: "protocol_version", value: "10"},
 		{name: "sql_mode", value: strings.Join(sqlModeStrings(r.Session.SQLModes), ",")},
 		{name: "time_zone", value: runtimeSessionTimeZone(r.Session)},
 		{name: "version", value: "8.0.0-quantastream"},
 		{name: "version_comment", value: "QuantaStream"},
+		{name: "version_compile_machine", value: "x86_64"},
+		{name: "version_compile_os", value: "Linux"},
 	}
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" && len(patterns) == 0 {
