@@ -2,10 +2,12 @@ version: 1
 name: mysql_compat_mutations_boundaries
 
 tests:
+  # Supported no-op DDL forms. These are useful cleanup guards in both MySQL and
+  # QuantaStream even though real table creation remains catalog-backed.
   - id: mysql_compat_mutations_boundaries.001.drop_table_if_exists
     status: supported
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_ddl_safe_noop
     compatibility: mysql
     requires: [drop_table, if_exists]
     sql: |
@@ -14,18 +16,20 @@ tests:
   - id: mysql_compat_mutations_boundaries.002.drop_ctas_table_if_exists
     status: supported
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_ddl_safe_noop
     compatibility: mysql
     requires: [drop_table, if_exists]
     sql: |
       drop table if exists qs_mysql_compat_mutations_ctas
 
+  # True MySQL DDL boundaries. QS table creation is still catalog/YAML-backed,
+  # so inline schema creation and CTAS stay as post-1.0 compatibility targets.
   - id: mysql_compat_mutations_boundaries.003.create_inline_table
     status: xfail
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_mysql_ddl_boundary
     compatibility: mysql
-    requires: [create_table, int, varchar]
+    requires: [create_table, inline_schema, primary_key, int, varchar]
     issue: "Inline CREATE TABLE definitions are not supported yet; QS table creation is catalog/YAML-backed."
     sql: |
       create table qs_mysql_compat_mutations (
@@ -34,13 +38,15 @@ tests:
         amount int
       )
 
+  # These are DML-shaped MySQL cases, but this fixture depends on the inline
+  # scratch table above. Catalog-backed DML remains covered by mutate_tests_body.
   - id: mysql_compat_mutations_boundaries.004.multi_row_insert
     status: xfail
     kind: statement
-    feature: mutations_insert_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [insert, values]
-    issue: "This MySQL insert depends on inline CREATE TABLE support for the scratch table."
+    issue: "This MySQL-compatible insert depends on inline CREATE TABLE support for the scratch table; catalog-backed INSERT coverage lives in mutate_tests_body.yaml."
     sql: |
       insert into qs_mysql_compat_mutations (id, name, amount)
       values (1, 'Abe', 10), (2, 'Abby', 20)
@@ -50,10 +56,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.005.update_arithmetic_assignment
     status: xfail
     kind: statement
-    feature: mutations_update_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [update, arithmetic, where, comparison]
-    issue: "UPDATE arithmetic assignment and the scratch table setup are not supported by the MySQL compatibility surface yet."
+    issue: "This MySQL-compatible update depends on inline CREATE TABLE support for the scratch table; arithmetic assignment is a follow-up DML compatibility target."
     sql: |
       update qs_mysql_compat_mutations
       set amount = amount + 5
@@ -64,10 +70,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.006.delete_rows
     status: xfail
     kind: statement
-    feature: mutations_delete_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [delete, where, comparison]
-    issue: "This delete depends on inline CREATE TABLE support for the scratch table."
+    issue: "This MySQL-compatible delete depends on inline CREATE TABLE support for the scratch table; catalog-backed DELETE coverage lives in mutate_tests_body.yaml."
     sql: |
       delete from qs_mysql_compat_mutations
       where id = 1
@@ -78,10 +84,10 @@ tests:
     status: xfail
     kind: query
     order: exact
-    feature: mutations_select_after_write_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [select, order_by]
-    issue: "Read-after-write on a MySQL-created scratch table depends on inline CREATE TABLE and DML support."
+    issue: "Read-after-write on a MySQL-created scratch table depends on inline CREATE TABLE support; catalog-backed DML readback coverage lives in mutate_tests_body.yaml."
     sql: |
       select id, name, amount
       from qs_mysql_compat_mutations
@@ -94,7 +100,7 @@ tests:
   - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
     status: xfail
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_mysql_ddl_boundary
     compatibility: mysql
     requires: [drop_table, cascade]
     issue: "DROP TABLE ... CASCADE is a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading catalog changes."
@@ -104,7 +110,7 @@ tests:
   - id: mysql_compat_mutations_boundaries.009.create_table_as_select
     status: xfail
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_mysql_ddl_boundary
     compatibility: mysql
     requires: [create_table_as, select]
     issue: "CREATE TABLE AS SELECT requires result-schema inference plus materializing a new table from a SELECT result; QS table creation is still catalog/YAML-backed."
@@ -114,10 +120,11 @@ tests:
       from customer
       where c_custkey <= 3
 
+  # Cleanup no-ops, safe even when the boundary table creation never happened.
   - id: mysql_compat_mutations_boundaries.900.cleanup
     status: supported
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_ddl_safe_noop
     compatibility: mysql
     requires: [drop_table, if_exists]
     sql: |
@@ -126,7 +133,7 @@ tests:
   - id: mysql_compat_mutations_boundaries.901.cleanup_ctas
     status: supported
     kind: statement
-    feature: mutations_ddl_boundary
+    feature: mutations_ddl_safe_noop
     compatibility: mysql
     requires: [drop_table, if_exists]
     sql: |

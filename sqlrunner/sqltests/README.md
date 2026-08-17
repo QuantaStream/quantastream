@@ -46,6 +46,13 @@ target to see `XFAIL` roadmap gaps. Do not include them in MySQL reference
 captures or `MYSQL_COMPAT_SUITE=all`, because stock MySQL success would
 correctly appear as `XPASS`.
 
+Mutation coverage is split deliberately. `mysql_compat_mutations.yaml` keeps
+diff-safe transaction and cleanup statements. Catalog-backed DML behavior lives
+in `mutate_tests_body.yaml`, where QuantaStream-owned test tables are available.
+`mysql_compat_mutations_boundaries.yaml` tracks MySQL scratch-table workflows
+that currently depend on inline `CREATE TABLE`, `CREATE TABLE AS SELECT`, or
+`DROP TABLE ... CASCADE`.
+
 ## Capturing MySQL Reference Results
 
 Compatibility suites can generate runnable SQLRunner suites with `expect`
@@ -88,5 +95,6 @@ Run the view boundary suite directly against QuantaStream targets:
 ```bash
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_views_boundaries.yaml -compat_report
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_group_order_boundaries.yaml -compat_report
+go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_mutations_boundaries.yaml -compat_report
 go run . -engine inabox-direct -consul 127.0.0.1:8500 -suite_file sqltests/mysql_compat_catalog.yaml -compat_report
 ```
