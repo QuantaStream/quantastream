@@ -47,8 +47,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if len(selectStmt.Tables) == 0 {
 		return selectStmt, nil
 	}
-	viewCount := 0
+	expansionCount := 0
 	for _, table := range selectStmt.Tables {
+		if table.DerivedSelect != nil {
+			expansionCount++
+			continue
+		}
 		if s.tableExists(table) {
 			continue
 		}
@@ -56,23 +60,35 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			if diagnostics.BlocksNative() {
 				return selectStmt, diagnostics
 			}
-			viewCount++
+			expansionCount++
 		}
 	}
-	if viewCount == 0 {
+	if expansionCount == 0 {
 		return selectStmt, nil
 	}
-	if viewCount > 1 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+	if expansionCount > 1 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
 		return selectStmt, DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical view expansion currently supports one view source without memberships or subqueries"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports one view or derived table source without memberships or subqueries"),
 		}
 	}
 	var expansion viewExpansion
-	var foundView bool
+	var foundExpansion bool
 	tables := make([]UnboundTable, 0, len(selectStmt.Tables))
 	joins := make([]UnboundJoin, 0, len(selectStmt.Joins))
 	predicates := make([]UnboundPredicate, 0)
 	for _, table := range selectStmt.Tables {
+		if table.DerivedSelect != nil {
+			nextExpansion, diagnostics, ok := s.expandDerivedTable(table)
+			if diagnostics.BlocksNative() || !ok {
+				return selectStmt, diagnostics
+			}
+			expansion = nextExpansion
+			foundExpansion = true
+			tables = append(tables, nextExpansion.tables...)
+			joins = append(joins, nextExpansion.joins...)
+			predicates = append(predicates, nextExpansion.predicates...)
+			continue
+		}
 		if s.tableExists(table) {
 			tables = append(tables, table)
 			continue
@@ -89,12 +105,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			return selectStmt, diagnostics
 		}
 		expansion = nextExpansion
-		foundView = true
+		foundExpansion = true
 		tables = append(tables, nextExpansion.tables...)
 		joins = append(joins, nextExpansion.joins...)
 		predicates = append(predicates, nextExpansion.predicates...)
 	}
-	if !foundView {
+	if !foundExpansion {
 		return selectStmt, nil
 	}
 	selectStmt.Tables = tables
@@ -199,6 +215,59 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 	}, nil, true
 }
 
+func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansion, DiagnosticSet, bool) {
+	if table.DerivedSelect == nil {
+		return viewExpansion{}, nil, false
+	}
+	derivedSelect := cloneUnboundSelect(*table.DerivedSelect)
+	derivedSelect, diagnostics := s.expandSelect(derivedSelect)
+	if diagnostics.BlocksNative() {
+		return viewExpansion{}, diagnostics, true
+	}
+	derivedName := tableRefName(table.Name, table.Alias)
+	if derivedName == "" {
+		derivedName = "derived"
+	}
+	if diagnostics := validateExpandableDerivedTableSelect(derivedName, derivedSelect); diagnostics.BlocksNative() {
+		return viewExpansion{}, diagnostics, true
+	}
+	columns, diagnostics := buildViewProjectionMap(derivedSelect)
+	if diagnostics.BlocksNative() {
+		return viewExpansion{}, diagnostics, true
+	}
+	outerRef := tableRefName(table.Name, table.Alias)
+	tables := append([]UnboundTable(nil), derivedSelect.Tables...)
+	joins := append([]UnboundJoin(nil), derivedSelect.Joins...)
+	predicates := append([]UnboundPredicate(nil), derivedSelect.Predicates...)
+	aggregates := append([]UnboundAggregate(nil), derivedSelect.Aggregates...)
+	if len(tables) == 1 {
+		base := tables[0]
+		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
+		columns, diagnostics = rewriteViewProjectionMapSource(columns, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
+		aggregates, diagnostics = rewriteViewDefinitionAggregates(aggregates, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
+		tables[0].Alias = outerRef
+		tables[0].Role = table.Role
+	}
+	return viewExpansion{
+		tables:     tables,
+		joins:      joins,
+		predicates: predicates,
+		aggregates: aggregates,
+		columns:    columns,
+		viewRef:    outerRef,
+		distinct:   derivedSelect.Result.Distinct,
+	}, nil, true
+}
+
 func (s viewExpansionState) tableExists(table UnboundTable) bool {
 	if s.catalog == nil {
 		return false
@@ -230,27 +299,50 @@ func (s viewExpansionState) schemaForTable(table UnboundTable) string {
 }
 
 func validateExpandableViewSelect(schema string, viewName string, selectStmt UnboundSelect) DiagnosticSet {
+	return validateExpandableLogicalSourceSelect("view "+qualifiedCatalogName(schema, viewName), selectStmt)
+}
+
+func validateExpandableDerivedTableSelect(derivedName string, selectStmt UnboundSelect) DiagnosticSet {
+	return validateExpandableLogicalSourceSelect("derived table "+derivedName, selectStmt)
+}
+
+func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt UnboundSelect) DiagnosticSet {
 	if len(selectStmt.Tables) == 0 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" must expand to base tables without memberships or subqueries"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" must expand to base tables without memberships or subqueries"),
 		}
 	}
 	if len(selectStmt.GroupBy) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.OrderBy) > 0 {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain grouping, having, or order by yet"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain grouping, having, or order by yet"),
 		}
 	}
 	if selectStmt.Result.AppliesResultWindow() {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain limit or offset yet"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain limit or offset yet"),
 		}
 	}
 	if selectStmt.WhereExpr != nil {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view "+qualifiedCatalogName(schema, viewName)+" cannot contain grouped boolean predicates yet"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain grouped boolean predicates yet"),
 		}
 	}
 	return nil
+}
+
+func cloneUnboundSelect(selectStmt UnboundSelect) UnboundSelect {
+	selectStmt.Tables = append([]UnboundTable(nil), selectStmt.Tables...)
+	selectStmt.Projection = append([]UnboundProjection(nil), selectStmt.Projection...)
+	selectStmt.Joins = append([]UnboundJoin(nil), selectStmt.Joins...)
+	selectStmt.Memberships = append([]UnboundMembership(nil), selectStmt.Memberships...)
+	selectStmt.Predicates = append([]UnboundPredicate(nil), selectStmt.Predicates...)
+	selectStmt.Subqueries = append([]UnboundSubqueryPlanIntent(nil), selectStmt.Subqueries...)
+	selectStmt.GroupBy = append([]UnboundExpr(nil), selectStmt.GroupBy...)
+	selectStmt.Aggregates = append([]UnboundAggregate(nil), selectStmt.Aggregates...)
+	selectStmt.Having = append([]UnboundPredicate(nil), selectStmt.Having...)
+	selectStmt.OrderBy = append([]UnboundSort(nil), selectStmt.OrderBy...)
+	selectStmt.Blockers = append([]NativeBlocker(nil), selectStmt.Blockers...)
+	return selectStmt
 }
 
 func validateDistinctViewUsage(selectStmt UnboundSelect, expansion viewExpansion) DiagnosticSet {

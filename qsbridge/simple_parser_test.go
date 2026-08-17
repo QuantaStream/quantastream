@@ -968,6 +968,40 @@ func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select c.customer_key, customer_name
+		from (
+			select c_custkey as customer_key, c_name as customer_name
+			from customer
+			where c_mktsegment = 'BUILDING'
+		) as c
+		where customer_key = 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one derived source", statement.Select.Tables)
+	}
+	table := statement.Select.Tables[0]
+	if table.Name != "c" || table.Alias != "c" {
+		t.Fatalf("table = %#v, want derived alias c", table)
+	}
+	if table.DerivedSelect == nil {
+		t.Fatalf("derived select is nil")
+	}
+	if got := table.DerivedSQL; !strings.HasPrefix(strings.ToLower(got), "select c_custkey") {
+		t.Fatalf("derived sql = %q, want inner SELECT", got)
+	}
+	if len(table.DerivedSelect.Tables) != 1 || table.DerivedSelect.Tables[0].Name != "customer" {
+		t.Fatalf("derived tables = %#v, want customer", table.DerivedSelect.Tables)
+	}
+	if len(table.DerivedSelect.Predicates) != 1 {
+		t.Fatalf("derived predicates = %#v, want one predicate", table.DerivedSelect.Predicates)
+	}
+}
+
 func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
 	if diagnostics.BlocksNative() {

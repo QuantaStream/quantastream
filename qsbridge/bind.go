@@ -7,10 +7,12 @@ import (
 
 // UnboundTable describes a table reference before catalog binding.
 type UnboundTable struct {
-	Schema string
-	Name   string
-	Alias  string
-	Role   string
+	Schema        string
+	Name          string
+	Alias         string
+	Role          string
+	DerivedSQL    string
+	DerivedSelect *UnboundSelect
 }
 
 // BoundTable records one query-local table instance and its catalog metadata.

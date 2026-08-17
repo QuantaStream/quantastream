@@ -1,0 +1,75 @@
+version: 1
+name: mysql_compat_derived_tables
+
+tests:
+  - id: mysql_compat_derived_tables.001.simple_projection_predicate
+    status: supported
+    kind: query
+    order: exact
+    feature: derived_tables
+    compatibility: mysql
+    requires: [select, derived_table, aliases, where, in_predicate, order_by]
+    sql: |
+      select customer_key, customer_name, market_segment
+      from (
+        select
+          c_custkey as customer_key,
+          c_name as customer_name,
+          c_mktsegment as market_segment
+        from customer
+      ) as c
+      where customer_key in (1, 2, 3)
+      order by customer_key
+    expect:
+      columns: [customer_key, customer_name, market_segment]
+      rows:
+        - [1, "Customer#000000001", BUILDING]
+        - [2, "Customer#000000002", AUTOMOBILE]
+        - [3, "Customer#000000003", AUTOMOBILE]
+
+  - id: mysql_compat_derived_tables.002.inner_and_outer_predicates
+    status: supported
+    kind: query
+    order: exact
+    feature: derived_tables
+    compatibility: mysql
+    requires: [select, derived_table, aliases, where, in_predicate, order_by]
+    sql: |
+      select customer_key, market_segment
+      from (
+        select
+          c_custkey as customer_key,
+          c_mktsegment as market_segment
+        from customer
+        where c_mktsegment = 'BUILDING'
+      ) as c
+      where customer_key in (1, 2, 3)
+      order by customer_key
+    expect:
+      columns: [customer_key, market_segment]
+      rows:
+        - [1, BUILDING]
+
+  - id: mysql_compat_derived_tables.003.expression_alias_predicate_limit
+    status: supported
+    kind: query
+    order: exact
+    feature: derived_tables
+    compatibility: mysql
+    requires: [select, derived_table, aliases, expression_projection, where, order_by, limit]
+    sql: |
+      select next_customer_key
+      from (
+        select
+          c_custkey + 1 as next_customer_key
+        from customer
+        where c_custkey in (1, 2, 3)
+      ) as c
+      where next_customer_key >= 3
+      order by next_customer_key
+      limit 2
+    expect:
+      columns: [next_customer_key]
+      rows:
+        - [3]
+        - [4]

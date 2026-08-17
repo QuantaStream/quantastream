@@ -39,6 +39,55 @@ func TestPlannerExpandsSimpleLogicalView(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsSimpleDerivedTable(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select customer_key, customer_name
+		from (
+			select c_custkey as customer_key, c_name as customer_name
+			from customer
+			where c_name = 'Customer#000000001'
+		) as c
+		where customer_key = 1
+		order by customer_key
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "customer" {
+		t.Fatalf("sources = %#v, want customer", result.Query.Sources)
+	}
+	if got := result.Query.Sources[0].RefName(); got != "c" {
+		t.Fatalf("source ref = %q, want c", got)
+	}
+	if len(result.Query.Predicates) != 2 {
+		t.Fatalf("predicates = %d, want derived + outer predicates", len(result.Query.Predicates))
+	}
+	if !predicateReferencesField(result.Query.Predicates[0], "c", "c_name") {
+		t.Fatalf("derived predicate = %#v, want c.c_name", result.Query.Predicates[0])
+	}
+	if !predicateReferencesField(result.Query.Predicates[1], "c", "c_custkey") {
+		t.Fatalf("outer predicate = %#v, want c.c_custkey", result.Query.Predicates[1])
+	}
+	if len(result.Query.Projection) != 2 {
+		t.Fatalf("projection = %#v, want two columns", result.Query.Projection)
+	}
+	if result.Query.Projection[0].Alias != "customer_key" || result.Query.Projection[1].Alias != "customer_name" {
+		t.Fatalf("projection aliases = %#v, want customer_key/customer_name", result.Query.Projection)
+	}
+	if !exprReferencesField(result.Query.Projection[0].Expr, "c", "c_custkey") {
+		t.Fatalf("projection[0] = %#v, want c.c_custkey", result.Query.Projection[0].Expr)
+	}
+	if len(result.Query.OrderBy) != 1 || !exprReferencesField(result.Query.OrderBy[0].Expr, "c", "c_custkey") {
+		t.Fatalf("order by = %#v, want c.c_custkey", result.Query.OrderBy)
+	}
+}
+
 func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

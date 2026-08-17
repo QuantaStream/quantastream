@@ -186,7 +186,10 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			return UnboundStatement{}, diagnostic, false
 		}
 	}
-	sourceOnlyText, whereText, hasWhere := splitOptionalKeyword(sourceText, "where")
+	sourceOnlyText, whereText, hasWhere := splitBeforeTopLevelKeyword(sourceText, "where")
+	if !hasWhere {
+		sourceOnlyText = sourceText
+	}
 	tables, joins, diagnostic, ok := parseSimpleSources(sourceOnlyText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -3075,6 +3078,9 @@ func normalizeSimpleJoinEdge(join UnboundJoin, leftTable UnboundTable) UnboundJo
 }
 
 func parseSimpleTable(sourceText string) (UnboundTable, Diagnostic, bool) {
+	if table, diagnostic, found, ok := parseSimpleDerivedTable(sourceText); found {
+		return table, diagnostic, ok
+	}
 	fields := strings.Fields(sourceText)
 	switch len(fields) {
 	case 1:
@@ -3095,6 +3101,47 @@ func parseSimpleTable(sourceText string) (UnboundTable, Diagnostic, bool) {
 	default:
 		return UnboundTable{}, simpleParserDiagnostic("expected one table source"), false
 	}
+}
+
+func parseSimpleDerivedTable(sourceText string) (UnboundTable, Diagnostic, bool, bool) {
+	inner, aliasText, diagnostic, found, ok := splitLeadingSimpleParenthesized(sourceText)
+	if !found {
+		return UnboundTable{}, Diagnostic{}, false, true
+	}
+	if !ok {
+		return UnboundTable{}, diagnostic, true, false
+	}
+	if _, ok := consumeKeyword(inner, "select"); !ok {
+		return UnboundTable{}, simpleParserDiagnostic("derived table source must be a SELECT statement"), true, false
+	}
+	if aliasText == "" {
+		return UnboundTable{}, simpleParserDiagnostic("derived table alias is required"), true, false
+	}
+	if remaining, ok := consumeKeyword(aliasText, "as"); ok {
+		aliasText = strings.TrimSpace(remaining)
+		if aliasText == "" {
+			return UnboundTable{}, simpleParserDiagnostic("derived table alias is missing after AS"), true, false
+		}
+	}
+	aliasFields := strings.Fields(aliasText)
+	if len(aliasFields) != 1 || strings.Contains(aliasFields[0], ".") {
+		return UnboundTable{}, simpleParserDiagnostic("derived table alias must be a simple identifier"), true, false
+	}
+	statement, diagnostic, ok := parseSimpleSelect(inner)
+	if !ok {
+		return UnboundTable{}, diagnostic, true, false
+	}
+	if statement.Kind != QueryKindSelect {
+		return UnboundTable{}, simpleParserDiagnostic("derived table source must be a SELECT statement"), true, false
+	}
+	derived := statement.Select
+	alias := aliasFields[0]
+	return UnboundTable{
+		Name:          alias,
+		Alias:         alias,
+		DerivedSQL:    strings.TrimSpace(inner),
+		DerivedSelect: &derived,
+	}, Diagnostic{}, true, true
 }
 
 func parseSimpleProjections(projectionText string) ([]UnboundProjection, []UnboundAggregate, Diagnostic, bool) {
@@ -3938,6 +3985,49 @@ func simpleStripBalancedParens(text string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(text[1 : len(text)-1]), true
+}
+
+func splitLeadingSimpleParenthesized(text string) (string, string, Diagnostic, bool, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") {
+		return "", "", Diagnostic{}, false, true
+	}
+	depth := 0
+	quoted := false
+	for i := 0; i < len(trimmed); i++ {
+		ch := trimmed[i]
+		if ch == '\'' {
+			if quoted && i+1 < len(trimmed) && trimmed[i+1] == '\'' {
+				i++
+				continue
+			}
+			quoted = !quoted
+			continue
+		}
+		if quoted {
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return "", "", simpleParserDiagnostic("unbalanced derived table parentheses"), true, false
+			}
+			if depth == 0 {
+				inner := strings.TrimSpace(trimmed[1:i])
+				if inner == "" {
+					return "", "", simpleParserDiagnostic("derived table source is empty"), true, false
+				}
+				return inner, strings.TrimSpace(trimmed[i+1:]), Diagnostic{}, true, true
+			}
+		}
+	}
+	if quoted {
+		return "", "", simpleParserDiagnostic("unterminated string literal in derived table source"), true, false
+	}
+	return "", "", simpleParserDiagnostic("unbalanced derived table parentheses"), true, false
 }
 
 func simpleAggregateReturnType(function string) DataType {
