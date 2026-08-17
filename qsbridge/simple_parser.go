@@ -245,6 +245,9 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("UPDATE must include SET"), false
 	}
+	if diagnostic, blocked := simpleMutationOrderLimitDiagnostic("UPDATE", mutationText); blocked {
+		return UnboundStatement{}, diagnostic, false
+	}
 	table, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -315,6 +318,9 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("DELETE must include FROM"), false
 	}
+	if diagnostic, blocked := simpleMutationOrderLimitDiagnostic("DELETE", deleteBody); blocked {
+		return UnboundStatement{}, diagnostic, false
+	}
 	targetText, whereText, hasWhere := splitOptionalKeyword(deleteBody, "where")
 	table, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
@@ -336,6 +342,18 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 			Result:     ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func simpleMutationOrderLimitDiagnostic(statement string, text string) (Diagnostic, bool) {
+	if _, orderTail, ok := splitBeforeTopLevelKeyword(text, "order"); ok {
+		if _, ok := consumeKeyword(orderTail, "by"); ok {
+			return simpleParserDiagnostic(statement + " ORDER BY is not supported yet"), true
+		}
+	}
+	if _, _, ok := splitBeforeTopLevelKeyword(text, "limit"); ok {
+		return simpleParserDiagnostic(statement + " LIMIT is not supported yet"), true
+	}
+	return Diagnostic{}, false
 }
 
 func parseSimpleTruncate(sql string) (UnboundStatement, Diagnostic, bool) {

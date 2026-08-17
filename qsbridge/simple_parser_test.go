@@ -56,6 +56,41 @@ func TestSimpleParserBridgeParsesUpdateWithoutWhereForValidation(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeRejectsUpdateOrderLimitBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "order by",
+			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id",
+			message: "UPDATE ORDER BY is not supported yet",
+		},
+		{
+			name:    "limit",
+			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' limit 1",
+			message: "UPDATE LIMIT is not supported yet",
+		},
+		{
+			name:    "order by limit",
+			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id limit 1",
+			message: "UPDATE ORDER BY is not supported yet",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, diagnostics := SimpleParserBridge{}.Parse(test.sql)
+			if !diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want parser blocker", diagnostics)
+			}
+			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
+				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
+			}
+		})
+	}
+}
+
 func TestSimpleParserBridgeParsesDeleteStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("delete from customers_qa where state = 'ID'")
 	if diagnostics.BlocksNative() {
@@ -82,6 +117,41 @@ func TestSimpleParserBridgeParsesDeleteWithoutWhereForValidation(t *testing.T) {
 	}
 	if len(statement.Delete.Predicates) != 0 {
 		t.Fatalf("predicates = %d, want validation to handle missing predicate", len(statement.Delete.Predicates))
+	}
+}
+
+func TestSimpleParserBridgeRejectsDeleteOrderLimitBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "order by",
+			sql:     "delete from customers_qa where state = 'ID' order by cust_id",
+			message: "DELETE ORDER BY is not supported yet",
+		},
+		{
+			name:    "limit",
+			sql:     "delete from customers_qa where state = 'ID' limit 1",
+			message: "DELETE LIMIT is not supported yet",
+		},
+		{
+			name:    "limit without where",
+			sql:     "delete from customers_qa limit 1",
+			message: "DELETE LIMIT is not supported yet",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, diagnostics := SimpleParserBridge{}.Parse(test.sql)
+			if !diagnostics.BlocksNative() {
+				t.Fatalf("diagnostics = %#v, want parser blocker", diagnostics)
+			}
+			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
+				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
+			}
+		})
 	}
 }
 

@@ -120,6 +120,49 @@ tests:
       from customer
       where c_custkey <= 3
 
+  - id: mysql_compat_mutations_boundaries.010.update_order_by_limit
+    status: xfail
+    kind: statement
+    feature: mutations_order_limit_boundary
+    compatibility: mysql
+    requires: [update, order_by, limit]
+    issue: "UPDATE ... ORDER BY ... LIMIT is a MySQL mutation ordering boundary; QS mutation statements do not carry ordering/limit semantics yet."
+    sql: |
+      update qs_mysql_compat_mutations_ctas
+      set name = 'limited'
+      order by id
+      limit 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.011.delete_order_by_limit
+    status: xfail
+    kind: statement
+    feature: mutations_order_limit_boundary
+    compatibility: mysql
+    requires: [delete, where, order_by, limit]
+    issue: "DELETE ... ORDER BY ... LIMIT is a MySQL mutation ordering boundary; QS mutation statements do not carry ordering/limit semantics yet."
+    sql: |
+      delete from qs_mysql_compat_mutations_ctas
+      where id > 1
+      order by id
+      limit 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.012.delete_limit_without_where
+    status: xfail
+    kind: statement
+    feature: mutations_order_limit_boundary
+    compatibility: mysql
+    requires: [delete, limit]
+    issue: "DELETE ... LIMIT without WHERE is valid MySQL syntax but unsafe for QS until mutation limit semantics are represented explicitly."
+    sql: |
+      delete from qs_mysql_compat_mutations_ctas
+      limit 1
+    expect:
+      affected_rows: 1
+
   # Cleanup no-ops, safe even when the boundary table creation never happened.
   - id: mysql_compat_mutations_boundaries.900.cleanup
     status: supported
