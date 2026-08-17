@@ -249,7 +249,7 @@ func showIndexRows(target qsbridge.TableInstance, columns []qsbridge.FieldRef) [
 
 func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName string, nonUnique int64, seq int64, prefix string) showIndexRow {
 	comment := describeExtra(column)
-	indexComment := strings.TrimSpace(strings.Join(nonEmptyStrings(prefix, comment), " "))
+	indexComment := strings.TrimSpace(strings.Join(nonEmptyStrings(prefix, describeIndexParameters(column)), " "))
 	nullValue := ""
 	if column.Nullable {
 		nullValue = "YES"
@@ -270,6 +270,36 @@ func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName s
 
 func showIndexColumnHasMapper(column qsbridge.FieldRef) bool {
 	return strings.TrimSpace(describeExtra(column)) != ""
+}
+
+func describeIndexParameters(field qsbridge.FieldRef) string {
+	encoding := field.Encoding
+	params := make([]string, 0, 6)
+	if encoding.Multiplicity == qsbridge.MultiplicitySet {
+		params = append(params, "multiplicity=set")
+	}
+	if encoding.Scale > 0 {
+		params = append(params, "scale="+strconv.Itoa(encoding.Scale))
+	}
+	if encoding.Granularity != qsbridge.TimeGranularityUnknown {
+		params = append(params, "granularity="+string(encoding.Granularity))
+	}
+	if encoding.PrefixLength > 0 {
+		params = append(params, "prefix_length="+strconv.Itoa(encoding.PrefixLength))
+	}
+	if encoding.MaxLength > 0 {
+		params = append(params, "max_length="+strconv.Itoa(encoding.MaxLength))
+	}
+	if strings.TrimSpace(encoding.RemainderStore) != "" {
+		params = append(params, "remainder_store="+strings.TrimSpace(encoding.RemainderStore))
+	}
+	if encoding.Search.Enabled {
+		params = append(params, "searchable=true")
+		if strings.TrimSpace(encoding.Search.Mode) != "" {
+			params = append(params, "search_mode="+strings.TrimSpace(encoding.Search.Mode))
+		}
+	}
+	return strings.Join(params, " ")
 }
 
 func nonEmptyStrings(values ...string) []string {

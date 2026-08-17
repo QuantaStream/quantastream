@@ -144,6 +144,10 @@ const (
 	BinaryOpLike BinaryOp = "like"
 	// BinaryOpNotLike is the SQL NOT LIKE operator.
 	BinaryOpNotLike BinaryOp = "not like"
+	// BinaryOpRegexp is the SQL REGEXP operator.
+	BinaryOpRegexp BinaryOp = "regexp"
+	// BinaryOpNotRegexp is the SQL NOT REGEXP operator.
+	BinaryOpNotRegexp BinaryOp = "not regexp"
 	// BinaryOpIn is the SQL IN operator.
 	BinaryOpIn BinaryOp = "in"
 	// BinaryOpNotIn is the SQL NOT IN operator.
@@ -386,7 +390,7 @@ func literalDataType(kind ValueKind) DataType {
 // binaryDataType maps predicate operators to boolean result metadata.
 func binaryDataType(op BinaryOp) DataType {
 	switch op {
-	case BinaryOpEqual, BinaryOpNotEqual, BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual, BinaryOpAnd, BinaryOpOr, BinaryOpLike, BinaryOpNotLike, BinaryOpIn, BinaryOpNotIn:
+	case BinaryOpEqual, BinaryOpNotEqual, BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual, BinaryOpAnd, BinaryOpOr, BinaryOpLike, BinaryOpNotLike, BinaryOpRegexp, BinaryOpNotRegexp, BinaryOpIn, BinaryOpNotIn:
 		return DataTypeBool
 	case BinaryOpAdd, BinaryOpSubtract, BinaryOpMultiply, BinaryOpDivide:
 		return DataTypeFloat

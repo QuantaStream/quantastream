@@ -1520,7 +1520,7 @@ func TestSQLRuntimeExecuteSQLInformationSchemaStatisticsReturnsIndexRows(t *test
 	if got, want := chunk.Rows[1][0].Value, "qs_c_name"; got != want {
 		t.Fatalf("mapper index = %#v, want %q", got, want)
 	}
-	if got, want := chunk.Rows[1][3].Value, "mapper=StringLexBSI"; got != want {
+	if got, want := chunk.Rows[1][3].Value, "max_length=25"; got != want {
 		t.Fatalf("mapper index comment = %#v, want %q", got, want)
 	}
 }
@@ -1567,14 +1567,14 @@ func TestSQLRuntimeExecuteSQLShowIndexReturnsPKAndMapperRows(t *testing.T) {
 	if pk[0].Value != "customer" || pk[1].Value != int64(0) || pk[2].Value != "PRIMARY" || pk[3].Value != int64(1) || pk[4].Value != "c_custkey" {
 		t.Fatalf("primary row = %#v", pk)
 	}
-	if pk[10].Value != "QUANTASTREAM" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true mapper=IntBSI" {
+	if pk[10].Value != "QUANTASTREAM" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true" {
 		t.Fatalf("primary row mapper metadata = %#v", pk)
 	}
 	mapped := chunk.Rows[1]
 	if mapped[1].Value != int64(1) || mapped[2].Value != "qs_c_name" || mapped[4].Value != "c_name" {
 		t.Fatalf("mapper row = %#v", mapped)
 	}
-	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTASTREAM" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "mapper=StringLexBSI" {
+	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTASTREAM" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "max_length=25" {
 		t.Fatalf("mapper row metadata = %#v", mapped)
 	}
 	if mapped[14].Kind != qsbridge.ValueNull {

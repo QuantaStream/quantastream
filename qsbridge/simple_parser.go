@@ -4472,6 +4472,12 @@ func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate,
 		}
 		return []UnboundPredicate{predicate}, Diagnostic{}, true
 	}
+	if predicate, diagnostic, ok := parseSimpleRegexpPredicate(text, parameterIndex); ok || diagnostic.Code != "" {
+		if !ok {
+			return nil, diagnostic, false
+		}
+		return []UnboundPredicate{predicate}, Diagnostic{}, true
+	}
 	op, left, right, ok := splitBeforeComparisonOperator(text)
 	if !ok {
 		return nil, simpleParserDiagnostic("WHERE must be field comparison literal, BETWEEN range, or IN list"), false
@@ -4494,6 +4500,35 @@ func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate,
 		Placement: placement,
 		Scope:     PredicateScopeWhere,
 	}}, Diagnostic{}, true
+}
+
+func parseSimpleRegexpPredicate(text string, parameterIndex *int) (UnboundPredicate, Diagnostic, bool) {
+	left, right, ok := splitBeforeKeyword(text, "regexp")
+	if !ok {
+		left, right, ok = splitBeforeKeyword(text, "rlike")
+	}
+	if !ok {
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	op := BinaryOpRegexp
+	left = strings.TrimSpace(left)
+	if remaining, ok := consumeTrailingKeyword(left, "not"); ok {
+		left = remaining
+		op = BinaryOpNotRegexp
+	}
+	leftExpr, ok := parseSimpleScalarExpression(left)
+	if !ok {
+		return UnboundPredicate{}, simpleParserDiagnostic("REGEXP left expression is empty"), false
+	}
+	comparisonValue, diagnostic, ok := parseSimpleComparisonValue(strings.TrimSpace(right), parameterIndex)
+	if !ok {
+		return UnboundPredicate{}, diagnostic, false
+	}
+	return UnboundPredicate{
+		Expr:      UnboundBinary(op, leftExpr, comparisonValue),
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeWhere,
+	}, Diagnostic{}, true
 }
 
 func parseSimpleLikePredicate(text string, parameterIndex *int) (UnboundPredicate, Diagnostic, bool) {

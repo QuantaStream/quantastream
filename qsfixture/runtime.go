@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1470,9 +1471,18 @@ func runtimeFixtureEvalRowPredicate(predicate qsbridge.Predicate, row runtimeFix
 		return runtimeFixtureLikeMatch(fmt.Sprint(left.Value), fmt.Sprint(right.Value)), nil
 	case qsbridge.BinaryOpNotLike:
 		return !runtimeFixtureLikeMatch(fmt.Sprint(left.Value), fmt.Sprint(right.Value)), nil
+	case qsbridge.BinaryOpRegexp:
+		return runtimeFixtureRegexpMatch(fmt.Sprint(left.Value), fmt.Sprint(right.Value)), nil
+	case qsbridge.BinaryOpNotRegexp:
+		return !runtimeFixtureRegexpMatch(fmt.Sprint(left.Value), fmt.Sprint(right.Value)), nil
 	default:
 		return false, fmt.Errorf("runtime fixture unsupported residual predicate op %s", binary.Op)
 	}
+}
+
+func runtimeFixtureRegexpMatch(value string, pattern string) bool {
+	matched, err := regexp.MatchString(pattern, value)
+	return err == nil && matched
 }
 
 func runtimeFixtureCellInExprList(cell qsbridge.ResultCell, expr qsbridge.Expr, row runtimeFixtureRow) (bool, error) {

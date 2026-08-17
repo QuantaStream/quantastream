@@ -123,3 +123,22 @@ tests:
         - [3, Customer#000000003]
         - [4, Customer#000000004]
         - [5, Customer#000000005]
+
+  - id: mysql_compat_order_edges.007.multi_key_order_comma_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_limit_offset_edges
+    compatibility: mysql
+    requires: [select, order_by, limit, offset]
+    sql: |
+      select n_name as nation_name, n_regionkey as region_key
+      from nation
+      order by n_regionkey desc, n_name
+      limit 2, 3
+    expect:
+      columns: [nation_name, region_key]
+      rows:
+        - [IRAQ, 4]
+        - [JORDAN, 4]
+        - [SAUDI ARABIA, 4]

@@ -255,3 +255,23 @@ tests:
     expect:
       columns: [market_segment, customer_count]
       row_count: 2
+
+  - id: mysql_compat_group_order_boundaries.025.having_alias_range_limit
+    status: supported
+    kind: query
+    order: exact
+    feature: group_by_having_alias_boundary
+    compatibility: mysql
+    requires: [select, table_scan, aliases, group_by, having, comparison, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment, count(*) as customer_count
+      from customer
+      group by market_segment
+      having customer_count >= 280 and customer_count <= 310
+      order by customer_count desc, market_segment
+      limit 2
+    expect:
+      columns: [market_segment, customer_count]
+      rows:
+        - [AUTOMOBILE, 302]
+        - [HOUSEHOLD, 294]

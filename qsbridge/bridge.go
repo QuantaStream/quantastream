@@ -2553,7 +2553,7 @@ func stringEnumPredicateUsesBitmapDifference(expr Expr) bool {
 		return false
 	}
 	switch binary.Op {
-	case BinaryOpNotEqual, BinaryOpNotIn, BinaryOpNotLike:
+	case BinaryOpNotEqual, BinaryOpNotIn, BinaryOpNotLike, BinaryOpNotRegexp:
 		return stringEnumPredicateCanUseBitmapPushdown(expr)
 	default:
 		return false

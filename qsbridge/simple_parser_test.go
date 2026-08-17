@@ -2703,6 +2703,27 @@ func TestSimpleParserBridgeParsesSeedAndGroupedResidualOrPredicate(t *testing.T)
 	}
 }
 
+func TestSimpleParserBridgeParsesRegexpPredicateAsResidual(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select r_name from region where r_name regexp '^A'")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	predicate := statement.Select.Predicates[0]
+	if predicate.Placement != PredicateResidualScan {
+		t.Fatalf("placement = %s, want %s", predicate.Placement, PredicateResidualScan)
+	}
+	binary, ok := predicate.Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expr = %T, want UnboundBinaryExpr", predicate.Expr)
+	}
+	if binary.Op != BinaryOpRegexp {
+		t.Fatalf("predicate op = %s, want %s", binary.Op, BinaryOpRegexp)
+	}
+}
+
 func TestSimpleParserBridgeRejectsUnsupportedSQL(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o_orderkey from orders where o_orderkey = 7 or o_orderkey = 8 and o_custkey = 501")
 	if diagnostics.BlocksNative() {

@@ -1975,6 +1975,7 @@ func directBitmapConditionBinaryOp(op qsbridge.BinaryOp) bool {
 		qsbridge.BinaryOpLess, qsbridge.BinaryOpLessEqual,
 		qsbridge.BinaryOpGreater, qsbridge.BinaryOpGreaterEqual,
 		qsbridge.BinaryOpLike, qsbridge.BinaryOpNotLike,
+		qsbridge.BinaryOpRegexp, qsbridge.BinaryOpNotRegexp,
 		qsbridge.BinaryOpIn, qsbridge.BinaryOpNotIn,
 		qsbridge.BinaryOpBetween, qsbridge.BinaryOpNotBetween:
 		return true

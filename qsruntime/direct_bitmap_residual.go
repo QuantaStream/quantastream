@@ -104,6 +104,16 @@ func directBitmapEvaluateResidualBoolExpr(expr qsbridge.Expr, rowSet qsbridge.Qu
 			return !matched, nil
 		}
 		return matched, nil
+	case qsbridge.BinaryOpRegexp, qsbridge.BinaryOpNotRegexp:
+		left, right, diagnostics := directBitmapEvaluateResidualPair(binary, rowSet, index)
+		if diagnostics.BlocksNative() {
+			return false, diagnostics
+		}
+		matched := directBitmapResidualRegexpCells(left, right)
+		if binary.Op == qsbridge.BinaryOpNotRegexp {
+			return !matched, nil
+		}
+		return matched, nil
 	case qsbridge.BinaryOpIn, qsbridge.BinaryOpNotIn:
 		matched, diagnostics := directBitmapEvaluateResidualIn(binary, rowSet, index)
 		if diagnostics.BlocksNative() {
@@ -244,6 +254,18 @@ func directBitmapResidualLikeCells(left qsbridge.ResultCell, right qsbridge.Resu
 		return false
 	}
 	return directBitmapResidualLike(fmt.Sprint(left.Value), fmt.Sprint(right.Value))
+}
+
+func directBitmapResidualRegexpCells(left qsbridge.ResultCell, right qsbridge.ResultCell) bool {
+	if left.Kind == qsbridge.ValueNull || right.Kind == qsbridge.ValueNull || left.Value == nil || right.Value == nil {
+		return false
+	}
+	return directBitmapResidualRegexp(fmt.Sprint(left.Value), fmt.Sprint(right.Value))
+}
+
+func directBitmapResidualRegexp(value string, pattern string) bool {
+	matched, err := regexp.MatchString(pattern, value)
+	return err == nil && matched
 }
 
 func directBitmapResidualLike(value string, pattern string) bool {

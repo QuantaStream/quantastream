@@ -238,6 +238,18 @@ tests:
       columns: [variable_name, value]
       row_count: 4
 
+  - id: mysql_compat_catalog.01405.show_session_variables_where
+    status: supported
+    kind: query
+    feature: catalog_variables
+    compatibility: mysql
+    requires: [show_variables, session_scope, where, metadata_columns]
+    sql: |
+      show session variables where Variable_name = 'character_set_connection'
+    expect:
+      columns: [variable_name, value]
+      row_count: 1
+
   - id: mysql_compat_catalog.0141.show_status
     status: supported
     kind: query

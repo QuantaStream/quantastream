@@ -37,13 +37,12 @@ tests:
         - [BRAZIL]
 
   - id: mysql_compat_predicates_boundaries.003.regexp_predicate
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: predicates_regexp_boundary
     compatibility: mysql
     requires: [select, table_scan, where, regexp]
-    issue: "REGEXP predicates are not implemented yet."
     sql: |
       select r_name as region_name
       from region

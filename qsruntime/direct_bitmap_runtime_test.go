@@ -1171,6 +1171,41 @@ func TestDirectBitmapRuntimeRejectsRelationshipVectorJoinBeforeBorrow(t *testing
 	}
 }
 
+func TestDirectBitmapRuntimeRejectsNonEquiPeerJoinBeforeBorrow(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Joins = []qsbridge.JoinEdge{{
+		Left: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "customer", Alias: "c"},
+			Name:  "c_custkey",
+		},
+		Right: qsbridge.FieldRef{
+			Table: qsbridge.TableInstance{Table: "orders", Alias: "o"},
+			Name:  "o_custkey",
+		},
+		Operator:  qsbridge.BinaryOpGreater,
+		Kind:      qsbridge.JoinKindInner,
+		Direction: qsbridge.JoinPeerEquality,
+		Legal:     true,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			t.Fatalf("session provider should not be called for unsupported peer join")
+			return nil, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if !result.Diagnostics.BlocksNative() {
+		t.Fatalf("expected non-equi peer join diagnostic")
+	}
+	if !strings.Contains(result.Diagnostics[0].Message, "non-relationship peer joins") {
+		t.Fatalf("diagnostic message = %q", result.Diagnostics[0].Message)
+	}
+}
+
 func TestDirectBitmapRuntimeRejectsGroupedFilterBeforeBorrow(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
 		ProjectionFields: []qsbridge.QuantaProjectionField{{Index: "orders", Field: "o_orderkey", Visible: true}},
@@ -2901,6 +2936,32 @@ func TestDirectBitmapRuntimeMaterializesResidualPredicatesBeforeCount(t *testing
 	}
 	if got := chunk.Rows[0][0].Value; got != int64(2) {
 		t.Fatalf("count = %#v, want 2", got)
+	}
+}
+
+func TestDirectBitmapEvaluateResidualRegexpPredicate(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "region", Table: "region"}
+	field := qsbridge.FieldRef{Table: table, Name: "r_name", PhysicalName: "r_name", Type: qsbridge.DataTypeString}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "region",
+		Rownums: []qsbridge.QuantaRownum{1, 2},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_name", Type: qsbridge.DataTypeString},
+			Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "AFRICA"}, {Kind: qsbridge.ValueString, Value: "EUROPE"}},
+		}},
+	}
+
+	expr := qsbridge.Binary(qsbridge.BinaryOpRegexp, qsbridge.Field(field), qsbridge.Literal(qsbridge.ValueString, "^A"))
+	first, diagnostics := directBitmapEvaluateResidualBoolExpr(expr, rowSet, 0)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("first diagnostics = %#v", diagnostics)
+	}
+	second, diagnostics := directBitmapEvaluateResidualBoolExpr(expr, rowSet, 1)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("second diagnostics = %#v", diagnostics)
+	}
+	if !first || second {
+		t.Fatalf("regexp matches = %t/%t, want true/false", first, second)
 	}
 }
 
