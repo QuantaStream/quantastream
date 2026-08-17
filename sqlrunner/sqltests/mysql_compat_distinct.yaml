@@ -1,0 +1,98 @@
+version: 1
+name: mysql_compat_distinct
+
+tests:
+  - id: mysql_compat_distinct.001.distinct_projection
+    status: supported
+    kind: query
+    order: exact
+    feature: distinct_projection
+    compatibility: mysql
+    requires: [select, distinct, order_by]
+    sql: |
+      select distinct c_mktsegment as market_segment
+      from customer
+      order by market_segment
+    expect:
+      columns: [market_segment]
+      rows:
+        - [AUTOMOBILE]
+        - [BUILDING]
+        - [FURNITURE]
+        - [HOUSEHOLD]
+        - [MACHINERY]
+
+  - id: mysql_compat_distinct.002.distinct_expression_projection
+    status: supported
+    kind: query
+    order: exact
+    feature: distinct_projection
+    compatibility: mysql
+    requires: [select, distinct, lower, order_by]
+    sql: |
+      select distinct lower(c_mktsegment) as market_segment
+      from customer
+      order by market_segment
+    expect:
+      columns: [market_segment]
+      rows:
+        - [automobile]
+        - [building]
+        - [furniture]
+        - [household]
+        - [machinery]
+
+  - id: mysql_compat_distinct.003.distinct_order_limit_offset
+    status: supported
+    kind: query
+    order: exact
+    feature: distinct_order_limit
+    compatibility: mysql
+    requires: [select, distinct, order_by, limit, offset]
+    sql: |
+      select distinct c_mktsegment as market_segment
+      from customer
+      order by market_segment desc
+      limit 2 offset 1
+    expect:
+      columns: [market_segment]
+      rows:
+        - [HOUSEHOLD]
+        - [FURNITURE]
+
+  - id: mysql_compat_distinct.010.count_distinct
+    status: supported
+    kind: query
+    order: exact
+    feature: distinct_aggregate
+    compatibility: mysql
+    requires: [select, count, distinct]
+    sql: |
+      select count(distinct c_mktsegment) as distinct_segments
+      from customer
+    expect:
+      columns: [distinct_segments]
+      rows:
+        - [5]
+
+  - id: mysql_compat_distinct.011.grouped_count_distinct
+    status: supported
+    kind: query
+    order: exact
+    feature: distinct_aggregate
+    compatibility: mysql
+    requires: [select, group_by, count, distinct, order_by, limit]
+    sql: |
+      select c_nationkey as nation_key, count(distinct c_mktsegment) as distinct_segments
+      from customer
+      group by c_nationkey
+      order by nation_key
+      limit 5
+    expect:
+      columns: [nation_key, distinct_segments]
+      rows:
+        - [0, 5]
+        - [1, 5]
+        - [2, 5]
+        - [3, 5]
+        - [4, 5]
