@@ -225,7 +225,7 @@ tests:
     feature: joins_non_equi_boundary
     compatibility: mysql
     requires: [select, table_scan, inner_join, non_equi_join, group_by, count, order_by]
-    issue: "Relationship-vector joins currently require equi-join keys; non-equi JOIN ON predicates are a post-1.0 compatibility target."
+    issue: "Non-equi peer joins parse, but direct distributed execution does not yet have a materialized peer-join fallback."
     sql: |
       select r.r_name as region_name, count(n.n_nationkey) as nation_count
       from region as r

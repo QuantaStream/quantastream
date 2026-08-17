@@ -76,6 +76,9 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 		result.Probes = append(request.Probes, result.Probes...)
 		return result, err
 	}
+	if diagnostics := directBitmapUnsupportedPeerJoinDiagnostics(request); diagnostics.BlocksNative() {
+		return ExecutionResult{Diagnostics: diagnostics}, nil
+	}
 	request = directBitmapSeedMembershipOnlyRequest(request)
 	var session DirectSessionHandle
 	if !request.HasCandidateSet || request.Mutation.Kind != qsbridge.MutationUnknown {
@@ -318,6 +321,16 @@ func directBitmapRelationshipVectorJoinDiagnostics(request ExecutionRequest) qsb
 
 func directBitmapNeedsRelationshipVectorJoin(join qsbridge.JoinEdge) bool {
 	return qsbridge.PlanRelationshipJoins([]qsbridge.JoinEdge{join}).NeedsRelationshipVectorExecution()
+}
+
+func directBitmapUnsupportedPeerJoinDiagnostics(request ExecutionRequest) qsbridge.DiagnosticSet {
+	if len(request.Joins) == 0 {
+		return nil
+	}
+	if _, ok := directBitmapSelfJoinCountCandidate(request); ok {
+		return nil
+	}
+	return directBitmapAggregateDiagnostics("direct bitmap runtime only supports relationship-vector joins and self-join count for non-relationship peer joins in this slice")
 }
 
 func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, request ExecutionRequest, bitmapResult BitmapQueryResult, result ExecutionResult) ExecutionResult {

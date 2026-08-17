@@ -444,12 +444,13 @@ type UnboundProjection struct {
 	Type  DataType
 }
 
-// UnboundJoin describes one equality join edge before catalog binding.
+// UnboundJoin describes one comparison join edge before catalog binding.
 type UnboundJoin struct {
 	LeftQualifier  string
 	LeftField      string
 	RightQualifier string
 	RightField     string
+	Operator       BinaryOp
 	Predicates     []UnboundPredicate
 	Relationship   string
 	Kind           JoinKind
@@ -1880,9 +1881,14 @@ func BindJoin(context *BindContext, join UnboundJoin) (JoinEdge, DiagnosticSet) 
 		return JoinEdge{}, diagnostics
 	}
 
+	operator := join.Operator
+	if operator == "" {
+		operator = BinaryOpEqual
+	}
 	edge := JoinEdge{
 		Left:        left,
 		Right:       right,
+		Operator:    operator,
 		Kind:        joinKindOrInner(join.Kind),
 		Nulls:       nullExtensionForJoin(join.Kind, join.Nulls),
 		On:          onPredicates,
@@ -1891,12 +1897,15 @@ func BindJoin(context *BindContext, join UnboundJoin) (JoinEdge, DiagnosticSet) 
 		Unsupported: join.Unsupported,
 	}
 	if join.Relationship == "" {
-		if relationshipEdge, ok := catalogRelationshipEdgeForFields(context, left, right); ok {
-			relationshipEdge.Kind = edge.Kind
-			relationshipEdge.Nulls = edge.Nulls
-			relationshipEdge.On = onPredicates
-			relationshipEdge.Unsupported = join.Unsupported
-			return relationshipEdge, nil
+		if operator == BinaryOpEqual {
+			if relationshipEdge, ok := catalogRelationshipEdgeForFields(context, left, right); ok {
+				relationshipEdge.Operator = operator
+				relationshipEdge.Kind = edge.Kind
+				relationshipEdge.Nulls = edge.Nulls
+				relationshipEdge.On = onPredicates
+				relationshipEdge.Unsupported = join.Unsupported
+				return relationshipEdge, nil
+			}
 		}
 		return edge, nil
 	}
@@ -1906,6 +1915,7 @@ func BindJoin(context *BindContext, join UnboundJoin) (JoinEdge, DiagnosticSet) 
 		return JoinEdge{}, relationshipDiagnostics
 	}
 	edge = relationship.Edge(left, right)
+	edge.Operator = operator
 	edge.Kind = joinKindOrInner(join.Kind)
 	edge.Nulls = nullExtensionForJoin(edge.Kind, join.Nulls)
 	edge.On = onPredicates

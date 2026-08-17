@@ -327,10 +327,11 @@ const (
 	NullExtensionBoth NullExtension = "both"
 )
 
-// JoinEdge is a declared relationship or equality edge between table instances.
+// JoinEdge is a declared relationship or comparison edge between table instances.
 type JoinEdge struct {
 	Left        FieldRef
 	Right       FieldRef
+	Operator    BinaryOp
 	Kind        JoinKind
 	Nulls       NullExtension
 	On          []Predicate

@@ -626,6 +626,9 @@ func relationshipJoinExecutionKind(edge JoinEdge) RelationshipJoinExecutionKind 
 }
 
 func relationshipJoinNeedsVectorExecution(join JoinEdge) bool {
+	if join.Operator != "" && join.Operator != BinaryOpEqual {
+		return false
+	}
 	if join.Encoding.Kind == RelationshipEncodingVector {
 		return true
 	}

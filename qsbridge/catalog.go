@@ -142,6 +142,7 @@ func (r RelationshipDefinition) Edge(left FieldRef, right FieldRef) JoinEdge {
 	return JoinEdge{
 		Left:        left,
 		Right:       right,
+		Operator:    BinaryOpEqual,
 		Kind:        JoinKindInner,
 		Nulls:       NullExtensionNone,
 		On:          nil,

@@ -1,6 +1,9 @@
 package qsbridge
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func (e InMemoryNativeExecutor) executeJoinNative(request ExecutionRequest, query QueryIR) ExecutionResult {
 	if diagnostic, blocked := inMemoryUnsupportedJoinSelectDiagnostic(query); blocked {
@@ -176,10 +179,35 @@ func inMemoryJoinRowMatches(join JoinEdge, row InMemoryNativeRow, parameters Par
 	if !leftOK || !rightOK {
 		return false, inMemoryNativeDiagnostic("join fields %q and %q are not present in the in-memory row", join.Left.QualifiedName(), join.Right.QualifiedName()), false
 	}
-	if left.Value == nil || right.Value == nil || !inMemoryCellEqual(left, right) {
+	operator := join.Operator
+	if operator == "" {
+		operator = BinaryOpEqual
+	}
+	if !inMemorySupportedComparisonOp(operator) {
+		return false, inMemoryNativeDiagnostic("join operator %q is not supported by in-memory joins", operator), false
+	}
+	if left.Value == nil || right.Value == nil || !inMemoryCellComparesCell(operator, left, right) {
 		return false, Diagnostic{}, true
 	}
 	return inMemoryRowMatches(join.On, row, parameters)
+}
+
+func inMemoryCellComparesCell(op BinaryOp, left ResultCell, right ResultCell) bool {
+	if inMemoryIsNumericKind(left.Kind) || inMemoryIsNumericKind(right.Kind) {
+		leftNumber, leftOK := inMemoryNumericValue(left.Value)
+		rightNumber, rightOK := inMemoryNumericValue(right.Value)
+		if !leftOK || !rightOK {
+			return false
+		}
+		if op == BinaryOpNotEqual {
+			return leftNumber != rightNumber
+		}
+		return inMemoryCompareFloat(op, leftNumber, rightNumber)
+	}
+	if op == BinaryOpNotEqual {
+		return inMemoryCellCompare(left, right) != 0
+	}
+	return inMemoryCompareString(op, fmt.Sprint(left.Value), fmt.Sprint(right.Value))
 }
 
 func inMemoryQualifiedRow(source TableInstance, row InMemoryNativeRow) InMemoryNativeRow {

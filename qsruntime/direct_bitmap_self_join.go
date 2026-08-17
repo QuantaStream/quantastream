@@ -95,6 +95,7 @@ func directBitmapSelfJoinCountCandidate(request ExecutionRequest) (qsbridge.Join
 	}
 	join := request.Joins[0]
 	if join.Kind != qsbridge.JoinKindInner ||
+		(join.Operator != "" && join.Operator != qsbridge.BinaryOpEqual) ||
 		join.Direction != qsbridge.JoinPeerEquality ||
 		!join.Supported() ||
 		len(join.On) != 0 ||

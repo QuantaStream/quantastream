@@ -28,6 +28,35 @@ func TestInMemoryNativeExecutorAttachesProfileCounters(t *testing.T) {
 	}
 }
 
+func TestInMemoryJoinRowMatchesNonEquiFields(t *testing.T) {
+	row := InMemoryNativeRow{
+		"n.n_regionkey": {Kind: ValueInt, Value: int64(3)},
+		"r.r_regionkey": {Kind: ValueInt, Value: int64(2)},
+	}
+	join := JoinEdge{
+		Left:     FieldRef{Table: TableInstance{Table: "nation", Alias: "n"}, Name: "n_regionkey", Type: DataTypeInt},
+		Right:    FieldRef{Table: TableInstance{Table: "region", Alias: "r"}, Name: "r_regionkey", Type: DataTypeInt},
+		Operator: BinaryOpGreaterEqual,
+	}
+
+	matched, diagnostic, ok := inMemoryJoinRowMatches(join, row, ParameterBindingSet{})
+	if !ok || diagnostic.Message != "" {
+		t.Fatalf("diagnostic = %#v, ok=%v; want none/true", diagnostic, ok)
+	}
+	if !matched {
+		t.Fatalf("matched = false, want true for 3 >= 2")
+	}
+
+	join.Operator = BinaryOpLess
+	matched, diagnostic, ok = inMemoryJoinRowMatches(join, row, ParameterBindingSet{})
+	if !ok || diagnostic.Message != "" {
+		t.Fatalf("diagnostic = %#v, ok=%v; want none/true", diagnostic, ok)
+	}
+	if matched {
+		t.Fatalf("matched = true, want false for 3 < 2")
+	}
+}
+
 func inMemoryProfileCounterValue(profile ExecutionProfile, name string) uint64 {
 	for _, counter := range profile.Counters {
 		if counter.Name == name {

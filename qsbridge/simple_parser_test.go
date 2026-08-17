@@ -1310,6 +1310,23 @@ func TestSimpleParserBridgeParsesRightJoinEdge(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesNonEquiJoinEdge(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select r.r_name, n.n_name from region as r inner join nation as n on n.n_regionkey >= r.r_regionkey")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Joins) != 1 {
+		t.Fatalf("joins = %d, want 1", len(statement.Select.Joins))
+	}
+	join := statement.Select.Joins[0]
+	if join.Operator != BinaryOpGreaterEqual {
+		t.Fatalf("join operator = %q, want %q", join.Operator, BinaryOpGreaterEqual)
+	}
+	if join.LeftQualifier != "n" || join.LeftField != "n_regionkey" || join.RightQualifier != "r" || join.RightField != "r_regionkey" {
+		t.Fatalf("join = %#v, want n.n_regionkey >= r.r_regionkey", join)
+	}
+}
+
 func TestSimpleParserBridgeParsesJoinUsingEdge(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select count(*) from orders_qa as o1 inner join orders_qa as o2 using (cust_id)")
 	if diagnostics.BlocksNative() {
@@ -1366,15 +1383,21 @@ func TestSimpleParserBridgeParsesJoinOnResidualConjuncts(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsNonEqualityJoinEdge(t *testing.T) {
-	_, diagnostics := SimpleParserBridge{}.Parse(`
+func TestSimpleParserBridgeParsesNotEqualJoinEdge(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select c.first_name, o.order_id
 		from customers_qa as c
 		inner join orders_qa as o on o.cust_id = c.cust_id
 		inner join lineitems_qa as l on l.order_id != o.order_id
 	`)
-	if !diagnostics.BlocksNative() {
-		t.Fatalf("expected parser diagnostic for non-equality join edge")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Joins) != 2 {
+		t.Fatalf("joins = %d, want 2", len(statement.Select.Joins))
+	}
+	if statement.Select.Joins[1].Operator != BinaryOpNotEqual {
+		t.Fatalf("second join operator = %q, want %q", statement.Select.Joins[1].Operator, BinaryOpNotEqual)
 	}
 }
 
