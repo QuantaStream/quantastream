@@ -396,13 +396,18 @@ func (r SQLRuntime) constantProjectionExecutionResult(request qsbridge.Execution
 		len(query.Sources) != 0 ||
 		len(query.Joins) != 0 ||
 		len(query.Memberships) != 0 ||
-		len(query.Predicates) != 0 ||
-		query.WhereExpr != nil ||
 		len(query.GroupBy) != 0 ||
 		len(query.Having) != 0 ||
 		len(query.Aggregates) != 0 ||
 		len(query.Projection) == 0 {
 		return ExecutionResult{}, nil, false
+	}
+	matched, diagnostic, ok := qsbridge.ProjectionOnlySelectMatches(query.Predicates, query.WhereExpr, request.Bound.Parameters)
+	if !ok {
+		return ExecutionResult{}, qsbridge.DiagnosticSet{diagnostic}, true
+	}
+	if !matched {
+		return ExecutionResult{Count: 0}, nil, true
 	}
 
 	rowSet := qsbridge.QuantaProjectedRowSet{

@@ -1023,6 +1023,33 @@ func TestSimpleParserBridgeParsesProjectionOnlyLiterals(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesProjectionOnlyWhere(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select 1 as matched where 3 > 2 and 2 <= 2")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Tables) != 0 {
+		t.Fatalf("tables = %#v, want projection-only select", statement.Select.Tables)
+	}
+	if got, want := len(statement.Select.Projection), 1; got != want {
+		t.Fatalf("projection count = %d, want %d", got, want)
+	}
+	if got, want := len(statement.Select.Predicates), 2; got != want {
+		t.Fatalf("predicate count = %d, want %d", got, want)
+	}
+	first, ok := statement.Select.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok || first.Op != BinaryOpGreater {
+		t.Fatalf("first predicate = %#v, want greater-than binary", statement.Select.Predicates[0].Expr)
+	}
+	second, ok := statement.Select.Predicates[1].Expr.(UnboundBinaryExpr)
+	if !ok || second.Op != BinaryOpLessEqual {
+		t.Fatalf("second predicate = %#v, want less-than-or-equal binary", statement.Select.Predicates[1].Expr)
+	}
+}
+
 func TestSimpleParserBridgeParsesQ17CorrelatedAggregateIntent(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 select count(*)

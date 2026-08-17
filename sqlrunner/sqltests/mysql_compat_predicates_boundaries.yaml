@@ -3,13 +3,12 @@ name: mysql_compat_predicates_boundaries
 
 tests:
   - id: mysql_compat_predicates_boundaries.001.projection_only_where
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: predicates_scalar_select_boundary
     compatibility: mysql
     requires: [select, where, comparison]
-    issue: "Projection-only SELECT supports scalar projections, but projection-only WHERE predicates are not lowered yet."
     sql: |
       select 1 as matched
       where 3 > 2 and 2 <= 2

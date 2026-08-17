@@ -110,6 +110,15 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		}
 		projectionText = strings.TrimSpace(selectBody)
 	}
+	projectionOnlyWhereText := ""
+	projectionOnlyHasWhere := false
+	if !hasSource {
+		if left, right, found := splitBeforeTopLevelKeyword(projectionText, "where"); found {
+			projectionText = left
+			projectionOnlyWhereText = right
+			projectionOnlyHasWhere = true
+		}
+	}
 	sourceText, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(sourceText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -126,12 +135,31 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		if hasAnyTopLevelKeyword(projectionText, "where", "join", "group", "having", "order", "limit") {
 			return UnboundStatement{}, simpleParserDiagnostic("projection-only SELECT only supports a SELECT list"), false
 		}
+		predicates := []UnboundPredicate(nil)
+		whereExpr := UnboundExpr(nil)
+		if projectionOnlyHasWhere {
+			if hasAnyTopLevelKeyword(projectionOnlyWhereText, "from", "where", "join", "group", "having", "order", "limit") {
+				return UnboundStatement{}, simpleParserDiagnostic("projection-only SELECT WHERE only supports boolean predicates"), false
+			}
+			var memberships []UnboundMembership
+			var subqueries []UnboundSubqueryPlanIntent
+			var blockers []NativeBlocker
+			predicates, memberships, whereExpr, subqueries, blockers, diagnostic, ok = parseSimpleWhere(projectionOnlyWhereText)
+			if !ok {
+				return UnboundStatement{}, diagnostic, false
+			}
+			if len(memberships) > 0 || len(subqueries) > 0 || len(blockers) > 0 {
+				return UnboundStatement{}, simpleParserDiagnostic("projection-only SELECT WHERE only supports scalar boolean predicates"), false
+			}
+		}
 		return UnboundStatement{
 			SQL:  sql,
 			Kind: QueryKindSelect,
 			Select: UnboundSelect{
 				Projection: projections,
 				Aggregates: aggregates,
+				Predicates: predicates,
+				WhereExpr:  whereExpr,
 				Result:     ResultShape{Kind: ResultQuery, Limit: limit, HasLimit: hasLimit, Offset: offset, Distinct: distinct},
 			},
 		}, Diagnostic{}, true

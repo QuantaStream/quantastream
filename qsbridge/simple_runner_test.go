@@ -260,6 +260,30 @@ func TestSimpleRunnerRunsNestedAggregateExpressionInput(t *testing.T) {
 	})
 }
 
+func TestSimpleRunnerRunsProjectionOnlyWhere(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "projection_only_where",
+		querySQL: "select 1 as matched where 3 > 2 and 2 <= 2",
+		expectedColumns: []string{
+			"matched",
+		},
+		expectedRows: [][]string{
+			{"1"},
+		},
+	})
+}
+
+func TestSimpleRunnerReturnsEmptyRowsForProjectionOnlyWhereMiss(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "projection_only_where_miss",
+		querySQL: "select 1 as matched where 3 < 2",
+		expectedColumns: []string{
+			"matched",
+		},
+		expectedRows: nil,
+	})
+}
+
 func TestSimpleRunnerRunsGroupedCount(t *testing.T) {
 	runSimpleRunnerCase(t, simpleRunnerCase{
 		name:     "orders_grouped_count",

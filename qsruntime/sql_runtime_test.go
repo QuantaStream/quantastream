@@ -1027,6 +1027,61 @@ func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLProjectionOnlyWhere(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select 1 as matched where 3 > 2 and 2 <= 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("projection-only WHERE should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want one one-column row", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, any(int64(1)); got != want {
+		t.Fatalf("matched = %#v, want %#v", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLProjectionOnlyWhereMiss(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select 1 as matched where 3 < 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("projection-only WHERE miss should not dispatch to the direct executor")
+	}
+	if result.Runtime.Count != 0 || result.Runtime.RowSet.CandidateCount() != 0 {
+		t.Fatalf("runtime result count=%d candidate_count=%d, want empty", result.Runtime.Count, result.Runtime.RowSet.CandidateCount())
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

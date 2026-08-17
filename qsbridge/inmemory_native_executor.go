@@ -54,6 +54,9 @@ func (e InMemoryNativeExecutor) ExecuteNative(request ExecutionRequest) Executio
 	if query.Kind != QueryKindSelect {
 		return PlanOnlyNativeExecutor{}.ExecuteNative(request)
 	}
+	if len(query.Sources) == 0 {
+		return e.executeProjectionOnlyNative(request, query)
+	}
 	if diagnostic, blocked := inMemoryUnsupportedSelectDiagnostic(query); blocked {
 		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
 	}
@@ -119,9 +122,59 @@ func (e InMemoryNativeExecutor) ExecuteNative(request ExecutionRequest) Executio
 	return inMemoryAttachProfileCounters(result, matchedCandidates)
 }
 
+func (e InMemoryNativeExecutor) executeProjectionOnlyNative(request ExecutionRequest, query QueryIR) ExecutionResult {
+	if diagnostic, blocked := inMemoryUnsupportedProjectionOnlySelectDiagnostic(query); blocked {
+		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
+	}
+	matched, diagnostic, ok := inMemoryProjectionOnlyMatches(query, request.Bound.Parameters)
+	if !ok {
+		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
+	}
+	candidates := []inMemoryNativeCandidate(nil)
+	if matched {
+		candidates = append(candidates, inMemoryNativeCandidate{
+			Rownum: 1,
+			Row:    InMemoryNativeRow{},
+		})
+	}
+	rows, diagnostic, ok := inMemoryEvaluateProjectionRows(query.Projection, candidates)
+	if !ok {
+		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
+	}
+	result := request.EmptyResult()
+	result = inMemoryAppendResultRowsChunks(result, rows, request.Options.BatchSize)
+	return inMemoryAttachProfileCounters(result, len(candidates))
+}
+
 // ExecuteNativeBatch keeps batch execution metadata-only until row batches are modeled.
 func (e InMemoryNativeExecutor) ExecuteNativeBatch(request BatchExecutionRequest) BatchExecutionResult {
 	return PlanOnlyNativeExecutor{}.ExecuteNativeBatch(request)
+}
+
+func inMemoryUnsupportedProjectionOnlySelectDiagnostic(query QueryIR) (Diagnostic, bool) {
+	if len(query.Joins) > 0 || len(query.Memberships) > 0 || len(query.Subqueries) > 0 {
+		return inMemoryNativeDiagnostic("projection-only SELECT cannot use joins, memberships, or subqueries"), true
+	}
+	if len(query.GroupBy) > 0 || len(query.Aggregates) > 0 || len(query.Having) > 0 {
+		return inMemoryNativeDiagnostic("projection-only SELECT cannot use grouped or aggregate clauses"), true
+	}
+	if len(query.OrderBy) > 0 {
+		return inMemoryNativeDiagnostic("projection-only SELECT ORDER BY is not supported"), true
+	}
+	for _, projection := range query.Projection {
+		if !inMemorySupportedProjectionOnlyExpr(projection.Expr) {
+			return inMemoryNativeDiagnostic("projection-only SELECT supports only scalar literal and arithmetic projections"), true
+		}
+	}
+	for _, predicate := range query.Predicates {
+		if !inMemorySupportedProjectionOnlyBooleanExpr(predicate.Expr) {
+			return inMemoryNativeDiagnostic("projection-only SELECT WHERE supports only scalar boolean predicates"), true
+		}
+	}
+	if query.WhereExpr != nil && !inMemorySupportedProjectionOnlyBooleanExpr(query.WhereExpr) {
+		return inMemoryNativeDiagnostic("projection-only SELECT WHERE supports only scalar boolean predicates"), true
+	}
+	return Diagnostic{}, false
 }
 
 func inMemoryUnsupportedSelectDiagnostic(query QueryIR) (Diagnostic, bool) {
