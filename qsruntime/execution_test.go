@@ -388,6 +388,71 @@ func TestNewSQLExecutionRequestKeepsProjectedFieldsVisible(t *testing.T) {
 	}
 }
 
+func TestNewSQLExecutionRequestMaterializesJoinProjectionExpressionInputs(t *testing.T) {
+	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	customerKey := qsbridge.FieldRef{Table: customer, Name: "c_custkey", PhysicalName: "c_custkey", Type: qsbridge.DataTypeInt}
+	orderCustomerKey := qsbridge.FieldRef{Table: orders, Name: "o_custkey", PhysicalName: "o_custkey", Type: qsbridge.DataTypeInt}
+	orderKey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", PhysicalName: "o_orderkey", Type: qsbridge.DataTypeInt}
+	orderPriority := qsbridge.FieldRef{Table: orders, Name: "o_orderpriority", PhysicalName: "o_orderpriority", Type: qsbridge.DataTypeString}
+	marketSegment := qsbridge.FieldRef{Table: customer, Name: "c_mktsegment", PhysicalName: "c_mktsegment", Type: qsbridge.DataTypeString}
+	preparedQuery := qsbridge.QueryIR{
+		Kind:    qsbridge.QueryKindSelect,
+		Sources: []qsbridge.TableInstance{customer, orders},
+		Joins: []qsbridge.JoinEdge{{
+			Left:  customerKey,
+			Right: orderCustomerKey,
+			On: []qsbridge.Predicate{{
+				Expr: qsbridge.BinaryExpr{
+					Left:  qsbridge.FieldExpr{Ref: customerKey},
+					Op:    qsbridge.BinaryOpEqual,
+					Right: qsbridge.FieldExpr{Ref: orderCustomerKey},
+				},
+			}},
+		}},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: qsbridge.FieldExpr{Ref: customerKey}, Type: qsbridge.DataTypeInt},
+			{Expr: qsbridge.FieldExpr{Ref: orderKey}, Type: qsbridge.DataTypeInt},
+			{
+				Alias: "order_label",
+				Type:  qsbridge.DataTypeString,
+				Expr: qsbridge.SearchedCaseExpr{
+					Whens: []qsbridge.SearchedCaseWhen{{
+						Condition: qsbridge.BinaryExpr{
+							Left: qsbridge.FieldExpr{Ref: orderPriority},
+							Op:   qsbridge.BinaryOpIn,
+							Right: qsbridge.ListExpr{Items: []qsbridge.Expr{
+								qsbridge.Literal(qsbridge.ValueString, "1-URGENT"),
+								qsbridge.Literal(qsbridge.ValueString, "2-HIGH"),
+							}},
+						},
+						Result: qsbridge.Literal(qsbridge.ValueString, "urgent"),
+					}},
+					Else: qsbridge.CallExpr{Name: "lower", Args: []qsbridge.Expr{qsbridge.FieldExpr{Ref: marketSegment}}},
+				},
+			},
+		},
+	}
+	executionRequest := qsbridge.ExecutionRequest{
+		Bound: qsbridge.BoundPlan{
+			Prepared: qsbridge.PreparedPlan{Query: preparedQuery},
+		},
+	}
+
+	request := NewSQLExecutionRequest(qsbridge.QuantaIntermediateQuery{}, executionRequest)
+
+	fields := request.Materialization.ProjectionFields
+	got := make(map[string]qsbridge.QuantaProjectionField, len(fields))
+	for _, field := range fields {
+		got[string(field.Role)+"."+field.Field] = field
+	}
+	for _, want := range []string{"c.c_custkey", "o.o_orderkey", "o.o_orderpriority", "c.c_mktsegment", "o.o_custkey"} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("materialization fields = %#v, missing %s", fields, want)
+		}
+	}
+}
+
 func TestNewSQLExecutionRequestCarriesDatetimeRangeForMaterialization(t *testing.T) {
 	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
 	shipDate := qsbridge.FieldRef{

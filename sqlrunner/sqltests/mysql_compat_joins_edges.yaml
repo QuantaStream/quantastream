@@ -1,0 +1,72 @@
+version: 1
+name: mysql_compat_joins_edges
+
+tests:
+  - id: mysql_compat_joins_edges.001.join_case_projection
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_expression_projection_edges
+    compatibility: mysql
+    requires: [select, inner_join, case, in, lower, order_by, limit]
+    sql: |
+      select c.c_custkey,
+             o.o_orderkey,
+             case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 'urgent'
+                  else lower(c.c_mktsegment) end as order_label
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_custkey = '1'
+      order by o.o_orderkey
+      limit 3
+    expect:
+      columns: [c_custkey, o_orderkey, order_label]
+      rows:
+        - [1, 9154, building]
+        - [1, 14656, urgent]
+        - [1, 24322, urgent]
+
+  - id: mysql_compat_joins_edges.002.join_function_and_coerced_filters
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_predicate_edges
+    compatibility: mysql
+    requires: [select, inner_join, where, lower, between, order_by, limit]
+    sql: |
+      select c.c_custkey, o.o_orderkey
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where lower(c.c_mktsegment) = 'building'
+        and o.o_orderkey between '9000' and '10000'
+      order by o.o_orderkey
+      limit 5
+    expect:
+      columns: [c_custkey, o_orderkey]
+      rows:
+        - [514, 9027]
+        - [1475, 9028]
+        - [535, 9030]
+        - [121, 9056]
+        - [610, 9088]
+
+  - id: mysql_compat_joins_edges.003.grouped_join_count_distinct
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_distinct_aggregate_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, count, distinct, in, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             count(distinct o.o_orderpriority) as distinct_priorities
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_mktsegment in ('BUILDING', 'AUTOMOBILE')
+      group by c.c_mktsegment
+      order by c.c_mktsegment
+    expect:
+      columns: [market_segment, distinct_priorities]
+      rows:
+        - [AUTOMOBILE, 5]
+        - [BUILDING, 5]

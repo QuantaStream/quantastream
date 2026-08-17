@@ -2203,6 +2203,87 @@ func TestSQLRuntimeExecuteSQLExpandsWildcardSelect(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLMaterializesJoinProjectionExpressionInputs(t *testing.T) {
+	var gotRequest ExecutionRequest
+	catalog := qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_mktsegment", Type: qsbridge.DataTypeString},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "orders",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "o_orderkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "o_custkey", Type: qsbridge.DataTypeInt},
+					{Name: "o_orderpriority", Type: qsbridge.DataTypeString},
+				},
+				Relationships: []qsbridge.RelationshipDefinition{{
+					Name:      "orders_customer",
+					FromTable: "orders",
+					FromField: "o_custkey",
+					ToTable:   "customer",
+					ToField:   "c_custkey",
+					Direction: qsbridge.JoinChildToParent,
+					Encoding: qsbridge.RelationshipEncodingProfile{
+						Kind: qsbridge.RelationshipEncodingVector,
+					},
+				}},
+			},
+		},
+	}
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		gotRequest = request
+		return ExecutionResult{Count: 3}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `select c.c_custkey,
+       o.o_orderkey,
+       case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 'urgent'
+            else lower(c.c_mktsegment) end as order_label
+from customer as c
+inner join orders as o on o.o_custkey = c.c_custkey
+where c.c_custkey = '1'
+order by o.o_orderkey
+limit 3`, qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	got := make(map[string]bool, len(gotRequest.Materialization.ProjectionFields))
+	for _, field := range gotRequest.Materialization.ProjectionFields {
+		got[string(field.Role)+"."+field.Field] = true
+	}
+	for _, want := range []string{"c.c_custkey", "o.o_orderkey", "o.o_orderpriority", "c.c_mktsegment"} {
+		if !got[want] {
+			t.Fatalf("materialization fields = %#v, missing %s", gotRequest.Materialization.ProjectionFields, want)
+		}
+	}
+	visible, diagnostics := legacyDirectRelationshipVisibleProjectionFields(gotRequest)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("visible projection diagnostics = %#v", diagnostics)
+	}
+	graphFields := legacyDirectRelationshipGraphProjectionMaterializationFields(gotRequest, visible)
+	graphGot := make(map[string]bool, len(graphFields))
+	for _, field := range graphFields {
+		graphGot[string(field.Role)+"."+field.Field] = true
+	}
+	for _, want := range []string{"c.c_custkey", "o.o_orderkey", "o.o_orderpriority", "c.c_mktsegment"} {
+		if !graphGot[want] {
+			t.Fatalf("graph materialization fields = %#v, missing %s", graphFields, want)
+		}
+	}
+}
+
 func TestSQLRuntimeExecuteSQLRunsInsertMutationWithoutLowering(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

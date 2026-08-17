@@ -914,7 +914,7 @@ func directBitmapEvaluateMaterializedExpr(expr qsbridge.Expr, materialized qsbri
 	if field, ok := directBitmapExprField(expr); ok {
 		values, ok := directBitmapProjectedValues(materialized, field)
 		if !ok {
-			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics("aggregate input field is not present in materialized row set")
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("materialized expression field %s is not present in materialized row set; available=%s", directBitmapFieldRefDebug(field), directBitmapProjectedRowSetFieldDebug(materialized)))
 		}
 		if index >= len(values) {
 			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics("aggregate input field has fewer values than grouped candidates")
@@ -2329,6 +2329,42 @@ func directBitmapProjectedValues(rowSet qsbridge.QuantaProjectedRowSet, field qs
 		return vector.Values, true
 	}
 	return nil, false
+}
+
+func directBitmapFieldRefDebug(field qsbridge.FieldRef) string {
+	role := materializationFieldRole(field.Table.Table, field)
+	name := directBitmapFieldPhysicalName(field)
+	if role != "" {
+		return role + "." + name
+	}
+	if field.Table.Table != "" {
+		return field.Table.Table + "." + name
+	}
+	return name
+}
+
+func directBitmapProjectedRowSetFieldDebug(rowSet qsbridge.QuantaProjectedRowSet) string {
+	if len(rowSet.ProjectionVectors) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(rowSet.ProjectionVectors))
+	for _, vector := range rowSet.ProjectionVectors {
+		role := string(vector.Field.Role)
+		name := vector.Field.Field
+		if name == "" {
+			name = vector.Field.PhysicalName
+		}
+		if role != "" {
+			parts = append(parts, role+"."+name)
+			continue
+		}
+		if vector.Field.Index != "" {
+			parts = append(parts, vector.Field.Index+"."+name)
+			continue
+		}
+		parts = append(parts, name)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func directBitmapProjectedExpressionValues(rowSet qsbridge.QuantaProjectedRowSet, expr qsbridge.Expr) ([]qsbridge.ResultCell, bool) {

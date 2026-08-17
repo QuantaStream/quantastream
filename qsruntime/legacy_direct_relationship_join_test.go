@@ -5480,7 +5480,7 @@ func TestLegacyDirectRelationshipGraphProjectionMaterializationFieldsIncludesRes
 }
 
 func TestLegacyDirectRelationshipGraphProjectionResultMaterializesSinkFields(t *testing.T) {
-	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem"}
 	extendedPrice := qsbridge.FieldRef{Table: lineitem, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
 	request.ProjectionOrder = []qsbridge.FieldRef{extendedPrice}
@@ -5526,6 +5526,111 @@ func TestLegacyDirectRelationshipGraphProjectionResultMaterializesSinkFields(t *
 	}
 	if result.Count != 2 {
 		t.Fatalf("count = %d, want 2", result.Count)
+	}
+}
+
+func TestLegacyDirectRelationshipGraphProjectionResultEvaluatesExpressionProjection(t *testing.T) {
+	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	customerKey := qsbridge.FieldRef{Table: customer, Name: "c_custkey", PhysicalName: "c_custkey", Type: qsbridge.DataTypeInt}
+	orderKey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", PhysicalName: "o_orderkey", Type: qsbridge.DataTypeInt}
+	orderPriority := qsbridge.FieldRef{Table: orders, Name: "o_orderpriority", PhysicalName: "o_orderpriority", Type: qsbridge.DataTypeString}
+	marketSegment := qsbridge.FieldRef{Table: customer, Name: "c_mktsegment", PhysicalName: "c_mktsegment", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.ProjectionOrder = []qsbridge.FieldRef{customerKey, orderKey}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: qsbridge.FieldExpr{Ref: customerKey}, Type: qsbridge.DataTypeInt},
+		{Expr: qsbridge.FieldExpr{Ref: orderKey}, Type: qsbridge.DataTypeInt},
+		{
+			Alias: "order_label",
+			Type:  qsbridge.DataTypeString,
+			Expr: qsbridge.SearchedCaseExpr{
+				Whens: []qsbridge.SearchedCaseWhen{{
+					Condition: qsbridge.BinaryExpr{
+						Left: qsbridge.FieldExpr{Ref: orderPriority},
+						Op:   qsbridge.BinaryOpIn,
+						Right: qsbridge.ListExpr{Items: []qsbridge.Expr{
+							qsbridge.Literal(qsbridge.ValueString, "1-URGENT"),
+							qsbridge.Literal(qsbridge.ValueString, "2-HIGH"),
+						}},
+					},
+					Result: qsbridge.Literal(qsbridge.ValueString, "urgent"),
+				}},
+				Else: qsbridge.CallExpr{Name: "lower", Args: []qsbridge.Expr{qsbridge.FieldExpr{Ref: marketSegment}}},
+			},
+		},
+	}
+	request.Materialization.ProjectionFields = []qsbridge.QuantaProjectionField{
+		{Index: "customer", Role: "c", Field: "c_custkey", Type: qsbridge.DataTypeInt, Visible: true},
+		{Index: "orders", Role: "o", Field: "o_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+		{Index: "orders", Role: "o", Field: "o_orderpriority", Type: qsbridge.DataTypeString},
+		{Index: "customer", Role: "c", Field: "c_mktsegment", Type: qsbridge.DataTypeString},
+	}
+	edge := legacyDirectRelationshipEdge{
+		childRole:   "o",
+		childTable:  "orders",
+		childField:  "o_custkey",
+		parentRole:  "c",
+		parentTable: "customer",
+		parentField: "c_custkey",
+	}
+	scratchpad := newLegacyDirectRelationshipGraphScratchpad(map[string][]qsbridge.QuantaRownum{
+		"o": {101, 102},
+		"c": {1},
+	}, []legacyDirectRelationshipEdge{edge})
+	scratchpad.storeAlignedParentRows(edge, []qsbridge.QuantaRownum{101, 102}, []legacyDirectRelationshipPair{
+		{child: 101, parent: 1},
+		{child: 102, parent: 1},
+	})
+	values := map[string]map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell{
+		"customer": {
+			"c_custkey":    {1: {Kind: qsbridge.ValueInt, Value: int64(1)}},
+			"c_mktsegment": {1: {Kind: qsbridge.ValueString, Value: "BUILDING"}},
+		},
+		"orders": {
+			"o_orderkey":      {101: {Kind: qsbridge.ValueInt, Value: int64(9154)}, 102: {Kind: qsbridge.ValueInt, Value: int64(14656)}},
+			"o_orderpriority": {101: {Kind: qsbridge.ValueString, Value: "3-MEDIUM"}, 102: {Kind: qsbridge.ValueString, Value: "1-URGENT"}},
+		},
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{
+				Index:   request.Index,
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+			}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					vector.Values = append(vector.Values, values[request.Index][field.Field][rownum])
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+
+	result, err := executor.legacyDirectRelationshipGraphProjectionResult(
+		context.Background(),
+		request,
+		"orders",
+		[]qsbridge.QuantaRownum{101, 102},
+		[]legacyDirectRelationshipEdge{edge},
+		scratchpad,
+		ExecutionResult{Count: 2},
+	)
+
+	if err != nil {
+		t.Fatalf("graph projection: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.RowSet.ProjectionVectors) != 3 {
+		t.Fatalf("projection vectors = %#v, want 3 evaluated projections", result.RowSet.ProjectionVectors)
+	}
+	labels := result.RowSet.ProjectionVectors[2].Values
+	if labels[0].Value != "building" || labels[1].Value != "urgent" {
+		t.Fatalf("labels = %#v, want building/urgent", labels)
 	}
 }
 

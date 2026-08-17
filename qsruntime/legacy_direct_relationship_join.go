@@ -2145,10 +2145,25 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipGrap
 	if result.Diagnostics.BlocksNative() {
 		return result, nil
 	}
+	rowSet, orderDiagnostics := directBitmapOrderProjectedRows(request, rowSet)
+	result.Diagnostics = append(result.Diagnostics, orderDiagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, nil
+	}
+	rowSet, projectionDiagnostics := directBitmapEvaluateProjectionRowSet(request, rowSet)
+	result.Diagnostics = append(result.Diagnostics, projectionDiagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, nil
+	}
+	if request.Result.Distinct {
+		rowSet = directBitmapDistinctProjectedRowSet(rowSet)
+	}
 	if !limitPushed {
 		rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
 	}
-	rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)
+	if len(request.Projection) == 0 {
+		rowSet = directBitmapOrderVisibleProjectedRowSet(rowSet, request.ProjectionOrder)
+	}
 	result.RowSet = rowSet
 	result.Count = uint64(rowSet.CandidateCount())
 	result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
@@ -4754,8 +4769,9 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	}
 	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("projection_limit_pushed", strconv.FormatBool(limitPushed)))
 	materialization := e.projectionMaterializationKernel()
-	childFields := legacyDirectRelationshipFieldsForIndex(projectionFields, edge.childTable)
-	parentFields := legacyDirectRelationshipFieldsForIndex(projectionFields, edge.parentTable)
+	materializationFields := legacyDirectRelationshipGraphProjectionMaterializationFields(request, projectionFields)
+	childFields := legacyDirectRelationshipFieldsForIndex(materializationFields, edge.childTable)
+	parentFields := legacyDirectRelationshipFieldsForIndex(materializationFields, edge.parentTable)
 	result.Probes = append(result.Probes, legacyDirectRelationshipMaterializationProbes("child", joined, childFields)...)
 	childMaterializationStart := time.Now()
 	childValues, diagnostics, err := e.legacyDirectRelationshipMaterializedValues(ctx, materialization, edge.childTable, joined, childFields, e.legacyDirectRelationshipTimeMaterializationForRole(request, edge.childTable, edge.childRole))
@@ -4776,7 +4792,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 		return result, err
 	}
 	assembleStart := time.Now()
-	rowSet, diagnostics := legacyDirectRelationshipAssembleProjectedRows(edge, pairs, projectionFields, childValues, parentValues)
+	rowSet, diagnostics := legacyDirectRelationshipAssembleProjectedRows(edge, pairs, materializationFields, childValues, parentValues)
 	assembleElapsed := time.Since(assembleStart)
 	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("phase_assemble_rows_elapsed", assembleElapsed.String()))
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -5318,8 +5334,10 @@ func legacyDirectRelationshipVisibleProjectionFields(request ExecutionRequest) (
 
 func legacyDirectRelationshipProjectionField(field qsbridge.FieldRef) qsbridge.QuantaProjectionField {
 	roles := field.Roles | qsbridge.FieldRoleVisible
+	role := materializationFieldRole(field.Table.Table, field)
 	return qsbridge.QuantaProjectionField{
 		Index:        field.Table.Table,
+		Role:         qsbridge.TableInstanceID(role),
 		Field:        directBitmapFieldPhysicalName(field),
 		Type:         field.Type,
 		PhysicalName: field.PhysicalName,
