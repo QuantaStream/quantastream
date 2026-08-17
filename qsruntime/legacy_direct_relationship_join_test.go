@@ -5423,6 +5423,78 @@ func TestLegacyDirectRelationshipGraphSinkTableRejectsSiblingSinks(t *testing.T)
 	}
 }
 
+func TestLegacyDirectRelationshipChildReadRequestDefersNullExtendedChildSeedFilters(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{
+			{Index: "customer", Role: "c", Field: "c_custkey"},
+			{Index: "orders", Role: "o", Field: "o_orderkey"},
+		},
+	})
+	request.Sources = []qsbridge.TableInstance{
+		{Table: "customer", Alias: "c"},
+		{Table: "orders", Alias: "o"},
+	}
+	request.HasCandidateSet = true
+	request.CandidateSet = qsbridge.QuantaCandidateSet{Index: "orders", Rownums: []qsbridge.QuantaRownum{10, 11}}
+	edge := legacyDirectRelationshipEdge{
+		parentRole:               "c",
+		parentTable:              "customer",
+		childRole:                "o",
+		childTable:               "orders",
+		sqlKind:                  qsbridge.JoinKindLeftOuter,
+		leftOuterPreservesParent: true,
+	}
+
+	got := legacyDirectRelationshipChildReadRequest(request, edge)
+
+	if got.HasCandidateSet || got.CandidateSet.Index != "" || len(got.CandidateSet.Rownums) != 0 {
+		t.Fatalf("candidate set = %#v / %v, want cleared for null-extended child", got.CandidateSet, got.HasCandidateSet)
+	}
+	if len(got.Query.Fragments) != 1 || got.Query.Fragments[0].Index != "customer" {
+		t.Fatalf("fragments = %#v, want only parent-side fragment", got.Query.Fragments)
+	}
+}
+
+func TestLegacyDirectRelationshipFilterProjectionPredicatesEvaluatesDeferredPushdownNull(t *testing.T) {
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	orderKey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpEqual, qsbridge.Field(orderKey), qsbridge.Literal(qsbridge.ValueNull, nil)),
+		Placement: qsbridge.PredicatePushdown,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "customer",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customer", Role: "c", Field: "c_custkey", Type: qsbridge.DataTypeInt, Visible: true},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(1)},
+					{Kind: qsbridge.ValueInt, Value: int64(3)},
+					{Kind: qsbridge.ValueInt, Value: int64(6)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "o_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(1001)},
+					{Kind: qsbridge.ValueNull, Value: nil},
+					{Kind: qsbridge.ValueNull, Value: nil},
+				},
+			},
+		},
+	}
+	filtered, diagnostics := legacyDirectRelationshipFilterProjectionPredicates(request, rowSet)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(filtered.Rownums) != 2 || filtered.Rownums[0] != 2 || filtered.Rownums[1] != 3 {
+		t.Fatalf("filtered rownums = %#v, want [2 3]", filtered.Rownums)
+	}
+}
+
 func TestLegacyDirectRelationshipIntersectRownumsPreservesLeftOrder(t *testing.T) {
 	got := legacyDirectRelationshipIntersectRownums(
 		[]qsbridge.QuantaRownum{5, 2, 9, 7},

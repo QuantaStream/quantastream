@@ -73,13 +73,12 @@ tests:
         - [AFRICA, KENYA]
 
   - id: mysql_compat_joins_boundaries.004.left_join_on_residual_null_extension
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_left_outer_boundary
     compatibility: mysql
     requires: [select, table_scan, left_join, null, on_predicate, order_by]
-    issue: "LEFT JOIN with residual ON predicates currently returns matched rows but does not yet preserve all null-extended left rows."
     sql: |
       select r.r_name as region_name, n.n_name as nation_name
       from region as r
@@ -131,13 +130,12 @@ tests:
         - [125]
 
   - id: mysql_compat_joins_boundaries.007.left_join_is_null_antijoin
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_left_outer_boundary
     compatibility: mysql
     requires: [select, table_scan, left_join, null, where, order_by, limit]
-    issue: "LEFT JOIN null extension is not fully materialized through projection and filtering yet."
     sql: |
       select c.c_custkey as customer_key, o.o_orderkey as order_key
       from customer as c

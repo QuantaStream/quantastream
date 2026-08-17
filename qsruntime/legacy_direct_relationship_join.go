@@ -752,7 +752,8 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 			return ExecutionResult{Diagnostics: diagnostics}, err
 		}
 		childStart := time.Now()
-		childRows, diagnostics, err = e.legacyDirectRelationshipRownumsForTable(ctx, request, edge.childTable, edge.childRole, edge.childField)
+		childReadRequest := legacyDirectRelationshipChildReadRequest(request, edge)
+		childRows, diagnostics, err = e.legacyDirectRelationshipRownumsForTable(ctx, childReadRequest, edge.childTable, edge.childRole, edge.childField)
 		childElapsed = time.Since(childStart)
 		if err != nil || diagnostics.BlocksNative() {
 			return ExecutionResult{Diagnostics: diagnostics}, err
@@ -4762,6 +4763,17 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 	if len(optionalParentRows) > 0 {
 		parentRows = optionalParentRows[0]
 	}
+	onResiduals := legacyDirectRelationshipResidualPredicatesForScope(request, qsbridge.PredicateScopeOn)
+	if len(onResiduals) > 0 {
+		var err error
+		pairs, diagnostics, err = e.legacyDirectRelationshipFilterPairsByPredicates(ctx, request, edge, pairs, onResiduals)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, err
+		}
+		joined = legacyDirectRelationshipChildRownums(pairs)
+		request = legacyDirectRelationshipRequestWithoutJoinOnResiduals(request)
+	}
 	joined, pairs = legacyDirectRelationshipProjectionOuterRows(edge, joined, pairs, parentRows)
 	var limitPushed bool
 	if len(request.OrderBy) == 0 && !directBitmapHasResidualScanPredicates(request) && !request.Result.Distinct {
@@ -4800,7 +4812,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipProj
 		return result, nil
 	}
 	residualStart := time.Now()
-	rowSet, diagnostics = directBitmapFilterResidualScanPredicates(request, rowSet)
+	rowSet, diagnostics = legacyDirectRelationshipFilterProjectionPredicates(request, rowSet)
 	residualElapsed := time.Since(residualStart)
 	result.Probes = append(result.Probes, legacyDirectRelationshipProbe("phase_projection_residual_filter_elapsed", residualElapsed.String()))
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
@@ -4839,6 +4851,82 @@ func legacyDirectRelationshipProjectionOuterRows(edge legacyDirectRelationshipEd
 	extendedPairs := legacyDirectRelationshipLeftOuterPairs(parentRows, pairs)
 	extendedJoined := legacyDirectRelationshipChildRownums(extendedPairs)
 	return extendedJoined, extendedPairs
+}
+
+func legacyDirectRelationshipChildReadRequest(request ExecutionRequest, edge legacyDirectRelationshipEdge) ExecutionRequest {
+	if edge.sqlKind != qsbridge.JoinKindLeftOuter || !edge.leftOuterPreservesParent {
+		return request
+	}
+	return legacyDirectRelationshipRequestWithoutRoleSeedFilters(request, edge.childTable, edge.childRole)
+}
+
+func legacyDirectRelationshipRequestWithoutRoleSeedFilters(request ExecutionRequest, table string, role string) ExecutionRequest {
+	if len(request.Query.Fragments) > 0 {
+		fragments := make([]qsbridge.QuantaQueryFragment, 0, len(request.Query.Fragments))
+		for _, fragment := range request.Query.Fragments {
+			if legacyDirectRelationshipFragmentTargetsTableRole(request, fragment, table, role) {
+				continue
+			}
+			fragments = append(fragments, fragment)
+		}
+		request.Query.Fragments = fragments
+	}
+	if request.HasCandidateSet && strings.EqualFold(request.CandidateSet.Index, table) {
+		request.HasCandidateSet = false
+		request.CandidateSet = qsbridge.QuantaCandidateSet{}
+	}
+	return request
+}
+
+func legacyDirectRelationshipRequestWithoutJoinOnResiduals(request ExecutionRequest) ExecutionRequest {
+	if len(request.Joins) == 0 {
+		return request
+	}
+	joins := append([]qsbridge.JoinEdge(nil), request.Joins...)
+	for joinIndex := range joins {
+		on := joins[joinIndex].On
+		if len(on) == 0 {
+			continue
+		}
+		filtered := make([]qsbridge.Predicate, 0, len(on))
+		for _, predicate := range on {
+			if predicate.Scope == qsbridge.PredicateScopeOn &&
+				(predicate.Placement == qsbridge.PredicateResidualScan || predicate.Placement == qsbridge.PredicateResidualJoin) {
+				continue
+			}
+			filtered = append(filtered, predicate)
+		}
+		joins[joinIndex].On = filtered
+	}
+	request.Joins = joins
+	return request
+}
+
+func legacyDirectRelationshipFilterProjectionPredicates(request ExecutionRequest, rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet) {
+	predicates := directBitmapResidualScanPredicates(request)
+	for _, predicate := range request.Predicates {
+		if predicate.Scope != "" && predicate.Scope != qsbridge.PredicateScopeWhere {
+			continue
+		}
+		if predicate.Placement != qsbridge.PredicatePushdown {
+			continue
+		}
+		predicates = append(predicates, predicate)
+	}
+	if len(predicates) == 0 {
+		return rowSet, nil
+	}
+	keep := make([]int, 0, rowSet.CandidateCount())
+	for i := 0; i < rowSet.CandidateCount(); i++ {
+		matched, diagnostics := directBitmapEvaluateResidualPredicates(predicates, rowSet, i)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, diagnostics
+		}
+		if matched {
+			keep = append(keep, i)
+		}
+	}
+	return directBitmapFilterRowSetByIndexes(rowSet, keep), nil
 }
 
 func legacyDirectRelationshipLeftOuterPairs(parentRows []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair) []legacyDirectRelationshipPair {

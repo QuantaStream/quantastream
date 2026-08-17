@@ -183,6 +183,14 @@ func directBitmapEvaluateResidualBetween(binary qsbridge.BinaryExpr, rowSet qsbr
 
 func directBitmapResidualCompareCells(op qsbridge.BinaryOp, left qsbridge.ResultCell, right qsbridge.ResultCell) bool {
 	if left.Kind == qsbridge.ValueNull || right.Kind == qsbridge.ValueNull || left.Value == nil || right.Value == nil {
+		leftNull := left.Kind == qsbridge.ValueNull || left.Value == nil
+		rightNull := right.Kind == qsbridge.ValueNull || right.Value == nil
+		switch op {
+		case qsbridge.BinaryOpEqual:
+			return leftNull && rightNull
+		case qsbridge.BinaryOpNotEqual:
+			return leftNull != rightNull
+		}
 		return false
 	}
 	if leftNumber, leftOK := directBitmapNumericCellValue(left); leftOK {
