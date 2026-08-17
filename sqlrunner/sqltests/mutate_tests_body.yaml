@@ -977,3 +977,159 @@ tests:
     expect:
       rows:
         - [0]
+
+  - id: "mutate_body.133.insert_null_predicate_rows"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, address, state, city, zip, createdAtTimestamp, timestamp_micro, timestamp_millis, hashedCustId, phone, phoneType, isActive, birthdate, isLegalAge, age, height, numFamilyMembers, rownum) values
+        ('600','Ada','Nullish','600 Edge St','CA','Arcata','95521','2020-04-01 00:00:00.000Z','2020-04-01 00:00:00.000Z','2020-04-01 00:00:00.000Z','edge600','600-111-2222',null,true,'2000-01-01',true,21,61,2,41),
+        ('610','Bea','Sparse','610 Edge St','OR','Bend','97701','2020-04-02 00:00:00.000Z','2020-04-02 00:00:00.000Z','2020-04-02 00:00:00.000Z','edge610','610-111-2222','home',true,'2000-01-01',true,31,null,3,42),
+        ('620','Cal','Dense','620 Edge St','WA','Seattle','98101','2020-04-03 00:00:00.000Z','2020-04-03 00:00:00.000Z','2020-04-03 00:00:00.000Z','edge620','620-111-2222','cell',false,'2000-01-01',true,41,68,4,43),
+        ('630','Dee','Dense','630 Edge St','NV','Reno','89501','2020-04-04 00:00:00.000Z','2020-04-04 00:00:00.000Z','2020-04-04 00:00:00.000Z','edge630','630-111-2222','business',true,'2000-01-01',true,51,70,5,44)
+    expect:
+      affected_rows: 4
+
+  - id: "mutate_body.134.commit_null_predicate_rows"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.135.update_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set city = 'MissingPhone' where phoneType is null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.136.commit_update_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.137.select_after_update_where_is_null"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where city = 'MissingPhone'
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.138.update_where_is_not_null"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set last_name = 'HasPhone' where phoneType is not null
+    expect:
+      affected_rows: 3
+
+  - id: "mutate_body.139.commit_update_where_is_not_null"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.140.select_after_update_where_is_not_null"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where last_name = 'HasPhone'
+    expect:
+      rows:
+        - [3]
+
+  - id: "mutate_body.141.update_bsi_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set city = 'MissingHeight' where height is null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.142.commit_update_bsi_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.143.select_after_update_bsi_where_is_null"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where city = 'MissingHeight'
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.144.delete_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where phoneType is null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.145.commit_delete_where_is_null"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.146.select_after_delete_where_is_null"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [3]
+
+  - id: "mutate_body.147.delete_where_is_not_null"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where height is not null
+    expect:
+      affected_rows: 2
+
+  - id: "mutate_body.148.commit_delete_where_is_not_null"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.149.select_after_delete_where_is_not_null"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.150.delete_null_predicate_remainder"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where cust_id is not null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.151.commit_null_predicate_remainder"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.152.select_after_null_predicate_cleanup"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [0]
