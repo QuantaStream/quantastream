@@ -140,3 +140,66 @@ tests:
         - [1, 24322]
         - [2, 38276]
         - [2, 20257]
+
+  - id: mysql_compat_joins_edges.007.grouped_join_sum_arithmetic_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_aggregate_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, sum, arithmetic, in, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(o.o_orderkey * 2) as doubled_orderkey_sum
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_mktsegment in ('BUILDING', 'AUTOMOBILE')
+      group by c.c_mktsegment
+      order by doubled_orderkey_sum desc, market_segment
+    expect:
+      columns: [market_segment, doubled_orderkey_sum]
+      rows:
+        - [BUILDING, 223443472]
+        - [AUTOMOBILE, 178279376]
+
+  - id: mysql_compat_joins_edges.008.grouped_join_sum_case_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_aggregate_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, sum, case, in, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 1 else 0 end) as urgent_orders
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_mktsegment in ('BUILDING', 'AUTOMOBILE')
+      group by c.c_mktsegment
+      order by urgent_orders desc, market_segment
+    expect:
+      columns: [market_segment, urgent_orders]
+      rows:
+        - [BUILDING, 1477]
+        - [AUTOMOBILE, 1214]
+
+  - id: mysql_compat_joins_edges.009.grouped_join_sum_case_field_expression
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_aggregate_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, group_by, sum, case, in, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then o.o_orderkey else 0 end) as urgent_orderkey_sum
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_mktsegment in ('BUILDING', 'AUTOMOBILE')
+      group by c.c_mktsegment
+      order by urgent_orderkey_sum desc, market_segment
+    expect:
+      columns: [market_segment, urgent_orderkey_sum]
+      rows:
+        - [BUILDING, 45293229]
+        - [AUTOMOBILE, 35592782]
