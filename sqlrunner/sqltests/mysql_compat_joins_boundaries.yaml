@@ -95,13 +95,12 @@ tests:
         - [MIDDLE EAST, null]
 
   - id: mysql_compat_joins_boundaries.005.left_join_null_extension_projection
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_left_outer_boundary
     compatibility: mysql
     requires: [select, table_scan, left_join, null, where, order_by]
-    issue: "LEFT JOIN null extension is not fully materialized through projection yet."
     sql: |
       select c.c_name as customer_name, o.o_orderkey as order_key
       from customer as c
@@ -130,3 +129,121 @@ tests:
       columns: [joined_rows]
       rows:
         - [125]
+
+  - id: mysql_compat_joins_boundaries.007.left_join_is_null_antijoin
+    status: xfail
+    kind: query
+    order: exact
+    feature: joins_left_outer_boundary
+    compatibility: mysql
+    requires: [select, table_scan, left_join, null, where, order_by, limit]
+    issue: "LEFT JOIN null extension is not fully materialized through projection and filtering yet."
+    sql: |
+      select c.c_custkey as customer_key, o.o_orderkey as order_key
+      from customer as c
+      left join orders as o on o.o_custkey = c.c_custkey
+      where o.o_orderkey is null
+      order by c.c_custkey
+      limit 5
+    expect:
+      columns: [customer_key, order_key]
+      rows:
+        - [3, null]
+        - [6, null]
+        - [9, null]
+        - [12, null]
+        - [15, null]
+
+  - id: mysql_compat_joins_boundaries.008.left_join_grouped_count_zero_matches
+    status: xfail
+    kind: query
+    order: exact
+    feature: joins_left_outer_boundary
+    compatibility: mysql
+    requires: [select, table_scan, left_join, group_by, count, null, order_by]
+    issue: "LEFT JOIN aggregate semantics need null-extended rows so zero-match groups can survive."
+    sql: |
+      select c.c_custkey as customer_key, count(o.o_orderkey) as order_count
+      from customer as c
+      left join orders as o on o.o_custkey = c.c_custkey
+      where c.c_custkey in (1, 3, 6)
+      group by c.c_custkey
+      order by c.c_custkey
+    expect:
+      columns: [customer_key, order_count]
+      rows:
+        - [1, 9]
+        - [3, 0]
+        - [6, 0]
+
+  - id: mysql_compat_joins_boundaries.009.derived_table_grouped_join
+    status: xfail
+    kind: query
+    order: exact
+    feature: joins_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, group_by, count, aliases, order_by]
+    issue: "Derived table sources are not accepted by the current simple parser."
+    sql: |
+      select c.c_custkey as customer_key, s.order_count
+      from customer as c
+      inner join (
+        select o_custkey, count(*) as order_count
+        from orders
+        group by o_custkey
+      ) as s on s.o_custkey = c.c_custkey
+      where c.c_custkey in (1, 2, 3)
+      order by c.c_custkey
+    expect:
+      columns: [customer_key, order_count]
+      rows:
+        - [1, 9]
+        - [2, 10]
+
+  - id: mysql_compat_joins_boundaries.010.correlated_subquery_in_join_on
+    status: xfail
+    kind: query
+    order: exact
+    feature: joins_correlated_subquery_boundary
+    compatibility: mysql
+    requires: [select, table_scan, inner_join, scalar_subquery, correlated_subquery, order_by]
+    issue: "Correlated scalar subqueries inside JOIN ON predicates are not supported yet."
+    sql: |
+      select c.c_custkey as customer_key, o.o_orderkey as order_key
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+        and o.o_orderkey = (
+          select min(o2.o_orderkey)
+          from orders as o2
+          where o2.o_custkey = c.c_custkey
+        )
+      where c.c_custkey in (1, 2)
+      order by c.c_custkey
+    expect:
+      columns: [customer_key, order_key]
+      rows:
+        - [1, 9154]
+        - [2, 6980]
+
+  - id: mysql_compat_joins_boundaries.011.non_equi_join_condition
+    status: xfail
+    kind: query
+    order: exact
+    feature: joins_non_equi_boundary
+    compatibility: mysql
+    requires: [select, table_scan, inner_join, non_equi_join, group_by, count, order_by]
+    issue: "Relationship-vector joins currently require equi-join keys; non-equi JOIN ON predicates are a post-1.0 compatibility target."
+    sql: |
+      select r.r_name as region_name, count(n.n_nationkey) as nation_count
+      from region as r
+      inner join nation as n on n.n_regionkey >= r.r_regionkey
+      group by r.r_name
+      order by r.r_name
+    expect:
+      columns: [region_name, nation_count]
+      rows:
+        - [AFRICA, 25]
+        - [AMERICA, 20]
+        - [ASIA, 15]
+        - [EUROPE, 10]
+        - [MIDDLE EAST, 5]
