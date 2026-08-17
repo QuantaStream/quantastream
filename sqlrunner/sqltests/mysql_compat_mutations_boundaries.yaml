@@ -120,7 +120,164 @@ tests:
       from customer
       where c_custkey <= 3
 
-  - id: mysql_compat_mutations_boundaries.010.update_order_by_limit
+  - id: mysql_compat_mutations_boundaries.010.update_assignment_arithmetic
+    status: xfail
+    kind: statement
+    feature: mutations_assignment_expression_boundary
+    compatibility: mysql
+    requires: [update, arithmetic, where, comparison]
+    issue: "UPDATE assignment expressions are post-1.0 compatibility work; QS mutations currently assign literal or parameter values only."
+    sql: |
+      update qs_mysql_compat_mutations_ctas
+      set id = id + 10
+      where id = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.011.update_assignment_function
+    status: xfail
+    kind: statement
+    feature: mutations_assignment_expression_boundary
+    compatibility: mysql
+    requires: [update, scalar_function, where, comparison]
+    issue: "UPDATE assignment expressions are post-1.0 compatibility work; scalar functions in SET clauses need explicit mutation expression evaluation."
+    sql: |
+      update qs_mysql_compat_mutations_ctas
+      set name = lower(name)
+      where id = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.012.update_join
+    status: xfail
+    kind: statement
+    feature: mutations_multi_table_boundary
+    compatibility: mysql
+    requires: [update, join, aliases, where, comparison]
+    issue: "UPDATE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
+    sql: |
+      update customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      set c.c_comment = 'joined'
+      where o.o_orderkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.013.delete_join
+    status: xfail
+    kind: statement
+    feature: mutations_multi_table_boundary
+    compatibility: mysql
+    requires: [delete, join, aliases, where, comparison]
+    issue: "DELETE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
+    sql: |
+      delete c
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      where o.o_orderkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.014.update_where_subquery
+    status: xfail
+    kind: statement
+    feature: mutations_subquery_boundary
+    compatibility: mysql
+    requires: [update, where, subquery, in]
+    issue: "Mutation predicates with subqueries need explicit write-time subquery planning and safety checks."
+    sql: |
+      update qs_mysql_compat_mutations_ctas
+      set name = 'subquery'
+      where id in (
+        select c_custkey
+        from customer
+        where c_custkey <= 2
+      )
+    expect:
+      affected_rows: 2
+
+  - id: mysql_compat_mutations_boundaries.015.delete_where_subquery
+    status: xfail
+    kind: statement
+    feature: mutations_subquery_boundary
+    compatibility: mysql
+    requires: [delete, where, subquery, in]
+    issue: "Mutation predicates with subqueries need explicit write-time subquery planning and safety checks."
+    sql: |
+      delete from qs_mysql_compat_mutations_ctas
+      where id in (
+        select c_custkey
+        from customer
+        where c_custkey = 3
+      )
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.016.alter_table_add_column
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_boundary
+    compatibility: mysql
+    requires: [alter_table, add_column, varchar]
+    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
+    sql: |
+      alter table qs_mysql_compat_mutations_ctas
+      add column note varchar(40)
+
+  - id: mysql_compat_mutations_boundaries.017.alter_table_drop_column
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_boundary
+    compatibility: mysql
+    requires: [alter_table, drop_column]
+    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
+    sql: |
+      alter table qs_mysql_compat_mutations_ctas
+      drop column name
+
+  - id: mysql_compat_mutations_boundaries.018.insert_select
+    status: xfail
+    kind: statement
+    feature: mutations_insert_select_boundary
+    compatibility: mysql
+    requires: [insert, select]
+    issue: "INSERT ... SELECT requires result-schema validation and materializing SELECT rows into the write path."
+    sql: |
+      insert into qs_mysql_compat_mutations_ctas (id, name)
+      select c_custkey, c_name
+      from customer
+      where c_custkey <= 3
+    expect:
+      affected_rows: 3
+
+  - id: mysql_compat_mutations_boundaries.019.replace_into
+    status: xfail
+    kind: statement
+    feature: mutations_upsert_boundary
+    compatibility: mysql
+    requires: [replace, insert, primary_key]
+    issue: "REPLACE needs explicit delete/insert or overwrite semantics over QS primary-key authority."
+    sql: |
+      replace into qs_mysql_compat_mutations_ctas (id, name)
+      values (1, 'replacement')
+    expect:
+      affected_rows: 2
+
+  - id: mysql_compat_mutations_boundaries.020.insert_on_duplicate_key_update
+    status: xfail
+    kind: statement
+    feature: mutations_upsert_boundary
+    compatibility: mysql
+    requires: [insert, on_duplicate_key_update, primary_key]
+    issue: "INSERT ... ON DUPLICATE KEY UPDATE needs QS upsert semantics plus update-expression support."
+    sql: |
+      insert into qs_mysql_compat_mutations_ctas (id, name)
+      values (1, 'duplicate')
+      on duplicate key update name = values(name)
+    expect:
+      affected_rows: 2
+
+  - id: mysql_compat_mutations_boundaries.021.update_order_by_limit
     status: xfail
     kind: statement
     feature: mutations_order_limit_boundary
@@ -135,7 +292,7 @@ tests:
     expect:
       affected_rows: 1
 
-  - id: mysql_compat_mutations_boundaries.011.delete_order_by_limit
+  - id: mysql_compat_mutations_boundaries.022.delete_order_by_limit
     status: xfail
     kind: statement
     feature: mutations_order_limit_boundary
@@ -150,7 +307,7 @@ tests:
     expect:
       affected_rows: 1
 
-  - id: mysql_compat_mutations_boundaries.012.delete_limit_without_where
+  - id: mysql_compat_mutations_boundaries.023.delete_limit_without_where
     status: xfail
     kind: statement
     feature: mutations_order_limit_boundary

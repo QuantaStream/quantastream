@@ -35,6 +35,9 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "insert"); ok {
 		return parseSimpleInsert(sql)
 	}
+	if _, ok := consumeKeyword(trimmed, "replace"); ok {
+		return UnboundStatement{}, simpleParserDiagnostic("REPLACE is not supported yet"), false
+	}
 	if _, ok := consumeKeyword(trimmed, "update"); ok {
 		return parseSimpleUpdate(sql)
 	}
@@ -49,6 +52,9 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	if _, ok := consumeKeyword(trimmed, "drop"); ok {
 		return parseSimpleDrop(sql)
+	}
+	if _, ok := consumeKeyword(trimmed, "alter"); ok {
+		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE is not supported yet; QS schema is catalog/YAML-backed"), false
 	}
 	if _, ok := consumeKeyword(trimmed, "show"); ok {
 		return parseSimpleShow(sql)
@@ -211,9 +217,15 @@ func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("INSERT must include INTO"), false
 	}
+	if _, _, ok := splitBeforeTopLevelKeyword(insertBody, "select"); ok {
+		return UnboundStatement{}, simpleParserDiagnostic("INSERT ... SELECT is not supported yet"), false
+	}
 	targetText, valuesText, ok := splitBeforeKeyword(insertBody, "values")
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("INSERT must include VALUES"), false
+	}
+	if diagnostic, blocked := simpleInsertOnDuplicateKeyDiagnostic(valuesText); blocked {
+		return UnboundStatement{}, diagnostic, false
 	}
 	table, columns, diagnostic, ok := parseSimpleInsertTarget(targetText)
 	if !ok {
@@ -247,6 +259,9 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	if diagnostic, blocked := simpleMutationOrderLimitDiagnostic("UPDATE", mutationText); blocked {
 		return UnboundStatement{}, diagnostic, false
+	}
+	if hasAnyTopLevelKeyword(targetText, "join") {
+		return UnboundStatement{}, simpleParserDiagnostic("UPDATE JOIN is not supported yet"), false
 	}
 	table, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
@@ -289,7 +304,7 @@ func parseSimpleUpdateAssignments(text string) ([]UnboundAssignment, int, Diagno
 		if column == "" {
 			return nil, 0, simpleParserDiagnostic("UPDATE assignment column is empty"), false
 		}
-		value, diagnostic, ok := parseSimpleComparisonValue(strings.TrimSpace(right), &parameterIndex)
+		value, diagnostic, ok := parseSimpleUpdateAssignmentValue(strings.TrimSpace(right), &parameterIndex)
 		if !ok {
 			return nil, 0, diagnostic, false
 		}
@@ -314,6 +329,9 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("only DELETE statements are supported"), false
 	}
+	if targetAlias, _, ok := splitBeforeTopLevelKeyword(deleteBody, "from"); ok && strings.TrimSpace(targetAlias) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE is not supported yet"), false
+	}
 	deleteBody, ok = consumeKeyword(deleteBody, "from")
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("DELETE must include FROM"), false
@@ -322,6 +340,9 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, diagnostic, false
 	}
 	targetText, whereText, hasWhere := splitOptionalKeyword(deleteBody, "where")
+	if hasAnyTopLevelKeyword(targetText, "join") {
+		return UnboundStatement{}, simpleParserDiagnostic("DELETE JOIN is not supported yet"), false
+	}
 	table, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -354,6 +375,86 @@ func simpleMutationOrderLimitDiagnostic(statement string, text string) (Diagnost
 		return simpleParserDiagnostic(statement + " LIMIT is not supported yet"), true
 	}
 	return Diagnostic{}, false
+}
+
+func simpleInsertOnDuplicateKeyDiagnostic(text string) (Diagnostic, bool) {
+	if _, onTail, ok := splitBeforeTopLevelKeyword(text, "on"); ok {
+		duplicateTail, ok := consumeKeyword(onTail, "duplicate")
+		if ok {
+			keyTail, ok := consumeKeyword(duplicateTail, "key")
+			if ok {
+				if _, ok := consumeKeyword(keyTail, "update"); ok {
+					return simpleParserDiagnostic("INSERT ... ON DUPLICATE KEY UPDATE is not supported yet"), true
+				}
+			}
+		}
+	}
+	return Diagnostic{}, false
+}
+
+func parseSimpleUpdateAssignmentValue(text string, parameterIndex *int) (UnboundExpr, Diagnostic, bool) {
+	if text == "?" {
+		if parameterIndex == nil {
+			return UnboundParameter(1, DataTypeUnknown), Diagnostic{}, true
+		}
+		index := *parameterIndex
+		*parameterIndex = index + 1
+		return UnboundParameter(index, DataTypeUnknown), Diagnostic{}, true
+	}
+	if literal, diagnostic, ok := parseSimpleLiteral(text); ok || diagnostic.Code != "" && !simpleMutationAssignmentExpressionBoundary(text) {
+		return literal, diagnostic, ok
+	}
+	if simpleMutationAssignmentExpressionBoundary(text) {
+		return nil, simpleParserDiagnostic("UPDATE assignment expressions are not supported yet"), false
+	}
+	return parseSimpleLiteral(text)
+}
+
+func simpleMutationAssignmentExpressionBoundary(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	if _, ok := parseSimpleScalarSubqueryExpression(trimmed, PredicateScopeWhere); ok {
+		return true
+	}
+	if _, ok := parseSimpleScalarCallExpression(trimmed); ok {
+		return true
+	}
+	for _, operator := range []string{"+", "-", "*", "/"} {
+		if topLevelSimpleOperatorIndex(trimmed, operator) > 0 {
+			return true
+		}
+	}
+	return isSimpleIdentifierPath(trimmed)
+}
+
+func isSimpleIdentifierPath(text string) bool {
+	parts := strings.Split(text, ".")
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if !isSimpleIdentifierPathPart(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSimpleIdentifierPathPart(text string) bool {
+	if text == "" {
+		return false
+	}
+	if !isSimpleIdentifierStart(text[0]) {
+		return false
+	}
+	for i := 1; i < len(text); i++ {
+		if !isSimpleIdentifierPart(text[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseSimpleTruncate(sql string) (UnboundStatement, Diagnostic, bool) {

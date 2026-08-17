@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func assertSimpleParserRejects(t *testing.T, sql string, message string) {
+	t.Helper()
+	_, diagnostics := SimpleParserBridge{}.Parse(sql)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want parser blocker", diagnostics)
+	}
+	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), message) {
+		t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, message)
+	}
+}
+
 func TestSimpleParserBridgeParsesUpdateStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set age = 99, phoneType = 'cell;home', last_name = 'Madden, Jr' where state = 'ID'")
 	if diagnostics.BlocksNative() {
@@ -56,6 +67,35 @@ func TestSimpleParserBridgeParsesUpdateWithoutWhereForValidation(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeRejectsUpdateAssignmentExpressionBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "arithmetic expression",
+			sql:  "update customers_qa set age = age + 1 where state = 'ID'",
+		},
+		{
+			name: "scalar function",
+			sql:  "update customers_qa set last_name = lower(last_name) where state = 'ID'",
+		},
+		{
+			name: "scalar subquery",
+			sql:  "update customers_qa set age = (select max(age) from customers_qa) where state = 'ID'",
+		},
+		{
+			name: "field reference",
+			sql:  "update customers_qa set last_name = first_name where state = 'ID'",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertSimpleParserRejects(t, test.sql, "UPDATE assignment expressions are not supported yet")
+		})
+	}
+}
+
 func TestSimpleParserBridgeRejectsUpdateOrderLimitBoundary(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -87,6 +127,35 @@ func TestSimpleParserBridgeRejectsUpdateOrderLimitBoundary(t *testing.T) {
 			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
 				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
 			}
+		})
+	}
+}
+
+func TestSimpleParserBridgeRejectsMultiTableMutationBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "update join",
+			sql:     "update customer c inner join orders o on c.c_custkey = o.o_custkey set c.c_comment = 'seen' where o.o_orderkey = 1",
+			message: "UPDATE JOIN is not supported yet",
+		},
+		{
+			name:    "delete target alias",
+			sql:     "delete c from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
+			message: "multi-table DELETE is not supported yet",
+		},
+		{
+			name:    "delete join",
+			sql:     "delete from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
+			message: "DELETE JOIN is not supported yet",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertSimpleParserRejects(t, test.sql, test.message)
 		})
 	}
 }
@@ -151,6 +220,38 @@ func TestSimpleParserBridgeRejectsDeleteOrderLimitBoundary(t *testing.T) {
 			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
 				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
 			}
+		})
+	}
+}
+
+func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
+	assertSimpleParserRejects(t, "alter table customers_qa add column nickname varchar(40)", "ALTER TABLE is not supported yet")
+}
+
+func TestSimpleParserBridgeRejectsInsertSelectBoundary(t *testing.T) {
+	assertSimpleParserRejects(t, "insert into customers_qa (cust_id, first_name) select c_custkey, c_name from customer", "INSERT ... SELECT is not supported yet")
+}
+
+func TestSimpleParserBridgeRejectsReplaceAndOnDuplicateBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "replace",
+			sql:     "replace into customers_qa (cust_id, first_name) values (1, 'Ada')",
+			message: "REPLACE is not supported yet",
+		},
+		{
+			name:    "on duplicate",
+			sql:     "insert into customers_qa (cust_id, first_name) values (1, 'Ada') on duplicate key update first_name = values(first_name)",
+			message: "INSERT ... ON DUPLICATE KEY UPDATE is not supported yet",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertSimpleParserRejects(t, test.sql, test.message)
 		})
 	}
 }
