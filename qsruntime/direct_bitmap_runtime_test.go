@@ -986,6 +986,88 @@ func TestDirectBitmapProjectedValuesUsesRoleForRepeatedAliases(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeCountsSelfJoinUsingMultiplicity(t *testing.T) {
+	left := qsbridge.FieldRef{
+		Table: qsbridge.TableInstance{Table: "nation", Alias: "n1"},
+		Name:  "n_regionkey",
+		Type:  qsbridge.DataTypeInt,
+	}
+	right := qsbridge.FieldRef{
+		Table: qsbridge.TableInstance{Table: "nation", Alias: "n2"},
+		Name:  "n_regionkey",
+		Type:  qsbridge.DataTypeInt,
+	}
+	materialized := false
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 5, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5}}, nil, nil
+				},
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materialized = true
+			if request.Index != "nation" {
+				t.Fatalf("materialization index = %q, want nation", request.Index)
+			}
+			if len(request.ProjectionFields) != 1 || request.ProjectionFields[0].Role != "n1" || request.ProjectionFields[0].Field != "n_regionkey" {
+				t.Fatalf("projection fields = %#v, want n1.n_regionkey", request.ProjectionFields)
+			}
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "nation",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field: request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueInt, Value: int64(1)},
+						{Kind: qsbridge.ValueInt, Value: int64(1)},
+						{Kind: qsbridge.ValueInt, Value: int64(2)},
+						{Kind: qsbridge.ValueInt, Value: int64(2)},
+						{Kind: qsbridge.ValueInt, Value: int64(3)},
+					},
+				}},
+			}, nil, nil
+		}),
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SourceIndexes = []string{"nation"}
+	request.Sources = []qsbridge.TableInstance{
+		{Table: "nation", Alias: "n1"},
+		{Table: "nation", Alias: "n2"},
+	}
+	request.Joins = []qsbridge.JoinEdge{{
+		Left:      left,
+		Right:     right,
+		Kind:      qsbridge.JoinKindInner,
+		Direction: qsbridge.JoinPeerEquality,
+		Legal:     true,
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "joined_rows",
+		Type:     qsbridge.DataTypeInt,
+	}}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if !materialized {
+		t.Fatalf("expected self-join key materialization")
+	}
+	if len(result.RowSet.ProjectionVectors) != 1 || len(result.RowSet.ProjectionVectors[0].Values) != 1 {
+		t.Fatalf("row set = %#v, want single aggregate cell", result.RowSet)
+	}
+	cell := result.RowSet.ProjectionVectors[0].Values[0]
+	if cell.Kind != qsbridge.ValueInt || cell.Value != int64(9) {
+		t.Fatalf("joined_rows cell = %#v, want 9", cell)
+	}
+}
+
 func TestDirectBitmapGroupExpressionIndexUsesRoleForRepeatedAliases(t *testing.T) {
 	n1 := qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "nation", Alias: "n1"}, Name: "n_name"}
 	n2 := qsbridge.FieldRef{Table: qsbridge.TableInstance{Table: "nation", Alias: "n2"}, Name: "n_name"}

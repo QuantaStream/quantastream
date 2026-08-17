@@ -113,13 +113,11 @@ tests:
         - [Customer#000000006, null]
 
   - id: mysql_compat_joins_boundaries.006.using_join
-    status: xfail
     kind: query
     order: exact
     feature: joins_using_boundary
     compatibility: mysql
     requires: [select, table_scan, inner_join, using]
-    issue: "JOIN ... USING parses, but direct self-join semantics currently collapse same-table roles instead of preserving MySQL join cardinality."
     sql: |
       select count(*) as joined_rows
       from nation as n1

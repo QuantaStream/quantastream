@@ -324,6 +324,9 @@ func (r DirectBitmapRuntime) directBitmapAggregateResult(ctx context.Context, re
 	if result.Diagnostics.BlocksNative() {
 		return result
 	}
+	if selfJoinResult, ok := r.directBitmapSelfJoinCountAggregateResult(ctx, request, bitmapResult, result); ok {
+		return selfJoinResult
+	}
 	if len(request.GroupBy) == 0 && directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) && !directBitmapHasResidualScanPredicates(request) && request.NativePredicates.Empty() {
 		return directBitmapCountAggregateResult(request, result)
 	}
