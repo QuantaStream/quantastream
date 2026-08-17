@@ -29,6 +29,7 @@ func run(args []string) int {
 	timeout := flags.Duration("timeout", 30*time.Second, "per-smoke timeout")
 	maxRows := flags.Int("max-rows", 5, "maximum rows to print per query")
 	q3View := flags.Bool("q3-view", true, "run the TPC-H Q3 view smoke when q3_order_line_base is installed")
+	prepared := flags.Bool("prepared", true, "run prepared statement smoke queries")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -123,7 +124,95 @@ func run(args []string) int {
 		fmt.Println("q3_order_line_base not installed; skipped")
 	}
 
+	if *prepared {
+		if err := runPreparedSmoke(ctx, db, *maxRows); err != nil {
+			fmt.Fprintf(os.Stderr, "prepared smoke failed: %v\n", err)
+			return 1
+		}
+	}
+
 	return 0
+}
+
+func runPreparedSmoke(ctx context.Context, db *sql.DB, maxRows int) error {
+	fmt.Println()
+	fmt.Println("-- prepared_lineitem_shipmode_count --")
+	stmt, err := db.PrepareContext(ctx, "select count(*) as lineitem_count from lineitem where l_shipmode = ?")
+	if err != nil {
+		return fmt.Errorf("prepare shipmode count: %w", err)
+	}
+	for _, shipMode := range []string{"MAIL", "SHIP"} {
+		rows, err := runPreparedQuery(ctx, stmt, maxRows, shipMode)
+		if err != nil {
+			_ = stmt.Close()
+			return fmt.Errorf("execute shipmode count for %s: %w", shipMode, err)
+		}
+		fmt.Printf("param=%s rows=%v\n", shipMode, rows)
+	}
+	if err := stmt.Close(); err != nil {
+		return fmt.Errorf("close shipmode statement: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println("-- prepared_lineitem_discount_probe --")
+	stmt, err = db.PrepareContext(ctx, "select count(*) as discount_count from lineitem where l_discount between ? and ?")
+	if err != nil {
+		return fmt.Errorf("prepare discount probe: %w", err)
+	}
+	rows, err := runPreparedQuery(ctx, stmt, maxRows, 0.05, 0.07)
+	if closeErr := stmt.Close(); closeErr != nil && err == nil {
+		err = fmt.Errorf("close discount statement: %w", closeErr)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("params=[0.05 0.07] rows=%v\n", rows)
+	return nil
+}
+
+func runPreparedQuery(ctx context.Context, stmt *sql.Stmt, maxRows int, args ...any) ([][]any, error) {
+	rows, err := stmt.QueryContext(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("columns=%v\n", columns)
+
+	values := make([]any, len(columns))
+	dest := make([]any, len(columns))
+	for i := range values {
+		dest[i] = &values[i]
+	}
+
+	captured := make([][]any, 0)
+	count := 0
+	for rows.Next() {
+		for i := range values {
+			values[i] = nil
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		row := make([]any, len(values))
+		for i, value := range values {
+			row[i] = normalizeDriverValue(value)
+		}
+		captured = append(captured, row)
+		if count < maxRows {
+			fmt.Println(row)
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	fmt.Printf("row_count=%d\n", count)
+	return captured, nil
 }
 
 func runQuery(ctx context.Context, db *sql.DB, query smokeQuery, maxRows int) ([][]any, error) {

@@ -15,6 +15,8 @@ const (
 	CommandKindStmtPrepare CommandKind = "stmt_prepare"
 	// CommandKindStmtExecute is a decoded COM_STMT_EXECUTE command.
 	CommandKindStmtExecute CommandKind = "stmt_execute"
+	// CommandKindStmtSendLongData is a decoded COM_STMT_SEND_LONG_DATA command.
+	CommandKindStmtSendLongData CommandKind = "stmt_send_long_data"
 	// CommandKindStmtClose is a decoded COM_STMT_CLOSE command.
 	CommandKindStmtClose CommandKind = "stmt_close"
 	// CommandKindStmtReset is a decoded COM_STMT_RESET command.
@@ -31,6 +33,7 @@ type Command struct {
 	SQL          string
 	StatementID  uint32
 	Execute      PreparedExecuteCommand
+	LongData     PreparedLongDataCommand
 	ConnectionID uint32
 	Database     string
 }
@@ -59,6 +62,12 @@ func DecodeCommand(payload []byte) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Kind: CommandKindStmtExecute, StatementID: execute.StatementID, Execute: execute}, nil
+	case CommandStmtSendLongData:
+		longData, err := DecodePreparedLongDataCommand(payload)
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: CommandKindStmtSendLongData, StatementID: longData.StatementID, LongData: longData}, nil
 	case CommandStmtClose:
 		statementID, err := decodeStatementIDCommand(CommandStmtClose, payload)
 		if err != nil {
@@ -95,6 +104,8 @@ func decodeStatementIDCommand(command CommandByte, payload []byte) (uint32, erro
 
 func commandName(command CommandByte) string {
 	switch command {
+	case CommandStmtSendLongData:
+		return "COM_STMT_SEND_LONG_DATA"
 	case CommandStmtClose:
 		return "COM_STMT_CLOSE"
 	case CommandStmtReset:

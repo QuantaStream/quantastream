@@ -213,6 +213,224 @@ func TestNativeProxyMySQLCommandHandlerExecutesPreparedStatement(t *testing.T) {
 	}
 }
 
+func TestNativeProxyMySQLCommandHandlerPreparedExecuteReusesCachedTypes(t *testing.T) {
+	var requests []ExecutionRequest
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		requests = append(requests, request)
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:   "orders",
+			Rownums: []qsbridge.QuantaRownum{8},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Field:  qsbridge.QuantaProjectionField{Index: "orders", Field: "o_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(8)}},
+			}},
+		}}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind: qsmysql.CommandKindStmtPrepare,
+		SQL:  "select o_orderkey from orders where o_orderkey = ?",
+	}); err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtExecute,
+		StatementID: 1,
+		Execute:     nativeProxyPreparedExecuteCommand(1, qsmysql.ColumnTypeLongLong, int64(7)),
+	}); err != nil {
+		t.Fatalf("first execute failed: %v", err)
+	}
+
+	cachedPayload := []byte{0, 0}
+	cachedPayload = appendNativeProxyUint64LE(cachedPayload, 8)
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtExecute,
+		StatementID: 1,
+		Execute:     nativeProxyPreparedExecuteCommandWithPayload(1, cachedPayload),
+	}); err != nil {
+		t.Fatalf("cached execute failed: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want two executes", len(requests))
+	}
+	fragment := requests[1].Query.Fragments[0]
+	if fragment.Literal.Kind != qsbridge.ValueInt || fragment.Literal.Value != int64(8) {
+		t.Fatalf("cached execute literal = %#v, want int64(8)", fragment.Literal)
+	}
+}
+
+func TestNativeProxyMySQLCommandHandlerPreparedBatchInsert(t *testing.T) {
+	var gotRequest ExecutionRequest
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		gotRequest = request
+		return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: 2}}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	prepare, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind: qsmysql.CommandKindStmtPrepare,
+		SQL:  "insert into orders (o_orderkey, o_orderpriority) values (?, ?), (?, ?)",
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	statementID := nativeProxyPreparedStatementID(t, prepare)
+	execute, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtExecute,
+		StatementID: statementID,
+		Execute: nativeProxyPreparedExecuteCommandWithValues(statementID, []nativeProxyPreparedValue{
+			{Type: qsmysql.ColumnTypeLongLong, Value: int64(9001)},
+			{Type: qsmysql.ColumnTypeVarString, Value: "1-URGENT"},
+			{Type: qsmysql.ColumnTypeLongLong, Value: int64(9002)},
+			{Type: qsmysql.ColumnTypeVarString, Value: "2-HIGH"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if execute.Kind != qsmysql.CommandResponseOK {
+		t.Fatalf("execute response = %#v, want OK", execute)
+	}
+	if gotRequest.Mutation.Kind != qsbridge.MutationInsert || gotRequest.Mutation.Target.Table != "orders" {
+		t.Fatalf("mutation = %#v, want orders insert", gotRequest.Mutation)
+	}
+	if len(gotRequest.Mutation.Rows) != 2 {
+		t.Fatalf("mutation rows = %#v, want two rows", gotRequest.Mutation.Rows)
+	}
+	if got := nativeProxyLiteralValue(t, gotRequest.Mutation.Rows[0].Values[0]); got != int64(9001) {
+		t.Fatalf("first order key = %#v, want 9001", got)
+	}
+	if got := nativeProxyLiteralValue(t, gotRequest.Mutation.Rows[1].Values[1]); got != "2-HIGH" {
+		t.Fatalf("second priority = %#v, want 2-HIGH", got)
+	}
+}
+
+func TestNativeProxyMySQLCommandHandlerPreparedLongData(t *testing.T) {
+	var gotRequest ExecutionRequest
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		gotRequest = request
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:   "orders",
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Field:  qsbridge.QuantaProjectionField{Index: "orders", Field: "o_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(1)}},
+			}},
+		}}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	profile := NewNativeProxyMySQLSessionProfile()
+	handler := NativeProxyMySQLCommandHandler{FrontDoor: frontDoor, Profile: profile}
+
+	prepare, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind: qsmysql.CommandKindStmtPrepare,
+		SQL:  "select o_orderkey from orders where o_orderpriority = ?",
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	statementID := nativeProxyPreparedStatementID(t, prepare)
+	longData, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtSendLongData,
+		StatementID: statementID,
+		LongData: qsmysql.PreparedLongDataCommand{
+			StatementID: statementID,
+			ParameterID: 0,
+			Data:        []byte("1-"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("send long data failed: %v", err)
+	}
+	if longData.Kind != qsmysql.CommandResponseNoResponse {
+		t.Fatalf("long data response = %#v, want no response", longData)
+	}
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtSendLongData,
+		StatementID: statementID,
+		LongData: qsmysql.PreparedLongDataCommand{
+			StatementID: statementID,
+			ParameterID: 0,
+			Data:        []byte("URGENT"),
+		},
+	}); err != nil {
+		t.Fatalf("second send long data failed: %v", err)
+	}
+	execute, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtExecute,
+		StatementID: statementID,
+		Execute: nativeProxyPreparedExecuteCommandWithPayload(statementID, []byte{
+			0,
+			1,
+			byte(qsmysql.ColumnTypeLongBlob), 0,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if execute.Kind != qsmysql.CommandResponseQuery {
+		t.Fatalf("execute response = %#v, want query", execute)
+	}
+	fragment := gotRequest.Query.Fragments[0]
+	if fragment.Literal.Kind != qsbridge.ValueString || fragment.Literal.Value != "1-URGENT" {
+		t.Fatalf("long-data literal = %#v, want concatenated string", fragment.Literal)
+	}
+	if values := profile.PreparedLongDataValues(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(statementID)}); len(values) != 0 {
+		t.Fatalf("long data values after execute = %#v, want cleared", values)
+	}
+}
+
+func TestNativeProxyMySQLCommandHandlerPreparedResetClearsLongData(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		return ExecutionResult{Count: 1}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	profile := NewNativeProxyMySQLSessionProfile()
+	handler := NativeProxyMySQLCommandHandler{FrontDoor: frontDoor, Profile: profile}
+
+	prepare, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind: qsmysql.CommandKindStmtPrepare,
+		SQL:  "select o_orderkey from orders where o_orderpriority = ?",
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	statementID := nativeProxyPreparedStatementID(t, prepare)
+	if _, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtSendLongData,
+		StatementID: statementID,
+		LongData:    qsmysql.PreparedLongDataCommand{StatementID: statementID, ParameterID: 0, Data: []byte("payload")},
+	}); err != nil {
+		t.Fatalf("send long data failed: %v", err)
+	}
+	if values := profile.PreparedLongDataValues(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(statementID)}); len(values) != 1 {
+		t.Fatalf("long data values before reset = %#v, want one", values)
+	}
+	reset, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:        qsmysql.CommandKindStmtReset,
+		StatementID: statementID,
+	})
+	if err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+	if reset.Kind != qsmysql.CommandResponseOK {
+		t.Fatalf("reset response = %#v, want OK", reset)
+	}
+	if values := profile.PreparedLongDataValues(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(statementID)}); len(values) != 0 {
+		t.Fatalf("long data values after reset = %#v, want cleared", values)
+	}
+}
+
 func TestNativeProxyMySQLCommandHandlerPreparedStatementReturnsBinaryRows(t *testing.T) {
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
@@ -278,21 +496,75 @@ func TestNativeProxyFrontDoorServeMySQLCommandUsesPacketLoop(t *testing.T) {
 }
 
 func nativeProxyPreparedExecuteCommand(statementID uint32, parameterType qsmysql.ColumnType, value any) qsmysql.PreparedExecuteCommand {
-	payload := []byte{0, 1, byte(parameterType), 0}
-	switch typed := value.(type) {
-	case int64:
-		payload = appendNativeProxyUint64LE(payload, uint64(typed))
-	case float64:
-		payload = appendNativeProxyUint64LE(payload, math.Float64bits(typed))
-	case string:
-		payload = append(payload, byte(len(typed)))
-		payload = append(payload, typed...)
+	return nativeProxyPreparedExecuteCommandWithValues(statementID, []nativeProxyPreparedValue{{Type: parameterType, Value: value}})
+}
+
+func nativeProxyPreparedStatementID(t *testing.T, response qsmysql.CommandResponse) uint32 {
+	t.Helper()
+	if response.Kind != qsmysql.CommandResponsePrepared || len(response.Packets) == 0 {
+		t.Fatalf("prepare response = %#v, want prepared response", response)
 	}
+	payload := response.Packets[0].Payload
+	if len(payload) < 5 {
+		t.Fatalf("prepare OK payload = %v, want statement id", payload)
+	}
+	return uint32(payload[1]) | uint32(payload[2])<<8 | uint32(payload[3])<<16 | uint32(payload[4])<<24
+}
+
+type nativeProxyPreparedValue struct {
+	Type     qsmysql.ColumnType
+	Unsigned bool
+	Value    any
+}
+
+func nativeProxyPreparedExecuteCommandWithValues(statementID uint32, values []nativeProxyPreparedValue) qsmysql.PreparedExecuteCommand {
+	nullBitmapLength := (len(values) + 7) / 8
+	payload := make([]byte, nullBitmapLength, nullBitmapLength+1+len(values)*10)
+	payload = append(payload, 1)
+	for _, value := range values {
+		flags := byte(0)
+		if value.Unsigned {
+			flags = 0x80
+		}
+		payload = append(payload, byte(value.Type), flags)
+	}
+	for _, value := range values {
+		payload = appendNativeProxyPreparedValue(payload, value)
+	}
+	return nativeProxyPreparedExecuteCommandWithPayload(statementID, payload)
+}
+
+func nativeProxyPreparedExecuteCommandWithPayload(statementID uint32, payload []byte) qsmysql.PreparedExecuteCommand {
 	return qsmysql.PreparedExecuteCommand{
 		StatementID:      statementID,
 		IterationCount:   1,
-		ParameterPayload: payload,
+		ParameterPayload: append([]byte(nil), payload...),
 	}
+}
+
+func appendNativeProxyPreparedValue(payload []byte, value nativeProxyPreparedValue) []byte {
+	switch typed := value.Value.(type) {
+	case int64:
+		return appendNativeProxyUint64LE(payload, uint64(typed))
+	case uint64:
+		return appendNativeProxyUint64LE(payload, typed)
+	case float64:
+		return appendNativeProxyUint64LE(payload, math.Float64bits(typed))
+	case string:
+		payload = append(payload, byte(len(typed)))
+		return append(payload, typed...)
+	default:
+		return payload
+	}
+}
+
+func nativeProxyLiteralValue(t *testing.T, expr qsbridge.Expr) any {
+	t.Helper()
+	literal, ok := expr.(qsbridge.LiteralExpr)
+	if !ok {
+		t.Fatalf("expr = %#v, want literal", expr)
+	}
+	return literal.Value
 }
 
 func appendNativeProxyUint64LE(out []byte, value uint64) []byte {

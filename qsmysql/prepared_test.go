@@ -31,6 +31,18 @@ func TestDecodeCommandPreparedStatementCommands(t *testing.T) {
 		t.Fatalf("execute command = %#v", execute)
 	}
 
+	longDataPayload := []byte{byte(CommandStmtSendLongData)}
+	longDataPayload = appendUint32LE(longDataPayload, 42)
+	longDataPayload = appendUint16LE(longDataPayload, 1)
+	longDataPayload = append(longDataPayload, []byte("chunk")...)
+	longData, err := DecodeCommand(longDataPayload)
+	if err != nil {
+		t.Fatalf("DecodeCommand long data failed: %v", err)
+	}
+	if longData.Kind != CommandKindStmtSendLongData || longData.StatementID != 42 || longData.LongData.ParameterIndex() != 2 || string(longData.LongData.Data) != "chunk" {
+		t.Fatalf("long data command = %#v", longData)
+	}
+
 	closeCommand, err := DecodeCommand([]byte{byte(CommandStmtClose), 42, 0, 0, 0})
 	if err != nil {
 		t.Fatalf("DecodeCommand close failed: %v", err)
@@ -87,6 +99,110 @@ func TestDecodePreparedExecuteParameters(t *testing.T) {
 	}
 	if values[2].Kind != qsbridge.ValueFloat || values[2].Value != 12.5 {
 		t.Fatalf("value 3 = %#v, want 12.5", values[2])
+	}
+}
+
+func TestDecodePreparedExecuteParametersUsesCachedTypes(t *testing.T) {
+	payload := []byte{byte(CommandStmtExecute)}
+	payload = appendUint32LE(payload, 7)
+	payload = append(payload, 0)
+	payload = appendUint32LE(payload, 1)
+	payload = append(payload, 0, 0)
+	payload = appendUint64LE(payload, 99)
+
+	execute, err := DecodePreparedExecuteCommand(payload)
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteCommand failed: %v", err)
+	}
+	values, types, err := DecodePreparedExecuteParametersWithOptions(execute, []qsbridge.ParameterRef{
+		{Index: 1, Type: qsbridge.DataTypeInt},
+	}, PreparedExecuteDecodeOptions{
+		CachedTypes: []PreparedParameterType{{Type: ColumnTypeLongLong}},
+	})
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteParametersWithOptions failed: %v", err)
+	}
+	if len(types) != 1 || types[0].Type != ColumnTypeLongLong {
+		t.Fatalf("types = %#v, want cached longlong", types)
+	}
+	if len(values) != 1 || values[0].Value != int64(99) {
+		t.Fatalf("values = %#v, want int64(99)", values)
+	}
+}
+
+func TestDecodePreparedExecuteParametersSubstitutesLongData(t *testing.T) {
+	payload := []byte{byte(CommandStmtExecute)}
+	payload = appendUint32LE(payload, 7)
+	payload = append(payload, 0)
+	payload = appendUint32LE(payload, 1)
+	payload = append(payload, 0, 1)
+	payload = append(payload,
+		byte(ColumnTypeString), 0,
+		byte(ColumnTypeLongLong), 0,
+	)
+	payload = appendUint64LE(payload, 123)
+
+	execute, err := DecodePreparedExecuteCommand(payload)
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteCommand failed: %v", err)
+	}
+	values, _, err := DecodePreparedExecuteParametersWithOptions(execute, []qsbridge.ParameterRef{
+		{Index: 1, Type: qsbridge.DataTypeString},
+		{Index: 2, Type: qsbridge.DataTypeInt},
+	}, PreparedExecuteDecodeOptions{
+		LongData: map[int][]byte{1: []byte("large payload")},
+	})
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteParametersWithOptions failed: %v", err)
+	}
+	if len(values) != 2 || values[0].Kind != qsbridge.ValueString || values[0].Value != "large payload" || values[1].Value != int64(123) {
+		t.Fatalf("values = %#v, want long data plus inline int", values)
+	}
+}
+
+func TestDecodePreparedExecuteParametersScalarEdges(t *testing.T) {
+	payload := []byte{byte(CommandStmtExecute)}
+	payload = appendUint32LE(payload, 7)
+	payload = append(payload, 0)
+	payload = appendUint32LE(payload, 1)
+	payload = append(payload, 0b00001000, 1)
+	payload = append(payload,
+		byte(ColumnTypeLongLong), 0x80,
+		byte(ColumnTypeDateTime), 0,
+		byte(ColumnTypeNewDecimal), 0,
+		byte(ColumnTypeNull), 0,
+	)
+	payload = appendUint64LE(payload, uint64(1<<63)+5)
+	payload = append(payload, 7)
+	payload = appendUint16LE(payload, 2026)
+	payload = append(payload, 8, 17, 12, 34, 56)
+	payload = appendLengthEncodedString(payload, "12.34")
+
+	execute, err := DecodePreparedExecuteCommand(payload)
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteCommand failed: %v", err)
+	}
+	values, _, err := DecodePreparedExecuteParametersWithOptions(execute, []qsbridge.ParameterRef{
+		{Index: 1, Type: qsbridge.DataTypeInt},
+		{Index: 2, Type: qsbridge.DataTypeTime},
+		{Index: 3, Type: qsbridge.DataTypeString},
+		{Index: 4, Type: qsbridge.DataTypeString, Nullable: true},
+	}, PreparedExecuteDecodeOptions{})
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteParametersWithOptions failed: %v", err)
+	}
+	if values[0].Kind != qsbridge.ValueInt || values[0].Value != uint64(1<<63)+5 {
+		t.Fatalf("unsigned value = %#v", values[0])
+	}
+	timestamp, ok := values[1].Value.(time.Time)
+	if !ok || !timestamp.Equal(time.Date(2026, 8, 17, 12, 34, 56, 0, time.UTC)) {
+		t.Fatalf("time value = %#v", values[1])
+	}
+	if values[2].Kind != qsbridge.ValueString || values[2].Value != "12.34" {
+		t.Fatalf("decimal value = %#v", values[2])
+	}
+	if values[3].Kind != qsbridge.ValueNull || values[3].Value != nil {
+		t.Fatalf("null value = %#v", values[3])
 	}
 }
 

@@ -259,7 +259,8 @@ func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
-	rows, diagnostic, ok := parseSimpleInsertRows(valuesText, len(columns))
+	parameterIndex := 1
+	rows, diagnostic, ok := parseSimpleInsertRows(valuesText, len(columns), &parameterIndex)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -2458,7 +2459,7 @@ func parseSimpleInsertTarget(text string) (UnboundTable, []string, Diagnostic, b
 	return table, columns, Diagnostic{}, true
 }
 
-func parseSimpleInsertRows(text string, columnCount int) ([][]UnboundExpr, Diagnostic, bool) {
+func parseSimpleInsertRows(text string, columnCount int, parameterIndex *int) ([][]UnboundExpr, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(text)
 	rows := make([][]UnboundExpr, 0, 1)
 	for trimmed != "" {
@@ -2473,7 +2474,7 @@ func parseSimpleInsertRows(text string, columnCount int) ([][]UnboundExpr, Diagn
 		if !ok {
 			return nil, diagnostic, false
 		}
-		row, diagnostic, ok := parseSimpleInsertRow(rowText, columnCount)
+		row, diagnostic, ok := parseSimpleInsertRow(rowText, columnCount, parameterIndex)
 		if !ok {
 			return nil, diagnostic, false
 		}
@@ -2489,14 +2490,14 @@ func parseSimpleInsertRows(text string, columnCount int) ([][]UnboundExpr, Diagn
 	return rows, Diagnostic{}, true
 }
 
-func parseSimpleInsertRow(text string, columnCount int) ([]UnboundExpr, Diagnostic, bool) {
+func parseSimpleInsertRow(text string, columnCount int, parameterIndex *int) ([]UnboundExpr, Diagnostic, bool) {
 	parts := splitSimpleCommaList(text)
 	if len(parts) != columnCount {
 		return nil, simpleParserDiagnostic("INSERT row value count does not match target column count"), false
 	}
 	values := make([]UnboundExpr, 0, len(parts))
 	for _, part := range parts {
-		value, diagnostic, ok := parseSimpleInsertValue(strings.TrimSpace(part))
+		value, diagnostic, ok := parseSimpleInsertValue(strings.TrimSpace(part), parameterIndex)
 		if !ok {
 			return nil, diagnostic, false
 		}
@@ -2505,7 +2506,7 @@ func parseSimpleInsertRow(text string, columnCount int) ([]UnboundExpr, Diagnost
 	return values, Diagnostic{}, true
 }
 
-func parseSimpleInsertValue(text string) (UnboundExpr, Diagnostic, bool) {
+func parseSimpleInsertValue(text string, parameterIndex *int) (UnboundExpr, Diagnostic, bool) {
 	switch simpleLowerASCII(text) {
 	case "":
 		return UnboundLiteral(ValueNull, nil), Diagnostic{}, true
@@ -2516,7 +2517,7 @@ func parseSimpleInsertValue(text string) (UnboundExpr, Diagnostic, bool) {
 	case "null":
 		return UnboundLiteral(ValueNull, nil), Diagnostic{}, true
 	default:
-		return parseSimpleLiteral(text)
+		return parseSimpleComparisonValue(text, parameterIndex)
 	}
 }
 

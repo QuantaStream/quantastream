@@ -77,7 +77,7 @@ func NewSQLExecutionRequest(query qsbridge.QuantaIntermediateQuery, request qsbr
 	runtimeRequest.ProjectionOrder = projectionOrder(preparedQuery.Projection)
 	runtimeRequest.OrderBy = append([]qsbridge.SortSpec(nil), preparedQuery.OrderBy...)
 	runtimeRequest.Options = request.Options
-	runtimeRequest.Mutation = cloneMutationShape(preparedQuery.Mutation)
+	runtimeRequest.Mutation = bindMutationShapeParameters(cloneMutationShape(preparedQuery.Mutation), request.Bound.Parameters)
 	runtimeRequest.SQLAggregates = append([]qsbridge.Aggregate(nil), preparedQuery.Aggregates...)
 	runtimeRequest.Materialization = materializationRequestFromPreparedQuery(runtimeRequest, preparedQuery)
 	runtimeRequest.FilterDomain = filterDomainTranslationFromRequest(runtimeRequest)
@@ -373,6 +373,125 @@ func cloneMutationShape(mutation qsbridge.MutationShape) qsbridge.MutationShape 
 	cloned.ViewDependencies = append([]qsbridge.TableInstance(nil), mutation.ViewDependencies...)
 	cloned.DependentRelationships = append([]qsbridge.RelationshipDefinition(nil), mutation.DependentRelationships...)
 	return cloned
+}
+
+func bindMutationShapeParameters(mutation qsbridge.MutationShape, parameters qsbridge.ParameterBindingSet) qsbridge.MutationShape {
+	for rowIndex := range mutation.Rows {
+		for valueIndex := range mutation.Rows[rowIndex].Values {
+			mutation.Rows[rowIndex].Values[valueIndex] = bindMutationParameterExpr(mutation.Rows[rowIndex].Values[valueIndex], parameters)
+		}
+	}
+	for assignmentIndex := range mutation.Assignments {
+		mutation.Assignments[assignmentIndex].Value = bindMutationParameterExpr(mutation.Assignments[assignmentIndex].Value, parameters)
+	}
+	for predicateIndex := range mutation.Predicates {
+		mutation.Predicates[predicateIndex].Expr = bindMutationParameterExpr(mutation.Predicates[predicateIndex].Expr, parameters)
+	}
+	return mutation
+}
+
+func bindMutationParameterExpr(expr qsbridge.Expr, parameters qsbridge.ParameterBindingSet) qsbridge.Expr {
+	switch typed := expr.(type) {
+	case qsbridge.ParameterExpr:
+		if literal, ok := mutationParameterLiteral(typed.Ref, parameters); ok {
+			return literal
+		}
+		return expr
+	case *qsbridge.ParameterExpr:
+		if typed == nil {
+			return expr
+		}
+		if literal, ok := mutationParameterLiteral(typed.Ref, parameters); ok {
+			return literal
+		}
+		return expr
+	case qsbridge.ListExpr:
+		cloned := typed
+		cloned.Items = append([]qsbridge.Expr(nil), typed.Items...)
+		for i := range cloned.Items {
+			cloned.Items[i] = bindMutationParameterExpr(cloned.Items[i], parameters)
+		}
+		return cloned
+	case *qsbridge.ListExpr:
+		if typed == nil {
+			return expr
+		}
+		cloned := *typed
+		cloned.Items = append([]qsbridge.Expr(nil), typed.Items...)
+		for i := range cloned.Items {
+			cloned.Items[i] = bindMutationParameterExpr(cloned.Items[i], parameters)
+		}
+		return &cloned
+	case qsbridge.CallExpr:
+		cloned := typed
+		cloned.Args = append([]qsbridge.Expr(nil), typed.Args...)
+		for i := range cloned.Args {
+			cloned.Args[i] = bindMutationParameterExpr(cloned.Args[i], parameters)
+		}
+		return cloned
+	case *qsbridge.CallExpr:
+		if typed == nil {
+			return expr
+		}
+		cloned := *typed
+		cloned.Args = append([]qsbridge.Expr(nil), typed.Args...)
+		for i := range cloned.Args {
+			cloned.Args[i] = bindMutationParameterExpr(cloned.Args[i], parameters)
+		}
+		return &cloned
+	case qsbridge.BinaryExpr:
+		typed.Left = bindMutationParameterExpr(typed.Left, parameters)
+		typed.Right = bindMutationParameterExpr(typed.Right, parameters)
+		return typed
+	case *qsbridge.BinaryExpr:
+		if typed == nil {
+			return expr
+		}
+		cloned := *typed
+		cloned.Left = bindMutationParameterExpr(cloned.Left, parameters)
+		cloned.Right = bindMutationParameterExpr(cloned.Right, parameters)
+		return &cloned
+	case qsbridge.SearchedCaseExpr:
+		cloned := typed
+		cloned.Whens = append([]qsbridge.SearchedCaseWhen(nil), typed.Whens...)
+		for i := range cloned.Whens {
+			cloned.Whens[i].Condition = bindMutationParameterExpr(cloned.Whens[i].Condition, parameters)
+			cloned.Whens[i].Result = bindMutationParameterExpr(cloned.Whens[i].Result, parameters)
+		}
+		cloned.Else = bindMutationParameterExpr(cloned.Else, parameters)
+		return cloned
+	case *qsbridge.SearchedCaseExpr:
+		if typed == nil {
+			return expr
+		}
+		cloned := *typed
+		cloned.Whens = append([]qsbridge.SearchedCaseWhen(nil), typed.Whens...)
+		for i := range cloned.Whens {
+			cloned.Whens[i].Condition = bindMutationParameterExpr(cloned.Whens[i].Condition, parameters)
+			cloned.Whens[i].Result = bindMutationParameterExpr(cloned.Whens[i].Result, parameters)
+		}
+		cloned.Else = bindMutationParameterExpr(cloned.Else, parameters)
+		return &cloned
+	default:
+		return expr
+	}
+}
+
+func mutationParameterLiteral(ref qsbridge.ParameterRef, parameters qsbridge.ParameterBindingSet) (qsbridge.LiteralExpr, bool) {
+	for _, binding := range parameters.Bindings {
+		if !mutationParameterRefMatches(binding.Ref, ref) {
+			continue
+		}
+		return qsbridge.Literal(binding.Value.Kind, binding.Value.Value), true
+	}
+	return qsbridge.LiteralExpr{}, false
+}
+
+func mutationParameterRefMatches(bound qsbridge.ParameterRef, ref qsbridge.ParameterRef) bool {
+	if bound.Name != "" || ref.Name != "" {
+		return bound.Name != "" && bound.Name == ref.Name
+	}
+	return bound.Index == ref.Index
 }
 
 func sourceIndexes(sources []qsbridge.TableInstance) []string {

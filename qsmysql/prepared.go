@@ -54,10 +54,28 @@ type PreparedExecuteCommand struct {
 	ParameterPayload []byte
 }
 
+// PreparedLongDataCommand is a decoded COM_STMT_SEND_LONG_DATA packet.
+type PreparedLongDataCommand struct {
+	StatementID uint32
+	ParameterID uint16
+	Data        []byte
+}
+
+// ParameterIndex returns the one-based prepared parameter index.
+func (c PreparedLongDataCommand) ParameterIndex() int {
+	return int(c.ParameterID) + 1
+}
+
 // PreparedParameterType describes one MySQL binary prepared-statement parameter type.
 type PreparedParameterType struct {
 	Type     ColumnType
 	Unsigned bool
+}
+
+// PreparedExecuteDecodeOptions supplies session state for COM_STMT_EXECUTE decoding.
+type PreparedExecuteDecodeOptions struct {
+	CachedTypes []PreparedParameterType
+	LongData    map[int][]byte
 }
 
 // DecodePreparedExecuteCommand decodes the fixed COM_STMT_EXECUTE envelope.
@@ -76,17 +94,40 @@ func DecodePreparedExecuteCommand(payload []byte) (PreparedExecuteCommand, error
 	}, nil
 }
 
+// DecodePreparedLongDataCommand decodes a COM_STMT_SEND_LONG_DATA packet.
+func DecodePreparedLongDataCommand(payload []byte) (PreparedLongDataCommand, error) {
+	if len(payload) < 7 {
+		return PreparedLongDataCommand{}, fmt.Errorf("COM_STMT_SEND_LONG_DATA payload too short: %d bytes", len(payload))
+	}
+	if CommandByte(payload[0]) != CommandStmtSendLongData {
+		return PreparedLongDataCommand{}, fmt.Errorf("COM_STMT_SEND_LONG_DATA payload has command byte 0x%02x", payload[0])
+	}
+	return PreparedLongDataCommand{
+		StatementID: readUint32LE(payload[1:5]),
+		ParameterID: readUint16LE(payload[5:7]),
+		Data:        append([]byte(nil), payload[7:]...),
+	}, nil
+}
+
 // DecodePreparedExecuteParameters converts a COM_STMT_EXECUTE parameter payload
 // into qsbridge values using the prepared-plan parameter metadata.
 func DecodePreparedExecuteParameters(execute PreparedExecuteCommand, refs []qsbridge.ParameterRef) ([]qsbridge.ParameterValue, error) {
+	values, _, err := DecodePreparedExecuteParametersWithOptions(execute, refs, PreparedExecuteDecodeOptions{})
+	return values, err
+}
+
+// DecodePreparedExecuteParametersWithOptions converts a COM_STMT_EXECUTE
+// parameter payload using cached wire metadata and previously sent long-data
+// chunks when the client omits inline values.
+func DecodePreparedExecuteParametersWithOptions(execute PreparedExecuteCommand, refs []qsbridge.ParameterRef, options PreparedExecuteDecodeOptions) ([]qsbridge.ParameterValue, []PreparedParameterType, error) {
 	parameterCount := len(refs)
 	if parameterCount == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	payload := execute.ParameterPayload
 	nullBitmapLength := (parameterCount + 7) / 8
 	if len(payload) < nullBitmapLength+1 {
-		return nil, fmt.Errorf("COM_STMT_EXECUTE parameter payload truncated: got %d bytes, want at least %d", len(payload), nullBitmapLength+1)
+		return nil, nil, fmt.Errorf("COM_STMT_EXECUTE parameter payload truncated: got %d bytes, want at least %d", len(payload), nullBitmapLength+1)
 	}
 	nullBitmap := payload[:nullBitmapLength]
 	offset := nullBitmapLength
@@ -97,7 +138,7 @@ func DecodePreparedExecuteParameters(execute PreparedExecuteCommand, refs []qsbr
 	if newParameterBoundFlag != 0 {
 		typeBytes := parameterCount * 2
 		if len(payload)-offset < typeBytes {
-			return nil, fmt.Errorf("COM_STMT_EXECUTE parameter types truncated: got %d bytes, want %d", len(payload)-offset, typeBytes)
+			return nil, nil, fmt.Errorf("COM_STMT_EXECUTE parameter types truncated: got %d bytes, want %d", len(payload)-offset, typeBytes)
 		}
 		for i := 0; i < parameterCount; i++ {
 			types[i] = PreparedParameterType{
@@ -106,6 +147,8 @@ func DecodePreparedExecuteParameters(execute PreparedExecuteCommand, refs []qsbr
 			}
 			offset += 2
 		}
+	} else if len(options.CachedTypes) == parameterCount {
+		copy(types, options.CachedTypes)
 	} else {
 		for i, ref := range refs {
 			types[i] = preparedParameterTypeFromRef(ref)
@@ -122,17 +165,21 @@ func DecodePreparedExecuteParameters(execute PreparedExecuteCommand, refs []qsbr
 			values = append(values, qsbridge.IndexedParameterValue(index, qsbridge.ValueNull, nil))
 			continue
 		}
+		if data, ok := options.LongData[index]; ok {
+			values = append(values, qsbridge.IndexedParameterValue(index, qsbridge.ValueString, string(data)))
+			continue
+		}
 		kind, value, next, err := decodePreparedBinaryValue(payload, offset, types[i])
 		if err != nil {
-			return nil, fmt.Errorf("decode COM_STMT_EXECUTE parameter %d: %w", i+1, err)
+			return nil, nil, fmt.Errorf("decode COM_STMT_EXECUTE parameter %d: %w", i+1, err)
 		}
 		offset = next
 		values = append(values, qsbridge.IndexedParameterValue(index, kind, value))
 	}
 	if offset != len(payload) {
-		return nil, fmt.Errorf("COM_STMT_EXECUTE parameter payload has %d trailing bytes", len(payload)-offset)
+		return nil, nil, fmt.Errorf("COM_STMT_EXECUTE parameter payload has %d trailing bytes", len(payload)-offset)
 	}
-	return values, nil
+	return values, clonePreparedParameterTypes(types), nil
 }
 
 // PreparedStatementResponse encodes a COM_STMT_PREPARE_OK response and the
@@ -188,6 +235,13 @@ func preparedParameterTypeFromRef(ref qsbridge.ParameterRef) PreparedParameterTy
 	default:
 		return PreparedParameterType{Type: ColumnTypeVarString}
 	}
+}
+
+func clonePreparedParameterTypes(types []PreparedParameterType) []PreparedParameterType {
+	if len(types) == 0 {
+		return nil
+	}
+	return append([]PreparedParameterType(nil), types...)
 }
 
 func parameterColumnDefinition(ref qsbridge.ParameterRef) ColumnDefinition {

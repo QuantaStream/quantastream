@@ -21,6 +21,8 @@ const (
 	CommandStmtPrepare CommandByte = 0x16
 	// CommandStmtExecute is COM_STMT_EXECUTE.
 	CommandStmtExecute CommandByte = 0x17
+	// CommandStmtSendLongData is COM_STMT_SEND_LONG_DATA.
+	CommandStmtSendLongData CommandByte = 0x18
 	// CommandStmtClose is COM_STMT_CLOSE.
 	CommandStmtClose CommandByte = 0x19
 	// CommandStmtReset is COM_STMT_RESET.

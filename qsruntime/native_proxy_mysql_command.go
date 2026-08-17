@@ -44,15 +44,18 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 		return h.handleMySQLPreparedStatementPrepare(command)
 	case qsmysql.CommandKindStmtExecute:
 		return h.handleMySQLPreparedStatementExecute(ctx, command)
+	case qsmysql.CommandKindStmtSendLongData:
+		return h.handleMySQLPreparedStatementLongData(command)
 	case qsmysql.CommandKindStmtClose:
-		h.preparedStatementRegistry().Close(qsbridge.PreparedStatementCloseRequest{
-			Handle: qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)},
-		})
+		h.sessionProfile().ClosePreparedStatement(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)})
 		return qsmysql.NoResponse(), nil
 	case qsmysql.CommandKindStmtReset:
-		if _, ok := h.preparedStatementRegistry().Get(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)}); !ok {
+		profile := h.sessionProfile()
+		handle := qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)}
+		if _, ok := profile.PreparedStatements().Get(handle); !ok {
 			return qsmysql.ErrorResponse(nativeProxyMySQLUnknownPreparedStatement(command.StatementID, "reset")), nil
 		}
+		profile.ClearPreparedLongData(handle)
 		return qsmysql.StatementOKResponse(qsbridge.StatementResult{}), nil
 	case qsmysql.CommandKindQuery:
 		if response, ok, err := nativeProxyMySQLMetadataQueryResponse(command); ok || err != nil {
@@ -85,11 +88,20 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementPrepare(comm
 }
 
 func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementExecute(ctx context.Context, command qsmysql.Command) (qsmysql.CommandResponse, error) {
-	prepared, ok := h.preparedStatementRegistry().Get(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)})
+	profile := h.sessionProfile()
+	handle := qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)}
+	prepared, ok := profile.PreparedStatements().Get(handle)
 	if !ok {
 		return qsmysql.ErrorResponse(nativeProxyMySQLUnknownPreparedStatement(command.StatementID, "execute")), nil
 	}
-	values, err := qsmysql.DecodePreparedExecuteParameters(command.Execute, prepared.Parameters)
+	longData := profile.PreparedLongDataValues(handle)
+	if len(longData) > 0 {
+		defer profile.ClearPreparedLongData(handle)
+	}
+	values, parameterTypes, err := qsmysql.DecodePreparedExecuteParametersWithOptions(command.Execute, prepared.Parameters, qsmysql.PreparedExecuteDecodeOptions{
+		CachedTypes: profile.PreparedParameterTypes(handle),
+		LongData:    longData,
+	})
 	if err != nil {
 		return qsmysql.ErrorResponse(qsbridge.ProtocolError{
 			SQLState:   qsbridge.SQLStateInvalidParameter,
@@ -97,13 +109,38 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementExecute(ctx 
 			Message:    err.Error(),
 		}), nil
 	}
+	profile.StorePreparedParameterTypes(handle, parameterTypes)
 	result, err := h.FrontDoor.Server.ExecuteSQL(ctx, prepared.SQL, h.Options, values...)
 	if err != nil {
 		return qsmysql.ErrorResponseFromError(err), nil
 	}
-	profile := h.sessionProfile()
 	profile.Store(result.Instrumentation)
 	return nativeProxyMySQLPreparedResponseFromSQLResult(result)
+}
+
+func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementLongData(command qsmysql.Command) (qsmysql.CommandResponse, error) {
+	profile := h.sessionProfile()
+	handle := qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)}
+	prepared, ok := profile.PreparedStatements().Get(handle)
+	if !ok {
+		return qsmysql.ErrorResponse(nativeProxyMySQLUnknownPreparedStatement(command.StatementID, "send_long_data")), nil
+	}
+	parameter, ok := nativeProxyMySQLLongDataParameter(prepared.Parameters, command.LongData.ParameterIndex())
+	if !ok {
+		return qsmysql.ErrorResponse(qsbridge.ProtocolError{
+			SQLState:   qsbridge.SQLStateInvalidParameter,
+			VendorCode: 1210,
+			Message:    fmt.Sprintf("unknown prepared long-data parameter %d for statement %d", command.LongData.ParameterID, command.StatementID),
+		}), nil
+	}
+	if _, ok := profile.AppendPreparedLongData(handle, parameter, command.LongData.Data); !ok {
+		return qsmysql.ErrorResponse(qsbridge.ProtocolError{
+			SQLState:   qsbridge.SQLStateInvalidParameter,
+			VendorCode: 1210,
+			Message:    fmt.Sprintf("could not store prepared long-data parameter %d for statement %d", command.LongData.ParameterID, command.StatementID),
+		}), nil
+	}
+	return qsmysql.NoResponse(), nil
 }
 
 func (h NativeProxyMySQLCommandHandler) preparedStatementRegistry() *qsbridge.MemoryPreparedStatementRegistry {
@@ -123,6 +160,18 @@ func nativeProxyMySQLUnknownPreparedStatement(statementID uint32, operation stri
 		VendorCode: 1243,
 		Message:    fmt.Sprintf("unknown prepared statement handler (%d) given to COM_STMT_%s", statementID, operation),
 	}
+}
+
+func nativeProxyMySQLLongDataParameter(parameters []qsbridge.ParameterRef, oneBasedIndex int) (qsbridge.ParameterValue, bool) {
+	if oneBasedIndex <= 0 || oneBasedIndex > len(parameters) {
+		return qsbridge.ParameterValue{}, false
+	}
+	ref := parameters[oneBasedIndex-1]
+	index := ref.Index
+	if index == 0 {
+		index = oneBasedIndex
+	}
+	return qsbridge.IndexedParameterValue(index, qsbridge.ValueString, nil), true
 }
 
 func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult) (qsmysql.CommandResponse, error) {

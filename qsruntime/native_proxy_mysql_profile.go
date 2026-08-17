@@ -10,15 +10,21 @@ import (
 
 // NativeProxyMySQLSessionProfile keeps the last execution profile for one MySQL session.
 type NativeProxyMySQLSessionProfile struct {
-	mu       sync.Mutex
-	last     ExecutionInstrumentationSnapshot
-	prepared *qsbridge.MemoryPreparedStatementRegistry
+	mu              sync.Mutex
+	last            ExecutionInstrumentationSnapshot
+	prepared        *qsbridge.MemoryPreparedStatementRegistry
+	longData        *qsbridge.MemoryPreparedLongDataRegistry
+	longDataPayload map[string][]byte
+	parameterTypes  map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType
 }
 
 // NewNativeProxyMySQLSessionProfile creates an empty per-session profile store.
 func NewNativeProxyMySQLSessionProfile() *NativeProxyMySQLSessionProfile {
 	return &NativeProxyMySQLSessionProfile{
-		prepared: qsbridge.NewMemoryPreparedStatementRegistry(),
+		prepared:        qsbridge.NewMemoryPreparedStatementRegistry(),
+		longData:        qsbridge.NewMemoryPreparedLongDataRegistry(),
+		longDataPayload: make(map[string][]byte),
+		parameterTypes:  make(map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType),
 	}
 }
 
@@ -53,6 +59,146 @@ func (p *NativeProxyMySQLSessionProfile) PreparedStatements() *qsbridge.MemoryPr
 		p.prepared = qsbridge.NewMemoryPreparedStatementRegistry()
 	}
 	return p.prepared
+}
+
+// PreparedLongData returns the per-session long-data metadata registry.
+func (p *NativeProxyMySQLSessionProfile) PreparedLongData() *qsbridge.MemoryPreparedLongDataRegistry {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.longData == nil {
+		p.longData = qsbridge.NewMemoryPreparedLongDataRegistry()
+	}
+	return p.longData
+}
+
+// StorePreparedParameterTypes remembers the latest binary wire types for one prepared statement.
+func (p *NativeProxyMySQLSessionProfile) StorePreparedParameterTypes(handle qsbridge.PreparedStatementHandle, types []qsmysql.PreparedParameterType) {
+	if p == nil || handle.ID == 0 || len(types) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.parameterTypes == nil {
+		p.parameterTypes = make(map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType)
+	}
+	p.parameterTypes[handle.ID] = append([]qsmysql.PreparedParameterType(nil), types...)
+}
+
+// PreparedParameterTypes returns cached binary wire types for one prepared statement.
+func (p *NativeProxyMySQLSessionProfile) PreparedParameterTypes(handle qsbridge.PreparedStatementHandle) []qsmysql.PreparedParameterType {
+	if p == nil || handle.ID == 0 {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.parameterTypes == nil {
+		return nil
+	}
+	return append([]qsmysql.PreparedParameterType(nil), p.parameterTypes[handle.ID]...)
+}
+
+// AppendPreparedLongData records payload bytes and metadata for one long-data fragment.
+func (p *NativeProxyMySQLSessionProfile) AppendPreparedLongData(handle qsbridge.PreparedStatementHandle, parameter qsbridge.ParameterValue, data []byte) (qsbridge.PreparedLongDataState, bool) {
+	if p == nil || handle.Empty() || parameter.Index == 0 {
+		return qsbridge.PreparedLongDataState{}, false
+	}
+	state, ok := p.PreparedLongData().Append(qsbridge.PreparedLongDataFragment{
+		Handle:     handle,
+		Parameter:  parameter,
+		ChunkBytes: uint64(len(data)),
+	})
+	if !ok {
+		return qsbridge.PreparedLongDataState{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.longDataPayload == nil {
+		p.longDataPayload = make(map[string][]byte)
+	}
+	key := nativeProxyPreparedLongDataPayloadKey(handle, parameter.Index)
+	p.longDataPayload[key] = append(p.longDataPayload[key], data...)
+	return state, true
+}
+
+// PreparedLongDataValues returns accumulated long-data payloads keyed by one-based parameter index.
+func (p *NativeProxyMySQLSessionProfile) PreparedLongDataValues(handle qsbridge.PreparedStatementHandle) map[int][]byte {
+	if p == nil || handle.Empty() {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.longDataPayload) == 0 {
+		return nil
+	}
+	values := make(map[int][]byte)
+	prefix := nativeProxyPreparedLongDataHandlePayloadKey(handle) + "|"
+	for key, data := range p.longDataPayload {
+		if len(key) < len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		index, ok := nativeProxyPreparedLongDataPayloadIndex(key[len(prefix):])
+		if !ok {
+			continue
+		}
+		values[index] = append([]byte(nil), data...)
+	}
+	return values
+}
+
+// ClearPreparedLongData clears all accumulated long-data state for one prepared statement.
+func (p *NativeProxyMySQLSessionProfile) ClearPreparedLongData(handle qsbridge.PreparedStatementHandle) bool {
+	if p == nil || handle.Empty() {
+		return false
+	}
+	metadataCleared := p.PreparedLongData().ClearHandle(handle)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	prefix := nativeProxyPreparedLongDataHandlePayloadKey(handle) + "|"
+	payloadCleared := false
+	for key := range p.longDataPayload {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			delete(p.longDataPayload, key)
+			payloadCleared = true
+		}
+	}
+	return metadataCleared || payloadCleared
+}
+
+// ClosePreparedStatement removes a prepared statement and all adapter-owned session state.
+func (p *NativeProxyMySQLSessionProfile) ClosePreparedStatement(handle qsbridge.PreparedStatementHandle) bool {
+	if p == nil || handle.Empty() {
+		return false
+	}
+	closed := p.PreparedStatements().Close(qsbridge.PreparedStatementCloseRequest{Handle: handle})
+	p.ClearPreparedLongData(handle)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.parameterTypes != nil && handle.ID != 0 {
+		delete(p.parameterTypes, handle.ID)
+	}
+	return closed
+}
+
+func nativeProxyPreparedLongDataPayloadKey(handle qsbridge.PreparedStatementHandle, index int) string {
+	return nativeProxyPreparedLongDataHandlePayloadKey(handle) + "|" + strconv.Itoa(index)
+}
+
+func nativeProxyPreparedLongDataHandlePayloadKey(handle qsbridge.PreparedStatementHandle) string {
+	if handle.ID != 0 {
+		return "id:" + strconv.FormatUint(uint64(handle.ID), 10)
+	}
+	return "name:" + handle.Name
+}
+
+func nativeProxyPreparedLongDataPayloadIndex(value string) (int, bool) {
+	index, err := strconv.Atoi(value)
+	if err != nil || index <= 0 {
+		return 0, false
+	}
+	return index, true
 }
 
 func nativeProxyMySQLProfileQueryResponse(command qsmysql.Command, profile *NativeProxyMySQLSessionProfile) (qsmysql.CommandResponse, bool, error) {

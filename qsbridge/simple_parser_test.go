@@ -1718,6 +1718,28 @@ func TestSimpleParserBridgeParsesInsertMultipleRowsAndBooleanNull(t *testing.T) 
 	}
 }
 
+func TestSimpleParserBridgeParsesInsertValueParameters(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("insert into orders (o_orderkey, o_orderpriority) values (?, ?), (?, ?)")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Insert.Rows) != 2 || len(statement.Insert.Rows[0]) != 2 || len(statement.Insert.Rows[1]) != 2 {
+		t.Fatalf("insert rows = %#v, want two two-value rows", statement.Insert.Rows)
+	}
+	parameters := []UnboundExpr{
+		statement.Insert.Rows[0][0],
+		statement.Insert.Rows[0][1],
+		statement.Insert.Rows[1][0],
+		statement.Insert.Rows[1][1],
+	}
+	for i, expr := range parameters {
+		parameter, ok := expr.(UnboundParameterExpr)
+		if !ok || parameter.Index != i+1 {
+			t.Fatalf("parameter %d = %#v, want index %d", i, expr, i+1)
+		}
+	}
+}
+
 func TestSimpleParserBridgeParsesEmptyInsertValueAsNull(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa (cust_id, createdAtTimestamp, first_name) values ('200',, 'Bob')")
 	if diagnostics.BlocksNative() {
