@@ -1050,7 +1050,7 @@ func (m *BitmapIndex) storeSeedBitmap(index, field string, fromTime, toTime time
 func (m *BitmapIndex) updateSeedCacheForBSIFragment(index, field string, shardNano int64, added *roaring64.Bitmap, removed *roaring64.Bitmap) {
 	m.seedCacheLock.Lock()
 	defer m.seedCacheLock.Unlock()
-	for _, entry := range m.seedCache {
+	for key, entry := range m.seedCache {
 		if entry == nil || entry.Bits == nil || entry.Index != index || entry.Field != field {
 			continue
 		}
@@ -1058,17 +1058,12 @@ func (m *BitmapIndex) updateSeedCacheForBSIFragment(index, field string, shardNa
 			continue
 		}
 		if removed != nil {
-			entry.Bits.AndNot(removed)
-			removedCount := removed.GetCardinality()
-			if removedCount > entry.Count {
-				entry.Count = 0
-			} else {
-				entry.Count -= removedCount
-			}
+			delete(m.seedCache, key)
+			continue
 		}
 		if added != nil {
 			entry.Bits = roaring64.ParOr(0, entry.Bits, added)
-			entry.Count += added.GetCardinality()
+			entry.Count = entry.Bits.GetCardinality()
 		}
 	}
 }

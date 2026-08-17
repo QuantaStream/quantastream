@@ -53,7 +53,7 @@ func TestTimeRangeExistenceCachesSeedAndUpdatesFromBSI(t *testing.T) {
 	}
 }
 
-func TestBulkClearUpdatesCachedBSISeed(t *testing.T) {
+func TestBulkClearInvalidatesCachedBSISeed(t *testing.T) {
 	index := newSeedCacheTestIndex(t)
 	field := "l_shipdate"
 	day := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
@@ -72,21 +72,8 @@ func TestBulkClearUpdatesCachedBSISeed(t *testing.T) {
 
 	index.clearAll("lineitem", day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(1))
 
-	cached, count, ok := index.cachedSeedBitmap("lineitem", field, day, day)
-	if !ok {
-		t.Fatal("expected cached seed after bulk clear")
-	}
-	if cached.Contains(1) {
-		t.Fatalf("cached seed still contains cleared rownum 1: %#v", cached.ToArray())
-	}
-	if !cached.Contains(2) {
-		t.Fatalf("cached seed lost surviving rownum 2: %#v", cached.ToArray())
-	}
-	if got, want := cached.GetCardinality(), uint64(1); got != want {
-		t.Fatalf("cached seed cardinality after clear = %d, want %d", got, want)
-	}
-	if got, want := count, uint64(1); got != want {
-		t.Fatalf("cached seed row count after clear = %d, want %d", got, want)
+	if _, _, ok := index.cachedSeedBitmap("lineitem", field, day, day); ok {
+		t.Fatal("bulk clear should invalidate cached seed")
 	}
 
 	nextSeed, err := index.timeRangeExistence("lineitem", field, day, day)
@@ -95,6 +82,22 @@ func TestBulkClearUpdatesCachedBSISeed(t *testing.T) {
 	}
 	if got, want := nextSeed.GetCardinality(), uint64(1); got != want {
 		t.Fatalf("seed cardinality after clear = %d, want %d", got, want)
+	}
+}
+
+func TestBulkClearInvalidatesEmptyCachedBSISeed(t *testing.T) {
+	index := newSeedCacheTestIndex(t)
+	field := "l_shipdate"
+	day := time.Date(2023, 6, 2, 0, 0, 0, 0, time.UTC)
+	index.bsiCache["lineitem"][field][day.UnixNano()] = seedCacheTestBSI(map[uint64]int64{
+		1: 20230602,
+	})
+
+	index.storeSeedBitmap("lineitem", field, day, day, roaring64.ParOr(0), 0)
+	index.clearAll("lineitem", day.UnixNano(), day.UnixNano(), roaring64.BitmapOf(1))
+
+	if _, _, ok := index.cachedSeedBitmap("lineitem", field, day, day); ok {
+		t.Fatal("bulk clear should invalidate empty cached seed")
 	}
 }
 

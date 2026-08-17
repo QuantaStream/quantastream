@@ -545,3 +545,98 @@ tests:
     expect:
       rows:
         - [0]
+
+  - id: "mutate_body.078.multi_row_insert_catalog_table"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, address, state, city, zip, createdAtTimestamp, timestamp_micro, timestamp_millis, hashedCustId, phone, phoneType, isActive, birthdate, isLegalAge, age, height, numFamilyMembers, rownum) values
+        ('300','Nora','Fields','300 Edge St','TX','Austin','73301','2020-01-01 00:00:00.000Z','2020-01-01 00:00:00.000Z','2020-01-01 00:00:00.000Z','edge300','300-111-2222','home',true,'2000-01-01',true,31,65,2,11),
+        ('310','Oscar','Lane','310 Edge St','TX','Austin','73301','2020-01-02 00:00:00.000Z','2020-01-02 00:00:00.000Z','2020-01-02 00:00:00.000Z','edge310','310-111-2222','cell;business',false,'2000-01-01',true,41,70,3,12),
+        ('320','Priya','Stone','320 Edge St','OR','Portland','97035','2020-01-03 00:00:00.000Z','2020-01-03 00:00:00.000Z','2020-01-03 00:00:00.000Z','edge320','320-111-2222','business',true,'2000-01-01',true,51,61,4,13)
+    expect:
+      affected_rows: 3
+
+  - id: "mutate_body.079.commit"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.080.select_after_multi_row_insert"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where state = 'TX'
+    expect:
+      rows:
+        - [2]
+
+  - id: "mutate_body.081.multi_assignment_update"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set city = 'Dallas', age = 42, isActive = true where state = 'TX' and phoneType = 'business'
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.082.commit"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.083.select_after_multi_assignment_update"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where city = 'Dallas' and age = 42 and isActive = true
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.084.delete_with_compound_predicate"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where state = 'TX' and isActive = true
+    expect:
+      affected_rows: 2
+
+  - id: "mutate_body.085.commit"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.086.select_after_compound_delete"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.087.delete_remaining_catalog_rows"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where cust_id is not null
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.088.commit"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.089.select_after_mutation_edge_cleanup"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [0]
