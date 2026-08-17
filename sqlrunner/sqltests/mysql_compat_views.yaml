@@ -94,6 +94,36 @@ tests:
       rows:
         - [1, 6, 0]
 
+  - id: mysql_compat_views.012.create_union_all_view
+    status: supported
+    kind: statement
+    feature: views_union_definition
+    compatibility: mysql
+    requires: [create_view, create_or_replace_view, union_all, order_by, limit]
+    sql: |
+      create or replace view qs_mysql_compat_union_all_view as
+      select 2 as n
+      union all
+      select 1 as n
+      order by n
+      limit 1
+
+  - id: mysql_compat_views.013.select_union_all_view
+    status: xfail
+    kind: query
+    order: exact
+    feature: views_union_query
+    compatibility: mysql
+    requires: [select, view_reference, union_all, order_by, limit]
+    issue: "Views backed by UNION ALL definitions are not expandable yet; direct constant UNION ALL SELECT is supported only as a boundary."
+    sql: |
+      select n
+      from qs_mysql_compat_union_all_view
+    expect:
+      columns: [n]
+      rows:
+        - [1]
+
   - id: mysql_compat_views.020.drop_customer_projection_view
     status: supported
     kind: statement
@@ -111,3 +141,12 @@ tests:
     requires: [drop_view]
     sql: |
       drop view qs_mysql_compat_q3_order_line_base
+
+  - id: mysql_compat_views.022.drop_union_all_view
+    status: supported
+    kind: statement
+    feature: views_ddl
+    compatibility: mysql
+    requires: [drop_view]
+    sql: |
+      drop view qs_mysql_compat_union_all_view
