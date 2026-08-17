@@ -375,6 +375,9 @@ func directBitmapGroupedAggregateCell(aggregate qsbridge.Aggregate, values []qsb
 		}
 		groupValues = append(groupValues, values[index])
 	}
+	if directBitmapCountValueAggregate(aggregate) {
+		return directBitmapCountNonNullCell(groupValues), nil
+	}
 	if aggregate.Mode == qsbridge.AggregateDistinct {
 		if !strings.EqualFold(aggregate.Function, "count") {
 			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics("direct bitmap runtime only supports grouped count(distinct field) in this slice")

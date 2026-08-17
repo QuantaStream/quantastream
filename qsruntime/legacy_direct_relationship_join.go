@@ -4857,8 +4857,8 @@ func legacyDirectRelationshipLeftOuterPairs(parentRows []qsbridge.QuantaRownum, 
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipLeftOuterAggregateResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, parentRows []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult) (ExecutionResult, error) {
-	if !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) {
-		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("left outer relationship-vector execution only supports count(*) aggregates in this slice")...)
+	if !directBitmapAllAggregatesUseCount(request.SQLAggregates) {
+		result.Diagnostics = append(result.Diagnostics, legacyDirectRelationshipDiagnostic("left outer relationship-vector execution only supports count aggregates in this slice")...)
 		return result, nil
 	}
 	whereResiduals := legacyDirectRelationshipResidualPredicatesForScope(request, qsbridge.PredicateScopeWhere)
@@ -4885,6 +4885,10 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipLeft
 		return e.legacyDirectRelationshipAggregateResult(ctx, request, edge, outerJoined, outerPairs, result)
 	}
 	result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
+	if !directBitmapAllAggregatesUseBitmapCount(request.SQLAggregates) {
+		outerJoined := legacyDirectRelationshipChildRownums(outerPairs)
+		return e.legacyDirectRelationshipAggregateResult(ctx, request, edge, outerJoined, outerPairs, result)
+	}
 	return directBitmapCountAggregateResult(request, result), nil
 }
 

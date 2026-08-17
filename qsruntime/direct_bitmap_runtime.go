@@ -541,6 +541,9 @@ func directBitmapMaterializedAggregateCell(aggregate qsbridge.Aggregate, materia
 	if diagnostics.BlocksNative() {
 		return qsbridge.ResultCell{}, diagnostics
 	}
+	if directBitmapCountValueAggregate(aggregate) {
+		return directBitmapCountNonNullCell(values), nil
+	}
 	if aggregate.Mode == qsbridge.AggregateDistinct {
 		if !strings.EqualFold(aggregate.Function, "count") {
 			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics("direct bitmap runtime only supports count(distinct field) in this slice")
@@ -667,6 +670,15 @@ func directBitmapDistinctCountCell(values []qsbridge.ResultCell) qsbridge.Result
 func directBitmapAllAggregatesUseBitmapCount(aggregates []qsbridge.Aggregate) bool {
 	for _, aggregate := range aggregates {
 		if !directBitmapCountAllAggregate(aggregate) {
+			return false
+		}
+	}
+	return true
+}
+
+func directBitmapAllAggregatesUseCount(aggregates []qsbridge.Aggregate) bool {
+	for _, aggregate := range aggregates {
+		if !directBitmapCountAllAggregate(aggregate) && !directBitmapCountValueAggregate(aggregate) {
 			return false
 		}
 	}
@@ -881,6 +893,24 @@ func directBitmapCountAllAggregate(aggregate qsbridge.Aggregate) bool {
 		aggregate.Mode != qsbridge.AggregateDistinct &&
 		aggregate.Input == nil &&
 		aggregate.Filter == nil
+}
+
+func directBitmapCountValueAggregate(aggregate qsbridge.Aggregate) bool {
+	return strings.EqualFold(aggregate.Function, "count") &&
+		aggregate.Mode != qsbridge.AggregateDistinct &&
+		aggregate.Input != nil &&
+		aggregate.Filter == nil
+}
+
+func directBitmapCountNonNullCell(values []qsbridge.ResultCell) qsbridge.ResultCell {
+	count := int64(0)
+	for _, cell := range values {
+		if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
+			continue
+		}
+		count++
+	}
+	return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: count}
 }
 
 func directBitmapAggregateInputField(aggregate qsbridge.Aggregate) (qsbridge.FieldRef, bool) {

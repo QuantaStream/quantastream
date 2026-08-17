@@ -3693,6 +3693,98 @@ func TestDirectBitmapMaterializedGroupedAggregateUsesDerivedYearProjection(t *te
 	}
 }
 
+func TestDirectBitmapMaterializedAggregateCountFieldIgnoresNullInputs(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "orders", Table: "orders", Alias: "o"}
+	orderKey := qsbridge.FieldRef{Table: table, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
+	aggregate := qsbridge.Aggregate{
+		Function: "count",
+		Input:    qsbridge.Field(orderKey),
+		Alias:    "order_count",
+		Type:     qsbridge.DataTypeInt,
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "orders",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "o_orderkey", Type: qsbridge.DataTypeInt},
+			Values: []qsbridge.ResultCell{
+				{Kind: qsbridge.ValueInt, Value: int64(1001)},
+				{Kind: qsbridge.ValueNull, Value: nil},
+				{Kind: qsbridge.ValueInt, Value: int64(1003)},
+			},
+		}},
+	}
+
+	cell, diagnostics := directBitmapMaterializedAggregateCell(aggregate, materialized)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if cell.Value != int64(2) {
+		t.Fatalf("count = %v, want 2", cell.Value)
+	}
+}
+
+func TestDirectBitmapMaterializedGroupedAggregateCountFieldIgnoresNullInputs(t *testing.T) {
+	customer := qsbridge.TableInstance{ID: "customer", Table: "customer", Alias: "c"}
+	orders := qsbridge.TableInstance{ID: "orders", Table: "orders", Alias: "o"}
+	customerKey := qsbridge.FieldRef{Table: customer, Name: "c_custkey", Type: qsbridge.DataTypeInt}
+	orderKey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
+	request := ExecutionRequest{
+		SourceIndexes: []string{"customer"},
+		GroupBy:       []qsbridge.Expr{qsbridge.Field(customerKey)},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: qsbridge.Field(customerKey), Alias: "customer_key", Type: qsbridge.DataTypeInt},
+			{Expr: qsbridge.AggregateRef("order_count", 0), Alias: "order_count", Type: qsbridge.DataTypeInt},
+		},
+		SQLAggregates: []qsbridge.Aggregate{{
+			Function: "count",
+			Input:    qsbridge.Field(orderKey),
+			Alias:    "order_count",
+			Type:     qsbridge.DataTypeInt,
+		}},
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "customer",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customer", Role: "c", Field: "c_custkey", Type: qsbridge.DataTypeInt},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(1)},
+					{Kind: qsbridge.ValueInt, Value: int64(3)},
+					{Kind: qsbridge.ValueInt, Value: int64(6)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "orders", Role: "o", Field: "o_orderkey", Type: qsbridge.DataTypeInt},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(1001)},
+					{Kind: qsbridge.ValueNull, Value: nil},
+					{Kind: qsbridge.ValueNull, Value: nil},
+				},
+			},
+		},
+	}
+
+	result := directBitmapMaterializedGroupedAggregateResult(request, materialized, ExecutionResult{})
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	wantCounts := []int64{1, 0, 0}
+	if len(chunk.Rows) != len(wantCounts) {
+		t.Fatalf("rows = %#v, want %d rows", chunk.Rows, len(wantCounts))
+	}
+	for i, want := range wantCounts {
+		if got := chunk.Rows[i][1].Value; got != want {
+			t.Fatalf("row %d count = %v, want %d; rows=%#v", i, got, want, chunk.Rows)
+		}
+	}
+}
+
 func TestDirectBitmapMaterializedGroupedAggregateSupportsComputedSubstringGroup(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "part", Table: "part", Alias: "p"}
 	partType := qsbridge.FieldRef{Table: table, Name: "p_type", Type: qsbridge.DataTypeString}
