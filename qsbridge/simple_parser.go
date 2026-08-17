@@ -2724,20 +2724,25 @@ func parseSimpleSources(sourceText string) ([]UnboundTable, []UnboundJoin, Diagn
 	joins := make([]UnboundJoin, 0, 1)
 	previousTable := leftTable
 	for {
-		rightText, onText, ok := splitBeforeKeyword(joinText, "on")
+		rightText, conditionKeyword, conditionText, ok := splitBeforeFirstSimpleKeyword(joinText, "on", "using")
 		if !ok {
-			return nil, nil, simpleParserDiagnostic("JOIN must include ON"), false
+			return nil, nil, simpleParserDiagnostic("JOIN must include ON or USING"), false
 		}
 		rightTable, diagnostic, ok := parseSimpleTable(rightText)
 		if !ok {
 			return nil, nil, diagnostic, false
 		}
 		nextJoinText, nextKind := "", JoinKindInner
-		onText, nextJoinText, nextKind, hasJoin, diagnostic, ok = parseSimpleJoinOnTail(onText)
+		conditionText, nextJoinText, nextKind, hasJoin, diagnostic, ok = parseSimpleJoinConditionTail(conditionText)
 		if !ok {
 			return nil, nil, diagnostic, false
 		}
-		join, diagnostic, ok := parseSimpleJoinOn(onText, kind)
+		var join UnboundJoin
+		if conditionKeyword == "using" {
+			join, diagnostic, ok = parseSimpleJoinUsing(conditionText, kind, previousTable, rightTable)
+		} else {
+			join, diagnostic, ok = parseSimpleJoinOn(conditionText, kind)
+		}
 		if !ok {
 			return nil, nil, diagnostic, false
 		}
@@ -2762,17 +2767,23 @@ func parseSimpleJoinKindPrefix(text string) (string, JoinKind, Diagnostic, bool)
 		kind = JoinKindLeftOuter
 		if remaining, ok := consumeTrailingKeyword(text, "left"); ok {
 			text = remaining
+		} else if remaining, ok := consumeTrailingKeyword(text, "right"); ok {
+			text = remaining
+			kind = JoinKindRightOuter
 		}
 	} else if remaining, ok := consumeTrailingKeyword(text, "left"); ok {
 		text = remaining
 		kind = JoinKindLeftOuter
-	} else if hasAnyKeyword(text, "right", "full") {
-		return "", "", simpleParserDiagnostic("only INNER and LEFT OUTER JOIN are supported"), false
+	} else if remaining, ok := consumeTrailingKeyword(text, "right"); ok {
+		text = remaining
+		kind = JoinKindRightOuter
+	} else if hasAnyKeyword(text, "full") {
+		return "", "", simpleParserDiagnostic("FULL OUTER JOIN is not supported yet"), false
 	}
 	return text, kind, Diagnostic{}, true
 }
 
-func parseSimpleJoinOnTail(text string) (string, string, JoinKind, bool, Diagnostic, bool) {
+func parseSimpleJoinConditionTail(text string) (string, string, JoinKind, bool, Diagnostic, bool) {
 	onText, nextJoinText, hasJoin := splitBeforeKeyword(text, "join")
 	if !hasJoin {
 		return text, "", "", false, Diagnostic{}, true
@@ -2824,6 +2835,45 @@ func parseSimpleJoinOn(text string, kind JoinKind) (UnboundJoin, Diagnostic, boo
 		Kind:           kind,
 		Predicates:     predicates,
 	}, Diagnostic{}, true
+}
+
+func parseSimpleJoinUsing(text string, kind JoinKind, leftTable UnboundTable, rightTable UnboundTable) (UnboundJoin, Diagnostic, bool) {
+	fields, diagnostic, ok := parseSimpleUsingFields(text)
+	if !ok {
+		return UnboundJoin{}, diagnostic, false
+	}
+	if len(fields) != 1 {
+		return UnboundJoin{}, simpleParserDiagnostic("JOIN USING currently supports exactly one field"), false
+	}
+	field := fields[0]
+	return UnboundJoin{
+		LeftQualifier:  tableRefName(leftTable.Name, leftTable.Alias),
+		LeftField:      field,
+		RightQualifier: tableRefName(rightTable.Name, rightTable.Alias),
+		RightField:     field,
+		Kind:           kind,
+	}, Diagnostic{}, true
+}
+
+func parseSimpleUsingFields(text string) ([]string, Diagnostic, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "(") || !strings.HasSuffix(text, ")") {
+		return nil, simpleParserDiagnostic("JOIN USING must be written as USING (field)"), false
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "("), ")"))
+	if inner == "" {
+		return nil, simpleParserDiagnostic("JOIN USING must name at least one field"), false
+	}
+	parts := strings.Split(inner, ",")
+	fields := make([]string, 0, len(parts))
+	for _, part := range parts {
+		field := strings.TrimSpace(part)
+		if field == "" || strings.Contains(field, ".") {
+			return nil, simpleParserDiagnostic("JOIN USING fields must be unqualified column names"), false
+		}
+		fields = append(fields, field)
+	}
+	return fields, Diagnostic{}, true
 }
 
 func normalizeSimpleJoinEdge(join UnboundJoin, leftTable UnboundTable) UnboundJoin {
@@ -2970,14 +3020,22 @@ func parseSimpleCountProjection(exprText string, alias string, aggregateIndex in
 		}
 	default:
 		distinctInput, ok := consumeKeyword(inputText, "distinct")
-		if !ok {
-			return UnboundAggregate{}, UnboundProjection{}, false
+		if ok {
+			input, inputOK := parseSimpleScalarExpression(distinctInput)
+			if !inputOK {
+				return UnboundAggregate{}, UnboundProjection{}, false
+			}
+			aggregate.Mode = AggregateDistinct
+			aggregate.Input = input
+			if aggregate.Alias == "" {
+				aggregate.Alias = "count"
+			}
+			break
 		}
-		input, inputOK := parseSimpleScalarExpression(distinctInput)
+		input, inputOK := parseSimpleScalarExpression(inputText)
 		if !inputOK {
 			return UnboundAggregate{}, UnboundProjection{}, false
 		}
-		aggregate.Mode = AggregateDistinct
 		aggregate.Input = input
 		if aggregate.Alias == "" {
 			aggregate.Alias = "count"

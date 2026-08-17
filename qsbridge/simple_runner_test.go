@@ -100,6 +100,96 @@ func TestSimpleRunnerRunsInFilter(t *testing.T) {
 	})
 }
 
+func TestSimpleRunnerRunsJoinUsing(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "orders_self_join_using",
+		querySQL: "select count(*) as joined_rows from orders as o1 inner join orders as o2 using (o_custkey)",
+		tables:   simpleRunnerOrdersFixture(),
+		expectedColumns: []string{
+			"joined_rows",
+		},
+		expectedRows: [][]string{
+			{"5"},
+		},
+	})
+}
+
+func TestSimpleRunnerRunsRightJoin(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "orders_right_join_customer",
+		querySQL: "select c.c_custkey as customer_id, o.o_orderkey as order_id from orders as o right join customer as c on c.c_custkey = o.o_custkey where c.c_custkey in (2, 3) order by c.c_custkey, o.o_orderkey",
+		tables: append(
+			simpleRunnerOrdersFixture(),
+			simpleRunnerCustomerFixture()...,
+		),
+		expectedColumns: []string{
+			"customer_id",
+			"order_id",
+		},
+		expectedRows: [][]string{
+			{"2", "9"},
+			{"3", "NULL"},
+		},
+	})
+}
+
+func TestSimpleRunnerRunsLeftJoinOnResidualNullExtension(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "customer_left_join_orders_on_residual",
+		querySQL: "select c.c_custkey as customer_id, o.o_orderkey as order_id from customer as c left join orders as o on o.o_custkey = c.c_custkey and o.o_orderkey = 8 where c.c_custkey in (1, 2, 3) order by c.c_custkey",
+		tables: append(
+			simpleRunnerCustomerFixture(),
+			simpleRunnerOrdersFixture()...,
+		),
+		expectedColumns: []string{
+			"customer_id",
+			"order_id",
+		},
+		expectedRows: [][]string{
+			{"1", "8"},
+			{"2", "NULL"},
+			{"3", "NULL"},
+		},
+	})
+}
+
+func TestSimpleRunnerRunsLeftJoinIsNullAntijoin(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "customer_left_join_orders_is_null",
+		querySQL: "select c.c_custkey as customer_id, o.o_orderkey as order_id from customer as c left join orders as o on o.o_custkey = c.c_custkey where o.o_orderkey is null order by c.c_custkey",
+		tables: append(
+			simpleRunnerCustomerFixture(),
+			simpleRunnerOrdersFixture()...,
+		),
+		expectedColumns: []string{
+			"customer_id",
+			"order_id",
+		},
+		expectedRows: [][]string{
+			{"3", "NULL"},
+		},
+	})
+}
+
+func TestSimpleRunnerRunsLeftJoinGroupedCountZeroMatches(t *testing.T) {
+	runSimpleRunnerCase(t, simpleRunnerCase{
+		name:     "customer_left_join_orders_grouped_count_zero",
+		querySQL: "select c.c_custkey as customer_id, count(o.o_orderkey) as order_count from customer as c left join orders as o on o.o_custkey = c.c_custkey where c.c_custkey in (1, 3) group by c.c_custkey order by c.c_custkey",
+		tables: append(
+			simpleRunnerCustomerFixture(),
+			simpleRunnerOrdersFixture()...,
+		),
+		expectedColumns: []string{
+			"customer_id",
+			"order_count",
+		},
+		expectedRows: [][]string{
+			{"1", "2"},
+			{"3", "0"},
+		},
+	})
+}
+
 func TestSimpleRunnerRunsLimitOffset(t *testing.T) {
 	runSimpleRunnerCase(t, simpleRunnerCase{
 		name:     "orders_limit_offset",

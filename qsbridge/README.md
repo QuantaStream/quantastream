@@ -300,11 +300,14 @@ Go's `database/sql/driver` connector surface. It is connector-based rather
 than globally registered, so tests and future adapters can exercise the path
 without importing the historical qlbridge SQL driver.
 `inmemory_native_executor.go` provides a storage-neutral native executor for
-one-table direct SELECT projections and flat AND-combined field-to-literal or
+direct SELECT projections and flat AND-combined field-to-literal or
 field-to-parameter comparison predicates.
-It also applies one direct-field ORDER BY plus LIMIT/OFFSET result shaping. It
-lets connector and result-envelope tests scan real projected rows while bitmap,
-BSI, and broader expression execution remain outside the qsbridge scaffold.
+It also applies direct-field ORDER BY plus LIMIT/OFFSET result shaping. It lets
+connector and result-envelope tests scan real projected rows while bitmap, BSI,
+and broader expression execution remain outside the qsbridge scaffold.
+`inmemory_join.go` adds fixture-grade inner, left, and right join row assembly
+for parser and driver compatibility tests, including null-extended rows for
+outer joins.
 `inmemory_projection.go` contains the executor-local expression projection
 helpers for arithmetic projection evaluation and result-row chunking.
 `inmemory_aggregate.go` contains executor-local global aggregate and grouped

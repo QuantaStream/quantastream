@@ -57,6 +57,9 @@ func (e InMemoryNativeExecutor) ExecuteNative(request ExecutionRequest) Executio
 	if len(query.Sources) == 0 {
 		return e.executeProjectionOnlyNative(request, query)
 	}
+	if len(query.Joins) > 0 {
+		return e.executeJoinNative(request, query)
+	}
 	if diagnostic, blocked := inMemoryUnsupportedSelectDiagnostic(query); blocked {
 		return request.EmptyResult().WithDispatchDiagnostic(diagnostic)
 	}
@@ -370,25 +373,31 @@ func inMemorySortCandidates(sortSpecs []SortSpec, candidates []inMemoryNativeCan
 	if len(sortSpecs) == 0 || len(candidates) < 2 {
 		return Diagnostic{}, true
 	}
-	if len(sortSpecs) > 1 {
-		return inMemoryNativeDiagnostic("only one ORDER BY field is supported"), false
+	fields := make([]FieldRef, 0, len(sortSpecs))
+	for _, sortSpec := range sortSpecs {
+		field, ok := inMemoryProjectionField(sortSpec.Expr)
+		if !ok {
+			return inMemoryNativeDiagnostic("only direct field ORDER BY is supported"), false
+		}
+		fields = append(fields, field)
 	}
-	field, ok := inMemoryProjectionField(sortSpecs[0].Expr)
-	if !ok {
-		return inMemoryNativeDiagnostic("only direct field ORDER BY is supported"), false
-	}
-	descending := sortSpecs[0].Direction == SortDescending
 	sort.SliceStable(candidates, func(i, j int) bool {
-		left, leftOK := inMemoryFieldCell(candidates[i].Row, field)
-		right, rightOK := inMemoryFieldCell(candidates[j].Row, field)
-		if !leftOK || !rightOK {
-			return false
+		for index, field := range fields {
+			left, leftOK := inMemoryFieldCell(candidates[i].Row, field)
+			right, rightOK := inMemoryFieldCell(candidates[j].Row, field)
+			if !leftOK || !rightOK {
+				return false
+			}
+			cmp := inMemoryCellCompare(left, right)
+			if cmp == 0 {
+				continue
+			}
+			if sortSpecs[index].Direction == SortDescending {
+				return cmp > 0
+			}
+			return cmp < 0
 		}
-		less := inMemoryCellLess(left, right)
-		if descending {
-			return !less && !inMemoryCellEqual(left, right)
-		}
-		return less
+		return false
 	})
 	return Diagnostic{}, true
 }
@@ -556,7 +565,7 @@ func inMemoryComparisonPredicateParts(predicate Predicate) (BinaryOp, FieldRef, 
 
 func inMemorySupportedComparisonOp(op BinaryOp) bool {
 	switch op {
-	case BinaryOpEqual, BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual:
+	case BinaryOpEqual, BinaryOpNotEqual, BinaryOpLess, BinaryOpLessEqual, BinaryOpGreater, BinaryOpGreaterEqual:
 		return true
 	default:
 		return false
@@ -567,6 +576,8 @@ func inMemoryReverseComparisonOp(op BinaryOp) (BinaryOp, bool) {
 	switch op {
 	case BinaryOpEqual:
 		return BinaryOpEqual, true
+	case BinaryOpNotEqual:
+		return BinaryOpNotEqual, true
 	case BinaryOpLess:
 		return BinaryOpGreater, true
 	case BinaryOpLessEqual:
@@ -690,7 +701,13 @@ func inMemoryComparisonValue(expr Expr, parameters ParameterBindingSet) (Literal
 }
 
 func inMemoryFieldCell(row InMemoryNativeRow, field FieldRef) (ResultCell, bool) {
-	for _, name := range []string{field.Name, field.PhysicalName, field.QualifiedName()} {
+	for _, name := range []string{
+		field.QualifiedName(),
+		field.Table.Table + "." + field.Name,
+		field.Table.Table + "." + field.PhysicalName,
+		field.PhysicalName,
+		field.Name,
+	} {
 		if name == "" {
 			continue
 		}
@@ -711,12 +728,25 @@ func inMemoryTypedCell(cell ResultCell, dataType DataType) ResultCell {
 
 func inMemoryCellComparesLiteral(op BinaryOp, cell ResultCell, literal LiteralExpr) bool {
 	if cell.Value == nil || literal.Value == nil {
-		return op == BinaryOpEqual && cell.Value == nil && literal.Value == nil
+		bothNull := cell.Value == nil && literal.Value == nil
+		if op == BinaryOpEqual {
+			return bothNull
+		}
+		if op == BinaryOpNotEqual {
+			return !bothNull
+		}
+		return false
 	}
 	if inMemoryIsNumericKind(cell.Kind) || inMemoryIsNumericKind(literal.Kind) {
 		left, leftOK := inMemoryNumericValue(cell.Value)
 		right, rightOK := inMemoryNumericValue(literal.Value)
+		if op == BinaryOpNotEqual {
+			return leftOK && rightOK && left != right
+		}
 		return leftOK && rightOK && inMemoryCompareFloat(op, left, right)
+	}
+	if op == BinaryOpNotEqual {
+		return fmt.Sprint(cell.Value) != fmt.Sprint(literal.Value)
 	}
 	return inMemoryCompareString(op, fmt.Sprint(cell.Value), fmt.Sprint(literal.Value))
 }
@@ -756,25 +786,47 @@ func inMemoryCompareString(op BinaryOp, left string, right string) bool {
 }
 
 func inMemoryCellLess(left ResultCell, right ResultCell) bool {
+	return inMemoryCellCompare(left, right) < 0
+}
+
+func inMemoryCellCompare(left ResultCell, right ResultCell) int {
+	if left.Value == nil && right.Value == nil {
+		return 0
+	}
+	if left.Value == nil {
+		return -1
+	}
+	if right.Value == nil {
+		return 1
+	}
 	if inMemoryIsNumericKind(left.Kind) || inMemoryIsNumericKind(right.Kind) {
 		leftNumber, leftOK := inMemoryNumericValue(left.Value)
 		rightNumber, rightOK := inMemoryNumericValue(right.Value)
 		if leftOK && rightOK {
-			return leftNumber < rightNumber
+			switch {
+			case leftNumber < rightNumber:
+				return -1
+			case leftNumber > rightNumber:
+				return 1
+			default:
+				return 0
+			}
 		}
 	}
-	return fmt.Sprint(left.Value) < fmt.Sprint(right.Value)
+	leftText := fmt.Sprint(left.Value)
+	rightText := fmt.Sprint(right.Value)
+	switch {
+	case leftText < rightText:
+		return -1
+	case leftText > rightText:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func inMemoryCellEqual(left ResultCell, right ResultCell) bool {
-	if inMemoryIsNumericKind(left.Kind) || inMemoryIsNumericKind(right.Kind) {
-		leftNumber, leftOK := inMemoryNumericValue(left.Value)
-		rightNumber, rightOK := inMemoryNumericValue(right.Value)
-		if leftOK && rightOK {
-			return leftNumber == rightNumber
-		}
-	}
-	return fmt.Sprint(left.Value) == fmt.Sprint(right.Value)
+	return inMemoryCellCompare(left, right) == 0
 }
 
 func inMemoryIsNumericKind(kind ValueKind) bool {

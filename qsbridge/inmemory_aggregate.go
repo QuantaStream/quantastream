@@ -263,6 +263,15 @@ func inMemoryLimitResultRows(rows []ResultRow, offset int, limit int, hasLimit b
 func (a *inMemoryAggregateAccumulator) add(aggregate Aggregate, candidate inMemoryNativeCandidate) (Diagnostic, bool) {
 	switch {
 	case strings.EqualFold(aggregate.Function, "count"):
+		if aggregate.Input != nil {
+			value, diagnostic, ok := inMemoryAggregateInputCell(aggregate, candidate)
+			if !ok {
+				return diagnostic, false
+			}
+			if value.Value == nil {
+				return Diagnostic{}, true
+			}
+		}
 		a.Count++
 		return Diagnostic{}, true
 	case strings.EqualFold(aggregate.Function, "sum"), strings.EqualFold(aggregate.Function, "avg"):
@@ -381,7 +390,7 @@ func inMemorySupportedAggregate(aggregate Aggregate) bool {
 	}
 	switch {
 	case strings.EqualFold(aggregate.Function, "count"):
-		return aggregate.Input == nil
+		return aggregate.Input == nil || inMemorySupportedEvaluatedExpr(aggregate.Input)
 	case strings.EqualFold(aggregate.Function, "sum"), strings.EqualFold(aggregate.Function, "avg"), strings.EqualFold(aggregate.Function, "min"), strings.EqualFold(aggregate.Function, "max"):
 		return inMemorySupportedEvaluatedExpr(aggregate.Input)
 	default:
@@ -417,6 +426,19 @@ func inMemoryAppendGlobalAggregateChunk(result ExecutionResult, query QueryIR, c
 func inMemoryGlobalAggregateCell(aggregate Aggregate, candidates []inMemoryNativeCandidate) (ResultCell, Diagnostic, bool) {
 	switch {
 	case strings.EqualFold(aggregate.Function, "count"):
+		if aggregate.Input != nil {
+			count := int64(0)
+			for _, candidate := range candidates {
+				cell, diagnostic, ok := inMemoryEvalExpr(aggregate.Input, candidate.Row)
+				if !ok {
+					return ResultCell{}, diagnostic, false
+				}
+				if cell.Value != nil {
+					count++
+				}
+			}
+			return ResultCell{Kind: ValueInt, Value: count}, Diagnostic{}, true
+		}
 		return ResultCell{Kind: ValueInt, Value: int64(len(candidates))}, Diagnostic{}, true
 	case strings.EqualFold(aggregate.Function, "sum"):
 		sum, count, diagnostic, ok := inMemoryNumericAggregateInput(aggregate, candidates)

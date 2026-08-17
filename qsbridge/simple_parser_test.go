@@ -1293,6 +1293,40 @@ func TestSimpleParserBridgeParsesInnerJoinEdge(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesRightJoinEdge(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c.first_name, o.order_id from orders_qa as o right join customers_qa as c on c.cust_id = o.cust_id")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Joins) != 1 {
+		t.Fatalf("joins = %d, want 1", len(statement.Select.Joins))
+	}
+	join := statement.Select.Joins[0]
+	if join.Kind != JoinKindRightOuter {
+		t.Fatalf("join kind = %q, want right outer", join.Kind)
+	}
+	if join.LeftQualifier != "c" || join.LeftField != "cust_id" || join.RightQualifier != "o" || join.RightField != "cust_id" {
+		t.Fatalf("join = %#v, want c.cust_id = o.cust_id", join)
+	}
+}
+
+func TestSimpleParserBridgeParsesJoinUsingEdge(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select count(*) from orders_qa as o1 inner join orders_qa as o2 using (cust_id)")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Joins) != 1 {
+		t.Fatalf("joins = %d, want 1", len(statement.Select.Joins))
+	}
+	join := statement.Select.Joins[0]
+	if join.Kind != JoinKindInner {
+		t.Fatalf("join kind = %q, want inner", join.Kind)
+	}
+	if join.LeftQualifier != "o1" || join.LeftField != "cust_id" || join.RightQualifier != "o2" || join.RightField != "cust_id" {
+		t.Fatalf("join = %#v, want o1.cust_id = o2.cust_id", join)
+	}
+}
+
 func TestSimpleParserBridgeParsesJoinOnResidualConjuncts(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select count(*) from supplier as s inner join lineitem as l on s.s_suppkey = l.l_suppkey and s.s_nationkey = l.l_suppkey")
 	if diagnostics.BlocksNative() {
