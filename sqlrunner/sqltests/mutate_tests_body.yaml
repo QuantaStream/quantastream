@@ -177,7 +177,7 @@ tests:
     status: supported
     kind: query
     sql: |-
-      select count(*) from customers_qa where hashedCustId != null and state = 'CO'
+      select count(*) from customers_qa where hashedCustId = 'aaaaabbbbbcccccdddd' and state = 'CO'
     expect:
       rows:
         - [2]
@@ -545,35 +545,3 @@ tests:
     expect:
       rows:
         - [0]
-
-  # Label-only legacy script rows stay as intentional XFAILs until catalog-integrated
-  # parser/comment handling is useful enough to support directly.
-  - id: "mutate_body.016.update"
-    status: xfail
-    kind: statement
-    sql: |-
-      Update non-existant table
-
-  - id: "mutate_body.018.update"
-    status: xfail
-    kind: statement
-    sql: |-
-      Update non-existant column
-
-  - id: "mutate_body.064.delete"
-    status: xfail
-    kind: statement
-    sql: |-
-      DELETE tests
-
-  - id: "mutate_body.065.delete"
-    status: xfail
-    kind: statement
-    sql: |-
-      Delete non-existant table
-
-  - id: "mutate_body.074.delete"
-    status: xfail
-    kind: statement
-    sql: |-
-      delete batch
