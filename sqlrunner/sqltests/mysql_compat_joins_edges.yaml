@@ -70,3 +70,73 @@ tests:
       rows:
         - [AUTOMOBILE, 5]
         - [BUILDING, 5]
+
+  - id: mysql_compat_joins_edges.004.join_order_by_case_hidden_child_field
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_order_by_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, order_by, case, in, limit]
+    sql: |
+      select c.c_custkey, o.o_orderkey, o.o_orderpriority
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_custkey in (1, 2)
+      order by case when o.o_orderpriority in ('1-URGENT', '2-HIGH') then 0 else 1 end,
+               o.o_orderkey
+      limit 5
+    expect:
+      columns: [c_custkey, o_orderkey, o_orderpriority]
+      rows:
+        - [2, 10563, 1-URGENT]
+        - [1, 14656, 2-HIGH]
+        - [1, 24322, 1-URGENT]
+        - [2, 29956, 1-URGENT]
+        - [1, 31653, 2-HIGH]
+
+  - id: mysql_compat_joins_edges.005.join_order_by_function_hidden_parent_field
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_order_by_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, order_by, lower, between, limit]
+    sql: |
+      select c.c_custkey, o.o_orderkey, c.c_mktsegment
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where o.o_orderkey between 9000 and 9200
+      order by lower(c.c_mktsegment), o.o_orderkey
+      limit 5
+    expect:
+      columns: [c_custkey, o_orderkey, c_mktsegment]
+      rows:
+        - [677, 9026, AUTOMOBILE]
+        - [926, 9059, AUTOMOBILE]
+        - [1399, 9063, AUTOMOBILE]
+        - [679, 9091, AUTOMOBILE]
+        - [1010, 9120, AUTOMOBILE]
+
+  - id: mysql_compat_joins_edges.006.join_order_by_arithmetic_hidden_child_field
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_order_by_expression_edges
+    compatibility: mysql
+    requires: [select, inner_join, order_by, arithmetic, limit]
+    sql: |
+      select c.c_custkey, o.o_orderkey
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      where c.c_custkey in (1, 2, 3)
+      order by (o.o_totalprice * 2) desc, o.o_orderkey
+      limit 5
+    expect:
+      columns: [c_custkey, o_orderkey]
+      rows:
+        - [1, 9154]
+        - [1, 36422]
+        - [1, 24322]
+        - [2, 38276]
+        - [2, 20257]
