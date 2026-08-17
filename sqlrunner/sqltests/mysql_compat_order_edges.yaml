@@ -1,0 +1,125 @@
+version: 1
+name: mysql_compat_order_edges
+
+tests:
+  - id: mysql_compat_order_edges.001.order_by_scalar_function
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_expression_edges
+    compatibility: mysql
+    requires: [select, order_by, lower, limit]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      order by lower(c_mktsegment), c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [2, AUTOMOBILE]
+        - [3, AUTOMOBILE]
+        - [6, AUTOMOBILE]
+        - [7, AUTOMOBILE]
+        - [17, AUTOMOBILE]
+
+  - id: mysql_compat_order_edges.002.order_by_searched_case
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_case_edges
+    compatibility: mysql
+    requires: [select, order_by, case, limit]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      order by case when c_mktsegment = 'BUILDING' then 0 else 1 end, c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [1, BUILDING]
+        - [8, BUILDING]
+        - [11, BUILDING]
+        - [13, BUILDING]
+        - [18, BUILDING]
+
+  - id: mysql_compat_order_edges.003.order_by_simple_case
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_case_edges
+    compatibility: mysql
+    requires: [select, order_by, case, limit]
+    sql: |
+      select c_custkey, c_mktsegment
+      from customer
+      order by case c_mktsegment when 'BUILDING' then 0 when 'AUTOMOBILE' then 1 else 2 end, c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_mktsegment]
+      rows:
+        - [1, BUILDING]
+        - [8, BUILDING]
+        - [11, BUILDING]
+        - [13, BUILDING]
+        - [18, BUILDING]
+
+  - id: mysql_compat_order_edges.004.order_by_quoted_ordinal_is_literal
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_literal_edges
+    compatibility: mysql
+    requires: [select, order_by, limit]
+    sql: |
+      select n_name as nation_name, n_nationkey as nation_key
+      from nation
+      order by '2' desc
+      limit 3
+    expect:
+      columns: [nation_name, nation_key]
+      rows:
+        - [ALGERIA, 0]
+        - [ARGENTINA, 1]
+        - [BRAZIL, 2]
+
+  - id: mysql_compat_order_edges.005.order_by_ordinal_remains_ordinal
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_ordinal_edges
+    compatibility: mysql
+    requires: [select, order_by, limit]
+    sql: |
+      select n_name as nation_name, n_nationkey as nation_key
+      from nation
+      order by 2 desc
+      limit 3
+    expect:
+      columns: [nation_name, nation_key]
+      rows:
+        - [UNITED STATES, 24]
+        - [UNITED KINGDOM, 23]
+        - [RUSSIA, 22]
+
+  - id: mysql_compat_order_edges.006.order_by_scalar_function_desc
+    status: supported
+    kind: query
+    order: exact
+    feature: order_by_expression_edges
+    compatibility: mysql
+    requires: [select, order_by, length, limit]
+    sql: |
+      select c_custkey, c_name
+      from customer
+      order by length(c_name) desc, c_custkey
+      limit 5
+    expect:
+      columns: [c_custkey, c_name]
+      rows:
+        - [1, Customer#000000001]
+        - [2, Customer#000000002]
+        - [3, Customer#000000003]
+        - [4, Customer#000000004]
+        - [5, Customer#000000005]
