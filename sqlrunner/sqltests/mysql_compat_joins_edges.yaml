@@ -270,3 +270,74 @@ tests:
       columns: [market_segment, orderkey_sum]
       rows:
         - [BUILDING, 111721736]
+
+  - id: mysql_compat_joins_edges.013.three_table_join_projection_hidden_order
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_three_table_edges
+    compatibility: mysql
+    requires: [select, inner_join, three_table_join, where, order_by, limit]
+    sql: |
+      select c.c_custkey, o.o_orderkey, l.l_linenumber
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_custkey = 1
+      order by l.l_extendedprice desc, o.o_orderkey, l.l_linenumber
+      limit 5
+    expect:
+      columns: [c_custkey, o_orderkey, l_linenumber]
+      rows:
+        - [1, 31653, 1]
+        - [1, 9154, 1]
+        - [1, 9154, 7]
+        - [1, 24322, 4]
+        - [1, 53283, 4]
+
+  - id: mysql_compat_joins_edges.014.three_table_join_grouped_case_aggregate
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_three_table_edges
+    compatibility: mysql
+    requires: [select, inner_join, three_table_join, group_by, sum, case, in, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(case when l.l_quantity > 30 then 1 else 0 end) as large_line_count
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      where c.c_mktsegment in ('BUILDING', 'AUTOMOBILE')
+      group by c.c_mktsegment
+      order by large_line_count desc, market_segment
+    expect:
+      columns: [market_segment, large_line_count]
+      rows:
+        - [BUILDING, 6012]
+        - [AUTOMOBILE, 4782]
+
+  - id: mysql_compat_joins_edges.015.three_table_join_having_grandchild_aggregate
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_three_table_edges
+    compatibility: mysql
+    requires: [select, inner_join, three_table_join, group_by, having, sum, order_by]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(l.l_quantity) as quantity_sum
+      from customer as c
+      inner join orders as o on o.o_custkey = c.c_custkey
+      inner join lineitem as l on l.l_orderkey = o.o_orderkey
+      group by c.c_mktsegment
+      having sum(l.l_quantity) > 60000.00
+      order by quantity_sum desc, market_segment
+    expect:
+      columns: [market_segment, quantity_sum]
+      rows:
+        - [BUILDING, 382779.00]
+        - [AUTOMOBILE, 305943.00]
+        - [FURNITURE, 303756.00]
+        - [HOUSEHOLD, 284727.00]
+        - [MACHINERY, 258922.00]

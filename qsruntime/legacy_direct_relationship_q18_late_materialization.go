@@ -174,6 +174,9 @@ func legacyDirectRelationshipQ18LargeOrderProjectionPlanFor(request ExecutionReq
 	if diagnostics.BlocksNative() || len(groupFields) == 0 {
 		return legacyDirectRelationshipQ18LargeOrderProjectionPlan{}, false
 	}
+	if !legacyDirectRelationshipQ18GroupFieldsIncludeOrderKey(groupFields) {
+		return legacyDirectRelationshipQ18LargeOrderProjectionPlan{}, false
+	}
 	finalFields := make([]qsbridge.QuantaProjectionField, 0, len(groupFields))
 	for _, groupField := range groupFields {
 		if strings.EqualFold(groupField.Table.Table, "lineitem") {
@@ -205,6 +208,15 @@ func legacyDirectRelationshipQ18GroupFields(groupBy []qsbridge.Expr) ([]qsbridge
 		groupFields = append(groupFields, field)
 	}
 	return groupFields, nil
+}
+
+func legacyDirectRelationshipQ18GroupFieldsIncludeOrderKey(groupFields []qsbridge.FieldRef) bool {
+	for _, field := range groupFields {
+		if strings.EqualFold(field.Table.Table, "orders") && directBitmapFieldPhysicalName(field) == "o_orderkey" {
+			return true
+		}
+	}
+	return false
 }
 
 func legacyDirectRelationshipProjectionFieldForFieldRef(fields []qsbridge.QuantaProjectionField, ref qsbridge.FieldRef) qsbridge.QuantaProjectionField {

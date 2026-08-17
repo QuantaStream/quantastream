@@ -4460,6 +4460,38 @@ func TestLegacyDirectRelationshipQ18LargeOrderProjectionLateMaterializesSurvivor
 	assertExecutionProbe(t, result.Probes, "relationship_join", "graph_grouped_aggregate_post_having_groups", "2")
 }
 
+func TestLegacyDirectRelationshipQ18LargeOrderProjectionRequiresOrderKeyGroup(t *testing.T) {
+	customer := qsbridge.TableInstance{Table: "customer", Alias: "c"}
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
+	cMktsegment := qsbridge.FieldRef{Table: customer, Name: "c_mktsegment", Type: qsbridge.DataTypeString}
+	oOrderkey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
+	lQuantity := qsbridge.FieldRef{Table: lineitem, Name: "l_quantity", Type: qsbridge.DataTypeFloat}
+	fields := []qsbridge.QuantaProjectionField{
+		{Index: "customer", Role: "c", Field: "c_mktsegment", Type: qsbridge.DataTypeString, Visible: true},
+		{Index: "orders", Role: "o", Field: "o_orderkey", Type: qsbridge.DataTypeInt, Visible: true},
+		{Index: "lineitem", Role: "l", Field: "l_quantity", Type: qsbridge.DataTypeFloat},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{ProjectionFields: fields})
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(cMktsegment)}
+	request.SQLAggregates = []qsbridge.Aggregate{{Function: "sum", Input: qsbridge.Field(lQuantity), Alias: "quantity_sum", Type: qsbridge.DataTypeFloat}}
+	request.Having = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpGreater, qsbridge.AggregateRef("quantity_sum", 0), qsbridge.Literal(qsbridge.ValueInt, int64(300))),
+		Placement: qsbridge.PredicateResidualScan,
+	}}
+	edges := []legacyDirectRelationshipEdge{
+		{childRole: "l", childTable: "lineitem", childField: "l_orderkey", parentRole: "o", parentTable: "orders", parentField: "o_orderkey"},
+		{childRole: "o", childTable: "orders", childField: "o_custkey", parentRole: "c", parentTable: "customer", parentField: "c_custkey"},
+	}
+	if _, ok := legacyDirectRelationshipQ18LargeOrderProjectionPlanFor(request, edges, fields); ok {
+		t.Fatalf("Q18 fast path planned for customer segment grouping; want generic graph aggregate")
+	}
+	request.GroupBy = []qsbridge.Expr{qsbridge.Field(oOrderkey)}
+	if _, ok := legacyDirectRelationshipQ18LargeOrderProjectionPlanFor(request, edges, fields); !ok {
+		t.Fatalf("Q18 fast path did not plan for orders.o_orderkey grouping")
+	}
+}
+
 func TestLegacyDirectRelationshipQ3OrderRevenuePreAggregatesByOrder(t *testing.T) {
 	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
 	lineitem := qsbridge.TableInstance{Table: "lineitem", Alias: "l"}
