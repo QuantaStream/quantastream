@@ -2846,6 +2846,69 @@ func TestSimpleParserBridgeParsesGroupedMixedBooleanPredicateWithBlocker(t *test
 	}
 }
 
+func TestSimpleParserBridgeParsesConstantUnionAllOrderByLimitOne(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select 2 as n
+		union all
+		select 1 as n
+		order by n
+		limit 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 1 {
+		t.Fatalf("projections = %d, want 1", len(statement.Select.Projection))
+	}
+	if statement.Select.Projection[0].Alias != "n" {
+		t.Fatalf("alias = %q, want n", statement.Select.Projection[0].Alias)
+	}
+	literal, ok := statement.Select.Projection[0].Expr.(UnboundLiteralExpr)
+	if !ok {
+		t.Fatalf("projection expr = %T, want UnboundLiteralExpr", statement.Select.Projection[0].Expr)
+	}
+	if literal.Kind != ValueInt || literal.Value != int64(1) {
+		t.Fatalf("literal = %#v, want int 1", literal)
+	}
+	if !statement.Select.Result.HasLimit || statement.Select.Result.Limit != 1 {
+		t.Fatalf("result limit = %#v, want LIMIT 1", statement.Select.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesRowValueInAsResidualPredicate(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select n_name as nation_name
+		from nation
+		where (n_regionkey, n_nationkey) in ((1, 1), (1, 2))
+		order by nation_name
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	predicate := statement.Select.Predicates[0]
+	if predicate.Placement != PredicateResidualScan {
+		t.Fatalf("placement = %s, want %s", predicate.Placement, PredicateResidualScan)
+	}
+	root, ok := predicate.Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expr = %T, want UnboundBinaryExpr", predicate.Expr)
+	}
+	if root.Op != BinaryOpOr {
+		t.Fatalf("root op = %s, want %s", root.Op, BinaryOpOr)
+	}
+	left, ok := root.Left.(UnboundBinaryExpr)
+	if !ok || left.Op != BinaryOpAnd {
+		t.Fatalf("left branch = %#v, want AND branch", root.Left)
+	}
+	right, ok := root.Right.(UnboundBinaryExpr)
+	if !ok || right.Op != BinaryOpAnd {
+		t.Fatalf("right branch = %#v, want AND branch", root.Right)
+	}
+}
+
 func unboundPredicateReferencesField(predicate UnboundPredicate, qualifier string, name string) bool {
 	return unboundExprReferencesField(predicate.Expr, qualifier, name)
 }

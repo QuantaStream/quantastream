@@ -18,13 +18,12 @@ tests:
         - [1]
 
   - id: mysql_compat_predicates_boundaries.002.row_value_in
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: predicates_row_value_boundary
     compatibility: mysql
     requires: [select, table_scan, where, row_value, in]
-    issue: "Row-value predicates are not parsed yet; scalar IN predicates are supported."
     sql: |
       select n_name as nation_name
       from nation

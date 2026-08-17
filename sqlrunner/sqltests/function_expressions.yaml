@@ -580,7 +580,7 @@ tests:
         - ['Abe']
 
   - id: "function_expressions.180.timediff_join_select_list"
-    status: xfail
+    status: supported
     kind: query
     order: rowsort
     capabilities: [function, quanta-custom, timediff, join, select-expression]
@@ -589,7 +589,7 @@ tests:
       from customers_qa as c
       inner join orders_qa as o on o.cust_id = c.cust_id
     expect:
-      columns: [c.first_name, ship_hours]
+      columns: [first_name, ship_hours]
       rows:
         - ['Abe', '3']
         - ['Abe', '4.5']

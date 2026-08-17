@@ -103,6 +103,14 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		selectBody = remaining
 		distinct = true
 	}
+	if !distinct {
+		if statement, diagnostic, found, ok := parseSimpleConstantUnionAllSelect(sql, selectBody); found || diagnostic.Code != "" {
+			if !ok {
+				return UnboundStatement{}, diagnostic, false
+			}
+			return statement, Diagnostic{}, true
+		}
+	}
 	projectionText, sourceText, hasSource := splitBeforeTopLevelKeyword(selectBody, "from")
 	if !hasSource {
 		if _, _, found := findTopLevelSimpleKeyword(selectBody, "from"); found {
@@ -233,6 +241,164 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			Blockers:    blockers,
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundStatement, Diagnostic, bool, bool) {
+	body, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(selectBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false, false
+	}
+	body, orderBy, hasOrderBy, diagnostic, ok := parseSimpleOrderByClause(body)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false, false
+	}
+	if _, _, found := findTopLevelSimpleKeyword(body, "union"); !found {
+		return UnboundStatement{}, Diagnostic{}, false, true
+	}
+	if !hasOrderBy || !hasLimit || limit != 1 || offset != 0 {
+		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL only supports source-free constant SELECT branches with ORDER BY and LIMIT 1"), true, false
+	}
+	if len(orderBy) != 1 {
+		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY must contain one term"), true, false
+	}
+	terms, diagnostic, ok := splitSimpleUnionAllTerms(body)
+	if !ok {
+		return UnboundStatement{}, diagnostic, true, false
+	}
+	rows := make([]simpleConstantUnionRow, 0, len(terms))
+	for _, term := range terms {
+		row, diagnostic, ok := parseSimpleConstantUnionTerm(term)
+		if !ok {
+			return UnboundStatement{}, diagnostic, true, false
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL must include at least one SELECT branch"), true, false
+	}
+	firstAlias := rows[0].Projection.Alias
+	orderAlias, ok := simpleUnionOrderAlias(orderBy[0])
+	if !ok || firstAlias == "" || !strings.EqualFold(orderAlias, firstAlias) {
+		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY must reference the first projection alias"), true, false
+	}
+	best := rows[0]
+	for _, row := range rows[1:] {
+		less, ok := simpleLiteralLess(row.Literal, best.Literal)
+		if !ok {
+			return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY only supports comparable constant literals"), true, false
+		}
+		if (orderBy[0].Direction != SortDescending && less) || (orderBy[0].Direction == SortDescending && !less) {
+			best = row
+		}
+	}
+	projection := best.Projection
+	projection.Alias = firstAlias
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindSelect,
+		Select: UnboundSelect{
+			Projection: []UnboundProjection{projection},
+			Result:     ResultShape{Kind: ResultQuery, Limit: 1, HasLimit: true},
+		},
+	}, Diagnostic{}, true, true
+}
+
+type simpleConstantUnionRow struct {
+	Projection UnboundProjection
+	Literal    UnboundLiteralExpr
+}
+
+func splitSimpleUnionAllTerms(text string) ([]string, Diagnostic, bool) {
+	terms := make([]string, 0, 2)
+	remaining := strings.TrimSpace(text)
+	firstLeft, right, found := splitBeforeTopLevelKeyword(remaining, "union")
+	if !found {
+		return nil, simpleParserDiagnostic("UNION ALL must include at least two SELECT branches"), false
+	}
+	terms = append(terms, "select "+firstLeft)
+	for {
+		afterAll, ok := consumeKeyword(right, "all")
+		if !ok {
+			return nil, simpleParserDiagnostic("only UNION ALL is supported"), false
+		}
+		next := strings.TrimSpace(afterAll)
+		if next == "" {
+			return nil, simpleParserDiagnostic("UNION ALL branch is empty"), false
+		}
+		if left, tail, found := splitBeforeTopLevelKeyword(next, "union"); found {
+			terms = append(terms, left)
+			right = tail
+			continue
+		}
+		terms = append(terms, next)
+		break
+	}
+	return terms, Diagnostic{}, true
+}
+
+func parseSimpleConstantUnionTerm(text string) (simpleConstantUnionRow, Diagnostic, bool) {
+	selectBody, ok := consumeKeyword(text, "select")
+	if !ok {
+		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must be SELECT statements"), false
+	}
+	if hasAnyTopLevelKeyword(selectBody, "from", "where", "join", "group", "having", "order", "limit", "union") {
+		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches only support source-free constant SELECT lists"), false
+	}
+	projections, aggregates, diagnostic, ok := parseSimpleProjections(selectBody)
+	if !ok {
+		return simpleConstantUnionRow{}, diagnostic, false
+	}
+	if len(projections) != 1 || len(aggregates) != 0 {
+		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project one constant value"), false
+	}
+	literal, ok := projections[0].Expr.(UnboundLiteralExpr)
+	if !ok {
+		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project constant literals"), false
+	}
+	return simpleConstantUnionRow{Projection: projections[0], Literal: literal}, Diagnostic{}, true
+}
+
+func simpleUnionOrderAlias(sort UnboundSort) (string, bool) {
+	field, ok := sort.Expr.(UnboundFieldExpr)
+	if !ok || field.Qualifier != "" || field.Name == "" {
+		return "", false
+	}
+	return field.Name, true
+}
+
+func simpleLiteralLess(left UnboundLiteralExpr, right UnboundLiteralExpr) (bool, bool) {
+	if leftNumber, ok := simpleLiteralNumber(left); ok {
+		rightNumber, rightOK := simpleLiteralNumber(right)
+		return leftNumber < rightNumber, rightOK
+	}
+	if left.Kind != right.Kind {
+		return false, false
+	}
+	switch left.Kind {
+	case ValueString:
+		leftValue, leftOK := left.Value.(string)
+		rightValue, rightOK := right.Value.(string)
+		return leftValue < rightValue, leftOK && rightOK
+	case ValueBool:
+		leftValue, leftOK := left.Value.(bool)
+		rightValue, rightOK := right.Value.(bool)
+		return !leftValue && rightValue, leftOK && rightOK
+	default:
+		return false, false
+	}
+}
+
+func simpleLiteralNumber(value UnboundLiteralExpr) (float64, bool) {
+	switch value.Kind {
+	case ValueInt:
+		typed, ok := value.Value.(int64)
+		return float64(typed), ok
+	case ValueFloat:
+		typed, ok := value.Value.(float64)
+		return typed, ok
+	default:
+		return 0, false
+	}
 }
 
 func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -4608,6 +4774,12 @@ func parseSimpleInPredicate(text string, parameterIndex *int) (UnboundPredicate,
 		left = remaining
 		op = BinaryOpNotIn
 	}
+	if predicate, diagnostic, ok := parseSimpleRowValueInPredicate(left, right, op, parameterIndex); ok || diagnostic.Code != "" {
+		if !ok {
+			return UnboundPredicate{}, diagnostic, false
+		}
+		return predicate, Diagnostic{}, true
+	}
 	leftExpr, ok := parseSimpleScalarExpression(left)
 	if !ok {
 		return UnboundPredicate{}, simpleParserDiagnostic("IN left expression is empty"), false
@@ -4625,6 +4797,140 @@ func parseSimpleInPredicate(text string, parameterIndex *int) (UnboundPredicate,
 		Placement: placement,
 		Scope:     PredicateScopeWhere,
 	}, Diagnostic{}, true
+}
+
+func parseSimpleRowValueInPredicate(left string, right string, op BinaryOp, parameterIndex *int) (UnboundPredicate, Diagnostic, bool) {
+	leftValues, diagnostic, ok := parseSimpleRowValueLeftExprList(left)
+	if !ok {
+		if diagnostic.Code != "" {
+			return UnboundPredicate{}, diagnostic, false
+		}
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	rightRows, diagnostic, ok := parseSimpleRowValueInList(right, len(leftValues), parameterIndex)
+	if !ok {
+		return UnboundPredicate{}, diagnostic, false
+	}
+	if len(rightRows) == 0 {
+		return UnboundPredicate{}, simpleParserDiagnostic("row-value IN list cannot be empty"), false
+	}
+	var expr UnboundExpr
+	for _, row := range rightRows {
+		rowExpr := simpleRowValueEqualityExpr(leftValues, row)
+		if op == BinaryOpNotIn {
+			rowExpr = simpleNegateRowValueEqualityExpr(rowExpr)
+		}
+		if expr == nil {
+			expr = rowExpr
+			continue
+		}
+		joinOp := BinaryOpOr
+		if op == BinaryOpNotIn {
+			joinOp = BinaryOpAnd
+		}
+		expr = UnboundBinary(joinOp, expr, rowExpr)
+	}
+	return UnboundPredicate{
+		Expr:      expr,
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeWhere,
+	}, Diagnostic{}, true
+}
+
+func parseSimpleRowValueLeftExprList(text string) ([]UnboundExpr, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") || !strings.HasSuffix(trimmed, ")") {
+		return nil, Diagnostic{}, false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "("), ")"))
+	if body == "" {
+		return nil, simpleParserDiagnostic("row-value IN left tuple cannot be empty"), false
+	}
+	parts := splitSimpleCommaList(body)
+	if len(parts) < 2 {
+		return nil, Diagnostic{}, false
+	}
+	values := make([]UnboundExpr, 0, len(parts))
+	for _, part := range parts {
+		expr, ok := parseSimpleScalarExpression(strings.TrimSpace(part))
+		if !ok {
+			return nil, simpleParserDiagnostic("row-value IN left tuple must contain scalar expressions"), false
+		}
+		values = append(values, expr)
+	}
+	return values, Diagnostic{}, true
+}
+
+func parseSimpleRowValueLiteralExprList(text string, parameterIndex *int) ([]UnboundExpr, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") || !strings.HasSuffix(trimmed, ")") {
+		return nil, simpleParserDiagnostic("row-value IN list entries must be parenthesized tuples"), false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "("), ")"))
+	if body == "" {
+		return nil, simpleParserDiagnostic("row-value IN tuple cannot be empty"), false
+	}
+	parts := splitSimpleCommaList(body)
+	values := make([]UnboundExpr, 0, len(parts))
+	for _, part := range parts {
+		expr, diagnostic, ok := parseSimpleComparisonValue(strings.TrimSpace(part), parameterIndex)
+		if !ok {
+			return nil, diagnostic, false
+		}
+		values = append(values, expr)
+	}
+	return values, Diagnostic{}, true
+}
+
+func parseSimpleRowValueInList(text string, arity int, parameterIndex *int) ([][]UnboundExpr, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") || !strings.HasSuffix(trimmed, ")") {
+		return nil, simpleParserDiagnostic("row-value IN must use a parenthesized tuple list"), false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "("), ")"))
+	if body == "" {
+		return nil, simpleParserDiagnostic("row-value IN list cannot be empty"), false
+	}
+	parts := splitSimpleCommaList(body)
+	rows := make([][]UnboundExpr, 0, len(parts))
+	for _, part := range parts {
+		row, diagnostic, ok := parseSimpleRowValueLiteralExprList(part, parameterIndex)
+		if !ok {
+			return nil, diagnostic, false
+		}
+		if len(row) != arity {
+			return nil, simpleParserDiagnostic("row-value IN tuple arity must match left tuple"), false
+		}
+		rows = append(rows, row)
+	}
+	return rows, Diagnostic{}, true
+}
+
+func simpleRowValueEqualityExpr(left []UnboundExpr, right []UnboundExpr) UnboundExpr {
+	var expr UnboundExpr
+	for i := range left {
+		comparison := UnboundBinary(BinaryOpEqual, left[i], right[i])
+		if expr == nil {
+			expr = comparison
+			continue
+		}
+		expr = UnboundBinary(BinaryOpAnd, expr, comparison)
+	}
+	return expr
+}
+
+func simpleNegateRowValueEqualityExpr(expr UnboundExpr) UnboundExpr {
+	binary, ok := expr.(UnboundBinaryExpr)
+	if !ok {
+		return expr
+	}
+	if binary.Op == BinaryOpEqual {
+		return UnboundBinary(BinaryOpNotEqual, binary.Left, binary.Right)
+	}
+	if binary.Op == BinaryOpAnd {
+		return UnboundBinary(BinaryOpOr, simpleNegateRowValueEqualityExpr(binary.Left), simpleNegateRowValueEqualityExpr(binary.Right))
+	}
+	return expr
 }
 
 func parseSimpleInList(text string, parameterIndex *int) (UnboundListExpr, Diagnostic, bool) {
