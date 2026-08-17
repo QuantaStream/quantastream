@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
@@ -39,6 +40,20 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 		return qsmysql.PingResponse(), nil
 	case qsmysql.CommandKindQuit:
 		return qsmysql.QuitResponse(), nil
+	case qsmysql.CommandKindStmtPrepare:
+		return h.handleMySQLPreparedStatementPrepare(command)
+	case qsmysql.CommandKindStmtExecute:
+		return h.handleMySQLPreparedStatementExecute(ctx, command)
+	case qsmysql.CommandKindStmtClose:
+		h.preparedStatementRegistry().Close(qsbridge.PreparedStatementCloseRequest{
+			Handle: qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)},
+		})
+		return qsmysql.NoResponse(), nil
+	case qsmysql.CommandKindStmtReset:
+		if _, ok := h.preparedStatementRegistry().Get(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)}); !ok {
+			return qsmysql.ErrorResponse(nativeProxyMySQLUnknownPreparedStatement(command.StatementID, "reset")), nil
+		}
+		return qsmysql.StatementOKResponse(qsbridge.StatementResult{}), nil
 	case qsmysql.CommandKindQuery:
 		if response, ok, err := nativeProxyMySQLMetadataQueryResponse(command); ok || err != nil {
 			return response, err
@@ -57,6 +72,59 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 	}
 }
 
+func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementPrepare(command qsmysql.Command) (qsmysql.CommandResponse, error) {
+	prepared, diagnostics := h.FrontDoor.Server.PrepareSQL(command.SQL)
+	if protocolError, ok := diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	description := h.preparedStatementRegistry().Register(prepared)
+	if protocolError, ok := description.Diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	return qsmysql.PreparedStatementResponse(description)
+}
+
+func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementExecute(ctx context.Context, command qsmysql.Command) (qsmysql.CommandResponse, error) {
+	prepared, ok := h.preparedStatementRegistry().Get(qsbridge.PreparedStatementHandle{ID: qsbridge.PreparedStatementID(command.StatementID)})
+	if !ok {
+		return qsmysql.ErrorResponse(nativeProxyMySQLUnknownPreparedStatement(command.StatementID, "execute")), nil
+	}
+	values, err := qsmysql.DecodePreparedExecuteParameters(command.Execute, prepared.Parameters)
+	if err != nil {
+		return qsmysql.ErrorResponse(qsbridge.ProtocolError{
+			SQLState:   qsbridge.SQLStateInvalidParameter,
+			VendorCode: 1210,
+			Message:    err.Error(),
+		}), nil
+	}
+	result, err := h.FrontDoor.Server.ExecuteSQL(ctx, prepared.SQL, h.Options, values...)
+	if err != nil {
+		return qsmysql.ErrorResponseFromError(err), nil
+	}
+	profile := h.sessionProfile()
+	profile.Store(result.Instrumentation)
+	return nativeProxyMySQLPreparedResponseFromSQLResult(result)
+}
+
+func (h NativeProxyMySQLCommandHandler) preparedStatementRegistry() *qsbridge.MemoryPreparedStatementRegistry {
+	return h.sessionProfile().PreparedStatements()
+}
+
+func (h NativeProxyMySQLCommandHandler) sessionProfile() *NativeProxyMySQLSessionProfile {
+	if h.Profile != nil {
+		return h.Profile
+	}
+	return NewNativeProxyMySQLSessionProfile()
+}
+
+func nativeProxyMySQLUnknownPreparedStatement(statementID uint32, operation string) qsbridge.ProtocolError {
+	return qsbridge.ProtocolError{
+		SQLState:   qsbridge.SQLStateInvalidParameter,
+		VendorCode: 1243,
+		Message:    fmt.Sprintf("unknown prepared statement handler (%d) given to COM_STMT_%s", statementID, operation),
+	}
+}
+
 func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult) (qsmysql.CommandResponse, error) {
 	if protocolError, ok := result.Diagnostics.FirstProtocolError(); ok {
 		return qsmysql.ErrorResponse(protocolError), nil
@@ -70,6 +138,23 @@ func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult) (qsmysql.C
 	}
 	if clientResult.Kind == qsbridge.ResultQuery || len(clientResult.Columns) > 0 {
 		return qsmysql.QueryResponse(clientResult)
+	}
+	return qsmysql.StatementOKResponse(clientResult.Statement), nil
+}
+
+func nativeProxyMySQLPreparedResponseFromSQLResult(result SQLExecutionResult) (qsmysql.CommandResponse, error) {
+	if protocolError, ok := result.Diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	if protocolError, ok := result.Runtime.Diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	clientResult := nativeProxyClientExecutionResult(result)
+	if protocolError, ok := clientResult.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	if clientResult.Kind == qsbridge.ResultQuery || len(clientResult.Columns) > 0 {
+		return qsmysql.BinaryQueryResponse(clientResult)
 	}
 	return qsmysql.StatementOKResponse(clientResult.Statement), nil
 }

@@ -10,13 +10,16 @@ import (
 
 // NativeProxyMySQLSessionProfile keeps the last execution profile for one MySQL session.
 type NativeProxyMySQLSessionProfile struct {
-	mu   sync.Mutex
-	last ExecutionInstrumentationSnapshot
+	mu       sync.Mutex
+	last     ExecutionInstrumentationSnapshot
+	prepared *qsbridge.MemoryPreparedStatementRegistry
 }
 
 // NewNativeProxyMySQLSessionProfile creates an empty per-session profile store.
 func NewNativeProxyMySQLSessionProfile() *NativeProxyMySQLSessionProfile {
-	return &NativeProxyMySQLSessionProfile{}
+	return &NativeProxyMySQLSessionProfile{
+		prepared: qsbridge.NewMemoryPreparedStatementRegistry(),
+	}
 }
 
 // Store replaces the last query profile with a stable copy of snapshot.
@@ -37,6 +40,19 @@ func (p *NativeProxyMySQLSessionProfile) Snapshot() ExecutionInstrumentationSnap
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return cloneExecutionInstrumentationSnapshot(p.last)
+}
+
+// PreparedStatements returns the per-session prepared-statement registry.
+func (p *NativeProxyMySQLSessionProfile) PreparedStatements() *qsbridge.MemoryPreparedStatementRegistry {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.prepared == nil {
+		p.prepared = qsbridge.NewMemoryPreparedStatementRegistry()
+	}
+	return p.prepared
 }
 
 func nativeProxyMySQLProfileQueryResponse(command qsmysql.Command, profile *NativeProxyMySQLSessionProfile) (qsmysql.CommandResponse, bool, error) {

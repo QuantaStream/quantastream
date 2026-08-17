@@ -30,6 +30,11 @@ func (r NativeProxyRuntime) InspectSQL(sql string, options qsbridge.ExecutionOpt
 	return r.Runtime.InspectSQL(sql, options, values...)
 }
 
+// PrepareSQL prepares SQL metadata without binding execute-time values.
+func (r NativeProxyRuntime) PrepareSQL(sql string) qsbridge.PreparedPlan {
+	return r.Runtime.Plan(sql).PreparedPlan()
+}
+
 // NativeProxyRuntimeConfig captures runtime defaults shared by future proxy/server adapters.
 type NativeProxyRuntimeConfig struct {
 	Direct                      DirectRuntimeConfig

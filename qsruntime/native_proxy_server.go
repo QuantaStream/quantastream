@@ -191,6 +191,15 @@ func (s NativeProxyServer) InspectSQL(sql string, options qsbridge.ExecutionOpti
 	return s.Runtime.InspectSQL(sql, options, values...)
 }
 
+// PrepareSQL returns prepared-statement metadata without executing or binding values.
+func (s NativeProxyServer) PrepareSQL(sql string) (qsbridge.PreparedPlan, qsbridge.DiagnosticSet) {
+	if !s.Ready() {
+		return qsbridge.PreparedPlan{}, nativeProxyServerNotReadyDiagnostics()
+	}
+	prepared := s.Runtime.PrepareSQL(sql)
+	return prepared, append(qsbridge.DiagnosticSet(nil), prepared.Diagnostics...)
+}
+
 func nativeProxyServerNotReadyDiagnostics() qsbridge.DiagnosticSet {
 	return qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "native proxy server runtime is not ready"),

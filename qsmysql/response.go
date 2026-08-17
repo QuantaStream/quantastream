@@ -8,10 +8,14 @@ type CommandResponseKind string
 const (
 	// CommandResponseQuery carries text resultset packets.
 	CommandResponseQuery CommandResponseKind = "query"
+	// CommandResponsePrepared carries COM_STMT_PREPARE response packets.
+	CommandResponsePrepared CommandResponseKind = "prepared"
 	// CommandResponseOK carries an OK packet.
 	CommandResponseOK CommandResponseKind = "ok"
 	// CommandResponseError carries an ERR packet.
 	CommandResponseError CommandResponseKind = "error"
+	// CommandResponseNoResponse writes no packets, as required by COM_STMT_CLOSE.
+	CommandResponseNoResponse CommandResponseKind = "no_response"
 	// CommandResponseClose asks the connection owner to close without writing packets.
 	CommandResponseClose CommandResponseKind = "close"
 )
@@ -33,6 +37,15 @@ const (
 // QueryResponse encodes a query result as MySQL text-result packets.
 func QueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
 	packets, err := TextResultSetPackets(result)
+	if err != nil {
+		return CommandResponse{}, err
+	}
+	return CommandResponse{Kind: CommandResponseQuery, Packets: packets}, nil
+}
+
+// BinaryQueryResponse encodes a prepared statement query result as MySQL binary-result packets.
+func BinaryQueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
+	packets, err := BinaryResultSetPackets(result)
 	if err != nil {
 		return CommandResponse{}, err
 	}
@@ -99,6 +112,11 @@ func PingResponse() CommandResponse {
 // QuitResponse returns the close response for COM_QUIT.
 func QuitResponse() CommandResponse {
 	return CommandResponse{Kind: CommandResponseClose, Close: true}
+}
+
+// NoResponse returns a command response that intentionally writes no packets.
+func NoResponse() CommandResponse {
+	return CommandResponse{Kind: CommandResponseNoResponse}
 }
 
 // ErrorResponse encodes a protocol error as a MySQL ERR packet.

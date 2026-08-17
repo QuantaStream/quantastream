@@ -17,6 +17,14 @@ const (
 	CommandQuery CommandByte = 0x03
 	// CommandPing is COM_PING.
 	CommandPing CommandByte = 0x0e
+	// CommandStmtPrepare is COM_STMT_PREPARE.
+	CommandStmtPrepare CommandByte = 0x16
+	// CommandStmtExecute is COM_STMT_EXECUTE.
+	CommandStmtExecute CommandByte = 0x17
+	// CommandStmtClose is COM_STMT_CLOSE.
+	CommandStmtClose CommandByte = 0x19
+	// CommandStmtReset is COM_STMT_RESET.
+	CommandStmtReset CommandByte = 0x1a
 )
 
 // CapabilityFlag identifies one MySQL handshake capability bit.
