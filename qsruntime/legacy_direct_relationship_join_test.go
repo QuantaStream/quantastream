@@ -5545,6 +5545,47 @@ func TestLegacyDirectRelationshipLeftOuterAggregateResultCountsUnmatchedParents(
 	assertExecutionProbe(t, result.Probes, "relationship_join", "left_outer_unmatched_parents", "1")
 }
 
+func TestLegacyDirectRelationshipVectorSQLKindNormalizesRightOuterParentPreserving(t *testing.T) {
+	child := qsbridge.TableInstance{Table: "nation", Alias: "n"}
+	parent := qsbridge.TableInstance{Table: "region", Alias: "r"}
+	planned := qsbridge.RelationshipJoinPlanEdge{
+		Left:    qsbridge.FieldRef{Table: child, Name: "n_regionkey"},
+		Right:   qsbridge.FieldRef{Table: parent, Name: "r_regionkey"},
+		SQLKind: qsbridge.JoinKindRightOuter,
+	}
+
+	kind, preservesParent := legacyDirectRelationshipVectorSQLKind(planned, parent)
+
+	if kind != qsbridge.JoinKindLeftOuter || !preservesParent {
+		t.Fatalf("kind/preservesParent = %q/%v, want left_outer/true", kind, preservesParent)
+	}
+}
+
+func TestLegacyDirectRelationshipCellTreatsZeroChildRownumAsMatched(t *testing.T) {
+	edge := legacyDirectRelationshipEdge{
+		childTable:               "nation",
+		parentTable:              "region",
+		sqlKind:                  qsbridge.JoinKindLeftOuter,
+		leftOuterPreservesParent: true,
+	}
+	field := qsbridge.QuantaProjectionField{Index: "nation", Field: "n_name", PhysicalName: "n_name"}
+	childValues := map[string]map[qsbridge.QuantaRownum]qsbridge.ResultCell{
+		legacyDirectRelationshipProjectionFieldKey(field): {
+			0: {Kind: qsbridge.ValueString, Value: "ALGERIA"},
+		},
+	}
+
+	cell, ok := legacyDirectRelationshipCell(edge, field, legacyDirectRelationshipPair{child: 0, parent: 1}, childValues, nil)
+	if !ok || cell.Kind != qsbridge.ValueString || cell.Value != "ALGERIA" {
+		t.Fatalf("cell = %#v, ok=%v; want matched child rownum 0", cell, ok)
+	}
+
+	cell, ok = legacyDirectRelationshipCell(edge, field, legacyDirectRelationshipPair{parent: 1, childNull: true}, childValues, nil)
+	if !ok || cell.Kind != qsbridge.ValueNull {
+		t.Fatalf("outer cell = %#v, ok=%v; want explicit NULL child", cell, ok)
+	}
+}
+
 func TestLegacyDirectRelationshipGraphProjectionMaterializationFieldsIncludesResidualOnlyFields(t *testing.T) {
 	part := qsbridge.TableInstance{Table: "part", Alias: "p"}
 	partsupp := qsbridge.TableInstance{Table: "partsupp", Alias: "ps"}

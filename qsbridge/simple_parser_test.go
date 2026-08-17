@@ -1305,8 +1305,8 @@ func TestSimpleParserBridgeParsesRightJoinEdge(t *testing.T) {
 	if join.Kind != JoinKindRightOuter {
 		t.Fatalf("join kind = %q, want right outer", join.Kind)
 	}
-	if join.LeftQualifier != "c" || join.LeftField != "cust_id" || join.RightQualifier != "o" || join.RightField != "cust_id" {
-		t.Fatalf("join = %#v, want c.cust_id = o.cust_id", join)
+	if join.LeftQualifier != "o" || join.LeftField != "cust_id" || join.RightQualifier != "c" || join.RightField != "cust_id" {
+		t.Fatalf("join = %#v, want o.cust_id = c.cust_id", join)
 	}
 }
 

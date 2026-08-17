@@ -2877,16 +2877,24 @@ func parseSimpleUsingFields(text string) ([]string, Diagnostic, bool) {
 }
 
 func normalizeSimpleJoinEdge(join UnboundJoin, leftTable UnboundTable) UnboundJoin {
-	if join.Kind != JoinKindLeftOuter {
+	if join.Kind != JoinKindLeftOuter && join.Kind != JoinKindRightOuter {
 		return join
 	}
 	leftRef := tableRefName(leftTable.Name, leftTable.Alias)
-	if strings.EqualFold(join.LeftQualifier, leftRef) {
-		return join
-	}
-	if strings.EqualFold(join.RightQualifier, leftRef) {
-		join.LeftQualifier, join.RightQualifier = join.RightQualifier, join.LeftQualifier
-		join.LeftField, join.RightField = join.RightField, join.LeftField
+	switch join.Kind {
+	case JoinKindLeftOuter:
+		if strings.EqualFold(join.LeftQualifier, leftRef) {
+			return join
+		}
+		if strings.EqualFold(join.RightQualifier, leftRef) {
+			join.LeftQualifier, join.RightQualifier = join.RightQualifier, join.LeftQualifier
+			join.LeftField, join.RightField = join.RightField, join.LeftField
+		}
+	case JoinKindRightOuter:
+		if strings.EqualFold(join.RightQualifier, leftRef) {
+			join.LeftQualifier, join.RightQualifier = join.RightQualifier, join.LeftQualifier
+			join.LeftField, join.RightField = join.RightField, join.LeftField
+		}
 	}
 	return join
 }

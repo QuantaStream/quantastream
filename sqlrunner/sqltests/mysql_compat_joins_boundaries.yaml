@@ -52,13 +52,11 @@ tests:
         - [Abby, null]
 
   - id: mysql_compat_joins_boundaries.003.right_join
-    status: xfail
     kind: query
     order: exact
     feature: joins_right_outer_boundary
     compatibility: mysql
     requires: [select, table_scan, right_join, order_by, limit]
-    issue: "RIGHT JOIN parses, but direct relationship-vector execution still only supports INNER and LEFT OUTER relationship joins."
     sql: |
       select r.r_name as region_name, n.n_name as nation_name
       from nation as n

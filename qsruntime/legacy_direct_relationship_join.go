@@ -56,8 +56,9 @@ type legacyDirectRelationshipEdge struct {
 }
 
 type legacyDirectRelationshipPair struct {
-	child  qsbridge.QuantaRownum
-	parent qsbridge.QuantaRownum
+	child     qsbridge.QuantaRownum
+	parent    qsbridge.QuantaRownum
+	childNull bool
 }
 
 type legacyDirectRelationshipReduceTiming struct {
@@ -3558,12 +3559,15 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectSingleRelationsh
 	if planned.ExecutionKind != qsbridge.RelationshipJoinExecutionVector {
 		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("relationship-vector execution only supports relationship-vector joins in this slice")
 	}
-	if planned.SQLKind != qsbridge.JoinKindInner && planned.SQLKind != qsbridge.JoinKindLeftOuter {
-		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("relationship-vector execution only supports inner and left outer relationship-vector joins in this slice")
+	if planned.SQLKind != qsbridge.JoinKindInner && planned.SQLKind != qsbridge.JoinKindLeftOuter && planned.SQLKind != qsbridge.JoinKindRightOuter {
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("relationship-vector execution only supports inner, left outer, and parent-preserving right outer relationship-vector joins in this slice")
 	}
 	edge, diagnostics := e.legacyDirectRelationshipEdge(planned)
 	if diagnostics.BlocksNative() {
 		return legacyDirectRelationshipEdge{}, diagnostics
+	}
+	if planned.SQLKind == qsbridge.JoinKindRightOuter && !(edge.sqlKind == qsbridge.JoinKindLeftOuter && edge.leftOuterPreservesParent) {
+		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("right outer relationship-vector execution only supports preserving the relationship parent side in this slice")
 	}
 	if edge.sqlKind == qsbridge.JoinKindLeftOuter && !edge.leftOuterPreservesParent {
 		return legacyDirectRelationshipEdge{}, legacyDirectRelationshipDiagnostic("left outer relationship-vector execution only supports preserving the relationship parent side in this slice")
@@ -3606,6 +3610,7 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectEndpointRelation
 	if childField == "" {
 		childField = attr.SourceName
 	}
+	sqlKind, preservesParent := legacyDirectRelationshipVectorSQLKind(planned, other.Table)
 	return legacyDirectRelationshipEdge{
 		childRole:                legacyDirectRelationshipTableRoleKey(endpoint.Table),
 		childTable:               table.Name,
@@ -3614,10 +3619,24 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectEndpointRelation
 		parentTable:              parentTable,
 		parentField:              parentField,
 		capabilities:             planned.Capabilities,
-		sqlKind:                  planned.SQLKind,
-		leftOuterPreservesParent: planned.SQLKind == qsbridge.JoinKindLeftOuter && legacyDirectRelationshipSameTableInstance(planned.Left.Table, other.Table),
+		sqlKind:                  sqlKind,
+		leftOuterPreservesParent: preservesParent,
 		projectionScope:          planned.ProjectionScope,
 	}, true
+}
+
+func legacyDirectRelationshipVectorSQLKind(planned RelationshipJoinPlanEdge, parent qsbridge.TableInstance) (qsbridge.JoinKind, bool) {
+	switch planned.SQLKind {
+	case qsbridge.JoinKindLeftOuter:
+		return planned.SQLKind, legacyDirectRelationshipSameTableInstance(planned.Left.Table, parent)
+	case qsbridge.JoinKindRightOuter:
+		if legacyDirectRelationshipSameTableInstance(planned.Right.Table, parent) {
+			return qsbridge.JoinKindLeftOuter, true
+		}
+		return planned.SQLKind, false
+	default:
+		return planned.SQLKind, false
+	}
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectCachedTable(name string) *core.Table {
@@ -4939,7 +4958,7 @@ func legacyDirectRelationshipLeftOuterPairs(parentRows []qsbridge.QuantaRownum, 
 		if _, ok := matchedParents[parent]; ok {
 			continue
 		}
-		extendedPairs = append(extendedPairs, legacyDirectRelationshipPair{parent: parent})
+		extendedPairs = append(extendedPairs, legacyDirectRelationshipPair{parent: parent, childNull: true})
 	}
 	return extendedPairs
 }
@@ -5781,7 +5800,7 @@ func legacyDirectRelationshipCell(edge legacyDirectRelationshipEdge, field qsbri
 	fieldKey := legacyDirectRelationshipProjectionFieldKey(field)
 	switch {
 	case strings.EqualFold(field.Index, edge.childTable):
-		if edge.sqlKind == qsbridge.JoinKindLeftOuter && edge.leftOuterPreservesParent && pair.child == 0 {
+		if edge.sqlKind == qsbridge.JoinKindLeftOuter && edge.leftOuterPreservesParent && pair.childNull {
 			return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, true
 		}
 		cell, ok := childValues[fieldKey][pair.child]
