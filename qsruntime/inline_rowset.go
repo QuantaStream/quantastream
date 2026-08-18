@@ -25,6 +25,10 @@ func (r SQLRuntime) inlineRowSetRuntimeResult(request qsbridge.ExecutionRequest)
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, diagnostics, true
 	}
+	rowSet, diagnostics = inlineRowSetApplyMemberships(runtimeRequest, rowSet)
+	if diagnostics.BlocksNative() {
+		return ExecutionResult{Diagnostics: diagnostics}, diagnostics, true
+	}
 	rowSet, diagnostics = inlineRowSetFilterRows(runtimeRequest, rowSet)
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, diagnostics, true
@@ -65,11 +69,13 @@ func inlineRowSetSelectShapeDiagnostics(request ExecutionRequest, query qsbridge
 	if len(query.InlineRows) != len(query.Sources) {
 		return inlineRowSetDiagnostics("inline UNION ALL derived sources cannot be mixed with stored table sources yet")
 	}
-	if len(request.Memberships) > 0 {
-		return inlineRowSetDiagnostics("inline UNION ALL derived sources do not support membership subqueries yet")
-	}
 	if len(query.Subqueries) > 0 {
 		return inlineRowSetDiagnostics("inline UNION ALL derived sources do not support nested subqueries yet")
+	}
+	for _, membership := range request.Memberships {
+		if membership.RightInlineRows == nil {
+			return inlineRowSetDiagnostics("inline UNION ALL derived source membership requires an inline right-hand rowset")
+		}
 	}
 	if len(request.Joins) > 0 && len(request.Joins) != len(request.Sources)-1 {
 		return inlineRowSetDiagnostics("inline UNION ALL derived source joins must follow source order")
@@ -233,6 +239,74 @@ func inlineRowSetRowsToMaterializedRowSet(query qsbridge.QueryIR, rows []inlineR
 		}
 	}
 	return rowSet
+}
+
+func inlineRowSetMaterializedSingle(rowSet qsbridge.InlineRowSet) qsbridge.QuantaProjectedRowSet {
+	return inlineRowSetRowsToMaterializedRowSet(qsbridge.QueryIR{
+		Sources:    []qsbridge.TableInstance{rowSet.Source},
+		InlineRows: []qsbridge.InlineRowSet{rowSet},
+	}, inlineRowSetRowsForSource(rowSet), map[qsbridge.TableInstanceID]qsbridge.InlineRowSet{
+		rowSet.Source.ID: rowSet,
+	})
+}
+
+func inlineRowSetApplyMemberships(request ExecutionRequest, rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet) {
+	if len(request.Memberships) == 0 || rowSet.CandidateCount() == 0 {
+		return rowSet, nil
+	}
+	filtered := rowSet
+	var diagnostics qsbridge.DiagnosticSet
+	for _, membership := range request.Memberships {
+		filtered, diagnostics = inlineRowSetApplyMembership(filtered, membership)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, diagnostics
+		}
+	}
+	return filtered, nil
+}
+
+func inlineRowSetApplyMembership(rowSet qsbridge.QuantaProjectedRowSet, membership qsbridge.MembershipEdge) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet) {
+	if membership.RightInlineRows == nil {
+		return qsbridge.QuantaProjectedRowSet{}, inlineRowSetDiagnostics("membership right-hand rowset is missing")
+	}
+	rightRowSet := inlineRowSetMaterializedSingle(*membership.RightInlineRows)
+	if len(membership.Predicates) > 0 {
+		var diagnostics qsbridge.DiagnosticSet
+		rightRowSet, diagnostics = inlineRowSetFilterRows(ExecutionRequest{Predicates: membership.Predicates}, rightRowSet)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, diagnostics
+		}
+	}
+	rightValues, ok := directBitmapProjectedValues(rightRowSet, membership.Right)
+	if !ok {
+		return qsbridge.QuantaProjectedRowSet{}, inlineRowSetDiagnostics("membership right field is not present in inline rowset")
+	}
+	valueSet := make(map[string]struct{}, len(rightValues))
+	for _, cell := range rightValues {
+		if directBitmapNullCell(cell) {
+			continue
+		}
+		valueSet[directBitmapGroupKey(cell)] = struct{}{}
+	}
+	leftValues, ok := directBitmapProjectedValues(rowSet, membership.Left)
+	if !ok {
+		return qsbridge.QuantaProjectedRowSet{}, inlineRowSetDiagnostics("membership left field is not present in inline rowset")
+	}
+	keep := make([]int, 0, len(leftValues))
+	for rowIndex, cell := range leftValues {
+		_, matched := valueSet[directBitmapGroupKey(cell)]
+		if directBitmapNullCell(cell) {
+			matched = false
+		}
+		include := matched
+		if membership.Kind == qsbridge.MembershipAnti {
+			include = !matched
+		}
+		if include {
+			keep = append(keep, rowIndex)
+		}
+	}
+	return directBitmapProjectedRowSetRows(rowSet, keep), nil
 }
 
 func inlineRowSetPutCell(cells map[string]qsbridge.ResultCell, source qsbridge.TableInstance, field qsbridge.FieldDefinition, cell qsbridge.ResultCell) {

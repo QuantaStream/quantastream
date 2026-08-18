@@ -181,6 +181,7 @@ func cloneMembershipEdges(edges []MembershipEdge) []MembershipEdge {
 	for index, edge := range edges {
 		cloned[index] = edge
 		cloned[index].Predicates = append([]Predicate(nil), edge.Predicates...)
+		cloned[index].RightInlineRows = cloneInlineRowSetPointer(edge.RightInlineRows)
 	}
 	return cloned
 }

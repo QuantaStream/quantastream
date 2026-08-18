@@ -3,13 +3,12 @@ name: mysql_compat_subqueries_boundaries
 
 tests:
   - id: mysql_compat_subqueries_boundaries.001.derived_table_in_membership
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, in_subquery, order_by]
-    issue: "Inline constant UNION ALL derived sources inside subqueries require rowset materialization support."
     sql: |
       select c.name
       from (
@@ -32,13 +31,12 @@ tests:
         - [Annie]
 
   - id: mysql_compat_subqueries_boundaries.002.derived_table_correlated_exists
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, correlated_exists]
-    issue: "Inline constant UNION ALL derived sources inside correlated subqueries require rowset materialization support."
     sql: |
       select c.name
       from (
@@ -58,13 +56,12 @@ tests:
         - [Abe]
 
   - id: mysql_compat_subqueries_boundaries.003.derived_table_scalar_aggregate_predicate
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, scalar_subquery, aggregate, comparison]
-    issue: "Inline constant UNION ALL derived sources inside scalar subqueries require rowset materialization support."
     sql: |
       select item
       from (

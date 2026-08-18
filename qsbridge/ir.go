@@ -378,15 +378,16 @@ const (
 // Left is the filtered side. Anti membership is therefore naturally lowered as
 // left minus matching right values when the physical planner can use bitmaps.
 type MembershipEdge struct {
-	Left        FieldRef
-	Right       FieldRef
-	Kind        MembershipKind
-	Direction   JoinDirection
-	Cardinality string
-	Encoding    RelationshipEncodingProfile
-	Predicates  []Predicate
-	Legal       bool
-	Unsupported string
+	Left            FieldRef
+	Right           FieldRef
+	RightInlineRows *InlineRowSet
+	Kind            MembershipKind
+	Direction       JoinDirection
+	Cardinality     string
+	Encoding        RelationshipEncodingProfile
+	Predicates      []Predicate
+	Legal           bool
+	Unsupported     string
 }
 
 // Supported reports whether the membership edge can be used by the native path.

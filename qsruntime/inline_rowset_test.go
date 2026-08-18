@@ -138,6 +138,86 @@ order by c.cust_id, o.order_id`, qsbridge.ExecutionOptions{})
 	}
 }
 
+func TestSQLRuntimeInlineConstantUnionDerivedTableInMembership(t *testing.T) {
+	runtime, _ := newInlineRowSetTestRuntime(t)
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+select c.name
+from (
+  select 1 as cust_id, 'Abe' as name
+  union all select 2, 'Abby'
+  union all select 3, 'Annie'
+) as c
+where c.cust_id in (
+  select o.cust_id
+  from (
+    select 1 as cust_id
+    union all select 3
+  ) as o
+)
+order by c.name`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	rows := inlineRowSetTestRows(t, result)
+	if len(rows) != 2 || rows[0][0].Value != "Abe" || rows[1][0].Value != "Annie" {
+		t.Fatalf("rows = %#v, want Abe and Annie", rows)
+	}
+}
+
+func TestSQLRuntimeInlineConstantUnionDerivedTableCorrelatedExists(t *testing.T) {
+	runtime, _ := newInlineRowSetTestRuntime(t)
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+select c.name
+from (
+  select 1 as cust_id, 'Abe' as name
+  union all select 2, 'Abby'
+) as c
+where exists (
+  select 1
+  from (
+    select 1 as cust_id
+  ) as o
+  where o.cust_id = c.cust_id
+)`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	rows := inlineRowSetTestRows(t, result)
+	if len(rows) != 1 || rows[0][0].Value != "Abe" {
+		t.Fatalf("rows = %#v, want Abe", rows)
+	}
+}
+
+func TestSQLRuntimeInlineConstantUnionDerivedTableScalarAggregatePredicate(t *testing.T) {
+	runtime, _ := newInlineRowSetTestRuntime(t)
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+select item
+from (
+  select 'small' as item, 5 as amount
+  union all select 'large', 20
+) as sales
+where amount > (select avg(amount) from (select 5 as amount union all select 15) as baseline)`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	rows := inlineRowSetTestRows(t, result)
+	if len(rows) != 1 || rows[0][0].Value != "large" {
+		t.Fatalf("rows = %#v, want large", rows)
+	}
+}
+
 func newInlineRowSetTestRuntime(t *testing.T) (SQLRuntime, *bool) {
 	t.Helper()
 	executed := false

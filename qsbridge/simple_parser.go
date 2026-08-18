@@ -4982,7 +4982,7 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 	if hasWhere && hasAnyKeyword(predicateText, "where", "join", "group", "having", "order", "limit") {
 		return UnboundMembership{}, simpleParserDiagnostic("membership subquery only supports simple WHERE predicates"), false
 	}
-	table, diagnostic, ok := parseSimpleTable(sourceOnlyText)
+	table, diagnostic, ok := parseSimpleMembershipSubquerySource(sourceOnlyText)
 	if !ok {
 		return UnboundMembership{}, diagnostic, false
 	}
@@ -5094,7 +5094,7 @@ func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bo
 	if hasAnyKeyword(predicateText, "where", "join", "group", "having", "order", "limit") {
 		return UnboundMembership{}, simpleParserDiagnostic("EXISTS subquery only supports simple AND-combined predicates"), false
 	}
-	table, diagnostic, ok := parseSimpleTable(sourceOnlyText)
+	table, diagnostic, ok := parseSimpleMembershipSubquerySource(sourceOnlyText)
 	if !ok {
 		return UnboundMembership{}, diagnostic, false
 	}
@@ -5148,6 +5148,17 @@ func parseSimpleExistsMembership(text string) (UnboundMembership, Diagnostic, bo
 	}
 	membership.Predicates = predicates
 	return membership, Diagnostic{}, true
+}
+
+func parseSimpleMembershipSubquerySource(sourceText string) (UnboundTable, Diagnostic, bool) {
+	tables, joins, diagnostic, ok := parseSimpleSources(sourceText)
+	if !ok {
+		return UnboundTable{}, diagnostic, false
+	}
+	if len(tables) != 1 || len(joins) != 0 {
+		return UnboundTable{}, simpleParserDiagnostic("membership subquery only supports a single table source"), false
+	}
+	return tables[0], Diagnostic{}, true
 }
 
 func parseSimpleExistsPredicate(text string) (UnboundPredicate, Diagnostic, bool) {

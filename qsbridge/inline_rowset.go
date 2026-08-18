@@ -6,29 +6,40 @@ import (
 )
 
 func (c *BindContext) addInlineRowSet(table UnboundTable) (BoundTable, DiagnosticSet) {
+	c.nextTableID++
+	bound, inlineRows, diagnostics := c.bindInlineRowSetTable(table, TableInstanceID(fmt.Sprintf("%s_%d", table.Name, c.nextTableID)))
+	if diagnostics.BlocksNative() {
+		return BoundTable{}, c.record(diagnostics)
+	}
+	c.tables = append(c.tables, bound)
+	c.inlineRowSets = append(c.inlineRowSets, inlineRows)
+	return bound, nil
+}
+
+func (c *BindContext) bindInlineRowSetTable(table UnboundTable, id TableInstanceID) (BoundTable, InlineRowSet, DiagnosticSet) {
 	rowSet := table.InlineRows
 	if rowSet == nil {
-		return BoundTable{}, c.record(DiagnosticSet{
+		return BoundTable{}, InlineRowSet{}, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "inline rowset is nil"),
-		})
+		}
 	}
 	if len(rowSet.Columns) == 0 {
-		return BoundTable{}, c.record(DiagnosticSet{
+		return BoundTable{}, InlineRowSet{}, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "inline rowset has no columns"),
-		})
+		}
 	}
 	if len(rowSet.Rows) == 0 {
-		return BoundTable{}, c.record(DiagnosticSet{
+		return BoundTable{}, InlineRowSet{}, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "inline rowset has no rows"),
-		})
+		}
 	}
 	fields, diagnostics := inlineRowSetFields(*rowSet)
 	if diagnostics.BlocksNative() {
-		return BoundTable{}, c.record(diagnostics)
+		return BoundTable{}, InlineRowSet{}, diagnostics
 	}
 	rows, diagnostics := inlineRowSetRows(*rowSet, len(fields))
 	if diagnostics.BlocksNative() {
-		return BoundTable{}, c.record(diagnostics)
+		return BoundTable{}, InlineRowSet{}, diagnostics
 	}
 
 	schema := table.Schema
@@ -40,20 +51,18 @@ func (c *BindContext) addInlineRowSet(table UnboundTable) (BoundTable, Diagnosti
 		Name:   table.Name,
 		Fields: fields,
 	}
-	c.nextTableID++
-	instance := definition.Instance(TableInstanceID(fmt.Sprintf("%s_%d", table.Name, c.nextTableID)), table.Alias)
+	instance := definition.Instance(id, table.Alias)
 	instance.Role = table.Role
 	bound := BoundTable{
 		Instance:   instance,
 		Definition: definition,
 	}
-	c.tables = append(c.tables, bound)
-	c.inlineRowSets = append(c.inlineRowSets, InlineRowSet{
+	inlineRows := InlineRowSet{
 		Source: instance,
 		Fields: append([]FieldDefinition(nil), fields...),
 		Rows:   cloneResultRows(rows),
-	})
-	return bound, nil
+	}
+	return bound, inlineRows, nil
 }
 
 func inlineRowSetFields(rowSet UnboundInlineRowSet) ([]FieldDefinition, DiagnosticSet) {
@@ -165,6 +174,22 @@ func cloneInlineRowSets(rowSets []InlineRowSet) []InlineRowSet {
 		})
 	}
 	return cloned
+}
+
+func cloneInlineRowSet(rowSet InlineRowSet) InlineRowSet {
+	return InlineRowSet{
+		Source: rowSet.Source,
+		Fields: append([]FieldDefinition(nil), rowSet.Fields...),
+		Rows:   cloneResultRows(rowSet.Rows),
+	}
+}
+
+func cloneInlineRowSetPointer(rowSet *InlineRowSet) *InlineRowSet {
+	if rowSet == nil {
+		return nil
+	}
+	cloned := cloneInlineRowSet(*rowSet)
+	return &cloned
 }
 
 func cloneResultRows(rows []ResultRow) []ResultRow {
