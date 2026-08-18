@@ -75,13 +75,12 @@ tests:
         - [large]
 
   - id: mysql_compat_subqueries_boundaries.004.multi_column_in_subquery
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: subqueries_row_value_boundary
     compatibility: mysql
     requires: [select, table_scan, row_value, in_subquery]
-    issue: "Row-value subquery predicates are not parsed yet."
     sql: |
       select n_name as nation_name
       from nation

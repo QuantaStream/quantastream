@@ -50,6 +50,9 @@ func (r DirectBitmapRuntime) directBitmapApplyMemberships(ctx context.Context, r
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	if membership.IsTuple() {
+		return r.directBitmapApplyTupleMembership(ctx, result, membership)
+	}
 	if directBitmapMembershipHasCorrelatedPredicates(membership) {
 		return r.directBitmapApplyCorrelatedSiblingMembership(ctx, request, result, membership, rootSeedResult)
 	}
@@ -86,6 +89,147 @@ func (r DirectBitmapRuntime) directBitmapApplyMembership(ctx context.Context, re
 	}
 	filtered.Count = uint64(len(filtered.Rownums))
 	return filtered, nil, nil, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapApplyTupleMembership(ctx context.Context, result BitmapQueryResult, membership qsbridge.MembershipEdge) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	detail := directBitmapMembershipNarrowProbeDetail(membership)
+	probes := []ExecutionProbe{
+		directBitmapMembershipProbe("tuple_left_candidates_before", strconv.Itoa(len(result.Rownums)), detail),
+		directBitmapMembershipProbe("tuple_arity", strconv.Itoa(len(membership.LeftTuple)), detail),
+	}
+	if len(membership.LeftTuple) == 0 || len(membership.LeftTuple) != len(membership.RightTuple) {
+		return result, probes, directBitmapMembershipDiagnostics("tuple membership requires equal left and right tuple arity"), nil
+	}
+	if directBitmapMembershipHasCorrelatedPredicates(membership) {
+		return result, probes, directBitmapMembershipDiagnostics("tuple membership does not support correlated predicates in this slice"), nil
+	}
+	rightValues, rightProbes, diagnostics, err := r.directBitmapMembershipRightTupleValues(ctx, membership)
+	probes = append(probes, rightProbes...)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, probes, diagnostics, err
+	}
+	leftFields, diagnostics := directBitmapMembershipTupleProjectionFields(membership.LeftTuple, membership.Left.Table)
+	if diagnostics.BlocksNative() {
+		return result, probes, diagnostics, nil
+	}
+	leftMaterializationStart := time.Now()
+	leftRowSet, diagnostics, materializationProbes, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+		Index:            membership.Left.Table.Table,
+		Rownums:          append([]qsbridge.QuantaRownum(nil), result.Rownums...),
+		ProjectionFields: leftFields,
+	})
+	probes = append(probes, materializationProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("tuple_left_materialization_elapsed", time.Since(leftMaterializationStart).String(), detail),
+		directBitmapMembershipProbe("tuple_left_materialization_fields", strconv.Itoa(len(leftFields)), detail),
+	)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, probes, diagnostics, err
+	}
+
+	filtered := result.Clone()
+	filtered.Rownums = filtered.Rownums[:0]
+	nullKeys := 0
+	for rowIndex, rownum := range leftRowSet.Rownums {
+		key, ok, keyDiagnostics := directBitmapMembershipTupleKey(membership.LeftTuple, leftRowSet, rowIndex)
+		if keyDiagnostics.BlocksNative() {
+			return result, probes, keyDiagnostics, nil
+		}
+		if !ok {
+			nullKeys++
+		}
+		_, matched := rightValues[key]
+		keep := ok && matched
+		if membership.Kind == qsbridge.MembershipAnti {
+			keep = !keep
+		}
+		if keep {
+			filtered.Rownums = append(filtered.Rownums, rownum)
+		}
+	}
+	filtered.Count = uint64(len(filtered.Rownums))
+	probes = append(probes,
+		directBitmapMembershipProbe("tuple_left_null_keys", strconv.Itoa(nullKeys), detail),
+		directBitmapMembershipProbe("tuple_right_keys", strconv.Itoa(len(rightValues)), detail),
+		directBitmapMembershipProbe("tuple_left_candidates_after", strconv.Itoa(len(filtered.Rownums)), detail),
+	)
+	return filtered, probes, nil, nil
+}
+
+func (r DirectBitmapRuntime) directBitmapMembershipRightTupleValues(ctx context.Context, membership qsbridge.MembershipEdge) (map[string]struct{}, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+	detail := directBitmapMembershipNarrowProbeDetail(membership)
+	rightResult, probes, diagnostics, err := r.directBitmapMembershipRightCandidateResultWithExtraFragmentsAndProbes(ctx, membership, nil)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, probes, diagnostics, err
+	}
+	rightFields, diagnostics := directBitmapMembershipTupleProjectionFields(membership.RightTuple, membership.Right.Table)
+	if diagnostics.BlocksNative() {
+		return nil, probes, diagnostics, nil
+	}
+	materializationStart := time.Now()
+	rightRowSet, diagnostics, materializationProbes, err := directBitmapMaterializeWithKernel(ctx, r.projectionMaterializationKernel(), qsbridge.QuantaMaterializationRequest{
+		Index:            membership.Right.Table.Table,
+		Rownums:          append([]qsbridge.QuantaRownum(nil), rightResult.Rownums...),
+		ProjectionFields: rightFields,
+	})
+	probes = append(probes, materializationProbes...)
+	probes = append(probes,
+		directBitmapMembershipProbe("tuple_right_materialization_elapsed", time.Since(materializationStart).String(), detail),
+		directBitmapMembershipProbe("tuple_right_materialization_rows", strconv.Itoa(rightRowSet.CandidateCount()), detail),
+		directBitmapMembershipProbe("tuple_right_materialization_fields", strconv.Itoa(len(rightFields)), detail),
+	)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, probes, diagnostics, err
+	}
+	values := make(map[string]struct{}, rightRowSet.CandidateCount())
+	nullKeys := 0
+	for rowIndex := 0; rowIndex < rightRowSet.CandidateCount(); rowIndex++ {
+		key, ok, keyDiagnostics := directBitmapMembershipTupleKey(membership.RightTuple, rightRowSet, rowIndex)
+		if keyDiagnostics.BlocksNative() {
+			return nil, probes, keyDiagnostics, nil
+		}
+		if !ok {
+			nullKeys++
+			continue
+		}
+		values[key] = struct{}{}
+	}
+	probes = append(probes, directBitmapMembershipProbe("tuple_right_null_keys", strconv.Itoa(nullKeys), detail))
+	return values, probes, nil, nil
+}
+
+func directBitmapMembershipTupleProjectionFields(expressions []qsbridge.Expr, table qsbridge.TableInstance) ([]qsbridge.QuantaProjectionField, qsbridge.DiagnosticSet) {
+	fields := make([]qsbridge.QuantaProjectionField, 0)
+	for _, expression := range expressions {
+		for _, field := range qsbridge.FieldRefs(expression) {
+			if !directBitmapSameTableInstance(field.Table, table) {
+				return nil, directBitmapMembershipDiagnostics("tuple membership expressions must stay on their membership table")
+			}
+			projection := directBitmapMembershipProjectionField(field)
+			if !directBitmapMembershipHasProjectionField(fields, projection) {
+				fields = append(fields, projection)
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return nil, directBitmapMembershipDiagnostics("tuple membership requires at least one materialized field")
+	}
+	return fields, nil
+}
+
+func directBitmapMembershipTupleKey(expressions []qsbridge.Expr, rowSet qsbridge.QuantaProjectedRowSet, rowIndex int) (string, bool, qsbridge.DiagnosticSet) {
+	cells := make([]qsbridge.ResultCell, 0, len(expressions))
+	for _, expression := range expressions {
+		cell, diagnostics := directBitmapEvaluateMaterializedExpr(expression, rowSet, rowIndex)
+		if diagnostics.BlocksNative() {
+			return "", false, diagnostics
+		}
+		if directBitmapNullCell(cell) {
+			return "", false, nil
+		}
+		cells = append(cells, cell)
+	}
+	return directBitmapGroupCellsKey(cells), true, nil
 }
 
 func (r DirectBitmapRuntime) directBitmapApplyCorrelatedSiblingMembership(ctx context.Context, request ExecutionRequest, result BitmapQueryResult, membership qsbridge.MembershipEdge, rootSeedResult BitmapQueryResult) (BitmapQueryResult, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
@@ -1747,8 +1891,8 @@ func directBitmapMembershipProbe(name string, value string, detail string) Execu
 func directBitmapMembershipNarrowProbeDetail(membership qsbridge.MembershipEdge) string {
 	return strings.Join([]string{
 		"kind=" + string(membership.Kind),
-		"left=" + membership.Left.QualifiedName(),
-		"right=" + membership.Right.QualifiedName(),
+		"left=" + runtimeMembershipDisplay(membership.Left, membership.LeftTuple),
+		"right=" + runtimeMembershipDisplay(membership.Right, membership.RightTuple),
 		"cap=" + strconv.Itoa(directBitmapMembershipMaxDynamicBatchEQValues),
 	}, " ")
 }

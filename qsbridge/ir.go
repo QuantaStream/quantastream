@@ -381,6 +381,8 @@ type MembershipEdge struct {
 	Left            FieldRef
 	Right           FieldRef
 	RightInlineRows *InlineRowSet
+	LeftTuple       []Expr
+	RightTuple      []Expr
 	Kind            MembershipKind
 	Direction       JoinDirection
 	Cardinality     string
@@ -395,12 +397,21 @@ func (e MembershipEdge) Supported() bool {
 	if !e.Legal || e.Unsupported != "" {
 		return false
 	}
+	if e.IsTuple() && (len(e.LeftTuple) == 0 || len(e.LeftTuple) != len(e.RightTuple)) {
+		return false
+	}
 	for _, predicate := range e.Predicates {
 		if !predicate.Supported() {
 			return false
 		}
 	}
 	return true
+}
+
+// IsTuple reports whether the membership compares row-value tuples instead of
+// a single left/right field pair.
+func (e MembershipEdge) IsTuple() bool {
+	return len(e.LeftTuple) > 0 || len(e.RightTuple) > 0
 }
 
 // Capabilities returns native capabilities implied by the membership edge.

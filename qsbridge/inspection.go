@@ -1,5 +1,10 @@
 package qsbridge
 
+import (
+	"fmt"
+	"strings"
+)
+
 // InspectionReport is the management-facing snapshot of native planning state.
 //
 // It intentionally duplicates some high-level facts from classification and
@@ -412,8 +417,8 @@ func summarizeMembershipEdges(edges []MembershipEdge) []MembershipInspection {
 	for _, edge := range edges {
 		summaries = append(summaries, MembershipInspection{
 			Kind:         edge.Kind,
-			Left:         edge.Left.QualifiedName(),
-			Right:        edge.Right.QualifiedName(),
+			Left:         membershipInspectionDisplay(edge.Left, edge.LeftTuple),
+			Right:        membershipInspectionDisplay(edge.Right, edge.RightTuple),
 			Direction:    edge.Direction,
 			Cardinality:  edge.Cardinality,
 			Legal:        edge.Supported(),
@@ -422,6 +427,38 @@ func summarizeMembershipEdges(edges []MembershipEdge) []MembershipInspection {
 		})
 	}
 	return summaries
+}
+
+func membershipInspectionDisplay(fallback FieldRef, tuple []Expr) string {
+	if len(tuple) == 0 {
+		return fallback.QualifiedName()
+	}
+	parts := make([]string, 0, len(tuple))
+	for _, expr := range tuple {
+		parts = append(parts, membershipInspectionExprDisplay(expr))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func membershipInspectionExprDisplay(expr Expr) string {
+	switch typed := expr.(type) {
+	case FieldExpr:
+		return typed.Ref.QualifiedName()
+	case *FieldExpr:
+		if typed != nil {
+			return typed.Ref.QualifiedName()
+		}
+	case LiteralExpr:
+		return fmt.Sprint(typed.Value)
+	case *LiteralExpr:
+		if typed != nil {
+			return fmt.Sprint(typed.Value)
+		}
+	}
+	if expr == nil {
+		return "<nil>"
+	}
+	return string(expr.ExpressionKind())
 }
 
 func tableInstanceNames(tables []TableInstance) []string {

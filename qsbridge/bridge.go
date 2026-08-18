@@ -466,9 +466,11 @@ type UnboundJoin struct {
 type UnboundMembership struct {
 	LeftQualifier  string
 	LeftField      string
+	LeftTuple      []UnboundExpr
 	RightTable     UnboundTable
 	RightQualifier string
 	RightField     string
+	RightTuple     []UnboundExpr
 	Predicates     []UnboundPredicate
 	Kind           MembershipKind
 	Relationship   string
@@ -1978,6 +1980,9 @@ func BindMembership(context *BindContext, membership UnboundMembership) (Members
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
 		}
 	}
+	if len(membership.LeftTuple) > 0 || len(membership.RightTuple) > 0 {
+		return bindTupleMembership(context, membership)
+	}
 	left, leftDiagnostics := context.ResolveField(membership.LeftQualifier, membership.LeftField, FieldRoleResidualInput)
 	right, rightInlineRows, rightDiagnostics := bindMembershipRightField(context, membership)
 	diagnostics := make(DiagnosticSet, 0, len(leftDiagnostics)+len(rightDiagnostics))
@@ -2019,6 +2024,99 @@ func BindMembership(context *BindContext, membership UnboundMembership) (Members
 	return edge, nil
 }
 
+func bindTupleMembership(context *BindContext, membership UnboundMembership) (MembershipEdge, DiagnosticSet) {
+	if len(membership.LeftTuple) == 0 || len(membership.RightTuple) == 0 {
+		return MembershipEdge{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "row-value membership requires left and right tuples"),
+		}
+	}
+	if len(membership.LeftTuple) != len(membership.RightTuple) {
+		return MembershipEdge{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "row-value membership tuple arity must match"),
+		}
+	}
+
+	leftTuple, leftDiagnostics := bindMembershipTupleExpressions(context, membership.LeftTuple)
+	rightContext := context
+	var rightInlineRows *InlineRowSet
+	if membership.RightTable.Name != "" {
+		rightTable, inlineRows, tableDiagnostics := bindMembershipRightTable(context, membership, TableInstanceID(membership.RightTable.Name+"_membership"))
+		if tableDiagnostics.BlocksNative() {
+			return MembershipEdge{}, tableDiagnostics
+		}
+		rightInlineRows = inlineRows
+		rightContext = bindMembershipContextWithRightTable(context, rightTable)
+	}
+	rightTuple, rightDiagnostics := bindMembershipTupleExpressions(rightContext, membership.RightTuple)
+	diagnostics := make(DiagnosticSet, 0, len(leftDiagnostics)+len(rightDiagnostics))
+	diagnostics = append(diagnostics, leftDiagnostics...)
+	diagnostics = append(diagnostics, rightDiagnostics...)
+	if diagnostics.BlocksNative() {
+		return MembershipEdge{}, diagnostics
+	}
+
+	left, ok := firstMembershipTupleField(leftTuple)
+	if !ok {
+		return MembershipEdge{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "row-value membership left tuple requires at least one field"),
+		}
+	}
+	right, ok := firstMembershipTupleField(rightTuple)
+	if !ok {
+		return MembershipEdge{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "row-value membership right tuple requires at least one field"),
+		}
+	}
+
+	predicates := bindMembershipPredicates(context, membership, right, &diagnostics)
+	if diagnostics.BlocksNative() {
+		return MembershipEdge{}, diagnostics
+	}
+	kind := membership.Kind
+	if kind == MembershipKindUnknown {
+		kind = MembershipSemi
+	}
+	return MembershipEdge{
+		Left:            left,
+		Right:           right,
+		LeftTuple:       leftTuple,
+		RightTuple:      rightTuple,
+		RightInlineRows: rightInlineRows,
+		Kind:            kind,
+		Direction:       JoinPeerEquality,
+		Legal:           true,
+		Unsupported:     membership.Unsupported,
+		Predicates:      predicates,
+	}, nil
+}
+
+func bindMembershipTupleExpressions(context *BindContext, expressions []UnboundExpr) ([]Expr, DiagnosticSet) {
+	bound := make([]Expr, 0, len(expressions))
+	diagnostics := make(DiagnosticSet, 0)
+	for _, expression := range expressions {
+		expr, exprDiagnostics := BindExpression(context, expression, FieldRoleResidualInput)
+		if exprDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, exprDiagnostics...)
+			continue
+		}
+		bound = append(bound, expr)
+	}
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	return bound, nil
+}
+
+func firstMembershipTupleField(expressions []Expr) (FieldRef, bool) {
+	for _, expression := range expressions {
+		fields := FieldRefs(expression)
+		if len(fields) > 0 {
+			return fields[0], true
+		}
+	}
+	return FieldRef{}, false
+}
+
 func bindMembershipPredicates(context *BindContext, membership UnboundMembership, right FieldRef, diagnostics *DiagnosticSet) []Predicate {
 	if len(membership.Predicates) == 0 {
 		return nil
@@ -2033,6 +2131,14 @@ func bindMembershipPredicates(context *BindContext, membership UnboundMembership
 		}
 	}
 	return bindUnboundPredicates(bindContext, membership.Predicates, diagnostics)
+}
+
+func bindMembershipContextWithRightTable(context *BindContext, right BoundTable) *BindContext {
+	bindContext := NewBindContext(context.Catalog, context.DefaultSchema)
+	bindContext.tables = append(bindContext.tables, context.tables...)
+	bindContext.nextTableID = context.nextTableID
+	bindContext.tables = append(bindContext.tables, right)
+	return bindContext
 }
 
 func bindMembershipPredicateContext(context *BindContext, membership UnboundMembership, right FieldRef) (*BindContext, DiagnosticSet) {
@@ -2059,14 +2165,10 @@ func bindMembershipPredicateContext(context *BindContext, membership UnboundMemb
 			return nil, diagnostics
 		}
 	}
-	bindContext := NewBindContext(context.Catalog, context.DefaultSchema)
-	bindContext.tables = append(bindContext.tables, context.tables...)
-	bindContext.nextTableID = context.nextTableID
-	bindContext.tables = append(bindContext.tables, BoundTable{
+	return bindMembershipContextWithRightTable(context, BoundTable{
 		Instance:   right.Table,
 		Definition: definition,
-	})
-	return bindContext, nil
+	}), nil
 }
 
 func bindMembershipRightField(context *BindContext, membership UnboundMembership) (FieldRef, *InlineRowSet, DiagnosticSet) {
@@ -2074,18 +2176,29 @@ func bindMembershipRightField(context *BindContext, membership UnboundMembership
 		field, diagnostics := context.ResolveField(membership.RightQualifier, membership.RightField, FieldRoleResidualInput)
 		return field, nil, diagnostics
 	}
+	bound, inlineRows, diagnostics := bindMembershipRightTable(context, membership, TableInstanceID(membership.RightTable.Name+"_membership"))
+	if diagnostics.BlocksNative() {
+		return FieldRef{}, nil, diagnostics
+	}
+	field, ok := bound.Definition.Field(membership.RightField)
+	if !ok {
+		return FieldRef{}, nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "field not found: "+bound.Instance.RefName()+"."+membership.RightField),
+		}
+	}
+	return field.Ref(bound.Instance, FieldRoleResidualInput), inlineRows, nil
+}
+
+func bindMembershipRightTable(context *BindContext, membership UnboundMembership, instanceID TableInstanceID) (BoundTable, *InlineRowSet, DiagnosticSet) {
+	if membership.RightTable.Name == "" {
+		return BoundTable{}, nil, nil
+	}
 	if membership.RightTable.InlineRows != nil {
-		bound, inlineRows, diagnostics := context.bindInlineRowSetTable(membership.RightTable, TableInstanceID(membership.RightTable.Name+"_membership"))
+		bound, inlineRows, diagnostics := context.bindInlineRowSetTable(membership.RightTable, instanceID)
 		if diagnostics.BlocksNative() {
-			return FieldRef{}, nil, diagnostics
+			return BoundTable{}, nil, diagnostics
 		}
-		field, ok := bound.Definition.Field(membership.RightField)
-		if !ok {
-			return FieldRef{}, nil, DiagnosticSet{
-				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "field not found: "+bound.Instance.RefName()+"."+membership.RightField),
-			}
-		}
-		return field.Ref(bound.Instance, FieldRoleResidualInput), &inlineRows, nil
+		return bound, &inlineRows, nil
 	}
 	schema := membership.RightTable.Schema
 	if schema == "" {
@@ -2093,16 +2206,10 @@ func bindMembershipRightField(context *BindContext, membership UnboundMembership
 	}
 	definition, diagnostics := context.Catalog.Table(schema, membership.RightTable.Name)
 	if diagnostics.BlocksNative() {
-		return FieldRef{}, nil, diagnostics
+		return BoundTable{}, nil, diagnostics
 	}
-	instance := definition.Instance(TableInstanceID(membership.RightTable.Name+"_membership"), membership.RightTable.Alias)
-	field, ok := definition.Field(membership.RightField)
-	if !ok {
-		return FieldRef{}, nil, DiagnosticSet{
-			ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "field not found: "+instance.RefName()+"."+membership.RightField),
-		}
-	}
-	return field.Ref(instance, FieldRoleResidualInput), nil, nil
+	instance := definition.Instance(instanceID, membership.RightTable.Alias)
+	return BoundTable{Instance: instance, Definition: definition}, nil, nil
 }
 
 // BindSubqueryPlanIntent binds parser-recognized subquery intent into catalog-backed planner intent.

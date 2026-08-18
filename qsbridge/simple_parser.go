@@ -4986,6 +4986,36 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 	if !ok {
 		return UnboundMembership{}, diagnostic, false
 	}
+	rightQualifier := tableRefName(table.Name, table.Alias)
+	if leftTuple, tupleDiagnostic, tupleOK := parseSimpleRowValueLeftExprList(left); tupleOK || tupleDiagnostic.Code != "" {
+		if !tupleOK {
+			return UnboundMembership{}, tupleDiagnostic, false
+		}
+		rightTuple, projectionDiagnostic, projectionOK := parseSimpleMembershipProjectionExprList(projectionText, rightQualifier)
+		if !projectionOK {
+			return UnboundMembership{}, projectionDiagnostic, false
+		}
+		if len(leftTuple) != len(rightTuple) {
+			return UnboundMembership{}, simpleParserDiagnostic("row-value membership tuple arity must match"), false
+		}
+		predicates := []UnboundPredicate(nil)
+		if hasWhere {
+			var predicateDiagnostic Diagnostic
+			predicates, predicateDiagnostic, ok = parseSimplePredicates(predicateText)
+			if !ok {
+				return UnboundMembership{}, predicateDiagnostic, false
+			}
+			predicates = qualifySimpleMembershipPredicates(predicates, rightQualifier)
+		}
+		return UnboundMembership{
+			LeftTuple:      leftTuple,
+			RightTable:     table,
+			RightQualifier: rightQualifier,
+			RightTuple:     rightTuple,
+			Predicates:     predicates,
+			Kind:           kind,
+		}, Diagnostic{}, true
+	}
 	rightQualifier, rightField := splitProjectionField(strings.TrimSpace(projectionText))
 	if rightField == "" {
 		return UnboundMembership{}, simpleParserDiagnostic("membership subquery SELECT field is empty"), false
@@ -5011,6 +5041,26 @@ func parseSimpleSubqueryMembership(text string) (UnboundMembership, Diagnostic, 
 		Predicates:     predicates,
 		Kind:           kind,
 	}, Diagnostic{}, true
+}
+
+func parseSimpleMembershipProjectionExprList(text string, qualifier string) ([]UnboundExpr, Diagnostic, bool) {
+	parts := splitSimpleCommaList(text)
+	if len(parts) == 0 {
+		return nil, simpleParserDiagnostic("membership subquery SELECT tuple cannot be empty"), false
+	}
+	expressions := make([]UnboundExpr, 0, len(parts))
+	for _, part := range parts {
+		exprText, _, diagnostic, ok := parseSimpleProjectionAlias(part)
+		if !ok {
+			return nil, diagnostic, false
+		}
+		expr, ok := parseSimpleScalarExpression(exprText)
+		if !ok {
+			return nil, simpleParserDiagnostic("membership subquery SELECT tuple must contain scalar expressions"), false
+		}
+		expressions = append(expressions, qualifySimpleMembershipExpr(expr, qualifier))
+	}
+	return expressions, Diagnostic{}, true
 }
 
 func qualifySimpleMembershipPredicates(predicates []UnboundPredicate, qualifier string) []UnboundPredicate {

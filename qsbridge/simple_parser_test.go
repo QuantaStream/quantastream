@@ -1625,6 +1625,43 @@ func TestSimpleParserBridgeParsesFilteredSubqueryMembership(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesRowValueSubqueryMembership(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select n_name as nation_name
+		from nation
+		where (n_regionkey, n_nationkey) in (
+			select r_regionkey, 1
+			from region
+			where r_name = 'AMERICA'
+		)
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Memberships) != 1 {
+		t.Fatalf("memberships = %d, want 1", len(statement.Select.Memberships))
+	}
+	membership := statement.Select.Memberships[0]
+	if len(membership.LeftTuple) != 2 || len(membership.RightTuple) != 2 {
+		t.Fatalf("membership tuple arity = %d/%d, want 2/2", len(membership.LeftTuple), len(membership.RightTuple))
+	}
+	left, ok := membership.LeftTuple[0].(UnboundFieldExpr)
+	if !ok || left.Name != "n_regionkey" {
+		t.Fatalf("left tuple[0] = %#v, want n_regionkey", membership.LeftTuple[0])
+	}
+	rightField, ok := membership.RightTuple[0].(UnboundFieldExpr)
+	if !ok || rightField.Qualifier != "region" || rightField.Name != "r_regionkey" {
+		t.Fatalf("right tuple[0] = %#v, want region.r_regionkey", membership.RightTuple[0])
+	}
+	rightLiteral, ok := membership.RightTuple[1].(UnboundLiteralExpr)
+	if !ok || rightLiteral.Kind != ValueInt || rightLiteral.Value != int64(1) {
+		t.Fatalf("right tuple[1] = %#v, want int literal 1", membership.RightTuple[1])
+	}
+	if len(membership.Predicates) != 1 {
+		t.Fatalf("membership predicates = %d, want 1", len(membership.Predicates))
+	}
+}
+
 func TestSimpleParserBridgeParsesFilteredSubqueryMembershipWithInnerAnd(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select count(*) as forest_partsupp_count

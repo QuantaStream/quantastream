@@ -330,7 +330,7 @@ func queryMembershipInspectionRows(memberships []qsbridge.MembershipEdge) []Exec
 	rows := make([]ExecutionInspectionRow, 0, len(memberships)*6)
 	for index, membership := range memberships {
 		prefix := fmt.Sprintf("%03d", index+1)
-		detail := fmt.Sprintf("left=%s right=%s", membership.Left.QualifiedName(), membership.Right.QualifiedName())
+		detail := fmt.Sprintf("left=%s right=%s", runtimeMembershipDisplay(membership.Left, membership.LeftTuple), runtimeMembershipDisplay(membership.Right, membership.RightTuple))
 		rows = append(rows,
 			ExecutionInspectionRow{Section: "membership", Name: prefix + ".kind", Value: string(membership.Kind), Detail: detail},
 			ExecutionInspectionRow{Section: "membership", Name: prefix + ".direction", Value: string(membership.Direction)},
@@ -341,6 +341,38 @@ func queryMembershipInspectionRows(memberships []qsbridge.MembershipEdge) []Exec
 		)
 	}
 	return rows
+}
+
+func runtimeMembershipDisplay(fallback qsbridge.FieldRef, tuple []qsbridge.Expr) string {
+	if len(tuple) == 0 {
+		return fallback.QualifiedName()
+	}
+	parts := make([]string, 0, len(tuple))
+	for _, expr := range tuple {
+		parts = append(parts, runtimeMembershipExprDisplay(expr))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func runtimeMembershipExprDisplay(expr qsbridge.Expr) string {
+	switch typed := expr.(type) {
+	case qsbridge.FieldExpr:
+		return typed.Ref.QualifiedName()
+	case *qsbridge.FieldExpr:
+		if typed != nil {
+			return typed.Ref.QualifiedName()
+		}
+	case qsbridge.LiteralExpr:
+		return fmt.Sprint(typed.Value)
+	case *qsbridge.LiteralExpr:
+		if typed != nil {
+			return fmt.Sprint(typed.Value)
+		}
+	}
+	if expr == nil {
+		return "<nil>"
+	}
+	return string(expr.ExpressionKind())
 }
 
 func aggregateFunctionSummary(aggregates []qsbridge.Aggregate) string {

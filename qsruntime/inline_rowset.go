@@ -277,6 +277,9 @@ func inlineRowSetApplyMembership(rowSet qsbridge.QuantaProjectedRowSet, membersh
 			return qsbridge.QuantaProjectedRowSet{}, diagnostics
 		}
 	}
+	if membership.IsTuple() {
+		return inlineRowSetApplyTupleMembership(rowSet, rightRowSet, membership)
+	}
 	rightValues, ok := directBitmapProjectedValues(rightRowSet, membership.Right)
 	if !ok {
 		return qsbridge.QuantaProjectedRowSet{}, inlineRowSetDiagnostics("membership right field is not present in inline rowset")
@@ -301,6 +304,38 @@ func inlineRowSetApplyMembership(rowSet qsbridge.QuantaProjectedRowSet, membersh
 		include := matched
 		if membership.Kind == qsbridge.MembershipAnti {
 			include = !matched
+		}
+		if include {
+			keep = append(keep, rowIndex)
+		}
+	}
+	return directBitmapProjectedRowSetRows(rowSet, keep), nil
+}
+
+func inlineRowSetApplyTupleMembership(rowSet qsbridge.QuantaProjectedRowSet, rightRowSet qsbridge.QuantaProjectedRowSet, membership qsbridge.MembershipEdge) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet) {
+	if len(membership.LeftTuple) == 0 || len(membership.LeftTuple) != len(membership.RightTuple) {
+		return qsbridge.QuantaProjectedRowSet{}, inlineRowSetDiagnostics("tuple membership requires equal left and right tuple arity")
+	}
+	valueSet := make(map[string]struct{}, rightRowSet.CandidateCount())
+	for rowIndex := 0; rowIndex < rightRowSet.CandidateCount(); rowIndex++ {
+		key, ok, diagnostics := directBitmapMembershipTupleKey(membership.RightTuple, rightRowSet, rowIndex)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, diagnostics
+		}
+		if ok {
+			valueSet[key] = struct{}{}
+		}
+	}
+	keep := make([]int, 0, rowSet.CandidateCount())
+	for rowIndex := 0; rowIndex < rowSet.CandidateCount(); rowIndex++ {
+		key, ok, diagnostics := directBitmapMembershipTupleKey(membership.LeftTuple, rowSet, rowIndex)
+		if diagnostics.BlocksNative() {
+			return qsbridge.QuantaProjectedRowSet{}, diagnostics
+		}
+		_, matched := valueSet[key]
+		include := ok && matched
+		if membership.Kind == qsbridge.MembershipAnti {
+			include = !include
 		}
 		if include {
 			keep = append(keep, rowIndex)

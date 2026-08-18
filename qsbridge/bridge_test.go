@@ -1891,6 +1891,51 @@ func TestBindMembershipDefaultsToSemiMembership(t *testing.T) {
 	}
 }
 
+func TestBindTupleMembershipBindsTupleExpressions(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	if _, diagnostics := context.AddTable(UnboundTable{Name: "orders", Alias: "o"}); diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+
+	edge, diagnostics := BindMembership(context, UnboundMembership{
+		LeftTuple: []UnboundExpr{
+			UnboundField("o", "o_custkey"),
+			UnboundField("o", "shared_key"),
+		},
+		RightTable: UnboundTable{Name: "customer", Alias: "c"},
+		RightTuple: []UnboundExpr{
+			UnboundField("c", "c_custkey"),
+			UnboundLiteral(ValueInt, int64(1)),
+		},
+		Predicates: []UnboundPredicate{{
+			Expr:      UnboundBinary(BinaryOpEqual, UnboundField("c", "c_name"), UnboundLiteral(ValueString, "Customer#000000001")),
+			Placement: PredicateResidualScan,
+			Scope:     PredicateScopeWhere,
+		}},
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if !edge.IsTuple() || !edge.Supported() {
+		t.Fatalf("edge = %#v, want supported tuple membership", edge)
+	}
+	if len(edge.LeftTuple) != 2 || len(edge.RightTuple) != 2 {
+		t.Fatalf("tuple arity = %d/%d, want 2/2", len(edge.LeftTuple), len(edge.RightTuple))
+	}
+	left, ok := edge.LeftTuple[0].(FieldExpr)
+	if !ok || left.Ref.QualifiedName() != "o.o_custkey" {
+		t.Fatalf("left tuple[0] = %#v, want o.o_custkey", edge.LeftTuple[0])
+	}
+	right, ok := edge.RightTuple[0].(FieldExpr)
+	if !ok || right.Ref.QualifiedName() != "c.c_custkey" {
+		t.Fatalf("right tuple[0] = %#v, want c.c_custkey", edge.RightTuple[0])
+	}
+	literal, ok := edge.RightTuple[1].(LiteralExpr)
+	if !ok || literal.Kind != ValueInt || literal.Value != int64(1) {
+		t.Fatalf("right tuple[1] = %#v, want int literal 1", edge.RightTuple[1])
+	}
+}
+
 func TestBindMembershipReportsMissingRelationship(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	for _, table := range []UnboundTable{{Name: "orders", Alias: "o"}, {Name: "customer", Alias: "c"}} {

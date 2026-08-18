@@ -82,6 +82,15 @@ func (q QueryIR) requiredReadAccessFields() []FieldRef {
 	for _, edge := range q.Memberships {
 		collector.addField(edge.Left)
 		collector.addField(edge.Right)
+		for _, expr := range edge.LeftTuple {
+			collector.addExpr(expr)
+		}
+		for _, expr := range edge.RightTuple {
+			collector.addExpr(expr)
+		}
+		for _, predicate := range edge.Predicates {
+			collector.addExpr(predicate.Expr)
+		}
 	}
 	for _, projection := range q.Projection {
 		collector.addExpr(projection.Expr)
