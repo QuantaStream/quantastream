@@ -88,6 +88,135 @@ func TestPlannerExpandsSimpleDerivedTable(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsDerivedTableWithInnerJoin(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select order_key, customer_name
+		from (
+			select o.o_orderkey as order_key, c.c_name as customer_name
+			from orders as o
+			inner join customer as c on o.o_custkey = c.c_custkey
+			where c.c_name = 'Customer#000000001'
+		) as q
+		where order_key = 7
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 2 {
+		t.Fatalf("sources = %#v, want orders + customer", result.Query.Sources)
+	}
+	if result.Query.Sources[0].Table != "orders" || result.Query.Sources[0].RefName() != "o" {
+		t.Fatalf("source[0] = %#v, want orders as o", result.Query.Sources[0])
+	}
+	if result.Query.Sources[1].Table != "customer" || result.Query.Sources[1].RefName() != "c" {
+		t.Fatalf("source[1] = %#v, want customer as c", result.Query.Sources[1])
+	}
+	if len(result.Query.Joins) != 1 {
+		t.Fatalf("joins = %#v, want one join", result.Query.Joins)
+	}
+	if got, want := result.Query.Joins[0].Left.QualifiedName(), "o.o_custkey"; got != want {
+		t.Fatalf("join left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[0].Right.QualifiedName(), "c.c_custkey"; got != want {
+		t.Fatalf("join right = %q, want %q", got, want)
+	}
+	if len(result.Query.Predicates) != 2 {
+		t.Fatalf("predicates = %d, want derived + outer predicates", len(result.Query.Predicates))
+	}
+	if !predicateReferencesField(result.Query.Predicates[0], "c", "c_name") {
+		t.Fatalf("derived predicate = %#v, want c.c_name", result.Query.Predicates[0])
+	}
+	if !predicateReferencesField(result.Query.Predicates[1], "o", "o_orderkey") {
+		t.Fatalf("outer predicate = %#v, want o.o_orderkey", result.Query.Predicates[1])
+	}
+}
+
+func TestPlannerExpandsDerivedTableSourceInOuterJoin(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select c.c_name, o.order_key
+		from customer as c
+		inner join (
+			select o_orderkey as order_key, o_custkey as customer_key
+			from orders
+		) as o on o.customer_key = c.c_custkey
+		where c.c_custkey = 1
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 2 {
+		t.Fatalf("sources = %#v, want customer + orders", result.Query.Sources)
+	}
+	if result.Query.Sources[0].Table != "customer" || result.Query.Sources[0].RefName() != "c" {
+		t.Fatalf("source[0] = %#v, want customer as c", result.Query.Sources[0])
+	}
+	if result.Query.Sources[1].Table != "orders" || result.Query.Sources[1].RefName() != "o" {
+		t.Fatalf("source[1] = %#v, want orders as o", result.Query.Sources[1])
+	}
+	if len(result.Query.Joins) != 1 {
+		t.Fatalf("joins = %#v, want one join", result.Query.Joins)
+	}
+	if got, want := result.Query.Joins[0].Left.QualifiedName(), "o.o_custkey"; got != want {
+		t.Fatalf("join left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[0].Right.QualifiedName(), "c.c_custkey"; got != want {
+		t.Fatalf("join right = %q, want %q", got, want)
+	}
+	if !exprReferencesField(result.Query.Projection[1].Expr, "o", "o_orderkey") {
+		t.Fatalf("projection = %#v, want o.o_orderkey", result.Query.Projection[1])
+	}
+}
+
+func TestPlannerExpandsGroupedAggregateDerivedTable(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select customer_key, order_count
+		from (
+			select o_custkey as customer_key, count(*) as order_count
+			from orders
+			group by o_custkey
+		) as s
+		where customer_key = 1
+		order by customer_key
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "orders" || result.Query.Sources[0].RefName() != "s" {
+		t.Fatalf("sources = %#v, want orders as s", result.Query.Sources)
+	}
+	if len(result.Query.GroupBy) != 1 || !exprReferencesField(result.Query.GroupBy[0], "s", "o_custkey") {
+		t.Fatalf("group by = %#v, want s.o_custkey", result.Query.GroupBy)
+	}
+	if len(result.Query.Aggregates) != 1 || result.Query.Aggregates[0].Function != "count" || result.Query.Aggregates[0].Input != nil {
+		t.Fatalf("aggregates = %#v, want count(*)", result.Query.Aggregates)
+	}
+	ref, ok := result.Query.Projection[1].Expr.(AggregateRefExpr)
+	if !ok || ref.Alias != "order_count" || ref.Index != 0 {
+		t.Fatalf("projection[1] = %#v, want order_count aggregate ref", result.Query.Projection[1].Expr)
+	}
+	if len(result.Query.Predicates) != 1 || !predicateReferencesField(result.Query.Predicates[0], "s", "o_custkey") {
+		t.Fatalf("predicates = %#v, want s.o_custkey", result.Query.Predicates)
+	}
+}
+
 func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

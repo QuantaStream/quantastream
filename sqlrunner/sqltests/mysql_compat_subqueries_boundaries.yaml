@@ -9,7 +9,7 @@ tests:
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, in_subquery, order_by]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources inside subqueries require rowset materialization support."
     sql: |
       select c.name
       from (
@@ -38,7 +38,7 @@ tests:
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, correlated_exists]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources inside correlated subqueries require rowset materialization support."
     sql: |
       select c.name
       from (
@@ -64,7 +64,7 @@ tests:
     feature: subqueries_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, scalar_subquery, aggregate, comparison]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources inside scalar subqueries require rowset materialization support."
     sql: |
       select item
       from (

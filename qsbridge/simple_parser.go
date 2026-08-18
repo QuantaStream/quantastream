@@ -2873,7 +2873,7 @@ func findSimpleAggregateCallRef(call UnboundCallExpr, aggregates []UnboundAggreg
 }
 
 func parseSimpleSources(sourceText string) ([]UnboundTable, []UnboundJoin, Diagnostic, bool) {
-	leftText, joinText, hasJoin := splitBeforeKeyword(sourceText, "join")
+	leftText, joinText, hasJoin := splitBeforeTopLevelKeyword(sourceText, "join")
 	if !hasJoin {
 		table, diagnostic, ok := parseSimpleTable(sourceText)
 		if !ok {
@@ -2894,7 +2894,7 @@ func parseSimpleSources(sourceText string) ([]UnboundTable, []UnboundJoin, Diagn
 	joins := make([]UnboundJoin, 0, 1)
 	previousTable := leftTable
 	for {
-		rightText, conditionKeyword, conditionText, ok := splitBeforeFirstSimpleKeyword(joinText, "on", "using")
+		rightText, conditionKeyword, conditionText, ok := splitBeforeFirstTopLevelSimpleKeyword(joinText, "on", "using")
 		if !ok {
 			return nil, nil, simpleParserDiagnostic("JOIN must include ON or USING"), false
 		}
@@ -2947,14 +2947,14 @@ func parseSimpleJoinKindPrefix(text string) (string, JoinKind, Diagnostic, bool)
 	} else if remaining, ok := consumeTrailingKeyword(text, "right"); ok {
 		text = remaining
 		kind = JoinKindRightOuter
-	} else if hasAnyKeyword(text, "full") {
+	} else if hasAnyTopLevelKeyword(text, "full") {
 		return "", "", simpleParserDiagnostic("FULL OUTER JOIN is not supported yet"), false
 	}
 	return text, kind, Diagnostic{}, true
 }
 
 func parseSimpleJoinConditionTail(text string) (string, string, JoinKind, bool, Diagnostic, bool) {
-	onText, nextJoinText, hasJoin := splitBeforeKeyword(text, "join")
+	onText, nextJoinText, hasJoin := splitBeforeTopLevelKeyword(text, "join")
 	if !hasJoin {
 		return text, "", "", false, Diagnostic{}, true
 	}
@@ -5276,7 +5276,7 @@ func splitSimpleOrPredicates(text string) []string {
 }
 
 func parseSimpleOrderByClause(text string) (string, []UnboundSort, bool, Diagnostic, bool) {
-	left, right, ok := splitBeforeKeyword(text, "order")
+	left, right, ok := splitBeforeTopLevelKeyword(text, "order")
 	if !ok {
 		return text, nil, false, Diagnostic{}, true
 	}
@@ -5333,7 +5333,7 @@ func parseSimpleOrderByAggregateExpression(text string) (UnboundExpr, bool) {
 }
 
 func parseSimpleGroupByClause(text string) (string, []UnboundExpr, bool, Diagnostic, bool) {
-	left, right, ok := splitBeforeKeyword(text, "group")
+	left, right, ok := splitBeforeTopLevelKeyword(text, "group")
 	if !ok {
 		return text, nil, false, Diagnostic{}, true
 	}
@@ -5357,7 +5357,7 @@ func parseSimpleGroupByClause(text string) (string, []UnboundExpr, bool, Diagnos
 }
 
 func parseSimpleHavingClause(text string, projections []UnboundProjection, aggregates []UnboundAggregate) (string, []UnboundPredicate, []UnboundAggregate, bool, Diagnostic, bool) {
-	left, right, ok := splitBeforeKeyword(text, "having")
+	left, right, ok := splitBeforeTopLevelKeyword(text, "having")
 	if !ok {
 		return text, nil, aggregates, false, Diagnostic{}, true
 	}
@@ -5643,7 +5643,7 @@ func parseSimpleOptionalLimitOnlyClause(text string, statement string) (int, int
 }
 
 func parseSimpleLimitClause(text string) (string, int, int, bool, Diagnostic, bool) {
-	left, right, ok := splitBeforeKeyword(text, "limit")
+	left, right, ok := splitBeforeTopLevelKeyword(text, "limit")
 	if !ok {
 		return text, 0, 0, false, Diagnostic{}, true
 	}
@@ -5741,6 +5741,29 @@ func splitBeforeFirstSimpleKeyword(text string, keywords ...string) (string, str
 	bestKeyword := ""
 	for _, keyword := range keywords {
 		index, end, ok := findSimpleKeyword(text, keyword)
+		if !ok {
+			continue
+		}
+		if bestIndex == -1 || index < bestIndex {
+			bestIndex = index
+			bestEnd = end
+			bestKeyword = strings.ToLower(keyword)
+		}
+	}
+	if bestIndex == -1 {
+		return "", "", "", false
+	}
+	left := strings.TrimSpace(text[:bestIndex])
+	right := strings.TrimSpace(text[bestEnd:])
+	return left, bestKeyword, right, left != ""
+}
+
+func splitBeforeFirstTopLevelSimpleKeyword(text string, keywords ...string) (string, string, string, bool) {
+	bestIndex := -1
+	bestEnd := -1
+	bestKeyword := ""
+	for _, keyword := range keywords {
+		index, end, ok := findTopLevelSimpleKeyword(text, keyword)
 		if !ok {
 			continue
 		}

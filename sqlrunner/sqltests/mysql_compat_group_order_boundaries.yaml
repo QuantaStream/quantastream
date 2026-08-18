@@ -9,7 +9,7 @@ tests:
     feature: group_by_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, group_by, count, order_by]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select city, count(*) as customer_count
       from (
@@ -32,7 +32,7 @@ tests:
     feature: group_by_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, group_by, having, sum, order_by]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select region, sum(amount) as total_amount
       from (
@@ -55,7 +55,7 @@ tests:
     feature: select_order_limit_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, order_by, limit, offset]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select n
       from (
@@ -77,7 +77,7 @@ tests:
     feature: select_order_limit_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, aliases, expression_projection, order_by]
-    issue: "Derived table sources are not accepted by the current simple parser."
+    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select label, score * 2 as doubled_score
       from (

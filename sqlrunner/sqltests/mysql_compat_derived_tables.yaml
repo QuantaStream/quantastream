@@ -73,3 +73,82 @@ tests:
       rows:
         - [3]
         - [4]
+
+  - id: mysql_compat_derived_tables.010.derived_join_source_grouped_count
+    status: supported
+    kind: query
+    timeout: 180s
+    order: exact
+    feature: derived_tables_join
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, aliases, where, group_by, count]
+    sql: |
+      select
+        order_key,
+        count(*) as line_count,
+        ship_priority
+      from (
+        select
+          c.c_mktsegment as market_segment,
+          o.o_orderkey as order_key,
+          o.o_orderdate as order_date,
+          o.o_shippriority as ship_priority,
+          l.l_linenumber as line_number
+        from customer as c
+        inner join orders as o on c.c_custkey = o.o_custkey
+        inner join lineitem as l on o.o_orderkey = l.l_orderkey
+      ) as q
+      where order_key = 1
+      group by order_key, ship_priority
+    expect:
+      columns: [order_key, line_count, ship_priority]
+      rows:
+        - [1, 6, 0]
+
+  - id: mysql_compat_derived_tables.011.derived_source_in_outer_join
+    status: supported
+    kind: query
+    order: exact
+    feature: derived_tables_join
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, aliases, where, order_by, limit]
+    sql: |
+      select c.c_custkey as customer_key, o.order_key
+      from customer as c
+      inner join (
+        select
+          o_orderkey as order_key,
+          o_custkey as customer_key
+        from orders
+      ) as o on o.customer_key = c.c_custkey
+      where c.c_custkey = 1
+      order by o.order_key
+      limit 3
+    expect:
+      columns: [customer_key, order_key]
+      rows:
+        - [1, 9154]
+        - [1, 14656]
+        - [1, 24322]
+
+  - id: mysql_compat_derived_tables.020.grouped_aggregate_derived_source
+    status: supported
+    kind: query
+    order: exact
+    feature: derived_tables_grouped_aggregate
+    compatibility: mysql
+    requires: [select, derived_table, where, group_by, count, order_by]
+    sql: |
+      select customer_key, order_count
+      from (
+        select o_custkey as customer_key, count(*) as order_count
+        from orders
+        where o_custkey in (1, 2, 3)
+        group by o_custkey
+      ) as s
+      order by customer_key
+    expect:
+      columns: [customer_key, order_count]
+      rows:
+        - [1, 9]
+        - [2, 10]

@@ -1002,6 +1002,34 @@ func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDerivedTableJoinSource(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select q.order_key, q.customer_name
+		from (
+			select o.o_orderkey as order_key, c.c_name as customer_name
+			from orders as o
+			inner join customer as c on o.o_custkey = c.c_custkey
+		) as q
+		where q.order_key = 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one derived source", statement.Select.Tables)
+	}
+	table := statement.Select.Tables[0]
+	if table.Name != "q" || table.DerivedSelect == nil {
+		t.Fatalf("table = %#v, want derived q", table)
+	}
+	if len(table.DerivedSelect.Tables) != 2 {
+		t.Fatalf("derived tables = %#v, want two joined tables", table.DerivedSelect.Tables)
+	}
+	if len(table.DerivedSelect.Joins) != 1 {
+		t.Fatalf("derived joins = %#v, want one join", table.DerivedSelect.Joins)
+	}
+}
+
 func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
 	if diagnostics.BlocksNative() {

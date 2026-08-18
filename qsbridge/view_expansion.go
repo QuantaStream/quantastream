@@ -32,7 +32,9 @@ type viewExpansion struct {
 	tables     []UnboundTable
 	joins      []UnboundJoin
 	predicates []UnboundPredicate
+	groupBy    []UnboundExpr
 	aggregates []UnboundAggregate
+	having     []UnboundPredicate
 	columns    viewProjectionMap
 	viewRef    string
 	distinct   bool
@@ -116,10 +118,15 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	selectStmt.Tables = tables
 	selectStmt.Joins = append(joins, selectStmt.Joins...)
 	if len(expansion.aggregates) > 0 {
-		if diagnostics := validateAggregateViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
-			return selectStmt, diagnostics
+		if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
+			if diagnostics := validateGroupedAggregateLogicalSourceUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+				return selectStmt, diagnostics
+			}
+		} else {
+			if diagnostics := validateAggregateViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+				return selectStmt, diagnostics
+			}
 		}
-		selectStmt.Aggregates = append(expansion.aggregates, selectStmt.Aggregates...)
 	}
 	if expansion.distinct {
 		if diagnostics := validateDistinctViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
@@ -133,6 +140,9 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		return selectStmt, rewriteDiagnostics
 	}
 	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
+	selectStmt.GroupBy = append(expansion.groupBy, selectStmt.GroupBy...)
+	selectStmt.Aggregates = append(expansion.aggregates, selectStmt.Aggregates...)
+	selectStmt.Having = append(expansion.having, selectStmt.Having...)
 	return selectStmt, nil
 }
 
@@ -186,7 +196,9 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 	tables := append([]UnboundTable(nil), viewSelect.Tables...)
 	joins := append([]UnboundJoin(nil), viewSelect.Joins...)
 	predicates := append([]UnboundPredicate(nil), viewSelect.Predicates...)
+	groupBy := append([]UnboundExpr(nil), viewSelect.GroupBy...)
 	aggregates := append([]UnboundAggregate(nil), viewSelect.Aggregates...)
+	having := append([]UnboundPredicate(nil), viewSelect.Having...)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -197,7 +209,15 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
+		groupBy, diagnostics = rewriteViewDefinitionExprs(groupBy, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
 		aggregates, diagnostics = rewriteViewDefinitionAggregates(aggregates, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
+		having, diagnostics = rewriteViewDefinitionPredicates(having, base, outerRef)
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
@@ -208,7 +228,9 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		tables:     tables,
 		joins:      joins,
 		predicates: predicates,
+		groupBy:    groupBy,
 		aggregates: aggregates,
+		having:     having,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   viewSelect.Result.Distinct,
@@ -239,7 +261,9 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 	tables := append([]UnboundTable(nil), derivedSelect.Tables...)
 	joins := append([]UnboundJoin(nil), derivedSelect.Joins...)
 	predicates := append([]UnboundPredicate(nil), derivedSelect.Predicates...)
+	groupBy := append([]UnboundExpr(nil), derivedSelect.GroupBy...)
 	aggregates := append([]UnboundAggregate(nil), derivedSelect.Aggregates...)
+	having := append([]UnboundPredicate(nil), derivedSelect.Having...)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -250,7 +274,15 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
+		groupBy, diagnostics = rewriteViewDefinitionExprs(groupBy, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
 		aggregates, diagnostics = rewriteViewDefinitionAggregates(aggregates, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
+		having, diagnostics = rewriteViewDefinitionPredicates(having, base, outerRef)
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
@@ -261,7 +293,9 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 		tables:     tables,
 		joins:      joins,
 		predicates: predicates,
+		groupBy:    groupBy,
 		aggregates: aggregates,
+		having:     having,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   derivedSelect.Result.Distinct,
@@ -312,9 +346,9 @@ func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt Unboun
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" must expand to base tables without memberships or subqueries"),
 		}
 	}
-	if len(selectStmt.GroupBy) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.OrderBy) > 0 {
+	if len(selectStmt.OrderBy) > 0 {
 		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain grouping, having, or order by yet"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain order by yet"),
 		}
 	}
 	if selectStmt.Result.AppliesResultWindow() {
@@ -325,6 +359,16 @@ func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt Unboun
 	if selectStmt.WhereExpr != nil {
 		return DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain grouped boolean predicates yet"),
+		}
+	}
+	if len(selectStmt.GroupBy) > 0 && len(selectStmt.Aggregates) == 0 {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" grouping without aggregates is not supported yet"),
+		}
+	}
+	if len(selectStmt.Having) > 0 && len(selectStmt.Aggregates) == 0 {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" having without aggregates is not supported yet"),
 		}
 	}
 	return nil
@@ -426,6 +470,94 @@ func validateAggregateViewUsage(selectStmt UnboundSelect, expansion viewExpansio
 		}
 	}
 	return nil
+}
+
+func validateGroupedAggregateLogicalSourceUsage(selectStmt UnboundSelect, expansion viewExpansion) DiagnosticSet {
+	if len(selectStmt.Tables) != len(expansion.tables) || len(selectStmt.Joins) > len(expansion.joins) || selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support direct projection, key predicates, and ordering only"),
+		}
+	}
+	for _, projection := range selectStmt.Projection {
+		field, ok := projection.Expr.(UnboundFieldExpr)
+		if !ok || field.Name == "*" {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently require explicit projected columns"),
+			}
+		}
+		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support direct projection only"),
+			}
+		}
+		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
+			}
+		}
+	}
+	for _, predicate := range selectStmt.Predicates {
+		if logicalSourceExprReferencesAggregateMappedColumn(predicate.Expr, expansion) {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "outer predicates on grouped aggregate columns are not supported yet"),
+			}
+		}
+	}
+	for _, sort := range selectStmt.OrderBy {
+		field, ok := sort.Expr.(UnboundFieldExpr)
+		if !ok || field.Name == "*" {
+			continue
+		}
+		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support ordering by derived columns only"),
+			}
+		}
+		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
+			return DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
+			}
+		}
+	}
+	return nil
+}
+
+func logicalSourceExprReferencesAggregateMappedColumn(expr UnboundExpr, expansion viewExpansion) bool {
+	switch typed := expr.(type) {
+	case nil:
+		return false
+	case UnboundFieldExpr:
+		if typed.Name == "*" || typed.Qualifier != "" && !strings.EqualFold(typed.Qualifier, expansion.viewRef) {
+			return false
+		}
+		mapped, ok := expansionMappedExpr(expansion, typed.Name)
+		return ok && viewProjectionExprUsesOnlyAggregates(mapped)
+	case UnboundBinaryExpr:
+		return logicalSourceExprReferencesAggregateMappedColumn(typed.Left, expansion) || logicalSourceExprReferencesAggregateMappedColumn(typed.Right, expansion)
+	case UnboundCallExpr:
+		for _, arg := range typed.Args {
+			if logicalSourceExprReferencesAggregateMappedColumn(arg, expansion) {
+				return true
+			}
+		}
+		return false
+	case UnboundListExpr:
+		for _, item := range typed.Items {
+			if logicalSourceExprReferencesAggregateMappedColumn(item, expansion) {
+				return true
+			}
+		}
+		return false
+	case UnboundSearchedCaseExpr:
+		for _, when := range typed.Whens {
+			if logicalSourceExprReferencesAggregateMappedColumn(when.Condition, expansion) || logicalSourceExprReferencesAggregateMappedColumn(when.Result, expansion) {
+				return true
+			}
+		}
+		return logicalSourceExprReferencesAggregateMappedColumn(typed.Else, expansion)
+	default:
+		return false
+	}
 }
 
 func viewProjectionExprUsesOnlyAggregates(expr UnboundExpr) bool {
@@ -937,6 +1069,16 @@ func rewriteViewDefinitionPredicates(predicates []UnboundPredicate, base Unbound
 	for _, predicate := range predicates {
 		predicate.Expr = rewriteBaseQualifierExpr(predicate.Expr, aliases, replacementRef, &diagnostics)
 		rewritten = append(rewritten, predicate)
+	}
+	return rewritten, diagnostics
+}
+
+func rewriteViewDefinitionExprs(exprs []UnboundExpr, base UnboundTable, replacementRef string) ([]UnboundExpr, DiagnosticSet) {
+	aliases := tableAliases(base)
+	rewritten := make([]UnboundExpr, 0, len(exprs))
+	var diagnostics DiagnosticSet
+	for _, expr := range exprs {
+		rewritten = append(rewritten, rewriteBaseQualifierExpr(expr, aliases, replacementRef, &diagnostics))
 	}
 	return rewritten, diagnostics
 }
