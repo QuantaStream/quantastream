@@ -158,6 +158,10 @@ and `HAVING` boundaries for later outer-join-safe planning.
 `ir.go` contains table, field, predicate, join, aggregate, and result-shape
 vocabulary.
 
+`inline_rowset.go` binds parser-owned constant rowsets, such as inline
+`SELECT ... UNION ALL ...` derived sources, into normal query-local table
+instances with result-cell payloads for runtime materialization.
+
 `encoding.go` contains physical encoding, rehydration, value multiplicity, and
 relationship traversal capability vocabulary. These types describe what Quanta
 can evaluate natively without importing runtime bitmap or BSI packages. It also

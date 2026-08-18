@@ -13,6 +13,14 @@ type UnboundTable struct {
 	Role          string
 	DerivedSQL    string
 	DerivedSelect *UnboundSelect
+	InlineRows    *UnboundInlineRowSet
+}
+
+// UnboundInlineRowSet records a tiny parser-owned rowset such as a constant
+// SELECT ... UNION ALL ... derived source.
+type UnboundInlineRowSet struct {
+	Columns []UnboundProjection
+	Rows    [][]UnboundExpr
 }
 
 // BoundTable records one query-local table instance and its catalog metadata.
@@ -26,9 +34,10 @@ type BindContext struct {
 	Catalog       Catalog
 	DefaultSchema string
 
-	tables      []BoundTable
-	diagnostics DiagnosticSet
-	nextTableID int
+	tables        []BoundTable
+	inlineRowSets []InlineRowSet
+	diagnostics   DiagnosticSet
+	nextTableID   int
 }
 
 // NewBindContext creates a binding context for one statement.
@@ -68,17 +77,20 @@ func (c *BindContext) Sources() []TableInstance {
 	return sources
 }
 
+// InlineRowSets returns bound inline rowsets in source order.
+func (c *BindContext) InlineRowSets() []InlineRowSet {
+	if c == nil {
+		return nil
+	}
+	return cloneInlineRowSets(c.inlineRowSets)
+}
+
 // AddTable binds a table reference against the catalog and records its alias.
 func (c *BindContext) AddTable(table UnboundTable) (BoundTable, DiagnosticSet) {
 	if c == nil {
 		return BoundTable{}, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
 		}
-	}
-	if c.Catalog == nil {
-		return BoundTable{}, c.record(DiagnosticSet{
-			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
-		})
 	}
 	if table.Name == "" {
 		return BoundTable{}, c.record(DiagnosticSet{
@@ -88,6 +100,14 @@ func (c *BindContext) AddTable(table UnboundTable) (BoundTable, DiagnosticSet) {
 	if c.hasTableRef(tableRefName(table.Name, table.Alias)) {
 		return BoundTable{}, c.record(DiagnosticSet{
 			ErrorDiagnostic(DiagnosticDuplicateTableAlias, PhaseBind, "duplicate table reference: "+tableRefName(table.Name, table.Alias)),
+		})
+	}
+	if table.InlineRows != nil {
+		return c.addInlineRowSet(table)
+	}
+	if c.Catalog == nil {
+		return BoundTable{}, c.record(DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
 		})
 	}
 

@@ -279,14 +279,19 @@ func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundSt
 	if len(rows) == 0 {
 		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL must include at least one SELECT branch"), true, false
 	}
-	firstAlias := rows[0].Projection.Alias
+	for _, row := range rows {
+		if len(row.Projections) != 1 || len(row.Literals) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY LIMIT 1 supports one projected value"), true, false
+		}
+	}
+	firstAlias := rows[0].Projections[0].Alias
 	orderAlias, ok := simpleUnionOrderAlias(orderBy[0])
 	if !ok || firstAlias == "" || !strings.EqualFold(orderAlias, firstAlias) {
 		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY must reference the first projection alias"), true, false
 	}
 	best := rows[0]
 	for _, row := range rows[1:] {
-		less, ok := simpleLiteralLess(row.Literal, best.Literal)
+		less, ok := simpleLiteralLess(row.Literals[0], best.Literals[0])
 		if !ok {
 			return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY only supports comparable constant literals"), true, false
 		}
@@ -294,7 +299,7 @@ func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundSt
 			best = row
 		}
 	}
-	projection := best.Projection
+	projection := best.Projections[0]
 	projection.Alias = firstAlias
 	return UnboundStatement{
 		SQL:  sql,
@@ -307,8 +312,8 @@ func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundSt
 }
 
 type simpleConstantUnionRow struct {
-	Projection UnboundProjection
-	Literal    UnboundLiteralExpr
+	Projections []UnboundProjection
+	Literals    []UnboundLiteralExpr
 }
 
 func splitSimpleUnionAllTerms(text string) ([]string, Diagnostic, bool) {
@@ -351,14 +356,68 @@ func parseSimpleConstantUnionTerm(text string) (simpleConstantUnionRow, Diagnost
 	if !ok {
 		return simpleConstantUnionRow{}, diagnostic, false
 	}
-	if len(projections) != 1 || len(aggregates) != 0 {
-		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project one constant value"), false
+	if len(projections) == 0 || len(aggregates) != 0 {
+		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project constant values"), false
 	}
-	literal, ok := projections[0].Expr.(UnboundLiteralExpr)
+	literals := make([]UnboundLiteralExpr, 0, len(projections))
+	for _, projection := range projections {
+		literal, ok := projection.Expr.(UnboundLiteralExpr)
+		if !ok {
+			return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project constant literals"), false
+		}
+		literals = append(literals, literal)
+	}
+	return simpleConstantUnionRow{Projections: projections, Literals: literals}, Diagnostic{}, true
+}
+
+func parseSimpleConstantUnionAllRowSet(sql string) (UnboundInlineRowSet, Diagnostic, bool, bool) {
+	selectBody, ok := consumeKeyword(sql, "select")
 	if !ok {
-		return simpleConstantUnionRow{}, simpleParserDiagnostic("UNION ALL branches must project constant literals"), false
+		return UnboundInlineRowSet{}, simpleParserDiagnostic("UNION ALL rowset must be a SELECT statement"), false, false
 	}
-	return simpleConstantUnionRow{Projection: projections[0], Literal: literal}, Diagnostic{}, true
+	var terms []string
+	if _, _, found := findTopLevelSimpleKeyword(selectBody, "union"); found {
+		parsedTerms, diagnostic, ok := splitSimpleUnionAllTerms(selectBody)
+		if !ok {
+			return UnboundInlineRowSet{}, diagnostic, true, false
+		}
+		terms = parsedTerms
+	} else {
+		if hasAnyTopLevelKeyword(selectBody, "from", "where", "join", "group", "having", "order", "limit") {
+			return UnboundInlineRowSet{}, Diagnostic{}, false, true
+		}
+		terms = []string{strings.TrimSpace(sql)}
+	}
+	rows := make([]simpleConstantUnionRow, 0, len(terms))
+	for _, term := range terms {
+		row, diagnostic, ok := parseSimpleConstantUnionTerm(term)
+		if !ok {
+			return UnboundInlineRowSet{}, diagnostic, true, false
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return UnboundInlineRowSet{}, simpleParserDiagnostic("UNION ALL must include at least one SELECT branch"), true, false
+	}
+	columnCount := len(rows[0].Projections)
+	if columnCount == 0 {
+		return UnboundInlineRowSet{}, simpleParserDiagnostic("UNION ALL branches must project at least one value"), true, false
+	}
+	dataRows := make([][]UnboundExpr, 0, len(rows))
+	for rowIndex, row := range rows {
+		if len(row.Projections) != columnCount {
+			return UnboundInlineRowSet{}, simpleParserDiagnostic(fmt.Sprintf("UNION ALL branch %d projects %d columns, expected %d", rowIndex+1, len(row.Projections), columnCount)), true, false
+		}
+		values := make([]UnboundExpr, 0, columnCount)
+		for _, projection := range row.Projections {
+			values = append(values, projection.Expr)
+		}
+		dataRows = append(dataRows, values)
+	}
+	return UnboundInlineRowSet{
+		Columns: append([]UnboundProjection(nil), rows[0].Projections...),
+		Rows:    dataRows,
+	}, Diagnostic{}, true, true
 }
 
 func simpleUnionOrderAlias(sort UnboundSort) (string, bool) {
@@ -3546,6 +3605,18 @@ func parseSimpleDerivedTable(sourceText string) (UnboundTable, Diagnostic, bool,
 	if len(aliasFields) != 1 || strings.Contains(aliasFields[0], ".") {
 		return UnboundTable{}, simpleParserDiagnostic("derived table alias must be a simple identifier"), true, false
 	}
+	alias := aliasFields[0]
+	if inlineRows, diagnostic, found, ok := parseSimpleConstantUnionAllRowSet(inner); found || diagnostic.Code != "" {
+		if !ok {
+			return UnboundTable{}, diagnostic, true, false
+		}
+		return UnboundTable{
+			Name:       alias,
+			Alias:      alias,
+			DerivedSQL: strings.TrimSpace(inner),
+			InlineRows: &inlineRows,
+		}, Diagnostic{}, true, true
+	}
 	statement, diagnostic, ok := parseSimpleSelect(inner)
 	if !ok {
 		return UnboundTable{}, diagnostic, true, false
@@ -3554,7 +3625,6 @@ func parseSimpleDerivedTable(sourceText string) (UnboundTable, Diagnostic, bool,
 		return UnboundTable{}, simpleParserDiagnostic("derived table source must be a SELECT statement"), true, false
 	}
 	derived := statement.Select
-	alias := aliasFields[0]
 	return UnboundTable{
 		Name:          alias,
 		Alias:         alias,

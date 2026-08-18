@@ -545,6 +545,7 @@ func BindSelect(context *BindContext, selectStmt UnboundSelect) (QueryIR, Diagno
 		}
 	}
 	query.Sources = context.Sources()
+	query.InlineRows = context.InlineRowSets()
 
 	for _, join := range selectStmt.Joins {
 		edge, joinDiagnostics := BindJoin(context, join)

@@ -3,13 +3,12 @@ name: mysql_compat_group_order_boundaries
 
 tests:
   - id: mysql_compat_group_order_boundaries.001.derived_table_group_count
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: group_by_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, group_by, count, order_by]
-    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select city, count(*) as customer_count
       from (
@@ -26,13 +25,12 @@ tests:
         - [Tacoma, 1]
 
   - id: mysql_compat_group_order_boundaries.002.derived_table_having_sum
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: group_by_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, group_by, having, sum, order_by]
-    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select region, sum(amount) as total_amount
       from (
@@ -49,13 +47,12 @@ tests:
         - [north, 17]
 
   - id: mysql_compat_group_order_boundaries.003.derived_table_order_limit_offset
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: select_order_limit_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, order_by, limit, offset]
-    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select n
       from (
@@ -71,13 +68,12 @@ tests:
         - [2]
 
   - id: mysql_compat_group_order_boundaries.004.derived_table_order_by_alias_desc
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: select_order_limit_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, aliases, expression_projection, order_by]
-    issue: "Inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select label, score * 2 as doubled_score
       from (

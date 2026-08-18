@@ -157,6 +157,7 @@ func (s SortSpec) RequiredFields() []FieldRef {
 type QueryIR struct {
 	Kind        QueryKind
 	Sources     []TableInstance
+	InlineRows  []InlineRowSet
 	Joins       []JoinEdge
 	Memberships []MembershipEdge
 	Predicates  []Predicate

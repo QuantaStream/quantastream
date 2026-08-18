@@ -3,13 +3,12 @@ name: mysql_compat_joins_boundaries
 
 tests:
   - id: mysql_compat_joins_boundaries.001.derived_table_inner_join
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, inner_join, aliases, order_by]
-    issue: "Multiple inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select c.name, o.order_id
       from (
@@ -28,13 +27,12 @@ tests:
         - [Abe, 1002]
 
   - id: mysql_compat_joins_boundaries.002.derived_table_left_join_null_extension
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, left_join, null, order_by]
-    issue: "Multiple inline constant UNION ALL derived sources require rowset materialization support."
     sql: |
       select c.name, o.order_id
       from (

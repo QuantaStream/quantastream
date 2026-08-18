@@ -142,6 +142,7 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 	case "exists_subquery_materialization.go",
 		"filter_domain_normalization.go",
 		"filter_evaluator.go",
+		"inline_rowset.go",
 		"native_predicate.go",
 		"native_projection_capability.go",
 		"native_projection_materialization.go",

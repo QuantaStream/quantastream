@@ -1063,6 +1063,39 @@ func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesInlineConstantUnionDerivedTableSource(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select c.name, c.cust_id
+		from (
+			select 1 as cust_id, 'Abe' as name
+			union all select 2, 'Abby'
+		) as c
+		where c.cust_id = 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one inline rowset source", statement.Select.Tables)
+	}
+	table := statement.Select.Tables[0]
+	if table.Name != "c" || table.Alias != "c" {
+		t.Fatalf("table = %#v, want inline alias c", table)
+	}
+	if table.DerivedSelect != nil {
+		t.Fatalf("derived select = %#v, want nil for inline rowset", table.DerivedSelect)
+	}
+	if table.InlineRows == nil {
+		t.Fatalf("inline rows is nil")
+	}
+	if len(table.InlineRows.Columns) != 2 || len(table.InlineRows.Rows) != 2 {
+		t.Fatalf("inline rows = %#v, want two columns and two rows", table.InlineRows)
+	}
+	if table.InlineRows.Columns[0].Alias != "cust_id" || table.InlineRows.Columns[1].Alias != "name" {
+		t.Fatalf("inline columns = %#v, want cust_id/name", table.InlineRows.Columns)
+	}
+}
+
 func TestSimpleParserBridgeParsesDerivedTableJoinSource(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select q.order_key, q.customer_name

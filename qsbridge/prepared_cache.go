@@ -153,6 +153,7 @@ func cloneAccessRequirements(requirements []AccessRequirement) []AccessRequireme
 func cloneQueryIR(query QueryIR) QueryIR {
 	cloned := query
 	cloned.Sources = append([]TableInstance(nil), query.Sources...)
+	cloned.InlineRows = cloneInlineRowSets(query.InlineRows)
 	cloned.Joins = append([]JoinEdge(nil), query.Joins...)
 	cloned.Memberships = cloneMembershipEdges(query.Memberships)
 	cloned.Predicates = append([]Predicate(nil), query.Predicates...)

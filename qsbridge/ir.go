@@ -18,6 +18,13 @@ type TableInstance struct {
 	Role   string
 }
 
+// InlineRowSet carries a small materialized source through planning.
+type InlineRowSet struct {
+	Source TableInstance
+	Fields []FieldDefinition
+	Rows   []ResultRow
+}
+
 // RefName returns the SQL name that should be used to qualify fields.
 func (t TableInstance) RefName() string {
 	if t.Alias != "" {
