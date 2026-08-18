@@ -494,6 +494,37 @@ func TestUnboundStatementBindCreateTable(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateTemporaryTableCarriesMetadata(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table if not exists scratch_keys (customer_key bigint not null, revenue decimal(12,2), primary key (customer_key))")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindCreateTable || query.Mutation.Kind != MutationCreateTable {
+		t.Fatalf("query kind/mutation = %q/%q, want create_table", query.Kind, query.Mutation.Kind)
+	}
+	if !query.Mutation.Temporary || !query.Mutation.IfNotExists {
+		t.Fatalf("mutation flags temporary/if_not_exists = %t/%t, want true/true", query.Mutation.Temporary, query.Mutation.IfNotExists)
+	}
+	if query.Mutation.Target.Schema != "quanta" || query.Mutation.Target.Table != "scratch_keys" {
+		t.Fatalf("mutation target = %#v, want quanta.scratch_keys", query.Mutation.Target)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if column := query.Mutation.Columns[0]; column.Name != "customer_key" || column.Type != DataTypeInt || !column.PrimaryKey || column.Nullable {
+		t.Fatalf("customer_key column = %#v, want non-null int primary key", column)
+	}
+	if column := query.Mutation.Columns[1]; column.Name != "revenue" || column.Type != DataTypeFloat || column.Encoding.Scale != 2 {
+		t.Fatalf("revenue column = %#v, want decimal scale 2", column)
+	}
+}
+
 func TestUnboundStatementBindCreateView(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{
@@ -582,6 +613,28 @@ func TestUnboundStatementBindDropTableTracksChildDependencies(t *testing.T) {
 	}
 	if len(query.Mutation.DependentRelationships) != 1 {
 		t.Fatalf("dependent relationships = %#v, want orders_customer", query.Mutation.DependentRelationships)
+	}
+}
+
+func TestUnboundStatementBindDropTemporaryTableSkipsDurableDependencies(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{}, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("drop temporary table if exists scratch_keys")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindDropTable || query.Mutation.Kind != MutationDropTable {
+		t.Fatalf("query kind/mutation = %q/%q, want drop_table", query.Kind, query.Mutation.Kind)
+	}
+	if !query.Mutation.Temporary || !query.Mutation.IfExists {
+		t.Fatalf("mutation flags temporary/if_exists = %t/%t, want true/true", query.Mutation.Temporary, query.Mutation.IfExists)
+	}
+	if len(query.Mutation.DependentRelationships) != 0 {
+		t.Fatalf("dependent relationships = %#v, want none for temporary drop", query.Mutation.DependentRelationships)
 	}
 }
 

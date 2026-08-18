@@ -357,7 +357,7 @@ func cloneResultShape(shape qsbridge.ResultShape) qsbridge.ResultShape {
 func cloneStatementResult(statement qsbridge.StatementResult) qsbridge.StatementResult {
 	cloned := statement
 	cloned.Notices = append([]qsbridge.StatementNotice(nil), statement.Notices...)
-	cloned.SessionActions = append([]qsbridge.SessionAction(nil), statement.SessionActions...)
+	cloned.SessionActions = qsbridge.CloneSessionActions(statement.SessionActions)
 	return cloned
 }
 

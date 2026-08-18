@@ -702,21 +702,35 @@ func parseSimpleCreate(sql string) (UnboundStatement, Diagnostic, bool) {
 		createBody = remaining
 		replace = true
 	}
+	temporary := false
+	if remaining, ok := consumeKeyword(createBody, "temporary"); ok {
+		createBody = remaining
+		temporary = true
+	}
 	if remaining, ok := consumeKeyword(createBody, "table"); ok {
 		if replace {
 			return UnboundStatement{}, simpleParserDiagnostic("CREATE OR REPLACE TABLE is not supported"), false
 		}
-		return parseSimpleCreateTableBody(sql, remaining)
+		return parseSimpleCreateTableBody(sql, remaining, temporary)
 	}
 	if remaining, ok := consumeKeyword(createBody, "view"); ok {
+		if temporary {
+			return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY VIEW is not supported"), false
+		}
 		return parseSimpleCreateViewBody(sql, remaining, replace)
+	}
+	if temporary {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY must be followed by TABLE"), false
 	}
 	return UnboundStatement{}, simpleParserDiagnostic("CREATE must include TABLE or VIEW"), false
 }
 
-func parseSimpleCreateTableBody(sql string, createBody string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleCreateTableBody(sql string, createBody string, temporary bool) (UnboundStatement, Diagnostic, bool) {
 	if strings.TrimSpace(createBody) == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE must include a table"), false
+	}
+	if temporary {
+		return parseSimpleCreateTemporaryTableBody(sql, createBody)
 	}
 	if hasAnyKeyword(createBody, "if", "exists", "like", "as", "select", "temporary", "where", "partition") || strings.Contains(createBody, "(") {
 		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE only supports one YAML-backed table name"), false
@@ -736,6 +750,399 @@ func parseSimpleCreateTableBody(sql string, createBody string) (UnboundStatement
 			Result: ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleCreateTemporaryTableBody(sql string, createBody string) (UnboundStatement, Diagnostic, bool) {
+	createBody = strings.TrimSpace(createBody)
+	if createBody == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE must include a table"), false
+	}
+	ifNotExists := false
+	if remaining, ok := consumeKeyword(createBody, "if"); ok {
+		notRemaining, notOK := consumeKeyword(remaining, "not")
+		if !notOK {
+			return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE IF must be followed by NOT EXISTS"), false
+		}
+		existsRemaining, existsOK := consumeKeyword(notRemaining, "exists")
+		if !existsOK {
+			return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE IF NOT must be followed by EXISTS"), false
+		}
+		ifNotExists = true
+		createBody = strings.TrimSpace(existsRemaining)
+	}
+	if hasAnyKeyword(createBody, "like") {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE LIKE is not supported yet"), false
+	}
+	if targetText, selectText, ok := splitBeforeTopLevelKeyword(createBody, "as"); ok && strings.TrimSpace(targetText) != "" && strings.TrimSpace(selectText) != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE AS SELECT is not supported yet"), false
+	}
+	tableText, columnText, diagnostic, ok := splitSimpleCreateTableTargetAndColumns(createBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	table, diagnostic, ok := parseSimpleTable(tableText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE aliases are not supported"), false
+	}
+	columns, diagnostic, ok := parseSimpleCreateTemporaryTableColumns(columnText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindCreateTable,
+		Create: UnboundCreateTable{
+			Table:       table,
+			Temporary:   true,
+			IfNotExists: ifNotExists,
+			Columns:     columns,
+			Result:      ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func splitSimpleCreateTableTargetAndColumns(createBody string) (string, string, Diagnostic, bool) {
+	open := -1
+	var quote byte
+	for i := 0; i < len(createBody); i++ {
+		ch := createBody[i]
+		if ch == '\'' || ch == '"' || ch == '`' {
+			if quote == ch {
+				quote = 0
+				continue
+			}
+			if quote == 0 {
+				quote = ch
+			}
+			continue
+		}
+		if quote != 0 {
+			continue
+		}
+		if ch == '(' {
+			open = i
+			break
+		}
+	}
+	if open < 0 {
+		return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE requires an inline column list"), false
+	}
+	tableText := strings.TrimSpace(createBody[:open])
+	if tableText == "" {
+		return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE must include a table"), false
+	}
+	depth := 0
+	quote = 0
+	for i := open; i < len(createBody); i++ {
+		ch := createBody[i]
+		if ch == '\'' || ch == '"' || ch == '`' {
+			if quote == ch {
+				quote = 0
+				continue
+			}
+			if quote == 0 {
+				quote = ch
+			}
+			continue
+		}
+		if quote != 0 {
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				trailing := strings.TrimSpace(createBody[i+1:])
+				if trailing != "" {
+					return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE only supports an inline column list"), false
+				}
+				columnText := strings.TrimSpace(createBody[open+1 : i])
+				if columnText == "" {
+					return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE column list must not be empty"), false
+				}
+				return tableText, columnText, Diagnostic{}, true
+			}
+			if depth < 0 {
+				return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE column list has an unmatched close parenthesis"), false
+			}
+		}
+	}
+	return "", "", simpleParserDiagnostic("CREATE TEMPORARY TABLE column list must be closed"), false
+}
+
+func parseSimpleCreateTemporaryTableColumns(columnText string) ([]FieldDefinition, Diagnostic, bool) {
+	parts := splitSimpleCommaList(columnText)
+	columns := make([]FieldDefinition, 0, len(parts))
+	primaryColumns := make(map[string]struct{})
+	seenColumns := make(map[string]struct{})
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, simpleParserDiagnostic("CREATE TEMPORARY TABLE column definitions must not be empty"), false
+		}
+		if constraintColumns, ok, diagnosticOK := parseSimpleCreateTemporaryTablePrimaryKeyConstraint(part); ok || !diagnosticOK {
+			if !diagnosticOK {
+				return nil, constraintColumns.diagnostic, false
+			}
+			for _, name := range constraintColumns.columns {
+				primaryColumns[strings.ToLower(name)] = struct{}{}
+			}
+			continue
+		}
+		column, diagnostic, ok := parseSimpleCreateTemporaryTableColumn(part)
+		if !ok {
+			return nil, diagnostic, false
+		}
+		key := strings.ToLower(column.Name)
+		if _, exists := seenColumns[key]; exists {
+			return nil, simpleParserDiagnostic("CREATE TEMPORARY TABLE duplicate column: " + column.Name), false
+		}
+		seenColumns[key] = struct{}{}
+		if column.PrimaryKey {
+			primaryColumns[key] = struct{}{}
+		}
+		columns = append(columns, column)
+	}
+	if len(columns) == 0 {
+		return nil, simpleParserDiagnostic("CREATE TEMPORARY TABLE must include at least one column"), false
+	}
+	for i := range columns {
+		if _, ok := primaryColumns[strings.ToLower(columns[i].Name)]; ok {
+			columns[i].PrimaryKey = true
+			columns[i].Nullable = false
+		}
+	}
+	return columns, Diagnostic{}, true
+}
+
+type simpleTemporaryTablePrimaryKeyParse struct {
+	columns    []string
+	diagnostic Diagnostic
+}
+
+func parseSimpleCreateTemporaryTablePrimaryKeyConstraint(part string) (simpleTemporaryTablePrimaryKeyParse, bool, bool) {
+	remaining, ok := consumeKeyword(part, "primary")
+	if !ok {
+		if lower := strings.ToLower(strings.TrimSpace(part)); strings.HasPrefix(lower, "constraint ") || strings.HasPrefix(lower, "key ") || strings.HasPrefix(lower, "unique ") || strings.HasPrefix(lower, "index ") {
+			return simpleTemporaryTablePrimaryKeyParse{diagnostic: simpleParserDiagnostic("CREATE TEMPORARY TABLE only supports PRIMARY KEY constraints")}, false, false
+		}
+		return simpleTemporaryTablePrimaryKeyParse{}, false, true
+	}
+	remaining, ok = consumeKeyword(remaining, "key")
+	if !ok {
+		return simpleTemporaryTablePrimaryKeyParse{diagnostic: simpleParserDiagnostic("CREATE TEMPORARY TABLE PRIMARY must be followed by KEY")}, false, false
+	}
+	remaining = strings.TrimSpace(remaining)
+	if !strings.HasPrefix(remaining, "(") || !strings.HasSuffix(remaining, ")") {
+		return simpleTemporaryTablePrimaryKeyParse{diagnostic: simpleParserDiagnostic("CREATE TEMPORARY TABLE PRIMARY KEY must include a column list")}, false, false
+	}
+	columnText := strings.TrimSpace(remaining[1 : len(remaining)-1])
+	if columnText == "" {
+		return simpleTemporaryTablePrimaryKeyParse{diagnostic: simpleParserDiagnostic("CREATE TEMPORARY TABLE PRIMARY KEY column list must not be empty")}, false, false
+	}
+	columns := splitSimpleCommaList(columnText)
+	names := make([]string, 0, len(columns))
+	for _, column := range columns {
+		column = stripSimpleIdentifierQuotes(strings.TrimSpace(column))
+		if column == "" || strings.Contains(column, ".") || len(strings.Fields(column)) != 1 {
+			return simpleTemporaryTablePrimaryKeyParse{diagnostic: simpleParserDiagnostic("CREATE TEMPORARY TABLE PRIMARY KEY columns must be simple identifiers")}, false, false
+		}
+		names = append(names, column)
+	}
+	return simpleTemporaryTablePrimaryKeyParse{columns: names}, true, true
+}
+
+func parseSimpleCreateTemporaryTableColumn(part string) (FieldDefinition, Diagnostic, bool) {
+	name, rest, ok := parseSimpleCreateTemporaryTableColumnName(part)
+	if !ok {
+		return FieldDefinition{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE column definitions must start with a column name"), false
+	}
+	if name == "" || strings.Contains(name, ".") {
+		return FieldDefinition{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE column names must be simple identifiers"), false
+	}
+	dataType, encoding, rest, diagnostic, ok := parseSimpleCreateTemporaryTableColumnType(rest)
+	if !ok {
+		return FieldDefinition{}, diagnostic, false
+	}
+	restLower := " " + strings.ToLower(strings.TrimSpace(rest)) + " "
+	column := FieldDefinition{
+		Name:     name,
+		Type:     dataType,
+		Nullable: true,
+		Encoding: encoding,
+	}
+	if strings.Contains(restLower, " primary key ") {
+		column.PrimaryKey = true
+		column.Nullable = false
+	}
+	if strings.Contains(restLower, " not null ") {
+		column.Nullable = false
+	}
+	return column, Diagnostic{}, true
+}
+
+func parseSimpleCreateTemporaryTableColumnName(part string) (string, string, bool) {
+	part = strings.TrimSpace(part)
+	if part == "" {
+		return "", "", false
+	}
+	if part[0] == '`' || part[0] == '"' {
+		quote := part[0]
+		for i := 1; i < len(part); i++ {
+			if part[i] == quote {
+				if i+1 < len(part) && part[i+1] == quote {
+					i++
+					continue
+				}
+				escapedQuote := string([]byte{quote, quote})
+				name := strings.ReplaceAll(part[1:i], escapedQuote, string([]byte{quote}))
+				return name, strings.TrimSpace(part[i+1:]), true
+			}
+		}
+		return "", "", false
+	}
+	fields := strings.Fields(part)
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	return stripSimpleIdentifierQuotes(fields[0]), strings.TrimSpace(part[len(fields[0]):]), true
+}
+
+func parseSimpleCreateTemporaryTableColumnType(rest string) (DataType, EncodingProfile, string, Diagnostic, bool) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic("CREATE TEMPORARY TABLE columns require a type"), false
+	}
+	typeToken, afterType := splitSimpleTypeToken(rest)
+	typeName := strings.ToLower(strings.TrimSpace(typeToken))
+	typeBase := typeName
+	if open := strings.Index(typeBase, "("); open >= 0 {
+		typeBase = typeBase[:open]
+	}
+	typeBase = strings.TrimSpace(typeBase)
+	if typeBase == "double" {
+		if next, remaining, ok := firstSimpleToken(afterType); ok && strings.EqualFold(next, "precision") {
+			afterType = remaining
+		}
+	}
+	encoding := EncodingProfile{}
+	if strings.HasPrefix(typeName, "varchar(") || strings.HasPrefix(typeName, "char(") {
+		if maxLength, ok := simpleCreateTableTypeLength(typeName); ok {
+			encoding.MaxLength = maxLength
+		}
+	}
+	if strings.HasPrefix(typeName, "decimal(") || strings.HasPrefix(typeName, "numeric(") {
+		if scale, ok := simpleCreateTableTypeScale(typeName); ok {
+			encoding.Scale = scale
+		}
+	}
+	switch typeBase {
+	case "bit", "bool", "boolean":
+		return DataTypeBool, encoding, afterType, Diagnostic{}, true
+	case "tinyint", "smallint", "mediumint", "int", "integer", "bigint":
+		return DataTypeInt, encoding, afterType, Diagnostic{}, true
+	case "decimal", "numeric", "float", "double", "real":
+		return DataTypeFloat, encoding, afterType, Diagnostic{}, true
+	case "date", "datetime", "time", "timestamp", "year":
+		return DataTypeTime, encoding, afterType, Diagnostic{}, true
+	case "char", "varchar", "text", "tinytext", "mediumtext", "longtext", "enum", "json", "blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary":
+		return DataTypeString, encoding, afterType, Diagnostic{}, true
+	default:
+		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic("CREATE TEMPORARY TABLE unsupported column type: " + typeToken), false
+	}
+}
+
+func splitSimpleTypeToken(rest string) (string, string) {
+	depth := 0
+	var quote byte
+	for i := 0; i < len(rest); i++ {
+		ch := rest[i]
+		if ch == '\'' || ch == '"' || ch == '`' {
+			if quote == ch {
+				quote = 0
+				continue
+			}
+			if quote == 0 {
+				quote = ch
+			}
+			continue
+		}
+		if quote != 0 {
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ' ', '\t', '\n', '\r':
+			if depth == 0 {
+				return strings.TrimSpace(rest[:i]), strings.TrimSpace(rest[i+1:])
+			}
+		}
+	}
+	return strings.TrimSpace(rest), ""
+}
+
+func firstSimpleToken(text string) (string, string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", "", false
+	}
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	return fields[0], strings.TrimSpace(text[len(fields[0]):]), true
+}
+
+func simpleCreateTableTypeLength(typeName string) (int, bool) {
+	open := strings.Index(typeName, "(")
+	close := strings.LastIndex(typeName, ")")
+	if open < 0 || close <= open {
+		return 0, false
+	}
+	value := strings.TrimSpace(typeName[open+1 : close])
+	if comma := strings.Index(value, ","); comma >= 0 {
+		value = strings.TrimSpace(value[:comma])
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func simpleCreateTableTypeScale(typeName string) (int, bool) {
+	open := strings.Index(typeName, "(")
+	close := strings.LastIndex(typeName, ")")
+	if open < 0 || close <= open {
+		return 0, false
+	}
+	parts := splitSimpleCommaList(typeName[open+1 : close])
+	if len(parts) < 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func stripSimpleIdentifierQuotes(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && ((value[0] == '`' && value[len(value)-1] == '`') || (value[0] == '"' && value[len(value)-1] == '"')) {
+		return value[1 : len(value)-1]
+	}
+	return value
 }
 
 func parseSimpleCreateViewBody(sql string, createBody string, replace bool) (UnboundStatement, Diagnostic, bool) {
@@ -850,16 +1257,27 @@ func parseSimpleDrop(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("only DROP statements are supported"), false
 	}
+	temporary := false
+	if remaining, ok := consumeKeyword(dropBody, "temporary"); ok {
+		dropBody = remaining
+		temporary = true
+	}
 	if remaining, ok := consumeKeyword(dropBody, "table"); ok {
-		return parseSimpleDropTableBody(sql, remaining)
+		return parseSimpleDropTableBody(sql, remaining, temporary)
 	}
 	if remaining, ok := consumeKeyword(dropBody, "view"); ok {
+		if temporary {
+			return UnboundStatement{}, simpleParserDiagnostic("DROP TEMPORARY VIEW is not supported"), false
+		}
 		return parseSimpleDropViewBody(sql, remaining)
 	}
-	return parseSimpleDropTableBody(sql, dropBody)
+	if temporary {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TEMPORARY must be followed by TABLE"), false
+	}
+	return parseSimpleDropTableBody(sql, dropBody, false)
 }
 
-func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
+func parseSimpleDropTableBody(sql string, dropBody string, temporary bool) (UnboundStatement, Diagnostic, bool) {
 	dropBody = strings.TrimSpace(dropBody)
 	if dropBody == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
@@ -890,9 +1308,10 @@ func parseSimpleDropTableBody(sql string, dropBody string) (UnboundStatement, Di
 		SQL:  sql,
 		Kind: QueryKindDropTable,
 		Drop: UnboundDropTable{
-			Table:    table,
-			IfExists: ifExists,
-			Result:   ResultShape{Kind: ResultStatement},
+			Table:     table,
+			Temporary: temporary,
+			IfExists:  ifExists,
+			Result:    ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
 }

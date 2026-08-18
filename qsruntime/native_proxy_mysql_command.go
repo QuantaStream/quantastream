@@ -58,17 +58,19 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 		profile.ClearPreparedLongData(handle)
 		return qsmysql.StatementOKResponse(qsbridge.StatementResult{}), nil
 	case qsmysql.CommandKindQuery:
+		profile := h.sessionProfile()
 		if response, ok, err := nativeProxyMySQLMetadataQueryResponse(command); ok || err != nil {
 			return response, err
 		}
-		if response, ok, err := nativeProxyMySQLProfileQueryResponse(command, h.Profile); ok || err != nil {
+		if response, ok, err := nativeProxyMySQLProfileQueryResponse(command, profile); ok || err != nil {
 			return response, err
 		}
-		result, err := h.FrontDoor.Server.ExecuteSQL(ctx, command.SQL, h.Options)
+		result, err := h.FrontDoor.Server.ExecuteSQLWithSession(ctx, nativeProxyMySQLSessionForCommand(profile, command), command.SQL, h.Options)
 		if err != nil {
 			return qsmysql.ErrorResponseFromError(err), nil
 		}
-		h.Profile.Store(result.Instrumentation)
+		profile.Store(result.Instrumentation)
+		result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, profile.ApplySessionActions(nativeProxySessionActions(result))...)
 		return nativeProxyMySQLResponseFromSQLResult(result)
 	default:
 		return qsmysql.ErrorResponse(qsmysql.ProtocolErrorFromError(nil)), nil
@@ -76,7 +78,8 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 }
 
 func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementPrepare(command qsmysql.Command) (qsmysql.CommandResponse, error) {
-	prepared, diagnostics := h.FrontDoor.Server.PrepareSQL(command.SQL)
+	profile := h.sessionProfile()
+	prepared, diagnostics := h.FrontDoor.Server.PrepareSQLWithSession(command.SQL, nativeProxyMySQLSessionForCommand(profile, command))
 	if protocolError, ok := diagnostics.FirstProtocolError(); ok {
 		return qsmysql.ErrorResponse(protocolError), nil
 	}
@@ -110,11 +113,12 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementExecute(ctx 
 		}), nil
 	}
 	profile.StorePreparedParameterTypes(handle, parameterTypes)
-	result, err := h.FrontDoor.Server.ExecuteSQL(ctx, prepared.SQL, h.Options, values...)
+	result, err := h.FrontDoor.Server.ExecuteSQLWithSession(ctx, nativeProxyMySQLSessionForCommand(profile, command), prepared.SQL, h.Options, values...)
 	if err != nil {
 		return qsmysql.ErrorResponseFromError(err), nil
 	}
 	profile.Store(result.Instrumentation)
+	result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, profile.ApplySessionActions(nativeProxySessionActions(result))...)
 	return nativeProxyMySQLPreparedResponseFromSQLResult(result)
 }
 
@@ -152,6 +156,18 @@ func (h NativeProxyMySQLCommandHandler) sessionProfile() *NativeProxyMySQLSessio
 		return h.Profile
 	}
 	return NewNativeProxyMySQLSessionProfile()
+}
+
+func nativeProxyMySQLSessionForCommand(profile *NativeProxyMySQLSessionProfile, command qsmysql.Command) qsbridge.SessionContext {
+	if profile == nil {
+		return qsbridge.SessionContext{CurrentSchema: command.Database}
+	}
+	profile.SetCurrentSchema(command.Database)
+	session := profile.Session()
+	if session.CurrentSchema == "" {
+		session.CurrentSchema = command.Database
+	}
+	return session
 }
 
 func nativeProxyMySQLUnknownPreparedStatement(statementID uint32, operation string) qsbridge.ProtocolError {
@@ -219,7 +235,7 @@ func nativeProxyClientExecutionResult(result SQLExecutionResult) qsbridge.Execut
 		Kind:           request.Result.Kind,
 		Columns:        append([]qsbridge.ResultColumn(nil), request.ResultColumns...),
 		Statement:      cloneStatementResult(statement),
-		SessionActions: append([]qsbridge.SessionAction(nil), request.SessionActions...),
+		SessionActions: qsbridge.CloneSessionActions(request.SessionActions),
 		Diagnostics:    append(qsbridge.DiagnosticSet(nil), result.Diagnostics...),
 		Complete:       true,
 	}

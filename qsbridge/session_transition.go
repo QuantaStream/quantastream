@@ -62,6 +62,32 @@ func (s SessionContext) withSessionAction(action SessionAction) SessionContext {
 		s.TimeZone = action.Value
 	case SessionActionResetConnection:
 		s = resetClientSession(s)
+	case SessionActionCreateTemporaryTable:
+		table := cloneTableDefinition(action.Table)
+		if table.Name == "" {
+			table.Name = strings.TrimSpace(action.Name)
+		}
+		if table.Schema == "" {
+			table.Schema = strings.TrimSpace(action.Value)
+		}
+		if table.Schema == "" {
+			table.Schema = s.EffectiveSchema("")
+		}
+		if table.Name != "" {
+			if s.TemporaryTables == nil {
+				s.TemporaryTables = make(map[string]TableDefinition, 1)
+			}
+			s.TemporaryTables[temporaryTableKey(table.Schema, table.Name)] = table
+		}
+	case SessionActionDropTemporaryTable:
+		tableName := strings.TrimSpace(action.Name)
+		schemaName := strings.TrimSpace(action.Value)
+		if schemaName == "" {
+			schemaName = s.EffectiveSchema("")
+		}
+		if tableName != "" && s.TemporaryTables != nil {
+			delete(s.TemporaryTables, temporaryTableKey(schemaName, tableName))
+		}
 	}
 	return s
 }

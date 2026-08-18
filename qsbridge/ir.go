@@ -522,6 +522,10 @@ const (
 	SessionActionResetConnection SessionActionKind = "reset_connection"
 	// SessionActionChangeUser asks the protocol/session owner to replace the authenticated principal.
 	SessionActionChangeUser SessionActionKind = "change_user"
+	// SessionActionCreateTemporaryTable asks the protocol/session owner to add connection-local table metadata.
+	SessionActionCreateTemporaryTable SessionActionKind = "create_temporary_table"
+	// SessionActionDropTemporaryTable asks the protocol/session owner to remove connection-local table metadata.
+	SessionActionDropTemporaryTable SessionActionKind = "drop_temporary_table"
 )
 
 // SessionAction records a requested session change without applying it.
@@ -529,6 +533,7 @@ type SessionAction struct {
 	Kind  SessionActionKind
 	Name  string
 	Value string
+	Table TableDefinition
 }
 
 // MutationKind classifies the write operation represented by MutationShape.
@@ -578,6 +583,8 @@ type MutationShape struct {
 	ViewSQL                string
 	Replace                bool
 	IfExists               bool
+	IfNotExists            bool
+	Temporary              bool
 	ViewDependencies       []TableInstance
 	Columns                []FieldRef
 	Rows                   []MutationRow

@@ -18,7 +18,7 @@ func BindSession(context *BindContext, sessionStmt UnboundSession) (QueryIR, Dia
 	if result.Kind == "" {
 		result.Kind = ResultStatement
 	}
-	result.Statement.SessionActions = append([]SessionAction(nil), sessionStmt.Actions...)
+	result.Statement.SessionActions = CloneSessionActions(sessionStmt.Actions)
 	return QueryIR{
 		Kind:     QueryKindSession,
 		Result:   result,
@@ -42,5 +42,18 @@ func (p PreparedPlan) SessionActions() []SessionAction {
 }
 
 func cloneSessionActions(actions []SessionAction) []SessionAction {
-	return append([]SessionAction(nil), actions...)
+	return CloneSessionActions(actions)
+}
+
+// CloneSessionActions returns session actions with independent nested metadata.
+func CloneSessionActions(actions []SessionAction) []SessionAction {
+	if len(actions) == 0 {
+		return nil
+	}
+	cloned := make([]SessionAction, 0, len(actions))
+	for _, action := range actions {
+		action.Table = cloneTableDefinition(action.Table)
+		cloned = append(cloned, action)
+	}
+	return cloned
 }

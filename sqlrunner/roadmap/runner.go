@@ -259,7 +259,7 @@ func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 	if queryErr != nil {
 		return "unexpected error: " + queryErr.Error()
 	}
-	if len(test.Expect.Columns) > 0 && !equalStrings(test.Expect.Columns, actual.Columns) {
+	if len(test.Expect.Columns) > 0 && !expectedColumnsMatch(test, actual.Columns) {
 		return fmt.Sprintf("columns differ: expected %v, actual %v", test.Expect.Columns, actual.Columns)
 	}
 	if len(test.Expect.Types) > 0 {
@@ -285,6 +285,22 @@ func evaluateQuery(test TestCase, actual QueryResult, queryErr error) string {
 		return details
 	}
 	return ""
+}
+
+func expectedColumnsMatch(test TestCase, actual []string) bool {
+	expected := test.Expect.Columns
+	if len(expected) != len(actual) {
+		return false
+	}
+	if strings.EqualFold(test.Compatibility, "mysql") {
+		for i := range expected {
+			if canonicalColumn(expected[i]) != canonicalColumn(actual[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return equalStrings(expected, actual)
 }
 
 func rowComparisonOptionsFromExpected(expected Expected) rowComparisonOptions {

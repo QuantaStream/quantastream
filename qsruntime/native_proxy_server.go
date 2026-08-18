@@ -169,13 +169,18 @@ func (s NativeProxyServer) Ready() bool {
 
 // ExecuteSQL delegates SQL execution to the owned native runtime when ready.
 func (s NativeProxyServer) ExecuteSQL(ctx context.Context, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
+	return s.ExecuteSQLWithSession(ctx, s.Runtime.Runtime.Session, sql, options, values...)
+}
+
+// ExecuteSQLWithSession delegates SQL execution with connection-local session metadata.
+func (s NativeProxyServer) ExecuteSQLWithSession(ctx context.Context, session qsbridge.SessionContext, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
 	if !s.Ready() {
 		return SQLExecutionResult{Diagnostics: nativeProxyServerNotReadyDiagnostics()}, nil
 	}
 	if s.ContextWrapper != nil {
 		ctx = s.ContextWrapper(ctx)
 	}
-	result, err := s.Runtime.ExecuteSQL(ctx, sql, options, values...)
+	result, err := s.Runtime.ExecuteSQLWithSession(ctx, session, sql, options, values...)
 	if err == nil && !result.Diagnostics.BlocksNative() && !result.Runtime.Diagnostics.BlocksNative() {
 		result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, s.handleSessionActions(ctx, result)...)
 	}
@@ -193,10 +198,15 @@ func (s NativeProxyServer) InspectSQL(sql string, options qsbridge.ExecutionOpti
 
 // PrepareSQL returns prepared-statement metadata without executing or binding values.
 func (s NativeProxyServer) PrepareSQL(sql string) (qsbridge.PreparedPlan, qsbridge.DiagnosticSet) {
+	return s.PrepareSQLWithSession(sql, s.Runtime.Runtime.Session)
+}
+
+// PrepareSQLWithSession returns prepared-statement metadata using connection-local session metadata.
+func (s NativeProxyServer) PrepareSQLWithSession(sql string, session qsbridge.SessionContext) (qsbridge.PreparedPlan, qsbridge.DiagnosticSet) {
 	if !s.Ready() {
 		return qsbridge.PreparedPlan{}, nativeProxyServerNotReadyDiagnostics()
 	}
-	prepared := s.Runtime.PrepareSQL(sql)
+	prepared := s.Runtime.PrepareSQLWithSession(sql, session)
 	return prepared, append(qsbridge.DiagnosticSet(nil), prepared.Diagnostics...)
 }
 
@@ -233,10 +243,10 @@ func (s NativeProxyServer) handleSessionActions(ctx context.Context, result SQLE
 
 func nativeProxySessionActions(result SQLExecutionResult) []qsbridge.SessionAction {
 	if len(result.Runtime.Statement.SessionActions) > 0 {
-		return append([]qsbridge.SessionAction(nil), result.Runtime.Statement.SessionActions...)
+		return qsbridge.CloneSessionActions(result.Runtime.Statement.SessionActions)
 	}
 	if len(result.Request.Statement.SessionActions) > 0 {
-		return append([]qsbridge.SessionAction(nil), result.Request.Statement.SessionActions...)
+		return qsbridge.CloneSessionActions(result.Request.Statement.SessionActions)
 	}
 	return nil
 }

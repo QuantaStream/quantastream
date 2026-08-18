@@ -61,12 +61,16 @@ func (r SQLInspectionResult) Supported() bool {
 func (r SQLRuntime) Planner() qsbridge.Planner {
 	return qsbridge.Planner{
 		Parser:         r.Parser,
-		Catalog:        r.Environment.Catalog,
+		Catalog:        r.planningCatalog(),
 		DefaultSchema:  r.DefaultSchema,
 		CatalogVersion: r.CatalogVersion,
 		Session:        r.Session.Clone(),
 		Scope:          r.Scope,
 	}
+}
+
+func (r SQLRuntime) planningCatalog() qsbridge.Catalog {
+	return qsbridge.NewSessionCatalog(r.Environment.Catalog, r.Session, r.DefaultSchema)
 }
 
 // Plan parses and plans SQL through qsbridge without executing it.
@@ -162,6 +166,16 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 	if prepared.Kind == qsbridge.QueryKindSession {
 		result.Runtime = ExecutionResult{Statement: cloneStatementResult(request.Statement)}
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindCreateTable && prepared.Query.Mutation.Temporary {
+		result.Runtime = r.createTemporaryTableRuntimeResult(request)
+		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
+		return result, nil
+	}
+	if prepared.Kind == qsbridge.QueryKindDropTable && prepared.Query.Mutation.Temporary {
+		result.Runtime = r.dropTemporaryTableRuntimeResult(request)
+		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindShowCreateView {

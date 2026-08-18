@@ -1,0 +1,72 @@
+version: 1
+name: mysql_compat_temp_tables
+
+tests:
+  - id: mysql_compat_temp_tables.001.drop_stale_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_customer_keys
+
+  - id: mysql_compat_temp_tables.010.create_temp_table_metadata
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [create_table, temporary_table, primary_key]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_customer_keys (
+        customer_key int not null,
+        market_segment varchar(16),
+        created_at datetime,
+        primary key (customer_key)
+      )
+
+  - id: mysql_compat_temp_tables.011.show_columns_temp_table
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_metadata
+    compatibility: mysql
+    requires: [show_columns, temporary_table, primary_key]
+    sql: |
+      show columns from qs_mysql_compat_tmp_customer_keys
+    expect:
+      columns: [Field, Type, "Null", Key, Default, Extra]
+      rows:
+        - [customer_key, int, "NO", PRI, null, "NULL"]
+        - [market_segment, "varchar(16)", "YES", "", null, "NULL"]
+        - [created_at, datetime, "YES", "", null, "NULL"]
+
+  - id: mysql_compat_temp_tables.012.create_temp_table_if_not_exists_is_noop
+    status: supported
+    kind: statement
+    feature: temp_tables_lifecycle
+    compatibility: mysql
+    requires: [create_table, temporary_table, if_not_exists]
+    sql: |
+      create temporary table if not exists qs_mysql_compat_tmp_customer_keys (
+        customer_key int not null,
+        primary key (customer_key)
+      )
+
+  - id: mysql_compat_temp_tables.020.drop_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_customer_keys
+
+  - id: mysql_compat_temp_tables.021.drop_missing_temp_table_if_exists
+    status: supported
+    kind: statement
+    feature: temp_tables_lifecycle
+    compatibility: mysql
+    requires: [drop_table, temporary_table, if_exists]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_customer_keys

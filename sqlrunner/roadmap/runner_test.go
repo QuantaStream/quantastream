@@ -202,6 +202,43 @@ func TestEvaluateQueryKeepsBoolTextForBoolTypedResults(t *testing.T) {
 	}
 }
 
+func TestEvaluateQueryNormalizesColumnCaseForMySQLCompatibility(t *testing.T) {
+	test := TestCase{
+		ID:            "query.mysql_columns",
+		Status:        CaseSupported,
+		Kind:          "query",
+		Compatibility: "mysql",
+		Expect: Expected{
+			Columns: []string{"field", "type", "null"},
+		},
+	}
+	actual := QueryResult{
+		Columns: []string{"Field", "Type", "Null"},
+	}
+
+	if details := evaluateQuery(test, actual, nil); details != "" {
+		t.Fatalf("details = %q, want MySQL-compatible column case match", details)
+	}
+}
+
+func TestEvaluateQueryKeepsColumnCaseStrictOutsideMySQLCompatibility(t *testing.T) {
+	test := TestCase{
+		ID:     "query.strict_columns",
+		Status: CaseSupported,
+		Kind:   "query",
+		Expect: Expected{
+			Columns: []string{"field"},
+		},
+	}
+	actual := QueryResult{
+		Columns: []string{"Field"},
+	}
+
+	if details := evaluateQuery(test, actual, nil); details == "" {
+		t.Fatalf("details = empty, want strict column case mismatch")
+	}
+}
+
 func TestCompareRowsTreatsEquivalentNumericTextAsEqual(t *testing.T) {
 	expected := [][]Cell{{{Text: "1.193053225300001e+06"}}}
 	actual := [][]Cell{{{Text: "1193053.225300001"}}}

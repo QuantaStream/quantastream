@@ -200,11 +200,14 @@ type UnboundTruncate struct {
 	Blockers []NativeBlocker
 }
 
-// UnboundCreateTable describes a YAML-backed CREATE TABLE activation before binding.
+// UnboundCreateTable describes a CREATE TABLE operation before binding.
 type UnboundCreateTable struct {
-	Table    UnboundTable
-	Result   ResultShape
-	Blockers []NativeBlocker
+	Table       UnboundTable
+	Temporary   bool
+	IfNotExists bool
+	Columns     []FieldDefinition
+	Result      ResultShape
+	Blockers    []NativeBlocker
 }
 
 // UnboundCreateView describes a CREATE VIEW operation before binding.
@@ -218,10 +221,11 @@ type UnboundCreateView struct {
 
 // UnboundDropTable describes a DROP TABLE operation before binding.
 type UnboundDropTable struct {
-	Table    UnboundTable
-	IfExists bool
-	Result   ResultShape
-	Blockers []NativeBlocker
+	Table     UnboundTable
+	Temporary bool
+	IfExists  bool
+	Result    ResultShape
+	Blockers  []NativeBlocker
 }
 
 // UnboundDropView describes a DROP VIEW operation before binding.
@@ -853,8 +857,11 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 		return query, diagnostics
 	}
 	query.Mutation = MutationShape{
-		Kind:   MutationCreateTable,
-		Target: target,
+		Kind:        MutationCreateTable,
+		Target:      target,
+		Temporary:   createStmt.Temporary,
+		IfNotExists: createStmt.IfNotExists,
+		Columns:     createTableFieldRefs(target, createStmt.Columns),
 	}
 	return query, diagnostics
 }
@@ -895,14 +902,19 @@ func BindDropTable(context *BindContext, dropStmt UnboundDropTable) (QueryIR, Di
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
-	dependencies, dependencyDiagnostics := bindTruncateDependentRelationships(context, target)
-	if dependencyDiagnostics.BlocksNative() {
-		diagnostics = append(diagnostics, dependencyDiagnostics...)
-		return query, diagnostics
+	var dependencies []RelationshipDefinition
+	if !dropStmt.Temporary {
+		var dependencyDiagnostics DiagnosticSet
+		dependencies, dependencyDiagnostics = bindTruncateDependentRelationships(context, target)
+		if dependencyDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, dependencyDiagnostics...)
+			return query, diagnostics
+		}
 	}
 	query.Mutation = MutationShape{
 		Kind:                   MutationDropTable,
 		Target:                 target,
+		Temporary:              dropStmt.Temporary,
 		IfExists:               dropStmt.IfExists,
 		DependentRelationships: dependencies,
 	}
@@ -1736,6 +1748,14 @@ func describeTableFieldRefs(table TableDefinition, target TableInstance) []Field
 		fields = append(fields, field.Ref(target, FieldRoleVisible))
 	}
 	return fields
+}
+
+func createTableFieldRefs(target TableInstance, fields []FieldDefinition) []FieldRef {
+	refs := make([]FieldRef, 0, len(fields))
+	for _, field := range fields {
+		refs = append(refs, field.Ref(target, FieldRoleVisible|FieldRoleMutationTarget))
+	}
+	return refs
 }
 
 func describeViewFieldRefs(context *BindContext, view SQLViewDefinition) ([]FieldRef, DiagnosticSet) {

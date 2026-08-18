@@ -92,3 +92,44 @@ func TestExecutionResultSessionTransitionUsesAdapterProvidedBeforeSession(t *tes
 		t.Fatalf("transition = %#v, want timezone preview", transition)
 	}
 }
+
+func TestSessionContextPreviewSessionTransitionTracksTemporaryTables(t *testing.T) {
+	session := SessionContext{CurrentSchema: "quanta"}
+	table := TableDefinition{
+		Name:   "scratch_keys",
+		Fields: []FieldDefinition{{Name: "customer_key", Type: DataTypeInt, PrimaryKey: true}},
+	}
+
+	create := session.PreviewSessionTransition([]SessionAction{{
+		Kind:  SessionActionCreateTemporaryTable,
+		Name:  "scratch_keys",
+		Value: "quanta",
+		Table: table,
+	}})
+	if !create.Supported() {
+		t.Fatalf("create transition diagnostics = %#v, want supported", create.Diagnostics)
+	}
+	created, ok := create.After.TemporaryTables[temporaryTableKey("quanta", "scratch_keys")]
+	if !ok {
+		t.Fatalf("temporary tables = %#v, want scratch_keys", create.After.TemporaryTables)
+	}
+	if created.Schema != "quanta" || len(created.Fields) != 1 || created.Fields[0].Name != "customer_key" {
+		t.Fatalf("created temporary table = %#v", created)
+	}
+	if len(session.TemporaryTables) != 0 {
+		t.Fatalf("original session temporary tables = %#v, want unchanged", session.TemporaryTables)
+	}
+
+	reset := create.After.PreviewSessionTransition([]SessionAction{{Kind: SessionActionResetConnection}})
+	if len(reset.After.TemporaryTables) != 0 {
+		t.Fatalf("temporary tables after reset = %#v, want cleared", reset.After.TemporaryTables)
+	}
+
+	createAgain := create.After.PreviewSessionTransition([]SessionAction{{
+		Kind: SessionActionDropTemporaryTable,
+		Name: "scratch_keys",
+	}})
+	if len(createAgain.After.TemporaryTables) != 0 {
+		t.Fatalf("temporary tables after drop = %#v, want cleared", createAgain.After.TemporaryTables)
+	}
+}

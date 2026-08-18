@@ -150,3 +150,56 @@ func TestCachedCatalogReportsUnsupportedMetadataBackend(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want invalid execution option", diagnostics)
 	}
 }
+
+func TestSessionCatalogOverlaysTemporaryTables(t *testing.T) {
+	base := MemoryCatalog{
+		Schemas: []CatalogSchemaDefinition{{Name: "quanta"}},
+		Tables: []TableDefinition{
+			{Schema: "quanta", Name: "orders", Fields: []FieldDefinition{{Name: "o_orderkey", Type: DataTypeInt}}},
+			{Schema: "quanta", Name: "scratch_keys", Fields: []FieldDefinition{{Name: "durable_id", Type: DataTypeInt}}},
+		},
+		Views: []SQLViewDefinition{{Schema: "quanta", Name: "scratch_keys", SQL: "select o_orderkey from orders"}},
+	}
+	catalog := NewSessionCatalog(base, SessionContext{
+		CurrentSchema: "quanta",
+		TemporaryTables: map[string]TableDefinition{
+			temporaryTableKey("quanta", "scratch_keys"): {
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []FieldDefinition{{Name: "customer_key", Type: DataTypeInt, PrimaryKey: true}},
+			},
+		},
+	}, "quanta")
+
+	table, diagnostics := catalog.Table("", "scratch_keys")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("temporary table diagnostics = %#v", diagnostics)
+	}
+	if len(table.Fields) != 1 || table.Fields[0].Name != "customer_key" {
+		t.Fatalf("temporary table = %#v, want session-local definition", table)
+	}
+	columns, diagnostics := catalog.(CatalogMetadata).ListColumns("quanta", "scratch_keys")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("temporary columns diagnostics = %#v", diagnostics)
+	}
+	if len(columns) != 1 || columns[0].Name != "customer_key" {
+		t.Fatalf("temporary columns = %#v, want session-local definition", columns)
+	}
+	tables, diagnostics := catalog.(CatalogMetadata).ListTables("quanta")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("tables diagnostics = %#v", diagnostics)
+	}
+	if len(tables) != 2 || tables[0].Name != "orders" || tables[1].Name != "scratch_keys" || tables[1].Fields[0].Name != "customer_key" {
+		t.Fatalf("tables = %#v, want durable orders plus temporary scratch_keys shadow", tables)
+	}
+	if _, diagnostics := catalog.(ViewCatalog).View("quanta", "scratch_keys"); !containsDiagnosticCode(diagnostics.Codes(), DiagnosticCatalogViewNotFound) {
+		t.Fatalf("view diagnostics = %#v, want shadowed view not found", diagnostics)
+	}
+	views, diagnostics := catalog.(CatalogViewMetadata).ListViews("quanta")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("views diagnostics = %#v", diagnostics)
+	}
+	if len(views) != 0 {
+		t.Fatalf("views = %#v, want shadowed view omitted", views)
+	}
+}

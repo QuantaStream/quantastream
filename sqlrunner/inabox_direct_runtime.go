@@ -227,8 +227,14 @@ func inaboxDirectSuiteTables(suite *roadmap.Suite) []string {
 		case qsbridge.QueryKindDelete:
 			rememberTable(statement.Delete.Table)
 		case qsbridge.QueryKindCreateTable:
+			if statement.Create.Temporary {
+				continue
+			}
 			rememberTable(statement.Create.Table)
 		case qsbridge.QueryKindDropTable:
+			if statement.Drop.Temporary {
+				continue
+			}
 			rememberTable(statement.Drop.Table)
 		case qsbridge.QueryKindCreateView:
 			viewStatement, viewDiagnostics := parser.Parse(statement.CreateView.SQL)

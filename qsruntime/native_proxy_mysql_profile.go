@@ -16,6 +16,7 @@ type NativeProxyMySQLSessionProfile struct {
 	longData        *qsbridge.MemoryPreparedLongDataRegistry
 	longDataPayload map[string][]byte
 	parameterTypes  map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType
+	session         qsbridge.SessionContext
 }
 
 // NewNativeProxyMySQLSessionProfile creates an empty per-session profile store.
@@ -25,6 +26,43 @@ func NewNativeProxyMySQLSessionProfile() *NativeProxyMySQLSessionProfile {
 		longData:        qsbridge.NewMemoryPreparedLongDataRegistry(),
 		longDataPayload: make(map[string][]byte),
 		parameterTypes:  make(map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType),
+	}
+}
+
+// Session returns this MySQL connection's planning session metadata.
+func (p *NativeProxyMySQLSessionProfile) Session() qsbridge.SessionContext {
+	if p == nil {
+		return qsbridge.SessionContext{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.session.Clone()
+}
+
+// ApplySessionActions applies successful SQL session mutations to this connection.
+func (p *NativeProxyMySQLSessionProfile) ApplySessionActions(actions []qsbridge.SessionAction) qsbridge.DiagnosticSet {
+	if p == nil || len(actions) == 0 {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	transition := p.session.PreviewSessionTransition(actions)
+	if transition.Diagnostics.BlocksNative() {
+		return transition.Diagnostics
+	}
+	p.session = transition.After.Clone()
+	return nil
+}
+
+// SetCurrentSchema remembers the default database selected by the protocol connection.
+func (p *NativeProxyMySQLSessionProfile) SetCurrentSchema(schema string) {
+	if p == nil || schema == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.session.CurrentSchema == "" {
+		p.session.CurrentSchema = schema
 	}
 }
 

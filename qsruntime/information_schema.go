@@ -49,7 +49,7 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 }
 
 func (r SQLRuntime) informationSchemaSchemataRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
-	schemas := informationSchemaSchemaNames(r.Environment.Catalog, r.DefaultSchema)
+	schemas := informationSchemaSchemaNames(r.planningCatalog(), r.DefaultSchema)
 	rows := make([]informationSchemaRow, 0, len(schemas))
 	for _, schema := range schemas {
 		rows = append(rows, informationSchemaRow{
@@ -66,6 +66,7 @@ func (r SQLRuntime) informationSchemaSchemataRows() ([]informationSchemaRow, qsb
 }
 
 func (r SQLRuntime) informationSchemaTableRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	catalog := r.planningCatalog()
 	tables, diagnostics := r.catalogTablesForInformationSchema()
 	if diagnostics.BlocksNative() {
 		return nil, diagnostics
@@ -78,8 +79,8 @@ func (r SQLRuntime) informationSchemaTableRows() ([]informationSchemaRow, qsbrid
 			"TABLE_TYPE":   describeStringCell("BASE TABLE"),
 		})
 	}
-	if viewMetadata, ok := r.Environment.Catalog.(qsbridge.CatalogViewMetadata); ok {
-		for _, schema := range informationSchemaSchemaNames(r.Environment.Catalog, r.DefaultSchema) {
+	if viewMetadata, ok := catalog.(qsbridge.CatalogViewMetadata); ok {
+		for _, schema := range informationSchemaSchemaNames(catalog, r.DefaultSchema) {
 			views, viewDiagnostics := viewMetadata.ListViews(schema)
 			if viewDiagnostics.BlocksNative() {
 				return nil, viewDiagnostics
@@ -213,14 +214,15 @@ func informationSchemaCollationRows() []informationSchemaRow {
 }
 
 func (r SQLRuntime) catalogTablesForInformationSchema() ([]qsbridge.TableDefinition, qsbridge.DiagnosticSet) {
-	metadata, ok := r.Environment.Catalog.(qsbridge.CatalogMetadata)
+	catalog := r.planningCatalog()
+	metadata, ok := catalog.(qsbridge.CatalogMetadata)
 	if !ok {
 		return nil, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, "information_schema requires catalog metadata enumeration"),
 		}
 	}
 	tables := make([]qsbridge.TableDefinition, 0)
-	for _, schema := range informationSchemaSchemaNames(r.Environment.Catalog, r.DefaultSchema) {
+	for _, schema := range informationSchemaSchemaNames(catalog, r.DefaultSchema) {
 		schemaTables, diagnostics := metadata.ListTables(schema)
 		if diagnostics.BlocksNative() {
 			return nil, diagnostics

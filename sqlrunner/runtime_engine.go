@@ -272,10 +272,10 @@ func (e *runtimeRoadmapEngine) applySessionActions(result qsruntime.SQLExecution
 
 func runtimeRoadmapSessionActions(result qsruntime.SQLExecutionResult) []qsbridge.SessionAction {
 	if len(result.Runtime.Statement.SessionActions) > 0 {
-		return append([]qsbridge.SessionAction(nil), result.Runtime.Statement.SessionActions...)
+		return qsbridge.CloneSessionActions(result.Runtime.Statement.SessionActions)
 	}
 	if len(result.Request.Statement.SessionActions) > 0 {
-		return append([]qsbridge.SessionAction(nil), result.Request.Statement.SessionActions...)
+		return qsbridge.CloneSessionActions(result.Request.Statement.SessionActions)
 	}
 	return nil
 }

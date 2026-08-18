@@ -288,6 +288,44 @@ func TestSimpleParserBridgeParsesCreateTableStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateTemporaryTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`create temporary table if not exists qs_tmp_customer_keys (
+		customer_key bigint not null,
+		market_segment varchar(16),
+		revenue decimal(12,2),
+		created_at timestamp,
+		primary key (customer_key)
+	);`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable {
+		t.Fatalf("kind = %q, want create table", statement.Kind)
+	}
+	if !statement.Create.Temporary || !statement.Create.IfNotExists {
+		t.Fatalf("create flags temporary/if_not_exists = %t/%t, want true/true", statement.Create.Temporary, statement.Create.IfNotExists)
+	}
+	if statement.Create.Table.Name != "qs_tmp_customer_keys" {
+		t.Fatalf("table = %#v, want qs_tmp_customer_keys", statement.Create.Table)
+	}
+	fields := statement.Create.Columns
+	if len(fields) != 4 {
+		t.Fatalf("columns = %#v, want four columns", fields)
+	}
+	if fields[0].Name != "customer_key" || fields[0].Type != DataTypeInt || !fields[0].PrimaryKey || fields[0].Nullable {
+		t.Fatalf("customer_key column = %#v, want non-null int primary key", fields[0])
+	}
+	if fields[1].Name != "market_segment" || fields[1].Type != DataTypeString || fields[1].Encoding.MaxLength != 16 {
+		t.Fatalf("market_segment column = %#v, want varchar(16)", fields[1])
+	}
+	if fields[2].Name != "revenue" || fields[2].Type != DataTypeFloat || fields[2].Encoding.Scale != 2 {
+		t.Fatalf("revenue column = %#v, want decimal scale 2", fields[2])
+	}
+	if fields[3].Name != "created_at" || fields[3].Type != DataTypeTime {
+		t.Fatalf("created_at column = %#v, want timestamp/time", fields[3])
+	}
+}
+
 func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("drop table customers_qa;")
 	if diagnostics.BlocksNative() {
@@ -301,6 +339,22 @@ func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
 	}
 	if statement.Drop.Result.Kind != ResultStatement {
 		t.Fatalf("result kind = %q, want statement", statement.Drop.Result.Kind)
+	}
+}
+
+func TestSimpleParserBridgeParsesDropTemporaryTableIfExistsStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop temporary table if exists qs_tmp_customer_keys;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropTable {
+		t.Fatalf("kind = %q, want drop table", statement.Kind)
+	}
+	if statement.Drop.Table.Name != "qs_tmp_customer_keys" {
+		t.Fatalf("table = %#v, want qs_tmp_customer_keys", statement.Drop.Table)
+	}
+	if !statement.Drop.Temporary || !statement.Drop.IfExists {
+		t.Fatalf("drop flags temporary/if_exists = %t/%t, want true/true", statement.Drop.Temporary, statement.Drop.IfExists)
 	}
 }
 
@@ -905,6 +959,13 @@ func TestSimpleParserBridgeRejectsCreateTableAsSelect(t *testing.T) {
 	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_copy as select customer_id from customers_qa")
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("expected parser diagnostic for CREATE TABLE AS SELECT")
+	}
+}
+
+func TestSimpleParserBridgeRejectsCreateTemporaryTableAsSelect(t *testing.T) {
+	_, diagnostics := SimpleParserBridge{}.Parse("create temporary table customers_copy as select c_custkey from customer")
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("expected parser diagnostic for CREATE TEMPORARY TABLE AS SELECT")
 	}
 }
 

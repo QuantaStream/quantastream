@@ -142,6 +142,57 @@ func TestNativeProxyMySQLSessionProfileExposesLastQueryInstrumentation(t *testin
 	}
 }
 
+func TestNativeProxyMySQLCommandHandlerPersistsTemporaryTableMetadataInSession(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	create, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:     qsmysql.CommandKindQuery,
+		SQL:      "create temporary table scratch_keys (customer_key bigint not null, primary key (customer_key))",
+		Database: "quanta",
+	})
+	if err != nil {
+		t.Fatalf("HandleCommand create temporary table failed: %v", err)
+	}
+	if create.Kind != qsmysql.CommandResponseOK {
+		t.Fatalf("create response = %#v, want OK", create)
+	}
+	if executed {
+		t.Fatalf("CREATE TEMPORARY TABLE should not dispatch to the direct executor")
+	}
+	session := handler.Profile.Session()
+	if len(session.TemporaryTables) != 1 {
+		t.Fatalf("temporary tables = %#v, want one", session.TemporaryTables)
+	}
+
+	describe, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:     qsmysql.CommandKindQuery,
+		SQL:      "show columns from scratch_keys",
+		Database: "quanta",
+	})
+	if err != nil {
+		t.Fatalf("HandleCommand show columns failed: %v", err)
+	}
+	if describe.Kind != qsmysql.CommandResponseQuery {
+		t.Fatalf("describe response = %#v, want query", describe)
+	}
+	payloads := nativeProxyTestPacketPayloadText(describe.Packets)
+	if !strings.Contains(payloads, "customer_key") || !strings.Contains(payloads, "PRI") {
+		t.Fatalf("describe payloads missing temporary table metadata: %q", payloads)
+	}
+}
+
 func TestNativeProxyMySQLCommandHandlerExecutesPreparedStatement(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

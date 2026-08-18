@@ -1183,7 +1183,11 @@ func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 		vectors[offset].Values[i] = describeStringCell(describeNullability(column))
 		vectors[offset+1].Values[i] = describeStringCell(describeKey(column))
 		vectors[offset+2].Values[i] = describeNullCell()
-		vectors[offset+3].Values[i] = describeStringCell(describeExtra(column))
+		if extra := describeExtra(column); extra != "" {
+			vectors[offset+3].Values[i] = describeStringCell(extra)
+		} else {
+			vectors[offset+3].Values[i] = describeStringCell("NULL")
+		}
 		if full {
 			vectors[offset+4].Values[i] = describeStringCell("select,insert,update,references")
 			vectors[offset+5].Values[i] = describeStringCell("")
