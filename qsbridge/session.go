@@ -18,14 +18,15 @@ type SQLMode string
 // transaction state, network connection state, and runtime session storage stay
 // outside qsbridge.
 type SessionContext struct {
-	ID              SessionID
-	User            UserName
-	Roles           []RoleName
-	CurrentSchema   string
-	TimeZone        string
-	SQLModes        []SQLMode
-	Variables       map[string]string
-	TemporaryTables map[string]TableDefinition
+	ID                 SessionID
+	User               UserName
+	Roles              []RoleName
+	CurrentSchema      string
+	TimeZone           string
+	SQLModes           []SQLMode
+	Variables          map[string]string
+	TemporaryTables    map[string]TableDefinition
+	TemporaryTableRows map[string]TemporaryTableData
 }
 
 // Clone returns a copy whose slices and maps can be mutated independently.
@@ -44,6 +45,9 @@ func (s SessionContext) Clone() SessionContext {
 		for key, table := range s.TemporaryTables {
 			cloned.TemporaryTables[key] = cloneTableDefinition(table)
 		}
+	}
+	if s.TemporaryTableRows != nil {
+		cloned.TemporaryTableRows = cloneTemporaryTableRowsMap(s.TemporaryTableRows)
 	}
 	return cloned
 }

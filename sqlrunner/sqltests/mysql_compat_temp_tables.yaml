@@ -41,7 +41,36 @@ tests:
         - [market_segment, "varchar(16)", "YES", "", null, "NULL"]
         - [created_at, datetime, "YES", "", null, "NULL"]
 
-  - id: mysql_compat_temp_tables.012.create_temp_table_if_not_exists_is_noop
+  - id: mysql_compat_temp_tables.012.insert_temp_table_rows
+    status: supported
+    kind: statement
+    feature: temp_tables_dml
+    compatibility: mysql
+    requires: [insert, temporary_table]
+    sql: |
+      insert into qs_mysql_compat_tmp_customer_keys (customer_key, market_segment, created_at)
+      values (2, 'BUILDING', null), (1, 'AUTOMOBILE', null)
+
+  - id: mysql_compat_temp_tables.013.select_temp_table_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_dml
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select customer_key, market_segment
+      from qs_mysql_compat_tmp_customer_keys
+      where customer_key in (1, 2)
+      order by customer_key
+      limit 2
+    expect:
+      columns: [customer_key, market_segment]
+      rows:
+        - [1, AUTOMOBILE]
+        - [2, BUILDING]
+
+  - id: mysql_compat_temp_tables.014.create_temp_table_if_not_exists_is_noop
     status: supported
     kind: statement
     feature: temp_tables_lifecycle

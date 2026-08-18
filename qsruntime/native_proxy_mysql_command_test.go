@@ -193,6 +193,64 @@ func TestNativeProxyMySQLCommandHandlerPersistsTemporaryTableMetadataInSession(t
 	}
 }
 
+func TestNativeProxyMySQLCommandHandlerPersistsTemporaryTableRowsInSession(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	for _, sql := range []string{
+		"create temporary table scratch_keys (customer_key int not null, market_segment varchar(16), primary key (customer_key))",
+		"insert into scratch_keys (customer_key, market_segment) values (2, 'BUILDING'), (1, 'AUTOMOBILE')",
+	} {
+		response, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+			Kind:     qsmysql.CommandKindQuery,
+			SQL:      sql,
+			Database: "quanta",
+		})
+		if err != nil {
+			t.Fatalf("HandleCommand %q failed: %v", sql, err)
+		}
+		if response.Kind != qsmysql.CommandResponseOK {
+			t.Fatalf("response for %q = %#v, want OK", sql, response)
+		}
+	}
+	if executed {
+		t.Fatalf("temporary table DML should not dispatch to the direct executor")
+	}
+	session := handler.Profile.Session()
+	if got := len(session.TemporaryTableRows); got != 1 {
+		t.Fatalf("temporary row stores = %d, want one", got)
+	}
+
+	selectResult, err := handler.HandleCommand(context.Background(), qsmysql.Command{
+		Kind:     qsmysql.CommandKindQuery,
+		SQL:      "select customer_key, market_segment from scratch_keys order by customer_key",
+		Database: "quanta",
+	})
+	if err != nil {
+		t.Fatalf("HandleCommand select temporary table rows failed: %v", err)
+	}
+	if selectResult.Kind != qsmysql.CommandResponseQuery {
+		t.Fatalf("select response = %#v, want query", selectResult)
+	}
+	payloads := nativeProxyTestPacketPayloadText(selectResult.Packets)
+	for _, want := range []string{"customer_key", "market_segment", "AUTOMOBILE", "BUILDING"} {
+		if !strings.Contains(payloads, want) {
+			t.Fatalf("select payloads missing %q: %q", want, payloads)
+		}
+	}
+}
+
 func TestNativeProxyMySQLCommandHandlerExecutesPreparedStatement(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

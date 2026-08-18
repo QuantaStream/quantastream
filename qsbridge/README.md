@@ -1233,6 +1233,10 @@ transactions, or runtime session storage.
 of the durable catalog for binding and metadata reads. Temporary tables shadow
 durable tables or views within one session, but qsbridge still only describes
 the catalog view; runtime owns applying session actions.
+`temporary_table_rows.go` contains clone helpers for connection-local temporary
+table row payloads carried by session actions. Runtime owns INSERT/SELECT
+execution for those rows; qsbridge only keeps the session payload contract
+copy-safe.
 `session_registry.go` provides an optional in-memory session metadata registry
 for adapters that need to store authenticated sessions or apply session
 transitions during refactor work. It does not own network connections,

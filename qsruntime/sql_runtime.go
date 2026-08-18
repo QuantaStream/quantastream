@@ -178,6 +178,14 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindInsert {
+		if runtimeResult, diagnostics, ok := r.insertTemporaryTableRuntimeResult(request); ok {
+			result.Runtime = runtimeResult
+			result.Diagnostics = append(result.Diagnostics, diagnostics...)
+			result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
+			return result, nil
+		}
+	}
 	if prepared.Kind == qsbridge.QueryKindShowCreateView {
 		result.Runtime = showCreateViewRuntimeResult(request)
 		return result, nil
@@ -311,6 +319,12 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	if runtimeResult, diagnostics, ok := r.informationSchemaExecutionResult(request); ok {
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		return result, nil
+	}
+	if runtimeResult, diagnostics, ok := r.selectTemporaryTableRuntimeResult(request); ok {
+		result.Runtime = runtimeResult
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 		return result, nil
 	}
 

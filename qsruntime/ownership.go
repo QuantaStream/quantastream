@@ -194,7 +194,8 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"runtime_profile.go",
 		"service.go",
 		"sql_runtime.go",
-		"temp_table.go":
+		"temp_table.go",
+		"temp_table_rows.go":
 		return true
 	default:
 		return false

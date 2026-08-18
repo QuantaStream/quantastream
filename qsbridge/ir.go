@@ -526,7 +526,19 @@ const (
 	SessionActionCreateTemporaryTable SessionActionKind = "create_temporary_table"
 	// SessionActionDropTemporaryTable asks the protocol/session owner to remove connection-local table metadata.
 	SessionActionDropTemporaryTable SessionActionKind = "drop_temporary_table"
+	// SessionActionInsertTemporaryRows asks the protocol/session owner to append connection-local temporary table rows.
+	SessionActionInsertTemporaryRows SessionActionKind = "insert_temporary_rows"
 )
+
+// TemporaryTableRow stores one connection-local temporary table row.
+type TemporaryTableRow struct {
+	Values ResultRow
+}
+
+// TemporaryTableData stores connection-local row payloads for a temporary table.
+type TemporaryTableData struct {
+	Rows []TemporaryTableRow
+}
 
 // SessionAction records a requested session change without applying it.
 type SessionAction struct {
@@ -534,6 +546,7 @@ type SessionAction struct {
 	Name  string
 	Value string
 	Table TableDefinition
+	Rows  []TemporaryTableRow
 }
 
 // MutationKind classifies the write operation represented by MutationShape.

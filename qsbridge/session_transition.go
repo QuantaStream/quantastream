@@ -77,7 +77,14 @@ func (s SessionContext) withSessionAction(action SessionAction) SessionContext {
 			if s.TemporaryTables == nil {
 				s.TemporaryTables = make(map[string]TableDefinition, 1)
 			}
-			s.TemporaryTables[temporaryTableKey(table.Schema, table.Name)] = table
+			key := temporaryTableKey(table.Schema, table.Name)
+			s.TemporaryTables[key] = table
+			if s.TemporaryTableRows == nil {
+				s.TemporaryTableRows = make(map[string]TemporaryTableData, 1)
+			}
+			if _, exists := s.TemporaryTableRows[key]; !exists {
+				s.TemporaryTableRows[key] = TemporaryTableData{}
+			}
 		}
 	case SessionActionDropTemporaryTable:
 		tableName := strings.TrimSpace(action.Name)
@@ -85,8 +92,29 @@ func (s SessionContext) withSessionAction(action SessionAction) SessionContext {
 		if schemaName == "" {
 			schemaName = s.EffectiveSchema("")
 		}
-		if tableName != "" && s.TemporaryTables != nil {
-			delete(s.TemporaryTables, temporaryTableKey(schemaName, tableName))
+		if tableName != "" {
+			key := temporaryTableKey(schemaName, tableName)
+			if s.TemporaryTables != nil {
+				delete(s.TemporaryTables, key)
+			}
+			if s.TemporaryTableRows != nil {
+				delete(s.TemporaryTableRows, key)
+			}
+		}
+	case SessionActionInsertTemporaryRows:
+		tableName := strings.TrimSpace(action.Name)
+		schemaName := strings.TrimSpace(action.Value)
+		if schemaName == "" {
+			schemaName = s.EffectiveSchema("")
+		}
+		if tableName != "" && len(action.Rows) > 0 {
+			key := temporaryTableKey(schemaName, tableName)
+			if s.TemporaryTableRows == nil {
+				s.TemporaryTableRows = make(map[string]TemporaryTableData, 1)
+			}
+			data := cloneTemporaryTableData(s.TemporaryTableRows[key])
+			data.Rows = append(data.Rows, cloneTemporaryTableRows(action.Rows)...)
+			s.TemporaryTableRows[key] = data
 		}
 	}
 	return s

@@ -53,6 +53,7 @@ func CloneSessionActions(actions []SessionAction) []SessionAction {
 	cloned := make([]SessionAction, 0, len(actions))
 	for _, action := range actions {
 		action.Table = cloneTableDefinition(action.Table)
+		action.Rows = cloneTemporaryTableRows(action.Rows)
 		cloned = append(cloned, action)
 	}
 	return cloned
