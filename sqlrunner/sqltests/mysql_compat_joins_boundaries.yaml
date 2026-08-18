@@ -168,13 +168,12 @@ tests:
         - [6, 0]
 
   - id: mysql_compat_joins_boundaries.009.derived_table_grouped_join
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_derived_table_boundary
     compatibility: mysql
     requires: [select, derived_table, inner_join, group_by, count, aliases, order_by]
-    issue: "Grouped aggregate derived tables inside joins require materialization or a proven-safe aggregate join rewrite."
     sql: |
       select c.c_custkey as customer_key, s.order_count
       from customer as c
@@ -190,6 +189,34 @@ tests:
       rows:
         - [1, 9]
         - [2, 10]
+
+  - id: mysql_compat_joins_boundaries.012.derived_table_grouped_join_filter_order_limit
+    status: supported
+    kind: query
+    order: exact
+    feature: joins_derived_table_boundary
+    compatibility: mysql
+    requires: [select, derived_table, inner_join, group_by, count, where, between, order_by, limit]
+    sql: |
+      select c.c_custkey as customer_key, s.order_count
+      from customer as c
+      inner join (
+        select o_custkey, count(*) as order_count
+        from orders
+        where o_orderdate < '1995-03-15'
+        group by o_custkey
+      ) as s on s.o_custkey = c.c_custkey
+      where c.c_custkey between 1 and 100
+      order by s.order_count desc, c.c_custkey
+      limit 5
+    expect:
+      columns: [customer_key, order_count]
+      rows:
+        - [79, 16]
+        - [10, 14]
+        - [52, 14]
+        - [73, 14]
+        - [61, 13]
 
   - id: mysql_compat_joins_boundaries.010.correlated_subquery_in_join_on
     status: xfail

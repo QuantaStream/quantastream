@@ -45,6 +45,10 @@ type viewProjectionMap struct {
 	exprs    map[string]UnboundExpr
 }
 
+type groupedAggregateLogicalSourceUsage struct {
+	outerGroupBy []UnboundExpr
+}
+
 func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelect, DiagnosticSet) {
 	if len(selectStmt.Tables) == 0 {
 		return selectStmt, nil
@@ -117,9 +121,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	}
 	selectStmt.Tables = tables
 	selectStmt.Joins = append(joins, selectStmt.Joins...)
+	var groupedUsage groupedAggregateLogicalSourceUsage
 	if len(expansion.aggregates) > 0 {
 		if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
-			if diagnostics := validateGroupedAggregateLogicalSourceUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+			var diagnostics DiagnosticSet
+			groupedUsage, diagnostics = s.validateGroupedAggregateLogicalSourceUsage(selectStmt, expansion)
+			if diagnostics.BlocksNative() {
 				return selectStmt, diagnostics
 			}
 		} else {
@@ -140,6 +147,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		return selectStmt, rewriteDiagnostics
 	}
 	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
+	selectStmt.GroupBy = append(groupedUsage.outerGroupBy, selectStmt.GroupBy...)
 	selectStmt.GroupBy = append(expansion.groupBy, selectStmt.GroupBy...)
 	selectStmt.Aggregates = append(expansion.aggregates, selectStmt.Aggregates...)
 	selectStmt.Having = append(expansion.having, selectStmt.Having...)
@@ -472,33 +480,40 @@ func validateAggregateViewUsage(selectStmt UnboundSelect, expansion viewExpansio
 	return nil
 }
 
-func validateGroupedAggregateLogicalSourceUsage(selectStmt UnboundSelect, expansion viewExpansion) DiagnosticSet {
-	if len(selectStmt.Tables) != len(expansion.tables) || len(selectStmt.Joins) > len(expansion.joins) || selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 {
-		return DiagnosticSet{
+func (s viewExpansionState) validateGroupedAggregateLogicalSourceUsage(selectStmt UnboundSelect, expansion viewExpansion) (groupedAggregateLogicalSourceUsage, DiagnosticSet) {
+	usage, diagnostics := s.groupedAggregateLogicalSourceUsage(selectStmt, expansion)
+	if diagnostics.BlocksNative() {
+		return usage, diagnostics
+	}
+	if selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 {
+		return usage, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support direct projection, key predicates, and ordering only"),
 		}
 	}
 	for _, projection := range selectStmt.Projection {
 		field, ok := projection.Expr.(UnboundFieldExpr)
 		if !ok || field.Name == "*" {
-			return DiagnosticSet{
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently require explicit projected columns"),
 			}
 		}
 		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
-			return DiagnosticSet{
+			if unboundExprInList(field, usage.outerGroupBy) {
+				continue
+			}
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support direct projection only"),
 			}
 		}
 		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
-			return DiagnosticSet{
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
 			}
 		}
 	}
 	for _, predicate := range selectStmt.Predicates {
 		if logicalSourceExprReferencesAggregateMappedColumn(predicate.Expr, expansion) {
-			return DiagnosticSet{
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "outer predicates on grouped aggregate columns are not supported yet"),
 			}
 		}
@@ -509,17 +524,171 @@ func validateGroupedAggregateLogicalSourceUsage(selectStmt UnboundSelect, expans
 			continue
 		}
 		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
-			return DiagnosticSet{
+			if unboundExprInList(field, usage.outerGroupBy) {
+				continue
+			}
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support ordering by derived columns only"),
 			}
 		}
 		if _, ok := expansionMappedExpr(expansion, field.Name); !ok {
-			return DiagnosticSet{
+			return usage, DiagnosticSet{
 				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "view column not found: "+expansion.viewRef+"."+field.Name),
 			}
 		}
 	}
-	return nil
+	return usage, nil
+}
+
+func (s viewExpansionState) groupedAggregateLogicalSourceUsage(selectStmt UnboundSelect, expansion viewExpansion) (groupedAggregateLogicalSourceUsage, DiagnosticSet) {
+	if len(selectStmt.Tables) == len(expansion.tables) && len(selectStmt.Joins) <= len(expansion.joins) {
+		return groupedAggregateLogicalSourceUsage{}, nil
+	}
+	if len(expansion.tables) != 1 || len(expansion.joins) != 0 || len(expansion.having) != 0 || len(selectStmt.Tables) != 2 || len(selectStmt.Joins) != 1 {
+		return groupedAggregateLogicalSourceUsage{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources currently support direct projection, key predicates, and ordering only"),
+		}
+	}
+	join := selectStmt.Joins[0]
+	if joinKindOrInner(join.Kind) != JoinKindInner || join.Operator != "" && join.Operator != BinaryOpEqual || len(join.Predicates) > 0 {
+		return groupedAggregateLogicalSourceUsage{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical sources in joins require a simple INNER equality join"),
+		}
+	}
+	derivedField, outerField, ok := groupedAggregateLogicalSourceJoinFields(join, expansion)
+	if !ok {
+		return groupedAggregateLogicalSourceUsage{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical source joins must use a projected GROUP BY key"),
+		}
+	}
+	if !s.groupedAggregateLogicalSourceJoinIsUnique(selectStmt, expansion, derivedField, outerField) {
+		return groupedAggregateLogicalSourceUsage{}, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "grouped aggregate logical source joins require a unique non-derived join key"),
+		}
+	}
+	return groupedAggregateLogicalSourceUsage{outerGroupBy: []UnboundExpr{outerField}}, nil
+}
+
+func groupedAggregateLogicalSourceJoinFields(join UnboundJoin, expansion viewExpansion) (UnboundFieldExpr, UnboundFieldExpr, bool) {
+	left := UnboundField(join.LeftQualifier, join.LeftField)
+	right := UnboundField(join.RightQualifier, join.RightField)
+	if groupedAggregateLogicalSourceFieldIsGroupKey(left, expansion) {
+		return left, right, right.Qualifier != "" && right.Name != ""
+	}
+	if groupedAggregateLogicalSourceFieldIsGroupKey(right, expansion) {
+		return right, left, left.Qualifier != "" && left.Name != ""
+	}
+	return UnboundFieldExpr{}, UnboundFieldExpr{}, false
+}
+
+func groupedAggregateLogicalSourceFieldIsGroupKey(field UnboundFieldExpr, expansion viewExpansion) bool {
+	if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, expansion.viewRef) {
+		return false
+	}
+	if field.Name == "" || field.Name == "*" {
+		return false
+	}
+	mapped, ok := expansionMappedExpr(expansion, field.Name)
+	if !ok {
+		mapped = field
+	}
+	return unboundExprInList(mapped, expansion.groupBy)
+}
+
+func (s viewExpansionState) groupedAggregateLogicalSourceJoinIsUnique(selectStmt UnboundSelect, expansion viewExpansion, derivedField UnboundFieldExpr, outerField UnboundFieldExpr) bool {
+	if s.catalog == nil {
+		return false
+	}
+	outerTable, ok := unboundTableForRef(selectStmt.Tables, outerField.Qualifier)
+	if !ok {
+		return false
+	}
+	definition, diagnostics := s.catalog.Table(s.schemaForTable(outerTable), outerTable.Name)
+	if diagnostics.BlocksNative() {
+		return false
+	}
+	if field, ok := definition.Field(outerField.Name); ok && field.PrimaryKey {
+		return true
+	}
+	derivedTable := expansion.tables[0]
+	return s.catalogHasManyToOneRelationship(derivedTable, derivedField.Name, outerTable, outerField.Name)
+}
+
+func (s viewExpansionState) catalogHasManyToOneRelationship(childTable UnboundTable, childField string, parentTable UnboundTable, parentField string) bool {
+	catalog, ok := s.catalog.(DependentRelationshipCatalog)
+	if !ok {
+		return false
+	}
+	relationships, diagnostics := catalog.DependentRelationships(s.schemaForTable(parentTable), parentTable.Name)
+	if diagnostics.BlocksNative() {
+		return false
+	}
+	for _, relationship := range relationships {
+		if !strings.EqualFold(relationship.ChildTable(), childTable.Name) || !strings.EqualFold(relationship.ParentTable(), parentTable.Name) {
+			continue
+		}
+		if !relationshipFieldMatches(relationshipChildField(relationship), childField) || !relationshipFieldMatches(relationshipParentField(relationship), parentField) {
+			continue
+		}
+		if strings.EqualFold(relationship.Cardinality, "many_to_one") || relationship.Direction == JoinChildToParent {
+			return true
+		}
+	}
+	return false
+}
+
+func relationshipChildField(relationship RelationshipDefinition) string {
+	switch relationship.Direction {
+	case JoinParentToChild:
+		return relationship.ToField
+	default:
+		return relationship.FromField
+	}
+}
+
+func relationshipParentField(relationship RelationshipDefinition) string {
+	switch relationship.Direction {
+	case JoinParentToChild:
+		return relationship.FromField
+	default:
+		return relationship.ToField
+	}
+}
+
+func relationshipFieldMatches(relationshipField string, field string) bool {
+	return relationshipField == "" || strings.EqualFold(relationshipField, field)
+}
+
+func unboundTableForRef(tables []UnboundTable, ref string) (UnboundTable, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return UnboundTable{}, false
+	}
+	for _, table := range tables {
+		if _, ok := tableAliases(table)[strings.ToLower(ref)]; ok {
+			return table, true
+		}
+	}
+	return UnboundTable{}, false
+}
+
+func unboundExprInList(expr UnboundExpr, exprs []UnboundExpr) bool {
+	for _, candidate := range exprs {
+		if unboundExprEqual(expr, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func unboundExprEqual(left UnboundExpr, right UnboundExpr) bool {
+	switch l := left.(type) {
+	case UnboundFieldExpr:
+		r, ok := right.(UnboundFieldExpr)
+		return ok && strings.EqualFold(l.Qualifier, r.Qualifier) && strings.EqualFold(l.Name, r.Name)
+	default:
+		return false
+	}
 }
 
 func logicalSourceExprReferencesAggregateMappedColumn(expr UnboundExpr, expansion viewExpansion) bool {

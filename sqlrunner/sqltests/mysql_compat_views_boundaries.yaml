@@ -358,12 +358,11 @@ tests:
       group by c_mktsegment
 
   - id: mysql_compat_views_boundaries.081.select_grouped_aggregate_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_group_boundary
     compatibility: mysql
     requires: [select, view_reference, group_by, aggregate]
-    issue: "GROUP BY inside view definitions is not expandable yet."
     sql: |
       select market_segment, customer_count
       from qs_mysql_compat_grouped_aggregate_view
@@ -393,12 +392,11 @@ tests:
       having customer_count > 0
 
   - id: mysql_compat_views_boundaries.091.select_having_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_group_boundary
     compatibility: mysql
     requires: [select, view_reference, group_by, having]
-    issue: "HAVING inside view definitions is not expandable yet."
     sql: |
       select market_segment, customer_count
       from qs_mysql_compat_having_view

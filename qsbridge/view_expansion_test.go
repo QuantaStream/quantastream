@@ -217,6 +217,60 @@ func TestPlannerExpandsGroupedAggregateDerivedTable(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsGroupedAggregateDerivedTableJoinedOnUniqueKey(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select c.c_custkey as customer_key, s.order_count
+		from customer as c
+		inner join (
+			select o_custkey, count(*) as order_count
+			from orders
+			group by o_custkey
+		) as s on s.o_custkey = c.c_custkey
+		where c.c_custkey in (1, 2, 3)
+		order by c.c_custkey
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 2 {
+		t.Fatalf("sources = %#v, want customer + orders", result.Query.Sources)
+	}
+	if result.Query.Sources[0].Table != "customer" || result.Query.Sources[0].RefName() != "c" {
+		t.Fatalf("source[0] = %#v, want customer as c", result.Query.Sources[0])
+	}
+	if result.Query.Sources[1].Table != "orders" || result.Query.Sources[1].RefName() != "s" {
+		t.Fatalf("source[1] = %#v, want orders as s", result.Query.Sources[1])
+	}
+	if len(result.Query.Joins) != 1 {
+		t.Fatalf("joins = %#v, want one join", result.Query.Joins)
+	}
+	if got, want := result.Query.Joins[0].Left.QualifiedName(), "s.o_custkey"; got != want {
+		t.Fatalf("join left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[0].Right.QualifiedName(), "c.c_custkey"; got != want {
+		t.Fatalf("join right = %q, want %q", got, want)
+	}
+	if len(result.Query.GroupBy) != 2 {
+		t.Fatalf("group by = %#v, want derived and outer join keys", result.Query.GroupBy)
+	}
+	if !exprReferencesField(result.Query.GroupBy[0], "s", "o_custkey") || !exprReferencesField(result.Query.GroupBy[1], "c", "c_custkey") {
+		t.Fatalf("group by = %#v, want s.o_custkey then c.c_custkey", result.Query.GroupBy)
+	}
+	ref, ok := result.Query.Projection[1].Expr.(AggregateRefExpr)
+	if !ok || ref.Alias != "order_count" || ref.Index != 0 {
+		t.Fatalf("projection[1] = %#v, want order_count aggregate ref", result.Query.Projection[1].Expr)
+	}
+	if len(result.Query.OrderBy) != 1 || !exprReferencesField(result.Query.OrderBy[0].Expr, "c", "c_custkey") {
+		t.Fatalf("order by = %#v, want c.c_custkey", result.Query.OrderBy)
+	}
+}
+
 func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{
