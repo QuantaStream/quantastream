@@ -566,6 +566,40 @@ func TestUnboundStatementBindCreateView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateNestedViewExpandsBaseView(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_names",
+		SQL:    "select c_custkey as customer_key, c_name as customer_name from customer",
+	}}
+	context := NewBindContext(catalog, "quanta")
+	statement := UnboundStatement{
+		SQL:  "create or replace view customer_names_copy as select customer_key, customer_name from customer_names",
+		Kind: QueryKindCreateView,
+		CreateView: UnboundCreateView{
+			View:    UnboundTable{Name: "customer_names_copy"},
+			SQL:     "select customer_key, customer_name from customer_names",
+			Replace: true,
+			Result:  ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.Kind != MutationCreateView {
+		t.Fatalf("Mutation.Kind = %q, want create_view", query.Mutation.Kind)
+	}
+	if query.Mutation.ViewSQL != "select customer_key, customer_name from customer_names" {
+		t.Fatalf("ViewSQL = %q", query.Mutation.ViewSQL)
+	}
+	if len(query.Mutation.ViewDependencies) != 1 || query.Mutation.ViewDependencies[0].Table != "customer" {
+		t.Fatalf("ViewDependencies = %#v, want expanded customer dependency", query.Mutation.ViewDependencies)
+	}
+}
+
 func TestUnboundStatementBindCreateViewInlineColumnList(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create or replace view customer_names (customer_key, customer_name) as select c_custkey, c_name from customer")

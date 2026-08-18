@@ -884,6 +884,11 @@ func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR
 		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE VIEW must use a SELECT statement"))
 		return query, diagnostics
 	}
+	viewStatement, viewDiagnostics = ExpandStatementViews(context.Catalog, SimpleParserBridge{}, context.DefaultSchema, viewStatement)
+	if viewDiagnostics.BlocksNative() {
+		diagnostics = append(diagnostics, viewDiagnostics...)
+		return query, diagnostics
+	}
 	viewQuery, selectDiagnostics := BindSelect(context, viewStatement.Select)
 	if selectDiagnostics.BlocksNative() {
 		diagnostics = append(diagnostics, selectDiagnostics...)

@@ -266,28 +266,30 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.061.create_nested_view
-    status: xfail
+    status: supported
     kind: statement
     feature: views_nested_boundary
     compatibility: mysql
     requires: [create_view, nested_view]
-    issue: "CREATE VIEW definitions that reference another view are not accepted yet."
     sql: |
       create or replace view qs_mysql_compat_nested_view as
       select customer_key, customer_name
       from qs_mysql_compat_nested_base_view
 
   - id: mysql_compat_views_boundaries.062.select_nested_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_nested_boundary
     compatibility: mysql
     requires: [select, view_reference, nested_view]
-    issue: "Nested view references are not expandable yet."
     sql: |
       select customer_key, customer_name
       from qs_mysql_compat_nested_view
       where customer_key = 1
+    expect:
+      columns: [customer_key, customer_name]
+      rows:
+        - [1, "Customer#000000001"]
 
   - id: mysql_compat_views_boundaries.063.drop_nested_view
     status: supported
