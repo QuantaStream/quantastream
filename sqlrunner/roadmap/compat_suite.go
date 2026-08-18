@@ -20,6 +20,9 @@ func BuildCompatibilityExpectedSuite(source *Suite, expected CompatibilityExpect
 	}
 	for i, test := range source.Tests {
 		generated.Tests[i] = test
+		if compatibilityExpectedShouldPreserveSource(test.Expect) {
+			continue
+		}
 		captured, ok := capturedByID[test.ID]
 		if !ok {
 			continue
@@ -27,6 +30,13 @@ func BuildCompatibilityExpectedSuite(source *Suite, expected CompatibilityExpect
 		generated.Tests[i].Expect = captured.ExpectedBlock()
 	}
 	return generated
+}
+
+func compatibilityExpectedShouldPreserveSource(expected Expected) bool {
+	if expected.Rows != nil || expected.AffectedRows != nil || expected.Error != "" {
+		return false
+	}
+	return len(expected.Columns) > 0 || len(expected.Types) > 0 || expected.RowCount != nil
 }
 
 // ExpectedBlock converts a captured reference result into a SQLRunner expectation.

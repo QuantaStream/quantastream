@@ -459,3 +459,61 @@ func TestBuildCompatibilityExpectedSuiteCanBeParsedAsRoadmapSuite(t *testing.T) 
 		t.Fatalf("parsed expected value = %#v, want 7", got)
 	}
 }
+
+func TestBuildCompatibilityExpectedSuitePreservesShapeOnlyExpectations(t *testing.T) {
+	expectedRows := 1
+	suite := &Suite{
+		Version: 1,
+		Name:    "metadata-capture",
+		Tests: []TestCase{{
+			ID:            "metadata.001.show_create_view",
+			Status:        CaseSupported,
+			Kind:          "query",
+			Feature:       "views_metadata_boundary",
+			Compatibility: CompatibilityMySQL,
+			SQL:           "show create view customer_names",
+			Expect: Expected{
+				Columns:  []string{"View", "Create View", "character_set_client", "collation_connection"},
+				RowCount: &expectedRows,
+			},
+		}, {
+			ID:            "metadata.002.empty_exact_rows",
+			Status:        CaseSupported,
+			Kind:          "query",
+			Feature:       "views_metadata_boundary",
+			Compatibility: CompatibilityMySQL,
+			SQL:           "select 1 where 0 = 1",
+			Expect: Expected{
+				Columns: []string{"one"},
+				Rows:    [][]interface{}{},
+			},
+		}},
+	}
+	captured := NewCompatibilityExpectedFile(suite, []CompatibilityExpectedCase{{
+		ID:      "metadata.001.show_create_view",
+		Kind:    "query",
+		Columns: []string{"View", "Create View", "character_set_client", "collation_connection"},
+		Rows: [][]CompatibilityCell{{
+			{Text: "customer_names"},
+			{Text: "CREATE ALGORITHM=UNDEFINED DEFINER=`bench`@`127.0.0.1` SQL SECURITY DEFINER VIEW `customer_names` AS select 1"},
+			{Text: "utf8mb4"},
+			{Text: "utf8mb4_0900_ai_ci"},
+		}},
+	}, {
+		ID:      "metadata.002.empty_exact_rows",
+		Kind:    "query",
+		Columns: []string{"one"},
+		Rows:    [][]CompatibilityCell{{{Text: "captured"}}},
+	}})
+
+	generated := BuildCompatibilityExpectedSuite(suite, captured)
+	if got := generated.Tests[0].Expect.RowCount; got == nil || *got != expectedRows {
+		t.Fatalf("row count expectation = %#v, want %d", got, expectedRows)
+	}
+	if len(generated.Tests[0].Expect.Rows) != 0 {
+		t.Fatalf("rows expectation = %#v, want preserved shape-only expectation", generated.Tests[0].Expect.Rows)
+	}
+	if got := generated.Tests[1].Expect.Rows; len(got) != 1 || got[0][0] != "captured" {
+		t.Fatalf("explicit rows expectation = %#v, want captured rows", got)
+	}
+}
