@@ -134,10 +134,6 @@ Primary goals:
 
 Planned areas:
 
-- production multi-node deployment hardening
-- improved caching and query reuse
-- replication, failover, and recovery workflows
-- richer management and observability APIs
 - standards-based authentication and authorization integration
 - analyzer tooling to infer schema candidates from sample data
 
@@ -149,7 +145,6 @@ Longer-term direction:
 - multi-region and multi-data-center topology support
 - active/active high availability and disaster recovery
 - advanced workload management and optimizer guidance
-- deeper performance work in Roaring Bitmap and BSI execution paths
 
 ## Documentation
 
