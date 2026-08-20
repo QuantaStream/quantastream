@@ -617,6 +617,7 @@ type MutationShape struct {
 	IfExists               bool
 	IfNotExists            bool
 	Temporary              bool
+	Cascade                bool
 	ViewDependencies       []TableInstance
 	Columns                []FieldRef
 	Rows                   []MutationRow

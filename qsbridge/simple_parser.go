@@ -1427,6 +1427,18 @@ func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Dia
 	if dropBody == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW must include a view"), false
 	}
+	cascade := false
+	terms := strings.Fields(dropBody)
+	if len(terms) > 1 {
+		last := terms[len(terms)-1]
+		switch {
+		case strings.EqualFold(last, "cascade"):
+			cascade = true
+			dropBody = strings.TrimSpace(strings.TrimSuffix(dropBody, last))
+		case strings.EqualFold(last, "restrict"):
+			dropBody = strings.TrimSpace(strings.TrimSuffix(dropBody, last))
+		}
+	}
 	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP VIEW only supports one view name"), false
 	}
@@ -1443,6 +1455,7 @@ func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Dia
 		DropView: UnboundDropView{
 			View:     view,
 			IfExists: ifExists,
+			Cascade:  cascade,
 			Result:   ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true

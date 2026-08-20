@@ -595,8 +595,14 @@ func TestUnboundStatementBindCreateNestedViewExpandsBaseView(t *testing.T) {
 	if query.Mutation.ViewSQL != "select customer_key, customer_name from customer_names" {
 		t.Fatalf("ViewSQL = %q", query.Mutation.ViewSQL)
 	}
-	if len(query.Mutation.ViewDependencies) != 1 || query.Mutation.ViewDependencies[0].Table != "customer" {
-		t.Fatalf("ViewDependencies = %#v, want expanded customer dependency", query.Mutation.ViewDependencies)
+	if len(query.Mutation.ViewDependencies) != 2 {
+		t.Fatalf("ViewDependencies = %#v, want direct view and expanded table dependencies", query.Mutation.ViewDependencies)
+	}
+	if query.Mutation.ViewDependencies[0].Table != "customer_names" || query.Mutation.ViewDependencies[0].Role != "VIEW" {
+		t.Fatalf("ViewDependencies[0] = %#v, want direct customer_names view dependency", query.Mutation.ViewDependencies[0])
+	}
+	if query.Mutation.ViewDependencies[1].Table != "customer" {
+		t.Fatalf("ViewDependencies[1] = %#v, want expanded customer table dependency", query.Mutation.ViewDependencies[1])
 	}
 }
 
@@ -1414,6 +1420,30 @@ func TestUnboundStatementBindDropViewIfExists(t *testing.T) {
 	}
 	if !query.Mutation.IfExists {
 		t.Fatalf("Mutation.IfExists = false, want true")
+	}
+}
+
+func TestUnboundStatementBindDropViewCascade(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement := UnboundStatement{
+		SQL:  "drop view customer_names cascade",
+		Kind: QueryKindDropView,
+		DropView: UnboundDropView{
+			View:    UnboundTable{Name: "customer_names"},
+			Cascade: true,
+			Result:  ResultShape{Kind: ResultStatement},
+		},
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.Kind != MutationDropView {
+		t.Fatalf("Mutation.Kind = %q, want drop_view", query.Mutation.Kind)
+	}
+	if !query.Mutation.Cascade {
+		t.Fatalf("Mutation.Cascade = false, want true")
 	}
 }
 

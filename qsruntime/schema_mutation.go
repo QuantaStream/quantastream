@@ -111,9 +111,9 @@ func (h LegacyQuantaSessionHandle) DropView(ctx context.Context, request Executi
 		return qsbridge.StatementResult{}, nil, err
 	}
 	if consul := h.schemaMutationConsul(); consul != nil {
-		return h.dropConsulCatalogView(ctx, consul, viewName, request.Mutation.IfExists)
+		return h.dropConsulCatalogView(ctx, consul, schemaName, viewName, request.Mutation.IfExists, request.Mutation.Cascade)
 	}
-	return h.dropFileCatalogView(ctx, schemaName, viewName, request.Mutation.IfExists)
+	return h.dropFileCatalogView(ctx, schemaName, viewName, request.Mutation.IfExists, request.Mutation.Cascade)
 }
 
 func (h LegacyQuantaSessionHandle) createFileCatalogTable(ctx context.Context, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
@@ -249,33 +249,59 @@ func (h LegacyQuantaSessionHandle) createFileCatalogView(ctx context.Context, sc
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s created", viewName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropFileCatalogView(ctx context.Context, schemaName, viewName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) dropFileCatalogView(ctx context.Context, schemaName, viewName string, ifExists bool, cascade bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
 		}, nil
 	}
 	configDir := h.Session.BasePath
-	active, err := shared.CatalogViewActive(configDir, schemaName, viewName)
-	if err != nil {
-		return qsbridge.StatementResult{}, nil, err
-	}
-	if !active {
-		if ifExists {
-			return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
-		}
-		return qsbridge.StatementResult{}, nil, fmt.Errorf("view %s doesn't exist", viewName)
-	}
-	if err := shared.RemoveViewDefinition(configDir, viewName); err != nil {
-		return qsbridge.StatementResult{}, nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return qsbridge.StatementResult{}, nil, err
-	}
-	if err := shared.RemoveCatalogView(configDir, schemaName, viewName); err != nil {
+	if err := dropFileCatalogViewRecursive(ctx, configDir, schemaName, viewName, ifExists, cascade, map[string]struct{}{}); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
+}
+
+func dropFileCatalogViewRecursive(ctx context.Context, configDir, schemaName, viewName string, ifExists bool, cascade bool, visited map[string]struct{}) error {
+	key := strings.ToLower(strings.TrimSpace(schemaName)) + "." + strings.ToLower(strings.TrimSpace(viewName))
+	if _, ok := visited[key]; ok {
+		return nil
+	}
+	visited[key] = struct{}{}
+	active, err := shared.CatalogViewActive(configDir, schemaName, viewName)
+	if err != nil {
+		return err
+	}
+	if !active {
+		if ifExists {
+			return nil
+		}
+		return fmt.Errorf("view %s doesn't exist", viewName)
+	}
+	if cascade {
+		dependencies, err := shared.CheckViewDependenciesByObjectInCatalog(configDir, schemaName, viewName, shared.CatalogObjectTypeView)
+		if err != nil {
+			return err
+		}
+		for _, dependency := range dependencies {
+			if strings.EqualFold(strings.TrimSpace(dependency), strings.TrimSpace(viewName)) {
+				continue
+			}
+			if err := dropFileCatalogViewRecursive(ctx, configDir, schemaName, dependency, true, true, visited); err != nil {
+				return err
+			}
+		}
+	}
+	if err := shared.RemoveViewDefinition(configDir, viewName); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := shared.RemoveCatalogView(configDir, schemaName, viewName); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h LegacyQuantaSessionHandle) createConsulCatalogTable(ctx context.Context, consul *api.Client, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
@@ -449,29 +475,55 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogView(ctx context.Context, 
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s created", viewName)}, nil, nil
 }
 
-func (h LegacyQuantaSessionHandle) dropConsulCatalogView(ctx context.Context, consul *api.Client, viewName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
-	viewExists, err := shared.ViewExists(consul, viewName)
-	if err != nil {
-		return qsbridge.StatementResult{}, nil, err
-	}
-	if !viewExists {
-		if ifExists {
-			return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
-		}
-		return qsbridge.StatementResult{}, nil, fmt.Errorf("view %s doesn't exist", viewName)
-	}
+func (h LegacyQuantaSessionHandle) dropConsulCatalogView(ctx context.Context, consul *api.Client, schemaName, viewName string, ifExists bool, cascade bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	lock, err := shared.Lock(consul, "admin-tool", "query-engine")
 	if err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	defer shared.Unlock(consul, lock)
-	if err := ctx.Err(); err != nil {
-		return qsbridge.StatementResult{}, nil, err
-	}
-	if err := shared.DeleteView(consul, viewName); err != nil {
+	if err := dropConsulCatalogViewRecursive(ctx, consul, schemaName, viewName, ifExists, cascade, map[string]struct{}{}); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	return qsbridge.StatementResult{Status: fmt.Sprintf("View %s dropped", viewName)}, nil, nil
+}
+
+func dropConsulCatalogViewRecursive(ctx context.Context, consul *api.Client, schemaName, viewName string, ifExists bool, cascade bool, visited map[string]struct{}) error {
+	key := strings.ToLower(strings.TrimSpace(schemaName)) + "." + strings.ToLower(strings.TrimSpace(viewName))
+	if _, ok := visited[key]; ok {
+		return nil
+	}
+	visited[key] = struct{}{}
+	viewExists, err := shared.ViewExists(consul, viewName)
+	if err != nil {
+		return err
+	}
+	if !viewExists {
+		if ifExists {
+			return nil
+		}
+		return fmt.Errorf("view %s doesn't exist", viewName)
+	}
+	if cascade {
+		dependencies, err := shared.CheckViewDependenciesByObject(consul, schemaName, viewName, shared.CatalogObjectTypeView)
+		if err != nil {
+			return err
+		}
+		for _, dependency := range dependencies {
+			if strings.EqualFold(strings.TrimSpace(dependency), strings.TrimSpace(viewName)) {
+				continue
+			}
+			if err := dropConsulCatalogViewRecursive(ctx, consul, schemaName, dependency, true, true, visited); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := shared.DeleteView(consul, viewName); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h LegacyQuantaSessionHandle) viewDefinitionFromMutation(schemaName, viewName string, mutation qsbridge.MutationShape, creation, modification time.Time) shared.ViewDefinition {
@@ -485,10 +537,14 @@ func (h LegacyQuantaSessionHandle) viewDefinitionFromMutation(schemaName, viewNa
 		if objectSchema == "" {
 			objectSchema = schemaName
 		}
+		objectType := shared.CatalogObjectTypeTable
+		if strings.EqualFold(strings.TrimSpace(dependency.Role), shared.CatalogObjectTypeView) {
+			objectType = shared.CatalogObjectTypeView
+		}
 		dependencies = append(dependencies, shared.ViewDependency{
 			SchemaName: objectSchema,
 			ObjectName: objectName,
-			ObjectType: shared.CatalogObjectTypeTable,
+			ObjectType: objectType,
 		})
 	}
 	return shared.ViewDefinition{

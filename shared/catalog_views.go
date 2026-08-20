@@ -213,6 +213,11 @@ func DeleteView(consul *api.Client, viewName string) error {
 
 // CheckViewDependenciesInCatalog returns active file-backed views that depend on tableName.
 func CheckViewDependenciesInCatalog(configDir string, schemaName string, tableName string) ([]string, error) {
+	return CheckViewDependenciesByObjectInCatalog(configDir, schemaName, tableName, CatalogObjectTypeTable)
+}
+
+// CheckViewDependenciesByObjectInCatalog returns active file-backed views that depend on objectName.
+func CheckViewDependenciesByObjectInCatalog(configDir string, schemaName string, objectName string, objectType string) ([]string, error) {
 	views, err := ActiveCatalogViews(configDir, schemaName)
 	if err != nil {
 		return nil, err
@@ -223,7 +228,7 @@ func CheckViewDependenciesInCatalog(configDir string, schemaName string, tableNa
 		if err != nil {
 			return nil, err
 		}
-		if viewDependsOnTable(view, schemaName, tableName) {
+		if viewDependsOnObject(view, schemaName, objectName, objectType) {
 			dependencies = append(dependencies, viewName)
 		}
 	}
@@ -233,6 +238,11 @@ func CheckViewDependenciesInCatalog(configDir string, schemaName string, tableNa
 
 // CheckViewDependencies returns active Consul-backed views that depend on tableName.
 func CheckViewDependencies(consul *api.Client, schemaName string, tableName string) ([]string, error) {
+	return CheckViewDependenciesByObject(consul, schemaName, tableName, CatalogObjectTypeTable)
+}
+
+// CheckViewDependenciesByObject returns active Consul-backed views that depend on objectName.
+func CheckViewDependenciesByObject(consul *api.Client, schemaName string, objectName string, objectType string) ([]string, error) {
 	if consul == nil {
 		return nil, fmt.Errorf("consul client must not be nil")
 	}
@@ -255,7 +265,7 @@ func CheckViewDependencies(consul *api.Client, schemaName string, tableName stri
 		if err := ValidateViewDefinition(view); err != nil {
 			return nil, err
 		}
-		if viewDependsOnTable(view, schemaName, tableName) {
+		if viewDependsOnObject(view, schemaName, objectName, objectType) {
 			dependencies = append(dependencies, view.ViewName)
 		}
 	}
@@ -286,11 +296,15 @@ func ValidateViewDefinition(view ViewDefinition) error {
 }
 
 func viewDependsOnTable(view ViewDefinition, schemaName string, tableName string) bool {
+	return viewDependsOnObject(view, schemaName, tableName, CatalogObjectTypeTable)
+}
+
+func viewDependsOnObject(view ViewDefinition, schemaName string, objectName string, objectType string) bool {
 	for _, dependency := range view.Dependencies {
-		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectType), CatalogObjectTypeTable) {
+		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectType), strings.TrimSpace(objectType)) {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectName), strings.TrimSpace(tableName)) {
+		if !strings.EqualFold(strings.TrimSpace(dependency.ObjectName), strings.TrimSpace(objectName)) {
 			continue
 		}
 		dependencySchema := strings.TrimSpace(dependency.SchemaName)

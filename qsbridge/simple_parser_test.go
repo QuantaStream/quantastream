@@ -928,6 +928,25 @@ func TestSimpleParserBridgeParsesDropViewIfExistsStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDropViewCascadeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop view if exists building_customers cascade;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropView {
+		t.Fatalf("kind = %q, want drop view", statement.Kind)
+	}
+	if statement.DropView.View.Name != "building_customers" {
+		t.Fatalf("view = %#v, want building_customers", statement.DropView.View)
+	}
+	if !statement.DropView.IfExists {
+		t.Fatalf("IfExists = false, want true")
+	}
+	if !statement.DropView.Cascade {
+		t.Fatalf("Cascade = false, want true")
+	}
+}
+
 func TestSimpleParserBridgeParsesCreateViewInlineColumnList(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("create or replace view customer_names (customer_key, customer_name) as select c_custkey, c_name from customer;")
 	if diagnostics.BlocksNative() {

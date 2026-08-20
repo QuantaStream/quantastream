@@ -243,6 +243,7 @@ type UnboundDropTable struct {
 type UnboundDropView struct {
 	View     UnboundTable
 	IfExists bool
+	Cascade  bool
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -946,6 +947,7 @@ func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR
 		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE VIEW must use a SELECT statement"))
 		return query, diagnostics
 	}
+	viewDependencies := directViewDependenciesFromStatement(context, viewStatement)
 	viewStatement, viewDiagnostics = ExpandStatementViews(context.Catalog, SimpleParserBridge{}, context.DefaultSchema, viewStatement)
 	if viewDiagnostics.BlocksNative() {
 		diagnostics = append(diagnostics, viewDiagnostics...)
@@ -961,7 +963,7 @@ func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR
 		Target:           target,
 		ViewSQL:          strings.TrimSpace(createStmt.SQL),
 		Replace:          createStmt.Replace,
-		ViewDependencies: viewDependenciesFromQuery(viewQuery),
+		ViewDependencies: mergeViewDependencies(viewDependencies, viewDependenciesFromQuery(viewQuery)),
 	}
 	return query, diagnostics
 }
@@ -1001,6 +1003,7 @@ func BindDropView(context *BindContext, dropStmt UnboundDropView) (QueryIR, Diag
 		Kind:     MutationDropView,
 		Target:   target,
 		IfExists: dropStmt.IfExists,
+		Cascade:  dropStmt.Cascade,
 	}
 	return query, diagnostics
 }
@@ -1902,6 +1905,93 @@ func viewDependenciesFromQuery(query QueryIR) []TableInstance {
 	}
 	for _, source := range query.Sources {
 		addSource(source)
+	}
+	return dependencies
+}
+
+func directViewDependenciesFromStatement(context *BindContext, statement UnboundStatement) []TableInstance {
+	if context == nil {
+		return nil
+	}
+	switch statement.Kind {
+	case QueryKindSelect:
+		return directViewDependenciesFromSelect(context, statement.Select)
+	case QueryKindUnionAll:
+		dependencies := make([]TableInstance, 0)
+		for _, branch := range statement.UnionAll.Branches {
+			dependencies = mergeViewDependencies(dependencies, directViewDependenciesFromSelect(context, branch))
+		}
+		return dependencies
+	default:
+		return nil
+	}
+}
+
+func directViewDependenciesFromSelect(context *BindContext, selectStmt UnboundSelect) []TableInstance {
+	dependencies := make([]TableInstance, 0)
+	for _, table := range selectStmt.Tables {
+		dependencies = mergeViewDependencies(dependencies, directViewDependencyFromTable(context, table))
+		if table.DerivedSelect != nil {
+			dependencies = mergeViewDependencies(dependencies, directViewDependenciesFromSelect(context, *table.DerivedSelect))
+		}
+	}
+	for _, membership := range selectStmt.Memberships {
+		dependencies = mergeViewDependencies(dependencies, directViewDependencyFromTable(context, membership.RightTable))
+		if membership.RightTable.DerivedSelect != nil {
+			dependencies = mergeViewDependencies(dependencies, directViewDependenciesFromSelect(context, *membership.RightTable.DerivedSelect))
+		}
+	}
+	return dependencies
+}
+
+func directViewDependencyFromTable(context *BindContext, table UnboundTable) []TableInstance {
+	if table.Name == "" || table.InlineRows != nil || table.DerivedSelect != nil || context == nil || context.Catalog == nil {
+		return nil
+	}
+	schemaName := strings.TrimSpace(table.Schema)
+	if schemaName == "" {
+		schemaName = context.DefaultSchema
+	}
+	if _, tableDiagnostics := context.Catalog.Table(schemaName, table.Name); !tableDiagnostics.BlocksNative() {
+		return nil
+	}
+	viewCatalog, ok := context.Catalog.(ViewCatalog)
+	if !ok {
+		return nil
+	}
+	if _, viewDiagnostics := viewCatalog.View(schemaName, table.Name); viewDiagnostics.BlocksNative() {
+		return nil
+	}
+	return []TableInstance{{
+		ID:     TableInstanceID(table.Name),
+		Schema: schemaName,
+		Table:  table.Name,
+		Alias:  table.Alias,
+		Role:   "VIEW",
+	}}
+}
+
+func mergeViewDependencies(left, right []TableInstance) []TableInstance {
+	dependencies := make([]TableInstance, 0, len(left)+len(right))
+	seen := make(map[string]struct{}, len(left)+len(right))
+	add := func(dependency TableInstance) {
+		if strings.TrimSpace(dependency.Table) == "" {
+			return
+		}
+		key := strings.ToLower(strings.TrimSpace(dependency.Schema)) + "." +
+			strings.ToLower(strings.TrimSpace(dependency.Table)) + "." +
+			strings.ToLower(strings.TrimSpace(dependency.Role))
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		dependencies = append(dependencies, dependency)
+	}
+	for _, dependency := range left {
+		add(dependency)
+	}
+	for _, dependency := range right {
+		add(dependency)
 	}
 	return dependencies
 }

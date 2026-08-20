@@ -125,6 +125,76 @@ func TestLegacySchemaMutationHandleDropViewIfExistsIgnoresMissingFileCatalogView
 	}
 }
 
+func TestLegacySchemaMutationHandleDropViewCascadeRemovesDependentViews(t *testing.T) {
+	configDir := t.TempDir()
+	now := testSchemaMutationTime()
+	views := []shared.ViewDefinition{
+		{
+			SchemaName: "quanta",
+			ViewName:   "customer_names",
+			SQL:        "select c_custkey, c_name from customer",
+			Dependencies: []shared.ViewDependency{
+				{SchemaName: "quanta", ObjectName: "customer", ObjectType: shared.CatalogObjectTypeTable},
+			},
+			CreationDate:     now,
+			ModificationDate: now,
+		},
+		{
+			SchemaName: "quanta",
+			ViewName:   "customer_names_copy",
+			SQL:        "select c_custkey, c_name from customer_names",
+			Dependencies: []shared.ViewDependency{
+				{SchemaName: "quanta", ObjectName: "customer_names", ObjectType: shared.CatalogObjectTypeView},
+				{SchemaName: "quanta", ObjectName: "customer", ObjectType: shared.CatalogObjectTypeTable},
+			},
+			CreationDate:     now,
+			ModificationDate: now,
+		},
+	}
+	for _, view := range views {
+		if err := shared.SaveViewDefinition(configDir, view); err != nil {
+			t.Fatalf("SaveViewDefinition(%s) error = %v", view.ViewName, err)
+		}
+		if err := shared.ActivateCatalogView(configDir, "quanta", view.ViewName, now); err != nil {
+			t.Fatalf("ActivateCatalogView(%s) error = %v", view.ViewName, err)
+		}
+	}
+	handle := LegacyQuantaSessionHandle{
+		TableName: "customer_names",
+		Session:   &core.Session{BasePath: configDir},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:    qsbridge.MutationDropView,
+			Target:  qsbridge.TableInstance{Schema: "quanta", Table: "customer_names"},
+			Cascade: true,
+		},
+	}
+
+	statement, diagnostics, err := handle.DropView(context.Background(), request)
+	if err != nil {
+		t.Fatalf("DropView(cascade) error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("DropView(cascade) diagnostics = %#v", diagnostics)
+	}
+	if statement.Status != "View customer_names dropped" {
+		t.Fatalf("status = %q, want customer_names dropped", statement.Status)
+	}
+	for _, viewName := range []string{"customer_names", "customer_names_copy"} {
+		active, err := shared.CatalogViewActive(configDir, "quanta", viewName)
+		if err != nil {
+			t.Fatalf("CatalogViewActive(%s) error = %v", viewName, err)
+		}
+		if active {
+			t.Fatalf("view %s should not be active after cascade", viewName)
+		}
+		if shared.ViewDefinitionExists(configDir, viewName) {
+			t.Fatalf("view definition %s should be removed after cascade", viewName)
+		}
+	}
+}
+
 func TestLegacySchemaMutationHandleDropTableIfExistsIgnoresMissingFileCatalogTable(t *testing.T) {
 	configDir := t.TempDir()
 	handle := LegacyQuantaSessionHandle{

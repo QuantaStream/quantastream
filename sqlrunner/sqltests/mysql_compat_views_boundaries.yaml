@@ -58,12 +58,11 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.006.drop_view_cascade
-    status: xfail
+    status: supported
     kind: statement
     feature: views_ddl_boundary
     compatibility: mysql
     requires: [drop_view, cascade]
-    issue: "DROP VIEW ... CASCADE is a post-1.0 compatibility target; QS currently requires explicit dependent-object cleanup."
     sql: |
       drop view qs_mysql_compat_drop_cascade_view cascade
 
