@@ -310,6 +310,38 @@ func TestLegacyTableCacheCatalogFindsDependentRelationshipsForParent(t *testing.
 	}
 }
 
+func TestLegacyTableCacheCatalogOrdersFieldsBySourceOrdinal(t *testing.T) {
+	cache := legacyCatalogTestCache()
+	cache.TableCache["region"] = &core.Table{
+		BasicTable: &shared.BasicTable{Name: "region", PrimaryKey: "r_regionkey"},
+		Attributes: []core.Attribute{
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "r_comment", Type: "String", MappingStrategy: "StringLexBSI", SourceOrdinal: 3}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "r_name", Type: "String", MappingStrategy: "StringEnum", SourceOrdinal: 2}},
+			{BasicAttribute: &shared.BasicAttribute{FieldName: "r_regionkey", Type: "Integer", MappingStrategy: "IntBSI", Required: true, SourceOrdinal: 1}},
+		},
+	}
+	catalog := LegacyTableCacheCatalog{TableCache: cache}
+
+	table, diagnostics := catalog.Table("quanta", "region")
+
+	if diagnostics.BlocksNative() {
+		t.Fatalf("table diagnostics = %#v", diagnostics)
+	}
+	got := make([]string, 0, len(table.Fields))
+	for _, field := range table.Fields {
+		got = append(got, field.Name)
+	}
+	want := []string{"r_regionkey", "r_name", "r_comment"}
+	if len(got) != len(want) {
+		t.Fatalf("fields = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("fields = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestLegacyTableCacheCatalogReportsCatalogMisses(t *testing.T) {
 	catalog := LegacyTableCacheCatalog{}
 

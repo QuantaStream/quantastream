@@ -2435,7 +2435,11 @@ func directBitmapProjectedExpressionValues(rowSet qsbridge.QuantaProjectedRowSet
 }
 
 func directBitmapProjectionVectorMatchesField(vector qsbridge.QuantaProjectionVector, field qsbridge.FieldRef) bool {
-	if vector.Field.Index != field.Table.Table || vector.Field.Field != directBitmapFieldPhysicalName(field) {
+	vectorField := vector.Field.Field
+	if vectorField == "" {
+		vectorField = vector.Field.PhysicalName
+	}
+	if vector.Field.Index != field.Table.Table || vectorField != directBitmapFieldPhysicalName(field) {
 		return false
 	}
 	if vector.Field.Role == "" {

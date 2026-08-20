@@ -302,6 +302,9 @@ func temporaryTableOrderVisibleProjectedRowSetByResultColumns(rowSet qsbridge.Qu
 func temporaryTableProjectionVectorMatchesResultColumn(vector qsbridge.QuantaProjectionVector, column qsbridge.ResultColumn) bool {
 	fieldName := strings.TrimSpace(vector.Field.Field)
 	if fieldName == "" {
+		fieldName = strings.TrimSpace(vector.Field.PhysicalName)
+	}
+	if fieldName == "" {
 		return false
 	}
 	if strings.EqualFold(fieldName, strings.TrimSpace(column.Name)) {

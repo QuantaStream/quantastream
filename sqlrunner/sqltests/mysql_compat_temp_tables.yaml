@@ -443,8 +443,8 @@ tests:
     compatibility: mysql
     requires: [insert, temporary_table, select, order_by]
     sql: |
-      insert into qs_mysql_compat_tmp_region_like (r_regionkey, r_name)
-      select r_regionkey, r_name
+      insert into qs_mysql_compat_tmp_region_like
+      select r_regionkey, r_name, r_comment
       from region
       where r_regionkey in (0, 1)
       order by r_regionkey

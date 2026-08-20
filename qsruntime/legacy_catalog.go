@@ -405,7 +405,7 @@ func (c LegacyTableCacheCatalog) tableDefinition(schema string, table *core.Tabl
 		},
 	}
 	definition.Fields = make([]qsbridge.FieldDefinition, 0, len(table.Attributes))
-	for _, attribute := range table.Attributes {
+	for _, attribute := range legacyCatalogOrderedAttributes(table.Attributes) {
 		if attribute.FieldName == "" && attribute.SourceName == "" {
 			continue
 		}
@@ -414,6 +414,36 @@ func (c LegacyTableCacheCatalog) tableDefinition(schema string, table *core.Tabl
 	}
 	definition.Relationships = c.relationshipsForTable(table)
 	return definition
+}
+
+func legacyCatalogOrderedAttributes(attributes []core.Attribute) []core.Attribute {
+	type orderedAttribute struct {
+		attribute core.Attribute
+		position  int
+	}
+	ordered := make([]orderedAttribute, 0, len(attributes))
+	for position, attribute := range attributes {
+		ordered = append(ordered, orderedAttribute{attribute: attribute, position: position})
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		leftOrdinal := ordered[i].attribute.SourceOrdinal
+		rightOrdinal := ordered[j].attribute.SourceOrdinal
+		switch {
+		case leftOrdinal > 0 && rightOrdinal > 0 && leftOrdinal != rightOrdinal:
+			return leftOrdinal < rightOrdinal
+		case leftOrdinal > 0 && rightOrdinal <= 0:
+			return true
+		case leftOrdinal <= 0 && rightOrdinal > 0:
+			return false
+		default:
+			return ordered[i].position < ordered[j].position
+		}
+	})
+	result := make([]core.Attribute, 0, len(ordered))
+	for _, item := range ordered {
+		result = append(result, item.attribute)
+	}
+	return result
 }
 
 func legacyFieldDefinition(schema string, table *core.Table, attribute core.Attribute) qsbridge.FieldDefinition {

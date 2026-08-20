@@ -177,15 +177,15 @@ func TestSQLRuntimeInsertSelectTemporaryTableLikeOrdersDirectSourceVectors(t *te
 				Rownums: []qsbridge.QuantaRownum{1},
 				ProjectionVectors: []qsbridge.QuantaProjectionVector{
 					{
-						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_name", Type: qsbridge.DataTypeString, Visible: true},
+						Field:  qsbridge.QuantaProjectionField{Index: "region", PhysicalName: "r_name", Type: qsbridge.DataTypeString, Visible: true},
 						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "AFRICA"}},
 					},
 					{
-						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_comment", Type: qsbridge.DataTypeString, Visible: true},
+						Field:  qsbridge.QuantaProjectionField{Index: "region", PhysicalName: "r_comment", Type: qsbridge.DataTypeString, Visible: true},
 						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "comment"}},
 					},
 					{
-						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_regionkey", Type: qsbridge.DataTypeInt, Visible: true},
+						Field:  qsbridge.QuantaProjectionField{Index: "region", PhysicalName: "r_regionkey", Type: qsbridge.DataTypeInt, Visible: true},
 						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: big.NewInt(0)}},
 					},
 				},
