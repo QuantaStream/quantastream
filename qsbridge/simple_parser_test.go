@@ -1018,6 +1018,22 @@ func TestSimpleParserBridgeParsesCreateTemporaryTableAsSelect(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateTemporaryTableSelectWithoutAs(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create temporary table customers_copy select c_custkey from customer")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics = %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable || !statement.Create.Temporary {
+		t.Fatalf("statement = %#v, want temporary create table", statement)
+	}
+	if statement.Create.Table.Name != "customers_copy" {
+		t.Fatalf("table = %#v, want customers_copy", statement.Create.Table)
+	}
+	if statement.Create.AsSQL != "select c_custkey from customer" {
+		t.Fatalf("AsSQL = %q", statement.Create.AsSQL)
+	}
+}
+
 func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id, o.o_totalprice total_price from orders as o where o.o_totalprice >= 101 and o.o_orderkey <= 8 order by o.o_totalprice desc limit 2")
 	if diagnostics.BlocksNative() {

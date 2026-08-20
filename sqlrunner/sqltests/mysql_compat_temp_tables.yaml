@@ -47,6 +47,15 @@ tests:
     sql: |
       drop temporary table if exists qs_mysql_compat_tmp_region_insert_select
 
+  - id: mysql_compat_temp_tables.006.drop_stale_ctas_without_as_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_regions_no_as
+
   - id: mysql_compat_temp_tables.010.create_temp_table_metadata
     status: supported
     kind: statement
@@ -355,3 +364,44 @@ tests:
     requires: [drop_table, temporary_table]
     sql: |
       drop temporary table qs_mysql_compat_tmp_region_insert_select
+
+  - id: mysql_compat_temp_tables.060.create_temp_table_select_without_as_tpch_region
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas
+    compatibility: mysql
+    requires: [create_table, temporary_table, select, order_by]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_regions_no_as
+      select r_regionkey as region_key, r_name as region_name
+      from region
+      where r_regionkey in (0, 1)
+      order by r_regionkey
+
+  - id: mysql_compat_temp_tables.061.select_temp_table_select_without_as_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_ctas
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select region_key, region_name
+      from qs_mysql_compat_tmp_regions_no_as
+      where region_key >= 0
+      order by region_key
+      limit 2
+    expect:
+      columns: [region_key, region_name]
+      rows:
+        - [0, AFRICA]
+        - [1, AMERICA]
+
+  - id: mysql_compat_temp_tables.062.drop_ctas_without_as_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_regions_no_as
