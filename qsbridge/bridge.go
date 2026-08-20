@@ -1076,11 +1076,32 @@ func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR,
 		return query, diagnostics
 	}
 	query.Mutation = MutationShape{
-		Kind:    MutationAlterTableAddPrimaryKey,
-		Target:  target.Instance,
-		Columns: columns,
+		Kind:            MutationAlterTableAddPrimaryKey,
+		Target:          target.Instance,
+		Columns:         columns,
+		ValidationSteps: alterTableAddPrimaryKeyValidationSteps(target.Instance, columns),
 	}
 	return query, diagnostics
+}
+
+func alterTableAddPrimaryKeyValidationSteps(target TableInstance, columns []FieldRef) []MutationValidationStep {
+	clonedColumns := append([]FieldRef(nil), columns...)
+	return []MutationValidationStep{
+		{
+			Kind:           MutationValidationPrimaryKeyNullScan,
+			Target:         target,
+			Columns:        append([]FieldRef(nil), clonedColumns...),
+			FailureCode:    DiagnosticMutationPrimaryKeyNull,
+			FailureMessage: "primary key columns must not contain NULL values before ALTER TABLE ADD PRIMARY KEY can activate",
+		},
+		{
+			Kind:           MutationValidationPrimaryKeyDuplicateScan,
+			Target:         target,
+			Columns:        append([]FieldRef(nil), clonedColumns...),
+			FailureCode:    DiagnosticMutationPrimaryKeyDuplicate,
+			FailureMessage: "primary key column tuples must be unique before ALTER TABLE ADD PRIMARY KEY can activate",
+		},
+	}
 }
 
 func bindAlterTableAddForeignKey(context *BindContext, query QueryIR, target BoundTable, fk UnboundForeignKey, diagnostics DiagnosticSet) (QueryIR, DiagnosticSet) {

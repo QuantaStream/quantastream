@@ -559,6 +559,11 @@ func (c *fieldCollector) addMutation(mutation MutationShape) {
 	for _, predicate := range mutation.Predicates {
 		c.addExpr(predicate.Expr)
 	}
+	for _, step := range mutation.ValidationSteps {
+		for _, field := range step.Columns {
+			c.addField(field)
+		}
+	}
 }
 
 func newParameterCollector() parameterCollector {

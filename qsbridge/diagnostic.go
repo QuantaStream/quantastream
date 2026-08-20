@@ -80,6 +80,10 @@ const (
 	DiagnosticMutationMissingPredicate DiagnosticCode = "mutation_missing_predicate"
 	// DiagnosticMutationProtectedField marks an UPDATE assignment to row identity or another protected field.
 	DiagnosticMutationProtectedField DiagnosticCode = "mutation_protected_field"
+	// DiagnosticMutationPrimaryKeyNull marks existing NULL data that blocks promoting columns to a primary key.
+	DiagnosticMutationPrimaryKeyNull DiagnosticCode = "mutation_primary_key_null"
+	// DiagnosticMutationPrimaryKeyDuplicate marks existing duplicate data that blocks promoting columns to a primary key.
+	DiagnosticMutationPrimaryKeyDuplicate DiagnosticCode = "mutation_primary_key_duplicate"
 	// DiagnosticUnsupportedMutation marks mutation semantics outside the initial native legality model.
 	DiagnosticUnsupportedMutation DiagnosticCode = "unsupported_mutation"
 	// DiagnosticTruncateChildDataExists rejects truncating a parent before dependent child tables are empty.

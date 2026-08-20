@@ -241,6 +241,10 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsuppo
 			Columns: []qsbridge.FieldRef{
 				{Name: "order_key", PrimaryKey: true},
 			},
+			ValidationSteps: []qsbridge.MutationValidationStep{
+				{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+				{Kind: qsbridge.MutationValidationPrimaryKeyDuplicateScan},
+			},
 		},
 	}
 
@@ -251,7 +255,7 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsuppo
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want unsupported mutation blocker", diagnostics)
 	}
-	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD PRIMARY KEY is not implemented yet") {
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD PRIMARY KEY is not implemented yet") || !strings.Contains(diagnostics[0].Error(), "primary_key_null_scan, primary_key_duplicate_scan") {
 		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD PRIMARY KEY", diagnostics)
 	}
 }

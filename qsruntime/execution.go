@@ -373,6 +373,19 @@ func cloneMutationShape(mutation qsbridge.MutationShape) qsbridge.MutationShape 
 	cloned.ViewDependencies = append([]qsbridge.TableInstance(nil), mutation.ViewDependencies...)
 	cloned.Relationships = append([]qsbridge.RelationshipDefinition(nil), mutation.Relationships...)
 	cloned.DependentRelationships = append([]qsbridge.RelationshipDefinition(nil), mutation.DependentRelationships...)
+	cloned.ValidationSteps = cloneMutationValidationSteps(mutation.ValidationSteps)
+	return cloned
+}
+
+func cloneMutationValidationSteps(steps []qsbridge.MutationValidationStep) []qsbridge.MutationValidationStep {
+	if len(steps) == 0 {
+		return nil
+	}
+	cloned := make([]qsbridge.MutationValidationStep, 0, len(steps))
+	for _, step := range steps {
+		step.Columns = append([]qsbridge.FieldRef(nil), step.Columns...)
+		cloned = append(cloned, step)
+	}
 	return cloned
 }
 

@@ -170,7 +170,22 @@ func cloneQueryIR(query QueryIR) QueryIR {
 	cloned.Mutation.Rows = append([]MutationRow(nil), query.Mutation.Rows...)
 	cloned.Mutation.Assignments = append([]MutationAssignment(nil), query.Mutation.Assignments...)
 	cloned.Mutation.Predicates = append([]Predicate(nil), query.Mutation.Predicates...)
+	cloned.Mutation.Relationships = cloneRelationshipDefinitions(query.Mutation.Relationships)
+	cloned.Mutation.DependentRelationships = cloneRelationshipDefinitions(query.Mutation.DependentRelationships)
+	cloned.Mutation.ValidationSteps = cloneMutationValidationSteps(query.Mutation.ValidationSteps)
 	cloned.Blockers = append([]NativeBlocker(nil), query.Blockers...)
+	return cloned
+}
+
+func cloneMutationValidationSteps(steps []MutationValidationStep) []MutationValidationStep {
+	if len(steps) == 0 {
+		return nil
+	}
+	cloned := make([]MutationValidationStep, 0, len(steps))
+	for _, step := range steps {
+		step.Columns = append([]FieldRef(nil), step.Columns...)
+		cloned = append(cloned, step)
+	}
 	return cloned
 }
 

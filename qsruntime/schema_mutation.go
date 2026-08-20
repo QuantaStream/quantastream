@@ -99,9 +99,27 @@ func (h LegacyQuantaSessionHandle) AlterTableAddPrimaryKey(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
+	validationSteps := schemaMutationValidationStepKinds(request.Mutation.ValidationSteps)
+	if validationSteps == "" {
+		validationSteps = "primary_key_null_scan, primary_key_duplicate_scan"
+	}
 	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY is not implemented yet; QS must validate existing rows and build primary-key authority artifacts before enabling it"),
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY is not implemented yet; required validation steps: "+validationSteps+"; QS must validate existing rows and build primary-key authority artifacts before enabling it"),
 	}, nil
+}
+
+func schemaMutationValidationStepKinds(steps []qsbridge.MutationValidationStep) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	kinds := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step.Kind == "" {
+			continue
+		}
+		kinds = append(kinds, string(step.Kind))
+	}
+	return strings.Join(kinds, ", ")
 }
 
 // AlterTableAddForeignKey reserves the parser/binder/runtime path for future

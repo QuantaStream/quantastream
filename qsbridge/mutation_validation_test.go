@@ -68,6 +68,26 @@ func TestQueryIRDiagnosticsIncludesMutationPolicy(t *testing.T) {
 	}
 }
 
+func TestMutationValidationStepFailureDiagnosticCarriesFields(t *testing.T) {
+	orders := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders", Alias: "o"}
+	orderKey := FieldRef{Table: orders, Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true}
+	step := MutationValidationStep{
+		Kind:           MutationValidationPrimaryKeyDuplicateScan,
+		Target:         orders,
+		Columns:        []FieldRef{orderKey},
+		FailureCode:    DiagnosticMutationPrimaryKeyDuplicate,
+		FailureMessage: "primary key duplicates exist",
+	}
+
+	diagnostic := step.FailureDiagnostic(PhaseExecute)
+	if diagnostic.Code != DiagnosticMutationPrimaryKeyDuplicate || diagnostic.Phase != PhaseExecute || diagnostic.Message != "primary key duplicates exist" {
+		t.Fatalf("diagnostic = %#v, want duplicate failure diagnostic", diagnostic)
+	}
+	if len(diagnostic.Fields) != 1 || diagnostic.Fields[0].QualifiedName() != "o.o_orderkey" {
+		t.Fatalf("diagnostic fields = %#v, want o.o_orderkey", diagnostic.Fields)
+	}
+}
+
 func TestFieldDefinitionRefCarriesPrimaryKey(t *testing.T) {
 	field := FieldDefinition{Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true}
 	ref := field.Ref(TableInstance{ID: "orders_1", Table: "orders", Alias: "o"}, FieldRoleMutationTarget)

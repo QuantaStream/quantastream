@@ -607,6 +607,41 @@ type MutationAssignment struct {
 	Value Expr
 }
 
+// MutationValidationKind identifies pre-commit validation work required before
+// a schema mutation can activate catalog/artifact metadata.
+type MutationValidationKind string
+
+const (
+	// MutationValidationPrimaryKeyNullScan checks that proposed primary-key columns contain no NULLs.
+	MutationValidationPrimaryKeyNullScan MutationValidationKind = "primary_key_null_scan"
+	// MutationValidationPrimaryKeyDuplicateScan checks that proposed primary-key tuples are unique.
+	MutationValidationPrimaryKeyDuplicateScan MutationValidationKind = "primary_key_duplicate_scan"
+)
+
+// MutationValidationStep describes a non-mutating validation scan required by a mutation.
+type MutationValidationStep struct {
+	Kind           MutationValidationKind
+	Target         TableInstance
+	Columns        []FieldRef
+	FailureCode    DiagnosticCode
+	FailureMessage string
+}
+
+// FailureDiagnostic returns the diagnostic a runtime should emit if this validation step fails.
+func (s MutationValidationStep) FailureDiagnostic(phase DiagnosticPhase) Diagnostic {
+	message := s.FailureMessage
+	if message == "" {
+		message = string(s.Kind) + " validation failed"
+	}
+	return Diagnostic{
+		Code:     s.FailureCode,
+		Severity: SeverityError,
+		Phase:    phase,
+		Message:  message,
+		Fields:   append([]FieldRef(nil), s.Columns...),
+	}
+}
+
 // MutationShape records write metadata before any execution strategy is chosen.
 //
 // The shape is intentionally executor-neutral: it captures target table identity,
@@ -630,4 +665,5 @@ type MutationShape struct {
 	Predicates             []Predicate
 	Relationships          []RelationshipDefinition
 	DependentRelationships []RelationshipDefinition
+	ValidationSteps        []MutationValidationStep
 }

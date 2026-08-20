@@ -618,6 +618,21 @@ func TestUnboundStatementBindAlterTableAddPrimaryKey(t *testing.T) {
 			t.Fatalf("column = %#v, want mutation-target non-null primary key ref", column)
 		}
 	}
+	if got := query.Mutation.ValidationSteps; len(got) != 2 {
+		t.Fatalf("validation steps = %#v, want null and duplicate scans", got)
+	} else {
+		if got[0].Kind != MutationValidationPrimaryKeyNullScan || got[0].FailureCode != DiagnosticMutationPrimaryKeyNull {
+			t.Fatalf("validation step[0] = %#v, want primary-key null scan", got[0])
+		}
+		if got[1].Kind != MutationValidationPrimaryKeyDuplicateScan || got[1].FailureCode != DiagnosticMutationPrimaryKeyDuplicate {
+			t.Fatalf("validation step[1] = %#v, want primary-key duplicate scan", got[1])
+		}
+		for _, step := range got {
+			if step.Target.Table != "orders" || len(step.Columns) != 2 || step.Columns[0].Name != "o_orderkey" || step.Columns[1].Name != "o_custkey" {
+				t.Fatalf("validation step = %#v, want orders o_orderkey/o_custkey", step)
+			}
+		}
+	}
 	access := query.RequiredAccess()
 	if !hasAccessRequirement(access, AccessCreate, "orders") {
 		t.Fatalf("RequiredAccess = %#v, want create on orders", access)
