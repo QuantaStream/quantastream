@@ -36,7 +36,10 @@ func compatibilityExpectedShouldPreserveSource(expected Expected) bool {
 	if expected.IgnoreAffectedRows {
 		return true
 	}
-	if expected.Rows != nil || expected.AffectedRows != nil || expected.Error != "" {
+	if expected.Error != "" {
+		return true
+	}
+	if expected.Rows != nil || expected.AffectedRows != nil {
 		return false
 	}
 	return len(expected.Columns) > 0 || len(expected.Types) > 0 || expected.RowCount != nil

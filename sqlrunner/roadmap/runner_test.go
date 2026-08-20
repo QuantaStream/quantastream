@@ -2,6 +2,7 @@ package roadmap
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,16 @@ func (e *fakeEngine) Query(_ context.Context, statement string) (QueryResult, er
 func (e *fakeEngine) Exec(_ context.Context, statement string) (int64, error) {
 	e.execs = append(e.execs, statement)
 	return 2, nil
+}
+
+type errorEngine struct{}
+
+func (e errorEngine) Query(context.Context, string) (QueryResult, error) {
+	return QueryResult{}, errors.New("Error 1054: Unknown column 'missing'")
+}
+
+func (e errorEngine) Exec(context.Context, string) (int64, error) {
+	return 0, errors.New("Error 1060: Duplicate column name 'region_key'")
 }
 
 func TestRunnerUsesConfiguredEngineForQueryAndStatement(t *testing.T) {
@@ -424,6 +435,32 @@ func TestRunnerCapturesCompatibilityExpectedResults(t *testing.T) {
 	statementCase := result.Expected.Cases[1]
 	if statementCase.AffectedRows == nil || *statementCase.AffectedRows != 2 {
 		t.Fatalf("affected rows = %#v, want 2", statementCase.AffectedRows)
+	}
+}
+
+func TestRunnerCaptureCompatibilityExpectedHonorsExpectedStatementErrors(t *testing.T) {
+	suite := &Suite{
+		Version: 1,
+		Name:    "capture-error",
+		Tests: []TestCase{{
+			ID:     "capture.001.statement_error",
+			Status: CaseSupported,
+			Kind:   "statement",
+			SQL:    "create temporary table duplicate_columns as select 1 as c, 2 as c",
+			Expect: Expected{Error: "Duplicate column name"},
+		}},
+	}
+
+	result := (Runner{Engine: errorEngine{}}).CaptureCompatibilityExpected(context.Background(), suite, CompatibilityCaptureOptions{})
+
+	if result.Summary.HasFailures() {
+		t.Fatalf("capture summary = %#v, want expected error pass", result.Summary.Results)
+	}
+	if len(result.Expected.Cases) != 1 || result.Expected.Cases[0].Error == "" {
+		t.Fatalf("captured cases = %#v, want captured reference error", result.Expected.Cases)
+	}
+	if result.Suite.Tests[0].Expect.Error != "Duplicate column name" {
+		t.Fatalf("generated suite error = %q, want portable source expectation", result.Suite.Tests[0].Expect.Error)
 	}
 }
 

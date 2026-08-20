@@ -1057,7 +1057,7 @@ func bindCreateTableAsSelectColumns(context *BindContext, target TableInstance, 
 		key := strings.ToLower(name)
 		if _, exists := seen[key]; exists {
 			return nil, DiagnosticSet{
-				ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "duplicate CREATE TABLE AS SELECT column: "+name),
+				ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, fmt.Sprintf("Duplicate column name '%s'", name)),
 			}
 		}
 		seen[key] = struct{}{}

@@ -244,6 +244,20 @@ tests:
     sql: |
       drop temporary table qs_mysql_compat_tmp_region_keys
 
+  - id: mysql_compat_temp_tables.038.create_temp_table_as_select_duplicate_aliases_error
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas_metadata
+    compatibility: mysql
+    requires: [create_table, temporary_table, select]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_duplicate_columns as
+      select r_regionkey as region_key, r_name as region_key
+      from region
+      limit 1
+    expect:
+      error_contains: Duplicate column name
+
   - id: mysql_compat_temp_tables.040.create_temp_table_as_select_grouped_tpch_nations
     status: supported
     kind: statement

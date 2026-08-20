@@ -662,6 +662,29 @@ func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testin
 	}
 }
 
+func TestUnboundStatementBindCreateTemporaryTableAsSelectRejectsDuplicateAliases(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{Tables: []TableDefinition{{
+		Schema: "quanta",
+		Name:   "orders",
+		Fields: []FieldDefinition{
+			{Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true},
+			{Name: "o_totalprice", Type: DataTypeFloat, Nullable: true},
+		},
+	}}}, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table scratch_orders as select o_orderkey as duplicate_name, o_totalprice as duplicate_name from orders limit 2")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	_, diagnostics := statement.Bind(context)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want duplicate column blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || !strings.Contains(diagnostics[0].Error(), "Duplicate column name 'duplicate_name'") {
+		t.Fatalf("diagnostics = %#v, want MySQL-style duplicate column diagnostic", diagnostics)
+	}
+}
+
 func TestUnboundStatementBindCreateView(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

@@ -50,10 +50,10 @@ func (r Runner) CaptureCompatibilityExpected(ctx context.Context, suite *Suite, 
 		switch test.Kind {
 		case "query":
 			actual, err := caseEngine.Query(caseCtx, sql)
+			details = evaluateQuery(test, actual, err)
 			if err != nil {
-				details = "unexpected error: " + err.Error()
 				captured = append(captured, CaptureCompatibilityErrorCase(test, "query", err))
-			} else {
+			} else if details == "" {
 				captured = append(captured, CaptureCompatibilityQueryCase(test, actual, canonical))
 			}
 		case "admin":
@@ -62,10 +62,10 @@ func (r Runner) CaptureCompatibilityExpected(ctx context.Context, suite *Suite, 
 			}
 		default:
 			affected, err := caseEngine.Exec(caseCtx, sql)
+			details = evaluateStatement(test, affected, err)
 			if err != nil {
-				details = "unexpected error: " + err.Error()
 				captured = append(captured, CaptureCompatibilityErrorCase(test, "statement", err))
-			} else {
+			} else if details == "" {
 				captured = append(captured, CaptureCompatibilityStatementCase(test, affected))
 			}
 		}
