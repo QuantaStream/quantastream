@@ -20,6 +20,24 @@ tests:
     sql: |
       drop temporary table if exists qs_mysql_compat_tmp_regions
 
+  - id: mysql_compat_temp_tables.003.drop_stale_ctas_aggregate_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_nation_counts
+
+  - id: mysql_compat_temp_tables.004.drop_stale_ctas_metadata_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_region_keys
+
   - id: mysql_compat_temp_tables.010.create_temp_table_metadata
     status: supported
     kind: statement
@@ -142,7 +160,37 @@ tests:
         - [1, AMERICA]
         - [2, ASIA]
 
-  - id: mysql_compat_temp_tables.032.drop_ctas_temp_table
+  - id: mysql_compat_temp_tables.032.create_temp_table_as_select_if_not_exists_is_noop
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas_lifecycle
+    compatibility: mysql
+    requires: [create_table, temporary_table, if_not_exists, select]
+    sql: |
+      create temporary table if not exists qs_mysql_compat_tmp_regions as
+      select 99 as region_key, 'SHOULD_NOT_INSERT' as region_name
+
+  - id: mysql_compat_temp_tables.033.select_temp_table_as_select_noop_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_ctas_lifecycle
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select region_key, region_name
+      from qs_mysql_compat_tmp_regions
+      where region_key >= 0
+      order by region_key
+      limit 3
+    expect:
+      columns: [region_key, region_name]
+      rows:
+        - [0, AFRICA]
+        - [1, AMERICA]
+        - [2, ASIA]
+
+  - id: mysql_compat_temp_tables.034.drop_ctas_temp_table
     status: supported
     kind: statement
     feature: temp_tables_ddl
@@ -150,3 +198,82 @@ tests:
     requires: [drop_table, temporary_table]
     sql: |
       drop temporary table qs_mysql_compat_tmp_regions
+
+  - id: mysql_compat_temp_tables.035.create_temp_table_as_select_region_key_metadata
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas_metadata
+    compatibility: mysql
+    requires: [create_table, temporary_table, select, order_by]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_region_keys as
+      select r_regionkey as region_key
+      from region
+      where r_regionkey in (0, 1, 2)
+      order by r_regionkey
+
+  - id: mysql_compat_temp_tables.036.show_columns_temp_table_as_select_region_key
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_ctas_metadata
+    compatibility: mysql
+    requires: [show_columns, temporary_table]
+    sql: |
+      show columns from qs_mysql_compat_tmp_region_keys
+    expect:
+      columns: [Field, Type, "Null", Key, Default, Extra]
+      rows:
+        - [region_key, int, "NO", "", null, "NULL"]
+
+  - id: mysql_compat_temp_tables.037.drop_ctas_metadata_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_region_keys
+
+  - id: mysql_compat_temp_tables.040.create_temp_table_as_select_grouped_tpch_nations
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas_aggregate_source
+    compatibility: mysql
+    requires: [create_table, temporary_table, select, aggregate, group_by, order_by]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_nation_counts as
+      select n_regionkey as region_key, count(*) as nation_count
+      from nation
+      where n_regionkey in (0, 1, 2)
+      group by n_regionkey
+      order by n_regionkey
+
+  - id: mysql_compat_temp_tables.041.select_temp_table_as_select_grouped_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_ctas_aggregate_source
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select region_key, nation_count
+      from qs_mysql_compat_tmp_nation_counts
+      where region_key >= 0
+      order by region_key
+      limit 3
+    expect:
+      columns: [region_key, nation_count]
+      rows:
+        - [0, 5]
+        - [1, 5]
+        - [2, 5]
+
+  - id: mysql_compat_temp_tables.042.drop_ctas_aggregate_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_nation_counts

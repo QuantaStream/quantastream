@@ -526,7 +526,14 @@ func TestUnboundStatementBindCreateTemporaryTableCarriesMetadata(t *testing.T) {
 }
 
 func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testing.T) {
-	context := NewBindContext(testBindCatalog(), "quanta")
+	context := NewBindContext(MemoryCatalog{Tables: []TableDefinition{{
+		Schema: "quanta",
+		Name:   "orders",
+		Fields: []FieldDefinition{
+			{Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true},
+			{Name: "o_totalprice", Type: DataTypeFloat, Nullable: true},
+		},
+	}}}, "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table scratch_orders as select o_orderkey as order_key, o_totalprice as total_price from orders limit 2")
 	if parseDiagnostics.BlocksNative() {
 		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
@@ -545,8 +552,14 @@ func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testin
 	if column := query.Mutation.Columns[0]; column.Name != "order_key" || column.Type != DataTypeInt || column.Table.Table != "scratch_orders" {
 		t.Fatalf("first CTAS column = %#v", column)
 	}
+	if query.Mutation.Columns[0].Nullable {
+		t.Fatalf("primary-key source CTAS column should be non-nullable: %#v", query.Mutation.Columns[0])
+	}
 	if column := query.Mutation.Columns[1]; column.Name != "total_price" || column.Type != DataTypeFloat {
 		t.Fatalf("second CTAS column = %#v", column)
+	}
+	if !query.Mutation.Columns[1].Nullable {
+		t.Fatalf("nullable source CTAS column should remain nullable: %#v", query.Mutation.Columns[1])
 	}
 }
 

@@ -1002,11 +1002,39 @@ func bindCreateTableAsSelectColumns(context *BindContext, target TableInstance, 
 			Name:         name,
 			PhysicalName: name,
 			Type:         column.Type,
-			Nullable:     column.Nullable,
+			Nullable:     createTableAsSelectColumnNullable(sourceQuery, index, column),
 			Roles:        FieldRoleVisible | FieldRoleMutationTarget,
 		})
 	}
 	return refs, nil
+}
+
+func createTableAsSelectColumnNullable(sourceQuery QueryIR, index int, column ResultColumn) bool {
+	projection, ok := createTableAsSelectProjection(sourceQuery, index)
+	if !ok {
+		return column.Nullable
+	}
+	switch expr := projection.Expr.(type) {
+	case FieldExpr:
+		if expr.Ref.PrimaryKey {
+			return false
+		}
+	case *FieldExpr:
+		if expr != nil && expr.Ref.PrimaryKey {
+			return false
+		}
+	}
+	return column.Nullable
+}
+
+func createTableAsSelectProjection(sourceQuery QueryIR, index int) (ProjectionColumn, bool) {
+	if len(sourceQuery.UnionAll) > 0 {
+		return createTableAsSelectProjection(sourceQuery.UnionAll[0], index)
+	}
+	if index < 0 || index >= len(sourceQuery.Projection) {
+		return ProjectionColumn{}, false
+	}
+	return sourceQuery.Projection[index], true
 }
 
 // BindCreateView binds parser-neutral CREATE VIEW metadata into QueryIR.
