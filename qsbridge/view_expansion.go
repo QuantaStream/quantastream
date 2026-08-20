@@ -36,6 +36,7 @@ type viewExpansion struct {
 	aggregates []UnboundAggregate
 	having     []UnboundPredicate
 	orderBy    []UnboundSort
+	window     ResultShape
 	columns    viewProjectionMap
 	viewRef    string
 	distinct   bool
@@ -146,6 +147,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	expansionAggregates := make([]UnboundAggregate, 0)
 	expansionHaving := make([]UnboundPredicate, 0)
 	expansionOrderBy := make([]UnboundSort, 0)
+	var expansionWindow ResultShape
 	for _, expansion := range expansions {
 		if len(expansion.aggregates) > 0 {
 			if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
@@ -166,6 +168,14 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			}
 			selectStmt.Result.Distinct = true
 		}
+		if expansion.window.AppliesResultWindow() {
+			if diagnostics := validateResultWindowViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+				return selectStmt, diagnostics
+			}
+			if !expansionWindow.AppliesResultWindow() {
+				expansionWindow = expansion.window
+			}
+		}
 		var rewriteDiagnostics DiagnosticSet
 		selectStmt, rewriteDiagnostics = rewriteOuterSelectViewReferences(selectStmt, expansion)
 		if rewriteDiagnostics.BlocksNative() {
@@ -184,11 +194,16 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if len(selectStmt.OrderBy) == 0 {
 		selectStmt.OrderBy = expansionOrderBy
 	}
+	if !selectStmt.Result.AppliesResultWindow() && expansionWindow.AppliesResultWindow() {
+		selectStmt.Result.Limit = expansionWindow.Limit
+		selectStmt.Result.HasLimit = expansionWindow.HasLimit
+		selectStmt.Result.Offset = expansionWindow.Offset
+	}
 	return selectStmt, nil
 }
 
 func validateMultipleLogicalSourceExpansionUsage(expansion viewExpansion) DiagnosticSet {
-	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && len(expansion.orderBy) == 0 && !expansion.distinct {
+	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && len(expansion.orderBy) == 0 && !expansion.window.AppliesResultWindow() && !expansion.distinct {
 		return nil
 	}
 	return DiagnosticSet{
@@ -269,6 +284,15 @@ func validateMembershipLogicalSourceExpansionUsage(expansion viewExpansion) Diag
 	}
 }
 
+func validateResultWindowViewUsage(selectStmt UnboundSelect, expansion viewExpansion) DiagnosticSet {
+	if len(selectStmt.Tables) != len(expansion.tables) || len(selectStmt.Joins) > len(expansion.joins) || len(selectStmt.Predicates) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "limited logical views currently support direct projection only"),
+		}
+	}
+	return nil
+}
+
 func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, DiagnosticSet, bool) {
 	view, diagnostics, ok := s.lookupView(table)
 	if diagnostics.BlocksNative() || !ok {
@@ -323,6 +347,7 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 	aggregates := append([]UnboundAggregate(nil), viewSelect.Aggregates...)
 	having := append([]UnboundPredicate(nil), viewSelect.Having...)
 	orderBy := append([]UnboundSort(nil), viewSelect.OrderBy...)
+	window := resultWindowShape(viewSelect.Result)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -360,6 +385,7 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		aggregates: aggregates,
 		having:     having,
 		orderBy:    orderBy,
+		window:     window,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   viewSelect.Result.Distinct,
@@ -394,6 +420,7 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 	aggregates := append([]UnboundAggregate(nil), derivedSelect.Aggregates...)
 	having := append([]UnboundPredicate(nil), derivedSelect.Having...)
 	orderBy := append([]UnboundSort(nil), derivedSelect.OrderBy...)
+	window := resultWindowShape(derivedSelect.Result)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -431,6 +458,7 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 		aggregates: aggregates,
 		having:     having,
 		orderBy:    orderBy,
+		window:     window,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   derivedSelect.Result.Distinct,
@@ -481,11 +509,6 @@ func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt Unboun
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" must expand to base tables without memberships or subqueries"),
 		}
 	}
-	if selectStmt.Result.AppliesResultWindow() {
-		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain limit or offset yet"),
-		}
-	}
 	if selectStmt.WhereExpr != nil {
 		return DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain grouped boolean predicates yet"),
@@ -502,6 +525,15 @@ func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt Unboun
 		}
 	}
 	return nil
+}
+
+func resultWindowShape(result ResultShape) ResultShape {
+	return ResultShape{
+		Kind:     result.Kind,
+		Limit:    result.Limit,
+		HasLimit: result.HasLimit,
+		Offset:   result.Offset,
+	}
 }
 
 func cloneUnboundSelect(selectStmt UnboundSelect) UnboundSelect {

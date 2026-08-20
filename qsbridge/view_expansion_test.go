@@ -76,6 +76,40 @@ func TestPlannerCarriesLogicalViewOrderByWhenOuterQueryHasNoSort(t *testing.T) {
 	}
 }
 
+func TestPlannerCarriesLogicalViewLimitWhenOuterQueryHasNoWindow(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "limited_customers",
+		SQL:    "select c_custkey as customer_key, c_name as customer_name from customer limit 1",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan("select customer_key, customer_name from limited_customers")
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "customer" {
+		t.Fatalf("sources = %#v, want customer", result.Query.Sources)
+	}
+	if got := result.Query.Sources[0].RefName(); got != "limited_customers" {
+		t.Fatalf("source ref = %q, want limited_customers", got)
+	}
+	if !result.Query.Result.HasResultLimit() || result.Query.Result.Limit != 1 {
+		t.Fatalf("result window = %#v, want limit 1", result.Query.Result)
+	}
+	if len(result.Query.Projection) != 2 {
+		t.Fatalf("projection = %#v, want customer key/name", result.Query.Projection)
+	}
+	if result.Query.Projection[0].Alias != "customer_key" || !exprReferencesField(result.Query.Projection[0].Expr, "limited_customers", "c_custkey") {
+		t.Fatalf("projection[0] = %#v, want limited_customers.c_custkey", result.Query.Projection[0])
+	}
+}
+
 func TestPlannerExpandsSimpleDerivedTable(t *testing.T) {
 	planner := Planner{
 		Parser:        SimpleParserBridge{},

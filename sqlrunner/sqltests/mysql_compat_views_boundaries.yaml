@@ -463,15 +463,18 @@ tests:
       limit 1
 
   - id: mysql_compat_views_boundaries.111.select_limit_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_order_limit_boundary
     compatibility: mysql
     requires: [select, view_reference, limit]
-    issue: "LIMIT inside view definitions is not expandable yet."
     sql: |
       select customer_key, customer_name
       from qs_mysql_compat_limit_view
+    expect:
+      columns: [customer_key, customer_name]
+      rows:
+        - [1, "Customer#000000001"]
 
   - id: mysql_compat_views_boundaries.112.drop_limit_view
     status: supported
