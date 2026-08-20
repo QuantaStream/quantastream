@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -163,7 +164,12 @@ func (r SQLRuntime) temporaryTableInsertSelectRows(ctx context.Context, table qs
 			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "INSERT SELECT result shape changed during execution"),
 		}
 	}
-	chunk, diagnostics := sourceResult.Runtime.RowSet.ToResultChunk(0, true)
+	sourceRowSet := sourceResult.Runtime.RowSet
+	if sourceOrder := projectionOrder(sourceResult.Request.Bound.Prepared.Query.Projection); len(sourceOrder) > 0 {
+		sourceRowSet = directBitmapOrderVisibleProjectedRowSet(sourceRowSet, sourceOrder)
+	}
+	sourceRowSet = temporaryTableOrderVisibleProjectedRowSetByResultColumns(sourceRowSet, sourceResult.Request.ResultColumns)
+	chunk, diagnostics := sourceRowSet.ToResultChunk(0, true)
 	if diagnostics.BlocksNative() {
 		return nil, diagnostics
 	}
@@ -259,6 +265,60 @@ func temporaryTableInsertResultRow(table qsbridge.TableDefinition, columnIndexes
 		return qsbridge.TemporaryTableRow{}, temporaryTableRowsDiagnostics("temporary table column cannot be NULL: " + field.Name)
 	}
 	return qsbridge.TemporaryTableRow{Values: values}, nil
+}
+
+func temporaryTableOrderVisibleProjectedRowSetByResultColumns(rowSet qsbridge.QuantaProjectedRowSet, columns []qsbridge.ResultColumn) qsbridge.QuantaProjectedRowSet {
+	if len(columns) == 0 || len(rowSet.ProjectionVectors) == 0 {
+		return rowSet
+	}
+	ordered := make([]qsbridge.QuantaProjectionVector, 0, len(rowSet.ProjectionVectors))
+	used := make([]bool, len(rowSet.ProjectionVectors))
+	for _, column := range columns {
+		for i, vector := range rowSet.ProjectionVectors {
+			if used[i] || !vector.Field.Visible || !temporaryTableProjectionVectorMatchesResultColumn(vector, column) {
+				continue
+			}
+			ordered = append(ordered, vector)
+			used[i] = true
+			break
+		}
+	}
+	for i, vector := range rowSet.ProjectionVectors {
+		if used[i] || !vector.Field.Visible {
+			continue
+		}
+		ordered = append(ordered, vector)
+	}
+	for i, vector := range rowSet.ProjectionVectors {
+		if used[i] || vector.Field.Visible {
+			continue
+		}
+		ordered = append(ordered, vector)
+	}
+	rowSet.ProjectionVectors = ordered
+	return rowSet
+}
+
+func temporaryTableProjectionVectorMatchesResultColumn(vector qsbridge.QuantaProjectionVector, column qsbridge.ResultColumn) bool {
+	fieldName := strings.TrimSpace(vector.Field.Field)
+	if fieldName == "" {
+		return false
+	}
+	if strings.EqualFold(fieldName, strings.TrimSpace(column.Name)) {
+		return true
+	}
+	source := strings.TrimSpace(column.Source)
+	if source == "" {
+		return false
+	}
+	qualified := strings.Trim(strings.TrimSpace(vector.Field.Index)+"."+fieldName, ".")
+	if strings.EqualFold(qualified, source) {
+		return true
+	}
+	if dot := strings.LastIndex(source, "."); dot >= 0 && dot+1 < len(source) {
+		return strings.EqualFold(fieldName, source[dot+1:])
+	}
+	return false
 }
 
 func temporaryTableEvaluateStaticExpr(expr qsbridge.Expr) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
@@ -417,7 +477,7 @@ func temporaryTableCoerceCell(cell qsbridge.ResultCell, field qsbridge.FieldDefi
 	case qsbridge.DataTypeInt:
 		value, ok := temporaryTableIntValue(cell)
 		if !ok {
-			return qsbridge.ResultCell{}, temporaryTableRowsDiagnostics("temporary table column requires integer value: " + field.Name)
+			return qsbridge.ResultCell{}, temporaryTableRowsDiagnostics("temporary table column requires integer value: " + field.Name + " got " + temporaryTableCellDebug(cell))
 		}
 		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: value}, nil
 	case qsbridge.DataTypeFloat:
@@ -436,6 +496,14 @@ func temporaryTableCoerceCell(cell qsbridge.ResultCell, field qsbridge.FieldDefi
 	default:
 		return cell, nil
 	}
+}
+
+func temporaryTableCellDebug(cell qsbridge.ResultCell) string {
+	value := fmt.Sprint(cell.Value)
+	if len(value) > 80 {
+		value = value[:80] + "..."
+	}
+	return fmt.Sprintf("kind=%s type=%T value=%q", cell.Kind, cell.Value, value)
 }
 
 func temporaryTableBoolValue(cell qsbridge.ResultCell) (bool, bool) {
@@ -457,6 +525,18 @@ func temporaryTableBoolValue(cell qsbridge.ResultCell) (bool, bool) {
 }
 
 func temporaryTableIntValue(cell qsbridge.ResultCell) (int64, bool) {
+	switch value := cell.Value.(type) {
+	case *big.Int:
+		if value == nil || !value.IsInt64() {
+			return 0, false
+		}
+		return value.Int64(), true
+	case big.Int:
+		if !value.IsInt64() {
+			return 0, false
+		}
+		return value.Int64(), true
+	}
 	if numeric, ok := directBitmapNumericCellValue(cell); ok {
 		if math.Trunc(numeric) != numeric {
 			return 0, false

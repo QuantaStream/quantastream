@@ -56,6 +56,15 @@ tests:
     sql: |
       drop temporary table if exists qs_mysql_compat_tmp_regions_no_as
 
+  - id: mysql_compat_temp_tables.007.drop_stale_like_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_region_like
+
   - id: mysql_compat_temp_tables.010.create_temp_table_metadata
     status: supported
     kind: statement
@@ -405,3 +414,65 @@ tests:
     requires: [drop_table, temporary_table]
     sql: |
       drop temporary table qs_mysql_compat_tmp_regions_no_as
+
+  - id: mysql_compat_temp_tables.070.create_temp_table_like_tpch_region
+    status: supported
+    kind: statement
+    feature: temp_tables_like
+    compatibility: mysql
+    requires: [create_table, temporary_table]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_region_like like region
+
+  - id: mysql_compat_temp_tables.071.show_columns_temp_table_like_region
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_like_metadata
+    compatibility: mysql
+    requires: [show_columns, temporary_table]
+    sql: |
+      show columns from qs_mysql_compat_tmp_region_like
+    expect:
+      row_count: 3
+
+  - id: mysql_compat_temp_tables.072.insert_select_temp_table_like_region
+    status: supported
+    kind: statement
+    feature: temp_tables_like_dml
+    compatibility: mysql
+    requires: [insert, temporary_table, select, order_by]
+    sql: |
+      insert into qs_mysql_compat_tmp_region_like (r_regionkey, r_name)
+      select r_regionkey, r_name
+      from region
+      where r_regionkey in (0, 1)
+      order by r_regionkey
+
+  - id: mysql_compat_temp_tables.073.select_temp_table_like_region_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_like_dml
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select r_regionkey, r_name
+      from qs_mysql_compat_tmp_region_like
+      where r_regionkey >= 0
+      order by r_regionkey
+      limit 2
+    expect:
+      columns: [r_regionkey, r_name]
+      rows:
+        - [0, AFRICA]
+        - [1, AMERICA]
+
+  - id: mysql_compat_temp_tables.074.drop_like_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_region_like

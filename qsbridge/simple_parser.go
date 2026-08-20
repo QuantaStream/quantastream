@@ -891,8 +891,8 @@ func parseSimpleCreateTemporaryTableBody(sql string, createBody string) (Unbound
 		ifNotExists = true
 		createBody = strings.TrimSpace(existsRemaining)
 	}
-	if hasAnyKeyword(createBody, "like") {
-		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE LIKE is not supported yet"), false
+	if targetText, sourceText, ok := splitBeforeTopLevelKeyword(createBody, "like"); ok && strings.TrimSpace(targetText) != "" && strings.TrimSpace(sourceText) != "" {
+		return parseSimpleCreateTemporaryTableLike(sql, targetText, sourceText, ifNotExists)
 	}
 	if targetText, selectText, ok := splitBeforeTopLevelKeyword(createBody, "select"); ok && strings.TrimSpace(targetText) != "" && strings.TrimSpace(selectText) != "" {
 		hasAs := false
@@ -925,6 +925,34 @@ func parseSimpleCreateTemporaryTableBody(sql string, createBody string) (Unbound
 			Temporary:   true,
 			IfNotExists: ifNotExists,
 			Columns:     columns,
+			Result:      ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleCreateTemporaryTableLike(sql string, targetText string, sourceText string, ifNotExists bool) (UnboundStatement, Diagnostic, bool) {
+	table, diagnostic, ok := parseSimpleTable(targetText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE aliases are not supported"), false
+	}
+	source, diagnostic, ok := parseSimpleTable(sourceText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if source.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TEMPORARY TABLE LIKE source aliases are not supported"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindCreateTable,
+		Create: UnboundCreateTable{
+			Table:       table,
+			Temporary:   true,
+			IfNotExists: ifNotExists,
+			LikeTable:   source,
 			Result:      ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true

@@ -662,6 +662,44 @@ func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testin
 	}
 }
 
+func TestUnboundStatementBindCreateTemporaryTableLikeClonesColumns(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{Tables: []TableDefinition{{
+		Schema: "quanta",
+		Name:   "customer",
+		Fields: []FieldDefinition{
+			{Name: "c_custkey", Type: DataTypeInt, Index: IndexBSI, PrimaryKey: true, Nullable: false, Encoding: LegacyEncodingProfile("IntBSI", LegacyEncodingOptions{})},
+			{Name: "c_name", Type: DataTypeString, Index: IndexStringEnum, Nullable: true, Encoding: LegacyEncodingProfile("StringEnum", LegacyEncodingOptions{})},
+		},
+	}}}, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table scratch_customer like customer")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindCreateTable || query.Mutation.Kind != MutationCreateTable {
+		t.Fatalf("query kind/mutation = %q/%q, want create_table", query.Kind, query.Mutation.Kind)
+	}
+	if !query.Mutation.Temporary || query.Mutation.Target.Table != "scratch_customer" {
+		t.Fatalf("mutation = %#v, want scratch_customer temporary create", query.Mutation)
+	}
+	if query.Mutation.SourceSQL != "" {
+		t.Fatalf("SourceSQL = %q, want empty for LIKE", query.Mutation.SourceSQL)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if column := query.Mutation.Columns[0]; column.Name != "c_custkey" || column.Table.Table != "scratch_customer" || !column.PrimaryKey || column.Nullable || column.Index != IndexBSI {
+		t.Fatalf("first LIKE column = %#v, want cloned non-null primary key on scratch_customer", column)
+	}
+	if column := query.Mutation.Columns[1]; column.Name != "c_name" || column.Table.Table != "scratch_customer" || column.Type != DataTypeString || !column.Nullable || column.Index != IndexStringEnum {
+		t.Fatalf("second LIKE column = %#v, want cloned nullable string enum on scratch_customer", column)
+	}
+}
+
 func TestUnboundStatementBindCreateTemporaryTableAsSelectRejectsDuplicateAliases(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{Tables: []TableDefinition{{
 		Schema: "quanta",

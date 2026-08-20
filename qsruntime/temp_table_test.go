@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"math/big"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -74,6 +75,177 @@ func TestSQLRuntimeCreateTemporaryTableUpdatesSessionCatalogMetadata(t *testing.
 	}
 	if !missing.Diagnostics.BlocksNative() {
 		t.Fatalf("missing diagnostics = %#v, want blocking table not found", missing.Diagnostics)
+	}
+}
+
+func TestSQLRuntimeCreateTemporaryTableLikeClonesCatalogMetadata(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas: []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI, PrimaryKey: true, Nullable: false, Encoding: qsbridge.LegacyEncodingProfile("IntBSI", qsbridge.LegacyEncodingOptions{})},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringEnum", qsbridge.LegacyEncodingOptions{})},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	create, err := runtime.ExecuteSQL(context.Background(), "create temporary table scratch_customer like customer", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("CREATE TEMPORARY TABLE LIKE failed: %v", err)
+	}
+	if create.Diagnostics.BlocksNative() || create.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("create diagnostics = %#v runtime=%#v", create.Diagnostics, create.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("CREATE TEMPORARY TABLE LIKE should not dispatch to the direct executor")
+	}
+	actions := create.Runtime.Statement.SessionActions
+	if len(actions) != 1 || actions[0].Kind != qsbridge.SessionActionCreateTemporaryTable || actions[0].Table.Name != "scratch_customer" {
+		t.Fatalf("create session actions = %#v", actions)
+	}
+	transition := runtime.Session.PreviewSessionTransition(actions)
+	if transition.Diagnostics.BlocksNative() {
+		t.Fatalf("session transition diagnostics = %#v", transition.Diagnostics)
+	}
+	runtime.Session = transition.After
+
+	describe, err := runtime.ExecuteSQL(context.Background(), "show columns from scratch_customer", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SHOW COLUMNS failed: %v", err)
+	}
+	if describe.Diagnostics.BlocksNative() || describe.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("describe diagnostics = %#v runtime=%#v", describe.Diagnostics, describe.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := describe.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("columns = %#v, want two cloned columns", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != "c_custkey" || chunk.Rows[0][3].Value != "PRI" || chunk.Rows[0][5].Value != "mapper=IntBSI" {
+		t.Fatalf("first cloned column row = %#v, want primary-key IntBSI metadata", chunk.Rows[0])
+	}
+	if chunk.Rows[1][0].Value != "c_name" || chunk.Rows[1][2].Value != "YES" || chunk.Rows[1][5].Value != "mapper=StringEnum" {
+		t.Fatalf("second cloned column row = %#v, want nullable StringEnum metadata", chunk.Rows[1])
+	}
+}
+
+func TestTemporaryTableIntegerCoercionAcceptsBigIntCells(t *testing.T) {
+	field := qsbridge.FieldDefinition{Name: "region_key", Type: qsbridge.DataTypeInt}
+	cell, diagnostics := temporaryTableCoerceCell(qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: big.NewInt(7)}, field)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("coerce diagnostics = %#v", diagnostics)
+	}
+	if cell.Kind != qsbridge.ValueInt || cell.Value != int64(7) {
+		t.Fatalf("coerced cell = %#v, want int64 7", cell)
+	}
+
+	tooLarge := new(big.Int).Lsh(big.NewInt(1), 80)
+	_, diagnostics = temporaryTableCoerceCell(qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: tooLarge}, field)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want overflow blocker", diagnostics)
+	}
+}
+
+func TestSQLRuntimeInsertSelectTemporaryTableLikeOrdersDirectSourceVectors(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas: []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "region",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "r_regionkey", Type: qsbridge.DataTypeInt, Index: qsbridge.IndexBSI, PrimaryKey: true, Nullable: false, Encoding: qsbridge.LegacyEncodingProfile("IntBSI", qsbridge.LegacyEncodingOptions{})},
+				{Name: "r_name", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum, Nullable: false, Encoding: qsbridge.LegacyEncodingProfile("StringEnum", qsbridge.LegacyEncodingOptions{})},
+				{Name: "r_comment", Type: qsbridge.DataTypeString, Index: qsbridge.IndexBackingString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 256})},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{
+			RowSet: qsbridge.QuantaProjectedRowSet{
+				Index:   "region",
+				Rownums: []qsbridge.QuantaRownum{1},
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_name", Type: qsbridge.DataTypeString, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "AFRICA"}},
+					},
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_comment", Type: qsbridge.DataTypeString, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "comment"}},
+					},
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "region", Field: "r_regionkey", Type: qsbridge.DataTypeInt, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: big.NewInt(0)}},
+					},
+				},
+			},
+			Count: 1,
+		}, nil
+	})
+
+	applyActions := func(result SQLExecutionResult) {
+		t.Helper()
+		transition := runtime.Session.PreviewSessionTransition(result.Runtime.Statement.SessionActions)
+		if transition.Diagnostics.BlocksNative() {
+			t.Fatalf("session transition diagnostics = %#v", transition.Diagnostics)
+		}
+		runtime.Session = transition.After
+	}
+
+	create, err := runtime.ExecuteSQL(context.Background(), "create temporary table scratch_region like region", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("CREATE TEMPORARY TABLE LIKE failed: %v", err)
+	}
+	if !create.Supported() {
+		t.Fatalf("create diagnostics = %#v runtime=%#v", create.Diagnostics, create.Runtime.Diagnostics)
+	}
+	applyActions(create)
+
+	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_region select r_regionkey, r_name, r_comment from region", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INSERT SELECT temporary table LIKE failed: %v", err)
+	}
+	if !insert.Supported() {
+		t.Fatalf("insert diagnostics = %#v runtime=%#v", insert.Diagnostics, insert.Runtime.Diagnostics)
+	}
+	if !executed {
+		t.Fatalf("INSERT SELECT source should dispatch to the direct executor")
+	}
+	applyActions(insert)
+
+	selectResult, err := runtime.ExecuteSQL(context.Background(), "select r_regionkey, r_name, r_comment from scratch_region", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT temporary table LIKE failed: %v", err)
+	}
+	if !selectResult.Supported() {
+		t.Fatalf("select diagnostics = %#v runtime=%#v", selectResult.Diagnostics, selectResult.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := selectResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("result chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 {
+		t.Fatalf("rows = %#v, want one", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, int64(0); got != want {
+		t.Fatalf("r_regionkey = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[0][1].Value, "AFRICA"; got != want {
+		t.Fatalf("r_name = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[0][2].Value, "comment"; got != want {
+		t.Fatalf("r_comment = %#v, want %#v", got, want)
 	}
 }
 

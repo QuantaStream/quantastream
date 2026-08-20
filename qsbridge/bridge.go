@@ -219,6 +219,7 @@ type UnboundCreateTable struct {
 	IfNotExists bool
 	Columns     []FieldDefinition
 	AsSQL       string
+	LikeTable   UnboundTable
 	Result      ResultShape
 	Blockers    []NativeBlocker
 }
@@ -988,6 +989,14 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 		return query, diagnostics
 	}
 	columns := createTableFieldRefs(target, createStmt.Columns)
+	if strings.TrimSpace(createStmt.LikeTable.Name) != "" {
+		likeColumns, likeDiagnostics := bindCreateTableLikeColumns(context, target, createStmt.LikeTable)
+		diagnostics = append(diagnostics, likeDiagnostics...)
+		if diagnostics.BlocksNative() {
+			return query, diagnostics
+		}
+		columns = likeColumns
+	}
 	if strings.TrimSpace(createStmt.AsSQL) != "" {
 		ctasColumns, ctasDiagnostics := bindCreateTableAsSelectColumns(context, target, createStmt.AsSQL)
 		diagnostics = append(diagnostics, ctasDiagnostics...)
@@ -1005,6 +1014,48 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 		SourceSQL:   strings.TrimSpace(createStmt.AsSQL),
 	}
 	return query, diagnostics
+}
+
+func bindCreateTableLikeColumns(context *BindContext, target TableInstance, source UnboundTable) ([]FieldRef, DiagnosticSet) {
+	if context == nil {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if context.Catalog == nil {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "catalog is nil"),
+		}
+	}
+	if strings.TrimSpace(source.Alias) != "" {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TEMPORARY TABLE LIKE source aliases are not supported"),
+		}
+	}
+	sourceName := strings.TrimSpace(source.Name)
+	if sourceName == "" {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TEMPORARY TABLE LIKE source table is empty"),
+		}
+	}
+	sourceSchema := strings.TrimSpace(source.Schema)
+	if sourceSchema == "" {
+		sourceSchema = context.DefaultSchema
+	}
+	sourceTable, diagnostics := context.Catalog.Table(sourceSchema, sourceName)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	if len(sourceTable.Fields) == 0 {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TEMPORARY TABLE LIKE source table has no columns: "+qualifiedCatalogName(sourceSchema, sourceName)),
+		}
+	}
+	refs := make([]FieldRef, 0, len(sourceTable.Fields))
+	for _, field := range sourceTable.Fields {
+		refs = append(refs, field.Ref(target, FieldRoleVisible|FieldRoleMutationTarget))
+	}
+	return refs, nil
 }
 
 func bindCreateTableAsSelectColumns(context *BindContext, target TableInstance, sourceSQL string) ([]FieldRef, DiagnosticSet) {

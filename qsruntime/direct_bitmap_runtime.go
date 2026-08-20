@@ -2481,6 +2481,15 @@ func directBitmapNumericCellValue(cell qsbridge.ResultCell) (float64, bool) {
 		return directBitmapParseNumericString(value)
 	case []byte:
 		return directBitmapParseNumericString(string(value))
+	case *big.Int:
+		if value == nil {
+			return 0, false
+		}
+		parsed, _ := new(big.Float).SetInt(value).Float64()
+		return parsed, true
+	case big.Int:
+		parsed, _ := new(big.Float).SetInt(&value).Float64()
+		return parsed, true
 	case fmt.Stringer:
 		return directBitmapParseNumericString(value.String())
 	case *big.Rat:

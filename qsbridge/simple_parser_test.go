@@ -1034,6 +1034,25 @@ func TestSimpleParserBridgeParsesCreateTemporaryTableSelectWithoutAs(t *testing.
 	}
 }
 
+func TestSimpleParserBridgeParsesCreateTemporaryTableLike(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create temporary table customers_copy like customer")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics = %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable || !statement.Create.Temporary {
+		t.Fatalf("statement = %#v, want temporary create table", statement)
+	}
+	if statement.Create.Table.Name != "customers_copy" {
+		t.Fatalf("table = %#v, want customers_copy", statement.Create.Table)
+	}
+	if statement.Create.LikeTable.Name != "customer" {
+		t.Fatalf("LikeTable = %#v, want customer", statement.Create.LikeTable)
+	}
+	if statement.Create.AsSQL != "" || len(statement.Create.Columns) != 0 {
+		t.Fatalf("Create = %#v, want LIKE without CTAS SQL or inline fields", statement.Create)
+	}
+}
+
 func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_orderkey as order_id, o.o_totalprice total_price from orders as o where o.o_totalprice >= 101 and o.o_orderkey <= 8 order by o.o_totalprice desc limit 2")
 	if diagnostics.BlocksNative() {
