@@ -97,6 +97,54 @@ tests:
       rows:
         - [2, Abby, 25]
 
+  - id: mysql_compat_mutations_boundaries.025.begin_formatted_catalog_insert
+    status: supported
+    kind: statement
+    feature: mutations_insert_formatting_boundary
+    compatibility: mysql
+    requires: [begin]
+    sql: |
+      begin
+
+  - id: mysql_compat_mutations_boundaries.026.formatted_catalog_insert
+    status: xfail
+    kind: statement
+    feature: mutations_insert_formatting_boundary
+    compatibility: mysql
+    requires: [insert, values, multiline]
+    issue: "Formatted multi-line INSERT ... VALUES parses successfully but currently fails in the catalog write path with an empty primary-key value; one-line catalog INSERT coverage remains supported."
+    sql: |
+      insert into customer (
+        c_custkey,
+        c_name,
+        c_address,
+        c_nationkey,
+        c_phone,
+        c_acctbal,
+        c_mktsegment,
+        c_comment
+      ) values (
+        900000002,
+        'Formatted Customer',
+        'Formatted Address',
+        1,
+        '11-222-333-4444',
+        42.50,
+        'BUILDING',
+        'formatted catalog insert boundary'
+      )
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.027.rollback_formatted_catalog_insert
+    status: supported
+    kind: statement
+    feature: mutations_insert_formatting_boundary
+    compatibility: mysql
+    requires: [rollback]
+    sql: |
+      rollback
+
   - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
     status: xfail
     kind: statement

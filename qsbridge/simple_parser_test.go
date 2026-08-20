@@ -1924,6 +1924,43 @@ func TestSimpleParserBridgeParsesInsertValues(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesFormattedInsertValues(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		insert into customer (
+			c_custkey,
+			c_name,
+			c_acctbal
+		) values (
+			900000002,
+			'Formatted Customer',
+			42.50
+		)
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.Insert.Table.Name != "customer" {
+		t.Fatalf("insert table = %#v, want customer", statement.Insert.Table)
+	}
+	if got := statement.Insert.Columns; len(got) != 3 || got[0] != "c_custkey" || got[2] != "c_acctbal" {
+		t.Fatalf("insert columns = %#v, want c_custkey, c_name, c_acctbal", got)
+	}
+	if len(statement.Insert.Rows) != 1 || len(statement.Insert.Rows[0]) != 3 {
+		t.Fatalf("insert rows = %#v, want one three-value row", statement.Insert.Rows)
+	}
+	key, ok := statement.Insert.Rows[0][0].(UnboundLiteralExpr)
+	if !ok || key.Kind != ValueInt || key.Value != int64(900000002) {
+		t.Fatalf("key literal = %#v, want int 900000002", statement.Insert.Rows[0][0])
+	}
+	balance, ok := statement.Insert.Rows[0][2].(UnboundLiteralExpr)
+	if !ok || balance.Kind != ValueFloat || balance.Value != float64(42.5) {
+		t.Fatalf("balance literal = %#v, want float 42.5", statement.Insert.Rows[0][2])
+	}
+}
+
 func TestSimpleParserBridgeParsesInsertValuesWithoutWhitespace(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa (cust_id, first_name, age) values('9001', 'Ada', 42)")
 	if diagnostics.BlocksNative() {
