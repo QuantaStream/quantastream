@@ -1592,11 +1592,11 @@ func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
 	if table.Alias != "" {
 		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE aliases are not supported"), false
 	}
-	columns, diagnostic, ok := parseSimpleAlterTableAddPrimaryKey(operationText)
+	columns, foreignKey, diagnostic, ok := parseSimpleAlterTableAdd(operationText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
-	return UnboundStatement{
+	statement := UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindAlterTable,
 		Alter: UnboundAlterTable{
@@ -1604,41 +1604,153 @@ func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
 			AddPrimaryKeyColumns: columns,
 			Result:               ResultShape{Kind: ResultStatement},
 		},
-	}, Diagnostic{}, true
+	}
+	if foreignKey != nil {
+		statement.Alter.AddForeignKey = foreignKey
+	}
+	return statement, Diagnostic{}, true
 }
 
-func parseSimpleAlterTableAddPrimaryKey(operationText string) ([]string, Diagnostic, bool) {
+func parseSimpleAlterTableAdd(operationText string) ([]string, *UnboundForeignKey, Diagnostic, bool) {
+	if columns, diagnostic, found, ok := parseSimpleAlterTableAddPrimaryKey(operationText); found {
+		return columns, nil, diagnostic, ok
+	}
+	if foreignKey, diagnostic, found, ok := parseSimpleAlterTableAddForeignKey(operationText); found {
+		return nil, foreignKey, diagnostic, ok
+	}
+	return nil, nil, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY or ADD FOREIGN KEY"), false
+}
+
+func parseSimpleAlterTableAddPrimaryKey(operationText string) ([]string, Diagnostic, bool, bool) {
 	remaining, ok := consumeKeyword(operationText, "primary")
 	if !ok {
-		if fkRemaining, fkOK := consumeKeyword(operationText, "foreign"); fkOK {
-			if _, keyOK := consumeKeyword(fkRemaining, "key"); keyOK {
-				return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY is not supported yet"), false
-			}
-		}
-		return nil, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY"), false
+		return nil, Diagnostic{}, false, true
 	}
 	remaining, ok = consumeKeyword(remaining, "key")
 	if !ok {
-		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY must be followed by KEY"), false
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY must be followed by KEY"), true, false
 	}
-	remaining = strings.TrimSpace(remaining)
-	if !strings.HasPrefix(remaining, "(") || !strings.HasSuffix(remaining, ")") {
-		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY must include a column list"), false
+	columnText, tail, diagnostic, found, ok := splitLeadingSimpleParenthesized(remaining)
+	if !found {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY must include a column list"), true, false
 	}
-	columnText := strings.TrimSpace(remaining[1 : len(remaining)-1])
-	if columnText == "" {
-		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY column list must not be empty"), false
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	if strings.TrimSpace(tail) != "" {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY does not support trailing options"), true, false
+	}
+	columns, diagnostic, ok := parseSimpleAlterColumnList(columnText, "ALTER TABLE ADD PRIMARY KEY")
+	return columns, diagnostic, true, ok
+}
+
+func parseSimpleAlterTableAddForeignKey(operationText string) (*UnboundForeignKey, Diagnostic, bool, bool) {
+	remaining := strings.TrimSpace(operationText)
+	constraintName := ""
+	if afterConstraint, ok := consumeKeyword(remaining, "constraint"); ok {
+		name, rest, ok := splitFirstSimpleToken(afterConstraint)
+		if !ok {
+			return nil, simpleParserDiagnostic("ALTER TABLE ADD CONSTRAINT requires a constraint name"), true, false
+		}
+		constraintName = stripSimpleIdentifierQuotes(name)
+		if constraintName == "" || strings.Contains(constraintName, ".") {
+			return nil, simpleParserDiagnostic("ALTER TABLE ADD CONSTRAINT name must be a simple identifier"), true, false
+		}
+		remaining = rest
+	}
+	remaining, ok := consumeKeyword(remaining, "foreign")
+	if !ok {
+		if constraintName != "" {
+			return nil, simpleParserDiagnostic("ALTER TABLE ADD CONSTRAINT only supports FOREIGN KEY"), true, false
+		}
+		return nil, Diagnostic{}, false, true
+	}
+	remaining, ok = consumeKeyword(remaining, "key")
+	if !ok {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN must be followed by KEY"), true, false
+	}
+	childText, remaining, diagnostic, found, ok := splitLeadingSimpleParenthesized(remaining)
+	if !found {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY must include a child column list"), true, false
+	}
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	childColumns, diagnostic, ok := parseSimpleAlterColumnList(childText, "ALTER TABLE ADD FOREIGN KEY")
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	remaining, ok = consumeKeyword(remaining, "references")
+	if !ok {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY must include REFERENCES"), true, false
+	}
+	openParen := strings.Index(remaining, "(")
+	if openParen < 0 {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY REFERENCES must include a referenced column list"), true, false
+	}
+	parentTableText := strings.TrimSpace(remaining[:openParen])
+	parentColumnText, tail, diagnostic, found, ok := splitLeadingSimpleParenthesized(remaining[openParen:])
+	if !found {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY REFERENCES must include a referenced column list"), true, false
+	}
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	if strings.TrimSpace(tail) != "" {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY options are not supported yet"), true, false
+	}
+	parentTable, diagnostic, ok := parseSimpleTable(parentTableText)
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	if parentTable.Alias != "" {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY referenced table aliases are not supported"), true, false
+	}
+	parentColumns, diagnostic, ok := parseSimpleAlterColumnList(parentColumnText, "ALTER TABLE ADD FOREIGN KEY REFERENCES")
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	if len(childColumns) != len(parentColumns) {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY child and referenced column counts must match"), true, false
+	}
+	if len(childColumns) != 1 {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY currently supports one child column and one referenced column"), true, false
+	}
+	return &UnboundForeignKey{
+		Name:              constraintName,
+		Columns:           childColumns,
+		ReferencedTable:   parentTable,
+		ReferencedColumns: parentColumns,
+	}, Diagnostic{}, true, true
+}
+
+func parseSimpleAlterColumnList(columnText string, context string) ([]string, Diagnostic, bool) {
+	if strings.TrimSpace(columnText) == "" {
+		return nil, simpleParserDiagnostic(context + " column list must not be empty"), false
 	}
 	parts := splitSimpleCommaList(columnText)
 	columns := make([]string, 0, len(parts))
 	for _, part := range parts {
 		column := stripSimpleIdentifierQuotes(strings.TrimSpace(part))
 		if column == "" || strings.Contains(column, ".") || len(strings.Fields(column)) != 1 {
-			return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY columns must be simple identifiers"), false
+			return nil, simpleParserDiagnostic(context + " columns must be simple identifiers"), false
 		}
 		columns = append(columns, column)
 	}
 	return columns, Diagnostic{}, true
+}
+
+func splitFirstSimpleToken(text string) (string, string, bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	token := fields[0]
+	idx := strings.Index(text, token)
+	if idx < 0 {
+		return "", "", false
+	}
+	return token, strings.TrimSpace(text[idx+len(token):]), true
 }
 
 func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {

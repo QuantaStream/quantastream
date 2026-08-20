@@ -624,6 +624,45 @@ func TestUnboundStatementBindAlterTableAddPrimaryKey(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindAlterTableAddForeignKey(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("alter table orders add constraint fk_orders_customer foreign key (o_custkey) references customer (c_custkey)")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindAlterTable || query.Mutation.Kind != MutationAlterTableAddForeignKey {
+		t.Fatalf("query kind/mutation = %q/%q, want alter_table/add_foreign_key", query.Kind, query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "orders" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("mutation target = %#v, want quanta.orders", query.Mutation.Target)
+	}
+	if got := query.Mutation.Columns; len(got) != 1 || got[0].Name != "o_custkey" || !got[0].Roles.Has(FieldRoleMutationTarget) {
+		t.Fatalf("mutation columns = %#v, want mutation-target o_custkey", got)
+	}
+	if len(query.Mutation.Relationships) != 1 {
+		t.Fatalf("relationships = %#v, want one relationship", query.Mutation.Relationships)
+	}
+	relationship := query.Mutation.Relationships[0]
+	if relationship.Name != "fk_orders_customer" || relationship.FromTable != "orders" || relationship.FromField != "o_custkey" || relationship.ToTable != "customer" || relationship.ToField != "c_custkey" {
+		t.Fatalf("relationship = %#v, want orders.o_custkey -> customer.c_custkey", relationship)
+	}
+	if relationship.Direction != JoinChildToParent || relationship.Cardinality != "many_to_one" || relationship.Encoding.Kind != RelationshipEncodingVector {
+		t.Fatalf("relationship metadata = %#v, want child-to-parent relation vector", relationship)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessCreate, "orders") {
+		t.Fatalf("RequiredAccess = %#v, want create on orders", access)
+	}
+	if !hasAccessRequirement(access, AccessSelect, "customer") {
+		t.Fatalf("RequiredAccess = %#v, want select on referenced customer", access)
+	}
+}
+
 func TestUnboundStatementBindCreateTemporaryTableCarriesMetadata(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{}, "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table if not exists scratch_keys (customer_key bigint not null, revenue decimal(12,2), primary key (customer_key))")

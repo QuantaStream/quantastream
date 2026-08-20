@@ -104,6 +104,25 @@ func (h LegacyQuantaSessionHandle) AlterTableAddPrimaryKey(ctx context.Context, 
 	}, nil
 }
 
+// AlterTableAddForeignKey reserves the parser/binder/runtime path for future
+// relationship catalog and artifact work without mutating table schemas yet.
+func (h LegacyQuantaSessionHandle) AlterTableAddForeignKey(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if request.Mutation.Kind != qsbridge.MutationAlterTableAddForeignKey {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "alter table add foreign key called for non-ALTER mutation"),
+		}, nil
+	}
+	if _, _, diagnostics := h.schemaMutationTarget(request, "alter table add foreign key"); diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD FOREIGN KEY is not implemented yet; QS must validate existing rows and update relationship/catalog artifacts before enabling it"),
+	}, nil
+}
+
 // CreateView persists a logical, non-materialized SQL view definition.
 func (h LegacyQuantaSessionHandle) CreateView(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if request.Mutation.Kind != qsbridge.MutationCreateView {

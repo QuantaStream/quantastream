@@ -588,6 +588,8 @@ const (
 	MutationDropTable MutationKind = "drop_table"
 	// MutationAlterTableAddPrimaryKey describes adding primary-key metadata to an existing table.
 	MutationAlterTableAddPrimaryKey MutationKind = "alter_table_add_primary_key"
+	// MutationAlterTableAddForeignKey describes adding foreign-key metadata to an existing table.
+	MutationAlterTableAddForeignKey MutationKind = "alter_table_add_foreign_key"
 	// MutationCreateView describes creating a logical non-materialized view.
 	MutationCreateView MutationKind = "create_view"
 	// MutationDropView describes dropping a logical non-materialized view.
@@ -626,5 +628,6 @@ type MutationShape struct {
 	Rows                   []MutationRow
 	Assignments            []MutationAssignment
 	Predicates             []Predicate
+	Relationships          []RelationshipDefinition
 	DependentRelationships []RelationshipDefinition
 }

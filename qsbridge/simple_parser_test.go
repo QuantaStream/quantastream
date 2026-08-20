@@ -258,12 +258,7 @@ func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
 		{
 			name:    "add column",
 			sql:     "alter table customers_qa add column nickname varchar(40)",
-			message: "ALTER TABLE only supports ADD PRIMARY KEY",
-		},
-		{
-			name:    "add foreign key",
-			sql:     "alter table orders add foreign key (o_custkey) references customer (c_custkey)",
-			message: "ALTER TABLE ADD FOREIGN KEY is not supported yet",
+			message: "ALTER TABLE only supports ADD PRIMARY KEY or ADD FOREIGN KEY",
 		},
 	}
 	for _, test := range tests {
@@ -432,6 +427,45 @@ func TestSimpleParserBridgeParsesAlterTableAddPrimaryKeyStatement(t *testing.T) 
 	if statement.Alter.Result.Kind != ResultStatement {
 		t.Fatalf("result kind = %q, want statement", statement.Alter.Result.Kind)
 	}
+}
+
+func TestSimpleParserBridgeParsesAlterTableAddForeignKeyStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("alter table orders add constraint fk_orders_customer foreign key (o_custkey) references customer(c_custkey);")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindAlterTable {
+		t.Fatalf("kind = %q, want alter table", statement.Kind)
+	}
+	if statement.Alter.Table.Name != "orders" {
+		t.Fatalf("table = %#v, want orders", statement.Alter.Table)
+	}
+	if statement.Alter.AddForeignKey == nil {
+		t.Fatalf("AddForeignKey = nil, want parsed foreign key")
+	}
+	foreignKey := statement.Alter.AddForeignKey
+	if foreignKey.Name != "fk_orders_customer" {
+		t.Fatalf("foreign key name = %q, want fk_orders_customer", foreignKey.Name)
+	}
+	if len(foreignKey.Columns) != 1 || foreignKey.Columns[0] != "o_custkey" {
+		t.Fatalf("foreign key columns = %#v, want o_custkey", foreignKey.Columns)
+	}
+	if foreignKey.ReferencedTable.Name != "customer" {
+		t.Fatalf("referenced table = %#v, want customer", foreignKey.ReferencedTable)
+	}
+	if len(foreignKey.ReferencedColumns) != 1 || foreignKey.ReferencedColumns[0] != "c_custkey" {
+		t.Fatalf("referenced columns = %#v, want c_custkey", foreignKey.ReferencedColumns)
+	}
+	if statement.Alter.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Alter.Result.Kind)
+	}
+}
+
+func TestSimpleParserBridgeRejectsAlterTableAddForeignKeyOptions(t *testing.T) {
+	assertSimpleParserRejects(t,
+		"alter table lineitem add constraint fk_lineitem_orders_reverse foreign key (l_orderkey) references orders(o_orderkey) with reverse artifact",
+		"ALTER TABLE ADD FOREIGN KEY options are not supported yet",
+	)
 }
 
 func TestSimpleParserBridgeParsesCreateViewStatement(t *testing.T) {

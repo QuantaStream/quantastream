@@ -256,6 +256,43 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsuppo
 	}
 }
 
+func TestLegacySchemaMutationHandleAlterTableAddForeignKeyReportsExplicitUnsupported(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{
+		TableName: "orders",
+		Session:   &core.Session{BasePath: t.TempDir()},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationAlterTableAddForeignKey,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "orders"},
+			Columns: []qsbridge.FieldRef{
+				{Name: "o_custkey"},
+			},
+			Relationships: []qsbridge.RelationshipDefinition{
+				{
+					Name:      "fk_orders_customer",
+					FromTable: "orders",
+					FromField: "o_custkey",
+					ToTable:   "customer",
+					ToField:   "c_custkey",
+					Direction: qsbridge.JoinChildToParent,
+				},
+			},
+		},
+	}
+
+	_, diagnostics, err := handle.AlterTableAddForeignKey(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AlterTableAddForeignKey() error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want unsupported mutation blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD FOREIGN KEY is not implemented yet") {
+		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD FOREIGN KEY", diagnostics)
+	}
+}
+
 func TestLegacySchemaMutationHandleDropTableRejectsActiveDependentView(t *testing.T) {
 	configDir := t.TempDir()
 	now := testSchemaMutationTime()

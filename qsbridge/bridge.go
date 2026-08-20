@@ -249,8 +249,17 @@ type UnboundDropTable struct {
 type UnboundAlterTable struct {
 	Table                UnboundTable
 	AddPrimaryKeyColumns []string
+	AddForeignKey        *UnboundForeignKey
 	Result               ResultShape
 	Blockers             []NativeBlocker
+}
+
+// UnboundForeignKey describes one ALTER TABLE ADD FOREIGN KEY clause before binding.
+type UnboundForeignKey struct {
+	Name              string
+	Columns           []string
+	ReferencedTable   UnboundTable
+	ReferencedColumns []string
 }
 
 // UnboundDropView describes a DROP VIEW operation before binding.
@@ -1033,6 +1042,9 @@ func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR,
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
+	if alterStmt.AddForeignKey != nil {
+		return bindAlterTableAddForeignKey(context, query, target, *alterStmt.AddForeignKey, diagnostics)
+	}
 	if len(alterStmt.AddPrimaryKeyColumns) == 0 {
 		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD PRIMARY KEY requires at least one column"))
 		return query, diagnostics
@@ -1067,6 +1079,66 @@ func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR,
 		Kind:    MutationAlterTableAddPrimaryKey,
 		Target:  target.Instance,
 		Columns: columns,
+	}
+	return query, diagnostics
+}
+
+func bindAlterTableAddForeignKey(context *BindContext, query QueryIR, target BoundTable, fk UnboundForeignKey, diagnostics DiagnosticSet) (QueryIR, DiagnosticSet) {
+	if len(fk.Columns) != 1 || len(fk.ReferencedColumns) != 1 {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD FOREIGN KEY currently supports one child column and one referenced column"))
+		return query, diagnostics
+	}
+	childColumn := strings.TrimSpace(fk.Columns[0])
+	parentColumn := strings.TrimSpace(fk.ReferencedColumns[0])
+	if childColumn == "" || parentColumn == "" {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD FOREIGN KEY columns must be simple identifiers"))
+		return query, diagnostics
+	}
+	if strings.TrimSpace(fk.ReferencedTable.Alias) != "" {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD FOREIGN KEY referenced table aliases are not supported"))
+		return query, diagnostics
+	}
+	parentName := strings.TrimSpace(fk.ReferencedTable.Name)
+	if parentName == "" {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD FOREIGN KEY referenced table is empty"))
+		return query, diagnostics
+	}
+	parentBound, parentTableDiagnostics := context.AddTable(fk.ReferencedTable)
+	diagnostics = append(diagnostics, parentTableDiagnostics...)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	parent := parentBound.Instance
+	query.Sources = append(query.Sources, parent)
+
+	childField, childDiagnostics := context.ResolveField(target.Instance.RefName(), childColumn, FieldRoleMutationTarget)
+	parentField, parentDiagnostics := context.ResolveField(parent.RefName(), parentColumn, FieldRoleMutationValue)
+	diagnostics = append(diagnostics, childDiagnostics...)
+	diagnostics = append(diagnostics, parentDiagnostics...)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	relationshipName := strings.TrimSpace(fk.Name)
+	if relationshipName == "" {
+		relationshipName = fmt.Sprintf("%s_%s_%s_%s", target.Instance.Table, childField.Name, parent.Table, parentField.Name)
+	}
+	relationship := RelationshipDefinition{
+		Name:        relationshipName,
+		FromTable:   target.Instance.Table,
+		FromField:   childField.Name,
+		ToTable:     parent.Table,
+		ToField:     parentField.Name,
+		Direction:   JoinChildToParent,
+		Cardinality: "many_to_one",
+		Encoding: RelationshipEncodingProfile{
+			Kind: RelationshipEncodingVector,
+		},
+	}
+	query.Mutation = MutationShape{
+		Kind:          MutationAlterTableAddForeignKey,
+		Target:        target.Instance,
+		Columns:       []FieldRef{childField},
+		Relationships: []RelationshipDefinition{relationship},
 	}
 	return query, diagnostics
 }
