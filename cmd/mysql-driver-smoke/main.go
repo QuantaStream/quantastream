@@ -30,6 +30,8 @@ func run(args []string) int {
 	maxRows := flags.Int("max-rows", 5, "maximum rows to print per query")
 	q3View := flags.Bool("q3-view", true, "run the TPC-H Q3 view smoke when q3_order_line_base is installed")
 	prepared := flags.Bool("prepared", true, "run prepared statement smoke queries")
+	preparedWrite := flags.Bool("prepared-write", false, "run a cleanup-protected prepared INSERT smoke")
+	preparedBatch := flags.Bool("prepared-batch", false, "run a cleanup-protected prepared multi-row INSERT smoke against QA tables when installed")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -64,6 +66,7 @@ func run(args []string) int {
 	fmt.Println("connected=true")
 
 	installedViews := map[string]bool{}
+	installedTables := map[string]string{}
 	queries := []smokeQuery{
 		{Label: "version", SQL: "select @@version as version_value, @@version_comment as version_comment"},
 		{Label: "database", SQL: "select database() as database_value, schema() as schema_value"},
@@ -87,6 +90,17 @@ func run(args []string) int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s failed: %v\n", query.Label, err)
 			return 1
+		}
+		if query.Label == "tables" {
+			for _, row := range rows {
+				if len(row) > 0 {
+					tableType := ""
+					if len(row) > 1 {
+						tableType = strings.ToUpper(fmt.Sprint(row[1]))
+					}
+					installedTables[strings.ToLower(fmt.Sprint(row[0]))] = tableType
+				}
+			}
 		}
 		if query.Label == "views" {
 			for _, row := range rows {
@@ -125,8 +139,14 @@ func run(args []string) int {
 	}
 
 	if *prepared {
-		if err := runPreparedSmoke(ctx, db, *maxRows); err != nil {
+		if err := runPreparedSmoke(ctx, db, *maxRows, *preparedWrite); err != nil {
 			fmt.Fprintf(os.Stderr, "prepared smoke failed: %v\n", err)
+			return 1
+		}
+	}
+	if *preparedBatch {
+		if err := runPreparedBatchSmoke(ctx, db, installedTables); err != nil {
+			fmt.Fprintf(os.Stderr, "prepared batch smoke failed: %v\n", err)
 			return 1
 		}
 	}
@@ -134,7 +154,169 @@ func run(args []string) int {
 	return 0
 }
 
-func runPreparedSmoke(ctx context.Context, db *sql.DB, maxRows int) error {
+func runPreparedBatchSmoke(ctx context.Context, db *sql.DB, installedTables map[string]string) error {
+	fmt.Println()
+	fmt.Println("-- prepared_qa_batch_insert_cleanup --")
+	if !baseTableInstalled(installedTables, "customers_qa") {
+		fmt.Println("customers_qa not installed; skipped")
+		return nil
+	}
+
+	rows := [][]any{
+		{"driver-batch-901", "Abe", "901 Driver Way", "Seattle", "WA", "98072", "425-555-0901", "cell;home"},
+		{"driver-batch-902", "Abby", "902 Driver Way", "Tacoma", "WA", "98011", "425-555-0902", "cell;business"},
+		{"driver-batch-903", "Annie", "903 Driver Way", "Everett", "WA", "98021", "425-555-0903", "home"},
+	}
+	keys := firstStringColumn(rows)
+
+	preDeleted, err := execPreparedStringKeys(ctx, db, "QA customer pre-clean", "delete from customers_qa where cust_id = ?", keys)
+	if err != nil {
+		return err
+	}
+	before, err := countPreparedStringKeys(ctx, db, "QA customer", "select count(*) from customers_qa where cust_id = ?", keys)
+	if err != nil {
+		return err
+	}
+	if before != 0 {
+		return fmt.Errorf("QA customer smoke rows before insert = %d, want 0", before)
+	}
+
+	affected, err := execPreparedArgs(ctx, db, "QA customer batch insert", `
+		insert into customers_qa (
+			cust_id,
+			first_name,
+			address,
+			city,
+			state,
+			zip,
+			phone,
+			phoneType
+		) values (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
+	`, flattenRows(rows)...)
+	if err != nil {
+		return err
+	}
+	afterInsert, err := countPreparedStringKeys(ctx, db, "QA customer", "select count(*) from customers_qa where cust_id = ?", keys)
+	if err != nil {
+		_, _ = execPreparedStringKeys(ctx, db, "QA customer cleanup", "delete from customers_qa where cust_id = ?", keys)
+		return err
+	}
+	if afterInsert != int64(len(rows)) {
+		_, _ = execPreparedStringKeys(ctx, db, "QA customer cleanup", "delete from customers_qa where cust_id = ?", keys)
+		return fmt.Errorf("QA customer smoke rows after insert = %d, want %d", afterInsert, len(rows))
+	}
+	postDeleted, err := execPreparedStringKeys(ctx, db, "QA customer cleanup", "delete from customers_qa where cust_id = ?", keys)
+	if err != nil {
+		return err
+	}
+	afterCleanup, err := countPreparedStringKeys(ctx, db, "QA customer", "select count(*) from customers_qa where cust_id = ?", keys)
+	if err != nil {
+		return err
+	}
+	if afterCleanup != 0 {
+		return fmt.Errorf("QA customer smoke rows after cleanup = %d, want 0", afterCleanup)
+	}
+
+	fmt.Printf("customer_rows=%d affected_rows=%d pre_deleted=%d before=%d after_insert=%d post_deleted=%d after_cleanup=%d\n",
+		len(rows), affected, preDeleted, before, afterInsert, postDeleted, afterCleanup)
+	return nil
+}
+
+func baseTableInstalled(installedTables map[string]string, table string) bool {
+	tableType, ok := installedTables[strings.ToLower(table)]
+	return ok && (tableType == "" || tableType == "BASE TABLE")
+}
+
+func firstStringColumn(rows [][]any) []string {
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) > 0 {
+			keys = append(keys, fmt.Sprint(row[0]))
+		}
+	}
+	return keys
+}
+
+func flattenRows(rows [][]any) []any {
+	args := make([]any, 0)
+	for _, row := range rows {
+		args = append(args, row...)
+	}
+	return args
+}
+
+func countPreparedStringKeys(ctx context.Context, db *sql.DB, label string, query string, keys []string) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("prepare %s count: %w", label, err)
+	}
+	var total int64
+	for _, key := range keys {
+		var count int64
+		if err := stmt.QueryRowContext(ctx, key).Scan(&count); err != nil {
+			_ = stmt.Close()
+			return 0, fmt.Errorf("count %s key %s: %w", label, key, err)
+		}
+		total += count
+	}
+	if err := stmt.Close(); err != nil {
+		return 0, fmt.Errorf("close %s count: %w", label, err)
+	}
+	return total, nil
+}
+
+func execPreparedArgs(ctx context.Context, db *sql.DB, label string, query string, args ...any) (int64, error) {
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("prepare %s: %w", label, err)
+	}
+	result, execErr := stmt.ExecContext(ctx, args...)
+	closeErr := stmt.Close()
+	if execErr != nil {
+		return 0, fmt.Errorf("execute %s: %w", label, execErr)
+	}
+	if closeErr != nil {
+		return 0, fmt.Errorf("close %s: %w", label, closeErr)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read %s affected rows: %w", label, err)
+	}
+	return affected, nil
+}
+
+func execPreparedStringKeys(ctx context.Context, db *sql.DB, label string, query string, keys []string) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("prepare %s: %w", label, err)
+	}
+	var total int64
+	for _, key := range keys {
+		result, err := stmt.ExecContext(ctx, key)
+		if err != nil {
+			_ = stmt.Close()
+			return 0, fmt.Errorf("execute %s key %s: %w", label, key, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			_ = stmt.Close()
+			return 0, fmt.Errorf("read %s affected rows for key %s: %w", label, key, err)
+		}
+		total += affected
+	}
+	if err := stmt.Close(); err != nil {
+		return 0, fmt.Errorf("close %s: %w", label, err)
+	}
+	return total, nil
+}
+
+func runPreparedSmoke(ctx context.Context, db *sql.DB, maxRows int, preparedWrite bool) error {
 	fmt.Println()
 	fmt.Println("-- prepared_lineitem_shipmode_count --")
 	stmt, err := db.PrepareContext(ctx, "select count(*) as lineitem_count from lineitem where l_shipmode = ?")
@@ -167,7 +349,116 @@ func runPreparedSmoke(ctx context.Context, db *sql.DB, maxRows int) error {
 		return err
 	}
 	fmt.Printf("params=[0.05 0.07] rows=%v\n", rows)
+	if preparedWrite {
+		if err := runPreparedInsertSmoke(ctx, db); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func runPreparedInsertSmoke(ctx context.Context, db *sql.DB) error {
+	const customerKey int64 = 900000093
+	fmt.Println()
+	fmt.Println("-- prepared_customer_insert_cleanup --")
+
+	preDeleted, err := deleteCustomer(ctx, db, customerKey)
+	if err != nil {
+		return fmt.Errorf("pre-clean customer key %d: %w", customerKey, err)
+	}
+	before, err := customerCount(ctx, db, customerKey)
+	if err != nil {
+		return fmt.Errorf("count customer before insert: %w", err)
+	}
+	if before != 0 {
+		return fmt.Errorf("customer key %d already exists before prepared insert smoke", customerKey)
+	}
+
+	stmt, err := db.PrepareContext(ctx, `
+		insert into customer (
+			c_custkey,
+			c_name,
+			c_address,
+			c_nationkey,
+			c_phone,
+			c_acctbal,
+			c_mktsegment,
+			c_comment
+		) values (?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare customer insert: %w", err)
+	}
+	result, err := stmt.ExecContext(ctx,
+		customerKey,
+		"Driver Prepared Customer",
+		"Cleanup Street",
+		int64(1),
+		"11-222-333-4444",
+		42.50,
+		"BUILDING",
+		"database/sql prepared insert smoke",
+	)
+	closeErr := stmt.Close()
+	if err != nil {
+		return fmt.Errorf("execute customer insert: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close customer insert statement: %w", closeErr)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read prepared insert affected rows: %w", err)
+	}
+	afterInsert, err := customerCount(ctx, db, customerKey)
+	if err != nil {
+		return fmt.Errorf("count customer after insert: %w", err)
+	}
+	if afterInsert != 1 {
+		_, _ = deleteCustomer(ctx, db, customerKey)
+		return fmt.Errorf("customer key %d count after insert = %d, want 1", customerKey, afterInsert)
+	}
+	postDeleted, err := deleteCustomer(ctx, db, customerKey)
+	if err != nil {
+		return fmt.Errorf("post-clean customer key %d: %w", customerKey, err)
+	}
+	afterCleanup, err := customerCount(ctx, db, customerKey)
+	if err != nil {
+		return fmt.Errorf("count customer after cleanup: %w", err)
+	}
+	if afterCleanup != 0 {
+		return fmt.Errorf("customer key %d count after cleanup = %d, want 0", customerKey, afterCleanup)
+	}
+	fmt.Printf("customer_key=%d affected_rows=%d pre_deleted=%d before=%d after_insert=%d post_deleted=%d after_cleanup=%d\n", customerKey, affected, preDeleted, before, afterInsert, postDeleted, afterCleanup)
+	return nil
+}
+
+type customerCounter interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func customerCount(ctx context.Context, queryer customerCounter, customerKey int64) (int64, error) {
+	var count int64
+	if err := queryer.QueryRowContext(ctx, "select count(*) from customer where c_custkey = ?", customerKey).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func deleteCustomer(ctx context.Context, db *sql.DB, customerKey int64) (int64, error) {
+	stmt, err := db.PrepareContext(ctx, "delete from customer where c_custkey = ?")
+	if err != nil {
+		return 0, err
+	}
+	result, execErr := stmt.ExecContext(ctx, customerKey)
+	closeErr := stmt.Close()
+	if execErr != nil {
+		return 0, execErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	return result.RowsAffected()
 }
 
 func runPreparedQuery(ctx context.Context, stmt *sql.Stmt, maxRows int, args ...any) ([][]any, error) {
