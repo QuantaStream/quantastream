@@ -556,6 +556,49 @@ func TestPlannerExpandsJoinBetweenTwoLogicalViewSources(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsLogicalViewSourceInMembershipSubquery(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_key_view",
+		SQL:    "select c_custkey as customer_key from customer",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select count(*) as customer_count
+		from customer
+		where c_custkey in (
+			select customer_key
+			from customer_key_view
+			where customer_key = 1
+		)
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Memberships) != 1 {
+		t.Fatalf("memberships = %#v, want one membership edge", result.Query.Memberships)
+	}
+	membership := result.Query.Memberships[0]
+	if got, want := membership.Left.QualifiedName(), "customer.c_custkey"; got != want {
+		t.Fatalf("membership left = %q, want %q", got, want)
+	}
+	if got, want := membership.Right.QualifiedName(), "customer_key_view.c_custkey"; got != want {
+		t.Fatalf("membership right = %q, want %q", got, want)
+	}
+	if len(membership.Predicates) != 1 {
+		t.Fatalf("membership predicates = %#v, want one subquery predicate", membership.Predicates)
+	}
+	if !predicateReferencesField(membership.Predicates[0], "customer_key_view", "c_custkey") {
+		t.Fatalf("membership predicate = %#v, want customer_key_view.c_custkey", membership.Predicates[0])
+	}
+}
+
 func TestPlannerRejectsUnprojectedLogicalViewColumn(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

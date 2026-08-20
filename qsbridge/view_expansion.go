@@ -53,6 +53,10 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if len(selectStmt.Tables) == 0 {
 		return selectStmt, nil
 	}
+	memberships, membershipExpansionCount, membershipDiagnostics := s.expandMembershipViews(selectStmt.Memberships)
+	if membershipDiagnostics.BlocksNative() {
+		return selectStmt, membershipDiagnostics
+	}
 	expansionCount := 0
 	for _, table := range selectStmt.Tables {
 		if table.DerivedSelect != nil {
@@ -70,11 +74,19 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		}
 	}
 	if expansionCount == 0 {
+		if membershipExpansionCount > 0 {
+			selectStmt.Memberships = memberships
+		}
 		return selectStmt, nil
 	}
-	if len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+	if len(selectStmt.Memberships) > 0 {
 		return selectStmt, DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports view or derived table sources without memberships or subqueries"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports view or derived table sources without memberships"),
+		}
+	}
+	if len(selectStmt.Subqueries) > 0 {
+		return selectStmt, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports view or derived table sources without subqueries"),
 		}
 	}
 	expansions := make([]viewExpansion, 0, expansionCount)
@@ -175,6 +187,79 @@ func validateMultipleLogicalSourceExpansionUsage(expansion viewExpansion) Diagno
 	}
 	return DiagnosticSet{
 		ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "multiple logical source expansion currently supports simple projection sources only"),
+	}
+}
+
+func (s viewExpansionState) expandMembershipViews(memberships []UnboundMembership) ([]UnboundMembership, int, DiagnosticSet) {
+	if len(memberships) == 0 {
+		return memberships, 0, nil
+	}
+	expanded := append([]UnboundMembership(nil), memberships...)
+	expansionCount := 0
+	for i, membership := range expanded {
+		next, changed, diagnostics := s.expandMembershipRightView(membership)
+		if diagnostics.BlocksNative() {
+			return memberships, expansionCount, diagnostics
+		}
+		if changed {
+			expanded[i] = next
+			expansionCount++
+		}
+	}
+	return expanded, expansionCount, nil
+}
+
+func (s viewExpansionState) expandMembershipRightView(membership UnboundMembership) (UnboundMembership, bool, DiagnosticSet) {
+	if membership.RightTable.Name == "" || membership.RightTable.InlineRows != nil {
+		return membership, false, nil
+	}
+	if s.tableExists(membership.RightTable) {
+		return membership, false, nil
+	}
+	if _, diagnostics, ok := s.lookupView(membership.RightTable); diagnostics.BlocksNative() || !ok {
+		if diagnostics.BlocksNative() {
+			return membership, false, diagnostics
+		}
+		return membership, false, nil
+	}
+	expansion, diagnostics, ok := s.expandTableView(membership.RightTable)
+	if diagnostics.BlocksNative() || !ok {
+		return membership, false, diagnostics
+	}
+	if diagnostics := validateMembershipLogicalSourceExpansionUsage(expansion); diagnostics.BlocksNative() {
+		return membership, false, diagnostics
+	}
+	membership.RightTable = expansion.tables[0]
+
+	var rewriteDiagnostics DiagnosticSet
+	if membership.RightField != "" {
+		rightExpr := rewriteViewColumnExpr(UnboundField(membership.RightQualifier, membership.RightField), expansion, &rewriteDiagnostics)
+		field, ok := rightExpr.(UnboundFieldExpr)
+		if !ok {
+			rewriteDiagnostics = append(rewriteDiagnostics, ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "membership view projection must expand to a base field: "+expansion.viewRef+"."+membership.RightField))
+		} else {
+			membership.RightQualifier = field.Qualifier
+			membership.RightField = field.Name
+		}
+	}
+	for i, expr := range membership.RightTuple {
+		membership.RightTuple[i] = rewriteViewColumnExpr(expr, expansion, &rewriteDiagnostics)
+	}
+	for i, predicate := range membership.Predicates {
+		membership.Predicates[i].Expr = rewriteViewColumnExpr(predicate.Expr, expansion, &rewriteDiagnostics)
+	}
+	if rewriteDiagnostics.BlocksNative() {
+		return membership, false, rewriteDiagnostics
+	}
+	return membership, true, nil
+}
+
+func validateMembershipLogicalSourceExpansionUsage(expansion viewExpansion) DiagnosticSet {
+	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && !expansion.distinct {
+		return nil
+	}
+	return DiagnosticSet{
+		ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "membership subquery view expansion currently supports simple projection sources only"),
 	}
 }
 

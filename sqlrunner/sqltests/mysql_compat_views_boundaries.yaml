@@ -571,12 +571,11 @@ tests:
       from customer
 
   - id: mysql_compat_views_boundaries.131.view_used_in_subquery
-    status: xfail
+    status: supported
     kind: query
     feature: views_subquery_boundary
     compatibility: mysql
     requires: [select, view_reference, subquery]
-    issue: "View references inside subqueries are not expandable yet."
     sql: |
       select count(*) as customer_count
       from customer
@@ -585,6 +584,10 @@ tests:
         from qs_mysql_compat_subquery_view
         where customer_key = 1
       )
+    expect:
+      columns: [customer_count]
+      rows:
+        - [1]
 
   - id: mysql_compat_views_boundaries.132.drop_subquery_view_source
     status: supported
