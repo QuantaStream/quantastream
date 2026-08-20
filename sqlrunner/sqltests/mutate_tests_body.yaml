@@ -1133,3 +1133,64 @@ tests:
     expect:
       rows:
         - [0]
+
+  - id: "mutate_body.153.insert_assignment_expression_seed"
+    status: supported
+    kind: statement
+    sql: |-
+      insert into customers_qa (cust_id, first_name, last_name, address, state, city, zip, createdAtTimestamp, timestamp_micro, timestamp_millis, hashedCustId, phone, phoneType, isActive, birthdate, isLegalAge, age, height, numFamilyMembers, rownum) values
+        ('900','Casey','LOUD','900 Expression St','CA','Arcata','95521','2020-05-01 00:00:00.000Z','2020-05-01 00:00:00.000Z','2020-05-01 00:00:00.000Z','edge900','900-111-2222','cell',true,'2000-01-01',true,30,64,2,53)
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.154.commit_assignment_expression_seed"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.155.update_assignment_expressions"
+    status: supported
+    kind: statement
+    sql: |-
+      update customers_qa set age = age + 2, last_name = lower(last_name), city = first_name where cust_id = '900'
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.156.commit_assignment_expressions"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.157.select_after_assignment_expressions"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa where age = 32 and last_name = 'loud' and city = 'Casey'
+    expect:
+      rows:
+        - [1]
+
+  - id: "mutate_body.158.delete_assignment_expression_seed"
+    status: supported
+    kind: statement
+    sql: |-
+      delete from customers_qa where cust_id = '900'
+    expect:
+      affected_rows: 1
+
+  - id: "mutate_body.159.commit_assignment_expression_cleanup"
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: "mutate_body.160.select_after_assignment_expression_cleanup"
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) from customers_qa
+    expect:
+      rows:
+        - [0]

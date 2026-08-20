@@ -693,21 +693,27 @@ func parseSimpleUpdateAssignmentValue(text string, parameterIndex *int) (Unbound
 		*parameterIndex = index + 1
 		return UnboundParameter(index, DataTypeUnknown), Diagnostic{}, true
 	}
-	if literal, diagnostic, ok := parseSimpleLiteral(text); ok || diagnostic.Code != "" && !simpleMutationAssignmentExpressionBoundary(text) {
+	if literal, diagnostic, ok := parseSimpleLiteral(text); ok || diagnostic.Code != "" && !simpleUpdateAssignmentLooksLikeExpression(text) {
 		return literal, diagnostic, ok
 	}
-	if simpleMutationAssignmentExpressionBoundary(text) {
-		return nil, simpleParserDiagnostic("UPDATE assignment expressions are not supported yet"), false
+	if _, ok := parseSimpleScalarSubqueryExpression(text, PredicateScopeWhere); ok {
+		return nil, simpleParserDiagnostic("UPDATE assignment scalar subqueries are not supported yet"), false
+	}
+	if expr, ok := parseSimpleScalarExpression(text); ok {
+		return expr, Diagnostic{}, true
 	}
 	return parseSimpleLiteral(text)
 }
 
-func simpleMutationAssignmentExpressionBoundary(text string) bool {
+func simpleUpdateAssignmentLooksLikeExpression(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return false
 	}
 	if _, ok := parseSimpleScalarSubqueryExpression(trimmed, PredicateScopeWhere); ok {
+		return true
+	}
+	if _, ok := parseSimpleCaseExpression(trimmed); ok {
 		return true
 	}
 	if _, ok := parseSimpleScalarCallExpression(trimmed); ok {

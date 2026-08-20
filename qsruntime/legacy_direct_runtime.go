@@ -1537,7 +1537,7 @@ func legacyDirectInsertLiteralValue(expr qsbridge.Expr) (interface{}, qsbridge.D
 	}, false
 }
 
-// UpdateRows applies literal UPDATE assignments to the rownums selected by the lowered predicate request.
+// UpdateRows applies UPDATE assignments to the rownums selected by the lowered predicate request.
 func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
@@ -1566,10 +1566,6 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 			),
 		}, nil
 	}
-	valueMap, diagnostics, ok := legacyDirectUpdateValueMap(request.Mutation.Assignments)
-	if !ok {
-		return qsbridge.StatementResult{}, diagnostics, nil
-	}
 	bitmapResult, queryDiagnostics, err := h.QueryBitmap(ctx, request)
 	if err != nil || queryDiagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, queryDiagnostics, err
@@ -1591,9 +1587,43 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 			),
 		}, nil
 	}
-	for _, rownum := range bitmapResult.Rownums {
+	var literalValueMap map[string]*qsbridge.ResultCell
+	valueMaps := make([]map[string]*qsbridge.ResultCell, 0)
+	literalOnly := legacyDirectUpdateAssignmentsAreLiteral(request.Mutation.Assignments)
+	if literalOnly {
+		var diagnostics qsbridge.DiagnosticSet
+		var ok bool
+		literalValueMap, diagnostics, ok = legacyDirectUpdateValueMap(request.Mutation.Assignments)
+		if !ok {
+			return qsbridge.StatementResult{}, diagnostics, nil
+		}
+	} else if len(bitmapResult.Rownums) > 0 {
+		materialized, diagnostics, err := h.materializeUpdateAssignmentRows(ctx, request, bitmapResult)
+		if err != nil || diagnostics.BlocksNative() {
+			return qsbridge.StatementResult{}, diagnostics, err
+		}
+		var ok bool
+		valueMaps, diagnostics, ok = legacyDirectUpdateExpressionValueMaps(request.Mutation.Assignments, materialized)
+		if !ok {
+			return qsbridge.StatementResult{}, diagnostics, nil
+		}
+	}
+	for rowIndex, rownum := range bitmapResult.Rownums {
 		if err := ctx.Err(); err != nil {
 			return qsbridge.StatementResult{}, nil, err
+		}
+		valueMap := literalValueMap
+		if !literalOnly {
+			if rowIndex >= len(valueMaps) {
+				return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(
+						qsbridge.DiagnosticInternalInvariant,
+						qsbridge.PhaseExecute,
+						"update assignment materialization row count does not match selected row count",
+					),
+				}, nil
+			}
+			valueMap = valueMaps[rowIndex]
 		}
 		if err := h.Session.UpdateRow(tableName, uint64(rownum), valueMap, h.updatePartitionTime(request, rownum)); err != nil {
 			return qsbridge.StatementResult{}, nil, err
@@ -1744,23 +1774,170 @@ func legacyDirectUpdateValueMap(assignments []qsbridge.MutationAssignment) (map[
 		if !ok {
 			return nil, diagnostics, false
 		}
-		fieldName := directBitmapFieldPhysicalName(assignment.Field)
-		if fieldName == "" {
-			fieldName = assignment.Field.Name
-		}
-		if fieldName == "" {
-			return nil, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(
-					qsbridge.DiagnosticInvalidExecutionOption,
-					qsbridge.PhaseExecute,
-					"update assignment has no target field",
-				),
-			}, false
+		fieldName, diagnostics, ok := legacyDirectUpdateAssignmentFieldName(assignment)
+		if !ok {
+			return nil, diagnostics, false
 		}
 		//valueMap[fieldName] = &rel.ValueColumn{Value: value.NewValue(literal)}
 		valueMap[fieldName] = &qsbridge.ResultCell{Value: literal}
 	}
 	return valueMap, nil, true
+}
+
+func legacyDirectUpdateAssignmentsAreLiteral(assignments []qsbridge.MutationAssignment) bool {
+	for _, assignment := range assignments {
+		if _, ok := legacyDirectLiteralExpr(assignment.Value); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func legacyDirectLiteralExpr(expr qsbridge.Expr) (qsbridge.LiteralExpr, bool) {
+	switch value := expr.(type) {
+	case qsbridge.LiteralExpr:
+		return value, true
+	case *qsbridge.LiteralExpr:
+		if value != nil {
+			return *value, true
+		}
+	}
+	return qsbridge.LiteralExpr{}, false
+}
+
+func (h LegacyQuantaSessionHandle) materializeUpdateAssignmentRows(ctx context.Context, request ExecutionRequest, result BitmapQueryResult) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+	materialization, diagnostics := MaterializationRequestFromExecution(request, result)
+	if diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, diagnostics, nil
+	}
+	rootIndex, _ := request.RootIndex()
+	materialization.ProjectionFields = legacyDirectEnsureUpdateAssignmentProjectionFields(rootIndex, materialization.ProjectionFields, request.Mutation.Assignments)
+	rowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, materialization)
+	if err != nil || diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, diagnostics, err
+	}
+	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
+		return qsbridge.QuantaProjectedRowSet{}, diagnostics, nil
+	}
+	if rowSet.CandidateCount() != len(result.Rownums) {
+		return qsbridge.QuantaProjectedRowSet{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"update assignment materialization row count does not match selected row count",
+			),
+		}, nil
+	}
+	return rowSet, nil, nil
+}
+
+func legacyDirectEnsureUpdateAssignmentProjectionFields(rootIndex string, fields []qsbridge.QuantaProjectionField, assignments []qsbridge.MutationAssignment) []qsbridge.QuantaProjectionField {
+	updated := append([]qsbridge.QuantaProjectionField(nil), fields...)
+	seen := make(map[string]struct{}, len(updated))
+	for _, field := range updated {
+		seen[materializationProjectionFieldStorageKey(field)] = struct{}{}
+	}
+	for _, assignment := range assignments {
+		for _, ref := range qsbridge.FieldRefs(assignment.Value) {
+			field := legacyDirectProjectionFieldFromFieldRef(rootIndex, ref)
+			key := materializationProjectionFieldStorageKey(field)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			updated = append(updated, field)
+		}
+	}
+	return updated
+}
+
+func legacyDirectProjectionFieldFromFieldRef(rootIndex string, ref qsbridge.FieldRef) qsbridge.QuantaProjectionField {
+	index := ref.Table.Table
+	if index == "" {
+		index = rootIndex
+	}
+	physical := directBitmapFieldPhysicalName(ref)
+	return qsbridge.QuantaProjectionField{
+		Index:        index,
+		Role:         qsbridge.TableInstanceID(materializationFieldRole(rootIndex, ref)),
+		Field:        physical,
+		PhysicalName: physical,
+		Type:         ref.Type,
+		Visible:      false,
+	}
+}
+
+func legacyDirectUpdateExpressionValueMaps(assignments []qsbridge.MutationAssignment, rowSet qsbridge.QuantaProjectedRowSet) ([]map[string]*qsbridge.ResultCell, qsbridge.DiagnosticSet, bool) {
+	valueMaps := make([]map[string]*qsbridge.ResultCell, rowSet.CandidateCount())
+	for rowIndex := 0; rowIndex < rowSet.CandidateCount(); rowIndex++ {
+		valueMap := make(map[string]*qsbridge.ResultCell, len(assignments))
+		for _, assignment := range assignments {
+			fieldName, diagnostics, ok := legacyDirectUpdateAssignmentFieldName(assignment)
+			if !ok {
+				return nil, diagnostics, false
+			}
+			cell, diagnostics := legacyDirectUpdateAssignmentCell(assignment, rowSet, rowIndex)
+			if diagnostics.BlocksNative() {
+				return nil, diagnostics, false
+			}
+			valueMap[fieldName] = &cell
+		}
+		valueMaps[rowIndex] = valueMap
+	}
+	return valueMaps, nil, true
+}
+
+func legacyDirectUpdateAssignmentFieldName(assignment qsbridge.MutationAssignment) (string, qsbridge.DiagnosticSet, bool) {
+	fieldName := directBitmapFieldPhysicalName(assignment.Field)
+	if fieldName == "" {
+		fieldName = assignment.Field.Name
+	}
+	if fieldName == "" {
+		return "", qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInvalidExecutionOption,
+				qsbridge.PhaseExecute,
+				"update assignment has no target field",
+			),
+		}, false
+	}
+	return fieldName, nil, true
+}
+
+func legacyDirectUpdateAssignmentCell(assignment qsbridge.MutationAssignment, rowSet qsbridge.QuantaProjectedRowSet, rowIndex int) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if literal, ok := legacyDirectLiteralExpr(assignment.Value); ok {
+		value := legacyDirectNormalizeMultiplicityValue(assignment.Field, literal.Value)
+		return qsbridge.ResultCell{Kind: literal.Kind, Value: legacyDirectCoerceUpdateValueForField(assignment.Field, value)}, nil
+	}
+	cell, diagnostics := directBitmapEvaluateMaterializedExpr(assignment.Value, rowSet, rowIndex)
+	if diagnostics.BlocksNative() {
+		return qsbridge.ResultCell{}, diagnostics
+	}
+	cell.Value = legacyDirectNormalizeMultiplicityValue(assignment.Field, cell.Value)
+	cell = legacyDirectCoerceUpdateCellForField(assignment.Field, cell)
+	return cell, nil
+}
+
+func legacyDirectCoerceUpdateCellForField(field qsbridge.FieldRef, cell qsbridge.ResultCell) qsbridge.ResultCell {
+	cell.Value = legacyDirectCoerceUpdateValueForField(field, cell.Value)
+	if field.Type == qsbridge.DataTypeInt {
+		switch cell.Value.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			cell.Kind = qsbridge.ValueInt
+		}
+	}
+	return cell
+}
+
+func legacyDirectCoerceUpdateValueForField(field qsbridge.FieldRef, value interface{}) interface{} {
+	if field.Type != qsbridge.DataTypeInt {
+		return value
+	}
+	number, ok := value.(float64)
+	if !ok || number != float64(int64(number)) {
+		return value
+	}
+	return int64(number)
 }
 
 const (

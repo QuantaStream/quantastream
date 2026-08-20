@@ -325,6 +325,66 @@ func TestLegacyDirectUpdateValueMapUsesPhysicalNames(t *testing.T) {
 	}
 }
 
+func TestLegacyDirectUpdateExpressionValueMapsEvaluateRowLocalExpressions(t *testing.T) {
+	customers := qsbridge.TableInstance{ID: "customers_qa_1", Table: "customers_qa", Alias: "c"}
+	age := qsbridge.FieldRef{Table: customers, Name: "age", Type: qsbridge.DataTypeInt}
+	lastName := qsbridge.FieldRef{Table: customers, Name: "last_name", Type: qsbridge.DataTypeString}
+	assignments := []qsbridge.MutationAssignment{
+		{
+			Field: age,
+			Value: qsbridge.Binary(
+				qsbridge.BinaryOpAdd,
+				qsbridge.Field(age),
+				qsbridge.Literal(qsbridge.ValueInt, int64(2)),
+			),
+		},
+		{
+			Field: lastName,
+			Value: qsbridge.Call("lower", qsbridge.Field(lastName)),
+		},
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "customers_qa",
+		Rownums: []qsbridge.QuantaRownum{11, 12},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customers_qa", Role: "c", Field: "age", Type: qsbridge.DataTypeInt},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(30)},
+					{Kind: qsbridge.ValueInt, Value: int64(41)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "customers_qa", Role: "c", Field: "last_name", Type: qsbridge.DataTypeString},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueString, Value: "LOUD"},
+					{Kind: qsbridge.ValueString, Value: "QUIET"},
+				},
+			},
+		},
+	}
+
+	valueMaps, diagnostics, ok := legacyDirectUpdateExpressionValueMaps(assignments, rowSet)
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, ok=%v", diagnostics, ok)
+	}
+	if len(valueMaps) != 2 {
+		t.Fatalf("valueMaps length = %d, want 2", len(valueMaps))
+	}
+	if got := valueMaps[0]["age"]; got == nil || got.Kind != qsbridge.ValueInt || got.Value != int64(32) {
+		t.Fatalf("row 0 age cell = %#v, want int 32", got)
+	}
+	if got := valueMaps[1]["age"]; got == nil || got.Kind != qsbridge.ValueInt || got.Value != int64(43) {
+		t.Fatalf("row 1 age cell = %#v, want int 43", got)
+	}
+	if got := valueMaps[0]["last_name"]; got == nil || got.Kind != qsbridge.ValueString || got.Value != "loud" {
+		t.Fatalf("row 0 last_name cell = %#v, want loud", got)
+	}
+	if got := valueMaps[1]["last_name"]; got == nil || got.Kind != qsbridge.ValueString || got.Value != "quiet" {
+		t.Fatalf("row 1 last_name cell = %#v, want quiet", got)
+	}
+}
+
 func TestLegacyDirectExecuteDeleteReportsMissingBitmapIndex(t *testing.T) {
 	_, diagnostics, err := (LegacyQuantaSessionHandle{}).ExecuteMutation(context.Background(), ExecutionRequest{
 		Mutation: qsbridge.MutationShape{Kind: qsbridge.MutationDelete},

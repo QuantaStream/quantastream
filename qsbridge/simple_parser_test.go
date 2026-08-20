@@ -67,33 +67,58 @@ func TestSimpleParserBridgeParsesUpdateWithoutWhereForValidation(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsUpdateAssignmentExpressionBoundary(t *testing.T) {
+func TestSimpleParserBridgeParsesUpdateAssignmentExpressions(t *testing.T) {
 	tests := []struct {
-		name string
-		sql  string
+		name     string
+		sql      string
+		wantType string
 	}{
 		{
-			name: "arithmetic expression",
-			sql:  "update customers_qa set age = age + 1 where state = 'ID'",
+			name:     "arithmetic expression",
+			sql:      "update customers_qa set age = age + 1 where state = 'ID'",
+			wantType: "binary",
 		},
 		{
-			name: "scalar function",
-			sql:  "update customers_qa set last_name = lower(last_name) where state = 'ID'",
+			name:     "scalar function",
+			sql:      "update customers_qa set last_name = lower(last_name) where state = 'ID'",
+			wantType: "call",
 		},
 		{
-			name: "scalar subquery",
-			sql:  "update customers_qa set age = (select max(age) from customers_qa) where state = 'ID'",
-		},
-		{
-			name: "field reference",
-			sql:  "update customers_qa set last_name = first_name where state = 'ID'",
+			name:     "field reference",
+			sql:      "update customers_qa set last_name = first_name where state = 'ID'",
+			wantType: "field",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assertSimpleParserRejects(t, test.sql, "UPDATE assignment expressions are not supported yet")
+			statement, diagnostics := SimpleParserBridge{}.Parse(test.sql)
+			if diagnostics.BlocksNative() {
+				t.Fatalf("parse diagnostics: %#v", diagnostics)
+			}
+			if statement.Kind != QueryKindUpdate || len(statement.Update.Assignments) != 1 {
+				t.Fatalf("statement = %#v, want one UPDATE assignment", statement)
+			}
+			value := statement.Update.Assignments[0].Value
+			switch test.wantType {
+			case "binary":
+				if _, ok := value.(UnboundBinaryExpr); !ok {
+					t.Fatalf("assignment value = %T, want UnboundBinaryExpr", value)
+				}
+			case "call":
+				if _, ok := value.(UnboundCallExpr); !ok {
+					t.Fatalf("assignment value = %T, want UnboundCallExpr", value)
+				}
+			case "field":
+				if _, ok := value.(UnboundFieldExpr); !ok {
+					t.Fatalf("assignment value = %T, want UnboundFieldExpr", value)
+				}
+			}
 		})
 	}
+}
+
+func TestSimpleParserBridgeRejectsUpdateAssignmentScalarSubquery(t *testing.T) {
+	assertSimpleParserRejects(t, "update customers_qa set age = (select max(age) from customers_qa) where state = 'ID'", "UPDATE assignment scalar subqueries are not supported yet")
 }
 
 func TestSimpleParserBridgeRejectsUpdateOrderLimitBoundary(t *testing.T) {
