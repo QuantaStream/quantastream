@@ -427,16 +427,19 @@ tests:
       order by c_custkey
 
   - id: mysql_compat_views_boundaries.101.select_order_by_view
-    status: xfail
+    status: supported
     kind: query
     feature: views_order_limit_boundary
     compatibility: mysql
     requires: [select, view_reference, order_by]
-    issue: "ORDER BY inside view definitions is not expandable yet."
     sql: |
       select customer_key, customer_name
       from qs_mysql_compat_ordered_view
       limit 1
+    expect:
+      columns: [customer_key, customer_name]
+      rows:
+        - [1, "Customer#000000001"]
 
   - id: mysql_compat_views_boundaries.102.drop_order_by_view
     status: supported

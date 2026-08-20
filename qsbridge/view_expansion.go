@@ -35,6 +35,7 @@ type viewExpansion struct {
 	groupBy    []UnboundExpr
 	aggregates []UnboundAggregate
 	having     []UnboundPredicate
+	orderBy    []UnboundSort
 	columns    viewProjectionMap
 	viewRef    string
 	distinct   bool
@@ -144,6 +145,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	outerGroupBy := make([]UnboundExpr, 0)
 	expansionAggregates := make([]UnboundAggregate, 0)
 	expansionHaving := make([]UnboundPredicate, 0)
+	expansionOrderBy := make([]UnboundSort, 0)
 	for _, expansion := range expansions {
 		if len(expansion.aggregates) > 0 {
 			if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
@@ -172,17 +174,21 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		expansionGroupBy = append(expansionGroupBy, expansion.groupBy...)
 		expansionAggregates = append(expansionAggregates, expansion.aggregates...)
 		expansionHaving = append(expansionHaving, expansion.having...)
+		expansionOrderBy = append(expansionOrderBy, expansion.orderBy...)
 	}
 	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
 	selectStmt.GroupBy = append(outerGroupBy, selectStmt.GroupBy...)
 	selectStmt.GroupBy = append(expansionGroupBy, selectStmt.GroupBy...)
 	selectStmt.Aggregates = append(expansionAggregates, selectStmt.Aggregates...)
 	selectStmt.Having = append(expansionHaving, selectStmt.Having...)
+	if len(selectStmt.OrderBy) == 0 {
+		selectStmt.OrderBy = expansionOrderBy
+	}
 	return selectStmt, nil
 }
 
 func validateMultipleLogicalSourceExpansionUsage(expansion viewExpansion) DiagnosticSet {
-	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && !expansion.distinct {
+	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && len(expansion.orderBy) == 0 && !expansion.distinct {
 		return nil
 	}
 	return DiagnosticSet{
@@ -316,6 +322,7 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 	groupBy := append([]UnboundExpr(nil), viewSelect.GroupBy...)
 	aggregates := append([]UnboundAggregate(nil), viewSelect.Aggregates...)
 	having := append([]UnboundPredicate(nil), viewSelect.Having...)
+	orderBy := append([]UnboundSort(nil), viewSelect.OrderBy...)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -338,6 +345,10 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
+		orderBy, diagnostics = rewriteViewDefinitionSorts(orderBy, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
 		tables[0].Alias = outerRef
 		tables[0].Role = table.Role
 	}
@@ -348,6 +359,7 @@ func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, 
 		groupBy:    groupBy,
 		aggregates: aggregates,
 		having:     having,
+		orderBy:    orderBy,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   viewSelect.Result.Distinct,
@@ -381,6 +393,7 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 	groupBy := append([]UnboundExpr(nil), derivedSelect.GroupBy...)
 	aggregates := append([]UnboundAggregate(nil), derivedSelect.Aggregates...)
 	having := append([]UnboundPredicate(nil), derivedSelect.Having...)
+	orderBy := append([]UnboundSort(nil), derivedSelect.OrderBy...)
 	if len(tables) == 1 {
 		base := tables[0]
 		predicates, diagnostics = rewriteViewDefinitionPredicates(predicates, base, outerRef)
@@ -403,6 +416,10 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 		if diagnostics.BlocksNative() {
 			return viewExpansion{}, diagnostics, true
 		}
+		orderBy, diagnostics = rewriteViewDefinitionSorts(orderBy, base, outerRef)
+		if diagnostics.BlocksNative() {
+			return viewExpansion{}, diagnostics, true
+		}
 		tables[0].Alias = outerRef
 		tables[0].Role = table.Role
 	}
@@ -413,6 +430,7 @@ func (s viewExpansionState) expandDerivedTable(table UnboundTable) (viewExpansio
 		groupBy:    groupBy,
 		aggregates: aggregates,
 		having:     having,
+		orderBy:    orderBy,
 		columns:    columns,
 		viewRef:    outerRef,
 		distinct:   derivedSelect.Result.Distinct,
@@ -461,11 +479,6 @@ func validateExpandableLogicalSourceSelect(sourceLabel string, selectStmt Unboun
 	if len(selectStmt.Tables) == 0 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
 		return DiagnosticSet{
 			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" must expand to base tables without memberships or subqueries"),
-		}
-	}
-	if len(selectStmt.OrderBy) > 0 {
-		return DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, sourceLabel+" cannot contain order by yet"),
 		}
 	}
 	if selectStmt.Result.AppliesResultWindow() {
@@ -1357,6 +1370,17 @@ func rewriteViewDefinitionExprs(exprs []UnboundExpr, base UnboundTable, replacem
 	var diagnostics DiagnosticSet
 	for _, expr := range exprs {
 		rewritten = append(rewritten, rewriteBaseQualifierExpr(expr, aliases, replacementRef, &diagnostics))
+	}
+	return rewritten, diagnostics
+}
+
+func rewriteViewDefinitionSorts(sorts []UnboundSort, base UnboundTable, replacementRef string) ([]UnboundSort, DiagnosticSet) {
+	aliases := tableAliases(base)
+	rewritten := make([]UnboundSort, 0, len(sorts))
+	var diagnostics DiagnosticSet
+	for _, sort := range sorts {
+		sort.Expr = rewriteBaseQualifierExpr(sort.Expr, aliases, replacementRef, &diagnostics)
+		rewritten = append(rewritten, sort)
 	}
 	return rewritten, diagnostics
 }
