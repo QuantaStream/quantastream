@@ -526,17 +526,20 @@ tests:
       from orders
 
   - id: mysql_compat_views_boundaries.122.join_two_view_sources
-    status: xfail
+    status: supported
     kind: query
     feature: views_multi_source_boundary
     compatibility: mysql
     requires: [select, view_reference, inner_join]
-    issue: "Outer queries with multiple logical view sources are not expandable yet."
     sql: |
       select l.customer_key, r.order_key
       from qs_mysql_compat_multi_view_left as l
       inner join qs_mysql_compat_multi_view_right as r on r.customer_key = l.customer_key
       where r.order_key = 1
+    expect:
+      columns: [customer_key, order_key]
+      rows:
+        - [370, 1]
 
   - id: mysql_compat_views_boundaries.123.drop_multi_view_source_right
     status: supported

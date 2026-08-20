@@ -497,6 +497,65 @@ func TestPlannerExpandsLogicalViewSourceInOuterJoin(t *testing.T) {
 	}
 }
 
+func TestPlannerExpandsJoinBetweenTwoLogicalViewSources(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{
+		{
+			Schema: "quanta",
+			Name:   "customer_keys",
+			SQL:    "select c_custkey as customer_key from customer",
+		},
+		{
+			Schema: "quanta",
+			Name:   "order_keys",
+			SQL:    "select o_orderkey as order_key, o_custkey as customer_key from orders",
+		},
+	}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan("select l.customer_key, r.order_key from customer_keys as l inner join order_keys as r on r.customer_key = l.customer_key where r.order_key = 1")
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 2 {
+		t.Fatalf("sources = %#v, want customer + orders", result.Query.Sources)
+	}
+	if result.Query.Sources[0].Table != "customer" || result.Query.Sources[0].RefName() != "l" {
+		t.Fatalf("source[0] = %#v, want customer as l", result.Query.Sources[0])
+	}
+	if result.Query.Sources[1].Table != "orders" || result.Query.Sources[1].RefName() != "r" {
+		t.Fatalf("source[1] = %#v, want orders as r", result.Query.Sources[1])
+	}
+	if len(result.Query.Joins) != 1 {
+		t.Fatalf("joins = %#v, want one logical-view join", result.Query.Joins)
+	}
+	if got, want := result.Query.Joins[0].Left.QualifiedName(), "r.o_custkey"; got != want {
+		t.Fatalf("join left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[0].Right.QualifiedName(), "l.c_custkey"; got != want {
+		t.Fatalf("join right = %q, want %q", got, want)
+	}
+	if len(result.Query.Projection) != 2 {
+		t.Fatalf("projection = %#v, want two columns", result.Query.Projection)
+	}
+	if result.Query.Projection[0].Alias != "customer_key" || !exprReferencesField(result.Query.Projection[0].Expr, "l", "c_custkey") {
+		t.Fatalf("projection[0] = %#v, want l.c_custkey as customer_key", result.Query.Projection[0])
+	}
+	if result.Query.Projection[1].Alias != "order_key" || !exprReferencesField(result.Query.Projection[1].Expr, "r", "o_orderkey") {
+		t.Fatalf("projection[1] = %#v, want r.o_orderkey as order_key", result.Query.Projection[1])
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want one orders filter", result.Query.Predicates)
+	}
+	if !predicateReferencesField(result.Query.Predicates[0], "r", "o_orderkey") {
+		t.Fatalf("predicate = %#v, want r.o_orderkey filter", result.Query.Predicates[0])
+	}
+}
+
 func TestPlannerRejectsUnprojectedLogicalViewColumn(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{

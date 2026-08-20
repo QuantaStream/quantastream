@@ -72,12 +72,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if expansionCount == 0 {
 		return selectStmt, nil
 	}
-	if expansionCount > 1 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+	if len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
 		return selectStmt, DiagnosticSet{
-			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports one view or derived table source without memberships or subqueries"),
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "logical source expansion currently supports view or derived table sources without memberships or subqueries"),
 		}
 	}
-	var expansion viewExpansion
+	expansions := make([]viewExpansion, 0, expansionCount)
 	var foundExpansion bool
 	tables := make([]UnboundTable, 0, len(selectStmt.Tables))
 	joins := make([]UnboundJoin, 0, len(selectStmt.Joins))
@@ -88,7 +88,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			if diagnostics.BlocksNative() || !ok {
 				return selectStmt, diagnostics
 			}
-			expansion = nextExpansion
+			expansions = append(expansions, nextExpansion)
 			foundExpansion = true
 			tables = append(tables, nextExpansion.tables...)
 			joins = append(joins, nextExpansion.joins...)
@@ -110,7 +110,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		if diagnostics.BlocksNative() || !ok {
 			return selectStmt, diagnostics
 		}
-		expansion = nextExpansion
+		expansions = append(expansions, nextExpansion)
 		foundExpansion = true
 		tables = append(tables, nextExpansion.tables...)
 		joins = append(joins, nextExpansion.joins...)
@@ -121,37 +121,61 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	}
 	selectStmt.Tables = tables
 	selectStmt.Joins = append(joins, selectStmt.Joins...)
-	var groupedUsage groupedAggregateLogicalSourceUsage
-	if len(expansion.aggregates) > 0 {
-		if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
-			var diagnostics DiagnosticSet
-			groupedUsage, diagnostics = s.validateGroupedAggregateLogicalSourceUsage(selectStmt, expansion)
-			if diagnostics.BlocksNative() {
-				return selectStmt, diagnostics
-			}
-		} else {
-			if diagnostics := validateAggregateViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+	if len(expansions) > 1 {
+		for _, expansion := range expansions {
+			if diagnostics := validateMultipleLogicalSourceExpansionUsage(expansion); diagnostics.BlocksNative() {
 				return selectStmt, diagnostics
 			}
 		}
 	}
-	if expansion.distinct {
-		if diagnostics := validateDistinctViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
-			return selectStmt, diagnostics
+	expansionGroupBy := make([]UnboundExpr, 0)
+	outerGroupBy := make([]UnboundExpr, 0)
+	expansionAggregates := make([]UnboundAggregate, 0)
+	expansionHaving := make([]UnboundPredicate, 0)
+	for _, expansion := range expansions {
+		if len(expansion.aggregates) > 0 {
+			if len(expansion.groupBy) > 0 || len(expansion.having) > 0 {
+				groupedUsage, diagnostics := s.validateGroupedAggregateLogicalSourceUsage(selectStmt, expansion)
+				if diagnostics.BlocksNative() {
+					return selectStmt, diagnostics
+				}
+				outerGroupBy = append(outerGroupBy, groupedUsage.outerGroupBy...)
+			} else {
+				if diagnostics := validateAggregateViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+					return selectStmt, diagnostics
+				}
+			}
 		}
-		selectStmt.Result.Distinct = true
-	}
-	var rewriteDiagnostics DiagnosticSet
-	selectStmt, rewriteDiagnostics = rewriteOuterSelectViewReferences(selectStmt, expansion)
-	if rewriteDiagnostics.BlocksNative() {
-		return selectStmt, rewriteDiagnostics
+		if expansion.distinct {
+			if diagnostics := validateDistinctViewUsage(selectStmt, expansion); diagnostics.BlocksNative() {
+				return selectStmt, diagnostics
+			}
+			selectStmt.Result.Distinct = true
+		}
+		var rewriteDiagnostics DiagnosticSet
+		selectStmt, rewriteDiagnostics = rewriteOuterSelectViewReferences(selectStmt, expansion)
+		if rewriteDiagnostics.BlocksNative() {
+			return selectStmt, rewriteDiagnostics
+		}
+		expansionGroupBy = append(expansionGroupBy, expansion.groupBy...)
+		expansionAggregates = append(expansionAggregates, expansion.aggregates...)
+		expansionHaving = append(expansionHaving, expansion.having...)
 	}
 	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
-	selectStmt.GroupBy = append(groupedUsage.outerGroupBy, selectStmt.GroupBy...)
-	selectStmt.GroupBy = append(expansion.groupBy, selectStmt.GroupBy...)
-	selectStmt.Aggregates = append(expansion.aggregates, selectStmt.Aggregates...)
-	selectStmt.Having = append(expansion.having, selectStmt.Having...)
+	selectStmt.GroupBy = append(outerGroupBy, selectStmt.GroupBy...)
+	selectStmt.GroupBy = append(expansionGroupBy, selectStmt.GroupBy...)
+	selectStmt.Aggregates = append(expansionAggregates, selectStmt.Aggregates...)
+	selectStmt.Having = append(expansionHaving, selectStmt.Having...)
 	return selectStmt, nil
+}
+
+func validateMultipleLogicalSourceExpansionUsage(expansion viewExpansion) DiagnosticSet {
+	if len(expansion.tables) == 1 && len(expansion.joins) == 0 && len(expansion.groupBy) == 0 && len(expansion.aggregates) == 0 && len(expansion.having) == 0 && !expansion.distinct {
+		return nil
+	}
+	return DiagnosticSet{
+		ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "multiple logical source expansion currently supports simple projection sources only"),
+	}
 }
 
 func (s viewExpansionState) expandTableView(table UnboundTable) (viewExpansion, DiagnosticSet, bool) {
