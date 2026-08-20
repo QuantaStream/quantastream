@@ -105,7 +105,7 @@ func TestSQLRuntimeTemporaryTableRowsStayInSession(t *testing.T) {
 	}
 	applyActions(create)
 
-	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys (customer_key, market_segment) values (2, 'BUILDING'), (1, 'AUTOMOBILE')", qsbridge.ExecutionOptions{})
+	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys values (2, 'BUILDING'), (1, 'AUTOMOBILE')", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("INSERT temporary table failed: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestSQLRuntimeInsertSelectTemporaryTableMaterializesRows(t *testing.T) {
 	}
 	applyActions(create)
 
-	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys (customer_key, market_segment) select 2 as customer_key, 'BUILDING' as market_segment union all select 1 as customer_key, 'AUTOMOBILE' as market_segment", qsbridge.ExecutionOptions{})
+	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys select 2 as customer_key, 'BUILDING' as market_segment union all select 1 as customer_key, 'AUTOMOBILE' as market_segment", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("INSERT SELECT temporary table failed: %v", err)
 	}

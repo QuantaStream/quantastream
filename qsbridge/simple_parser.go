@@ -3184,6 +3184,13 @@ func parseSimpleInsertTarget(text string) (UnboundTable, []string, Diagnostic, b
 	trimmed := strings.TrimSpace(text)
 	open := strings.Index(trimmed, "(")
 	close := strings.LastIndex(trimmed, ")")
+	if open == -1 && close == -1 {
+		table, diagnostic, ok := parseSimpleTable(trimmed)
+		if !ok {
+			return UnboundTable{}, nil, diagnostic, false
+		}
+		return table, nil, Diagnostic{}, true
+	}
 	if open <= 0 || close <= open || close != len(trimmed)-1 {
 		return UnboundTable{}, nil, simpleParserDiagnostic("INSERT target must include a column list"), false
 	}
@@ -3239,7 +3246,7 @@ func parseSimpleInsertRows(text string, columnCount int, parameterIndex *int) ([
 
 func parseSimpleInsertRow(text string, columnCount int, parameterIndex *int) ([]UnboundExpr, Diagnostic, bool) {
 	parts := splitSimpleCommaList(text)
-	if len(parts) != columnCount {
+	if columnCount > 0 && len(parts) != columnCount {
 		return nil, simpleParserDiagnostic("INSERT row value count does not match target column count"), false
 	}
 	values := make([]UnboundExpr, 0, len(parts))

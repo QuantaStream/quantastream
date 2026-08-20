@@ -1929,6 +1929,25 @@ func TestSimpleParserBridgeParsesInsertValues(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesInsertValuesWithoutColumnList(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa values ('9001', 'Ada', 42)")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.Insert.Table.Name != "customers_qa" {
+		t.Fatalf("insert table = %#v, want customers_qa", statement.Insert.Table)
+	}
+	if len(statement.Insert.Columns) != 0 {
+		t.Fatalf("insert columns = %#v, want omitted column list", statement.Insert.Columns)
+	}
+	if len(statement.Insert.Rows) != 1 || len(statement.Insert.Rows[0]) != 3 {
+		t.Fatalf("insert rows = %#v, want one three-value row", statement.Insert.Rows)
+	}
+}
+
 func TestSimpleParserBridgeParsesInsertSelect(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa (cust_id, first_name) select c_custkey, c_name from customer where c_custkey in (1, 2) order by c_custkey")
 	if diagnostics.BlocksNative() {
@@ -1947,6 +1966,26 @@ func TestSimpleParserBridgeParsesInsertSelect(t *testing.T) {
 		t.Fatalf("insert rows = %#v, want none for INSERT SELECT", statement.Insert.Rows)
 	}
 	wantSQL := "select c_custkey, c_name from customer where c_custkey in (1, 2) order by c_custkey"
+	if statement.Insert.SourceSQL != wantSQL {
+		t.Fatalf("SourceSQL = %q, want %q", statement.Insert.SourceSQL, wantSQL)
+	}
+}
+
+func TestSimpleParserBridgeParsesInsertSelectWithoutColumnList(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa select c_custkey, c_name from customer order by c_custkey limit 2")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.Insert.Table.Name != "customers_qa" {
+		t.Fatalf("insert table = %#v, want customers_qa", statement.Insert.Table)
+	}
+	if len(statement.Insert.Columns) != 0 {
+		t.Fatalf("insert columns = %#v, want omitted column list", statement.Insert.Columns)
+	}
+	wantSQL := "select c_custkey, c_name from customer order by c_custkey limit 2"
 	if statement.Insert.SourceSQL != wantSQL {
 		t.Fatalf("SourceSQL = %q, want %q", statement.Insert.SourceSQL, wantSQL)
 	}

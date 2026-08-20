@@ -367,6 +367,67 @@ func TestUnboundStatementBindInsertSelect(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindInsertSelectWithoutColumnList(t *testing.T) {
+	catalog := NewSessionCatalog(testBindCatalog(), SessionContext{
+		CurrentSchema: "quanta",
+		TemporaryTables: map[string]TableDefinition{
+			temporaryTableKey("quanta", "scratch_keys"): {
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []FieldDefinition{
+					{Name: "customer_key", Type: DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}, "quanta")
+	context := NewBindContext(catalog, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("insert into scratch_keys select c_custkey, c_name from customer order by c_custkey limit 2")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.SourceSQL != "select c_custkey, c_name from customer order by c_custkey limit 2" {
+		t.Fatalf("SourceSQL = %q", query.Mutation.SourceSQL)
+	}
+	if len(query.Mutation.Columns) != 0 {
+		t.Fatalf("mutation columns = %#v, want omitted column list", query.Mutation.Columns)
+	}
+}
+
+func TestUnboundStatementBindInsertSelectWithoutColumnListRejectsShapeMismatch(t *testing.T) {
+	catalog := NewSessionCatalog(testBindCatalog(), SessionContext{
+		CurrentSchema: "quanta",
+		TemporaryTables: map[string]TableDefinition{
+			temporaryTableKey("quanta", "scratch_keys"): {
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []FieldDefinition{
+					{Name: "customer_key", Type: DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}, "quanta")
+	context := NewBindContext(catalog, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("insert into scratch_keys select c_custkey from customer")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	_, diagnostics := statement.Bind(context)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want shape mismatch", diagnostics)
+	}
+	if len(diagnostics) == 0 || !strings.Contains(diagnostics[0].Error(), "projects 1 columns for 2 target columns") {
+		t.Fatalf("diagnostics = %#v, want insert-select shape mismatch", diagnostics)
+	}
+}
+
 func TestUnboundStatementBindUpdate(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

@@ -805,6 +805,7 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 		columns = append(columns, ref)
 	}
 
+	targetColumnCount := bindInsertTargetColumnCount(target, columns)
 	sourceSQL := strings.TrimSpace(insertStmt.SourceSQL)
 	if sourceSQL != "" {
 		sourceColumns, sourceDiagnostics := bindInsertSelectSourceColumns(context, sourceSQL)
@@ -812,11 +813,11 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 		if diagnostics.BlocksNative() {
 			return query, diagnostics
 		}
-		if len(sourceColumns) != len(columns) {
+		if len(sourceColumns) != targetColumnCount {
 			diagnostics = append(diagnostics, ErrorDiagnostic(
 				DiagnosticParserBoundary,
 				PhaseBind,
-				fmt.Sprintf("INSERT SELECT projects %d columns for %d target columns", len(sourceColumns), len(columns)),
+				fmt.Sprintf("INSERT SELECT projects %d columns for %d target columns", len(sourceColumns), targetColumnCount),
 			))
 			return query, diagnostics
 		}
@@ -831,7 +832,7 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 
 	rows := make([]MutationRow, 0, len(insertStmt.Rows))
 	for _, row := range insertStmt.Rows {
-		if len(columns) > 0 && len(row) != len(columns) {
+		if len(row) != targetColumnCount {
 			diagnostics = append(diagnostics, ErrorDiagnostic(
 				DiagnosticParserBoundary,
 				PhaseBind,
@@ -861,6 +862,13 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 		Rows:    rows,
 	}
 	return query, diagnostics
+}
+
+func bindInsertTargetColumnCount(target BoundTable, columns []FieldRef) int {
+	if len(columns) > 0 {
+		return len(columns)
+	}
+	return len(target.Definition.Fields)
 }
 
 func bindInsertSelectSourceColumns(context *BindContext, sourceSQL string) ([]ResultColumn, DiagnosticSet) {

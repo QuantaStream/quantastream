@@ -84,7 +84,7 @@ tests:
     compatibility: mysql
     requires: [insert, temporary_table]
     sql: |
-      insert into qs_mysql_compat_tmp_customer_keys (customer_key, market_segment, created_at)
+      insert into qs_mysql_compat_tmp_customer_keys
       values (2, 'BUILDING', null), (1, 'AUTOMOBILE', null)
 
   - id: mysql_compat_temp_tables.013.select_temp_table_rows
@@ -307,7 +307,7 @@ tests:
     compatibility: mysql
     requires: [insert, temporary_table, select, order_by]
     sql: |
-      insert into qs_mysql_compat_tmp_region_insert_select (region_key, region_name)
+      insert into qs_mysql_compat_tmp_region_insert_select
       select r_regionkey, r_name
       from region
       where r_regionkey in (0, 1, 2)
