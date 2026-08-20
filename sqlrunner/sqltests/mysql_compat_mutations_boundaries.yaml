@@ -213,28 +213,6 @@ tests:
     expect:
       affected_rows: 1
 
-  - id: mysql_compat_mutations_boundaries.016.alter_table_add_column
-    status: xfail
-    kind: statement
-    feature: mutations_alter_table_boundary
-    compatibility: mysql
-    requires: [alter_table, add_column, varchar]
-    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
-    sql: |
-      alter table qs_mysql_compat_mutations_ctas
-      add column note varchar(40)
-
-  - id: mysql_compat_mutations_boundaries.017.alter_table_drop_column
-    status: xfail
-    kind: statement
-    feature: mutations_alter_table_boundary
-    compatibility: mysql
-    requires: [alter_table, drop_column]
-    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
-    sql: |
-      alter table qs_mysql_compat_mutations_ctas
-      drop column name
-
   - id: mysql_compat_mutations_boundaries.018.insert_select
     status: xfail
     kind: statement
@@ -319,6 +297,31 @@ tests:
       limit 1
     expect:
       affected_rows: 1
+
+  # Keep ALTER boundaries after the DML cases. The MySQL reference run executes
+  # this suite in order, so dropping a column too early can invalidate later
+  # reference cases before QS is compared.
+  - id: mysql_compat_mutations_boundaries.016.alter_table_add_column
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_boundary
+    compatibility: mysql
+    requires: [alter_table, add_column, varchar]
+    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
+    sql: |
+      alter table qs_mysql_compat_mutations_ctas
+      add column note varchar(40)
+
+  - id: mysql_compat_mutations_boundaries.017.alter_table_drop_column
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_boundary
+    compatibility: mysql
+    requires: [alter_table, drop_column]
+    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
+    sql: |
+      alter table qs_mysql_compat_mutations_ctas
+      drop column name
 
   # Cleanup no-ops, safe even when the boundary table creation never happened.
   - id: mysql_compat_mutations_boundaries.900.cleanup
