@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,6 +226,33 @@ func TestLegacySchemaMutationHandleDropTableIfExistsIgnoresMissingFileCatalogTab
 	}
 	if statement.Status != "Table missing_table dropped" {
 		t.Fatalf("status = %q, want missing_table dropped", statement.Status)
+	}
+}
+
+func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsupported(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{
+		TableName: "scratch_orders",
+		Session:   &core.Session{BasePath: t.TempDir()},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationAlterTableAddPrimaryKey,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "scratch_orders"},
+			Columns: []qsbridge.FieldRef{
+				{Name: "order_key", PrimaryKey: true},
+			},
+		},
+	}
+
+	_, diagnostics, err := handle.AlterTableAddPrimaryKey(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AlterTableAddPrimaryKey() error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want unsupported mutation blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD PRIMARY KEY is not implemented yet") {
+		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD PRIMARY KEY", diagnostics)
 	}
 }
 

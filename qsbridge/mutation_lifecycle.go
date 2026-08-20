@@ -184,5 +184,13 @@ func (r PlanResult) mutationLifecycleDiagnosticsStep(diagnostics DiagnosticSet) 
 }
 
 func isMutationQueryKind(kind QueryKind) bool {
-	return kind == QueryKindInsert || kind == QueryKindUpdate || kind == QueryKindDelete
+	return kind == QueryKindInsert ||
+		kind == QueryKindUpdate ||
+		kind == QueryKindDelete ||
+		kind == QueryKindTruncate ||
+		kind == QueryKindCreateTable ||
+		kind == QueryKindDropTable ||
+		kind == QueryKindAlterTable ||
+		kind == QueryKindCreateView ||
+		kind == QueryKindDropView
 }

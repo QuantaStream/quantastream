@@ -250,7 +250,27 @@ func TestSimpleParserBridgeRejectsDeleteOrderLimitBoundary(t *testing.T) {
 }
 
 func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
-	assertSimpleParserRejects(t, "alter table customers_qa add column nickname varchar(40)", "ALTER TABLE is not supported yet")
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "add column",
+			sql:     "alter table customers_qa add column nickname varchar(40)",
+			message: "ALTER TABLE only supports ADD PRIMARY KEY",
+		},
+		{
+			name:    "add foreign key",
+			sql:     "alter table orders add foreign key (o_custkey) references customer (c_custkey)",
+			message: "ALTER TABLE ADD FOREIGN KEY is not supported yet",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertSimpleParserRejects(t, test.sql, test.message)
+		})
+	}
 }
 
 func TestSimpleParserBridgeRejectsReplaceAndOnDuplicateBoundary(t *testing.T) {
@@ -392,6 +412,25 @@ func TestSimpleParserBridgeParsesDropTableIfExistsStatement(t *testing.T) {
 	}
 	if !statement.Drop.IfExists {
 		t.Fatalf("IfExists = false, want true")
+	}
+}
+
+func TestSimpleParserBridgeParsesAlterTableAddPrimaryKeyStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("alter table scratch_orders add primary key (order_key, customer_key);")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindAlterTable {
+		t.Fatalf("kind = %q, want alter table", statement.Kind)
+	}
+	if statement.Alter.Table.Name != "scratch_orders" {
+		t.Fatalf("table = %#v, want scratch_orders", statement.Alter.Table)
+	}
+	if got := statement.Alter.AddPrimaryKeyColumns; len(got) != 2 || got[0] != "order_key" || got[1] != "customer_key" {
+		t.Fatalf("primary key columns = %#v, want order_key/customer_key", got)
+	}
+	if statement.Alter.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Alter.Result.Kind)
 	}
 }
 

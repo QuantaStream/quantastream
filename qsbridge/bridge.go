@@ -27,6 +27,7 @@ type UnboundStatement struct {
 	Truncate        UnboundTruncate
 	Create          UnboundCreateTable
 	Drop            UnboundDropTable
+	Alter           UnboundAlterTable
 	CreateView      UnboundCreateView
 	DropView        UnboundDropView
 	ShowView        UnboundShowCreateView
@@ -79,6 +80,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 		return BindCreateTable(context, s.Create)
 	case QueryKindDropTable:
 		return BindDropTable(context, s.Drop)
+	case QueryKindAlterTable:
+		return BindAlterTable(context, s.Alter)
 	case QueryKindCreateView:
 		return BindCreateView(context, s.CreateView)
 	case QueryKindDropView:
@@ -240,6 +243,14 @@ type UnboundDropTable struct {
 	IfExists  bool
 	Result    ResultShape
 	Blockers  []NativeBlocker
+}
+
+// UnboundAlterTable describes an ALTER TABLE operation before binding.
+type UnboundAlterTable struct {
+	Table                UnboundTable
+	AddPrimaryKeyColumns []string
+	Result               ResultShape
+	Blockers             []NativeBlocker
 }
 
 // UnboundDropView describes a DROP VIEW operation before binding.
@@ -1012,6 +1023,50 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 		IfNotExists: createStmt.IfNotExists,
 		Columns:     columns,
 		SourceSQL:   strings.TrimSpace(createStmt.AsSQL),
+	}
+	return query, diagnostics
+}
+
+// BindAlterTable binds parser-neutral ALTER TABLE metadata into QueryIR.
+func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR, DiagnosticSet) {
+	query, target, diagnostics := bindMutationTarget(context, QueryKindAlterTable, alterStmt.Table, alterStmt.Result, alterStmt.Blockers)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	if len(alterStmt.AddPrimaryKeyColumns) == 0 {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD PRIMARY KEY requires at least one column"))
+		return query, diagnostics
+	}
+	columns := make([]FieldRef, 0, len(alterStmt.AddPrimaryKeyColumns))
+	seen := make(map[string]struct{}, len(alterStmt.AddPrimaryKeyColumns))
+	for _, column := range alterStmt.AddPrimaryKeyColumns {
+		column = strings.TrimSpace(column)
+		if column == "" {
+			diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD PRIMARY KEY columns must be simple identifiers"))
+			continue
+		}
+		key := strings.ToLower(column)
+		if _, exists := seen[key]; exists {
+			diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD PRIMARY KEY duplicate column: "+column))
+			continue
+		}
+		seen[key] = struct{}{}
+		field, fieldDiagnostics := context.ResolveField(target.Instance.RefName(), column, FieldRoleMutationTarget)
+		if fieldDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, fieldDiagnostics...)
+			continue
+		}
+		field.PrimaryKey = true
+		field.Nullable = false
+		columns = append(columns, field)
+	}
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+	query.Mutation = MutationShape{
+		Kind:    MutationAlterTableAddPrimaryKey,
+		Target:  target.Instance,
+		Columns: columns,
 	}
 	return query, diagnostics
 }

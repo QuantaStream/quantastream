@@ -586,6 +586,8 @@ const (
 	MutationCreateTable MutationKind = "create_table"
 	// MutationDropTable describes dropping an active table schema and data.
 	MutationDropTable MutationKind = "drop_table"
+	// MutationAlterTableAddPrimaryKey describes adding primary-key metadata to an existing table.
+	MutationAlterTableAddPrimaryKey MutationKind = "alter_table_add_primary_key"
 	// MutationCreateView describes creating a logical non-materialized view.
 	MutationCreateView MutationKind = "create_view"
 	// MutationDropView describes dropping a logical non-materialized view.

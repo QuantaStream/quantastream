@@ -20,6 +20,8 @@ const (
 	QueryKindCreateTable QueryKind = "create_table"
 	// QueryKindDropTable identifies a DROP TABLE deactivation statement.
 	QueryKindDropTable QueryKind = "drop_table"
+	// QueryKindAlterTable identifies an ALTER TABLE catalog mutation statement.
+	QueryKindAlterTable QueryKind = "alter_table"
 	// QueryKindCreateView identifies a CREATE VIEW catalog statement.
 	QueryKindCreateView QueryKind = "create_view"
 	// QueryKindDropView identifies a DROP VIEW catalog statement.

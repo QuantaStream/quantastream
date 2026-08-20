@@ -593,6 +593,37 @@ func TestUnboundStatementBindCreateTable(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindAlterTableAddPrimaryKey(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("alter table orders add primary key (o_orderkey, o_custkey)")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindAlterTable || query.Mutation.Kind != MutationAlterTableAddPrimaryKey {
+		t.Fatalf("query kind/mutation = %q/%q, want alter_table/add_primary_key", query.Kind, query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "orders" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("mutation target = %#v, want quanta.orders", query.Mutation.Target)
+	}
+	if got := query.Mutation.Columns; len(got) != 2 || got[0].Name != "o_orderkey" || got[1].Name != "o_custkey" {
+		t.Fatalf("mutation columns = %#v, want o_orderkey/o_custkey", got)
+	}
+	for _, column := range query.Mutation.Columns {
+		if !column.Roles.Has(FieldRoleMutationTarget) || !column.PrimaryKey || column.Nullable {
+			t.Fatalf("column = %#v, want mutation-target non-null primary key ref", column)
+		}
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessCreate, "orders") {
+		t.Fatalf("RequiredAccess = %#v, want create on orders", access)
+	}
+}
+
 func TestUnboundStatementBindCreateTemporaryTableCarriesMetadata(t *testing.T) {
 	context := NewBindContext(MemoryCatalog{}, "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table if not exists scratch_keys (customer_key bigint not null, revenue decimal(12,2), primary key (customer_key))")

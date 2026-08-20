@@ -54,7 +54,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 		return parseSimpleDrop(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "alter"); ok {
-		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE is not supported yet; QS schema is catalog/YAML-backed"), false
+		return parseSimpleAlter(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "show"); ok {
 		return parseSimpleShow(sql)
@@ -86,7 +86,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW ERRORS, SHOW COUNT, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, ALTER TABLE ADD PRIMARY KEY, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW ERRORS, SHOW COUNT, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1569,6 +1569,76 @@ func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Dia
 			Result:   ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	alterBody, ok := consumeKeyword(trimmed, "alter")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only ALTER statements are supported"), false
+	}
+	alterBody, ok = consumeKeyword(alterBody, "table")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("ALTER must be followed by TABLE"), false
+	}
+	tableText, operationText, ok := splitBeforeTopLevelKeyword(alterBody, "add")
+	if !ok || strings.TrimSpace(tableText) == "" || strings.TrimSpace(operationText) == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY"), false
+	}
+	table, diagnostic, ok := parseSimpleTable(tableText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if table.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE aliases are not supported"), false
+	}
+	columns, diagnostic, ok := parseSimpleAlterTableAddPrimaryKey(operationText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindAlterTable,
+		Alter: UnboundAlterTable{
+			Table:                table,
+			AddPrimaryKeyColumns: columns,
+			Result:               ResultShape{Kind: ResultStatement},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleAlterTableAddPrimaryKey(operationText string) ([]string, Diagnostic, bool) {
+	remaining, ok := consumeKeyword(operationText, "primary")
+	if !ok {
+		if fkRemaining, fkOK := consumeKeyword(operationText, "foreign"); fkOK {
+			if _, keyOK := consumeKeyword(fkRemaining, "key"); keyOK {
+				return nil, simpleParserDiagnostic("ALTER TABLE ADD FOREIGN KEY is not supported yet"), false
+			}
+		}
+		return nil, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY"), false
+	}
+	remaining, ok = consumeKeyword(remaining, "key")
+	if !ok {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY must be followed by KEY"), false
+	}
+	remaining = strings.TrimSpace(remaining)
+	if !strings.HasPrefix(remaining, "(") || !strings.HasSuffix(remaining, ")") {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY must include a column list"), false
+	}
+	columnText := strings.TrimSpace(remaining[1 : len(remaining)-1])
+	if columnText == "" {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY column list must not be empty"), false
+	}
+	parts := splitSimpleCommaList(columnText)
+	columns := make([]string, 0, len(parts))
+	for _, part := range parts {
+		column := stripSimpleIdentifierQuotes(strings.TrimSpace(part))
+		if column == "" || strings.Contains(column, ".") || len(strings.Fields(column)) != 1 {
+			return nil, simpleParserDiagnostic("ALTER TABLE ADD PRIMARY KEY columns must be simple identifiers"), false
+		}
+		columns = append(columns, column)
+	}
+	return columns, Diagnostic{}, true
 }
 
 func parseSimpleShow(sql string) (UnboundStatement, Diagnostic, bool) {
