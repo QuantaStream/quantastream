@@ -50,6 +50,7 @@ tests:
         - [Abby, null]
 
   - id: mysql_compat_joins_boundaries.003.right_join
+    status: supported
     kind: query
     order: exact
     feature: joins_right_outer_boundary
@@ -109,6 +110,7 @@ tests:
         - [Customer#000000006, null]
 
   - id: mysql_compat_joins_boundaries.006.using_join
+    status: supported
     kind: query
     order: exact
     feature: joins_using_boundary
@@ -244,13 +246,12 @@ tests:
         - [2, 6980]
 
   - id: mysql_compat_joins_boundaries.011.non_equi_join_condition
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_non_equi_boundary
     compatibility: mysql
     requires: [select, table_scan, inner_join, non_equi_join, group_by, count, order_by]
-    issue: "Non-equi peer joins parse, but direct distributed execution does not yet have a materialized peer-join fallback."
     sql: |
       select r.r_name as region_name, count(n.n_nationkey) as nation_count
       from region as r

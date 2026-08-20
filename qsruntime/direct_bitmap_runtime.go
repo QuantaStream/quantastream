@@ -76,6 +76,10 @@ func (r DirectBitmapRuntime) ExecuteDirect(ctx context.Context, request Executio
 		result.Probes = append(request.Probes, result.Probes...)
 		return result, err
 	}
+	if result, ok, err := r.directBitmapPeerJoinResult(ctx, request); ok {
+		result.Probes = append(request.Probes, result.Probes...)
+		return result, err
+	}
 	if diagnostics := directBitmapUnsupportedPeerJoinDiagnostics(request); diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, nil
 	}
