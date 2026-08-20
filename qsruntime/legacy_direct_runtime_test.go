@@ -186,6 +186,47 @@ func TestLegacyDirectInsertRowMapOmitsNullValuesForDefaultsAndKeepsLogicalRownum
 	}
 }
 
+func TestLegacyDirectInsertRowMapAddsCatalogSourcePathAliases(t *testing.T) {
+	table := &core.Table{
+		AttributeNameMap: map[string]*core.Attribute{
+			"c_custkey": {BasicAttribute: &shared.BasicAttribute{
+				FieldName: "c_custkey",
+				SourceName: "/data/c_custkey",
+			}},
+			"c_name": {BasicAttribute: &shared.BasicAttribute{
+				FieldName: "c_name",
+				SourceName: "/data/c_name",
+			}},
+		},
+	}
+	rowMap, _, diagnostics, ok := legacyDirectInsertRowMap(
+		table,
+		[]qsbridge.FieldRef{
+			{Name: "c_custkey"},
+			{Name: "c_name"},
+		},
+		qsbridge.MutationRow{Values: []qsbridge.Expr{
+			qsbridge.Literal(qsbridge.ValueInt, int64(900000002)),
+			qsbridge.Literal(qsbridge.ValueString, "Formatted Customer"),
+		}},
+	)
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("legacyDirectInsertRowMap diagnostics = %v", diagnostics)
+	}
+	if got := rowMap["c_custkey"]; got != int64(900000002) {
+		t.Fatalf("c_custkey = %#v, want 900000002", got)
+	}
+	if got := rowMap["/data/c_custkey"]; got != int64(900000002) {
+		t.Fatalf("/data/c_custkey = %#v, want 900000002", got)
+	}
+	if got := rowMap["c_name"]; got != "Formatted Customer" {
+		t.Fatalf("c_name = %#v, want Formatted Customer", got)
+	}
+	if got := rowMap["/data/c_name"]; got != "Formatted Customer" {
+		t.Fatalf("/data/c_name = %#v, want Formatted Customer", got)
+	}
+}
+
 func TestLegacyDirectInsertRowMapPreservesExplicitNullDefaultTimeAsEmptyValue(t *testing.T) {
 	table := &core.Table{
 		AttributeNameMap: map[string]*core.Attribute{

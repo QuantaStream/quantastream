@@ -100,19 +100,18 @@ tests:
   - id: mysql_compat_mutations_boundaries.025.begin_formatted_catalog_insert
     status: supported
     kind: statement
-    feature: mutations_insert_formatting_boundary
+    feature: mutations_insert_formatting
     compatibility: mysql
     requires: [begin]
     sql: |
       begin
 
   - id: mysql_compat_mutations_boundaries.026.formatted_catalog_insert
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_insert_formatting_boundary
+    feature: mutations_insert_formatting
     compatibility: mysql
     requires: [insert, values, multiline]
-    issue: "Formatted multi-line INSERT ... VALUES parses successfully but currently fails in the catalog write path with an empty primary-key value; one-line catalog INSERT coverage remains supported."
     sql: |
       insert into customer (
         c_custkey,
@@ -139,7 +138,7 @@ tests:
   - id: mysql_compat_mutations_boundaries.027.rollback_formatted_catalog_insert
     status: supported
     kind: statement
-    feature: mutations_insert_formatting_boundary
+    feature: mutations_insert_formatting
     compatibility: mysql
     requires: [rollback]
     sql: |

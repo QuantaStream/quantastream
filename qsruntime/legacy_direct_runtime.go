@@ -1425,16 +1425,29 @@ func legacyDirectInsertRowMap(table *core.Table, columns []qsbridge.FieldRef, ro
 		}
 		if value == nil {
 			if legacyDirectInsertUsesExplicitEmptyDefaultTime(table, columnName) {
-				rowMap[columnName] = legacyDirectExplicitEmptyTimeSentinel
+				legacyDirectInsertSetRowValue(rowMap, table, columnName, legacyDirectExplicitEmptyTimeSentinel)
 			}
 			continue
 		}
 		if legacyDirectInsertUsesCatalogDefault(table, columnName, value) {
 			continue
 		}
-		rowMap[columnName] = value
+		legacyDirectInsertSetRowValue(rowMap, table, columnName, value)
 	}
 	return rowMap, providedRownum, nil, true
+}
+
+func legacyDirectInsertSetRowValue(rowMap map[string]interface{}, table *core.Table, columnName string, value interface{}) {
+	rowMap[columnName] = value
+	attr := legacyDirectInsertAttribute(table, columnName)
+	if attr == nil {
+		return
+	}
+	source := strings.TrimSpace(attr.SourceName)
+	if source == "" || strings.Contains(source, "+") || strings.EqualFold(source, columnName) {
+		return
+	}
+	rowMap[source] = value
 }
 
 const legacyDirectExplicitEmptyTimeSentinel = "1900-01-01T00:00:00Z"
