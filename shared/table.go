@@ -334,7 +334,19 @@ func (t *BasicTable) GetAttribute(name string) (*BasicAttribute, error) {
 		return nil, fmt.Errorf("assertion failure: receiver for table is nil for fieldname %s", name)
 	}
 	if t.attributeNameMap == nil {
-		return nil, fmt.Errorf("assertion failure: attributeNameMap for table %s is nil for fieldname %s", t.Name, name)
+		t.attributeNameMap = make(map[string]*BasicAttribute, len(t.Attributes))
+		for i := range t.Attributes {
+			attr := &t.Attributes[i]
+			if attr.FieldName == "" && attr.SourceName != "" {
+				attr.FieldName = attr.SourceName
+			}
+			if attr.FieldName != "" {
+				t.attributeNameMap[attr.FieldName] = attr
+			}
+			if attr.SourceName != "" && attr.SourceName != attr.FieldName {
+				t.attributeNameMap[attr.SourceName] = attr
+			}
+		}
 	}
 	if attr, ok := t.attributeNameMap[name]; ok {
 		return attr, nil
@@ -345,6 +357,9 @@ func (t *BasicTable) GetAttribute(name string) (*BasicAttribute, error) {
 // GetPrimaryKeyInfo - Return attributes for a given PK.
 func (t *BasicTable) GetPrimaryKeyInfo() ([]*BasicAttribute, error) {
 
+	if strings.TrimSpace(t.PrimaryKey) == "" && strings.TrimSpace(t.TimeQuantumField) == "" {
+		return []*BasicAttribute{}, nil
+	}
 	s := strings.Split(t.PrimaryKey, "+")
 	attrs := make([]*BasicAttribute, len(s))
 	i := 0

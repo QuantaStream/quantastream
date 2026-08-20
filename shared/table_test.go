@@ -43,6 +43,22 @@ func TestLoadTableWithPK(t *testing.T) {
 	assert.Equal(t, len(pki), 2)
 }
 
+func TestBasicTableGetAttributeInitializesGeneratedAttributeMap(t *testing.T) {
+	table := &BasicTable{
+		Name: "scratch",
+		Attributes: []BasicAttribute{
+			{FieldName: "id", SourceName: "id", Type: "Integer", MappingStrategy: "IntBSI"},
+		},
+	}
+
+	attr, err := table.GetAttribute("id")
+
+	assert.Nil(t, err)
+	if assert.NotNil(t, attr) {
+		assert.Equal(t, "IntBSI", attr.MappingStrategy)
+	}
+}
+
 func TestLoadSchemaAddsCompoundPrimaryKeyAuthorityAttribute(t *testing.T) {
 
 	schema, err := LoadSchema("./testdata/config", "cityzip", nil)

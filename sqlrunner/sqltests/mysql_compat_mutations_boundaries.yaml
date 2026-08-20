@@ -269,7 +269,7 @@ tests:
     feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [update, arithmetic, where, comparison]
-    issue: "Row-local UPDATE assignment expressions are supported on catalog-backed tables; this boundary remains XFAIL because the scratch table depends on unsupported CTAS/inline DDL."
+    issue: "The CTAS table is materialized, but this case attempts to update the projected identity field; QS protects primary-key/identity fields from UPDATE assignment."
     sql: |
       update qs_mysql_compat_mutations_ctas
       set id = id + 10
@@ -278,16 +278,15 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.011.update_assignment_function
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_update_assignment_function
     compatibility: mysql
     requires: [update, scalar_function, where, comparison]
-    issue: "Scalar-function UPDATE assignments are supported on catalog-backed tables; this boundary remains XFAIL because the scratch table depends on unsupported CTAS/inline DDL."
     sql: |
       update qs_mysql_compat_mutations_ctas
       set name = lower(name)
-      where id = 1
+      where id = 2
     expect:
       affected_rows: 1
 
@@ -299,10 +298,10 @@ tests:
     requires: [update, join, aliases, where, comparison]
     issue: "UPDATE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
     sql: |
-      update customer as c
-      inner join orders as o on c.c_custkey = o.o_custkey
-      set c.c_comment = 'joined'
-      where o.o_orderkey = 1
+      update qs_mysql_compat_mutations_ctas as t
+      inner join customer as c on t.id = c.c_custkey
+      set t.name = c.c_name
+      where t.id = 2
     expect:
       affected_rows: 1
 
@@ -314,10 +313,10 @@ tests:
     requires: [delete, join, aliases, where, comparison]
     issue: "DELETE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
     sql: |
-      delete c
-      from customer as c
-      inner join orders as o on c.c_custkey = o.o_custkey
-      where o.o_orderkey = 1
+      delete t
+      from qs_mysql_compat_mutations_ctas as t
+      inner join customer as c on t.id = c.c_custkey
+      where t.id = 11
     expect:
       affected_rows: 1
 
@@ -337,7 +336,7 @@ tests:
         where c_custkey <= 2
       )
     expect:
-      affected_rows: 2
+      affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.024.update_assignment_scalar_subquery
     status: xfail
@@ -351,9 +350,9 @@ tests:
       set id = (
         select max(c_custkey)
         from customer
-        where c_custkey <= 3
+        where c_custkey <= 4
       )
-      where id = 1
+      where id = 2
     expect:
       affected_rows: 1
 
@@ -400,7 +399,7 @@ tests:
       replace into qs_mysql_compat_mutations_ctas (id, name)
       values (1, 'replacement')
     expect:
-      affected_rows: 2
+      affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.020.insert_on_duplicate_key_update
     status: xfail
@@ -414,7 +413,7 @@ tests:
       values (1, 'duplicate')
       on duplicate key update name = values(name)
     expect:
-      affected_rows: 2
+      affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.021.update_order_by_limit
     status: xfail

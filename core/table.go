@@ -309,6 +309,9 @@ func (t *Table) GetRownumAttribute() *Attribute {
 // GetPrimaryKeyInfo - Return attributes for a given PK.
 func (t *Table) GetPrimaryKeyInfo() ([]*Attribute, error) {
 
+	if strings.TrimSpace(t.PrimaryKey) == "" && strings.TrimSpace(t.TimeQuantumField) == "" {
+		return []*Attribute{}, nil
+	}
 	s := strings.Split(t.PrimaryKey, "+")
 	attrs := make([]*Attribute, len(s))
 	i := 0

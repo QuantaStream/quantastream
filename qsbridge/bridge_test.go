@@ -651,6 +651,9 @@ func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testin
 	if column := query.Mutation.Columns[0]; column.Name != "order_key" || column.Type != DataTypeInt || column.Table.Table != "scratch_orders" {
 		t.Fatalf("first CTAS column = %#v", column)
 	}
+	if !query.Mutation.Columns[0].PrimaryKey {
+		t.Fatalf("primary-key source CTAS column should preserve primary key role: %#v", query.Mutation.Columns[0])
+	}
 	if query.Mutation.Columns[0].Nullable {
 		t.Fatalf("primary-key source CTAS column should be non-nullable: %#v", query.Mutation.Columns[0])
 	}

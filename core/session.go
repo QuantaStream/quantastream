@@ -250,6 +250,9 @@ func NewTableBuffer(table *Table) (*TableBuffer, error) {
 	}
 	tb.PKAttributes = pka
 	for _, v := range pka {
+		if v == nil {
+			continue
+		}
 		tb.PKMap[v.FieldName] = v
 	}
 	tb.rowCache = make(map[string]interface{})
@@ -278,6 +281,9 @@ func (t *TableBuffer) NextColumnID(bi *shared.BitmapIndex) error {
 // ShouldLookupPrimaryKey - Does this table have a primary key
 func (t *TableBuffer) ShouldLookupPrimaryKey() bool {
 
+	if len(t.PKAttributes) == 0 {
+		return false
+	}
 	if t.PKAttributes[0].ColumnID {
 		return false
 	}

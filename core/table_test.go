@@ -41,6 +41,23 @@ func TestLoadTableWithPK(t *testing.T) {
 	assert.Equal(t, len(pki), 2)
 }
 
+func TestNewTableBufferAllowsNoPrimaryKey(t *testing.T) {
+	table := &Table{BasicTable: &shared.BasicTable{
+		Name: "scratch",
+		Attributes: []shared.BasicAttribute{
+			{FieldName: "id", Type: "Integer", MappingStrategy: "IntBSI"},
+		},
+	}}
+
+	buffer, err := NewTableBuffer(table)
+
+	assert.Nil(t, err)
+	if assert.NotNil(t, buffer) {
+		assert.Empty(t, buffer.PKAttributes)
+		assert.False(t, buffer.ShouldLookupPrimaryKey())
+	}
+}
+
 func TestLoadTableWithRelation(t *testing.T) {
 	tcs := NewTableCacheStruct()
 	table, err := LoadTable(tcs, "./testdata", nil, "cityzip", nil)

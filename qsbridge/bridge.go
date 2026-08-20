@@ -1117,11 +1117,27 @@ func bindCreateTableAsSelectColumns(context *BindContext, target TableInstance, 
 			Name:         name,
 			PhysicalName: name,
 			Type:         column.Type,
+			PrimaryKey:   createTableAsSelectColumnPrimaryKey(sourceQuery, index),
 			Nullable:     createTableAsSelectColumnNullable(sourceQuery, index, column),
 			Roles:        FieldRoleVisible | FieldRoleMutationTarget,
 		})
 	}
 	return refs, nil
+}
+
+func createTableAsSelectColumnPrimaryKey(sourceQuery QueryIR, index int) bool {
+	projection, ok := createTableAsSelectProjection(sourceQuery, index)
+	if !ok {
+		return false
+	}
+	switch expr := projection.Expr.(type) {
+	case FieldExpr:
+		return expr.Ref.PrimaryKey
+	case *FieldExpr:
+		return expr != nil && expr.Ref.PrimaryKey
+	default:
+		return false
+	}
 }
 
 func createTableAsSelectColumnNullable(sourceQuery QueryIR, index int, column ResultColumn) bool {
