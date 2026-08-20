@@ -11,6 +11,15 @@ tests:
     sql: |
       drop temporary table if exists qs_mysql_compat_tmp_customer_keys
 
+  - id: mysql_compat_temp_tables.002.drop_stale_ctas_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table if exists qs_mysql_compat_tmp_regions
+
   - id: mysql_compat_temp_tables.010.create_temp_table_metadata
     status: supported
     kind: statement
@@ -99,3 +108,45 @@ tests:
     requires: [drop_table, temporary_table, if_exists]
     sql: |
       drop temporary table if exists qs_mysql_compat_tmp_customer_keys
+
+  - id: mysql_compat_temp_tables.030.create_temp_table_as_select_tpch_region
+    status: supported
+    kind: statement
+    feature: temp_tables_ctas
+    compatibility: mysql
+    requires: [create_table, temporary_table, select, order_by]
+    sql: |
+      create temporary table qs_mysql_compat_tmp_regions as
+      select r_regionkey as region_key, r_name as region_name
+      from region
+      where r_regionkey in (0, 1, 2)
+      order by r_regionkey
+
+  - id: mysql_compat_temp_tables.031.select_temp_table_as_select_rows
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_ctas
+    compatibility: mysql
+    requires: [select, temporary_table, predicates, order_by, limit]
+    sql: |
+      select region_key, region_name
+      from qs_mysql_compat_tmp_regions
+      where region_key >= 0
+      order by region_key
+      limit 3
+    expect:
+      columns: [region_key, region_name]
+      rows:
+        - [0, AFRICA]
+        - [1, AMERICA]
+        - [2, ASIA]
+
+  - id: mysql_compat_temp_tables.032.drop_ctas_temp_table
+    status: supported
+    kind: statement
+    feature: temp_tables_ddl
+    compatibility: mysql
+    requires: [drop_table, temporary_table]
+    sql: |
+      drop temporary table qs_mysql_compat_tmp_regions

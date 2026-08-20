@@ -613,6 +613,7 @@ type MutationShape struct {
 	Kind                   MutationKind
 	Target                 TableInstance
 	ViewSQL                string
+	SourceSQL              string
 	Replace                bool
 	IfExists               bool
 	IfNotExists            bool

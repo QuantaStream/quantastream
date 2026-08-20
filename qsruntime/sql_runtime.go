@@ -175,7 +175,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindCreateTable && prepared.Query.Mutation.Temporary {
-		result.Runtime = r.createTemporaryTableRuntimeResult(request)
+		result.Runtime = r.createTemporaryTableRuntimeResult(ctx, request)
 		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 		return result, nil
 	}

@@ -217,6 +217,7 @@ type UnboundCreateTable struct {
 	Temporary   bool
 	IfNotExists bool
 	Columns     []FieldDefinition
+	AsSQL       string
 	Result      ResultShape
 	Blockers    []NativeBlocker
 }
@@ -922,14 +923,90 @@ func BindCreateTable(context *BindContext, createStmt UnboundCreateTable) (Query
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
+	columns := createTableFieldRefs(target, createStmt.Columns)
+	if strings.TrimSpace(createStmt.AsSQL) != "" {
+		ctasColumns, ctasDiagnostics := bindCreateTableAsSelectColumns(context, target, createStmt.AsSQL)
+		diagnostics = append(diagnostics, ctasDiagnostics...)
+		if diagnostics.BlocksNative() {
+			return query, diagnostics
+		}
+		columns = ctasColumns
+	}
 	query.Mutation = MutationShape{
 		Kind:        MutationCreateTable,
 		Target:      target,
 		Temporary:   createStmt.Temporary,
 		IfNotExists: createStmt.IfNotExists,
-		Columns:     createTableFieldRefs(target, createStmt.Columns),
+		Columns:     columns,
+		SourceSQL:   strings.TrimSpace(createStmt.AsSQL),
 	}
 	return query, diagnostics
+}
+
+func bindCreateTableAsSelectColumns(context *BindContext, target TableInstance, sourceSQL string) ([]FieldRef, DiagnosticSet) {
+	if context == nil {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	sourceSQL = strings.TrimSpace(sourceSQL)
+	if sourceSQL == "" {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TABLE AS SELECT requires a SELECT statement"),
+		}
+	}
+	sourceStatement, diagnostics := SimpleParserBridge{}.Parse(sourceSQL)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	if sourceStatement.Kind != QueryKindSelect && sourceStatement.Kind != QueryKindUnionAll {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TABLE AS must use a SELECT statement"),
+		}
+	}
+	expanded, expansionDiagnostics := ExpandStatementViews(context.Catalog, SimpleParserBridge{}, context.DefaultSchema, sourceStatement)
+	if expansionDiagnostics.BlocksNative() {
+		return nil, expansionDiagnostics
+	}
+	sourceContext := NewBindContext(context.Catalog, context.DefaultSchema)
+	sourceQuery, bindDiagnostics := expanded.Bind(sourceContext)
+	if bindDiagnostics.BlocksNative() {
+		return nil, bindDiagnostics
+	}
+	queryDiagnostics := sourceQuery.Diagnostics()
+	if queryDiagnostics.BlocksNative() {
+		return nil, queryDiagnostics
+	}
+	resultColumns := sourceQuery.ResultColumns()
+	if len(resultColumns) == 0 {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE TABLE AS SELECT requires at least one result column"),
+		}
+	}
+	refs := make([]FieldRef, 0, len(resultColumns))
+	seen := make(map[string]struct{}, len(resultColumns))
+	for index, column := range resultColumns {
+		name := strings.TrimSpace(column.Name)
+		if name == "" {
+			name = fmt.Sprintf("column_%d", index+1)
+		}
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
+			return nil, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "duplicate CREATE TABLE AS SELECT column: "+name),
+			}
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, FieldRef{
+			Table:        target,
+			Name:         name,
+			PhysicalName: name,
+			Type:         column.Type,
+			Nullable:     column.Nullable,
+			Roles:        FieldRoleVisible | FieldRoleMutationTarget,
+		})
+	}
+	return refs, nil
 }
 
 // BindCreateView binds parser-neutral CREATE VIEW metadata into QueryIR.

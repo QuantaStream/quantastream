@@ -155,3 +155,63 @@ func TestSQLRuntimeTemporaryTableRowsStayInSession(t *testing.T) {
 		t.Fatalf("duplicate diagnostics = %#v, want duplicate primary key blocker", duplicate.Diagnostics)
 	}
 }
+
+func TestSQLRuntimeCreateTemporaryTableAsSelectMaterializesRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	applyActions := func(result SQLExecutionResult) {
+		t.Helper()
+		transition := runtime.Session.PreviewSessionTransition(result.Runtime.Statement.SessionActions)
+		if transition.Diagnostics.BlocksNative() {
+			t.Fatalf("session transition diagnostics = %#v", transition.Diagnostics)
+		}
+		runtime.Session = transition.After
+	}
+
+	create, err := runtime.ExecuteSQL(context.Background(), "create temporary table scratch_building_customers as select 2 as customer_key, 'BUILDING' as market_segment union all select 1 as customer_key, 'AUTOMOBILE' as market_segment", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("CREATE TEMPORARY TABLE AS SELECT failed: %v", err)
+	}
+	if !create.Supported() {
+		t.Fatalf("create diagnostics = %#v runtime=%#v", create.Diagnostics, create.Runtime.Diagnostics)
+	}
+	if create.Runtime.Statement.AffectedRows != 2 {
+		t.Fatalf("affected rows = %d, want 2", create.Runtime.Statement.AffectedRows)
+	}
+	actions := create.Runtime.Statement.SessionActions
+	if len(actions) != 2 || actions[0].Kind != qsbridge.SessionActionCreateTemporaryTable || actions[1].Kind != qsbridge.SessionActionInsertTemporaryRows {
+		t.Fatalf("session actions = %#v, want create + insert rows", actions)
+	}
+	if executed {
+		t.Fatalf("projection-only CTAS source should not dispatch to the direct executor")
+	}
+	applyActions(create)
+
+	selectResult, err := runtime.ExecuteSQL(context.Background(), "select customer_key, market_segment from scratch_building_customers order by customer_key limit 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT CTAS temporary table failed: %v", err)
+	}
+	if !selectResult.Supported() {
+		t.Fatalf("select diagnostics = %#v runtime=%#v", selectResult.Diagnostics, selectResult.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := selectResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("result chunk diagnostics = %#v", diagnostics)
+	}
+	if got, want := len(chunk.Rows), 2; got != want {
+		t.Fatalf("rows = %d, want %d", got, want)
+	}
+	if got, want := chunk.Rows[0][0].Value, int64(1); got != want {
+		t.Fatalf("first customer_key = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[1][1].Value, "BUILDING"; got != want {
+		t.Fatalf("second market_segment = %#v, want %#v", got, want)
+	}
+}

@@ -525,6 +525,31 @@ func TestUnboundStatementBindCreateTemporaryTableCarriesMetadata(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateTemporaryTableAsSelectInfersColumns(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create temporary table scratch_orders as select o_orderkey as order_key, o_totalprice as total_price from orders limit 2")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if !query.Mutation.Temporary || query.Mutation.SourceSQL == "" {
+		t.Fatalf("mutation = %#v, want temporary CTAS source", query.Mutation)
+	}
+	if got, want := len(query.Mutation.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if column := query.Mutation.Columns[0]; column.Name != "order_key" || column.Type != DataTypeInt || column.Table.Table != "scratch_orders" {
+		t.Fatalf("first CTAS column = %#v", column)
+	}
+	if column := query.Mutation.Columns[1]; column.Name != "total_price" || column.Type != DataTypeFloat {
+		t.Fatalf("second CTAS column = %#v", column)
+	}
+}
+
 func TestUnboundStatementBindCreateView(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

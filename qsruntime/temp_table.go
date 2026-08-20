@@ -1,12 +1,14 @@
 package qsruntime
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-func (r SQLRuntime) createTemporaryTableRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
+func (r SQLRuntime) createTemporaryTableRuntimeResult(ctx context.Context, request qsbridge.ExecutionRequest) ExecutionResult {
 	table, diagnostics := r.temporaryTableDefinition(request)
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{
@@ -27,17 +29,85 @@ func (r SQLRuntime) createTemporaryTableRuntimeResult(request qsbridge.Execution
 			Statement: qsbridge.StatementResult{Status: "CREATE TEMPORARY TABLE failed"},
 		}
 	}
+	sourceSQL := strings.TrimSpace(request.Bound.Prepared.Query.Mutation.SourceSQL)
+	var rows []qsbridge.TemporaryTableRow
+	if sourceSQL != "" {
+		var sourceDiagnostics qsbridge.DiagnosticSet
+		rows, sourceDiagnostics = r.createTemporaryTableAsSelectRows(ctx, table, sourceSQL, request.Options)
+		if sourceDiagnostics.BlocksNative() {
+			return ExecutionResult{
+				Diagnostics: sourceDiagnostics,
+				Statement:   qsbridge.StatementResult{Status: "CREATE TEMPORARY TABLE failed"},
+			}
+		}
+	}
+	actions := []qsbridge.SessionAction{{
+		Kind:  qsbridge.SessionActionCreateTemporaryTable,
+		Name:  table.Name,
+		Value: table.Schema,
+		Table: table,
+	}}
+	if len(rows) > 0 {
+		actions = append(actions, qsbridge.SessionAction{
+			Kind:  qsbridge.SessionActionInsertTemporaryRows,
+			Name:  table.Name,
+			Value: table.Schema,
+			Rows:  rows,
+		})
+	}
+	status := "Temporary table " + table.Name + " created"
+	if sourceSQL != "" {
+		status = fmt.Sprintf("Temporary table %s created from SELECT", table.Name)
+	}
 	return ExecutionResult{
+		Count: uint64(len(rows)),
 		Statement: qsbridge.StatementResult{
-			Status: "Temporary table " + table.Name + " created",
-			SessionActions: []qsbridge.SessionAction{{
-				Kind:  qsbridge.SessionActionCreateTemporaryTable,
-				Name:  table.Name,
-				Value: table.Schema,
-				Table: table,
-			}},
+			AffectedRows:   uint64(len(rows)),
+			Status:         status,
+			SessionActions: actions,
 		},
 	}
+}
+
+func (r SQLRuntime) createTemporaryTableAsSelectRows(ctx context.Context, table qsbridge.TableDefinition, sourceSQL string, options qsbridge.ExecutionOptions) ([]qsbridge.TemporaryTableRow, qsbridge.DiagnosticSet) {
+	sourceResult, err := r.ExecuteSQL(ctx, sourceSQL, options)
+	if err != nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "CREATE TEMPORARY TABLE AS SELECT failed: "+err.Error()),
+		}
+	}
+	if sourceResult.Diagnostics.BlocksNative() || sourceResult.Runtime.Diagnostics.BlocksNative() {
+		diagnostics := append(qsbridge.DiagnosticSet(nil), sourceResult.Diagnostics...)
+		diagnostics = append(diagnostics, sourceResult.Runtime.Diagnostics...)
+		return nil, diagnostics
+	}
+	if len(sourceResult.Request.ResultColumns) != len(table.Fields) {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "CREATE TEMPORARY TABLE AS SELECT result shape changed during execution"),
+		}
+	}
+	chunk, diagnostics := sourceResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	rows := make([]qsbridge.TemporaryTableRow, 0, len(chunk.Rows))
+	for rowIndex, row := range chunk.Rows {
+		if len(row) != len(table.Fields) {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, fmt.Sprintf("CREATE TEMPORARY TABLE AS SELECT row %d has %d values for %d columns", rowIndex+1, len(row), len(table.Fields))),
+			}
+		}
+		values := make(qsbridge.ResultRow, len(row))
+		for columnIndex, cell := range row {
+			coerced, cellDiagnostics := temporaryTableCoerceCell(cell, table.Fields[columnIndex])
+			if cellDiagnostics.BlocksNative() {
+				return nil, cellDiagnostics
+			}
+			values[columnIndex] = coerced
+		}
+		rows = append(rows, qsbridge.TemporaryTableRow{Values: values})
+	}
+	return rows, nil
 }
 
 func (r SQLRuntime) dropTemporaryTableRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
