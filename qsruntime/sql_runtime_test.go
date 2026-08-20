@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -1339,6 +1340,32 @@ func TestSQLRuntimeExecuteSQLExplainReturnsMetadataShape(t *testing.T) {
 	row := chunk.Rows[0]
 	if row[0].Value != int64(1) || row[1].Value != "SIMPLE" || row[2].Value != "lineitem" || row[4].Value != "QUANTASTREAM" {
 		t.Fatalf("explain row = %#v", row)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLExplainAnnotatesSelectShape(t *testing.T) {
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		t.Fatalf("EXPLAIN should not execute explained SQL")
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "explain select c_custkey from customer where c_mktsegment = 'BUILDING' order by c_custkey limit 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("EXPLAIN failed: %v", err)
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	row := chunk.Rows[0]
+	if row[2].Value != "customer" {
+		t.Fatalf("table = %#v, want customer", row[2])
+	}
+	extra, _ := row[11].Value.(string)
+	for _, want := range []string{"filtered", "ordered", "limited"} {
+		if !strings.Contains(extra, want) {
+			t.Fatalf("extra = %q, want %q annotation", extra, want)
+		}
 	}
 }
 

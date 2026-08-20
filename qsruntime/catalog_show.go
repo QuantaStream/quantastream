@@ -746,7 +746,8 @@ func showDiagnosticCountRuntimeResult(request qsbridge.ExecutionRequest) Executi
 func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	explainedSQL := strings.TrimSpace(query.Catalog.Pattern)
-	tableName := explainTableName(explainedSQL)
+	inspection := explainInspectSQL(explainedSQL)
+	tableName := inspection.TableName
 	rownums := []qsbridge.QuantaRownum{1}
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("id", qsbridge.DataTypeInt, 1),
@@ -785,7 +786,7 @@ func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 		vectors[8].Values[0] = describeNullCell()
 		vectors[9].Values[0] = describeIntCell(0)
 		vectors[10].Values[0] = describeFloatCell(100)
-		vectors[11].Values[0] = describeStringCell("QuantaStream native plan; use captured profiles for runtime probes")
+		vectors[11].Values[0] = describeStringCell(inspection.extra())
 	}
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
@@ -795,6 +796,61 @@ func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 		},
 		Count: 1,
 	}
+}
+
+type explainSQLInspection struct {
+	TableName string
+	Filtered  bool
+	Joined    bool
+	Grouped   bool
+	Ordered   bool
+	Limited   bool
+	Distinct  bool
+}
+
+func (e explainSQLInspection) extra() string {
+	parts := []string{"QuantaStream native plan"}
+	if e.Filtered {
+		parts = append(parts, "filtered")
+	}
+	if e.Joined {
+		parts = append(parts, "joined")
+	}
+	if e.Grouped {
+		parts = append(parts, "grouped")
+	}
+	if e.Ordered {
+		parts = append(parts, "ordered")
+	}
+	if e.Limited {
+		parts = append(parts, "limited")
+	}
+	if e.Distinct {
+		parts = append(parts, "distinct")
+	}
+	parts = append(parts, "use captured profiles for runtime probes")
+	return strings.Join(parts, "; ")
+}
+
+func explainInspectSQL(sql string) explainSQLInspection {
+	inspection := explainSQLInspection{TableName: explainTableName(sql)}
+	statement, diagnostics := qsbridge.SimpleParserBridge{}.Parse(sql)
+	if diagnostics.BlocksNative() {
+		return inspection
+	}
+	if statement.Kind != qsbridge.QueryKindSelect {
+		return inspection
+	}
+	if len(statement.Select.Tables) > 0 {
+		inspection.TableName = strings.TrimSpace(statement.Select.Tables[0].Name)
+	}
+	inspection.Filtered = statement.Select.WhereExpr != nil || len(statement.Select.Predicates) > 0 || len(statement.Select.Memberships) > 0 || len(statement.Select.Subqueries) > 0
+	inspection.Joined = len(statement.Select.Joins) > 0
+	inspection.Grouped = len(statement.Select.GroupBy) > 0 || len(statement.Select.Having) > 0
+	inspection.Ordered = len(statement.Select.OrderBy) > 0
+	inspection.Limited = statement.Select.Result.AppliesResultWindow()
+	inspection.Distinct = statement.Select.Result.Distinct
+	return inspection
 }
 
 func explainTableName(sql string) string {

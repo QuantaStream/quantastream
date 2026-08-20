@@ -25,3 +25,32 @@ tests:
         - filtered
         - extra
       row_count: 1
+
+  - id: mysql_compat_explain.002.explain_filtered_ordered_limited_table_select
+    status: supported
+    kind: query
+    feature: explain
+    compatibility: mysql
+    requires: [explain, where, order_by, limit, metadata_columns]
+    sql: |
+      explain
+      select c_custkey, c_name
+      from customer
+      where c_mktsegment = 'BUILDING'
+      order by c_custkey
+      limit 2
+    expect:
+      columns:
+        - id
+        - select_type
+        - table
+        - partitions
+        - type
+        - possible_keys
+        - key
+        - key_len
+        - ref
+        - rows
+        - filtered
+        - extra
+      row_count: 1
