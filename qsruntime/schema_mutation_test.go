@@ -333,6 +333,54 @@ func TestLegacySchemaMutationHandleCreateViewRejectsTableNameCollision(t *testin
 	}
 }
 
+func TestCreateTableAsSelectSchemaFromMutationUsesConservativeMapperDefaults(t *testing.T) {
+	table, diagnostics := createTableAsSelectSchemaFromMutation("scratch_customer", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{
+				Name:       "id",
+				Type:       qsbridge.DataTypeInt,
+				PrimaryKey: true,
+			},
+			{
+				Name:     "name",
+				Type:     qsbridge.DataTypeString,
+				Nullable: true,
+				Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25}),
+			},
+			{
+				Name:     "revenue",
+				Type:     qsbridge.DataTypeFloat,
+				Nullable: true,
+				Encoding: qsbridge.LegacyEncodingProfile("FloatScaleBSI", qsbridge.LegacyEncodingOptions{Scale: 4}),
+			},
+			{
+				Name:     "created_at",
+				Type:     qsbridge.DataTypeTime,
+				Nullable: true,
+				Encoding: qsbridge.LegacyEncodingProfile("TimestampBSI", qsbridge.LegacyEncodingOptions{}),
+			},
+		},
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("schema diagnostics = %#v", diagnostics)
+	}
+	if table.Name != "scratch_customer" || table.PrimaryKey != "id" {
+		t.Fatalf("table = %#v, want scratch_customer primary key id", table)
+	}
+	if got := table.Attributes[0]; got.MappingStrategy != "IntBSI" || !got.ColumnID || !got.Required {
+		t.Fatalf("id attr = %#v, want required IntBSI primary key", got)
+	}
+	if got := table.Attributes[1]; got.MappingStrategy != "StringEnum" || got.Size != 25 {
+		t.Fatalf("name attr = %#v, want StringEnum with source max length", got)
+	}
+	if got := table.Attributes[2]; got.MappingStrategy != "FloatScaleBSI" || got.Scale != 4 {
+		t.Fatalf("revenue attr = %#v, want FloatScaleBSI scale 4", got)
+	}
+	if got := table.Attributes[3]; got.MappingStrategy != "SysMillisBSI" || got.MapperConfig["granularity"] != "millisecond" {
+		t.Fatalf("created_at attr = %#v, want SysMillisBSI millisecond", got)
+	}
+}
+
 func testSchemaMutationTime() time.Time {
 	return time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC)
 }

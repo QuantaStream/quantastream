@@ -179,6 +179,11 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 		return result, nil
 	}
+	if prepared.Kind == qsbridge.QueryKindCreateTable && strings.TrimSpace(prepared.Query.Mutation.SourceSQL) != "" {
+		result.Runtime = r.createDurableTableAsSelectRuntimeResult(ctx, request)
+		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
+		return result, nil
+	}
 	if prepared.Kind == qsbridge.QueryKindDropTable && prepared.Query.Mutation.Temporary {
 		result.Runtime = r.dropTemporaryTableRuntimeResult(request)
 		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)

@@ -3,6 +3,8 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"
 	"github.com/hashicorp/consul/api"
+	"gopkg.in/yaml.v2"
 )
 
 // NewLegacySchemaMutationHandle creates a short-lived handle for schema mutations
@@ -49,6 +52,12 @@ func (h LegacyQuantaSessionHandle) CreateTable(ctx context.Context, request Exec
 	}
 	if err := ctx.Err(); err != nil {
 		return qsbridge.StatementResult{}, nil, err
+	}
+	if strings.TrimSpace(request.Mutation.SourceSQL) != "" {
+		if consul := h.schemaMutationConsul(); consul != nil {
+			return h.createConsulCatalogTableAsSelect(ctx, consul, schemaName, tableName, request.Mutation)
+		}
+		return h.createFileCatalogTableAsSelect(ctx, schemaName, tableName, request.Mutation)
 	}
 	if consul := h.schemaMutationConsul(); consul != nil {
 		return h.createConsulCatalogTable(ctx, consul, schemaName, tableName)
@@ -114,6 +123,59 @@ func (h LegacyQuantaSessionHandle) DropView(ctx context.Context, request Executi
 		return h.dropConsulCatalogView(ctx, consul, schemaName, viewName, request.Mutation.IfExists, request.Mutation.Cascade)
 	}
 	return h.dropFileCatalogView(ctx, schemaName, viewName, request.Mutation.IfExists, request.Mutation.Cascade)
+}
+
+func (h LegacyQuantaSessionHandle) createFileCatalogTableAsSelect(ctx context.Context, schemaName, tableName string, mutation qsbridge.MutationShape) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
+		}, nil
+	}
+	configDir := strings.TrimSpace(h.Session.BasePath)
+	if configDir == "" {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "CREATE TABLE AS SELECT requires a file-backed schema directory"),
+		}, nil
+	}
+	tableActive, err := shared.CatalogTableActive(configDir, schemaName, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if tableActive {
+		if mutation.IfNotExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s already exists", tableName)}, nil, nil
+		}
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s already exists", tableName)
+	}
+	viewActive, err := shared.CatalogViewActive(configDir, schemaName, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if viewActive {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("cannot create table %s because an active view with that name exists", tableName)
+	}
+	table, diagnostics := createTableAsSelectSchemaFromMutation(tableName, mutation)
+	if diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
+	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := saveCreateTableAsSelectSchema(configDir, table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.ActivateCatalogTable(configDir, schemaName, tableName, time.Now().UTC()); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := h.Session.BitIndex.TableOperation(tableName, "deploy"); err != nil {
+		_ = shared.RemoveCatalogTable(configDir, schemaName, tableName)
+		return qsbridge.StatementResult{}, nil, err
+	}
+	h.invalidateSchemaMutationTable(tableName)
+	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s created", tableName)}, nil, nil
 }
 
 func (h LegacyQuantaSessionHandle) createFileCatalogTable(ctx context.Context, schemaName, tableName string) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
@@ -381,6 +443,72 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogTable(ctx context.Context,
 	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s created", tableName)}, nil, nil
 }
 
+func (h LegacyQuantaSessionHandle) createConsulCatalogTableAsSelect(ctx context.Context, consul *api.Client, schemaName, tableName string, mutation qsbridge.MutationShape) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
+		}, nil
+	}
+	exists, err := shared.TableExists(consul, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if exists {
+		if mutation.IfNotExists {
+			return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s already exists", tableName)}, nil, nil
+		}
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s already exists", tableName)
+	}
+	viewExists, err := shared.ViewExists(consul, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if viewExists {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("cannot create table %s because an active view with that name exists", tableName)
+	}
+	table, diagnostics := createTableAsSelectSchemaFromMutation(tableName, mutation)
+	if diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
+	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	lock, err := shared.Lock(consul, "admin-tool", "query-engine")
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	defer shared.Unlock(consul, lock)
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.DeleteTable(consul, tableName); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.UpdateModTimeForTable(consul, tableName); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.MarshalConsul(table, consul); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	deployed, err := shared.LoadSchema("", tableName, consul)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("verify active schema from consul: %w", err)
+	}
+	ok, warnings, err := deployed.Compare(table)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if !ok {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("active schema verification failed for %s: %s", tableName, strings.Join(warnings, "; "))
+	}
+	if err := h.Session.BitIndex.TableOperation(tableName, "deploy"); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	h.invalidateSchemaMutationTable(tableName)
+	_ = schemaName
+	return qsbridge.StatementResult{Status: fmt.Sprintf("Table %s created", tableName)}, nil, nil
+}
+
 func (h LegacyQuantaSessionHandle) dropConsulCatalogTable(ctx context.Context, consul *api.Client, schemaName, tableName string, ifExists bool) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if h.Session == nil || h.Session.BitIndex == nil {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
@@ -556,6 +684,136 @@ func (h LegacyQuantaSessionHandle) viewDefinitionFromMutation(schemaName, viewNa
 		CreationDate:     creation,
 		ModificationDate: modification,
 	}
+}
+
+func createTableAsSelectSchemaFromMutation(tableName string, mutation qsbridge.MutationShape) (*shared.BasicTable, qsbridge.DiagnosticSet) {
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticParserBoundary, qsbridge.PhaseExecute, "CREATE TABLE AS SELECT target table is empty"),
+		}
+	}
+	if len(mutation.Columns) == 0 {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticParserBoundary, qsbridge.PhaseExecute, "CREATE TABLE AS SELECT requires at least one column"),
+		}
+	}
+	table := &shared.BasicTable{
+		Name:       tableName,
+		Selector:   `type="` + tableName + `"`,
+		Attributes: make([]shared.BasicAttribute, 0, len(mutation.Columns)),
+	}
+	seen := make(map[string]struct{}, len(mutation.Columns))
+	for index, column := range mutation.Columns {
+		name := strings.TrimSpace(column.Name)
+		if name == "" {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticParserBoundary, qsbridge.PhaseExecute, "CREATE TABLE AS SELECT column name is empty"),
+			}
+		}
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticParserBoundary, qsbridge.PhaseExecute, fmt.Sprintf("Duplicate column name '%s'", name)),
+			}
+		}
+		seen[key] = struct{}{}
+		attr := createTableAsSelectAttribute(column, index+1)
+		table.Attributes = append(table.Attributes, attr)
+		if table.PrimaryKey == "" && column.PrimaryKey {
+			table.PrimaryKey = name
+		}
+	}
+	return table, nil
+}
+
+func createTableAsSelectAttribute(column qsbridge.FieldRef, ordinal int) shared.BasicAttribute {
+	name := strings.TrimSpace(column.Name)
+	attr := shared.BasicAttribute{
+		FieldName:       name,
+		SourceName:      name,
+		Type:            createTableAsSelectSharedType(column.Type),
+		MappingStrategy: createTableAsSelectMappingStrategy(column),
+		SourceOrdinal:   ordinal,
+		Required:        !column.Nullable,
+		ColumnID:        column.PrimaryKey,
+	}
+	if column.Type == qsbridge.DataTypeFloat {
+		scale := column.Encoding.Scale
+		if scale <= 0 {
+			scale = 6
+		}
+		attr.Scale = scale
+	}
+	if column.Type == qsbridge.DataTypeString {
+		maxLen := column.Encoding.MaxLength
+		if maxLen <= 0 {
+			maxLen = 256
+		}
+		attr.Size = maxLen
+	}
+	if column.Type == qsbridge.DataTypeTime {
+		attr.MapperConfig = map[string]string{"granularity": "millisecond"}
+	}
+	return attr
+}
+
+func createTableAsSelectSharedType(dataType qsbridge.DataType) string {
+	switch dataType {
+	case qsbridge.DataTypeBool:
+		return "Boolean"
+	case qsbridge.DataTypeFloat:
+		return "Float"
+	case qsbridge.DataTypeInt:
+		return "Integer"
+	case qsbridge.DataTypeTime:
+		return "DateTime"
+	case qsbridge.DataTypeString:
+		return "String"
+	default:
+		return "String"
+	}
+}
+
+func createTableAsSelectMappingStrategy(column qsbridge.FieldRef) string {
+	switch column.Type {
+	case qsbridge.DataTypeString, qsbridge.DataTypeBool:
+		return "StringEnum"
+	case qsbridge.DataTypeTime:
+		return "SysMillisBSI"
+	}
+	legacy := strings.TrimSpace(column.Encoding.LegacyName)
+	if legacy != "" {
+		switch legacy {
+		case "ParentRelation":
+			return "IntBSI"
+		default:
+			return legacy
+		}
+	}
+	switch column.Type {
+	case qsbridge.DataTypeFloat:
+		return "FloatScaleBSI"
+	case qsbridge.DataTypeInt:
+		return "IntBSI"
+	default:
+		return "StringEnum"
+	}
+}
+
+func saveCreateTableAsSelectSchema(configDir string, table *shared.BasicTable) error {
+	if table == nil {
+		return fmt.Errorf("CREATE TABLE AS SELECT schema is nil")
+	}
+	tableDir := filepath.Join(configDir, strings.TrimSpace(table.Name))
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(table)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(tableDir, "schema.yaml"), data, 0644)
 }
 
 func (h LegacyQuantaSessionHandle) schemaMutationTarget(request ExecutionRequest, operation string) (string, string, qsbridge.DiagnosticSet) {

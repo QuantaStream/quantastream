@@ -995,10 +995,35 @@ func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsCreateTableAsSelect(t *testing.T) {
-	_, diagnostics := SimpleParserBridge{}.Parse("create table customers_copy as select customer_id from customers_qa")
-	if !diagnostics.BlocksNative() {
-		t.Fatalf("expected parser diagnostic for CREATE TABLE AS SELECT")
+func TestSimpleParserBridgeParsesCreateTableAsSelect(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create table customers_copy as select customer_id from customers_qa")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics = %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable || statement.Create.Temporary {
+		t.Fatalf("statement = %#v, want durable create table", statement)
+	}
+	if statement.Create.Table.Name != "customers_copy" {
+		t.Fatalf("table = %#v, want customers_copy", statement.Create.Table)
+	}
+	if statement.Create.AsSQL != "select customer_id from customers_qa" {
+		t.Fatalf("AsSQL = %q", statement.Create.AsSQL)
+	}
+}
+
+func TestSimpleParserBridgeParsesCreateTableSelectWithoutAs(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create table customers_copy select customer_id from customers_qa")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics = %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable || statement.Create.Temporary {
+		t.Fatalf("statement = %#v, want durable create table", statement)
+	}
+	if statement.Create.Table.Name != "customers_copy" {
+		t.Fatalf("table = %#v, want customers_copy", statement.Create.Table)
+	}
+	if statement.Create.AsSQL != "select customer_id from customers_qa" {
+		t.Fatalf("AsSQL = %q", statement.Create.AsSQL)
 	}
 }
 

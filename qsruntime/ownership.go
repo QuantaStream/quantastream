@@ -168,6 +168,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 	case "bitmap_result_adapter.go",
 		"catalog_factory.go",
 		"catalog_show.go",
+		"create_table_as_select.go",
 		"direct_config.go",
 		"direct_executor.go",
 		"direct_factory.go",

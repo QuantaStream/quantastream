@@ -22,8 +22,8 @@ tests:
     sql: |
       drop table if exists qs_mysql_compat_mutations_ctas
 
-  # True MySQL DDL boundaries. QS table creation is still catalog/YAML-backed,
-  # so inline schema creation and CTAS stay as post-1.0 compatibility targets.
+  # True MySQL DDL boundaries. QS table creation remains catalog/YAML-backed for
+  # inline schemas, while CTAS now generates a conservative catalog descriptor.
   - id: mysql_compat_mutations_boundaries.003.create_inline_table
     status: xfail
     kind: statement
@@ -252,12 +252,11 @@ tests:
       drop table qs_mysql_compat_mutations cascade
 
   - id: mysql_compat_mutations_boundaries.009.create_table_as_select
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_mysql_ddl_boundary
+    feature: mutations_ctas
     compatibility: mysql
     requires: [create_table_as, select]
-    issue: "CREATE TABLE AS SELECT requires result-schema inference plus materializing a new table from a SELECT result; QS table creation is still catalog/YAML-backed."
     sql: |
       create table qs_mysql_compat_mutations_ctas as
       select c_custkey as id, c_name as name

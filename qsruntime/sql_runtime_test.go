@@ -2461,6 +2461,85 @@ func TestSQLRuntimeExecuteSQLRunsInsertMutationWithoutLowering(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLCreateTableAsSelectCreatesAndInsertsRows(t *testing.T) {
+	catalog := qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true},
+			},
+		}},
+	}
+	var mutationKinds []qsbridge.MutationKind
+	var createRequest ExecutionRequest
+	var insertRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.Mutation.Kind != qsbridge.MutationUnknown {
+			mutationKinds = append(mutationKinds, request.Mutation.Kind)
+			switch request.Mutation.Kind {
+			case qsbridge.MutationCreateTable:
+				createRequest = request
+				return ExecutionResult{Statement: qsbridge.StatementResult{Status: "Table scratch_customer created"}}, nil
+			case qsbridge.MutationInsert:
+				insertRequest = request
+				return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: uint64(len(request.Mutation.Rows))}}, nil
+			default:
+				t.Fatalf("unexpected mutation kind = %q", request.Mutation.Kind)
+			}
+		}
+		return ExecutionResult{
+			RowSet: qsbridge.QuantaProjectedRowSet{
+				Index:   "customer",
+				Rownums: []qsbridge.QuantaRownum{1, 2},
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "customer_key", Type: qsbridge.DataTypeInt, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(1)}, {Kind: qsbridge.ValueInt, Value: int64(2)}},
+					},
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "customer_name", Type: qsbridge.DataTypeString, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "Customer#000000001"}, {Kind: qsbridge.ValueString, Value: "Customer#000000002"}},
+					},
+				},
+			},
+		}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "create table scratch_customer as select c_custkey as customer_key, c_name as customer_name from customer order by c_custkey limit 2", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if result.Runtime.Statement.AffectedRows != 2 {
+		t.Fatalf("affected rows = %d, want 2", result.Runtime.Statement.AffectedRows)
+	}
+	if got, want := fmt.Sprint(mutationKinds), "[create_table insert]"; got != want {
+		t.Fatalf("mutation dispatch order = %s, want %s", got, want)
+	}
+	if createRequest.Mutation.Target.Table != "scratch_customer" || createRequest.Mutation.SourceSQL == "" {
+		t.Fatalf("create mutation = %#v, want durable CTAS", createRequest.Mutation)
+	}
+	if insertRequest.Mutation.Target.Table != "scratch_customer" {
+		t.Fatalf("insert target = %#v, want scratch_customer", insertRequest.Mutation.Target)
+	}
+	if got, want := len(insertRequest.Mutation.Rows), 2; got != want {
+		t.Fatalf("insert rows = %d, want %d", got, want)
+	}
+	firstID, ok := insertRequest.Mutation.Rows[0].Values[0].(qsbridge.LiteralExpr)
+	if !ok || firstID.Value != int64(1) {
+		t.Fatalf("first inserted id = %#v, want literal 1", insertRequest.Mutation.Rows[0].Values[0])
+	}
+	secondName, ok := insertRequest.Mutation.Rows[1].Values[1].(qsbridge.LiteralExpr)
+	if !ok || secondName.Value != "Customer#000000002" {
+		t.Fatalf("second inserted name = %#v", insertRequest.Mutation.Rows[1].Values[1])
+	}
+}
+
 func TestSQLRuntimeExecuteSQLReturnsTransactionStatementsWithoutExecution(t *testing.T) {
 	tests := []struct {
 		sql      string
