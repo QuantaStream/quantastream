@@ -123,10 +123,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.010.update_assignment_arithmetic
     status: xfail
     kind: statement
-    feature: mutations_assignment_expression_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [update, arithmetic, where, comparison]
-    issue: "UPDATE assignment expressions are post-1.0 compatibility work; QS mutations currently assign literal or parameter values only."
+    issue: "Row-local UPDATE assignment expressions are supported on catalog-backed tables; this boundary remains XFAIL because the scratch table depends on unsupported CTAS/inline DDL."
     sql: |
       update qs_mysql_compat_mutations_ctas
       set id = id + 10
@@ -137,10 +137,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.011.update_assignment_function
     status: xfail
     kind: statement
-    feature: mutations_assignment_expression_boundary
+    feature: mutations_scratch_table_dml_boundary
     compatibility: mysql
     requires: [update, scalar_function, where, comparison]
-    issue: "UPDATE assignment expressions are post-1.0 compatibility work; scalar functions in SET clauses need explicit mutation expression evaluation."
+    issue: "Scalar-function UPDATE assignments are supported on catalog-backed tables; this boundary remains XFAIL because the scratch table depends on unsupported CTAS/inline DDL."
     sql: |
       update qs_mysql_compat_mutations_ctas
       set name = lower(name)
@@ -195,6 +195,24 @@ tests:
       )
     expect:
       affected_rows: 2
+
+  - id: mysql_compat_mutations_boundaries.024.update_assignment_scalar_subquery
+    status: xfail
+    kind: statement
+    feature: mutations_assignment_scalar_subquery_boundary
+    compatibility: mysql
+    requires: [update, scalar_subquery, aggregate, where, comparison]
+    issue: "UPDATE assignment scalar subqueries need explicit write-time subquery materialization; row-local assignment expressions are supported on catalog-backed tables."
+    sql: |
+      update qs_mysql_compat_mutations_ctas
+      set id = (
+        select max(c_custkey)
+        from customer
+        where c_custkey <= 3
+      )
+      where id = 1
+    expect:
+      affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.015.delete_where_subquery
     status: xfail

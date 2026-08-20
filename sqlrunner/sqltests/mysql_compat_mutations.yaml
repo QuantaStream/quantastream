@@ -37,3 +37,99 @@ tests:
     requires: [drop_table, if_exists]
     sql: |
       drop table if exists qs_mysql_compat_noop_table
+
+  - id: mysql_compat_mutations.010.dirty_customer_assignment_expression_fixture
+    status: supported
+    kind: statement
+    feature: mutations_assignment_expression_fixture
+    compatibility: mysql
+    requires: [update, arithmetic, where, comparison]
+    sql: |
+      update customer
+      set c_acctbal = c_acctbal + 0.01
+      where c_custkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations.011.restore_customer_assignment_expression_fixture
+    status: supported
+    kind: statement
+    feature: mutations_assignment_expression_fixture
+    compatibility: mysql
+    requires: [update, where, comparison]
+    sql: |
+      update customer
+      set c_name = 'Customer#000000001',
+          c_address = 'IVhzIApeRb ot,c,E',
+          c_acctbal = 711.56
+      where c_custkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations.012.update_customer_assignment_expressions
+    status: supported
+    kind: statement
+    feature: mutations_assignment_expression
+    compatibility: mysql
+    requires: [update, arithmetic, scalar_function, field_reference, where, comparison]
+    sql: |
+      update customer
+      set c_acctbal = c_acctbal + 2,
+          c_name = lower(c_name),
+          c_address = c_phone
+      where c_custkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations.013.select_customer_assignment_expression_row
+    status: supported
+    kind: query
+    order: exact
+    feature: mutations_assignment_expression
+    compatibility: mysql
+    requires: [select, where, comparison]
+    sql: |
+      select c_custkey,
+             c_name,
+             c_address,
+             round(c_acctbal, 2) as c_acctbal
+      from customer
+      where c_custkey = 1
+    expect:
+      columns: [c_custkey, c_name, c_address, c_acctbal]
+      rows:
+        - [1, customer#000000001, 25-989-741-2988, 713.56]
+
+  - id: mysql_compat_mutations.014.restore_customer_assignment_expression_row
+    status: supported
+    kind: statement
+    feature: mutations_assignment_expression_fixture
+    compatibility: mysql
+    requires: [update, where, comparison]
+    sql: |
+      update customer
+      set c_name = 'Customer#000000001',
+          c_address = 'IVhzIApeRb ot,c,E',
+          c_acctbal = 711.56
+      where c_custkey = 1
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations.015.select_restored_customer_assignment_expression_row
+    status: supported
+    kind: query
+    order: exact
+    feature: mutations_assignment_expression_fixture
+    compatibility: mysql
+    requires: [select, where, comparison]
+    sql: |
+      select c_custkey,
+             c_name,
+             c_address,
+             round(c_acctbal, 2) as c_acctbal
+      from customer
+      where c_custkey = 1
+    expect:
+      columns: [c_custkey, c_name, c_address, c_acctbal]
+      rows:
+        - [1, Customer#000000001, IVhzIApeRb ot,c,E, 711.56]
