@@ -263,6 +263,51 @@ tests:
       from customer
       where c_custkey <= 3
 
+  - id: mysql_compat_mutations_boundaries.035.drop_ctas_keys_table_if_exists
+    status: supported
+    kind: statement
+    feature: mutations_ddl_safe_noop
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_keys
+
+  - id: mysql_compat_mutations_boundaries.036.create_ctas_table_for_alter_keys
+    status: supported
+    kind: statement
+    feature: mutations_ctas
+    compatibility: mysql
+    requires: [create_table_as, select]
+    sql: |
+      create table qs_mysql_compat_mutations_keys as
+      select c_custkey as id, c_name as name
+      from customer
+      where c_custkey <= 3
+
+  - id: mysql_compat_mutations_boundaries.037.alter_table_add_primary_key
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_keys_boundary
+    compatibility: mysql
+    requires: [alter_table, add_primary_key]
+    issue: "ALTER TABLE ... ADD PRIMARY KEY is needed for heap-like CTAS workflows; QS must validate existing rows and build primary-key authority artifacts before enabling it."
+    sql: |
+      alter table qs_mysql_compat_mutations_keys
+      add primary key (id)
+
+  - id: mysql_compat_mutations_boundaries.038.alter_table_add_foreign_key
+    status: xfail
+    kind: statement
+    feature: mutations_alter_table_keys_boundary
+    compatibility: mysql
+    requires: [alter_table, add_foreign_key]
+    issue: "ALTER TABLE ... ADD FOREIGN KEY is needed for post-load relationship metadata; QS must validate existing rows and update relationship/catalog artifacts before enabling it."
+    sql: |
+      alter table qs_mysql_compat_mutations_keys
+      add constraint fk_qs_mysql_compat_mutations_keys_customer
+      foreign key (id)
+      references customer(c_custkey)
+
   - id: mysql_compat_mutations_boundaries.010.update_assignment_arithmetic
     status: xfail
     kind: statement
@@ -501,3 +546,12 @@ tests:
     requires: [drop_table, if_exists]
     sql: |
       drop table if exists qs_mysql_compat_mutations_ctas
+
+  - id: mysql_compat_mutations_boundaries.902.cleanup_ctas_keys
+    status: supported
+    kind: statement
+    feature: mutations_ddl_safe_noop
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_keys
