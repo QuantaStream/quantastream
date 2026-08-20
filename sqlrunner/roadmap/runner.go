@@ -325,6 +325,9 @@ func evaluateStatement(test TestCase, affected int64, execErr error) string {
 	if execErr != nil {
 		return "unexpected error: " + execErr.Error()
 	}
+	if test.Expect.IgnoreAffectedRows {
+		return ""
+	}
 	if test.Expect.AffectedRows != nil && affected != *test.Expect.AffectedRows {
 		return fmt.Sprintf("affected rows differ: expected %d, actual %d", *test.Expect.AffectedRows, affected)
 	}

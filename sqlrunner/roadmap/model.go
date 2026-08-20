@@ -49,6 +49,7 @@ type Expected struct {
 	Rows                     [][]interface{} `yaml:"rows"`
 	RowCount                 *int            `yaml:"row_count"`
 	AffectedRows             *int64          `yaml:"affected_rows"`
+	IgnoreAffectedRows       bool            `yaml:"ignore_affected_rows"`
 	Error                    string          `yaml:"error_contains"`
 	NumericTolerance         *float64        `yaml:"numeric_tolerance"`
 	NumericRelativeTolerance *float64        `yaml:"numeric_relative_tolerance"`
@@ -161,6 +162,9 @@ func normalizeTestCase(test *TestCase) error {
 	}
 	if test.Kind == "query" && test.Expect.AffectedRows != nil {
 		return fmt.Errorf("%s query cannot expect affected_rows", test.ID)
+	}
+	if test.Kind == "query" && test.Expect.IgnoreAffectedRows {
+		return fmt.Errorf("%s query cannot ignore affected_rows", test.ID)
 	}
 	if test.Kind != "query" && (len(test.Expect.Rows) > 0 || test.Expect.RowCount != nil) {
 		return fmt.Errorf("%s statement cannot expect rows", test.ID)

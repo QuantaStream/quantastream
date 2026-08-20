@@ -33,6 +33,9 @@ func BuildCompatibilityExpectedSuite(source *Suite, expected CompatibilityExpect
 }
 
 func compatibilityExpectedShouldPreserveSource(expected Expected) bool {
+	if expected.IgnoreAffectedRows {
+		return true
+	}
 	if expected.Rows != nil || expected.AffectedRows != nil || expected.Error != "" {
 		return false
 	}
@@ -85,11 +88,12 @@ type compatibilityTestYAML struct {
 }
 
 type compatibilityExpectedYAML struct {
-	Columns      []string        `yaml:"columns,omitempty"`
-	Rows         [][]interface{} `yaml:"rows,omitempty"`
-	RowCount     *int            `yaml:"row_count,omitempty"`
-	AffectedRows *int64          `yaml:"affected_rows,omitempty"`
-	Error        string          `yaml:"error_contains,omitempty"`
+	Columns            []string        `yaml:"columns,omitempty"`
+	Rows               [][]interface{} `yaml:"rows,omitempty"`
+	RowCount           *int            `yaml:"row_count,omitempty"`
+	AffectedRows       *int64          `yaml:"affected_rows,omitempty"`
+	IgnoreAffectedRows bool            `yaml:"ignore_affected_rows,omitempty"`
+	Error              string          `yaml:"error_contains,omitempty"`
 }
 
 func compatibilitySuiteYAMLFromSuite(suite Suite) compatibilitySuiteYAML {
@@ -119,15 +123,16 @@ func compatibilitySuiteYAMLFromSuite(suite Suite) compatibilitySuiteYAML {
 }
 
 func compatibilityExpectedYAMLFromExpected(expect Expected) *compatibilityExpectedYAML {
-	if len(expect.Columns) == 0 && len(expect.Rows) == 0 && expect.RowCount == nil && expect.AffectedRows == nil && expect.Error == "" {
+	if len(expect.Columns) == 0 && len(expect.Rows) == 0 && expect.RowCount == nil && expect.AffectedRows == nil && !expect.IgnoreAffectedRows && expect.Error == "" {
 		return nil
 	}
 	return &compatibilityExpectedYAML{
-		Columns:      append([]string(nil), expect.Columns...),
-		Rows:         cloneExpectedRows(expect.Rows),
-		RowCount:     expect.RowCount,
-		AffectedRows: expect.AffectedRows,
-		Error:        expect.Error,
+		Columns:            append([]string(nil), expect.Columns...),
+		Rows:               cloneExpectedRows(expect.Rows),
+		RowCount:           expect.RowCount,
+		AffectedRows:       expect.AffectedRows,
+		IgnoreAffectedRows: expect.IgnoreAffectedRows,
+		Error:              expect.Error,
 	}
 }
 

@@ -81,6 +81,23 @@ func TestRunnerUsesConfiguredEngineForQueryAndStatement(t *testing.T) {
 	}
 }
 
+func TestEvaluateStatementCanIgnoreAffectedRows(t *testing.T) {
+	affectedRows := int64(0)
+	test := TestCase{
+		ID:     "statement.cleanup",
+		Status: CaseSupported,
+		Kind:   "statement",
+		Expect: Expected{
+			AffectedRows:       &affectedRows,
+			IgnoreAffectedRows: true,
+		},
+	}
+
+	if details := evaluateStatement(test, 1, nil); details != "" {
+		t.Fatalf("details = %q, want ignored affected-row mismatch", details)
+	}
+}
+
 func TestRunnerPassesCaseMetadataToAwareEngine(t *testing.T) {
 	suite := &Suite{
 		Version: 1,

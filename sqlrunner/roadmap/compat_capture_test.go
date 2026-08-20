@@ -53,6 +53,39 @@ func TestCompareCompatibilityQueryCaseUsesCanonicalRules(t *testing.T) {
 	}
 }
 
+func TestBuildCompatibilityExpectedSuitePreservesIgnoreAffectedRows(t *testing.T) {
+	source := &Suite{
+		Version: 1,
+		Name:    "mysql_compat_cleanup",
+		Tests: []TestCase{{
+			ID:     "cleanup.one",
+			Status: CaseSupported,
+			Kind:   "statement",
+			SQL:    "delete from t where id = 1",
+			Expect: Expected{IgnoreAffectedRows: true},
+		}},
+	}
+	affectedRows := int64(0)
+	expected := CompatibilityExpectedFile{
+		Version: CompatibilityExpectedVersion,
+		Suite:   source.Name,
+		Cases: []CompatibilityExpectedCase{{
+			ID:           "cleanup.one",
+			Kind:         "statement",
+			AffectedRows: &affectedRows,
+		}},
+	}
+
+	generated := BuildCompatibilityExpectedSuite(source, expected)
+
+	if !generated.Tests[0].Expect.IgnoreAffectedRows {
+		t.Fatalf("ignore_affected_rows was not preserved: %#v", generated.Tests[0].Expect)
+	}
+	if generated.Tests[0].Expect.AffectedRows != nil {
+		t.Fatalf("affected rows = %#v, want nil", generated.Tests[0].Expect.AffectedRows)
+	}
+}
+
 func TestParseCompatibilityExpectedNormalizesAndFindsCases(t *testing.T) {
 	expected, err := ParseCompatibilityExpected([]byte(`
 version: 1

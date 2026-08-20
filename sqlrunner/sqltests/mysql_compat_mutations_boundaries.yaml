@@ -144,6 +144,103 @@ tests:
     sql: |
       rollback
 
+  # Transaction statements are accepted for client compatibility, but QS writes
+  # currently apply immediately. Keep the semantic rollback boundary explicit
+  # until the 1.0 transaction policy is settled.
+  - id: mysql_compat_mutations_boundaries.028.rollback_write_preclean
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [delete, where, comparison]
+    sql: |
+      delete from customer
+      where c_custkey = 900000094
+
+  - id: mysql_compat_mutations_boundaries.029.rollback_write_autocommit_off
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [set, autocommit]
+    sql: |
+      set autocommit = 0
+
+  - id: mysql_compat_mutations_boundaries.030.rollback_write_insert
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [insert, values]
+    sql: |
+      insert into customer (
+        c_custkey,
+        c_name,
+        c_address,
+        c_nationkey,
+        c_phone,
+        c_acctbal,
+        c_mktsegment,
+        c_comment
+      ) values (
+        900000094,
+        'Rollback Customer',
+        'Rollback Address',
+        1,
+        '11-222-333-4444',
+        42.50,
+        'BUILDING',
+        'rollback transaction boundary'
+      )
+    expect:
+      affected_rows: 1
+
+  - id: mysql_compat_mutations_boundaries.031.rollback_write_rollback
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [rollback]
+    sql: |
+      rollback
+
+  - id: mysql_compat_mutations_boundaries.032.rollback_write_readback
+    status: xfail
+    kind: query
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [rollback, select, count]
+    issue: "QS currently treats transaction statements as session compatibility metadata; rollback does not undo catalog-backed writes."
+    sql: |
+      select count(*) as rollback_row_count
+      from customer
+      where c_custkey = 900000094
+    expect:
+      columns: [rollback_row_count]
+      rows:
+        - [0]
+
+  - id: mysql_compat_mutations_boundaries.033.rollback_write_autocommit_on
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [set, autocommit]
+    sql: |
+      set autocommit = 1
+
+  - id: mysql_compat_mutations_boundaries.034.rollback_write_cleanup
+    status: supported
+    kind: statement
+    feature: mutations_transaction_write_boundary
+    compatibility: mysql
+    requires: [delete, where, comparison]
+    sql: |
+      delete from customer
+      where c_custkey = 900000094
+    expect:
+      ignore_affected_rows: true
+
   - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
     status: xfail
     kind: statement
