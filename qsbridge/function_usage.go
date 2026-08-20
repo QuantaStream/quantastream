@@ -46,6 +46,9 @@ func (q QueryIR) FunctionUsages() []FunctionUsage {
 }
 
 func collectQueryFunctionUsages(query QueryIR, usages *[]FunctionUsage) {
+	for _, branch := range query.UnionAll {
+		collectQueryFunctionUsages(branch, usages)
+	}
 	for _, column := range query.Projection {
 		collectExprFunctionUsages(column.Expr, FunctionUsageProjection, usages)
 	}

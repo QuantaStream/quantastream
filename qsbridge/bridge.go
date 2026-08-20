@@ -1,6 +1,7 @@
 package qsbridge
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -19,6 +20,7 @@ type UnboundStatement struct {
 	SQL             string
 	Kind            QueryKind
 	Select          UnboundSelect
+	UnionAll        UnboundUnionAll
 	Insert          UnboundInsert
 	Update          UnboundUpdate
 	Delete          UnboundDelete
@@ -63,6 +65,8 @@ func (s UnboundStatement) Bind(context *BindContext) (QueryIR, DiagnosticSet) {
 	switch s.Kind {
 	case QueryKindSelect:
 		return BindSelect(context, s.Select)
+	case QueryKindUnionAll:
+		return BindUnionAll(context, s.UnionAll)
 	case QueryKindInsert:
 		return BindInsert(context, s.Insert)
 	case QueryKindUpdate:
@@ -159,6 +163,13 @@ type UnboundSelect struct {
 	OrderBy     []UnboundSort
 	Result      ResultShape
 	Blockers    []NativeBlocker
+}
+
+// UnboundUnionAll describes a SELECT ... UNION ALL ... compound query.
+type UnboundUnionAll struct {
+	Branches []UnboundSelect
+	Result   ResultShape
+	Blockers []NativeBlocker
 }
 
 // UnboundInsert describes an INSERT shape before catalog binding.
@@ -656,6 +667,57 @@ func BindSelect(context *BindContext, selectStmt UnboundSelect) (QueryIR, Diagno
 	return query, diagnostics
 }
 
+// BindUnionAll binds a parser-neutral compound UNION ALL query into QueryIR.
+func BindUnionAll(context *BindContext, unionStmt UnboundUnionAll) (QueryIR, DiagnosticSet) {
+	query := QueryIR{
+		Kind:     QueryKindUnionAll,
+		Result:   unionStmt.Result,
+		Blockers: append([]NativeBlocker(nil), unionStmt.Blockers...),
+	}
+	if query.Result.Kind == "" {
+		query.Result.Kind = ResultQuery
+	}
+	if context == nil {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	if len(unionStmt.Branches) < 2 {
+		return query, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "UNION ALL requires at least two SELECT branches"),
+		}
+	}
+
+	diagnostics := make(DiagnosticSet, 0)
+	var expectedColumns []ResultColumn
+	for index, branch := range unionStmt.Branches {
+		branchContext := NewBindContext(context.Catalog, context.DefaultSchema)
+		branchQuery, branchDiagnostics := BindSelect(branchContext, branch)
+		if branchDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, branchDiagnostics...)
+			continue
+		}
+		columns := branchQuery.ResultColumns()
+		if index == 0 {
+			expectedColumns = columns
+		} else if shapeDiagnostics := validateUnionAllBranchColumns(expectedColumns, columns, index+1); shapeDiagnostics.BlocksNative() {
+			diagnostics = append(diagnostics, shapeDiagnostics...)
+			continue
+		}
+		query.UnionAll = append(query.UnionAll, branchQuery)
+	}
+	return query, diagnostics
+}
+
+func validateUnionAllBranchColumns(expected []ResultColumn, actual []ResultColumn, branchNumber int) DiagnosticSet {
+	if len(actual) != len(expected) {
+		return DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, fmt.Sprintf("UNION ALL branch %d projects %d columns, expected %d", branchNumber, len(actual), len(expected))),
+		}
+	}
+	return nil
+}
+
 func resolveUnboundProjectionAliases(expr UnboundExpr, projections []UnboundProjection) UnboundExpr {
 	switch typed := expr.(type) {
 	case UnboundFieldExpr:
@@ -880,7 +942,7 @@ func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR
 		diagnostics = append(diagnostics, viewDiagnostics...)
 		return query, diagnostics
 	}
-	if viewStatement.Kind != QueryKindSelect {
+	if viewStatement.Kind != QueryKindSelect && viewStatement.Kind != QueryKindUnionAll {
 		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "CREATE VIEW must use a SELECT statement"))
 		return query, diagnostics
 	}
@@ -889,7 +951,7 @@ func BindCreateView(context *BindContext, createStmt UnboundCreateView) (QueryIR
 		diagnostics = append(diagnostics, viewDiagnostics...)
 		return query, diagnostics
 	}
-	viewQuery, selectDiagnostics := BindSelect(context, viewStatement.Select)
+	viewQuery, selectDiagnostics := viewStatement.Bind(NewBindContext(context.Catalog, context.DefaultSchema))
 	if selectDiagnostics.BlocksNative() {
 		diagnostics = append(diagnostics, selectDiagnostics...)
 		return query, diagnostics
@@ -1784,13 +1846,13 @@ func describeViewFieldRefs(context *BindContext, view SQLViewDefinition) ([]Fiel
 	if expansionDiagnostics.BlocksNative() {
 		return nil, expansionDiagnostics
 	}
-	if expanded.Kind != QueryKindSelect {
+	if expanded.Kind != QueryKindSelect && expanded.Kind != QueryKindUnionAll {
 		return nil, DiagnosticSet{
 			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "DESCRIBE view target must use a SELECT statement"),
 		}
 	}
 	bindContext := NewBindContext(context.Catalog, context.DefaultSchema)
-	viewQuery, selectDiagnostics := BindSelect(bindContext, expanded.Select)
+	viewQuery, selectDiagnostics := expanded.Bind(bindContext)
 	if selectDiagnostics.BlocksNative() {
 		return nil, selectDiagnostics
 	}
@@ -1816,13 +1878,14 @@ func describeViewFieldRefs(context *BindContext, view SQLViewDefinition) ([]Fiel
 func viewDependenciesFromQuery(query QueryIR) []TableInstance {
 	dependencies := make([]TableInstance, 0, len(query.Sources))
 	seen := make(map[string]struct{}, len(query.Sources))
-	for _, source := range query.Sources {
+	var addSource func(TableInstance)
+	addSource = func(source TableInstance) {
 		key := strings.ToLower(strings.TrimSpace(source.Schema)) + "." + strings.ToLower(strings.TrimSpace(source.Table))
 		if key == "." {
-			continue
+			return
 		}
 		if _, ok := seen[key]; ok {
-			continue
+			return
 		}
 		seen[key] = struct{}{}
 		dependencies = append(dependencies, TableInstance{
@@ -1831,6 +1894,14 @@ func viewDependenciesFromQuery(query QueryIR) []TableInstance {
 			Table:  source.Table,
 			Role:   source.Table,
 		})
+	}
+	for _, branch := range query.UnionAll {
+		for _, source := range branch.Sources {
+			addSource(source)
+		}
+	}
+	for _, source := range query.Sources {
+		addSource(source)
 	}
 	return dependencies
 }

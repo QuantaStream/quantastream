@@ -166,6 +166,8 @@ const (
 	PhysicalNodeSort PhysicalNodeKind = "physical_sort"
 	// PhysicalNodeLimit executes physical limit and offset.
 	PhysicalNodeLimit PhysicalNodeKind = "physical_limit"
+	// PhysicalNodeUnionAll appends physical branch outputs in order.
+	PhysicalNodeUnionAll PhysicalNodeKind = "physical_union_all"
 	// PhysicalNodeUnsupported preserves an unplanned physical boundary.
 	PhysicalNodeUnsupported PhysicalNodeKind = "physical_unsupported"
 )
@@ -388,6 +390,39 @@ type PhysicalAggregateNode struct {
 	Diags      DiagnosticSet
 }
 
+// PhysicalUnionAllNode represents executor-facing UNION ALL branch append work.
+type PhysicalUnionAllNode struct {
+	Branches []PhysicalNode
+	Scope    PhysicalScope
+	Diags    DiagnosticSet
+}
+
+// PhysicalKind reports that PhysicalUnionAllNode is a physical UNION ALL node.
+func (PhysicalUnionAllNode) PhysicalKind() PhysicalNodeKind {
+	return PhysicalNodeUnionAll
+}
+
+// PhysicalChildren returns the physical branch roots.
+func (n PhysicalUnionAllNode) PhysicalChildren() []PhysicalNode {
+	children := make([]PhysicalNode, 0, len(n.Branches))
+	for _, branch := range n.Branches {
+		if branch != nil {
+			children = append(children, branch)
+		}
+	}
+	return children
+}
+
+// PhysicalScope returns the union physical scope.
+func (n PhysicalUnionAllNode) PhysicalScope() PhysicalScope {
+	return n.Scope
+}
+
+// PhysicalDiagnostics returns diagnostics attached to the union.
+func (n PhysicalUnionAllNode) PhysicalDiagnostics() DiagnosticSet {
+	return n.Diags
+}
+
 // PhysicalKind reports that PhysicalAggregateNode is a physical aggregate.
 func (PhysicalAggregateNode) PhysicalKind() PhysicalNodeKind {
 	return PhysicalNodeAggregate
@@ -497,6 +532,16 @@ func buildPhysicalNode(node LogicalNode, defaultScope PhysicalScope) PhysicalNod
 			Input: buildPhysicalNode(n.Input, defaultScope),
 			Scope: defaultScope,
 			Diags: n.Diags,
+		}
+	case UnionAllNode:
+		branches := make([]PhysicalNode, 0, len(n.Branches))
+		for _, branch := range n.Branches {
+			branches = append(branches, buildPhysicalNode(branch, defaultScope))
+		}
+		return PhysicalUnionAllNode{
+			Branches: branches,
+			Scope:    defaultScope,
+			Diags:    n.Diags,
 		}
 	case UnsupportedNode:
 		return PhysicalUnaryNode{

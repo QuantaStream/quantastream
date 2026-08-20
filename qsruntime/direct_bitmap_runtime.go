@@ -475,6 +475,7 @@ func directBitmapCountAggregateResult(request ExecutionRequest, result Execution
 		Index:   index,
 		Rownums: []qsbridge.QuantaRownum{1},
 	}
+	aggregateCells := make([]qsbridge.ResultCell, 0, len(request.SQLAggregates))
 	for _, aggregate := range request.SQLAggregates {
 		if !directBitmapCountAllAggregate(aggregate) {
 			result.Diagnostics = append(result.Diagnostics, qsbridge.ErrorDiagnostic(
@@ -484,26 +485,26 @@ func directBitmapCountAggregateResult(request ExecutionRequest, result Execution
 			))
 			return result
 		}
-		alias := aggregate.Alias
-		if alias == "" {
-			alias = aggregate.Function
-		}
-		aggregateType := aggregate.Type
-		if aggregateType == qsbridge.DataTypeUnknown {
-			aggregateType = qsbridge.DataTypeInt
-		}
-		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, qsbridge.QuantaProjectionVector{
-			Field: qsbridge.QuantaProjectionField{
-				Index:   index,
-				Field:   alias,
-				Type:    aggregateType,
-				Visible: true,
-			},
-			Values: []qsbridge.ResultCell{{
-				Kind:  qsbridge.ValueInt,
-				Value: int64(result.Count),
-			}},
+		aggregateCells = append(aggregateCells, qsbridge.ResultCell{
+			Kind:  qsbridge.ValueInt,
+			Value: int64(result.Count),
 		})
+	}
+	projections := request.Projection
+	if len(projections) == 0 {
+		projections = directBitmapDefaultGroupedAggregateProjections(request, nil)
+	}
+	rows := []directBitmapGroupedAggregateRow{{Aggs: aggregateCells}}
+	for _, projection := range projections {
+		vector, diagnostics := directBitmapGroupedAggregateProjectionVector(projection, rows, nil, request.SQLAggregates)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if result.Diagnostics.BlocksNative() {
+			return result
+		}
+		if vector.Field.Index == "" {
+			vector.Field.Index = index
+		}
+		rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
 	}
 	result.RowSet = rowSet
 	result.Count = uint64(rowSet.CandidateCount())

@@ -104,7 +104,7 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 		distinct = true
 	}
 	if !distinct {
-		if statement, diagnostic, found, ok := parseSimpleConstantUnionAllSelect(sql, selectBody); found || diagnostic.Code != "" {
+		if statement, diagnostic, found, ok := parseSimpleUnionAllSelect(sql, selectBody); found || diagnostic.Code != "" {
 			if !ok {
 				return UnboundStatement{}, diagnostic, false
 			}
@@ -246,6 +246,41 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 	}, Diagnostic{}, true
 }
 
+func parseSimpleUnionAllSelect(sql string, selectBody string) (UnboundStatement, Diagnostic, bool, bool) {
+	if _, _, found := findTopLevelSimpleKeyword(selectBody, "union"); !found {
+		return UnboundStatement{}, Diagnostic{}, false, true
+	}
+	if statement, diagnostic, found, ok := parseSimpleConstantUnionAllSelect(sql, selectBody); found {
+		return statement, diagnostic, true, ok
+	}
+	terms, diagnostic, ok := splitSimpleUnionAllTerms(selectBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, true, false
+	}
+	if len(terms) < 2 {
+		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL must include at least two SELECT branches"), true, false
+	}
+	branches := make([]UnboundSelect, 0, len(terms))
+	for _, term := range terms {
+		statement, diagnostic, ok := parseSimpleSelect(term)
+		if !ok {
+			return UnboundStatement{}, diagnostic, true, false
+		}
+		if statement.Kind != QueryKindSelect {
+			return UnboundStatement{}, simpleParserDiagnostic("UNION ALL branches must be SELECT statements"), true, false
+		}
+		branches = append(branches, statement.Select)
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindUnionAll,
+		UnionAll: UnboundUnionAll{
+			Branches: branches,
+			Result:   ResultShape{Kind: ResultQuery},
+		},
+	}, Diagnostic{}, true, true
+}
+
 func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundStatement, Diagnostic, bool, bool) {
 	body, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(selectBody)
 	if !ok {
@@ -259,7 +294,7 @@ func parseSimpleConstantUnionAllSelect(sql string, selectBody string) (UnboundSt
 		return UnboundStatement{}, Diagnostic{}, false, true
 	}
 	if !hasOrderBy || !hasLimit || limit != 1 || offset != 0 {
-		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL only supports source-free constant SELECT branches with ORDER BY and LIMIT 1"), true, false
+		return UnboundStatement{}, Diagnostic{}, false, true
 	}
 	if len(orderBy) != 1 {
 		return UnboundStatement{}, simpleParserDiagnostic("UNION ALL ORDER BY must contain one term"), true, false

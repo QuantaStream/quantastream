@@ -600,6 +600,35 @@ func TestUnboundStatementBindCreateNestedViewExpandsBaseView(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindCreateUnionAllViewTracksBranchDependencies(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse(`
+		create or replace view tpch_counts as
+		select 'orders' as source_table, count(*) as row_count
+		from orders
+		union all
+		select 'lineitem' as source_table, count(*) as row_count
+		from lineitem
+	`)
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Mutation.Kind != MutationCreateView {
+		t.Fatalf("Mutation.Kind = %q, want create_view", query.Mutation.Kind)
+	}
+	if len(query.Mutation.ViewDependencies) != 2 {
+		t.Fatalf("ViewDependencies = %#v, want two dependencies", query.Mutation.ViewDependencies)
+	}
+	if query.Mutation.ViewDependencies[0].Table != "orders" || query.Mutation.ViewDependencies[1].Table != "lineitem" {
+		t.Fatalf("ViewDependencies = %#v, want orders then lineitem", query.Mutation.ViewDependencies)
+	}
+}
+
 func TestUnboundStatementBindCreateViewInlineColumnList(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create or replace view customer_names (customer_key, customer_name) as select c_custkey, c_name from customer")

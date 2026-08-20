@@ -165,11 +165,23 @@ func cloneQueryIR(query QueryIR) QueryIR {
 	cloned.OrderBy = append([]SortSpec(nil), query.OrderBy...)
 	cloned.Result.Columns = append([]FieldRef(nil), query.Result.Columns...)
 	cloned.Result.Statement = cloneStatementResult(query.Result.Statement)
+	cloned.UnionAll = cloneQueryIRs(query.UnionAll)
 	cloned.Mutation.Columns = append([]FieldRef(nil), query.Mutation.Columns...)
 	cloned.Mutation.Rows = append([]MutationRow(nil), query.Mutation.Rows...)
 	cloned.Mutation.Assignments = append([]MutationAssignment(nil), query.Mutation.Assignments...)
 	cloned.Mutation.Predicates = append([]Predicate(nil), query.Mutation.Predicates...)
 	cloned.Blockers = append([]NativeBlocker(nil), query.Blockers...)
+	return cloned
+}
+
+func cloneQueryIRs(queries []QueryIR) []QueryIR {
+	if len(queries) == 0 {
+		return nil
+	}
+	cloned := make([]QueryIR, 0, len(queries))
+	for _, query := range queries {
+		cloned = append(cloned, cloneQueryIR(query))
+	}
 	return cloned
 }
 

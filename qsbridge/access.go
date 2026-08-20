@@ -30,6 +30,11 @@ type AccessRequirement struct {
 // RequiredAccess returns authorization metadata for this query.
 func (q QueryIR) RequiredAccess() []AccessRequirement {
 	collector := newAccessCollector()
+	for _, branch := range q.UnionAll {
+		for _, requirement := range branch.RequiredAccess() {
+			collector.addRequirement(requirement)
+		}
+	}
 	for _, field := range q.requiredReadAccessFields() {
 		collector.addField(AccessSelect, field)
 	}
@@ -140,6 +145,13 @@ func (c *accessCollector) addFields(privilege AccessPrivilege, table TableInstan
 	c.ensureTable(privilege, table)
 	for _, field := range fields {
 		c.addField(privilege, field)
+	}
+}
+
+func (c *accessCollector) addRequirement(requirement AccessRequirement) {
+	c.ensureTable(requirement.Privilege, requirement.Table)
+	for _, field := range requirement.Fields {
+		c.addField(requirement.Privilege, field)
 	}
 }
 

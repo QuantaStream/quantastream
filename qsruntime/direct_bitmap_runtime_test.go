@@ -2343,6 +2343,57 @@ func TestDirectBitmapRuntimeSynthesizesCountAggregateRows(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeFastCountHonorsLiteralProjection(t *testing.T) {
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "part",
+			Field:     "p_partkey",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpGE,
+		}},
+	})
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "part_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	request.Projection = []qsbridge.ProjectionColumn{
+		{Expr: qsbridge.Literal(qsbridge.ValueString, "part"), Alias: "source_table", Type: qsbridge.DataTypeString},
+		{Expr: qsbridge.AggregateRef("part_count", 0), Alias: "row_count", Type: qsbridge.DataTypeInt},
+	}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Count: 2000}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("chunk rows = %#v, want one two-column row", chunk.Rows)
+	}
+	if got := chunk.Rows[0][0].Value; got != "part" {
+		t.Fatalf("source_table = %#v, want part", got)
+	}
+	if got := chunk.Rows[0][1].Value; got != int64(2000) {
+		t.Fatalf("row_count = %#v, want 2000", got)
+	}
+}
+
 func TestDirectBitmapRuntimeEvaluatesGlobalAggregateRatioProjection(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem"}
 	numerator := qsbridge.FieldRef{Table: table, Name: "promo_revenue", Type: qsbridge.DataTypeFloat}

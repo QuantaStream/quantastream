@@ -503,6 +503,8 @@ func explainLogicalNode(id int, parentID int, depth int, node LogicalNode) PlanN
 	case LimitNode:
 		base.Limit = LimitSummary{Limit: n.Limit, Offset: n.Offset}
 		base.Summary = fmt.Sprintf("limit(limit=%d,offset=%d)", n.Limit, n.Offset)
+	case UnionAllNode:
+		base.Summary = fmt.Sprintf("union_all(branches=%d)", len(n.Branches))
 	case UnsupportedNode:
 		base.Summary = fmt.Sprintf("unsupported(diagnostics=%d)", len(base.Diagnostics))
 	default:
@@ -537,6 +539,8 @@ func explainPhysicalNode(id int, parentID int, depth int, node PhysicalNode) Phy
 	case PhysicalAggregateNode:
 		base.Strategies = append([]PhysicalStrategy(nil), n.Strategies...)
 		base.Summary = fmt.Sprintf("physical_aggregate(aggregates=%d,group=%d,having=%d,%s)", len(n.Aggregates), len(n.GroupBy), len(n.Having), scopeText)
+	case PhysicalUnionAllNode:
+		base.Summary = fmt.Sprintf("physical_union_all(branches=%d,%s)", len(n.Branches), scopeText)
 	case PhysicalJoinNode:
 		base.Strategies = append([]PhysicalStrategy(nil), n.Strategies...)
 		base.Join = JoinSummary{

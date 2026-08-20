@@ -486,12 +486,11 @@ tests:
       drop view qs_mysql_compat_limit_view
 
   - id: mysql_compat_views_boundaries.115.create_union_all_tpch_counts_view
-    status: xfail
+    status: supported
     kind: statement
     feature: views_union_boundary
     compatibility: mysql
     requires: [create_view, create_or_replace_view, union_all, aggregate]
-    issue: "Views backed by UNION ALL SELECT composition are not accepted or expandable yet; direct constant UNION ALL SELECT is only a narrow parser boundary."
     sql: |
       create or replace view qs_mysql_compat_tpch_union_counts as
       select 'orders' as source_table, count(*) as row_count
@@ -500,7 +499,22 @@ tests:
       select 'lineitem' as source_table, count(*) as row_count
       from lineitem
 
-  - id: mysql_compat_views_boundaries.116.cleanup_union_all_tpch_counts_view
+  - id: mysql_compat_views_boundaries.116.select_union_all_tpch_counts_view
+    status: supported
+    kind: query
+    feature: views_union_boundary
+    compatibility: mysql
+    requires: [select, view_reference, union_all, aggregate]
+    sql: |
+      select source_table, row_count
+      from qs_mysql_compat_tpch_union_counts
+    expect:
+      columns: [source_table, row_count]
+      rows:
+        - ["orders", 15000]
+        - ["lineitem", 60175]
+
+  - id: mysql_compat_views_boundaries.117.cleanup_union_all_tpch_counts_view
     status: supported
     kind: statement
     feature: views_ddl_boundary

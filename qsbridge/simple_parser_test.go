@@ -3068,6 +3068,31 @@ func TestSimpleParserBridgeParsesConstantUnionAllOrderByLimitOne(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTableBackedUnionAll(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		select 'orders' as source_table, count(*) as row_count
+		from orders
+		union all
+		select 'lineitem' as source_table, count(*) as row_count
+		from lineitem
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindUnionAll {
+		t.Fatalf("kind = %q, want union_all", statement.Kind)
+	}
+	if len(statement.UnionAll.Branches) != 2 {
+		t.Fatalf("branches = %d, want 2", len(statement.UnionAll.Branches))
+	}
+	if got := statement.UnionAll.Branches[0].Tables[0].Name; got != "orders" {
+		t.Fatalf("branch 1 table = %q, want orders", got)
+	}
+	if got := statement.UnionAll.Branches[1].Tables[0].Name; got != "lineitem" {
+		t.Fatalf("branch 2 table = %q, want lineitem", got)
+	}
+}
+
 func TestSimpleParserBridgeParsesRowValueInAsResidualPredicate(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select n_name as nation_name

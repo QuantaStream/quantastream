@@ -14,6 +14,12 @@ type NativeClassification struct {
 // ClassifyNative inspects a bound query for native capabilities and blockers.
 func ClassifyNative(query QueryIR) NativeClassification {
 	capabilities := newCapabilityCollector()
+	for _, branch := range query.UnionAll {
+		branchClassification := ClassifyNative(branch)
+		for _, capability := range branchClassification.Capabilities {
+			capabilities.add(capability)
+		}
+	}
 	collectPredicateCapabilities(capabilities, query.Predicates)
 	collectPredicateCapabilities(capabilities, query.Having)
 	collectJoinCapabilities(capabilities, query.Joins)

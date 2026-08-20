@@ -164,6 +164,12 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		}
 		return result, nil
 	}
+	if runtimeResult, diagnostics, err, ok := r.unionAllRuntimeResult(ctx, request); ok {
+		result.Runtime = runtimeResult
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
+		return result, err
+	}
 	if prepared.Kind == qsbridge.QueryKindSession {
 		result.Runtime = ExecutionResult{Statement: cloneStatementResult(request.Statement)}
 		return result, nil

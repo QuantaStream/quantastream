@@ -28,6 +28,8 @@ const (
 	PlanNodeSort PlanNodeKind = "sort"
 	// PlanNodeLimit applies LIMIT/OFFSET semantics.
 	PlanNodeLimit PlanNodeKind = "limit"
+	// PlanNodeUnionAll appends compound SELECT branch outputs in order.
+	PlanNodeUnionAll PlanNodeKind = "union_all"
 	// PlanNodeUnsupported preserves a logical shape that cannot run natively.
 	PlanNodeUnsupported PlanNodeKind = "unsupported"
 )
@@ -360,6 +362,33 @@ func (n LimitNode) NodeDiagnostics() DiagnosticSet {
 	return n.Diags
 }
 
+// UnionAllNode appends the rows from compound SELECT branches in SQL order.
+type UnionAllNode struct {
+	Branches []LogicalNode
+	Diags    DiagnosticSet
+}
+
+// NodeKind reports that UnionAllNode is a compound UNION ALL node.
+func (UnionAllNode) NodeKind() PlanNodeKind {
+	return PlanNodeUnionAll
+}
+
+// ChildNodes returns the UNION ALL branch roots.
+func (n UnionAllNode) ChildNodes() []LogicalNode {
+	children := make([]LogicalNode, 0, len(n.Branches))
+	for _, branch := range n.Branches {
+		if branch != nil {
+			children = append(children, branch)
+		}
+	}
+	return children
+}
+
+// NodeDiagnostics returns diagnostics attached to the compound node.
+func (n UnionAllNode) NodeDiagnostics() DiagnosticSet {
+	return n.Diags
+}
+
 // UnsupportedNode wraps a logical shape the native path cannot execute.
 type UnsupportedNode struct {
 	Input LogicalNode
@@ -384,6 +413,21 @@ func (n UnsupportedNode) NodeDiagnostics() DiagnosticSet {
 // BuildLogicalPlan lowers QueryIR into a conventional logical plan shape.
 func BuildLogicalPlan(query QueryIR) LogicalPlan {
 	classification := ClassifyNative(query)
+	if query.Kind == QueryKindUnionAll {
+		branches := make([]LogicalNode, 0, len(query.UnionAll))
+		for _, branch := range query.UnionAll {
+			branches = append(branches, BuildLogicalPlan(branch).Root)
+		}
+		root := LogicalNode(UnionAllNode{Branches: branches})
+		if classification.Diagnostics.BlocksNative() {
+			root = UnsupportedNode{Input: root, Diags: classification.Diagnostics}
+		}
+		return LogicalPlan{
+			Root:           root,
+			Classification: classification,
+			Result:         query.Result,
+		}
+	}
 	if query.Result.Kind == ResultStatement {
 		root := LogicalNode(StatementNode{Kind: query.Kind, Result: query.Result.Statement, Mutation: query.Mutation})
 		if classification.Diagnostics.BlocksNative() {

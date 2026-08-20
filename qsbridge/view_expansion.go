@@ -4,7 +4,7 @@ import "strings"
 
 // ExpandStatementViews rewrites supported logical view references into their base SELECT shape.
 func ExpandStatementViews(catalog Catalog, parser ParserBridge, defaultSchema string, statement UnboundStatement) (UnboundStatement, DiagnosticSet) {
-	if statement.Kind != QueryKindSelect {
+	if statement.Kind != QueryKindSelect && statement.Kind != QueryKindUnionAll {
 		return statement, nil
 	}
 	state := viewExpansionState{
@@ -13,12 +13,121 @@ func ExpandStatementViews(catalog Catalog, parser ParserBridge, defaultSchema st
 		defaultSchema: defaultSchema,
 		stack:         map[string]struct{}{},
 	}
+	if statement.Kind == QueryKindUnionAll {
+		for i, branch := range statement.UnionAll.Branches {
+			expanded, diagnostics := state.expandSelect(branch)
+			if diagnostics.BlocksNative() {
+				return statement, diagnostics
+			}
+			statement.UnionAll.Branches[i] = expanded
+		}
+		return statement, nil
+	}
+	if unionStatement, diagnostics, ok := state.expandDirectUnionAllViewSelect(statement.Select); diagnostics.BlocksNative() || ok {
+		return unionStatement, diagnostics
+	}
 	selectStmt, diagnostics := state.expandSelect(statement.Select)
 	if diagnostics.BlocksNative() {
 		return statement, diagnostics
 	}
 	statement.Select = selectStmt
 	return statement, nil
+}
+
+func (s viewExpansionState) expandDirectUnionAllViewSelect(selectStmt UnboundSelect) (UnboundStatement, DiagnosticSet, bool) {
+	if len(selectStmt.Tables) != 1 || len(selectStmt.Joins) > 0 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || len(selectStmt.Predicates) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.OrderBy) > 0 || selectStmt.Result.AppliesResultWindow() || selectStmt.Result.Distinct {
+		return UnboundStatement{}, nil, false
+	}
+	table := selectStmt.Tables[0]
+	if table.DerivedSelect != nil || table.InlineRows != nil || s.tableExists(table) {
+		return UnboundStatement{}, nil, false
+	}
+	view, diagnostics, ok := s.lookupView(table)
+	if diagnostics.BlocksNative() || !ok {
+		return UnboundStatement{}, diagnostics, ok
+	}
+	viewSQL := strings.TrimSpace(view.SQL)
+	if viewSQL == "" {
+		viewSQL = strings.TrimSpace(view.CanonicalSQL)
+	}
+	statement, parseDiagnostics := s.parser.Parse(viewSQL)
+	if parseDiagnostics.BlocksNative() {
+		return UnboundStatement{}, parseDiagnostics, true
+	}
+	if statement.Kind != QueryKindUnionAll {
+		return UnboundStatement{}, nil, false
+	}
+	branches := make([]UnboundSelect, 0, len(statement.UnionAll.Branches))
+	for _, branch := range statement.UnionAll.Branches {
+		expandedBranch, branchDiagnostics := s.expandSelect(branch)
+		if branchDiagnostics.BlocksNative() {
+			return UnboundStatement{}, branchDiagnostics, true
+		}
+		projectedBranch, projectionDiagnostics := projectUnionAllViewBranch(table, expandedBranch, selectStmt.Projection)
+		if projectionDiagnostics.BlocksNative() {
+			return UnboundStatement{}, projectionDiagnostics, true
+		}
+		branches = append(branches, projectedBranch)
+	}
+	return UnboundStatement{
+		Kind: QueryKindUnionAll,
+		UnionAll: UnboundUnionAll{
+			Branches: branches,
+			Result:   selectStmt.Result,
+		},
+	}, nil, true
+}
+
+func projectUnionAllViewBranch(viewTable UnboundTable, branch UnboundSelect, outerProjection []UnboundProjection) (UnboundSelect, DiagnosticSet) {
+	if len(outerProjection) == 0 || projectionListIsWildcard(outerProjection) {
+		return branch, nil
+	}
+	projected := branch
+	projected.Projection = make([]UnboundProjection, 0, len(outerProjection))
+	for _, projection := range outerProjection {
+		field, ok := projection.Expr.(UnboundFieldExpr)
+		if !ok || field.Name == "" || field.Name == "*" {
+			return UnboundSelect{}, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "UNION ALL view projection currently supports direct view column references"),
+			}
+		}
+		if field.Qualifier != "" && !strings.EqualFold(field.Qualifier, tableRefName(viewTable.Name, viewTable.Alias)) {
+			return UnboundSelect{}, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "unknown UNION ALL view qualifier: "+field.Qualifier),
+			}
+		}
+		branchProjection, ok := unionAllViewBranchProjection(branch, field.Name)
+		if !ok {
+			return UnboundSelect{}, DiagnosticSet{
+				ErrorDiagnostic(DiagnosticCatalogFieldNotFound, PhaseBind, "unknown UNION ALL view column: "+field.Name),
+			}
+		}
+		if projection.Alias != "" {
+			branchProjection.Alias = projection.Alias
+		}
+		projected.Projection = append(projected.Projection, branchProjection)
+	}
+	return projected, nil
+}
+
+func projectionListIsWildcard(projections []UnboundProjection) bool {
+	if len(projections) != 1 {
+		return false
+	}
+	field, ok := projections[0].Expr.(UnboundFieldExpr)
+	return ok && field.Name == "*" && projections[0].Alias == ""
+}
+
+func unionAllViewBranchProjection(branch UnboundSelect, name string) (UnboundProjection, bool) {
+	for _, projection := range branch.Projection {
+		if projection.Alias != "" && strings.EqualFold(projection.Alias, name) {
+			return projection, true
+		}
+		if field, ok := projection.Expr.(UnboundFieldExpr); ok && strings.EqualFold(field.Name, name) {
+			return projection, true
+		}
+	}
+	return UnboundProjection{}, false
 }
 
 type viewExpansionState struct {

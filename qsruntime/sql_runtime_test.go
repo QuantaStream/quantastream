@@ -35,6 +35,42 @@ func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLUnionAllAppendsBranchRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select 'orders' as source_table, 2 as row_count
+		union all
+		select 'lineitem' as source_table, 3 as row_count
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("constant UNION ALL should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 2 || len(chunk.Rows[1]) != 2 {
+		t.Fatalf("rows = %#v, want two two-column rows", chunk.Rows)
+	}
+	if chunk.Rows[0][0].Value != "orders" || chunk.Rows[0][1].Value != int64(2) {
+		t.Fatalf("first row = %#v, want orders/2", chunk.Rows[0])
+	}
+	if chunk.Rows[1][0].Value != "lineitem" || chunk.Rows[1][1].Value != int64(3) {
+		t.Fatalf("second row = %#v, want lineitem/3", chunk.Rows[1])
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowCreateViewReturnsCatalogRow(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

@@ -6,6 +6,8 @@ type QueryKind string
 const (
 	// QueryKindSelect identifies a SELECT query.
 	QueryKindSelect QueryKind = "select"
+	// QueryKindUnionAll identifies a compound SELECT ... UNION ALL ... query.
+	QueryKindUnionAll QueryKind = "union_all"
 	// QueryKindInsert identifies an INSERT statement.
 	QueryKindInsert QueryKind = "insert"
 	// QueryKindUpdate identifies an UPDATE statement.
@@ -171,11 +173,17 @@ type QueryIR struct {
 	Result      ResultShape
 	Mutation    MutationShape
 	Catalog     CatalogReadShape
+	UnionAll    []QueryIR
 	Blockers    []NativeBlocker
 }
 
 // Supported reports whether the query is currently executable by the native path.
 func (q QueryIR) Supported() bool {
+	for _, branch := range q.UnionAll {
+		if !branch.Supported() {
+			return false
+		}
+	}
 	if len(q.Blockers) > 0 {
 		return false
 	}
@@ -218,6 +226,9 @@ func (q QueryIR) Supported() bool {
 // Diagnostics returns query-level blockers and unsupported native features.
 func (q QueryIR) Diagnostics() DiagnosticSet {
 	diagnostics := make(DiagnosticSet, 0, len(q.Blockers))
+	for _, branch := range q.UnionAll {
+		diagnostics = append(diagnostics, branch.Diagnostics()...)
+	}
 	for _, blocker := range q.Blockers {
 		diagnostics = append(diagnostics, blocker.Diagnostic())
 	}
@@ -268,6 +279,11 @@ func (q QueryIR) RequiredFields() []FieldRef {
 // RequiredParameters returns prepared-statement parameters needed by the query.
 func (q QueryIR) RequiredParameters() []ParameterRef {
 	collector := newParameterCollector()
+	for _, branch := range q.UnionAll {
+		for _, ref := range branch.RequiredParameters() {
+			collector.addParameter(ref)
+		}
+	}
 	for _, predicate := range q.Predicates {
 		collector.addExpr(predicate.Expr)
 	}
@@ -312,6 +328,9 @@ func (q QueryIR) RequiredParameters() []ParameterRef {
 func (q QueryIR) ResultColumns() []ResultColumn {
 	if q.Result.Kind == ResultStatement {
 		return nil
+	}
+	if len(q.UnionAll) > 0 {
+		return q.UnionAll[0].ResultColumns()
 	}
 	if len(q.Projection) > 0 {
 		columns := make([]ResultColumn, 0, len(q.Projection))
@@ -377,6 +396,11 @@ func (q QueryIR) StatementResult() StatementResult {
 // RequiredFieldsForScope returns physical fields for predicates in scope plus all non-predicate query inputs.
 func (q QueryIR) RequiredFieldsForScope(scope PredicateScope) []FieldRef {
 	collector := newFieldCollector()
+	for _, branch := range q.UnionAll {
+		for _, field := range branch.RequiredFieldsForScope(scope) {
+			collector.addField(field)
+		}
+	}
 	for _, predicate := range q.Predicates {
 		if scope == "" || predicate.Scope == scope {
 			collector.addExpr(predicate.Expr)
