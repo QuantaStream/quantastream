@@ -520,6 +520,71 @@ func TestLegacyDirectRelationshipCountAggregateAppliesResidualPredicates(t *test
 	assertExecutionProbe(t, result.Probes, "relationship_join", "aggregate_residual_rows_after", "1")
 }
 
+func TestLegacyDirectRelationshipFilterPairsAppliesCorrelatedMinJoinOn(t *testing.T) {
+	orders := qsbridge.TableInstance{Table: "orders", Alias: "o"}
+	oOrderkey := qsbridge.FieldRef{Table: orders, Name: "o_orderkey", PhysicalName: "o_orderkey", Type: qsbridge.DataTypeInt}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	predicate := qsbridge.Predicate{
+		Expr: qsbridge.Binary(
+			qsbridge.BinaryOpEqual,
+			qsbridge.Field(oOrderkey),
+			qsbridge.ScalarSubquery("select min(o2.o_orderkey) from orders as o2 where o2.o_custkey = c.c_custkey", qsbridge.PredicateScopeOn),
+		),
+		Placement: qsbridge.PredicateResidualJoin,
+		Scope:     qsbridge.PredicateScopeOn,
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			rowSet := qsbridge.QuantaProjectedRowSet{Index: request.Index, Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...)}
+			for _, field := range request.ProjectionFields {
+				vector := qsbridge.QuantaProjectionVector{Field: field}
+				for _, rownum := range request.Rownums {
+					values := map[qsbridge.QuantaRownum]int64{
+						101: 9154,
+						102: 10000,
+						201: 9000,
+						202: 6980,
+					}
+					vector.Values = append(vector.Values, qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: values[rownum]})
+				}
+				rowSet.ProjectionVectors = append(rowSet.ProjectionVectors, vector)
+			}
+			return rowSet, nil, nil
+		}),
+	}
+	pairs, diagnostics, err := executor.legacyDirectRelationshipFilterPairsByPredicates(
+		context.Background(),
+		request,
+		legacyDirectRelationshipEdge{
+			childRole:   "o",
+			childTable:  "orders",
+			childField:  "o_custkey",
+			parentRole:  "c",
+			parentTable: "customer",
+			parentField: "c_custkey",
+		},
+		[]legacyDirectRelationshipPair{
+			{child: 101, parent: 1},
+			{child: 102, parent: 1},
+			{child: 201, parent: 2},
+			{child: 202, parent: 2},
+		},
+		[]qsbridge.Predicate{predicate},
+	)
+	if err != nil {
+		t.Fatalf("filter pairs: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(pairs) != 2 {
+		t.Fatalf("pairs = %#v, want two minimum child rows", pairs)
+	}
+	if pairs[0].child != 101 || pairs[0].parent != 1 || pairs[1].child != 202 || pairs[1].parent != 2 {
+		t.Fatalf("pairs = %#v, want customer minimum-order pairs", pairs)
+	}
+}
+
 func TestLegacyDirectRelationshipFragmentsForTableUsesRoleWhenPresent(t *testing.T) {
 	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{
 		{Index: "nation", Role: "nation_1", Field: "n_name", Literal: qsbridge.LiteralExpr{Kind: qsbridge.ValueString, Value: "FRANCE"}, HasLiteral: true},

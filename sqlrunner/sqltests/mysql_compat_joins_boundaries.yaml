@@ -221,13 +221,12 @@ tests:
         - [61, 13]
 
   - id: mysql_compat_joins_boundaries.010.correlated_subquery_in_join_on
-    status: xfail
+    status: supported
     kind: query
     order: exact
     feature: joins_correlated_subquery_boundary
     compatibility: mysql
     requires: [select, table_scan, inner_join, scalar_subquery, correlated_subquery, order_by]
-    issue: "Correlated scalar subqueries inside JOIN ON predicates are not supported yet."
     sql: |
       select c.c_custkey as customer_key, o.o_orderkey as order_key
       from customer as c

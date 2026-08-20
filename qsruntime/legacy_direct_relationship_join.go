@@ -5003,6 +5003,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipFilt
 	if len(predicates) == 0 || len(pairs) == 0 {
 		return append([]legacyDirectRelationshipPair(nil), pairs...), nil, nil
 	}
+	pairs, predicates, diagnostics, err := e.legacyDirectRelationshipApplyCorrelatedAggregateJoinPredicates(ctx, request, edge, pairs, predicates)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, diagnostics, err
+	}
+	if len(predicates) == 0 || len(pairs) == 0 {
+		return append([]legacyDirectRelationshipPair(nil), pairs...), nil, nil
+	}
 	materialization := e.projectionMaterializationKernel()
 	fields := request.Query.ProjectionFields
 	if len(request.Materialization.ProjectionFields) > 0 {
@@ -5035,6 +5042,267 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipFilt
 		}
 	}
 	return filtered, nil, nil
+}
+
+type legacyDirectRelationshipCorrelatedAggregateJoinPredicate struct {
+	Function string
+	Field    qsbridge.FieldRef
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipApplyCorrelatedAggregateJoinPredicates(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, pairs []legacyDirectRelationshipPair, predicates []qsbridge.Predicate) ([]legacyDirectRelationshipPair, []qsbridge.Predicate, qsbridge.DiagnosticSet, error) {
+	filtered := append([]legacyDirectRelationshipPair(nil), pairs...)
+	remaining := make([]qsbridge.Predicate, 0, len(predicates))
+	for _, predicate := range predicates {
+		correlated, ok := legacyDirectRelationshipCorrelatedAggregateJoinPredicateShape(predicate, edge)
+		if !ok {
+			remaining = append(remaining, predicate)
+			continue
+		}
+		next, diagnostics, err := e.legacyDirectRelationshipFilterPairsByCorrelatedAggregateJoinPredicate(ctx, request, edge, filtered, correlated)
+		if err != nil || diagnostics.BlocksNative() {
+			return nil, nil, diagnostics, err
+		}
+		filtered = next
+	}
+	return filtered, remaining, nil, nil
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipFilterPairsByCorrelatedAggregateJoinPredicate(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, pairs []legacyDirectRelationshipPair, predicate legacyDirectRelationshipCorrelatedAggregateJoinPredicate) ([]legacyDirectRelationshipPair, qsbridge.DiagnosticSet, error) {
+	if len(pairs) == 0 {
+		return nil, nil, nil
+	}
+	materialization := e.projectionMaterializationKernel()
+	field := legacyDirectRelationshipProjectionField(predicate.Field)
+	values, diagnostics, err := e.legacyDirectRelationshipMaterializedValues(ctx, materialization, edge.childTable, legacyDirectRelationshipChildRownums(pairs), []qsbridge.QuantaProjectionField{field}, e.legacyDirectRelationshipTimeMaterializationForRole(request, edge.childTable, edge.childRole))
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, diagnostics, err
+	}
+	fieldValues := values[legacyDirectRelationshipProjectionFieldKey(field)]
+	bestByParent := make(map[qsbridge.QuantaRownum]qsbridge.ResultCell)
+	seenParent := make(map[qsbridge.QuantaRownum]struct{})
+	for _, pair := range pairs {
+		if pair.childNull {
+			continue
+		}
+		cell, ok := fieldValues[pair.child]
+		if !ok {
+			return nil, directBitmapResidualDiagnostics("correlated aggregate join predicate is missing child field materialization"), nil
+		}
+		best, seen := bestByParent[pair.parent]
+		if !seen || legacyDirectRelationshipCorrelatedAggregateBetterCell(predicate.Function, cell, best) {
+			bestByParent[pair.parent] = cell
+			seenParent[pair.parent] = struct{}{}
+		}
+	}
+	filtered := make([]legacyDirectRelationshipPair, 0, len(pairs))
+	for _, pair := range pairs {
+		if pair.childNull {
+			continue
+		}
+		if _, seen := seenParent[pair.parent]; !seen {
+			continue
+		}
+		cell, ok := fieldValues[pair.child]
+		if !ok {
+			return nil, directBitmapResidualDiagnostics("correlated aggregate join predicate is missing child field materialization"), nil
+		}
+		if directBitmapResidualCompareCells(qsbridge.BinaryOpEqual, cell, bestByParent[pair.parent]) {
+			filtered = append(filtered, pair)
+		}
+	}
+	return filtered, nil, nil
+}
+
+func legacyDirectRelationshipCorrelatedAggregateBetterCell(function string, candidate qsbridge.ResultCell, current qsbridge.ResultCell) bool {
+	if strings.EqualFold(function, "max") {
+		return directBitmapResidualCompareCells(qsbridge.BinaryOpGreater, candidate, current)
+	}
+	return directBitmapResidualCompareCells(qsbridge.BinaryOpLess, candidate, current)
+}
+
+func legacyDirectRelationshipCorrelatedAggregateJoinPredicateShape(predicate qsbridge.Predicate, edge legacyDirectRelationshipEdge) (legacyDirectRelationshipCorrelatedAggregateJoinPredicate, bool) {
+	if predicate.Placement != qsbridge.PredicateResidualJoin {
+		return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{}, false
+	}
+	binary, ok := directBitmapBinaryExpr(predicate.Expr)
+	if !ok || binary.Op != qsbridge.BinaryOpEqual {
+		return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{}, false
+	}
+	field, scalar, ok := legacyDirectRelationshipCorrelatedAggregateJoinPredicateSides(binary.Left, binary.Right)
+	if !ok {
+		field, scalar, ok = legacyDirectRelationshipCorrelatedAggregateJoinPredicateSides(binary.Right, binary.Left)
+	}
+	if !ok || !legacyDirectRelationshipFieldMatchesTableRole(field, edge.childTable, edge.childRole) {
+		return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{}, false
+	}
+	function, aggregateTable, aggregateField, innerKeyField, outerKeyQualifier, outerKeyField, ok := legacyDirectRelationshipParseCorrelatedAggregateScalarSubquery(scalar.SQL)
+	if !ok {
+		return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{}, false
+	}
+	if !strings.EqualFold(aggregateTable, edge.childTable) ||
+		!legacyDirectRelationshipFieldNameMatches(aggregateField, field) ||
+		!strings.EqualFold(innerKeyField, edge.childField) ||
+		!legacyDirectRelationshipQualifierMatchesTableRole(outerKeyQualifier, edge.parentTable, edge.parentRole) ||
+		!strings.EqualFold(outerKeyField, edge.parentField) {
+		return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{}, false
+	}
+	return legacyDirectRelationshipCorrelatedAggregateJoinPredicate{Function: function, Field: field}, true
+}
+
+func legacyDirectRelationshipCorrelatedAggregateJoinPredicateSides(left qsbridge.Expr, right qsbridge.Expr) (qsbridge.FieldRef, qsbridge.ScalarSubqueryExpr, bool) {
+	field, fieldOK := directBitmapExprField(left)
+	if !fieldOK {
+		return qsbridge.FieldRef{}, qsbridge.ScalarSubqueryExpr{}, false
+	}
+	switch scalar := right.(type) {
+	case qsbridge.ScalarSubqueryExpr:
+		return field, scalar, true
+	case *qsbridge.ScalarSubqueryExpr:
+		if scalar != nil {
+			return field, *scalar, true
+		}
+	}
+	return qsbridge.FieldRef{}, qsbridge.ScalarSubqueryExpr{}, false
+}
+
+func legacyDirectRelationshipParseCorrelatedAggregateScalarSubquery(sql string) (function string, aggregateTable string, aggregateField string, innerKeyField string, outerKeyQualifier string, outerKeyField string, ok bool) {
+	body, ok := legacyDirectRelationshipConsumeKeywordCI(strings.TrimSpace(sql), "select")
+	if !ok {
+		return "", "", "", "", "", "", false
+	}
+	projectionText, sourceText, ok := legacyDirectRelationshipSplitKeywordCI(body, "from")
+	if !ok {
+		return "", "", "", "", "", "", false
+	}
+	sourceText, predicateText, ok := legacyDirectRelationshipSplitKeywordCI(sourceText, "where")
+	if !ok {
+		return "", "", "", "", "", "", false
+	}
+	function, aggregateQualifier, aggregateField, ok := legacyDirectRelationshipParseAggregateFieldProjection(projectionText)
+	if !ok {
+		return "", "", "", "", "", "", false
+	}
+	table, alias, ok := legacyDirectRelationshipParseSimpleTableRef(sourceText)
+	if !ok || !legacyDirectRelationshipQualifierMatchesName(aggregateQualifier, table, alias) {
+		return "", "", "", "", "", "", false
+	}
+	leftText, rightText, ok := legacyDirectRelationshipSplitComparisonEqual(predicateText)
+	if !ok {
+		return "", "", "", "", "", "", false
+	}
+	leftQualifier, leftField, leftOK := legacyDirectRelationshipSplitQualifiedField(leftText)
+	rightQualifier, rightField, rightOK := legacyDirectRelationshipSplitQualifiedField(rightText)
+	if !leftOK || !rightOK {
+		return "", "", "", "", "", "", false
+	}
+	if legacyDirectRelationshipQualifierMatchesName(rightQualifier, table, alias) {
+		leftQualifier, leftField, rightQualifier, rightField = rightQualifier, rightField, leftQualifier, leftField
+	}
+	if !legacyDirectRelationshipQualifierMatchesName(leftQualifier, table, alias) {
+		return "", "", "", "", "", "", false
+	}
+	return function, table, aggregateField, leftField, rightQualifier, rightField, true
+}
+
+func legacyDirectRelationshipParseAggregateFieldProjection(text string) (function string, qualifier string, field string, ok bool) {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	for _, candidate := range []string{"min", "max"} {
+		prefix := candidate + "("
+		if !strings.HasPrefix(lower, prefix) || !strings.HasSuffix(trimmed, ")") {
+			continue
+		}
+		qualifier, field, ok := legacyDirectRelationshipSplitQualifiedField(trimmed[len(prefix) : len(trimmed)-1])
+		return candidate, qualifier, field, ok
+	}
+	return "", "", "", false
+}
+
+func legacyDirectRelationshipParseSimpleTableRef(text string) (table string, alias string, ok bool) {
+	parts := strings.Fields(strings.TrimSpace(text))
+	if len(parts) == 0 || len(parts) > 3 {
+		return "", "", false
+	}
+	table = strings.Trim(parts[0], "`")
+	if table == "" {
+		return "", "", false
+	}
+	switch len(parts) {
+	case 1:
+		return table, "", true
+	case 2:
+		if strings.EqualFold(parts[1], "as") {
+			return "", "", false
+		}
+		return table, strings.Trim(parts[1], "`"), true
+	case 3:
+		if !strings.EqualFold(parts[1], "as") {
+			return "", "", false
+		}
+		return table, strings.Trim(parts[2], "`"), true
+	default:
+		return "", "", false
+	}
+}
+
+func legacyDirectRelationshipSplitComparisonEqual(text string) (string, string, bool) {
+	parts := strings.Split(strings.TrimSpace(text), "=")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+}
+
+func legacyDirectRelationshipSplitQualifiedField(text string) (string, string, bool) {
+	parts := strings.Split(strings.TrimSpace(text), ".")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	qualifier := strings.Trim(strings.TrimSpace(parts[0]), "`")
+	field := strings.Trim(strings.TrimSpace(parts[1]), "`")
+	return qualifier, field, qualifier != "" && field != ""
+}
+
+func legacyDirectRelationshipConsumeKeywordCI(text string, keyword string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	prefix := strings.ToLower(keyword)
+	if lower == prefix {
+		return "", true
+	}
+	if !strings.HasPrefix(lower, prefix+" ") {
+		return "", false
+	}
+	return strings.TrimSpace(trimmed[len(prefix):]), true
+}
+
+func legacyDirectRelationshipSplitKeywordCI(text string, keyword string) (string, string, bool) {
+	trimmed := strings.TrimSpace(text)
+	marker := " " + strings.ToLower(keyword) + " "
+	idx := strings.Index(strings.ToLower(trimmed), marker)
+	if idx < 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(trimmed[:idx]), strings.TrimSpace(trimmed[idx+len(marker):]), true
+}
+
+func legacyDirectRelationshipFieldMatchesTableRole(field qsbridge.FieldRef, table string, role string) bool {
+	return legacyDirectRelationshipQualifierMatchesTableRole(field.Table.Table, table, role) ||
+		legacyDirectRelationshipQualifierMatchesTableRole(field.Table.Alias, table, role) ||
+		legacyDirectRelationshipQualifierMatchesTableRole(field.Table.Role, table, role) ||
+		legacyDirectRelationshipQualifierMatchesTableRole(string(field.Table.ID), table, role)
+}
+
+func legacyDirectRelationshipQualifierMatchesTableRole(qualifier string, table string, role string) bool {
+	return qualifier != "" && (strings.EqualFold(qualifier, table) || strings.EqualFold(qualifier, role))
+}
+
+func legacyDirectRelationshipQualifierMatchesName(qualifier string, table string, alias string) bool {
+	return qualifier != "" && (strings.EqualFold(qualifier, table) || strings.EqualFold(qualifier, alias))
+}
+
+func legacyDirectRelationshipFieldNameMatches(name string, field qsbridge.FieldRef) bool {
+	return name != "" && (strings.EqualFold(name, field.Name) || strings.EqualFold(name, directBitmapFieldPhysicalName(field)))
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipAggregateResult(ctx context.Context, request ExecutionRequest, edge legacyDirectRelationshipEdge, joined []qsbridge.QuantaRownum, pairs []legacyDirectRelationshipPair, result ExecutionResult) (ExecutionResult, error) {
