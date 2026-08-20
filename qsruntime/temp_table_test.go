@@ -426,6 +426,14 @@ func TestSQLRuntimeCreateTemporaryTableAsSelectMaterializesRows(t *testing.T) {
 	if len(actions) != 2 || actions[0].Kind != qsbridge.SessionActionCreateTemporaryTable || actions[1].Kind != qsbridge.SessionActionInsertTemporaryRows {
 		t.Fatalf("session actions = %#v, want create + insert rows", actions)
 	}
+	if got, want := len(actions[0].Table.Fields), 2; got != want {
+		t.Fatalf("temporary CTAS fields = %d, want %d", got, want)
+	}
+	for _, field := range actions[0].Table.Fields {
+		if field.PrimaryKey {
+			t.Fatalf("temporary CTAS field = %#v, projection-only CTAS should not expose a synthetic primary key", field)
+		}
+	}
 	if executed {
 		t.Fatalf("projection-only CTAS source should not dispatch to the direct executor")
 	}

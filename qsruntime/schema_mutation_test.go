@@ -446,6 +446,36 @@ func TestCreateTableAsSelectSchemaFromMutationUsesConservativeMapperDefaults(t *
 	}
 }
 
+func TestCreateTableAsSelectSchemaFromMutationKeepsKeylessTableHeapLike(t *testing.T) {
+	table, diagnostics := createTableAsSelectSchemaFromMutation("scratch_metrics", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{
+				Name:     "revenue",
+				Type:     qsbridge.DataTypeFloat,
+				Nullable: true,
+				Encoding: qsbridge.LegacyEncodingProfile("FloatScaleBSI", qsbridge.LegacyEncodingOptions{Scale: 2}),
+			},
+			{
+				Name:     "market_segment",
+				Type:     qsbridge.DataTypeString,
+				Nullable: true,
+				Encoding: qsbridge.LegacyEncodingProfile("StringEnum", qsbridge.LegacyEncodingOptions{}),
+			},
+		},
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("schema diagnostics = %#v", diagnostics)
+	}
+	if table.Name != "scratch_metrics" || table.PrimaryKey != "" {
+		t.Fatalf("table = %#v, want scratch_metrics without primary key", table)
+	}
+	for _, attr := range table.Attributes {
+		if attr.ColumnID {
+			t.Fatalf("attribute = %#v, keyless CTAS should not expose a synthetic ColumnID", attr)
+		}
+	}
+}
+
 func testSchemaMutationTime() time.Time {
 	return time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC)
 }

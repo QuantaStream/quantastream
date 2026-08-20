@@ -762,6 +762,9 @@ func TestUnboundStatementBindCreateTableAsSelectInfersColumns(t *testing.T) {
 	if column := query.Mutation.Columns[0]; column.Name != "order_key" || column.Type != DataTypeInt || column.Table.Table != "scratch_orders" {
 		t.Fatalf("first CTAS column = %#v", column)
 	}
+	if !query.Mutation.Columns[0].PrimaryKey {
+		t.Fatalf("primary-key source CTAS column should preserve primary key role: %#v", query.Mutation.Columns[0])
+	}
 	if query.Mutation.Columns[0].Nullable {
 		t.Fatalf("primary-key source CTAS column should be non-nullable: %#v", query.Mutation.Columns[0])
 	}
@@ -770,6 +773,36 @@ func TestUnboundStatementBindCreateTableAsSelectInfersColumns(t *testing.T) {
 	}
 	if !query.Mutation.Columns[1].Nullable {
 		t.Fatalf("nullable source CTAS column should remain nullable: %#v", query.Mutation.Columns[1])
+	}
+}
+
+func TestUnboundStatementBindCreateTableAsSelectDoesNotInventPrimaryKey(t *testing.T) {
+	context := NewBindContext(MemoryCatalog{Tables: []TableDefinition{{
+		Schema: "quanta",
+		Name:   "orders",
+		Fields: []FieldDefinition{
+			{Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true},
+			{Name: "o_totalprice", Type: DataTypeFloat, Nullable: true},
+		},
+	}}}, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("create table scratch_order_totals as select o_totalprice as total_price from orders limit 2")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if got, want := len(query.Mutation.Columns), 1; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	column := query.Mutation.Columns[0]
+	if column.Name != "total_price" || column.Type != DataTypeFloat || column.PrimaryKey {
+		t.Fatalf("CTAS column = %#v, want keyless total_price", column)
+	}
+	if !column.Nullable {
+		t.Fatalf("keyless CTAS column = %#v, want nullable source column preserved", column)
 	}
 }
 
