@@ -339,8 +339,8 @@ tests:
     compatibility: mysql
     requires: [insert, temporary_table, select, order_by]
     sql: |
-      insert into qs_mysql_compat_tmp_region_insert_select
-      select r_regionkey, r_name
+      insert into qs_mysql_compat_tmp_region_insert_select (region_name, region_key)
+      select r_name, r_regionkey
       from region
       where r_regionkey in (0, 1, 2)
       order by r_regionkey
@@ -365,7 +365,43 @@ tests:
         - [1, AMERICA]
         - [2, ASIA]
 
-  - id: mysql_compat_temp_tables.053.drop_insert_select_temp_table
+  - id: mysql_compat_temp_tables.053.aggregate_insert_select_temp_table_count
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_aggregate
+    compatibility: mysql
+    requires: [select, temporary_table, aggregate]
+    sql: |
+      select count(*) as region_count
+      from qs_mysql_compat_tmp_region_insert_select
+      where region_key >= 0
+    expect:
+      columns: [region_count]
+      rows:
+        - [3]
+
+  - id: mysql_compat_temp_tables.054.aggregate_insert_select_temp_table_group_count
+    status: supported
+    kind: query
+    order: exact
+    feature: temp_tables_grouped_aggregate
+    compatibility: mysql
+    requires: [select, temporary_table, aggregate, group_by, order_by]
+    sql: |
+      select region_name, count(*) as region_count
+      from qs_mysql_compat_tmp_region_insert_select
+      where region_key >= 0
+      group by region_name
+      order by region_name
+    expect:
+      columns: [region_name, region_count]
+      rows:
+        - [AFRICA, 1]
+        - [AMERICA, 1]
+        - [ASIA, 1]
+
+  - id: mysql_compat_temp_tables.055.drop_insert_select_temp_table
     status: supported
     kind: statement
     feature: temp_tables_ddl

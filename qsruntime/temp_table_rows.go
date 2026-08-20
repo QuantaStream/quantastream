@@ -71,6 +71,19 @@ func (r SQLRuntime) selectTemporaryTableRuntimeResult(request qsbridge.Execution
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, diagnostics, true
 	}
+	if len(runtimeRequest.GroupBy) > 0 {
+		result := directBitmapMaterializedGroupedAggregateResult(runtimeRequest, rowSet, ExecutionResult{})
+		return result, result.Diagnostics, true
+	}
+	if len(runtimeRequest.SQLAggregates) > 0 {
+		result := ExecutionResult{}
+		if directBitmapSingleTopNAggregate(runtimeRequest.SQLAggregates) {
+			result = directBitmapTopNAggregateResult(runtimeRequest, rowSet, result)
+		} else {
+			result = directBitmapMaterializedAggregateResult(runtimeRequest, rowSet, result)
+		}
+		return result, result.Diagnostics, true
+	}
 	rowSet, diagnostics = directBitmapOrderProjectedRows(runtimeRequest, rowSet)
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{Diagnostics: diagnostics}, diagnostics, true
@@ -657,8 +670,11 @@ func temporaryTableSelectShapeDiagnostics(request ExecutionRequest) qsbridge.Dia
 	if len(request.Joins) > 0 || len(request.Memberships) > 0 {
 		return temporaryTableRowsDiagnostics("temporary table SELECT does not support joins yet")
 	}
-	if len(request.GroupBy) > 0 || len(request.SQLAggregates) > 0 || len(request.Aggregates) > 0 || len(request.Having) > 0 {
-		return temporaryTableRowsDiagnostics("temporary table SELECT does not support aggregation yet")
+	if len(request.Aggregates) > 0 {
+		return temporaryTableRowsDiagnostics("temporary table SELECT does not support legacy aggregate requests")
+	}
+	if len(request.Having) > 0 && len(request.GroupBy) == 0 {
+		return temporaryTableRowsDiagnostics("temporary table SELECT does not support HAVING without GROUP BY yet")
 	}
 	return nil
 }

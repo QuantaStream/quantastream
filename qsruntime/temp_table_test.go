@@ -452,3 +452,92 @@ func TestSQLRuntimeCreateTemporaryTableAsSelectMaterializesRows(t *testing.T) {
 		t.Fatalf("second market_segment = %#v, want %#v", got, want)
 	}
 }
+
+func TestSQLRuntimeSelectTemporaryTableAggregatesRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	applyActions := func(result SQLExecutionResult) {
+		t.Helper()
+		transition := runtime.Session.PreviewSessionTransition(result.Runtime.Statement.SessionActions)
+		if transition.Diagnostics.BlocksNative() {
+			t.Fatalf("session transition diagnostics = %#v", transition.Diagnostics)
+		}
+		runtime.Session = transition.After
+	}
+
+	create, err := runtime.ExecuteSQL(context.Background(), "create temporary table scratch_keys (customer_key int not null, market_segment varchar(16), primary key (customer_key))", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("CREATE TEMPORARY TABLE failed: %v", err)
+	}
+	if !create.Supported() {
+		t.Fatalf("create diagnostics = %#v runtime=%#v", create.Diagnostics, create.Runtime.Diagnostics)
+	}
+	applyActions(create)
+
+	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys values (2, 'BUILDING'), (1, 'AUTOMOBILE'), (3, 'BUILDING')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INSERT temporary table failed: %v", err)
+	}
+	if !insert.Supported() {
+		t.Fatalf("insert diagnostics = %#v runtime=%#v", insert.Diagnostics, insert.Runtime.Diagnostics)
+	}
+	applyActions(insert)
+
+	countResult, err := runtime.ExecuteSQL(context.Background(), "select count(*) as row_count, sum(customer_key) as key_sum from scratch_keys where customer_key >= 1", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT aggregate temporary table failed: %v", err)
+	}
+	if !countResult.Supported() {
+		t.Fatalf("count diagnostics = %#v runtime=%#v", countResult.Diagnostics, countResult.Runtime.Diagnostics)
+	}
+	countChunk, diagnostics := countResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("count chunk diagnostics = %#v", diagnostics)
+	}
+	if len(countChunk.Rows) != 1 {
+		t.Fatalf("count rows = %#v, want one", countChunk.Rows)
+	}
+	if got, want := countChunk.Rows[0][0].Value, int64(3); got != want {
+		t.Fatalf("row_count = %#v, want %#v", got, want)
+	}
+	if got, want := countChunk.Rows[0][1].Value, float64(6); got != want {
+		t.Fatalf("key_sum = %#v, want %#v", got, want)
+	}
+
+	groupResult, err := runtime.ExecuteSQL(context.Background(), "select market_segment, count(*) as segment_count from scratch_keys group by market_segment order by market_segment", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT grouped aggregate temporary table failed: %v", err)
+	}
+	if !groupResult.Supported() {
+		t.Fatalf("group diagnostics = %#v runtime=%#v", groupResult.Diagnostics, groupResult.Runtime.Diagnostics)
+	}
+	groupChunk, diagnostics := groupResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("group chunk diagnostics = %#v", diagnostics)
+	}
+	if len(groupChunk.Rows) != 2 {
+		t.Fatalf("group rows = %#v, want two", groupChunk.Rows)
+	}
+	if got, want := groupChunk.Rows[0][0].Value, "AUTOMOBILE"; got != want {
+		t.Fatalf("first market_segment = %#v, want %#v", got, want)
+	}
+	if got, want := groupChunk.Rows[0][1].Value, int64(1); got != want {
+		t.Fatalf("first segment_count = %#v, want %#v", got, want)
+	}
+	if got, want := groupChunk.Rows[1][0].Value, "BUILDING"; got != want {
+		t.Fatalf("second market_segment = %#v, want %#v", got, want)
+	}
+	if got, want := groupChunk.Rows[1][1].Value, int64(2); got != want {
+		t.Fatalf("second segment_count = %#v, want %#v", got, want)
+	}
+	if executed {
+		t.Fatalf("temporary table aggregate reads should not dispatch to the direct executor")
+	}
+}
