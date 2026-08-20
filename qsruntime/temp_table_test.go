@@ -156,6 +156,71 @@ func TestSQLRuntimeTemporaryTableRowsStayInSession(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeInsertSelectTemporaryTableMaterializesRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	applyActions := func(result SQLExecutionResult) {
+		t.Helper()
+		transition := runtime.Session.PreviewSessionTransition(result.Runtime.Statement.SessionActions)
+		if transition.Diagnostics.BlocksNative() {
+			t.Fatalf("session transition diagnostics = %#v", transition.Diagnostics)
+		}
+		runtime.Session = transition.After
+	}
+
+	create, err := runtime.ExecuteSQL(context.Background(), "create temporary table scratch_keys (customer_key int not null, market_segment varchar(16), primary key (customer_key))", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("CREATE TEMPORARY TABLE failed: %v", err)
+	}
+	if !create.Supported() {
+		t.Fatalf("create diagnostics = %#v runtime=%#v", create.Diagnostics, create.Runtime.Diagnostics)
+	}
+	applyActions(create)
+
+	insert, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys (customer_key, market_segment) select 2 as customer_key, 'BUILDING' as market_segment union all select 1 as customer_key, 'AUTOMOBILE' as market_segment", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INSERT SELECT temporary table failed: %v", err)
+	}
+	if !insert.Supported() {
+		t.Fatalf("insert diagnostics = %#v runtime=%#v", insert.Diagnostics, insert.Runtime.Diagnostics)
+	}
+	if insert.Runtime.Statement.AffectedRows != 2 {
+		t.Fatalf("affected rows = %d, want 2", insert.Runtime.Statement.AffectedRows)
+	}
+	if executed {
+		t.Fatalf("projection-only INSERT SELECT source should not dispatch to the direct executor")
+	}
+	applyActions(insert)
+
+	selectResult, err := runtime.ExecuteSQL(context.Background(), "select customer_key, market_segment from scratch_keys order by customer_key limit 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT temporary table failed: %v", err)
+	}
+	if !selectResult.Supported() {
+		t.Fatalf("select diagnostics = %#v runtime=%#v", selectResult.Diagnostics, selectResult.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := selectResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("result chunk diagnostics = %#v", diagnostics)
+	}
+	if got, want := len(chunk.Rows), 2; got != want {
+		t.Fatalf("rows = %d, want %d", got, want)
+	}
+	if got, want := chunk.Rows[0][0].Value, int64(1); got != want {
+		t.Fatalf("first customer_key = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[1][1].Value, "BUILDING"; got != want {
+		t.Fatalf("second market_segment = %#v, want %#v", got, want)
+	}
+}
+
 func TestSQLRuntimeCreateTemporaryTableAsSelectMaterializesRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

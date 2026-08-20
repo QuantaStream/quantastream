@@ -253,10 +253,6 @@ func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
 	assertSimpleParserRejects(t, "alter table customers_qa add column nickname varchar(40)", "ALTER TABLE is not supported yet")
 }
 
-func TestSimpleParserBridgeRejectsInsertSelectBoundary(t *testing.T) {
-	assertSimpleParserRejects(t, "insert into customers_qa (cust_id, first_name) select c_custkey, c_name from customer", "INSERT ... SELECT is not supported yet")
-}
-
 func TestSimpleParserBridgeRejectsReplaceAndOnDuplicateBoundary(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1930,6 +1926,29 @@ func TestSimpleParserBridgeParsesInsertValues(t *testing.T) {
 	age, ok := statement.Insert.Rows[0][2].(UnboundLiteralExpr)
 	if !ok || age.Kind != ValueInt || age.Value != int64(42) {
 		t.Fatalf("age literal = %#v, want int 42", statement.Insert.Rows[0][2])
+	}
+}
+
+func TestSimpleParserBridgeParsesInsertSelect(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa (cust_id, first_name) select c_custkey, c_name from customer where c_custkey in (1, 2) order by c_custkey")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.Insert.Table.Name != "customers_qa" {
+		t.Fatalf("insert table = %#v, want customers_qa", statement.Insert.Table)
+	}
+	if got := statement.Insert.Columns; len(got) != 2 || got[0] != "cust_id" || got[1] != "first_name" {
+		t.Fatalf("insert columns = %#v, want cust_id, first_name", got)
+	}
+	if len(statement.Insert.Rows) != 0 {
+		t.Fatalf("insert rows = %#v, want none for INSERT SELECT", statement.Insert.Rows)
+	}
+	wantSQL := "select c_custkey, c_name from customer where c_custkey in (1, 2) order by c_custkey"
+	if statement.Insert.SourceSQL != wantSQL {
+		t.Fatalf("SourceSQL = %q, want %q", statement.Insert.SourceSQL, wantSQL)
 	}
 }
 

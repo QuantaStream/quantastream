@@ -329,6 +329,44 @@ func TestUnboundStatementBindInsert(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindInsertSelect(t *testing.T) {
+	catalog := NewSessionCatalog(testBindCatalog(), SessionContext{
+		CurrentSchema: "quanta",
+		TemporaryTables: map[string]TableDefinition{
+			temporaryTableKey("quanta", "scratch_keys"): {
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []FieldDefinition{
+					{Name: "customer_key", Type: DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}, "quanta")
+	context := NewBindContext(catalog, "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("insert into scratch_keys (customer_key, customer_name) select c_custkey, c_name from customer order by c_custkey limit 2")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindInsert || query.Mutation.Kind != MutationInsert {
+		t.Fatalf("query kind/mutation = %q/%q, want insert", query.Kind, query.Mutation.Kind)
+	}
+	if query.Mutation.SourceSQL != "select c_custkey, c_name from customer order by c_custkey limit 2" {
+		t.Fatalf("SourceSQL = %q", query.Mutation.SourceSQL)
+	}
+	if len(query.Mutation.Rows) != 0 {
+		t.Fatalf("mutation rows = %#v, want none for INSERT SELECT", query.Mutation.Rows)
+	}
+	if got := query.Mutation.Columns; len(got) != 2 || got[0].Name != "customer_key" || got[1].Name != "customer_name" {
+		t.Fatalf("mutation columns = %#v, want customer_key, customer_name", got)
+	}
+}
+
 func TestUnboundStatementBindUpdate(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{

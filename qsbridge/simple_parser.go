@@ -508,15 +508,36 @@ func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("INSERT must include INTO"), false
 	}
-	if _, _, ok := splitBeforeTopLevelKeyword(insertBody, "select"); ok {
-		return UnboundStatement{}, simpleParserDiagnostic("INSERT ... SELECT is not supported yet"), false
+	if diagnostic, blocked := simpleInsertOnDuplicateKeyDiagnostic(insertBody); blocked {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if targetText, sourceText, ok := splitBeforeTopLevelKeyword(insertBody, "select"); ok {
+		table, columns, diagnostic, ok := parseSimpleInsertTarget(targetText)
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
+		sourceSQL := "select " + strings.TrimSpace(sourceText)
+		sourceStatement, sourceDiagnostics := SimpleParserBridge{}.Parse(sourceSQL)
+		if sourceDiagnostics.BlocksNative() {
+			return UnboundStatement{}, sourceDiagnostics[0], false
+		}
+		if sourceStatement.Kind != QueryKindSelect && sourceStatement.Kind != QueryKindUnionAll {
+			return UnboundStatement{}, simpleParserDiagnostic("INSERT SELECT must use a SELECT statement"), false
+		}
+		return UnboundStatement{
+			SQL:  sql,
+			Kind: QueryKindInsert,
+			Insert: UnboundInsert{
+				Table:     table,
+				Columns:   columns,
+				SourceSQL: sourceSQL,
+				Result:    ResultShape{Kind: ResultStatement},
+			},
+		}, Diagnostic{}, true
 	}
 	targetText, valuesText, ok := splitBeforeKeyword(insertBody, "values")
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("INSERT must include VALUES"), false
-	}
-	if diagnostic, blocked := simpleInsertOnDuplicateKeyDiagnostic(valuesText); blocked {
-		return UnboundStatement{}, diagnostic, false
 	}
 	table, columns, diagnostic, ok := parseSimpleInsertTarget(targetText)
 	if !ok {

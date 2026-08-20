@@ -185,7 +185,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 	if prepared.Kind == qsbridge.QueryKindInsert {
-		if runtimeResult, diagnostics, ok := r.insertTemporaryTableRuntimeResult(request); ok {
+		if runtimeResult, diagnostics, ok := r.insertTemporaryTableRuntimeResult(ctx, request); ok {
 			result.Runtime = runtimeResult
 			result.Diagnostics = append(result.Diagnostics, diagnostics...)
 			result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)

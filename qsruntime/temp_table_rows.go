@@ -1,6 +1,7 @@
 package qsruntime
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
-func (r SQLRuntime) insertTemporaryTableRuntimeResult(request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {
+func (r SQLRuntime) insertTemporaryTableRuntimeResult(ctx context.Context, request qsbridge.ExecutionRequest) (ExecutionResult, qsbridge.DiagnosticSet, bool) {
 	runtimeRequest := NewSQLExecutionRequest(qsbridge.QuantaIntermediateQuery{}, request)
 	mutation := runtimeRequest.Mutation
 	if mutation.Kind != qsbridge.MutationInsert {
@@ -20,7 +21,13 @@ func (r SQLRuntime) insertTemporaryTableRuntimeResult(request qsbridge.Execution
 	if !ok {
 		return ExecutionResult{}, nil, false
 	}
-	rows, diagnostics := r.temporaryTableInsertRows(table, key, mutation)
+	var rows []qsbridge.TemporaryTableRow
+	var diagnostics qsbridge.DiagnosticSet
+	if strings.TrimSpace(mutation.SourceSQL) != "" {
+		rows, diagnostics = r.temporaryTableInsertSelectRows(ctx, table, key, mutation, request.Options)
+	} else {
+		rows, diagnostics = r.temporaryTableInsertRows(table, key, mutation)
+	}
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{
 			Diagnostics: diagnostics,
@@ -131,6 +138,57 @@ func (r SQLRuntime) temporaryTableInsertRows(table qsbridge.TableDefinition, key
 	return rows, nil
 }
 
+func (r SQLRuntime) temporaryTableInsertSelectRows(ctx context.Context, table qsbridge.TableDefinition, key string, mutation qsbridge.MutationShape, options qsbridge.ExecutionOptions) ([]qsbridge.TemporaryTableRow, qsbridge.DiagnosticSet) {
+	columnIndexes, diagnostics := temporaryTableInsertColumnIndexes(table, mutation.Columns)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	sourceSQL := strings.TrimSpace(mutation.SourceSQL)
+	if sourceSQL == "" {
+		return nil, temporaryTableRowsDiagnostics("INSERT SELECT requires a SELECT statement")
+	}
+	sourceResult, err := r.ExecuteSQL(ctx, sourceSQL, options)
+	if err != nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "INSERT SELECT temporary table source failed: "+err.Error()),
+		}
+	}
+	if sourceResult.Diagnostics.BlocksNative() || sourceResult.Runtime.Diagnostics.BlocksNative() {
+		diagnostics := append(qsbridge.DiagnosticSet(nil), sourceResult.Diagnostics...)
+		diagnostics = append(diagnostics, sourceResult.Runtime.Diagnostics...)
+		return nil, diagnostics
+	}
+	if len(sourceResult.Request.ResultColumns) != len(columnIndexes) {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "INSERT SELECT result shape changed during execution"),
+		}
+	}
+	chunk, diagnostics := sourceResult.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	existingKeys := temporaryTablePrimaryKeySet(table, r.Session.TemporaryTableRows[key].Rows)
+	rows := make([]qsbridge.TemporaryTableRow, 0, len(chunk.Rows))
+	for rowIndex, row := range chunk.Rows {
+		if len(row) != len(columnIndexes) {
+			return nil, temporaryTableRowsDiagnostics(fmt.Sprintf("INSERT SELECT row %d has %d values for %d columns", rowIndex+1, len(row), len(columnIndexes)))
+		}
+		materialized, diagnostics := temporaryTableInsertResultRow(table, columnIndexes, row)
+		if diagnostics.BlocksNative() {
+			return nil, diagnostics
+		}
+		keyValue, hasPrimaryKey := temporaryTablePrimaryKey(table, materialized)
+		if hasPrimaryKey {
+			if _, exists := existingKeys[keyValue]; exists {
+				return nil, temporaryTableRowsDiagnostics("duplicate primary key for temporary table " + qualifiedRuntimeTableName(table.Schema, table.Name))
+			}
+			existingKeys[keyValue] = struct{}{}
+		}
+		rows = append(rows, materialized)
+	}
+	return rows, nil
+}
+
 func temporaryTableInsertColumnIndexes(table qsbridge.TableDefinition, columns []qsbridge.FieldRef) ([]int, qsbridge.DiagnosticSet) {
 	if len(columns) == 0 {
 		indexes := make([]int, len(table.Fields))
@@ -168,6 +226,27 @@ func temporaryTableInsertRow(table qsbridge.TableDefinition, columnIndexes []int
 			return qsbridge.TemporaryTableRow{}, diagnostics
 		}
 		cell, diagnostics = temporaryTableCoerceCell(cell, table.Fields[fieldIndex])
+		if diagnostics.BlocksNative() {
+			return qsbridge.TemporaryTableRow{}, diagnostics
+		}
+		values[fieldIndex] = cell
+	}
+	for fieldIndex, field := range table.Fields {
+		if field.Nullable || !directBitmapNullCell(values[fieldIndex]) {
+			continue
+		}
+		return qsbridge.TemporaryTableRow{}, temporaryTableRowsDiagnostics("temporary table column cannot be NULL: " + field.Name)
+	}
+	return qsbridge.TemporaryTableRow{Values: values}, nil
+}
+
+func temporaryTableInsertResultRow(table qsbridge.TableDefinition, columnIndexes []int, row qsbridge.ResultRow) (qsbridge.TemporaryTableRow, qsbridge.DiagnosticSet) {
+	values := make(qsbridge.ResultRow, len(table.Fields))
+	for i := range values {
+		values[i] = qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}
+	}
+	for valueIndex, fieldIndex := range columnIndexes {
+		cell, diagnostics := temporaryTableCoerceCell(row[valueIndex], table.Fields[fieldIndex])
 		if diagnostics.BlocksNative() {
 			return qsbridge.TemporaryTableRow{}, diagnostics
 		}

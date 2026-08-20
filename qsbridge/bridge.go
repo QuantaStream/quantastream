@@ -174,11 +174,12 @@ type UnboundUnionAll struct {
 
 // UnboundInsert describes an INSERT shape before catalog binding.
 type UnboundInsert struct {
-	Table    UnboundTable
-	Columns  []string
-	Rows     [][]UnboundExpr
-	Result   ResultShape
-	Blockers []NativeBlocker
+	Table     UnboundTable
+	Columns   []string
+	Rows      [][]UnboundExpr
+	SourceSQL string
+	Result    ResultShape
+	Blockers  []NativeBlocker
 }
 
 // UnboundAssignment describes one UPDATE assignment before catalog binding.
@@ -804,6 +805,30 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 		columns = append(columns, ref)
 	}
 
+	sourceSQL := strings.TrimSpace(insertStmt.SourceSQL)
+	if sourceSQL != "" {
+		sourceColumns, sourceDiagnostics := bindInsertSelectSourceColumns(context, sourceSQL)
+		diagnostics = append(diagnostics, sourceDiagnostics...)
+		if diagnostics.BlocksNative() {
+			return query, diagnostics
+		}
+		if len(sourceColumns) != len(columns) {
+			diagnostics = append(diagnostics, ErrorDiagnostic(
+				DiagnosticParserBoundary,
+				PhaseBind,
+				fmt.Sprintf("INSERT SELECT projects %d columns for %d target columns", len(sourceColumns), len(columns)),
+			))
+			return query, diagnostics
+		}
+		query.Mutation = MutationShape{
+			Kind:      MutationInsert,
+			Target:    target.Instance,
+			Columns:   columns,
+			SourceSQL: sourceSQL,
+		}
+		return query, diagnostics
+	}
+
 	rows := make([]MutationRow, 0, len(insertStmt.Rows))
 	for _, row := range insertStmt.Rows {
 		if len(columns) > 0 && len(row) != len(columns) {
@@ -836,6 +861,37 @@ func BindInsert(context *BindContext, insertStmt UnboundInsert) (QueryIR, Diagno
 		Rows:    rows,
 	}
 	return query, diagnostics
+}
+
+func bindInsertSelectSourceColumns(context *BindContext, sourceSQL string) ([]ResultColumn, DiagnosticSet) {
+	if context == nil {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticInternalInvariant, PhaseBind, "bind context is nil"),
+		}
+	}
+	sourceStatement, diagnostics := SimpleParserBridge{}.Parse(sourceSQL)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	if sourceStatement.Kind != QueryKindSelect && sourceStatement.Kind != QueryKindUnionAll {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "INSERT SELECT must use a SELECT statement"),
+		}
+	}
+	expanded, expansionDiagnostics := ExpandStatementViews(context.Catalog, SimpleParserBridge{}, context.DefaultSchema, sourceStatement)
+	if expansionDiagnostics.BlocksNative() {
+		return nil, expansionDiagnostics
+	}
+	sourceContext := NewBindContext(context.Catalog, context.DefaultSchema)
+	sourceQuery, bindDiagnostics := expanded.Bind(sourceContext)
+	if bindDiagnostics.BlocksNative() {
+		return nil, bindDiagnostics
+	}
+	queryDiagnostics := sourceQuery.Diagnostics()
+	if queryDiagnostics.BlocksNative() {
+		return nil, queryDiagnostics
+	}
+	return sourceQuery.ResultColumns(), nil
 }
 
 // BindUpdate binds parser-neutral UPDATE metadata into QueryIR.
