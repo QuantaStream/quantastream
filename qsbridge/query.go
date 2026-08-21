@@ -563,6 +563,9 @@ func (c *fieldCollector) addMutation(mutation MutationShape) {
 		for _, field := range step.Columns {
 			c.addField(field)
 		}
+		for _, field := range step.ReferencedColumns {
+			c.addField(field)
+		}
 	}
 }
 

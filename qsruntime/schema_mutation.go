@@ -136,8 +136,12 @@ func (h LegacyQuantaSessionHandle) AlterTableAddForeignKey(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
+	validationSteps := schemaMutationValidationStepKinds(request.Mutation.ValidationSteps)
+	if validationSteps == "" {
+		validationSteps = "foreign_key_parent_key_check, foreign_key_type_compatibility, foreign_key_orphan_scan"
+	}
 	return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD FOREIGN KEY is not implemented yet; QS must validate existing rows and update relationship/catalog artifacts before enabling it"),
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD FOREIGN KEY is not implemented yet; required validation steps: "+validationSteps+"; QS must validate existing rows and update relationship/catalog artifacts before enabling it"),
 	}, nil
 }
 

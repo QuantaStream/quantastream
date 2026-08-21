@@ -669,6 +669,31 @@ func TestUnboundStatementBindAlterTableAddForeignKey(t *testing.T) {
 	if relationship.Direction != JoinChildToParent || relationship.Cardinality != "many_to_one" || relationship.Encoding.Kind != RelationshipEncodingVector {
 		t.Fatalf("relationship metadata = %#v, want child-to-parent relation vector", relationship)
 	}
+	if got := query.Mutation.ValidationSteps; len(got) != 3 {
+		t.Fatalf("validation steps = %#v, want parent-key/type/orphan checks", got)
+	} else {
+		wantKinds := []MutationValidationKind{
+			MutationValidationForeignKeyParentKeyCheck,
+			MutationValidationForeignKeyTypeCompatibility,
+			MutationValidationForeignKeyOrphanScan,
+		}
+		wantCodes := []DiagnosticCode{
+			DiagnosticMutationForeignKeyParentKey,
+			DiagnosticMutationForeignKeyTypeMismatch,
+			DiagnosticMutationForeignKeyOrphan,
+		}
+		for i, step := range got {
+			if step.Kind != wantKinds[i] || step.FailureCode != wantCodes[i] {
+				t.Fatalf("validation step[%d] = %#v, want %s/%s", i, step, wantKinds[i], wantCodes[i])
+			}
+			if step.Target.Table != "orders" || step.ReferencedTarget.Table != "customer" {
+				t.Fatalf("validation step[%d] = %#v, want orders -> customer", i, step)
+			}
+			if len(step.Columns) != 1 || step.Columns[0].Name != "o_custkey" || len(step.ReferencedColumns) != 1 || step.ReferencedColumns[0].Name != "c_custkey" {
+				t.Fatalf("validation step[%d] = %#v, want o_custkey -> c_custkey", i, step)
+			}
+		}
+	}
 	access := query.RequiredAccess()
 	if !hasAccessRequirement(access, AccessCreate, "orders") {
 		t.Fatalf("RequiredAccess = %#v, want create on orders", access)

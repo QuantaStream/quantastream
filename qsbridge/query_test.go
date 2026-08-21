@@ -246,6 +246,32 @@ func TestQueryIRRequiredFieldsAndParametersIncludeMutationShape(t *testing.T) {
 	if len(parameters) != 2 || parameters[0].Index != 3 || parameters[1].Index != 4 {
 		t.Fatalf("update parameters = %#v, want assignment then predicate parameters", parameters)
 	}
+
+	customer := TableInstance{ID: "customer", Table: "customer"}
+	customerKey := FieldRef{Table: customer, Name: "c_custkey", Type: DataTypeInt, Roles: FieldRoleMutationValue}
+	alterFK := QueryIR{
+		Kind: QueryKindAlterTable,
+		Mutation: MutationShape{
+			Kind:   MutationAlterTableAddForeignKey,
+			Target: orders,
+			Columns: []FieldRef{
+				FieldRef{Table: orders, Name: "o_custkey", Type: DataTypeInt, Roles: FieldRoleMutationTarget},
+			},
+			ValidationSteps: []MutationValidationStep{
+				{
+					Kind:              MutationValidationForeignKeyOrphanScan,
+					Target:            orders,
+					Columns:           []FieldRef{{Table: orders, Name: "o_custkey", Type: DataTypeInt}},
+					ReferencedTarget:  customer,
+					ReferencedColumns: []FieldRef{customerKey},
+				},
+			},
+		},
+	}
+	fields = alterFK.RequiredFields()
+	if len(fields) != 2 || fields[0].Name != "o_custkey" || fields[1].Name != "c_custkey" {
+		t.Fatalf("alter foreign key fields = %#v, want child and parent validation fields", fields)
+	}
 }
 
 func TestQueryIRDiagnosticsCollectsBlockersPredicatesAndJoins(t *testing.T) {

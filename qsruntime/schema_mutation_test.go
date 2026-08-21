@@ -282,6 +282,11 @@ func TestLegacySchemaMutationHandleAlterTableAddForeignKeyReportsExplicitUnsuppo
 					Direction: qsbridge.JoinChildToParent,
 				},
 			},
+			ValidationSteps: []qsbridge.MutationValidationStep{
+				{Kind: qsbridge.MutationValidationForeignKeyParentKeyCheck},
+				{Kind: qsbridge.MutationValidationForeignKeyTypeCompatibility},
+				{Kind: qsbridge.MutationValidationForeignKeyOrphanScan},
+			},
 		},
 	}
 
@@ -292,7 +297,7 @@ func TestLegacySchemaMutationHandleAlterTableAddForeignKeyReportsExplicitUnsuppo
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want unsupported mutation blocker", diagnostics)
 	}
-	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD FOREIGN KEY is not implemented yet") {
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD FOREIGN KEY is not implemented yet") || !strings.Contains(diagnostics[0].Error(), "foreign_key_parent_key_check, foreign_key_type_compatibility, foreign_key_orphan_scan") {
 		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD FOREIGN KEY", diagnostics)
 	}
 }

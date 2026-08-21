@@ -384,6 +384,7 @@ func cloneMutationValidationSteps(steps []qsbridge.MutationValidationStep) []qsb
 	cloned := make([]qsbridge.MutationValidationStep, 0, len(steps))
 	for _, step := range steps {
 		step.Columns = append([]qsbridge.FieldRef(nil), step.Columns...)
+		step.ReferencedColumns = append([]qsbridge.FieldRef(nil), step.ReferencedColumns...)
 		cloned = append(cloned, step)
 	}
 	return cloned

@@ -616,15 +616,23 @@ const (
 	MutationValidationPrimaryKeyNullScan MutationValidationKind = "primary_key_null_scan"
 	// MutationValidationPrimaryKeyDuplicateScan checks that proposed primary-key tuples are unique.
 	MutationValidationPrimaryKeyDuplicateScan MutationValidationKind = "primary_key_duplicate_scan"
+	// MutationValidationForeignKeyParentKeyCheck checks referenced parent-key metadata.
+	MutationValidationForeignKeyParentKeyCheck MutationValidationKind = "foreign_key_parent_key_check"
+	// MutationValidationForeignKeyTypeCompatibility checks child and referenced parent field compatibility.
+	MutationValidationForeignKeyTypeCompatibility MutationValidationKind = "foreign_key_type_compatibility"
+	// MutationValidationForeignKeyOrphanScan checks existing child rows for missing parent keys.
+	MutationValidationForeignKeyOrphanScan MutationValidationKind = "foreign_key_orphan_scan"
 )
 
 // MutationValidationStep describes a non-mutating validation scan required by a mutation.
 type MutationValidationStep struct {
-	Kind           MutationValidationKind
-	Target         TableInstance
-	Columns        []FieldRef
-	FailureCode    DiagnosticCode
-	FailureMessage string
+	Kind              MutationValidationKind
+	Target            TableInstance
+	Columns           []FieldRef
+	ReferencedTarget  TableInstance
+	ReferencedColumns []FieldRef
+	FailureCode       DiagnosticCode
+	FailureMessage    string
 }
 
 // FailureDiagnostic returns the diagnostic a runtime should emit if this validation step fails.
@@ -638,7 +646,7 @@ func (s MutationValidationStep) FailureDiagnostic(phase DiagnosticPhase) Diagnos
 		Severity: SeverityError,
 		Phase:    phase,
 		Message:  message,
-		Fields:   append([]FieldRef(nil), s.Columns...),
+		Fields:   append(append([]FieldRef(nil), s.Columns...), s.ReferencedColumns...),
 	}
 }
 

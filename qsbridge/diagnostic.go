@@ -84,6 +84,12 @@ const (
 	DiagnosticMutationPrimaryKeyNull DiagnosticCode = "mutation_primary_key_null"
 	// DiagnosticMutationPrimaryKeyDuplicate marks existing duplicate data that blocks promoting columns to a primary key.
 	DiagnosticMutationPrimaryKeyDuplicate DiagnosticCode = "mutation_primary_key_duplicate"
+	// DiagnosticMutationForeignKeyParentKey marks missing or incompatible parent-key metadata for a foreign key.
+	DiagnosticMutationForeignKeyParentKey DiagnosticCode = "mutation_foreign_key_parent_key"
+	// DiagnosticMutationForeignKeyTypeMismatch marks incompatible child/parent field types for a foreign key.
+	DiagnosticMutationForeignKeyTypeMismatch DiagnosticCode = "mutation_foreign_key_type_mismatch"
+	// DiagnosticMutationForeignKeyOrphan marks existing child rows with no matching parent key.
+	DiagnosticMutationForeignKeyOrphan DiagnosticCode = "mutation_foreign_key_orphan"
 	// DiagnosticUnsupportedMutation marks mutation semantics outside the initial native legality model.
 	DiagnosticUnsupportedMutation DiagnosticCode = "unsupported_mutation"
 	// DiagnosticTruncateChildDataExists rejects truncating a parent before dependent child tables are empty.

@@ -184,6 +184,7 @@ func cloneMutationValidationSteps(steps []MutationValidationStep) []MutationVali
 	cloned := make([]MutationValidationStep, 0, len(steps))
 	for _, step := range steps {
 		step.Columns = append([]FieldRef(nil), step.Columns...)
+		step.ReferencedColumns = append([]FieldRef(nil), step.ReferencedColumns...)
 		cloned = append(cloned, step)
 	}
 	return cloned

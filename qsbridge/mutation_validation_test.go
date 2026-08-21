@@ -70,21 +70,25 @@ func TestQueryIRDiagnosticsIncludesMutationPolicy(t *testing.T) {
 
 func TestMutationValidationStepFailureDiagnosticCarriesFields(t *testing.T) {
 	orders := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders", Alias: "o"}
+	customer := TableInstance{ID: "customer_1", Schema: "quanta", Table: "customer", Alias: "c"}
 	orderKey := FieldRef{Table: orders, Name: "o_orderkey", Type: DataTypeInt, PrimaryKey: true}
+	customerKey := FieldRef{Table: customer, Name: "c_custkey", Type: DataTypeInt, PrimaryKey: true}
 	step := MutationValidationStep{
-		Kind:           MutationValidationPrimaryKeyDuplicateScan,
-		Target:         orders,
-		Columns:        []FieldRef{orderKey},
-		FailureCode:    DiagnosticMutationPrimaryKeyDuplicate,
-		FailureMessage: "primary key duplicates exist",
+		Kind:              MutationValidationForeignKeyOrphanScan,
+		Target:            orders,
+		Columns:           []FieldRef{orderKey},
+		ReferencedTarget:  customer,
+		ReferencedColumns: []FieldRef{customerKey},
+		FailureCode:       DiagnosticMutationForeignKeyOrphan,
+		FailureMessage:    "foreign key orphans exist",
 	}
 
 	diagnostic := step.FailureDiagnostic(PhaseExecute)
-	if diagnostic.Code != DiagnosticMutationPrimaryKeyDuplicate || diagnostic.Phase != PhaseExecute || diagnostic.Message != "primary key duplicates exist" {
-		t.Fatalf("diagnostic = %#v, want duplicate failure diagnostic", diagnostic)
+	if diagnostic.Code != DiagnosticMutationForeignKeyOrphan || diagnostic.Phase != PhaseExecute || diagnostic.Message != "foreign key orphans exist" {
+		t.Fatalf("diagnostic = %#v, want orphan failure diagnostic", diagnostic)
 	}
-	if len(diagnostic.Fields) != 1 || diagnostic.Fields[0].QualifiedName() != "o.o_orderkey" {
-		t.Fatalf("diagnostic fields = %#v, want o.o_orderkey", diagnostic.Fields)
+	if len(diagnostic.Fields) != 2 || diagnostic.Fields[0].QualifiedName() != "o.o_orderkey" || diagnostic.Fields[1].QualifiedName() != "c.c_custkey" {
+		t.Fatalf("diagnostic fields = %#v, want o.o_orderkey and c.c_custkey", diagnostic.Fields)
 	}
 }
 

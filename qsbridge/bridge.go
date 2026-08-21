@@ -1156,12 +1156,47 @@ func bindAlterTableAddForeignKey(context *BindContext, query QueryIR, target Bou
 		},
 	}
 	query.Mutation = MutationShape{
-		Kind:          MutationAlterTableAddForeignKey,
-		Target:        target.Instance,
-		Columns:       []FieldRef{childField},
-		Relationships: []RelationshipDefinition{relationship},
+		Kind:            MutationAlterTableAddForeignKey,
+		Target:          target.Instance,
+		Columns:         []FieldRef{childField},
+		Relationships:   []RelationshipDefinition{relationship},
+		ValidationSteps: alterTableAddForeignKeyValidationSteps(target.Instance, []FieldRef{childField}, parent, []FieldRef{parentField}),
 	}
 	return query, diagnostics
+}
+
+func alterTableAddForeignKeyValidationSteps(target TableInstance, columns []FieldRef, parent TableInstance, parentColumns []FieldRef) []MutationValidationStep {
+	clonedColumns := append([]FieldRef(nil), columns...)
+	clonedParentColumns := append([]FieldRef(nil), parentColumns...)
+	return []MutationValidationStep{
+		{
+			Kind:              MutationValidationForeignKeyParentKeyCheck,
+			Target:            target,
+			Columns:           append([]FieldRef(nil), clonedColumns...),
+			ReferencedTarget:  parent,
+			ReferencedColumns: append([]FieldRef(nil), clonedParentColumns...),
+			FailureCode:       DiagnosticMutationForeignKeyParentKey,
+			FailureMessage:    "referenced columns must identify a parent key before ALTER TABLE ADD FOREIGN KEY can activate",
+		},
+		{
+			Kind:              MutationValidationForeignKeyTypeCompatibility,
+			Target:            target,
+			Columns:           append([]FieldRef(nil), clonedColumns...),
+			ReferencedTarget:  parent,
+			ReferencedColumns: append([]FieldRef(nil), clonedParentColumns...),
+			FailureCode:       DiagnosticMutationForeignKeyTypeMismatch,
+			FailureMessage:    "foreign key child columns must be compatible with referenced parent columns before activation",
+		},
+		{
+			Kind:              MutationValidationForeignKeyOrphanScan,
+			Target:            target,
+			Columns:           append([]FieldRef(nil), clonedColumns...),
+			ReferencedTarget:  parent,
+			ReferencedColumns: append([]FieldRef(nil), clonedParentColumns...),
+			FailureCode:       DiagnosticMutationForeignKeyOrphan,
+			FailureMessage:    "existing child rows must all reference parent keys before ALTER TABLE ADD FOREIGN KEY can activate",
+		},
+	}
 }
 
 func bindCreateTableLikeColumns(context *BindContext, target TableInstance, source UnboundTable) ([]FieldRef, DiagnosticSet) {
