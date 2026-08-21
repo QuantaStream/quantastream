@@ -774,6 +774,9 @@ go run ./quanta-admin auth upsert \
 go run ./quanta-admin auth list \
   --account-file /etc/quantastream/accounts.yaml
 
+go run ./quanta-admin auth validate \
+  --account-file /etc/quantastream/accounts.yaml
+
 go run ./quanta-admin auth remove \
   --account-file /etc/quantastream/accounts.yaml \
   --user old_user

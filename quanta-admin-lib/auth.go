@@ -12,12 +12,17 @@ import (
 // AuthCmd groups local MySQL auth account-file operations.
 type AuthCmd struct {
 	List         AuthListCmd         `cmd:"" help:"List accounts in a static auth account file."`
+	Validate     AuthValidateCmd     `cmd:"" help:"Validate a static auth account file."`
 	Upsert       AuthUpsertCmd       `cmd:"" help:"Create or update one static auth account."`
 	Remove       AuthRemoveCmd       `cmd:"" help:"Remove one static auth account."`
 	HashPassword AuthHashPasswordCmd `cmd:"" name:"hash-password" help:"Print verifier hashes for a password."`
 }
 
 type AuthListCmd struct {
+	AccountFile string `help:"YAML static auth account file." required:""`
+}
+
+type AuthValidateCmd struct {
 	AccountFile string `help:"YAML static auth account file." required:""`
 }
 
@@ -44,6 +49,17 @@ func (c *AuthListCmd) Run(ctx *Context) error {
 		return err
 	}
 	printAuthAccounts(c.AccountFile, accounts)
+	return nil
+}
+
+func (c *AuthValidateCmd) Run(ctx *Context) error {
+	accounts, err := qsmysql.LoadStaticAccountFile(c.AccountFile)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("auth_account_file=%s\n", c.AccountFile)
+	fmt.Printf("auth_account_count=%d\n", len(accounts))
+	fmt.Println("auth_account_file_valid=true")
 	return nil
 }
 

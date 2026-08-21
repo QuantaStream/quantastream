@@ -91,6 +91,31 @@ func TestAuthUpsertRequiresPassword(t *testing.T) {
 	}
 }
 
+func TestAuthValidateCommandLoadsValidAccountFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.yaml")
+	if err := (&AuthUpsertCmd{AccountFile: path, User: "bench", Password: "secret"}).Run(&Context{}); err != nil {
+		t.Fatalf("AuthUpsertCmd.Run returned error: %v", err)
+	}
+	if err := (&AuthValidateCmd{AccountFile: path}).Run(&Context{}); err != nil {
+		t.Fatalf("AuthValidateCmd.Run returned error: %v", err)
+	}
+}
+
+func TestAuthValidateCommandRejectsInvalidAccountFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.yaml")
+	if err := os.WriteFile(path, []byte(`
+accounts:
+  - username: bench
+  - username: bench
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	err := (&AuthValidateCmd{AccountFile: path}).Run(&Context{})
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("AuthValidateCmd.Run error = %v, want duplicate-account error", err)
+	}
+}
+
 func TestAuthRemoveRejectsMissingAndLastAccount(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounts.yaml")
 	if err := (&AuthUpsertCmd{AccountFile: path, User: "bench", Password: "secret"}).Run(&Context{}); err != nil {

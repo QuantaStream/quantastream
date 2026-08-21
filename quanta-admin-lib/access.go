@@ -9,12 +9,17 @@ import (
 
 // AccessCmd groups local static SQL access-policy file operations.
 type AccessCmd struct {
-	List   AccessListCmd   `cmd:"" help:"List grants in a static SQL access policy file."`
-	Upsert AccessUpsertCmd `cmd:"" help:"Create or update one static SQL access grant."`
-	Remove AccessRemoveCmd `cmd:"" help:"Remove one static SQL access grant."`
+	List     AccessListCmd     `cmd:"" help:"List grants in a static SQL access policy file."`
+	Validate AccessValidateCmd `cmd:"" help:"Validate a static SQL access policy file."`
+	Upsert   AccessUpsertCmd   `cmd:"" help:"Create or update one static SQL access grant."`
+	Remove   AccessRemoveCmd   `cmd:"" help:"Remove one static SQL access grant."`
 }
 
 type AccessListCmd struct {
+	PolicyFile string `help:"YAML static SQL access policy file." required:""`
+}
+
+type AccessValidateCmd struct {
 	PolicyFile string `help:"YAML static SQL access policy file." required:""`
 }
 
@@ -43,6 +48,18 @@ func (c *AccessListCmd) Run(ctx *Context) error {
 		return err
 	}
 	printAccessGrants(c.PolicyFile, policy.Grants())
+	return nil
+}
+
+func (c *AccessValidateCmd) Run(ctx *Context) error {
+	policy, err := qsbridge.LoadAccessPolicyFile(c.PolicyFile)
+	if err != nil {
+		return err
+	}
+	grants := policy.Grants()
+	fmt.Printf("access_policy_file=%s\n", c.PolicyFile)
+	fmt.Printf("access_grant_count=%d\n", len(grants))
+	fmt.Println("access_policy_file_valid=true")
 	return nil
 }
 

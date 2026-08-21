@@ -110,6 +110,39 @@ func TestAccessUpsertRejectsDuplicateFields(t *testing.T) {
 	}
 }
 
+func TestAccessValidateCommandLoadsValidPolicyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	if err := (&AccessUpsertCmd{
+		PolicyFile:    path,
+		PrincipalKind: "role",
+		Principal:     "reader",
+		Privilege:     "select",
+		Table:         "orders",
+	}).Run(&Context{}); err != nil {
+		t.Fatalf("AccessUpsertCmd.Run returned error: %v", err)
+	}
+	if err := (&AccessValidateCmd{PolicyFile: path}).Run(&Context{}); err != nil {
+		t.Fatalf("AccessValidateCmd.Run returned error: %v", err)
+	}
+}
+
+func TestAccessValidateCommandRejectsInvalidPolicyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	if err := os.WriteFile(path, []byte(`
+grants:
+  - principal_kind: role
+    principal: reader
+    privilege: merge
+    table: orders
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	err := (&AccessValidateCmd{PolicyFile: path}).Run(&Context{})
+	if err == nil || !strings.Contains(err.Error(), "unsupported privilege") {
+		t.Fatalf("AccessValidateCmd.Run error = %v, want unsupported-privilege error", err)
+	}
+}
+
 func TestAccessRemoveRejectsMissingAndLastGrant(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "access-policy.yaml")
 	if err := (&AccessUpsertCmd{

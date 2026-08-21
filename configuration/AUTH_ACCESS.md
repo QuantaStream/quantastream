@@ -35,6 +35,9 @@ go run ./quanta-admin auth upsert \
 
 go run ./quanta-admin auth list \
   --account-file /etc/quantastream/accounts.yaml
+
+go run ./quanta-admin auth validate \
+  --account-file /etc/quantastream/accounts.yaml
 ```
 
 The admin command writes password verifier hashes and keeps the file mode at
@@ -92,6 +95,9 @@ go run ./quanta-admin access upsert \
   --fields l_orderkey,l_extendedprice,l_discount
 
 go run ./quanta-admin access list \
+  --policy-file /etc/quantastream/access-policy.yaml
+
+go run ./quanta-admin access validate \
   --policy-file /etc/quantastream/access-policy.yaml
 ```
 
@@ -165,6 +171,8 @@ inputs to the proxy process.
 - Empty `QUANTASTREAM_ACCESS_POLICY_FILE` leaves SQL authorization permissive.
 - Once an access policy file is configured, every query or mutation must satisfy
   the required table/field grants.
+- Run `qstream-admin auth validate` and `qstream-admin access validate` before
+  restarting a service with changed static security files.
 - Prefer role grants for normal users. Put roles on accounts, then grant SQL
   privileges to roles.
 - Include `schema: quanta` for TPC-H and standard QuantaStream deployments.
