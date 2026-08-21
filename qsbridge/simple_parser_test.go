@@ -197,28 +197,54 @@ func TestSimpleParserBridgeParsesUpdateOrderLimitBoundary(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsMultiTableMutationBoundaries(t *testing.T) {
-	tests := []struct {
-		name    string
-		sql     string
-		message string
-	}{
-		{
-			name:    "update join",
-			sql:     "update customer c inner join orders o on c.c_custkey = o.o_custkey set c.c_comment = 'seen' where o.o_orderkey = 1",
-			message: "UPDATE JOIN is not supported yet",
-		},
-		{
-			name:    "delete join",
-			sql:     "delete from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
-			message: "DELETE JOIN is not supported yet",
-		},
+func TestSimpleParserBridgeParsesUpdateJoinBoundary(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`update qs_mysql_compat_mutations_ctas as t
+inner join customer as c on t.id = c.c_custkey
+set t.name = c.c_name
+where t.id = 2`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assertSimpleParserRejects(t, test.sql, test.message)
-		})
+	if statement.Kind != QueryKindUpdate {
+		t.Fatalf("kind = %q, want update", statement.Kind)
 	}
+	if statement.Update.Table.Name != "qs_mysql_compat_mutations_ctas" || statement.Update.Table.Alias != "t" {
+		t.Fatalf("target table = %#v, want qs_mysql_compat_mutations_ctas as t", statement.Update.Table)
+	}
+	if got, want := len(statement.Update.Assignments), 1; got != want {
+		t.Fatalf("assignments = %d, want %d", got, want)
+	}
+	if statement.Update.Assignments[0].Column != "name" {
+		t.Fatalf("assignment column = %q, want name", statement.Update.Assignments[0].Column)
+	}
+	scalar, ok := statement.Update.Assignments[0].Value.(UnboundScalarSubqueryExpr)
+	if !ok {
+		t.Fatalf("assignment value = %T, want UnboundScalarSubqueryExpr", statement.Update.Assignments[0].Value)
+	}
+	if scalar.SQL != "select c.c_name from customer as c where c.c_custkey = 2" {
+		t.Fatalf("assignment scalar SQL = %q", scalar.SQL)
+	}
+	if got, want := len(statement.Update.Predicates), 1; got != want {
+		t.Fatalf("predicates = %d, want %d", got, want)
+	}
+	binary, ok := statement.Update.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok || binary.Op != BinaryOpIn {
+		t.Fatalf("predicate = %#v, want IN binary", statement.Update.Predicates[0].Expr)
+	}
+	subquery, ok := binary.Right.(UnboundListSubqueryExpr)
+	if !ok {
+		t.Fatalf("predicate right = %T, want UnboundListSubqueryExpr", binary.Right)
+	}
+	if subquery.SQL != "select c.c_custkey from customer as c where c.c_custkey = 2" {
+		t.Fatalf("predicate subquery SQL = %q", subquery.SQL)
+	}
+}
+
+func TestSimpleParserBridgeRejectsDeleteJoinWithoutTargetAlias(t *testing.T) {
+	assertSimpleParserRejects(t,
+		"delete from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
+		"DELETE JOIN is not supported yet",
+	)
 }
 
 func TestSimpleParserBridgeParsesDeleteStatement(t *testing.T) {

@@ -332,12 +332,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.012.update_join
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_multi_table_boundary
     compatibility: mysql
     requires: [update, join, aliases, where, comparison]
-    issue: "UPDATE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
     sql: |
       update qs_mysql_compat_mutations_ctas as t
       inner join customer as c on t.id = c.c_custkey

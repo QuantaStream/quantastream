@@ -594,7 +594,7 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, diagnostic, false
 	}
 	if hasAnyTopLevelKeyword(targetText, "join") {
-		return UnboundStatement{}, simpleParserDiagnostic("UPDATE JOIN is not supported yet"), false
+		return parseSimpleUpdateJoin(sql, targetText, mutationText, limit, offset, hasLimit, orderBy)
 	}
 	table, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
@@ -648,6 +648,110 @@ func parseSimpleUpdateAssignments(text string) ([]UnboundAssignment, int, Diagno
 		return nil, 0, simpleParserDiagnostic("UPDATE must include at least one assignment"), false
 	}
 	return assignments, parameterIndex, Diagnostic{}, true
+}
+
+func parseSimpleUpdateJoin(sql string, sourceText string, mutationText string, limit int, offset int, hasLimit bool, orderBy []UnboundSort) (UnboundStatement, Diagnostic, bool) {
+	assignmentText, whereText, hasWhere := splitOptionalTopLevelKeyword(mutationText, "where")
+	tables, joins, diagnostic, ok := parseSimpleSources(sourceText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if len(tables) < 2 {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table UPDATE requires a JOIN source"), false
+	}
+	targetTable := tables[0]
+	targetAlias := tableRefName(targetTable.Name, targetTable.Alias)
+	targetField, otherTable, otherQualifier, otherField, ok := simpleDeleteJoinKeyMapping(tables, joins, targetAlias)
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table UPDATE requires an equality join on the target table"), false
+	}
+	rewrittenWhere := ""
+	if hasWhere {
+		rewrittenWhere, diagnostic, ok = simpleJoinRewriteWhere(whereText, targetAlias, targetField, otherQualifier, otherField, "multi-table UPDATE")
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
+	}
+	assignments, parameterIndex, diagnostic, ok := parseSimpleUpdateJoinAssignments(assignmentText, targetAlias, otherTable, otherQualifier, rewrittenWhere, hasWhere)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+
+	sourceSQL := "select " + otherQualifier + "." + otherField + " from " + simpleDeleteJoinTableSQL(otherTable)
+	if hasWhere {
+		sourceSQL += " where " + rewrittenWhere
+	}
+	predicates := []UnboundPredicate{{
+		Expr:      UnboundBinary(BinaryOpIn, UnboundField(targetAlias, targetField), UnboundListSubquery(sourceSQL, PredicateScopeWhere)),
+		Placement: PredicatePushdown,
+		Scope:     PredicateScopeWhere,
+	}}
+	if parameterIndex != 1 {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table UPDATE does not support assignment parameters yet"), false
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindUpdate,
+		Update: UnboundUpdate{
+			Table:       targetTable,
+			Assignments: assignments,
+			Predicates:  predicates,
+			OrderBy:     orderBy,
+			Result:      ResultShape{Kind: ResultStatement, Limit: limit, HasLimit: hasLimit, Offset: offset},
+		},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleUpdateJoinAssignments(text string, targetAlias string, otherTable UnboundTable, otherQualifier string, rewrittenWhere string, hasWhere bool) ([]UnboundAssignment, int, Diagnostic, bool) {
+	parts := splitSimpleCommaList(text)
+	assignments := make([]UnboundAssignment, 0, len(parts))
+	parameterIndex := 1
+	for _, part := range parts {
+		op, left, right, ok := splitBeforeComparisonOperator(part)
+		if !ok || op != BinaryOpEqual {
+			return nil, 0, simpleParserDiagnostic("UPDATE assignments must be column = value"), false
+		}
+		column, diagnostic, ok := simpleUpdateJoinAssignmentColumn(left, targetAlias)
+		if !ok {
+			return nil, 0, diagnostic, false
+		}
+		value, diagnostic, ok := simpleUpdateJoinAssignmentValue(strings.TrimSpace(right), otherTable, otherQualifier, rewrittenWhere, hasWhere, &parameterIndex)
+		if !ok {
+			return nil, 0, diagnostic, false
+		}
+		assignments = append(assignments, UnboundAssignment{Column: column, Value: value})
+	}
+	if len(assignments) == 0 {
+		return nil, 0, simpleParserDiagnostic("UPDATE must include at least one assignment"), false
+	}
+	return assignments, parameterIndex, Diagnostic{}, true
+}
+
+func simpleUpdateJoinAssignmentColumn(text string, targetAlias string) (string, Diagnostic, bool) {
+	column := strings.TrimSpace(text)
+	if column == "" {
+		return "", simpleParserDiagnostic("UPDATE assignment column is empty"), false
+	}
+	qualifier, field := splitProjectionField(column)
+	if qualifier == "" {
+		return field, Diagnostic{}, true
+	}
+	if !strings.EqualFold(qualifier, targetAlias) {
+		return "", simpleParserDiagnostic("multi-table UPDATE assignments must target the UPDATE table alias"), false
+	}
+	return field, Diagnostic{}, true
+}
+
+func simpleUpdateJoinAssignmentValue(text string, otherTable UnboundTable, otherQualifier string, rewrittenWhere string, hasWhere bool, parameterIndex *int) (UnboundExpr, Diagnostic, bool) {
+	qualifier, field := splitProjectionField(text)
+	if qualifier != "" && strings.EqualFold(qualifier, otherQualifier) && field != "" {
+		if !hasWhere {
+			return nil, simpleParserDiagnostic("multi-table UPDATE joined-field assignments require a WHERE predicate"), false
+		}
+		sourceSQL := "select " + otherQualifier + "." + field + " from " + simpleDeleteJoinTableSQL(otherTable) + " where " + rewrittenWhere
+		return UnboundScalarSubquery(sourceSQL, PredicateScopeWhere), Diagnostic{}, true
+	}
+	return parseSimpleUpdateAssignmentValue(text, parameterIndex)
 }
 
 func parseSimpleUpdatePredicates(text string, parameterIndex int) ([]UnboundPredicate, Diagnostic, bool) {
@@ -743,7 +847,7 @@ func parseSimpleDeleteJoin(sql string, targetAlias string, deleteBody string) (U
 	}
 	sourceSQL := "select " + otherQualifier + "." + otherField + " from " + simpleDeleteJoinTableSQL(otherTable)
 	if hasWhere {
-		rewrittenWhere, diagnostic, ok := simpleDeleteJoinRewriteWhere(whereText, targetAlias, targetField, otherQualifier, otherField)
+		rewrittenWhere, diagnostic, ok := simpleJoinRewriteWhere(whereText, targetAlias, targetField, otherQualifier, otherField, "multi-table DELETE")
 		if !ok {
 			return UnboundStatement{}, diagnostic, false
 		}
@@ -805,13 +909,13 @@ func simpleDeleteJoinTableSQL(table UnboundTable) string {
 	return text
 }
 
-func simpleDeleteJoinRewriteWhere(text string, targetAlias string, targetField string, otherQualifier string, otherField string) (string, Diagnostic, bool) {
+func simpleJoinRewriteWhere(text string, targetAlias string, targetField string, otherQualifier string, otherField string, statement string) (string, Diagnostic, bool) {
 	trimmed := strings.TrimSpace(text)
 	targetRef := targetAlias + "." + targetField
 	otherRef := otherQualifier + "." + otherField
 	rewritten := strings.ReplaceAll(trimmed, targetRef, otherRef)
 	if strings.Contains(rewritten, targetAlias+".") {
-		return "", simpleParserDiagnostic("multi-table DELETE WHERE can only reference the target join key from the target alias"), false
+		return "", simpleParserDiagnostic(statement + " WHERE can only reference the target join key from the target alias"), false
 	}
 	return rewritten, Diagnostic{}, true
 }
