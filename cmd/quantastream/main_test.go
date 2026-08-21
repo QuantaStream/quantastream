@@ -53,6 +53,27 @@ func TestRunStatusPrintsStaticAuthWithoutPassword(t *testing.T) {
 	}
 }
 
+func TestRunStatusPrintsStaticAuthAccountFile(t *testing.T) {
+	accountFile := filepath.Join(t.TempDir(), "accounts.yaml")
+	if err := os.WriteFile(accountFile, []byte("accounts:\n  - username: bench\n"), 0o600); err != nil {
+		t.Fatalf("write account file: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-auth-mode", "static", "-auth-account-file", accountFile}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"auth=static", "auth_account_file=" + accountFile} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "auth_user=") {
+		t.Fatalf("output should not print one auth user when account file is configured:\n%s", output)
+	}
+}
+
 func TestRunRejectsUnsupportedAuthMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"-status", "-auth-mode", "jwt"}, &stdout, &stderr)

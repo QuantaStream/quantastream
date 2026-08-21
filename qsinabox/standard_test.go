@@ -81,6 +81,19 @@ func TestStandardPlanReportsStaticAuthUser(t *testing.T) {
 	}
 }
 
+func TestStandardPlanReportsStaticAuthAccountFile(t *testing.T) {
+	plan := NewStandardPlan(StandardConfig{AuthMode: "static", AuthUser: "bench", AuthAccountFile: "/etc/quantastream/accounts.yaml"}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	for _, want := range []string{"auth=static", "auth_account_file=/etc/quantastream/accounts.yaml"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("summary lines missing %q: %s", want, lines)
+		}
+	}
+	if strings.Contains(lines, "auth_user=") {
+		t.Fatalf("summary lines should not print one auth user when account file is configured: %s", lines)
+	}
+}
+
 func TestStandardPlanReportsWriteAheadLogPath(t *testing.T) {
 	plan := NewStandardPlan(StandardConfig{WriteAheadLogPath: "/tmp/qs.wal"}, shared.LocalNodeServices{})
 	lines := strings.Join(plan.SummaryLines(), "\n")

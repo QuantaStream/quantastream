@@ -17,6 +17,7 @@ DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
 AUTH_MODE="${QUANTASTREAM_AUTH_MODE:-permissive}"
 AUTH_USER="${QUANTASTREAM_AUTH_USER:-}"
 AUTH_PASSWORD="${QUANTASTREAM_AUTH_PASSWORD:-}"
+AUTH_ACCOUNT_FILE="${QUANTASTREAM_AUTH_ACCOUNT_FILE:-}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 
 usage() {
@@ -39,6 +40,8 @@ Environment:
   QUANTASTREAM_AUTH_USER    Static auth username. Defaults to MOLIG004 when static auth is enabled.
   QUANTASTREAM_AUTH_PASSWORD
                            Static auth password. Empty password is allowed.
+  QUANTASTREAM_AUTH_ACCOUNT_FILE
+                           YAML static auth account file used when auth mode is static.
   QUANTASTREAM_RUNTIME_PROBES
                            Set to true to log runtime execution probes.
 
@@ -84,6 +87,9 @@ echo "auth=${AUTH_MODE}"
 if [[ "${AUTH_MODE}" == "static" && -n "${AUTH_USER}" ]]; then
   echo "auth_user=${AUTH_USER}"
 fi
+if [[ "${AUTH_MODE}" == "static" && -n "${AUTH_ACCOUNT_FILE}" ]]; then
+  echo "auth_account_file=${AUTH_ACCOUNT_FILE}"
+fi
 echo "runtime_probes=${RUNTIME_PROBES}"
 
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/quantastream-standard.XXXXXX")"
@@ -127,6 +133,7 @@ go build -o "${server_bin}" ./cmd/quantastream
   -database "$DATABASE" \
   -auth-mode "$AUTH_MODE" \
   -auth-user "$AUTH_USER" \
+  -auth-account-file "$AUTH_ACCOUNT_FILE" \
   -runtime-probes="${RUNTIME_PROBES}" &
 server_pid="$!"
 wait "${server_pid}"

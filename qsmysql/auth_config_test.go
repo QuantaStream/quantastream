@@ -1,6 +1,10 @@
 package qsmysql
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestAuthConfigDefaultsToPermissive(t *testing.T) {
 	authenticator, err := (AuthConfig{}).Authenticator("quanta")
@@ -36,6 +40,36 @@ func TestAuthConfigBuildsStaticAuthenticator(t *testing.T) {
 	}
 	if got := config.SummaryUser("quanta"); got != "bench" {
 		t.Fatalf("SummaryUser = %q, want bench", got)
+	}
+}
+
+func TestAuthConfigBuildsStaticAuthenticatorFromAccountFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.yaml")
+	if err := os.WriteFile(path, []byte(`
+accounts:
+  - username: bench
+    password: secret
+    default_database: quanta
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	config := AuthConfig{Mode: "static", AccountFile: path, Username: "ignored", Password: "ignored"}
+	authenticator, err := config.Authenticator("quanta")
+	if err != nil {
+		t.Fatalf("Authenticator failed: %v", err)
+	}
+	static, ok := authenticator.(StaticAuthenticator)
+	if !ok {
+		t.Fatalf("authenticator = %T, want StaticAuthenticator", authenticator)
+	}
+	if len(static.Accounts) != 1 || static.Accounts[0].Username != "bench" || static.Accounts[0].Password != "secret" {
+		t.Fatalf("accounts = %#v", static.Accounts)
+	}
+	if got := config.SummaryUser("quanta"); got != "" {
+		t.Fatalf("SummaryUser = %q, want hidden when account file is configured", got)
+	}
+	if got := config.SummaryAccountFile("quanta"); got != path {
+		t.Fatalf("SummaryAccountFile = %q, want %q", got, path)
 	}
 }
 

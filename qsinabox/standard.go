@@ -28,6 +28,7 @@ type StandardConfig struct {
 	AuthMode            string
 	AuthUser            string
 	AuthPassword        string
+	AuthAccountFile     string
 	RuntimeProbeLogging bool
 }
 
@@ -76,10 +77,11 @@ func (c StandardConfig) NativeGRPCAddress() string {
 func (c StandardConfig) MySQLAuthConfig() qsmysql.AuthConfig {
 	c = c.WithDefaults()
 	return qsmysql.AuthConfig{
-		Mode:     c.AuthMode,
-		Username: c.AuthUser,
-		Password: c.AuthPassword,
-		Database: c.Database,
+		Mode:        c.AuthMode,
+		Username:    c.AuthUser,
+		Password:    c.AuthPassword,
+		Database:    c.Database,
+		AccountFile: c.AuthAccountFile,
 	}.WithDefaults(c.Database)
 }
 
@@ -193,6 +195,9 @@ func (p StandardPlan) SummaryLines() []string {
 	}
 	if user := config.MySQLAuthConfig().SummaryUser(config.Database); user != "" {
 		lines = append(lines, fmt.Sprintf("auth_user=%s", user))
+	}
+	if accountFile := config.MySQLAuthConfig().SummaryAccountFile(config.Database); accountFile != "" {
+		lines = append(lines, fmt.Sprintf("auth_account_file=%s", accountFile))
 	}
 	if config.NativeGRPCEnabled() {
 		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())

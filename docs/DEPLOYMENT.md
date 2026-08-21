@@ -580,11 +580,32 @@ QUANTASTREAM_AUTH_USER=MOLIG004
 QUANTASTREAM_AUTH_PASSWORD='<password>'
 ```
 
+For multiple accounts or to keep the account list out of service command lines,
+use a YAML account file:
+
+```bash
+QUANTASTREAM_AUTH_MODE=static
+QUANTASTREAM_AUTH_ACCOUNT_FILE=/etc/quantastream/accounts.yaml
+```
+
+```yaml
+accounts:
+  - username: MOLIG004
+    default_database: quanta
+    password: "<password>"
+```
+
+The account file may use verifier fields instead of cleartext passwords:
+`mysql_native_password_verifier` stores `SHA1(SHA1(password))` as hex, and
+`caching_sha2_password_verifier` stores `SHA256(SHA256(password))` as hex.
+The upcoming `quanta-admin` account commands should own generating and rotating
+those verifier values.
+
 `QUANTASTREAM_AUTH_PASSWORD` should be supplied through process environment or
 service secret management rather than command history. Static auth is a first
-step, not a complete production security profile: durable account storage,
-password rotation, TLS guidance, authorization policy, audit logging, and
-`quanta-admin` account administration remain part of the 1.0 hardening work.
+step, not a complete production security profile: password rotation, TLS
+guidance, authorization policy, audit logging, and `quanta-admin` account
+administration remain part of the 1.0 hardening work.
 
 QuantaStream 1.0 will include a simple MySQL-compatible account and
 password authentication model in the public/core repository. The

@@ -15,10 +15,11 @@ const (
 
 // AuthConfig is the shared MySQL front-door authentication configuration.
 type AuthConfig struct {
-	Mode     string
-	Username string
-	Password string
-	Database string
+	Mode        string
+	Username    string
+	Password    string
+	Database    string
+	AccountFile string
 }
 
 // WithDefaults returns a normalized auth configuration.
@@ -43,6 +44,13 @@ func (c AuthConfig) Authenticator(defaultDatabase string) (Authenticator, error)
 	case AuthModePermissive:
 		return PermissiveAuthenticator{}, nil
 	case AuthModeStatic:
+		if strings.TrimSpace(c.AccountFile) != "" {
+			accounts, err := LoadStaticAccountFile(c.AccountFile)
+			if err != nil {
+				return nil, fmt.Errorf("load mysql static auth account file: %w", err)
+			}
+			return StaticAuthenticator{Accounts: accounts}, nil
+		}
 		return StaticAuthenticator{Accounts: []StaticAccount{{
 			Username:        c.Username,
 			Password:        c.Password,
@@ -61,8 +69,17 @@ func (c AuthConfig) SummaryMode(defaultDatabase string) string {
 // SummaryUser returns the configured account name safe for startup output.
 func (c AuthConfig) SummaryUser(defaultDatabase string) string {
 	c = c.WithDefaults(defaultDatabase)
-	if c.Mode != AuthModeStatic {
+	if c.Mode != AuthModeStatic || strings.TrimSpace(c.AccountFile) != "" {
 		return ""
 	}
 	return c.Username
+}
+
+// SummaryAccountFile returns the account-file path safe for startup output.
+func (c AuthConfig) SummaryAccountFile(defaultDatabase string) string {
+	c = c.WithDefaults(defaultDatabase)
+	if c.Mode != AuthModeStatic {
+		return ""
+	}
+	return strings.TrimSpace(c.AccountFile)
 }

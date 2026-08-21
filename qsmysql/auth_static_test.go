@@ -27,6 +27,27 @@ func TestStaticAuthenticatorAcceptsCachingSHA2Password(t *testing.T) {
 	}
 }
 
+func TestStaticAuthenticatorAcceptsCachingSHA2VerifierWithoutCleartextPassword(t *testing.T) {
+	seed := []byte("12345678901234567890")
+	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
+		Username:                    "guy",
+		CachingSHA2PasswordVerifier: cachingSHA2Verifier("secret"),
+		DefaultDatabase:             "quanta",
+	}}}
+	decision, err := authenticator.Authenticate(context.Background(), AuthRequest{
+		Username:       "guy",
+		AuthPluginName: cachingSHA2PasswordPluginName,
+		AuthPluginData: seed,
+		AuthResponse:   cachingSHA2PasswordToken(seed, "secret"),
+	})
+	if err != nil {
+		t.Fatalf("Authenticate failed: %v", err)
+	}
+	if !decision.Accepted || decision.Database != "quanta" {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
 func TestStaticAuthenticatorRejectsWrongPassword(t *testing.T) {
 	seed := []byte("12345678901234567890")
 	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
@@ -52,6 +73,27 @@ func TestStaticAuthenticatorAcceptsMySQLNativePassword(t *testing.T) {
 	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
 		Username: "guy",
 		Password: "secret",
+	}}}
+	decision, err := authenticator.Authenticate(context.Background(), AuthRequest{
+		Username:       "guy",
+		Database:       "quanta",
+		AuthPluginName: mysqlNativePasswordPluginName,
+		AuthPluginData: seed,
+		AuthResponse:   mysqlNativePasswordToken(seed, "secret"),
+	})
+	if err != nil {
+		t.Fatalf("Authenticate failed: %v", err)
+	}
+	if !decision.Accepted || decision.Database != "quanta" {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
+func TestStaticAuthenticatorAcceptsMySQLNativeVerifierWithoutCleartextPassword(t *testing.T) {
+	seed := []byte("12345678901234567890")
+	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
+		Username:                    "guy",
+		MySQLNativePasswordVerifier: mysqlNativeVerifier("secret"),
 	}}}
 	decision, err := authenticator.Authenticate(context.Background(), AuthRequest{
 		Username:       "guy",

@@ -47,6 +47,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
 	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
+	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", envString("QUANTASTREAM_PPROF_BIND", ""), "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
@@ -81,6 +82,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		AuthMode:        *authMode,
 		AuthUser:        *authUser,
 		AuthPassword:    *authPassword,
+		AuthAccountFile: *authAccountFile,
 		RuntimeProbes:   *runtimeProbes,
 	})
 	mountElapsed := time.Since(mountStart)
@@ -125,6 +127,7 @@ type distributedProxyConfig struct {
 	AuthMode        string
 	AuthUser        string
 	AuthPassword    string
+	AuthAccountFile string
 	RuntimeProbes   bool
 }
 
@@ -246,10 +249,11 @@ func (c distributedProxyConfig) withDefaults() distributedProxyConfig {
 func (c distributedProxyConfig) mysqlAuthConfig() qsmysql.AuthConfig {
 	c = c.withDefaults()
 	return qsmysql.AuthConfig{
-		Mode:     c.AuthMode,
-		Username: c.AuthUser,
-		Password: c.AuthPassword,
-		Database: c.Database,
+		Mode:        c.AuthMode,
+		Username:    c.AuthUser,
+		Password:    c.AuthPassword,
+		Database:    c.Database,
+		AccountFile: c.AuthAccountFile,
 	}.WithDefaults(c.Database)
 }
 
@@ -281,6 +285,9 @@ func (p distributedProxyProcess) SummaryLines() []string {
 	}
 	if user := p.Config.mysqlAuthConfig().SummaryUser(p.Config.Database); user != "" {
 		lines = append(lines, fmt.Sprintf("auth_user=%s", user))
+	}
+	if accountFile := p.Config.mysqlAuthConfig().SummaryAccountFile(p.Config.Database); accountFile != "" {
+		lines = append(lines, fmt.Sprintf("auth_account_file=%s", accountFile))
 	}
 	return lines
 }

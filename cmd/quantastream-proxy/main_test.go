@@ -82,3 +82,28 @@ func TestDistributedProxySummaryLinesReportStaticAuthUser(t *testing.T) {
 		t.Fatalf("summary leaked password material:\n%s", output)
 	}
 }
+
+func TestDistributedProxySummaryLinesReportStaticAuthAccountFile(t *testing.T) {
+	process := distributedProxyProcess{
+		Config: distributedProxyConfig{
+			BindAddress:     "127.0.0.1",
+			MySQLPort:       4000,
+			ConsulAddress:   "127.0.0.1:8500",
+			NodePort:        4400,
+			SchemaDir:       "configuration",
+			Database:        "quanta",
+			AuthMode:        "static",
+			AuthUser:        "bench",
+			AuthAccountFile: "/etc/quantastream/accounts.yaml",
+		},
+	}
+	output := strings.Join(process.SummaryLines(), "\n")
+	for _, want := range []string{"auth=static", "auth_account_file=/etc/quantastream/accounts.yaml"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("summary missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "auth_user=") {
+		t.Fatalf("summary should not print one auth user when account file is configured:\n%s", output)
+	}
+}
