@@ -81,6 +81,17 @@ type LocalWALRecoveryPlan struct {
 	ReplayCommitBoundaryCount int
 }
 
+type LocalWALReplaySummary struct {
+	ReplayRecordCount   int
+	PendingRecordCount  int
+	PutRowCount         int
+	UpdateRowCount      int
+	CommitBoundaryCount int
+	LastReplayedLSN     uint64
+	CheckpointAdvanced  bool
+	CheckpointLSN       uint64
+}
+
 func (p LocalWALRecoveryPlan) ReplayRecordCount() int {
 	return len(p.ReplayRecords)
 }
@@ -213,6 +224,24 @@ func (w *LocalWAL) CommitBoundary(ctx context.Context, record LocalWALRecord, co
 		return committedRecord, LocalWALCheckpoint{}, err
 	}
 	return committedRecord, checkpoint, nil
+}
+
+func (w *LocalWAL) CheckpointCommittedRecord(ctx context.Context, record LocalWALRecord) (LocalWALCheckpoint, error) {
+	if w == nil || w.file == nil {
+		return LocalWALCheckpoint{}, fmt.Errorf("WAL is not open")
+	}
+	if record.Kind != LocalWALRecordKindCommit {
+		return LocalWALCheckpoint{}, fmt.Errorf("WAL checkpoint can only advance to commit records, got %q", record.Kind)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return LocalWALCheckpoint{}, err
+	}
+	if record.LSN == 0 {
+		return LocalWALCheckpoint{}, fmt.Errorf("WAL checkpoint record LSN is required")
+	}
+	return w.advanceCheckpointLocked(record)
 }
 
 func (w *LocalWAL) appendLocked(record LocalWALRecord) (LocalWALRecord, error) {

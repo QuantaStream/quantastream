@@ -48,6 +48,7 @@ type StandardDirectRuntimeMount struct {
 	Pool                  *core.SessionPool
 	WriteAheadLog         *core.LocalWAL
 	WriteAheadLogRecovery core.LocalWALRecoveryPlan
+	WriteAheadLogReplay   core.LocalWALReplaySummary
 }
 
 // Close releases sessions owned by the runtime mount.
@@ -62,7 +63,7 @@ func (m *StandardDirectRuntimeMount) Close() {
 	}
 }
 
-func (m *StandardDirectRuntimeMount) EnableWriteAheadLog(path string) error {
+func (m *StandardDirectRuntimeMount) EnableWriteAheadLog(ctx context.Context, path string, resolverFactory core.SessionPrimaryKeyResolverFactory) error {
 	if m == nil || m.Pool == nil || strings.TrimSpace(path) == "" {
 		return nil
 	}
@@ -76,6 +77,13 @@ func (m *StandardDirectRuntimeMount) EnableWriteAheadLog(path string) error {
 	}
 	m.WriteAheadLog = wal
 	m.WriteAheadLogRecovery = recoveryPlan
+	replay, err := core.ReplayLocalWALRecoveryPlanToSessionPool(ctx, m.Pool, wal, recoveryPlan, resolverFactory)
+	if err != nil {
+		_ = wal.Close()
+		m.WriteAheadLog = nil
+		return err
+	}
+	m.WriteAheadLogReplay = replay
 	m.Pool.SetWriteAheadLog(wal)
 	return nil
 }

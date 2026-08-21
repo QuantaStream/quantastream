@@ -137,6 +137,15 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	for _, line := range plan.SummaryLines() {
 		fmt.Fprintln(stdout, line)
 	}
+	if process.RuntimeMount.WriteAheadLog != nil {
+		replay := process.RuntimeMount.WriteAheadLogReplay
+		fmt.Fprintf(stdout, "wal_startup_replayed_records=%d\n", replay.ReplayRecordCount)
+		fmt.Fprintf(stdout, "wal_startup_replayed_put_rows=%d\n", replay.PutRowCount)
+		fmt.Fprintf(stdout, "wal_startup_replayed_update_rows=%d\n", replay.UpdateRowCount)
+		fmt.Fprintf(stdout, "wal_startup_replayed_commit_boundaries=%d\n", replay.CommitBoundaryCount)
+		fmt.Fprintf(stdout, "wal_startup_pending_records=%d\n", replay.PendingRecordCount)
+		fmt.Fprintf(stdout, "wal_startup_checkpoint_lsn=%d\n", replay.CheckpointLSN)
+	}
 	if !plan.Ready {
 		fmt.Fprintln(stderr, "inabox-standard runtime is not ready; rerun with -status to inspect the current skeleton")
 		return 2

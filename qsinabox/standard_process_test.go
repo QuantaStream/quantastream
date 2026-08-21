@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -74,6 +75,125 @@ func TestMountStandardProcessEnablesWriteAheadLogWhenConfigured(t *testing.T) {
 	}
 	if process.RuntimeMount.Pool == nil || process.RuntimeMount.Pool.WriteAheadLog() == nil {
 		t.Fatalf("session pool did not receive configured WAL")
+	}
+}
+
+func TestMountStandardProcessReplaysCommittedWriteAheadLogTail(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	walPath := filepath.Join(root, "wal", "standard.wal")
+	wal, err := core.OpenLocalWALWithOptions(walPath, core.LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions() error = %v", err)
+	}
+	if _, err := wal.Append(context.Background(), core.LocalWALRecord{
+		OperationID: "put-sample-101",
+		Kind:        core.LocalWALRecordKindPutRow,
+		Table:       "sample",
+		Payload: json.RawMessage(`{
+			"table": "sample",
+			"primary_key_mode": "verify_existing",
+			"options": {},
+			"row": {"id": 101, "city": "Lima"}
+		}`),
+	}); err != nil {
+		t.Fatalf("append WAL put_row: %v", err)
+	}
+	commitRecord, err := wal.Append(context.Background(), core.LocalWALRecord{
+		OperationID: "commit-sample-101",
+		Kind:        core.LocalWALRecordKindCommit,
+	})
+	if err != nil {
+		t.Fatalf("append WAL commit: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	config := StandardConfig{
+		ConfigDir:         configDir,
+		DataDir:           filepath.Join(root, "data"),
+		WriteAheadLogPath: walPath,
+	}
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.RuntimeMount.WriteAheadLogReplay.ReplayRecordCount != 2 ||
+		process.RuntimeMount.WriteAheadLogReplay.PutRowCount != 1 ||
+		process.RuntimeMount.WriteAheadLogReplay.CommitBoundaryCount != 1 {
+		t.Fatalf("WAL replay summary = %+v, want one put and one commit", process.RuntimeMount.WriteAheadLogReplay)
+	}
+	if process.RuntimeMount.WriteAheadLogReplay.CheckpointLSN != commitRecord.LSN {
+		t.Fatalf("replay checkpoint LSN = %d, want %d", process.RuntimeMount.WriteAheadLogReplay.CheckpointLSN, commitRecord.LSN)
+	}
+	loadedCheckpoint, found, err := core.LoadLocalWALCheckpoint(walPath + ".checkpoint.json")
+	if err != nil {
+		t.Fatalf("LoadLocalWALCheckpoint() error = %v", err)
+	}
+	if !found || loadedCheckpoint.LastCommittedLSN != commitRecord.LSN {
+		t.Fatalf("checkpoint found=%t checkpoint=%+v, want LSN %d", found, loadedCheckpoint, commitRecord.LSN)
+	}
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(config.DataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest() error = %v", err)
+	}
+	if manifest.Source != "standard-wal-replay" || len(manifest.Entries) != 1 {
+		t.Fatalf("manifest after WAL replay = %+v, want one standard-wal-replay entry", manifest)
+	}
+	requireStandardProcessScalarString(t, process, "select count(*) from sample where id = 101", "1")
+}
+
+func TestMountStandardProcessBlocksOnWriteAheadLogReplayFailure(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	walPath := filepath.Join(root, "wal", "standard.wal")
+	wal, err := core.OpenLocalWALWithOptions(walPath, core.LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions() error = %v", err)
+	}
+	if _, err := wal.Append(context.Background(), core.LocalWALRecord{
+		OperationID: "put-missing-table",
+		Kind:        core.LocalWALRecordKindPutRow,
+		Table:       "missing_table",
+		Payload: json.RawMessage(`{
+			"table": "missing_table",
+			"options": {},
+			"row": {"id": 101}
+		}`),
+	}); err != nil {
+		t.Fatalf("append WAL put_row: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), core.LocalWALRecord{
+		OperationID: "commit-missing-table",
+		Kind:        core.LocalWALRecordKindCommit,
+	}); err != nil {
+		t.Fatalf("append WAL commit: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), StandardConfig{
+		ConfigDir:         configDir,
+		DataDir:           filepath.Join(root, "data"),
+		WriteAheadLogPath: walPath,
+	})
+	if err == nil {
+		process.Close()
+		t.Fatalf("MountStandardProcess() error = nil, want replay failure")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, expected mount error before runtime diagnostics", diagnostics)
+	}
+	if !strings.Contains(err.Error(), "enable inabox-standard WAL") || !strings.Contains(err.Error(), "missing_table") {
+		t.Fatalf("MountStandardProcess() error = %v, want WAL replay missing_table failure", err)
 	}
 }
 

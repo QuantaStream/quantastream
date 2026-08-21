@@ -33,10 +33,29 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 	}
 	tableCache := core.NewTableCacheStruct()
 	runtimeMount := backend.NewDirectRuntime(config, tableCache, 0)
-	if err := runtimeMount.EnableWriteAheadLog(config.WriteAheadLogPath); err != nil {
+	resolverFactory := standardDirectPrimaryKeyResolverFactory(config, tableCache, backend.Adapter.BitmapIndex, runtimeMount.Pool)
+	if err := runtimeMount.EnableWriteAheadLog(ctx, config.WriteAheadLogPath, resolverFactory); err != nil {
 		runtimeMount.Close()
 		backend.Close()
 		return StandardProcess{}, nil, fmt.Errorf("enable inabox-standard WAL: %w", err)
+	}
+	if runtimeMount.WriteAheadLogReplay.PutRowCount != 0 || runtimeMount.WriteAheadLogReplay.UpdateRowCount != 0 {
+		manifest, err := BuildStandardBSIPrimaryKeyAuthorityManifest(config, "standard-wal-replay")
+		if err != nil {
+			runtimeMount.Close()
+			backend.Close()
+			return StandardProcess{}, nil, fmt.Errorf("refresh BSI primary-key authority manifest after WAL replay: %w", err)
+		}
+		if err := standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config, &manifest); err != nil {
+			runtimeMount.Close()
+			backend.Close()
+			return StandardProcess{}, nil, fmt.Errorf("refresh BSI primary-key authority artifact counts after WAL replay: %w", err)
+		}
+		if err := SaveStandardBSIPrimaryKeyAuthorityManifest(config, manifest); err != nil {
+			runtimeMount.Close()
+			backend.Close()
+			return StandardProcess{}, nil, fmt.Errorf("save BSI primary-key authority manifest after WAL replay: %w", err)
+		}
 	}
 	nativeRuntime, diagnostics, err := buildStandardNativeProxyRuntime(ctx, config, backend, tableCache, runtimeMount.Runtime)
 	if err != nil || diagnostics.BlocksNative() {
