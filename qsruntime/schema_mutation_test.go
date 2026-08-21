@@ -418,16 +418,82 @@ func TestValidateAlterTableAddPrimaryKeyCatalogOnlyAllowsUnknownLightweightCount
 	}
 }
 
-func TestValidateAlterTableAddPrimaryKeyEmptyTablePropagatesContextCancellation(t *testing.T) {
+func TestValidateAlterTableAddPrimaryKeyRowCountPropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	handle := LegacyQuantaSessionHandle{}
-	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyEmptyTable(ctx, "scratch_orders", qsbridge.MutationShape{}, nil)
+	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyRowCount(ctx, "scratch_orders", qsbridge.MutationShape{}, nil)
 	if err == nil {
-		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() error = nil, want context cancellation")
+		t.Fatalf("validateAlterTableAddPrimaryKeyRowCount() error = nil, want context cancellation")
 	}
 	if diagnostics.BlocksNative() {
-		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() diagnostics = %#v", diagnostics)
+		t.Fatalf("validateAlterTableAddPrimaryKeyRowCount() diagnostics = %#v", diagnostics)
+	}
+}
+
+func TestExecuteAlterTableAddPrimaryKeyValidationPlansKeepsUnknownNullScanPending(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{}
+	result, diagnostics, err := handle.executeAlterTableAddPrimaryKeyValidationPlans(context.Background(), alterTableAddPrimaryKeyValidationResult{
+		RowCount:      3,
+		RowCountKnown: true,
+		Plans: []alterTableAddPrimaryKeyValidationPlan{
+			{
+				Mode:    alterTableAddPrimaryKeyValidationNullScan,
+				Table:   "scratch_orders",
+				Columns: []string{"order_key"},
+			},
+			{
+				Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+				Table:   "scratch_orders",
+				Columns: []string{"order_key"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("executeAlterTableAddPrimaryKeyValidationPlans() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("executeAlterTableAddPrimaryKeyValidationPlans() diagnostics = %#v", diagnostics)
+	}
+	if len(result.PendingPlans) != 2 || len(result.CompletedPlans) != 0 {
+		t.Fatalf("pending=%#v completed=%#v, want both plans pending", result.PendingPlans, result.CompletedPlans)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyNullScanRequestUsesNullCheckFragment(t *testing.T) {
+	request := alterTableAddPrimaryKeyNullScanRequest(alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationNullScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key"},
+	}, "order_key")
+	if got, want := strings.Join(request.SourceIndexes, ","), "scratch_orders"; got != want {
+		t.Fatalf("SourceIndexes = %q, want %q", got, want)
+	}
+	if len(request.Query.Fragments) != 1 {
+		t.Fatalf("fragments = %#v, want one null-check fragment", request.Query.Fragments)
+	}
+	fragment := request.Query.Fragments[0]
+	if fragment.Index != "scratch_orders" || fragment.Field != "order_key" || fragment.Operation != qsbridge.QuantaOperationIntersect || !fragment.NullCheck {
+		t.Fatalf("fragment = %#v, want scratch_orders.order_key IS NULL", fragment)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyNullDiagnosticUsesMutationNullCode(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyNullDiagnostic(alterTableAddPrimaryKeyValidationPlan{
+		Table: "scratch_orders",
+	}, alterTableAddPrimaryKeyNullScanResult{
+		Known:  true,
+		Column: "order_key",
+		Count:  2,
+	})
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticMutationPrimaryKeyNull {
+		t.Fatalf("diagnostics = %#v, want mutation primary key null code", diagnostics)
+	}
+	if message := diagnostics[0].Error(); !strings.Contains(message, "order_key has 2 NULL value(s)") {
+		t.Fatalf("diagnostic = %q, want null count", message)
 	}
 }
 

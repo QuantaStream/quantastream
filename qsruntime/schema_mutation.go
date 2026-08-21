@@ -256,9 +256,11 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 }
 
 type alterTableAddPrimaryKeyValidationResult struct {
-	RowCount      uint64
-	RowCountKnown bool
-	Plans         []alterTableAddPrimaryKeyValidationPlan
+	RowCount       uint64
+	RowCountKnown  bool
+	Plans          []alterTableAddPrimaryKeyValidationPlan
+	PendingPlans   []alterTableAddPrimaryKeyValidationPlan
+	CompletedPlans []alterTableAddPrimaryKeyValidationPlan
 }
 
 type alterTableAddPrimaryKeyValidationMode string
@@ -274,14 +276,30 @@ type alterTableAddPrimaryKeyValidationPlan struct {
 	Columns []string
 }
 
+type alterTableAddPrimaryKeyNullScanResult struct {
+	Known  bool
+	Column string
+	Count  uint64
+}
+
 func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyCatalogOnly(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
 	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans(tableName, mutation)
 	if diagnostics.BlocksNative() {
 		return alterTableAddPrimaryKeyValidationResult{}, diagnostics, nil
 	}
-	result, diagnostics, err := h.validateAlterTableAddPrimaryKeyEmptyTable(ctx, tableName, mutation, plans)
+	result, diagnostics, err := h.validateAlterTableAddPrimaryKeyRowCount(ctx, tableName, mutation, plans)
 	if err != nil || diagnostics.BlocksNative() {
 		return result, diagnostics, err
+	}
+	if !result.RowCountKnown || result.RowCount == 0 {
+		return result, nil, nil
+	}
+	result, diagnostics, err = h.executeAlterTableAddPrimaryKeyValidationPlans(ctx, result)
+	if err != nil || diagnostics.BlocksNative() {
+		return result, diagnostics, err
+	}
+	if len(result.PendingPlans) > 0 {
+		return result, alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName, result.RowCount, result.PendingPlans), nil
 	}
 	return result, nil, nil
 }
@@ -345,7 +363,7 @@ func alterTableAddPrimaryKeyValidationColumns(mutation qsbridge.MutationShape) (
 	return columns, nil
 }
 
-func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyEmptyTable(ctx context.Context, tableName string, mutation qsbridge.MutationShape, plans []alterTableAddPrimaryKeyValidationPlan) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyRowCount(ctx context.Context, tableName string, mutation qsbridge.MutationShape, plans []alterTableAddPrimaryKeyValidationPlan) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
 	_ = mutation
 	count, known, diagnostics, err := h.alterTableAddPrimaryKeyCatalogOnlyRowCount(ctx, tableName)
 	result := alterTableAddPrimaryKeyValidationResult{
@@ -353,10 +371,77 @@ func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyEmptyTable(ctx
 		RowCountKnown: known,
 		Plans:         plans,
 	}
-	if err != nil || diagnostics.BlocksNative() || !known || count == 0 {
-		return result, diagnostics, err
+	return result, diagnostics, err
+}
+
+func (h LegacyQuantaSessionHandle) executeAlterTableAddPrimaryKeyValidationPlans(ctx context.Context, result alterTableAddPrimaryKeyValidationResult) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
+	result.PendingPlans = nil
+	result.CompletedPlans = nil
+	for _, plan := range result.Plans {
+		switch plan.Mode {
+		case alterTableAddPrimaryKeyValidationNullScan:
+			scan, diagnostics, err := h.alterTableAddPrimaryKeyNullScan(ctx, plan)
+			if err != nil || diagnostics.BlocksNative() {
+				return result, diagnostics, err
+			}
+			if !scan.Known {
+				result.PendingPlans = append(result.PendingPlans, plan)
+				continue
+			}
+			if scan.Count > 0 {
+				return result, alterTableAddPrimaryKeyNullDiagnostic(plan, scan), nil
+			}
+			result.CompletedPlans = append(result.CompletedPlans, plan)
+		default:
+			result.PendingPlans = append(result.PendingPlans, plan)
+		}
 	}
-	return result, alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName, count, plans), nil
+	return result, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyNullScan(ctx context.Context, plan alterTableAddPrimaryKeyValidationPlan) (alterTableAddPrimaryKeyNullScanResult, qsbridge.DiagnosticSet, error) {
+	if err := ctx.Err(); err != nil {
+		return alterTableAddPrimaryKeyNullScanResult{Known: true}, nil, err
+	}
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return alterTableAddPrimaryKeyNullScanResult{}, nil, nil
+	}
+	for _, column := range plan.Columns {
+		request := alterTableAddPrimaryKeyNullScanRequest(plan, column)
+		if h.cachedRootTable(request) == nil {
+			return alterTableAddPrimaryKeyNullScanResult{}, nil, nil
+		}
+		result, diagnostics, err := h.QueryBitmapCountOnly(ctx, request)
+		if err != nil || diagnostics.BlocksNative() {
+			return alterTableAddPrimaryKeyNullScanResult{Known: true, Column: column}, diagnostics, err
+		}
+		if result.Count > 0 {
+			return alterTableAddPrimaryKeyNullScanResult{Known: true, Column: column, Count: result.Count}, nil, nil
+		}
+	}
+	return alterTableAddPrimaryKeyNullScanResult{Known: true}, nil, nil
+}
+
+func alterTableAddPrimaryKeyNullScanRequest(plan alterTableAddPrimaryKeyValidationPlan, column string) ExecutionRequest {
+	tableName := strings.TrimSpace(plan.Table)
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{
+			{
+				Index:     tableName,
+				Field:     strings.TrimSpace(column),
+				Operation: qsbridge.QuantaOperationIntersect,
+				NullCheck: true,
+			},
+		},
+	})
+	request.SourceIndexes = []string{tableName}
+	return request
+}
+
+func alterTableAddPrimaryKeyNullDiagnostic(plan alterTableAddPrimaryKeyValidationPlan, scan alterTableAddPrimaryKeyNullScanResult) qsbridge.DiagnosticSet {
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticMutationPrimaryKeyNull, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY validation failed for table %s: column %s has %d NULL value(s)", plan.Table, scan.Column, scan.Count)),
+	}
 }
 
 func alterTableAddPrimaryKeyCatalogOnlyStatus(tableName string, rowCount uint64, rowCountKnown bool) string {
