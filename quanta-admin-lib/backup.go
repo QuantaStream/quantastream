@@ -17,6 +17,8 @@ type BackupCmd struct {
 type BackupCreateCmd struct {
 	DataDir string `help:"QuantaStream data directory to snapshot." default:"data"`
 	Target  string `help:"Backup target directory. Supports file:///path or a local path." required:""`
+	Quiesce bool   `help:"Create a local storage write barrier during the snapshot." default:"false"`
+	WALPath string `help:"Optional local WAL path to record in the backup checkpoint."`
 }
 
 type BackupValidateCmd struct {
@@ -32,6 +34,9 @@ func (c *BackupCreateCmd) Run(ctx *Context) error {
 	manifest, err := core.CreateLocalStorageBackup(context.Background(), core.CreateLocalStorageBackupRequest{
 		DataDir: c.DataDir,
 		Target:  c.Target,
+		Quiesce: c.Quiesce,
+		WALPath: c.WALPath,
+		Owner:   "quanta-admin backup create",
 	})
 	if err != nil {
 		return err
@@ -85,4 +90,20 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	fmt.Printf("backup_bytes=%d\n", manifest.ByteCount)
 	fmt.Printf("backup_checkpoint_kind=%s\n", manifest.Checkpoint.Kind)
 	fmt.Printf("backup_wal_included=%t\n", manifest.Checkpoint.WALIncluded)
+	fmt.Printf("backup_checkpoint_lsn=%d\n", manifest.Checkpoint.LSN)
+	if manifest.Checkpoint.WALPath != "" {
+		fmt.Printf("backup_wal_path=%s\n", manifest.Checkpoint.WALPath)
+	}
+	if manifest.Checkpoint.WALCheckpointPath != "" {
+		fmt.Printf("backup_wal_checkpoint_path=%s\n", manifest.Checkpoint.WALCheckpointPath)
+	}
+	if manifest.Checkpoint.WALLastLSN != 0 {
+		fmt.Printf("backup_wal_last_lsn=%d\n", manifest.Checkpoint.WALLastLSN)
+	}
+	if manifest.Checkpoint.WALReplayRecords != 0 {
+		fmt.Printf("backup_wal_replay_records=%d\n", manifest.Checkpoint.WALReplayRecords)
+	}
+	if manifest.Checkpoint.WALPendingRecords != 0 {
+		fmt.Printf("backup_wal_pending_records=%d\n", manifest.Checkpoint.WALPendingRecords)
+	}
 }

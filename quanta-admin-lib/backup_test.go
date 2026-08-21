@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/QuantaStream/quantastream/core"
 )
 
 func TestBackupCommandsCreateValidateAndRestoreLocalSnapshot(t *testing.T) {
@@ -29,6 +31,24 @@ func TestBackupCommandsCreateValidateAndRestoreLocalSnapshot(t *testing.T) {
 	}
 	if string(data) != "name: customer\n" {
 		t.Fatalf("restored schema = %q", string(data))
+	}
+}
+
+func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	backupDir := filepath.Join(root, "backup")
+
+	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir, Quiesce: true}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
+	}
+	manifest, err := core.ValidateLocalStorageBackup(backupDir)
+	if err != nil {
+		t.Fatalf("ValidateLocalStorageBackup returned error: %v", err)
+	}
+	if manifest.Mode != core.LocalStorageBackupModeQuiescent {
+		t.Fatalf("manifest mode = %s, want quiescent", manifest.Mode)
 	}
 }
 

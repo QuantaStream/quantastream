@@ -1652,6 +1652,61 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	}
 }
 
+func TestStandardProcessRejectsLocalWritesWhileStorageQuiesced(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	lease, err := core.BeginLocalStorageQuiescence(context.Background(), core.BeginLocalStorageQuiescenceRequest{
+		DataDir: config.DataDir,
+		Owner:   "unit-test",
+		Reason:  "snapshot",
+	})
+	if err != nil {
+		t.Fatalf("BeginLocalStorageQuiescence returned error: %v", err)
+	}
+	defer func() { _ = core.EndLocalStorageQuiescence(config.DataDir, lease.ID) }()
+
+	for _, sql := range []string{
+		"insert into sample (id, city) values (1, 'Seattle')",
+		"commit",
+	} {
+		result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+		if err != nil {
+			t.Fatalf("%s error = %v", sql, err)
+		}
+		if !result.Diagnostics.BlocksNative() && !result.Runtime.Diagnostics.BlocksNative() {
+			t.Fatalf("%s diagnostics = %#v runtime=%#v, want quiescence blocker", sql, result.Diagnostics, result.Runtime.Diagnostics)
+		}
+		if text := standardProcessDiagnosticText(result.Diagnostics, result.Runtime.Diagnostics); !strings.Contains(text, "quiesced") {
+			t.Fatalf("%s diagnostics text = %q, want quiesced", sql, text)
+		}
+	}
+
+	if err := core.EndLocalStorageQuiescence(config.DataDir, lease.ID); err != nil {
+		t.Fatalf("EndLocalStorageQuiescence returned error: %v", err)
+	}
+	result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "insert into sample (id, city) values (2, 'Lima')", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("INSERT after quiescence error = %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("INSERT after quiescence diagnostics = %#v runtime=%#v, want none", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+}
+
 func TestStandardProcessCatalogLifecycleEnforcesRelationships(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
@@ -1974,6 +2029,16 @@ func standardTestMapKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func standardProcessDiagnosticText(sets ...qsbridge.DiagnosticSet) string {
+	var messages []string
+	for _, set := range sets {
+		for _, diagnostic := range set {
+			messages = append(messages, diagnostic.Message)
+		}
+	}
+	return strings.Join(messages, "\n")
 }
 
 func mustStreamEnvelope(tb testing.TB, eventID string, payload map[string]interface{}) core.IngestEnvelope {

@@ -97,6 +97,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 	}
 	pool := b.NewSessionPool(config, tableCache, poolSize)
 	sessions := StandardDirectSessionProvider{
+		Config:                               config,
 		Pool:                                 pool,
 		SchemaDir:                            b.ConfigBaseDir(config),
 		Conn:                                 b.NewLocalConnection(),
@@ -218,6 +219,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 // StandardDirectSessionProvider borrows table-scoped direct sessions from an
 // inabox-standard local session pool.
 type StandardDirectSessionProvider struct {
+	Config                               StandardConfig
 	Pool                                 *core.SessionPool
 	SchemaDir                            string
 	Conn                                 *shared.Conn
@@ -241,6 +243,7 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 	}
 	if standardSchemaMutationNeedsSyntheticHandle(request.Mutation.Kind) && strings.TrimSpace(p.SchemaDir) != "" {
 		return StandardDirectSessionHandle{
+			Config:    p.Config,
 			Pool:      p.Pool,
 			Table:     table,
 			Session:   p.syntheticSchemaMutationSession(),
@@ -257,6 +260,7 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		session.SetPrimaryKeyResolver(p.PrimaryKeyResolverFactory(session))
 	}
 	return StandardDirectSessionHandle{
+		Config:                               p.Config,
 		Pool:                                 p.Pool,
 		Table:                                table,
 		Session:                              session,
@@ -322,6 +326,7 @@ func (p StandardDirectSessionProvider) syntheticSchemaMutationSession() *core.Se
 // StandardDirectSessionHandle executes direct bitmap calls through a local
 // core.Session without gRPC.
 type StandardDirectSessionHandle struct {
+	Config                               StandardConfig
 	Pool                                 *core.SessionPool
 	Table                                string
 	Session                              *core.Session
@@ -351,11 +356,17 @@ func (h StandardDirectSessionHandle) QueryBitmapCountOnly(ctx context.Context, r
 
 // ExecuteMutation dispatches in-process SQL mutations through the local session.
 func (h StandardDirectSessionHandle) ExecuteMutation(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if diagnostics := h.rejectIfStorageQuiesced(string(request.Mutation.Kind)); diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
 	return h.legacyHandle().ExecuteMutation(ctx, request)
 }
 
 // InsertRows writes bound literal rows through the local session.
 func (h StandardDirectSessionHandle) InsertRows(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if diagnostics := h.rejectIfStorageQuiesced("insert"); diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
 	return h.legacyHandle().InsertRows(ctx, request)
 }
 
@@ -394,6 +405,19 @@ func (h StandardDirectSessionHandle) legacyHandle() qsruntime.LegacyQuantaSessio
 		Result:    h.Result,
 		Synthetic: h.Synthetic,
 	}
+}
+
+func (h StandardDirectSessionHandle) rejectIfStorageQuiesced(operation string) qsbridge.DiagnosticSet {
+	config := h.Config.WithDefaults()
+	if strings.TrimSpace(config.DataDir) == "" {
+		return nil
+	}
+	if err := core.RejectLocalStorageMutationIfQuiesced(config.DataDir, operation); err != nil {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, err.Error()),
+		}
+	}
+	return nil
 }
 
 func standardQueryCatalogViewForCachedTables(config StandardConfig, tableCache *core.TableCacheStruct) qsbridge.QueryCatalogView {

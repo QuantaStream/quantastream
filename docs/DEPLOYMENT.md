@@ -127,6 +127,12 @@ Current implementation status:
   pending WAL tail records. Standard-mode startup applies committed replay
   records before the MySQL front door is marked ready and leaves pending tail
   records unapplied. The WAL is disabled when the path is empty.
+- `quanta-admin backup create --quiesce` creates a local storage write barrier
+  file in the data directory while copying a filesystem snapshot. Standard-mode
+  SQL writes, catalog mutations, and local `COMMIT` refuse to proceed while that
+  barrier is present. The backup manifest records the WAL/checkpoint boundary
+  when `--wal-path` is supplied, and the transient barrier file is not included
+  in the snapshot or restore image.
 
 Skeleton status command:
 
@@ -136,6 +142,23 @@ go run ./cmd/quantastream -status
 go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
 go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
 go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard -wal-path /tmp/quantastream-standard/storage.wal
+```
+
+Local backup commands:
+
+```bash
+go run ./quanta-admin backup create \
+  --data-dir /tmp/quantastream-standard \
+  --target file:///tmp/quantastream-standard-backup \
+  --quiesce \
+  --wal-path /tmp/quantastream-standard/storage.wal
+
+go run ./quanta-admin backup validate \
+  --source file:///tmp/quantastream-standard-backup
+
+go run ./quanta-admin backup restore \
+  --source file:///tmp/quantastream-standard-backup \
+  --data-dir /tmp/quantastream-standard-restore
 ```
 
 Convenience startup command:

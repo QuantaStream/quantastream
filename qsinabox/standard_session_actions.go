@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/golang/protobuf/ptypes/empty"
 )
@@ -31,6 +32,11 @@ func (h StandardSessionActionHandler) HandleNativeProxySessionActions(ctx contex
 func (h StandardSessionActionHandler) commit(ctx context.Context) qsbridge.DiagnosticSet {
 	if h.Backend.Services.BitmapIndex == nil {
 		return standardSessionActionDiagnostics("inabox-standard commit requested but local bitmap index service is not mounted")
+	}
+	if err := core.RejectLocalStorageMutationIfQuiesced(h.Config.WithDefaults().DataDir, "commit"); err != nil {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, err.Error()),
+		}
 	}
 	if _, err := h.Backend.Services.BitmapIndex.Commit(ctx, &empty.Empty{}); err != nil {
 		return standardSessionActionDiagnostics(fmt.Sprintf("inabox-standard commit failed: %v", err))

@@ -23,6 +23,11 @@ const (
 	LocalStorageBackupFormat           = "quantastream-local-storage-backup"
 	LocalStorageBackupVersion          = 1
 	LocalStorageBackupModeOffline      = "offline-local-snapshot"
+	LocalStorageBackupModeQuiescent    = "quiescent-local-snapshot"
+	LocalStorageQuiescenceFormat       = "quantastream-local-storage-quiescence"
+	LocalStorageQuiescenceVersion      = 1
+	LocalStorageQuiescenceDir          = ".quantastream"
+	LocalStorageQuiescenceFileName     = "backup-quiescence.json"
 )
 
 // LocalStorageBackupManifest describes a provider-neutral backup generation.
@@ -45,9 +50,14 @@ type LocalStorageBackupManifest struct {
 // LocalStorageBackupCheckpoint is intentionally narrow until WAL/checkpoint
 // support lands. It reserves the manifest shape without inventing live semantics.
 type LocalStorageBackupCheckpoint struct {
-	Kind        string `json:"kind"`
-	WALIncluded bool   `json:"wal_included"`
-	LSN         uint64 `json:"lsn"`
+	Kind              string `json:"kind"`
+	WALIncluded       bool   `json:"wal_included"`
+	LSN               uint64 `json:"lsn"`
+	WALPath           string `json:"wal_path,omitempty"`
+	WALCheckpointPath string `json:"wal_checkpoint_path,omitempty"`
+	WALLastLSN        uint64 `json:"wal_last_lsn,omitempty"`
+	WALReplayRecords  int    `json:"wal_replay_records,omitempty"`
+	WALPendingRecords int    `json:"wal_pending_records,omitempty"`
 }
 
 // LocalStorageBackupEntry records one directory or file copied into the backup.
@@ -60,10 +70,30 @@ type LocalStorageBackupEntry struct {
 	SHA256  string    `json:"sha256,omitempty"`
 }
 
+type LocalStorageQuiescenceLease struct {
+	Version           int       `json:"version"`
+	Format            string    `json:"format"`
+	ID                string    `json:"id"`
+	Owner             string    `json:"owner,omitempty"`
+	Reason            string    `json:"reason,omitempty"`
+	DataDir           string    `json:"data_dir"`
+	WALPath           string    `json:"wal_path,omitempty"`
+	WALCheckpointPath string    `json:"wal_checkpoint_path,omitempty"`
+	CheckpointLSN     uint64    `json:"checkpoint_lsn,omitempty"`
+	LastLSN           uint64    `json:"last_lsn,omitempty"`
+	ReplayRecords     int       `json:"replay_records,omitempty"`
+	PendingRecords    int       `json:"pending_records,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 type CreateLocalStorageBackupRequest struct {
 	DataDir string
 	Target  string
 	Now     time.Time
+	Quiesce bool
+	WALPath string
+	Owner   string
+	Reason  string
 }
 
 type RestoreLocalStorageBackupRequest struct {
@@ -107,6 +137,20 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 	if err != nil {
 		return manifest, err
 	}
+	var lease LocalStorageQuiescenceLease
+	if req.Quiesce {
+		lease, err = BeginLocalStorageQuiescence(ctx, BeginLocalStorageQuiescenceRequest{
+			DataDir: sourceDir,
+			WALPath: req.WALPath,
+			Owner:   req.Owner,
+			Reason:  req.Reason,
+			Now:     req.Now,
+		})
+		if err != nil {
+			return manifest, err
+		}
+		defer func() { _ = EndLocalStorageQuiescence(sourceDir, lease.ID) }()
+	}
 	targetDir, err := ResolveLocalFileTarget(req.Target)
 	if err != nil {
 		return manifest, err
@@ -138,6 +182,22 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 			WALIncluded: false,
 		},
 	}
+	if req.Quiesce {
+		manifest.Mode = LocalStorageBackupModeQuiescent
+		manifest.Checkpoint = LocalStorageBackupCheckpoint{
+			Kind:              "quiescent",
+			WALIncluded:       localStoragePathInside(sourceDir, lease.WALPath),
+			LSN:               lease.CheckpointLSN,
+			WALPath:           lease.WALPath,
+			WALCheckpointPath: lease.WALCheckpointPath,
+			WALLastLSN:        lease.LastLSN,
+			WALReplayRecords:  lease.ReplayRecords,
+			WALPendingRecords: lease.PendingRecords,
+		}
+		if req.WALPath == "" {
+			manifest.Checkpoint.Kind = "quiescent-no-wal"
+		}
+	}
 
 	err = filepath.WalkDir(sourceDir, func(srcPath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -147,6 +207,9 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 			return err
 		}
 		if srcPath == sourceDir {
+			return nil
+		}
+		if localStorageBackupSkipQuiescenceFile(sourceDir, srcPath) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -219,6 +282,153 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		return manifest, err
 	}
 	return manifest, nil
+}
+
+type BeginLocalStorageQuiescenceRequest struct {
+	DataDir string
+	WALPath string
+	Owner   string
+	Reason  string
+	Now     time.Time
+}
+
+func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuiescenceRequest) (LocalStorageQuiescenceLease, error) {
+	dataDir, err := resolveExistingDirectory(req.DataDir, "quiescence data directory")
+	if err != nil {
+		return LocalStorageQuiescenceLease{}, err
+	}
+	if existing, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil {
+		return LocalStorageQuiescenceLease{}, err
+	} else if found {
+		return LocalStorageQuiescenceLease{}, fmt.Errorf("storage is already quiesced for backup id=%s owner=%s reason=%s", existing.ID, existing.Owner, existing.Reason)
+	}
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	lease := LocalStorageQuiescenceLease{
+		Version:   LocalStorageQuiescenceVersion,
+		Format:    LocalStorageQuiescenceFormat,
+		ID:        fmt.Sprintf("%d-%d", now.UnixNano(), os.Getpid()),
+		Owner:     strings.TrimSpace(req.Owner),
+		Reason:    strings.TrimSpace(req.Reason),
+		DataDir:   dataDir,
+		CreatedAt: now.UTC(),
+	}
+	if strings.TrimSpace(lease.Owner) == "" {
+		lease.Owner = "quanta-admin backup"
+	}
+	if strings.TrimSpace(lease.Reason) == "" {
+		lease.Reason = "local storage backup"
+	}
+	if strings.TrimSpace(req.WALPath) != "" {
+		plan, err := PlanLocalWALRecovery(req.WALPath)
+		if err != nil {
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("plan WAL recovery before quiescence: %w", err)
+		}
+		lease.WALPath = plan.WALPath
+		lease.WALCheckpointPath = plan.CheckpointPath
+		lease.CheckpointLSN = plan.CheckpointLSN
+		lease.LastLSN = plan.LastLSN
+		lease.ReplayRecords = len(plan.ReplayRecords)
+		lease.PendingRecords = len(plan.PendingRecords)
+	}
+	if err := ctx.Err(); err != nil {
+		return LocalStorageQuiescenceLease{}, err
+	}
+	if err := writeLocalStorageQuiescenceLease(dataDir, lease); err != nil {
+		return LocalStorageQuiescenceLease{}, err
+	}
+	return lease, nil
+}
+
+func EndLocalStorageQuiescence(dataDir, leaseID string) error {
+	path, err := LocalStorageQuiescencePath(dataDir)
+	if err != nil {
+		return err
+	}
+	lease, found, err := ObserveLocalStorageQuiescence(dataDir)
+	if err != nil || !found {
+		return err
+	}
+	if strings.TrimSpace(leaseID) != "" && lease.ID != leaseID {
+		return fmt.Errorf("quiescence lease id mismatch: active=%s requested=%s", lease.ID, leaseID)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove quiescence lease: %w", err)
+	}
+	return nil
+}
+
+func ObserveLocalStorageQuiescence(dataDir string) (LocalStorageQuiescenceLease, bool, error) {
+	path, err := LocalStorageQuiescencePath(dataDir)
+	if err != nil {
+		return LocalStorageQuiescenceLease{}, false, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return LocalStorageQuiescenceLease{}, false, nil
+	}
+	if err != nil {
+		return LocalStorageQuiescenceLease{}, false, fmt.Errorf("read quiescence lease: %w", err)
+	}
+	var lease LocalStorageQuiescenceLease
+	if err := json.Unmarshal(data, &lease); err != nil {
+		return LocalStorageQuiescenceLease{}, false, fmt.Errorf("parse quiescence lease: %w", err)
+	}
+	if lease.Version != LocalStorageQuiescenceVersion || lease.Format != LocalStorageQuiescenceFormat {
+		return LocalStorageQuiescenceLease{}, false, fmt.Errorf("unsupported quiescence lease %d/%s", lease.Version, lease.Format)
+	}
+	return lease, true, nil
+}
+
+func RejectLocalStorageMutationIfQuiesced(dataDir, operation string) error {
+	lease, found, err := ObserveLocalStorageQuiescence(dataDir)
+	if err != nil || !found {
+		return err
+	}
+	if strings.TrimSpace(operation) == "" {
+		operation = "storage mutation"
+	}
+	return fmt.Errorf("%s is blocked while local storage is quiesced for backup id=%s owner=%s reason=%s", operation, lease.ID, lease.Owner, lease.Reason)
+}
+
+func LocalStorageQuiescencePath(dataDir string) (string, error) {
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir == "" {
+		return "", fmt.Errorf("quiescence data directory is required")
+	}
+	resolved, err := ResolveLocalFileTarget(dataDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, LocalStorageQuiescenceDir, LocalStorageQuiescenceFileName), nil
+}
+
+func writeLocalStorageQuiescenceLease(dataDir string, lease LocalStorageQuiescenceLease) error {
+	path, err := LocalStorageQuiescencePath(dataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create quiescence lease directory: %w", err)
+	}
+	data, err := json.MarshalIndent(lease, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal quiescence lease: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("write quiescence lease: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write quiescence lease: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close quiescence lease: %w", err)
+	}
+	return nil
 }
 
 func LoadLocalStorageBackupManifest(source string) (LocalStorageBackupManifest, string, error) {
@@ -336,7 +546,9 @@ func validateLocalStorageBackupManifestShape(manifest LocalStorageBackupManifest
 	if manifest.Format != LocalStorageBackupFormat {
 		return fmt.Errorf("unsupported backup manifest format %q", manifest.Format)
 	}
-	if manifest.Mode != LocalStorageBackupModeOffline {
+	switch manifest.Mode {
+	case LocalStorageBackupModeOffline, LocalStorageBackupModeQuiescent:
+	default:
 		return fmt.Errorf("unsupported backup manifest mode %q", manifest.Mode)
 	}
 	if manifest.SnapshotDir != LocalStorageBackupSnapshotDir {
@@ -353,6 +565,35 @@ func validateLocalStorageBackupManifestShape(manifest LocalStorageBackupManifest
 		}
 	}
 	return nil
+}
+
+func localStorageBackupSkipQuiescenceFile(sourceDir, srcPath string) bool {
+	leasePath, err := LocalStorageQuiescencePath(sourceDir)
+	if err != nil {
+		return false
+	}
+	relLease, err := filepath.Rel(filepath.Clean(sourceDir), filepath.Clean(leasePath))
+	if err != nil || strings.HasPrefix(relLease, ".."+string(filepath.Separator)) || relLease == ".." {
+		return false
+	}
+	return filepath.Clean(srcPath) == filepath.Clean(leasePath)
+}
+
+func localStoragePathInside(root, candidate string) bool {
+	root = strings.TrimSpace(root)
+	candidate = strings.TrimSpace(candidate)
+	if root == "" || candidate == "" {
+		return false
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	return sameOrChildPath(filepath.Clean(rootAbs), filepath.Clean(candidateAbs))
 }
 
 func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBackupManifest) error {

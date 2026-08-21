@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,89 @@ func TestValidateLocalStorageBackupRejectsCorruptFile(t *testing.T) {
 	_, err := ValidateLocalStorageBackup(backupDir)
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("ValidateLocalStorageBackup error = %v, want checksum mismatch", err)
+	}
+}
+
+func TestCreateQuiescentLocalStorageBackupRecordsWALCheckpointAndRemovesLease(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	walPath := filepath.Join(dataDir, "wal", "standard.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	record, checkpoint, err := wal.CommitBoundary(context.Background(), LocalWALRecord{
+		OperationID: "commit-before-backup",
+		Kind:        LocalWALRecordKindCommit,
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatalf("CommitBoundary returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	backupDir := filepath.Join(root, "backup")
+	manifest, err := CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+		Quiesce: true,
+		WALPath: walPath,
+		Owner:   "unit-test",
+		Reason:  "snapshot",
+	})
+	if err != nil {
+		t.Fatalf("CreateLocalStorageBackup returned error: %v", err)
+	}
+	if manifest.Mode != LocalStorageBackupModeQuiescent {
+		t.Fatalf("manifest mode = %s, want %s", manifest.Mode, LocalStorageBackupModeQuiescent)
+	}
+	if manifest.Checkpoint.Kind != "quiescent" || !manifest.Checkpoint.WALIncluded {
+		t.Fatalf("checkpoint kind/included = %s/%t, want quiescent/true", manifest.Checkpoint.Kind, manifest.Checkpoint.WALIncluded)
+	}
+	if manifest.Checkpoint.LSN != checkpoint.LastCommittedLSN || manifest.Checkpoint.WALLastLSN != record.LSN {
+		t.Fatalf("checkpoint LSN/last = %d/%d, want %d/%d", manifest.Checkpoint.LSN, manifest.Checkpoint.WALLastLSN, checkpoint.LastCommittedLSN, record.LSN)
+	}
+	if manifest.Checkpoint.WALPath != walPath || manifest.Checkpoint.WALCheckpointPath == "" {
+		t.Fatalf("checkpoint WAL path/checkpoint = %q/%q", manifest.Checkpoint.WALPath, manifest.Checkpoint.WALCheckpointPath)
+	}
+	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
+		t.Fatalf("quiescence lease after backup found=%t err=%v, want removed", found, err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, LocalStorageBackupSnapshotDir, LocalStorageQuiescenceDir, LocalStorageQuiescenceFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot carried quiescence lease err=%v, want not exist", err)
+	}
+	if _, err := ValidateLocalStorageBackup(backupDir); err != nil {
+		t.Fatalf("ValidateLocalStorageBackup returned error: %v", err)
+	}
+}
+
+func TestLocalStorageQuiescenceRejectsSecondLeaseAndMutations(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+	lease, err := BeginLocalStorageQuiescence(context.Background(), BeginLocalStorageQuiescenceRequest{
+		DataDir: dataDir,
+		Owner:   "unit-test",
+		Reason:  "first lease",
+	})
+	if err != nil {
+		t.Fatalf("BeginLocalStorageQuiescence returned error: %v", err)
+	}
+	if _, err := BeginLocalStorageQuiescence(context.Background(), BeginLocalStorageQuiescenceRequest{DataDir: dataDir}); err == nil || !strings.Contains(err.Error(), "already quiesced") {
+		t.Fatalf("second BeginLocalStorageQuiescence error = %v, want already quiesced", err)
+	}
+	if err := RejectLocalStorageMutationIfQuiesced(dataDir, "insert"); err == nil || !strings.Contains(err.Error(), "blocked while local storage is quiesced") {
+		t.Fatalf("RejectLocalStorageMutationIfQuiesced error = %v, want blocked", err)
+	}
+	if err := EndLocalStorageQuiescence(dataDir, lease.ID); err != nil {
+		t.Fatalf("EndLocalStorageQuiescence returned error: %v", err)
+	}
+	if err := RejectLocalStorageMutationIfQuiesced(dataDir, "insert"); err != nil {
+		t.Fatalf("RejectLocalStorageMutationIfQuiesced after end = %v, want nil", err)
 	}
 }
 
