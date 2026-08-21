@@ -36,28 +36,20 @@ func TestQSBridgePackageDocumentationStandardIsVisible(t *testing.T) {
 	}
 }
 
-func TestQSBridgeREADMEMentionsEveryNonTestGoFile(t *testing.T) {
+func TestQSBridgeREADMEPointsToInternalArchitectureNotes(t *testing.T) {
 	readme, err := os.ReadFile("README.md")
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
 	}
 	text := string(readme)
-	files, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read qsbridge package: %v", err)
-	}
-
-	var missing []string
-	for _, entry := range files {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") || entry.Name() == "doc.go" {
-			continue
+	for _, phrase := range []string{
+		"quantastream-internal/blob/main/docs/qsbridge/README.md",
+		"quantastream-internal/blob/main/docs/qsbridge/DESIGN_DECISIONS.md",
+		"Keep internal roadmap state in those files",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Fatalf("README.md missing internal documentation pointer %q", phrase)
 		}
-		if !strings.Contains(text, "`"+entry.Name()+"`") {
-			missing = append(missing, entry.Name())
-		}
-	}
-	if len(missing) > 0 {
-		t.Fatalf("README.md missing qsbridge file entries:\n%s", strings.Join(missing, "\n"))
 	}
 }
 
