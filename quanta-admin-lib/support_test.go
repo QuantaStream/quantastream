@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
 func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
@@ -25,6 +27,21 @@ func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("0123456789abcdef"), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
+	authPath := filepath.Join(root, "accounts.yaml")
+	account := qsmysql.StaticAccountWithPasswordVerifiers("reader", "secret", "quanta")
+	account.Roles = []qsbridge.RoleName{"reader"}
+	if err := qsmysql.SaveStaticAccountFile(authPath, []qsmysql.StaticAccount{account}); err != nil {
+		t.Fatalf("SaveStaticAccountFile returned error: %v", err)
+	}
+	accessPath := filepath.Join(root, "access-policy.yaml")
+	if err := qsbridge.SaveAccessPolicyFile(accessPath, []qsbridge.AccessGrant{{
+		PrincipalKind: qsbridge.AccessPrincipalRole,
+		Principal:     "reader",
+		Privilege:     qsbridge.AccessSelect,
+		Table:         qsbridge.TableInstance{Table: "*"},
+	}}); err != nil {
+		t.Fatalf("SaveAccessPolicyFile returned error: %v", err)
+	}
 	backupDir := filepath.Join(root, "backup")
 	if _, err := core.CreateLocalStorageBackup(t.Context(), core.CreateLocalStorageBackupRequest{
 		DataDir: dataDir,
@@ -37,6 +54,8 @@ func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
 		return (&SupportBundleCmd{
 			Output:            output,
 			DataDir:           dataDir,
+			AuthAccountFile:   authPath,
+			AccessPolicyFile:  accessPath,
 			BackupSource:      []string{backupDir},
 			LogPath:           []string{logPath},
 			MaxLogBytes:       6,
@@ -56,6 +75,7 @@ func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
 		"metadata/version.txt",
 		"metadata/runtime.txt",
 		"config/summary.txt",
+		"security/summary.txt",
 		"wal/skipped.txt",
 		"backups/backup-001-manifest.json",
 		"logs/qstream.log",
@@ -74,6 +94,24 @@ func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
 	)
 	if strings.Contains(configSummary, "do-not-include") {
 		t.Fatalf("config summary leaked auth file contents:\n%s", configSummary)
+	}
+	securitySummary := string(entries["security/summary.txt"])
+	assertAdminBackupOutputContains(t, securitySummary,
+		"auth_account_file_configured=true",
+		"auth_account_file_valid=true",
+		"auth_account_count=1",
+		"auth_accounts_with_cleartext_password=0",
+		"auth_role_binding_count=1",
+		"access_policy_file_configured=true",
+		"access_policy_file_valid=true",
+		"access_grant_count=1",
+		"access_privilege_select_count=1",
+		"access_wildcard_table_grant_count=1",
+	)
+	for _, sensitive := range []string{"secret", "reader\n", "principal=reader"} {
+		if strings.Contains(securitySummary, sensitive) {
+			t.Fatalf("security summary leaked sensitive detail %q:\n%s", sensitive, securitySummary)
+		}
 	}
 	logTail := string(entries["logs/qstream.log"])
 	assertAdminBackupOutputContains(t, logTail,

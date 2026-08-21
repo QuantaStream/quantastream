@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/version"
 	"github.com/hashicorp/consul/api"
@@ -31,6 +33,8 @@ type SupportBundleCmd struct {
 	DataDir           string   `help:"QuantaStream data directory to summarize." default:"data"`
 	ConfigDir         string   `help:"Optional config directory to summarize. Defaults to <data-dir>/config when present, then ./config when present."`
 	WALPath           string   `help:"Optional local WAL path to plan. Defaults to <data-dir>/storage.wal when present."`
+	AuthAccountFile   string   `help:"Optional static auth account file to validate and summarize without raw contents."`
+	AccessPolicyFile  string   `help:"Optional static SQL access policy file to validate and summarize without raw contents."`
 	BackupSource      []string `help:"Backup source directory whose manifest should be included. Use a comma-separated list for multiple backups."`
 	LogPath           []string `help:"Log file to include as a recent tail. Use a comma-separated list for multiple logs."`
 	MaxLogBytes       int64    `help:"Maximum bytes to include per log file." default:"1048576"`
@@ -63,6 +67,7 @@ func (c *SupportBundleCmd) Run(ctx *Context) error {
 	archive.AddText("metadata/version.txt", supportBundleVersion())
 	archive.AddText("metadata/runtime.txt", supportBundleRuntime(ctx, dataDir, configDir, walPath, dataDirErr))
 	archive.AddText("config/summary.txt", supportBundleConfigSummary(dataDir, configDir))
+	archive.AddText("security/summary.txt", supportBundleSecuritySummary(c.AuthAccountFile, c.AccessPolicyFile))
 	if walPath != "" {
 		archive.AddText("wal/plan.txt", supportBundleWALPlan(walPath))
 	} else {
@@ -206,6 +211,7 @@ func supportBundleReadme() string {
 		"optional log tails, and best-effort cluster service-discovery status.",
 		"",
 		"It intentionally does not include table data files or raw auth/access policy files.",
+		"Security inputs are represented only by redacted validation/count summaries.",
 		"",
 	}, "\n")
 }
@@ -264,6 +270,112 @@ func supportBundleConfigSummary(dataDir, configDir string) string {
 	writeSchemaSummary(&b, configDir, "views", filepath.Join(configDir, "views", "*.yaml"))
 	writeSensitiveFileSummary(&b, configDir)
 	return b.String()
+}
+
+func supportBundleSecuritySummary(authAccountFile, accessPolicyFile string) string {
+	var b strings.Builder
+	writeSupportBundleAuthSummary(&b, authAccountFile)
+	writeSupportBundleAccessSummary(&b, accessPolicyFile)
+	return b.String()
+}
+
+func writeSupportBundleAuthSummary(b *strings.Builder, path string) {
+	path = strings.TrimSpace(path)
+	fmt.Fprintf(b, "auth_account_file_configured=%t\n", path != "")
+	if path == "" {
+		return
+	}
+	resolved, err := resolveOptionalLocalPath(path)
+	if err != nil {
+		resolved = filepath.Clean(path)
+	}
+	fmt.Fprintf(b, "auth_account_file=%s\n", resolved)
+	fmt.Fprintf(b, "auth_account_file_exists=%t\n", fileExists(resolved))
+	accounts, err := qsmysql.LoadStaticAccountFile(resolved)
+	if err != nil {
+		fmt.Fprintf(b, "auth_account_file_valid=false\n")
+		fmt.Fprintf(b, "auth_account_file_error=%v\n", err)
+		return
+	}
+	fmt.Fprintf(b, "auth_account_file_valid=true\n")
+	fmt.Fprintf(b, "auth_account_count=%d\n", len(accounts))
+	cleartext := 0
+	mysqlNative := 0
+	cachingSHA2 := 0
+	roleBindings := 0
+	for _, account := range accounts {
+		if account.Password != "" {
+			cleartext++
+		}
+		if account.MySQLNativePasswordVerifier != "" {
+			mysqlNative++
+		}
+		if account.CachingSHA2PasswordVerifier != "" {
+			cachingSHA2++
+		}
+		roleBindings += len(account.Roles)
+	}
+	fmt.Fprintf(b, "auth_accounts_with_cleartext_password=%d\n", cleartext)
+	fmt.Fprintf(b, "auth_accounts_with_mysql_native_verifier=%d\n", mysqlNative)
+	fmt.Fprintf(b, "auth_accounts_with_caching_sha2_verifier=%d\n", cachingSHA2)
+	fmt.Fprintf(b, "auth_role_binding_count=%d\n", roleBindings)
+}
+
+func writeSupportBundleAccessSummary(b *strings.Builder, path string) {
+	path = strings.TrimSpace(path)
+	fmt.Fprintf(b, "access_policy_file_configured=%t\n", path != "")
+	if path == "" {
+		return
+	}
+	resolved, err := resolveOptionalLocalPath(path)
+	if err != nil {
+		resolved = filepath.Clean(path)
+	}
+	fmt.Fprintf(b, "access_policy_file=%s\n", resolved)
+	fmt.Fprintf(b, "access_policy_file_exists=%t\n", fileExists(resolved))
+	policy, err := qsbridge.LoadAccessPolicyFile(resolved)
+	if err != nil {
+		fmt.Fprintf(b, "access_policy_file_valid=false\n")
+		fmt.Fprintf(b, "access_policy_file_error=%v\n", err)
+		return
+	}
+	grants := policy.Grants()
+	fmt.Fprintf(b, "access_policy_file_valid=true\n")
+	fmt.Fprintf(b, "access_grant_count=%d\n", len(grants))
+	principalKinds := map[qsbridge.AccessPrincipalKind]int{}
+	privileges := map[qsbridge.AccessPrivilege]int{}
+	wildcardTables := 0
+	columnScoped := 0
+	schemaAgnostic := 0
+	for _, grant := range grants {
+		principalKinds[grant.PrincipalKind]++
+		privileges[grant.Privilege]++
+		if grant.Table.Schema == "" || grant.Table.Schema == "*" {
+			schemaAgnostic++
+		}
+		if grant.Table.Table == "*" {
+			wildcardTables++
+		}
+		if len(grant.Fields) > 0 {
+			columnScoped++
+		}
+	}
+	fmt.Fprintf(b, "access_principal_kind_user_count=%d\n", principalKinds[qsbridge.AccessPrincipalUser])
+	fmt.Fprintf(b, "access_principal_kind_role_count=%d\n", principalKinds[qsbridge.AccessPrincipalRole])
+	for _, privilege := range []qsbridge.AccessPrivilege{
+		qsbridge.AccessSelect,
+		qsbridge.AccessInsert,
+		qsbridge.AccessUpdate,
+		qsbridge.AccessDelete,
+		qsbridge.AccessTruncate,
+		qsbridge.AccessCreate,
+		qsbridge.AccessDrop,
+	} {
+		fmt.Fprintf(b, "access_privilege_%s_count=%d\n", privilege, privileges[privilege])
+	}
+	fmt.Fprintf(b, "access_schema_agnostic_grant_count=%d\n", schemaAgnostic)
+	fmt.Fprintf(b, "access_wildcard_table_grant_count=%d\n", wildcardTables)
+	fmt.Fprintf(b, "access_column_scoped_grant_count=%d\n", columnScoped)
 }
 
 func writeCatalogObjectSummary(b *strings.Builder, configDir string) {

@@ -625,14 +625,17 @@ go run ./quanta-admin support bundle \
   --output /tmp/qstream-support.tar.gz \
   --data-dir /path/to/quantastream-data \
   --wal-path /path/to/quantastream-data/storage.wal \
+  --auth-account-file /etc/quantastream/accounts.yaml \
+  --access-policy-file /etc/quantastream/access-policy.yaml \
   --backup-source file:///path/to/backup \
   --log-path /var/log/quantastream/quantastream.log
 ```
 
 The support bundle includes version/runtime metadata, catalog/config summaries,
-optional WAL planning output, backup manifests, optional recent log tails, and
-best-effort Consul service-discovery status. It intentionally excludes table
-data files and raw auth/access policy files.
+optional redacted static auth/access validation summaries, optional WAL planning
+output, backup manifests, optional recent log tails, and best-effort Consul
+service-discovery status. It intentionally excludes table data files and raw
+auth/access policy files.
 
 ## First Support Response
 
@@ -645,6 +648,8 @@ qstream-admin support bundle \
   --output /tmp/qstream-support-$(date -u +%Y%m%dT%H%M%SZ).tar.gz \
   --data-dir /path/to/quantastream-data \
   --wal-path /path/to/quantastream-data/storage.wal \
+  --auth-account-file /etc/quantastream/accounts.yaml \
+  --access-policy-file /etc/quantastream/access-policy.yaml \
   --backup-source file:///path/to/latest-backup \
   --log-path /var/log/quantastream/quantastream.log,/var/log/quantastream/qstream-loader.log
 ```
@@ -655,6 +660,7 @@ Expected bundle entries include:
 - `metadata/version.txt`
 - `metadata/runtime.txt`
 - `config/summary.txt`
+- `security/summary.txt`
 - `wal/plan.txt` or `wal/skipped.txt`
 - `backups/backup-001-manifest.json` or `backups/skipped.txt`
 - `logs/<name>` for each requested log tail
@@ -667,10 +673,11 @@ tar -tzf /tmp/qstream-support-*.tar.gz | sort
 ```
 
 The bundle does not include table data files or raw auth/access policy files.
-It can include recent log tails, so review those logs for application payloads,
-customer identifiers, tokens, or deployment-specific secrets before sharing.
-Use `--max-log-bytes` to reduce log tail size or omit `--log-path` when logs
-need a separate redaction process.
+When `--auth-account-file` or `--access-policy-file` is supplied, it includes
+only validation status and counts. It can include recent log tails, so review
+those logs for application payloads, customer identifiers, tokens, or
+deployment-specific secrets before sharing. Use `--max-log-bytes` to reduce log
+tail size or omit `--log-path` when logs need a separate redaction process.
 
 For durability, backup, or startup recovery issues, also run a restore smoke
 against the relevant backup:
