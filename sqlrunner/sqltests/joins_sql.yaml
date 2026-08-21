@@ -340,7 +340,9 @@ tests:
 
   - id: "joins_sql.052.insert"
     # orders_qa.cust_id is a ParentRelation FK; orphan inserts are intentionally rejected.
-    status: xfail
+    status: supported
     kind: statement
     sql: |-
       insert into orders_qa (cust_id, order_id, order_date, ship_via) values('12','1005','2023-07-02T03:00:00','DHS')
+    expect:
+      error_contains: "cannot find value '12' in parent table 'customers_qa'"
