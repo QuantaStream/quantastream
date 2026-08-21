@@ -377,6 +377,33 @@ func TestAlterTableAddPrimaryKeyCatalogOnlyStatusIncludesKnownRowCount(t *testin
 	}
 }
 
+func TestValidateAlterTableAddPrimaryKeyCatalogOnlyAllowsUnknownLightweightCount(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{}
+	result, diagnostics, err := handle.validateAlterTableAddPrimaryKeyCatalogOnly(context.Background(), "scratch_orders", qsbridge.MutationShape{})
+	if err != nil {
+		t.Fatalf("validateAlterTableAddPrimaryKeyCatalogOnly() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("validateAlterTableAddPrimaryKeyCatalogOnly() diagnostics = %#v", diagnostics)
+	}
+	if result.RowCountKnown {
+		t.Fatalf("RowCountKnown = true, want false for lightweight handle")
+	}
+}
+
+func TestValidateAlterTableAddPrimaryKeyEmptyTablePropagatesContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	handle := LegacyQuantaSessionHandle{}
+	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyEmptyTable(ctx, "scratch_orders", qsbridge.MutationShape{})
+	if err == nil {
+		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() error = nil, want context cancellation")
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() diagnostics = %#v", diagnostics)
+	}
+}
+
 func TestApplyAlterTableAddPrimaryKeyCatalogMutationAddsCompoundAuthority(t *testing.T) {
 	table := &shared.BasicTable{
 		Name: "scratch_order_lines",
