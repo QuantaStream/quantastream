@@ -355,7 +355,19 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyRequiresVal
 }
 
 func TestAlterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(t *testing.T) {
-	diagnostics := alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic("scratch_orders", 3)
+	plans := []alterTableAddPrimaryKeyValidationPlan{
+		{
+			Mode:    alterTableAddPrimaryKeyValidationNullScan,
+			Table:   "scratch_orders",
+			Columns: []string{"order_key", "line_number"},
+		},
+		{
+			Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+			Table:   "scratch_orders",
+			Columns: []string{"order_key", "line_number"},
+		},
+	}
+	diagnostics := alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic("scratch_orders", 3, plans)
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
 	}
@@ -363,7 +375,10 @@ func TestAlterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want unsupported mutation", diagnostics)
 	}
 	message := diagnostics[0].Error()
-	if !strings.Contains(message, "scratch_orders with 3 existing row(s)") || !strings.Contains(message, "null and duplicate validation scans") {
+	if !strings.Contains(message, "scratch_orders with 3 existing row(s)") ||
+		!strings.Contains(message, "pending validation scans") ||
+		!strings.Contains(message, "pk_null_scan(order_key,line_number)") ||
+		!strings.Contains(message, "pk_duplicate_scan(order_key,line_number)") {
 		t.Fatalf("diagnostic = %q, want row count and validation guidance", message)
 	}
 }
@@ -395,13 +410,19 @@ func TestValidateAlterTableAddPrimaryKeyCatalogOnlyAllowsUnknownLightweightCount
 	if result.RowCountKnown {
 		t.Fatalf("RowCountKnown = true, want false for lightweight handle")
 	}
+	if len(result.Plans) != 2 {
+		t.Fatalf("plans = %#v, want validation plans surfaced", result.Plans)
+	}
+	if result.Plans[0].Mode != alterTableAddPrimaryKeyValidationNullScan || result.Plans[1].Mode != alterTableAddPrimaryKeyValidationDuplicateScan {
+		t.Fatalf("plans = %#v, want null then duplicate scan", result.Plans)
+	}
 }
 
 func TestValidateAlterTableAddPrimaryKeyEmptyTablePropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	handle := LegacyQuantaSessionHandle{}
-	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyEmptyTable(ctx, "scratch_orders", qsbridge.MutationShape{})
+	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyEmptyTable(ctx, "scratch_orders", qsbridge.MutationShape{}, nil)
 	if err == nil {
 		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() error = nil, want context cancellation")
 	}

@@ -258,6 +258,7 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 type alterTableAddPrimaryKeyValidationResult struct {
 	RowCount      uint64
 	RowCountKnown bool
+	Plans         []alterTableAddPrimaryKeyValidationPlan
 }
 
 type alterTableAddPrimaryKeyValidationMode string
@@ -278,11 +279,10 @@ func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyCatalogOnly(ct
 	if diagnostics.BlocksNative() {
 		return alterTableAddPrimaryKeyValidationResult{}, diagnostics, nil
 	}
-	result, diagnostics, err := h.validateAlterTableAddPrimaryKeyEmptyTable(ctx, tableName, mutation)
+	result, diagnostics, err := h.validateAlterTableAddPrimaryKeyEmptyTable(ctx, tableName, mutation, plans)
 	if err != nil || diagnostics.BlocksNative() {
 		return result, diagnostics, err
 	}
-	_ = plans
 	return result, nil, nil
 }
 
@@ -345,17 +345,18 @@ func alterTableAddPrimaryKeyValidationColumns(mutation qsbridge.MutationShape) (
 	return columns, nil
 }
 
-func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyEmptyTable(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
+func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyEmptyTable(ctx context.Context, tableName string, mutation qsbridge.MutationShape, plans []alterTableAddPrimaryKeyValidationPlan) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
 	_ = mutation
 	count, known, diagnostics, err := h.alterTableAddPrimaryKeyCatalogOnlyRowCount(ctx, tableName)
 	result := alterTableAddPrimaryKeyValidationResult{
 		RowCount:      count,
 		RowCountKnown: known,
+		Plans:         plans,
 	}
 	if err != nil || diagnostics.BlocksNative() || !known || count == 0 {
 		return result, diagnostics, err
 	}
-	return result, alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName, count), nil
+	return result, alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName, count, plans), nil
 }
 
 func alterTableAddPrimaryKeyCatalogOnlyStatus(tableName string, rowCount uint64, rowCountKnown bool) string {
@@ -366,10 +367,35 @@ func alterTableAddPrimaryKeyCatalogOnlyStatus(tableName string, rowCount uint64,
 	return status
 }
 
-func alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName string, count uint64) qsbridge.DiagnosticSet {
-	return qsbridge.DiagnosticSet{
-		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY catalog-only mode cannot promote table %s with %d existing row(s); QS must run null and duplicate validation scans before updating primary-key metadata", tableName, count)),
+func alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName string, count uint64, plans []alterTableAddPrimaryKeyValidationPlan) qsbridge.DiagnosticSet {
+	detail := alterTableAddPrimaryKeyValidationPlanSummary(plans)
+	if detail == "" {
+		detail = "null and duplicate validation scans"
+	} else {
+		detail = "pending validation scans: " + detail
 	}
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY catalog-only mode cannot promote table %s with %d existing row(s); QS must run %s before updating primary-key metadata", tableName, count, detail)),
+	}
+}
+
+func alterTableAddPrimaryKeyValidationPlanSummary(plans []alterTableAddPrimaryKeyValidationPlan) string {
+	if len(plans) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(plans))
+	for _, plan := range plans {
+		mode := strings.TrimSpace(string(plan.Mode))
+		if mode == "" {
+			continue
+		}
+		if len(plan.Columns) == 0 {
+			parts = append(parts, mode)
+			continue
+		}
+		parts = append(parts, mode+"("+strings.Join(plan.Columns, ",")+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyCatalogOnlyRowCount(ctx context.Context, tableName string) (uint64, bool, qsbridge.DiagnosticSet, error) {
