@@ -44,6 +44,28 @@ func TestAccessPolicyAllowsRoleGrant(t *testing.T) {
 	}
 }
 
+func TestAccessPolicyMatchesQueryLocalTableIDByStableCatalogName(t *testing.T) {
+	grantTable := TableInstance{Schema: "quanta", Table: "orders"}
+	boundTable := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders"}
+	policy := NewAccessPolicy(AccessGrant{
+		PrincipalKind: AccessPrincipalRole,
+		Principal:     "reader",
+		Privilege:     AccessSelect,
+		Table:         grantTable,
+	})
+
+	decision := AuthorizationRequest{
+		Session: SessionContext{User: "moli", Roles: []RoleName{"reader"}},
+		Requirements: []AccessRequirement{{
+			Privilege: AccessSelect,
+			Table:     boundTable,
+		}},
+	}.Authorize(policy)
+	if !decision.Supported() {
+		t.Fatalf("decision = %#v, want stable catalog-name grant to match query-local table id", decision)
+	}
+}
+
 func TestAccessPolicyDeniesMissingGrant(t *testing.T) {
 	orders := TableInstance{ID: "orders", Schema: "quanta", Table: "orders"}
 	policy := NewAccessPolicy()

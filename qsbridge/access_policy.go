@@ -85,7 +85,10 @@ func (g AccessGrant) matchesPrincipal(session SessionContext) bool {
 }
 
 func (g AccessGrant) matchesTable(table TableInstance) bool {
-	return tableIdentityKey(g.Table) == tableIdentityKey(table)
+	if g.Table.ID != "" && table.ID != "" && g.Table.ID == table.ID {
+		return true
+	}
+	return g.Table.Schema == table.Schema && g.Table.Table == table.Table
 }
 
 func (g AccessGrant) coversFields(fields []FieldRef) bool {
@@ -118,13 +121,6 @@ func cloneAccessGrants(grants []AccessGrant) []AccessGrant {
 func cloneAccessGrant(grant AccessGrant) AccessGrant {
 	grant.Fields = append([]FieldRef(nil), grant.Fields...)
 	return grant
-}
-
-func tableIdentityKey(table TableInstance) string {
-	if table.ID != "" {
-		return string(table.ID)
-	}
-	return table.Schema + "\x00" + table.Table
 }
 
 func fieldIdentityKey(field FieldRef) string {
