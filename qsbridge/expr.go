@@ -251,6 +251,24 @@ func ScalarSubquery(sql string, scope PredicateScope) ScalarSubqueryExpr {
 	return ScalarSubqueryExpr{SQL: sql, Scope: scope}
 }
 
+// ListSubqueryExpr records an IN-list subquery that must be evaluated once
+// before the parent query can be lowered to bitmap primitives.
+type ListSubqueryExpr struct {
+	SQL   string
+	Scope PredicateScope
+	Type  DataType
+}
+
+// ExpressionKind reports that ListSubqueryExpr is a list subquery.
+func (ListSubqueryExpr) ExpressionKind() ExprKind {
+	return ExprListSubquery
+}
+
+// ListSubquery creates an IN-list subquery expression.
+func ListSubquery(sql string, scope PredicateScope) ListSubqueryExpr {
+	return ListSubqueryExpr{SQL: sql, Scope: scope}
+}
+
 // ExistsSubqueryExpr records a non-correlated EXISTS subquery gate that must
 // be evaluated once before the parent query can be lowered.
 type ExistsSubqueryExpr struct {
@@ -326,6 +344,12 @@ func ExprDataType(expr Expr) DataType {
 		if n != nil {
 			return n.Type
 		}
+	case ListSubqueryExpr:
+		return n.Type
+	case *ListSubqueryExpr:
+		if n != nil {
+			return n.Type
+		}
 	case ExistsSubqueryExpr:
 		return DataTypeBool
 	case *ExistsSubqueryExpr:
@@ -360,6 +384,10 @@ func ExprNullable(expr Expr) bool {
 	case ScalarSubqueryExpr:
 		return true
 	case *ScalarSubqueryExpr:
+		return true
+	case ListSubqueryExpr:
+		return true
+	case *ListSubqueryExpr:
 		return true
 	case ExistsSubqueryExpr:
 		return false

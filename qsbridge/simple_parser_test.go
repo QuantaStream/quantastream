@@ -150,6 +150,39 @@ func TestSimpleParserBridgeParsesUpdateAssignmentScalarSubquery(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesMutationInListSubquery(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`update customers_qa
+set state = 'WA'
+where cust_id in (
+  select cust_id
+  from customers_qa
+  where state = 'ID'
+)`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindUpdate {
+		t.Fatalf("kind = %q, want update", statement.Kind)
+	}
+	if got, want := len(statement.Update.Predicates), 1; got != want {
+		t.Fatalf("predicates = %d, want %d", got, want)
+	}
+	binary, ok := statement.Update.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want UnboundBinaryExpr", statement.Update.Predicates[0].Expr)
+	}
+	if binary.Op != BinaryOpIn {
+		t.Fatalf("predicate op = %q, want %q", binary.Op, BinaryOpIn)
+	}
+	subquery, ok := binary.Right.(UnboundListSubqueryExpr)
+	if !ok {
+		t.Fatalf("predicate right = %T, want UnboundListSubqueryExpr", binary.Right)
+	}
+	if subquery.SQL != "select cust_id\n  from customers_qa\n  where state = 'ID'" {
+		t.Fatalf("subquery SQL = %q", subquery.SQL)
+	}
+}
+
 func TestSimpleParserBridgeParsesUpdateOrderLimitBoundary(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id limit 1")
 	if diagnostics.BlocksNative() {

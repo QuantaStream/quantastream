@@ -3205,6 +3205,23 @@ func UnboundScalarSubquery(sql string, scope PredicateScope) UnboundScalarSubque
 	return UnboundScalarSubqueryExpr{SQL: sql, Scope: scope}
 }
 
+// UnboundListSubqueryExpr is an IN-list subquery before runtime materialization.
+type UnboundListSubqueryExpr struct {
+	SQL   string
+	Scope PredicateScope
+}
+
+// BindExpr preserves list-subquery intent as a typed expression. Runtime
+// materialization replaces it with a literal list before bitmap lowering.
+func (e UnboundListSubqueryExpr) BindExpr(context *BindContext, roles FieldRole) (Expr, DiagnosticSet) {
+	return ListSubquery(e.SQL, e.Scope), nil
+}
+
+// UnboundListSubquery creates an unbound IN-list subquery expression.
+func UnboundListSubquery(sql string, scope PredicateScope) UnboundListSubqueryExpr {
+	return UnboundListSubqueryExpr{SQL: sql, Scope: scope}
+}
+
 // UnboundExistsSubqueryExpr is a non-correlated EXISTS gate before runtime
 // materialization.
 type UnboundExistsSubqueryExpr struct {

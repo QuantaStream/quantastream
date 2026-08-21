@@ -142,6 +142,15 @@ func (r SQLRuntime) materializeScalarSubqueriesInExpr(ctx context.Context, expr 
 		}
 		literal, diagnostics, err := r.materializeScalarSubqueryLiteral(ctx, *typed, options)
 		return literal, diagnostics, true, err
+	case qsbridge.ListSubqueryExpr:
+		list, diagnostics, err := r.materializeListSubqueryExpr(ctx, typed, options)
+		return list, diagnostics, true, err
+	case *qsbridge.ListSubqueryExpr:
+		if typed == nil {
+			return expr, nil, false, nil
+		}
+		list, diagnostics, err := r.materializeListSubqueryExpr(ctx, *typed, options)
+		return list, diagnostics, true, err
 	case qsbridge.BinaryExpr:
 		left, leftDiagnostics, leftChanged, err := r.materializeScalarSubqueriesInExpr(ctx, typed.Left, options)
 		if err != nil || leftDiagnostics.BlocksNative() {
@@ -251,6 +260,28 @@ func (r SQLRuntime) materializeScalarSubqueryLiteral(ctx context.Context, expr q
 	return qsbridge.Literal(cell.Kind, cell.Value), diagnostics, nil
 }
 
+func (r SQLRuntime) materializeListSubqueryExpr(ctx context.Context, expr qsbridge.ListSubqueryExpr, options qsbridge.ExecutionOptions) (qsbridge.ListExpr, qsbridge.DiagnosticSet, error) {
+	if expr.SQL == "" {
+		return qsbridge.List(), helperExecutionDiagnostic(PreflightHelperPlanScalarSubquery, "IN-list subquery SQL is empty"), nil
+	}
+	result, err := r.ExecuteSQL(ctx, expr.SQL, options)
+	diagnostics := append(qsbridge.DiagnosticSet(nil), result.Diagnostics...)
+	diagnostics = append(diagnostics, result.Runtime.Diagnostics...)
+	if err != nil || diagnostics.BlocksNative() {
+		return qsbridge.List(), diagnostics, err
+	}
+	cells, cellDiagnostics := listSubqueryResultCells(result.Runtime.RowSet)
+	diagnostics = append(diagnostics, cellDiagnostics...)
+	if diagnostics.BlocksNative() {
+		return qsbridge.List(), diagnostics, nil
+	}
+	items := make([]qsbridge.Expr, 0, len(cells))
+	for _, cell := range cells {
+		items = append(items, qsbridge.Literal(cell.Kind, cell.Value))
+	}
+	return qsbridge.List(items...), diagnostics, nil
+}
+
 func scalarSubqueryResultCell(rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
 	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
 		return qsbridge.ResultCell{}, diagnostics
@@ -259,4 +290,14 @@ func scalarSubqueryResultCell(rowSet qsbridge.QuantaProjectedRowSet) (qsbridge.R
 		return qsbridge.ResultCell{}, helperExecutionDiagnostic(PreflightHelperPlanScalarSubquery, "scalar subquery must return exactly one row and one column")
 	}
 	return rowSet.ProjectionVectors[0].Values[0], nil
+}
+
+func listSubqueryResultCells(rowSet qsbridge.QuantaProjectedRowSet) ([]qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	if len(rowSet.ProjectionVectors) != 1 {
+		return nil, helperExecutionDiagnostic(PreflightHelperPlanScalarSubquery, "IN-list subquery must return exactly one column")
+	}
+	return append([]qsbridge.ResultCell(nil), rowSet.ProjectionVectors[0].Values...), nil
 }

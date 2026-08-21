@@ -2090,6 +2090,65 @@ where o_orderkey = 7`, qsbridge.ExecutionOptions{})
 	}
 }
 
+func TestSQLRuntimeExecuteSQLMaterializesInListSubqueryInMutationPredicate(t *testing.T) {
+	var updateRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.Mutation.Kind == qsbridge.MutationUpdate {
+			updateRequest = request
+			return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: 2}}, nil
+		}
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Rownums: []qsbridge.QuantaRownum{1, 2},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(7)},
+					{Kind: qsbridge.ValueInt, Value: int64(8)},
+				},
+			}},
+		}}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `update orders
+set o_orderpriority = '2-HIGH'
+where o_orderkey in (
+  select o_orderkey
+  from orders
+  where o_orderkey <= 8
+)`, qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if got := updateRequest.Mutation.Kind; got != qsbridge.MutationUpdate {
+		t.Fatalf("mutation kind = %q, want update", got)
+	}
+	if got, want := len(updateRequest.Mutation.Predicates), 1; got != want {
+		t.Fatalf("predicates = %d, want %d", got, want)
+	}
+	binary, ok := updateRequest.Mutation.Predicates[0].Expr.(qsbridge.BinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want BinaryExpr", updateRequest.Mutation.Predicates[0].Expr)
+	}
+	list, ok := binary.Right.(qsbridge.ListExpr)
+	if !ok {
+		t.Fatalf("predicate right = %T, want ListExpr", binary.Right)
+	}
+	if got, want := len(list.Items), 2; got != want {
+		t.Fatalf("list items = %d, want %d", got, want)
+	}
+	first, ok := list.Items[0].(qsbridge.LiteralExpr)
+	if !ok || first.Kind != qsbridge.ValueInt || first.Value != int64(7) {
+		t.Fatalf("first list item = %#v, want int literal 7", list.Items[0])
+	}
+	second, ok := list.Items[1].(qsbridge.LiteralExpr)
+	if !ok || second.Kind != qsbridge.ValueInt || second.Value != int64(8) {
+		t.Fatalf("second list item = %#v, want int literal 8", list.Items[1])
+	}
+}
+
 func TestSQLRuntimeExecuteSQLAppliesCorrelatedAggregateNativePredicate(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

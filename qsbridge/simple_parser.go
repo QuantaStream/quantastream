@@ -5771,16 +5771,22 @@ func parseSimpleInPredicate(text string, parameterIndex *int) (UnboundPredicate,
 	if !ok {
 		return UnboundPredicate{}, simpleParserDiagnostic("IN left expression is empty"), false
 	}
-	list, diagnostic, ok := parseSimpleInList(right, parameterIndex)
-	if !ok {
-		return UnboundPredicate{}, diagnostic, false
+	var rightExpr UnboundExpr
+	if subquery, ok := parseSimpleListSubqueryExpression(right, PredicateScopeWhere); ok {
+		rightExpr = subquery
+	} else {
+		list, diagnostic, ok := parseSimpleInList(right, parameterIndex)
+		if !ok {
+			return UnboundPredicate{}, diagnostic, false
+		}
+		rightExpr = list
 	}
 	placement := PredicateResidualScan
 	if _, ok := leftExpr.(UnboundFieldExpr); ok {
 		placement = PredicatePushdown
 	}
 	return UnboundPredicate{
-		Expr:      UnboundBinary(op, leftExpr, list),
+		Expr:      UnboundBinary(op, leftExpr, rightExpr),
 		Placement: placement,
 		Scope:     PredicateScopeWhere,
 	}, Diagnostic{}, true
@@ -5939,6 +5945,14 @@ func parseSimpleInList(text string, parameterIndex *int) (UnboundListExpr, Diagn
 		items = append(items, item)
 	}
 	return UnboundList(items...), Diagnostic{}, true
+}
+
+func parseSimpleListSubqueryExpression(text string, scope PredicateScope) (UnboundListSubqueryExpr, bool) {
+	body, _, ok := parseSimpleMembershipSubqueryBody(text)
+	if !ok {
+		return UnboundListSubqueryExpr{}, false
+	}
+	return UnboundListSubquery("select "+strings.TrimSpace(body), scope), true
 }
 
 func simpleComparisonPredicatePlacement(left UnboundExpr, right UnboundExpr) PredicatePlacement {

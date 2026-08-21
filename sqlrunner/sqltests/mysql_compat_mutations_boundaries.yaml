@@ -365,12 +365,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.014.update_where_subquery
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_subquery_boundary
     compatibility: mysql
     requires: [update, where, subquery, in]
-    issue: "Mutation predicates with subqueries need explicit write-time subquery planning and safety checks."
     sql: |
       update qs_mysql_compat_mutations_ctas
       set name = 'subquery'
@@ -400,12 +399,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.015.delete_where_subquery
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_subquery_boundary
     compatibility: mysql
     requires: [delete, where, subquery, in]
-    issue: "Mutation predicates with subqueries need explicit write-time subquery planning and safety checks."
     sql: |
       delete from qs_mysql_compat_mutations_ctas
       where id in (
