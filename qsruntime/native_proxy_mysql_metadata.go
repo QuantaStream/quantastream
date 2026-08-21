@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 // nativeProxyMySQLMetadataQueryResponse answers MySQL client metadata probes
@@ -27,7 +28,7 @@ func nativeProxyMySQLMetadataQueryResult(command qsmysql.Command) (qsbridge.Exec
 	case "select database()", "select schema()":
 		return nativeProxySingleCellMetadataResult("DATABASE()", qsbridge.DataTypeString, qsbridge.ValueString, nativeProxyMetadataDatabase(command)), true
 	case "select version()":
-		return nativeProxySingleCellMetadataResult("VERSION()", qsbridge.DataTypeString, qsbridge.ValueString, "8.0.0-quantastream"), true
+		return nativeProxySingleCellMetadataResult("VERSION()", qsbridge.DataTypeString, qsbridge.ValueString, version.MySQLVersion()), true
 	case "select connection_id()":
 		return nativeProxySingleCellMetadataResult("CONNECTION_ID()", qsbridge.DataTypeInt, qsbridge.ValueInt, int64(nativeProxyMetadataConnectionID(command))), true
 	default:

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/version"
 	"github.com/hashicorp/consul/api"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -24,8 +25,8 @@ import (
 
 // Variables to identify the build
 var (
-	Version  string
-	Build    string
+	Version  = version.Version
+	Build    = version.BuildString()
 	EPOCH, _ = time.ParseInLocation(time.RFC3339, "2000-01-01T00:00:00+00:00", time.UTC)
 	loc, _   = time.LoadLocation("Local")
 )
@@ -129,7 +130,7 @@ func main() {
 	environment := app.Flag("env", "Environment [DEV, QA, STG, VAL, PROD]").Default("DEV").String()
 	consul := app.Flag("consul-endpoint", "Consul agent address/port").Default("127.0.0.1:8500").String()
 
-	shared.InitLogging("WARN", *environment, "TPC-H-Producer", Version, "Quanta")
+	shared.InitLogging("WARN", *environment, "TPC-H-Producer", Version, version.ProductName)
 
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 

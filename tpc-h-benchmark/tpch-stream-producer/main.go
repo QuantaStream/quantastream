@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/QuantaStream/quantastream/version"
 )
 
 type streamEvent struct {
@@ -47,9 +49,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	customerCount := flags.Int64("customer-count", 1500, "existing customer key domain size")
 	partCount := flags.Int64("part-count", 2000, "existing part key domain size")
 	supplierCount := flags.Int64("supplier-count", 100, "existing supplier key domain size")
+	showVersion := flags.Bool("version", false, "print QuantaStream version and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, version.Summary())
+		return 0
 	}
 	if *orders < 1 || *lineitems < 1 || *batchSize < 1 || *customerCount < 1 || *partCount < 1 || *supplierCount < 1 {
 		fmt.Fprintln(stderr, "orders, lineitems, batch-size, customer-count, part-count, and supplier-count must be positive")

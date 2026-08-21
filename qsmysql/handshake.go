@@ -1,6 +1,10 @@
 package qsmysql
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/QuantaStream/quantastream/version"
+)
 
 const (
 	defaultAuthPluginName  = "caching_sha2_password"
@@ -21,7 +25,7 @@ type HandshakeV10 struct {
 // NewDefaultHandshake returns a deterministic, testable protocol 10 greeting model.
 func NewDefaultHandshake(connectionID uint32, authPluginData []byte) HandshakeV10 {
 	return HandshakeV10{
-		ServerVersion:   "8.0.0-quantastream",
+		ServerVersion:   version.MySQLVersion(),
 		ConnectionID:    connectionID,
 		AuthPluginData:  append([]byte(nil), authPluginData...),
 		CapabilityFlags: defaultCapabilityFlags,

@@ -2,6 +2,8 @@ package admin
 
 import (
 	"fmt"
+
+	"github.com/QuantaStream/quantastream/version"
 )
 
 // Context - Global command line variables
@@ -13,8 +15,8 @@ type Context struct {
 
 // Variables to identify the build
 var (
-	Version string
-	Build   string
+	Version = version.Version
+	Build   = version.BuildString()
 )
 
 // VersionCmd - Version command
@@ -24,6 +26,12 @@ type VersionCmd struct {
 // Run - Version command implementation
 func (v *VersionCmd) Run(ctx *Context) error {
 
+	if Version == "" {
+		Version = version.Version
+	}
+	if Build == "" {
+		Build = version.BuildString()
+	}
 	fmt.Printf("Version: %s\n  Build: %s\n", Version, Build)
 	return nil
 }

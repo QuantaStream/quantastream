@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/qsloader"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 const loaderShutdownTimeout = 5 * time.Second
@@ -46,9 +47,14 @@ func run(ctx context.Context, args []string) int {
 	defaultSource := flags.String("default-source", "json-http", "source value used when a JSON event omits source")
 	physicalBuildRouting := flags.Bool("physical-build-routing", false, "route by physical time-quantum build shard when safe for the source shape")
 	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6061")
+	showVersion := flags.Bool("version", false, "print QuantaStream version and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(os.Stdout, version.Summary())
+		return 0
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	mode := shared.LoaderConnectionMode(strings.TrimSpace(*connectionMode))

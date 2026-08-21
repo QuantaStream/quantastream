@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 // SQLRuntime is the SQL-facing runtime facade before protocol-specific plumbing.
@@ -595,9 +596,9 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 	}
 	switch normalized {
 	case "version":
-		return qsbridge.Literal(qsbridge.ValueString, "8.0.0-quantastream"), true
+		return qsbridge.Literal(qsbridge.ValueString, version.MySQLVersion()), true
 	case "version_comment":
-		return qsbridge.Literal(qsbridge.ValueString, "QuantaStream"), true
+		return qsbridge.Literal(qsbridge.ValueString, version.MySQLVersionComment()), true
 	case "autocommit":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
 	case "character_set_client", "character_set_connection", "character_set_results":
@@ -666,7 +667,7 @@ func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (q
 		}
 		return qsbridge.Literal(qsbridge.ValueString, schema), true
 	case "version":
-		return qsbridge.Literal(qsbridge.ValueString, "8.0.0-quantastream"), true
+		return qsbridge.Literal(qsbridge.ValueString, version.MySQLVersion()), true
 	case "user", "current_user":
 		user := strings.TrimSpace(string(r.Session.User))
 		if user == "" {

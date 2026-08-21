@@ -22,6 +22,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"
+	"github.com/QuantaStream/quantastream/version"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -52,9 +53,14 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", envString("QUANTASTREAM_PPROF_BIND", ""), "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
+	showVersion := flags.Bool("version", false, "print QuantaStream version and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, version.Summary())
+		return 0
 	}
 	if *mysqlPort < 0 {
 		fmt.Fprintf(stderr, "mysql port cannot be negative: %d\n", *mysqlPort)

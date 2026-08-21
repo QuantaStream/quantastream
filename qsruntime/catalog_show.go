@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 func showCreateViewRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
@@ -621,8 +622,8 @@ func (r SQLRuntime) showVariableRows(pattern string, patterns []string) []showVa
 		{name: "protocol_version", value: "10"},
 		{name: "sql_mode", value: strings.Join(sqlModeStrings(r.Session.SQLModes), ",")},
 		{name: "time_zone", value: runtimeSessionTimeZone(r.Session)},
-		{name: "version", value: "8.0.0-quantastream"},
-		{name: "version_comment", value: "QuantaStream"},
+		{name: "version", value: version.MySQLVersion()},
+		{name: "version_comment", value: version.MySQLVersionComment()},
 		{name: "version_compile_machine", value: "x86_64"},
 		{name: "version_compile_os", value: "Linux"},
 	}

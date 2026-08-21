@@ -18,6 +18,7 @@ import (
 	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/version"
 	"gopkg.in/yaml.v2"
 )
 
@@ -55,9 +56,14 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
 	printBSIPKAuthorityManifest := flags.Bool("print-bsi-pk-authority-manifest", false, "print the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
 	writeBSIPKAuthorityManifest := flags.Bool("write-bsi-pk-authority-manifest", false, "write the logical BSI primary-key authority manifest for the mounted standard catalog and exit")
+	showVersion := flags.Bool("version", false, "print QuantaStream version and exit")
 
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, version.Summary())
+		return 0
 	}
 	if *mode != qsinabox.StandardMode {
 		fmt.Fprintf(stderr, "unsupported mode %q; only %q is wired in this skeleton\n", *mode, qsinabox.StandardMode)

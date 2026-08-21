@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
@@ -653,15 +654,15 @@ func TestSQLRuntimeExecuteSQLShowVariablesLikeReturnsCatalogRows(t *testing.T) {
 		t.Fatalf("time zone rows = %#v", timeZoneChunk.Rows)
 	}
 
-	version, err := runtime.ExecuteSQL(context.Background(), "show variables where Variable_name = 'version'", qsbridge.ExecutionOptions{})
+	versionResult, err := runtime.ExecuteSQL(context.Background(), "show variables where Variable_name = 'version'", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("SHOW VARIABLES WHERE version failed: %v", err)
 	}
-	versionChunk, diagnostics := version.Runtime.RowSet.ToResultChunk(0, true)
+	versionChunk, diagnostics := versionResult.Runtime.RowSet.ToResultChunk(0, true)
 	if diagnostics.BlocksNative() {
 		t.Fatalf("version chunk diagnostics = %#v", diagnostics)
 	}
-	if len(versionChunk.Rows) != 1 || versionChunk.Rows[0][0].Value != "version" || versionChunk.Rows[0][1].Value != "8.0.0-quantastream" {
+	if len(versionChunk.Rows) != 1 || versionChunk.Rows[0][0].Value != "version" || versionChunk.Rows[0][1].Value != version.MySQLVersion() {
 		t.Fatalf("version rows = %#v", versionChunk.Rows)
 	}
 
@@ -1104,7 +1105,7 @@ func TestSQLRuntimeExecuteSQLProjectionMetadataFunctions(t *testing.T) {
 		t.Fatalf("rows = %#v, want one six-column row", chunk.Rows)
 	}
 	row := chunk.Rows[0]
-	if row[0].Value != "analytics" || row[1].Value != "analytics" || row[2].Value != "8.0.0-quantastream" {
+	if row[0].Value != "analytics" || row[1].Value != "analytics" || row[2].Value != version.MySQLVersion() {
 		t.Fatalf("schema/version cells = %#v", row[:3])
 	}
 	if row[3].Value != "bench@localhost" || row[4].Value != "bench@localhost" || row[5].Value != int64(1) {
@@ -1205,7 +1206,7 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 		t.Fatalf("rows = %#v, want one five-column row", chunk.Rows)
 	}
 	row := chunk.Rows[0]
-	if row[0].Value != "8.0.0-quantastream" || row[1].Value != "QuantaStream" || row[2].Value != int64(0) || row[3].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" || row[4].Value != "+00:00" {
+	if row[0].Value != version.MySQLVersion() || row[1].Value != version.MySQLVersionComment() || row[2].Value != int64(0) || row[3].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" || row[4].Value != "+00:00" {
 		t.Fatalf("system variable cells = %#v", row)
 	}
 }

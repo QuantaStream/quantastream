@@ -2,6 +2,10 @@
 
 # QuantaStream Quick Start
 
+For the beginner binary release flow, use
+[`GETTING_STARTED.md`](GETTING_STARTED.md). This quick start is the source
+checkout workflow.
+
 ## Requirements
 
 Recommended environment:

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
+	"github.com/QuantaStream/quantastream/version"
 )
 
 func TestNativeProxyFrontDoorHandlesPingAndQuitCommands(t *testing.T) {
@@ -177,7 +178,7 @@ func TestNativeProxyFrontDoorHandlesMySQLMetadataSelectsAtProtocolBoundary(t *te
 	}{
 		{sql: "SELECT @@max_allowed_packet", payload: "\x0867108864"},
 		{sql: "select database()", payload: "\x09analytics"},
-		{sql: "select version()", payload: "\x128.0.0-quantastream"},
+		{sql: "select version()", payload: string([]byte{byte(len(version.MySQLVersion()))}) + version.MySQLVersion()},
 		{sql: "select connection_id()", payload: "\x0242"},
 	}
 	for _, test := range tests {

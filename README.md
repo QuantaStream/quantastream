@@ -94,7 +94,7 @@ Recommended environment:
 - HashiCorp Consul
 - 16 GB RAM minimum, 32 GB recommended for TPC-H experimentation
 
-Start with [docs/QUICKSTART.md](docs/QUICKSTART.md). Deployment assumptions and production-readiness notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary runbook or [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source checkout workflow. Deployment assumptions and production-readiness notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Validation And Benchmarks
 

@@ -3,6 +3,8 @@ package qsmysql
 import (
 	"bytes"
 	"testing"
+
+	"github.com/QuantaStream/quantastream/version"
 )
 
 func TestHandshakePacketEncodesProtocol10Greeting(t *testing.T) {
@@ -22,7 +24,7 @@ func TestHandshakePacketEncodesProtocol10Greeting(t *testing.T) {
 	if payload[0] != 0x0a {
 		t.Fatalf("protocol = %d, want 10", payload[0])
 	}
-	if !bytes.Contains(payload, []byte("8.0.0-quantastream\x00")) {
+	if !bytes.Contains(payload, []byte(version.MySQLVersion()+"\x00")) {
 		t.Fatalf("payload missing server version: %q", payload)
 	}
 	if !bytes.Contains(payload, []byte(defaultAuthPluginName+"\x00")) {

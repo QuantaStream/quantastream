@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/QuantaStream/quantastream/version"
 	u "github.com/araddon/gou"
 	"github.com/hashicorp/consul/api"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -20,9 +21,9 @@ import (
 
 var (
 	// Version number (i.e. 0.8.0)
-	Version string
+	Version = version.Version
 	// Build date
-	Build string
+	Build = version.BuildString()
 )
 
 func main() {
@@ -46,7 +47,7 @@ func main() {
 
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
-	shared.InitLogging(*logLevel, *environment, "Data-Node", Version, "Quanta")
+	shared.InitLogging(*logLevel, *environment, "Data-Node", Version, version.ProductName)
 
 	if *bindAddr == "0.0.0.0" { // if there's no bind address given then find our ip address
 		myaddr := GetOutboundIP().String()
