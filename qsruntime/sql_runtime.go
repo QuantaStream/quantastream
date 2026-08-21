@@ -196,6 +196,11 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
 			return result, nil
 		}
+		if strings.TrimSpace(prepared.Query.Mutation.SourceSQL) != "" {
+			result.Runtime = r.insertSelectRuntimeResult(ctx, request)
+			result.Diagnostics = append(result.Diagnostics, result.Runtime.Diagnostics...)
+			return result, nil
+		}
 	}
 	if prepared.Kind == qsbridge.QueryKindShowCreateView {
 		result.Runtime = showCreateViewRuntimeResult(request)

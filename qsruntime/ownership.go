@@ -179,6 +179,7 @@ func runtimeOwnershipCompositionFile(file string) bool {
 		"execution_inspection.go",
 		"executor.go",
 		"executor_selector.go",
+		"insert_select.go",
 		"inspection_rows.go",
 		"materialization.go",
 		"native_proxy_listener.go",

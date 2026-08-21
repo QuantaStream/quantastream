@@ -2461,6 +2461,147 @@ func TestSQLRuntimeExecuteSQLRunsInsertMutationWithoutLowering(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLInsertSelectMaterializesRows(t *testing.T) {
+	catalog := qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "customer_key", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}
+	var insertRequest ExecutionRequest
+	var sourceCalls int
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.Mutation.Kind == qsbridge.MutationInsert {
+			insertRequest = request
+			return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: uint64(len(request.Mutation.Rows))}}, nil
+		}
+		sourceCalls++
+		return ExecutionResult{
+			RowSet: qsbridge.QuantaProjectedRowSet{
+				Index:   "customer",
+				Rownums: []qsbridge.QuantaRownum{1, 2},
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "c_custkey", Type: qsbridge.DataTypeInt, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(1)}, {Kind: qsbridge.ValueInt, Value: int64(2)}},
+					},
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "c_name", Type: qsbridge.DataTypeString, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "Customer#000000001"}, {Kind: qsbridge.ValueString, Value: "Customer#000000002"}},
+					},
+				},
+			},
+		}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys (customer_key, customer_name) select c_custkey, c_name from customer order by c_custkey limit 2", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if sourceCalls != 1 {
+		t.Fatalf("source SELECT calls = %d, want 1", sourceCalls)
+	}
+	if result.Runtime.Statement.AffectedRows != 2 {
+		t.Fatalf("affected rows = %d, want 2", result.Runtime.Statement.AffectedRows)
+	}
+	if insertRequest.Mutation.Target.Table != "scratch_keys" {
+		t.Fatalf("insert target = %#v, want scratch_keys", insertRequest.Mutation.Target)
+	}
+	if len(insertRequest.Mutation.Rows) != 2 {
+		t.Fatalf("insert rows = %d, want 2", len(insertRequest.Mutation.Rows))
+	}
+	if insertRequest.Mutation.SourceSQL != "" {
+		t.Fatalf("insert SourceSQL = %q, want cleared before physical insert", insertRequest.Mutation.SourceSQL)
+	}
+	firstID, ok := insertRequest.Mutation.Rows[0].Values[0].(qsbridge.LiteralExpr)
+	if !ok || firstID.Value != int64(1) {
+		t.Fatalf("first inserted id = %#v, want literal 1", insertRequest.Mutation.Rows[0].Values[0])
+	}
+	secondName, ok := insertRequest.Mutation.Rows[1].Values[1].(qsbridge.LiteralExpr)
+	if !ok || secondName.Value != "Customer#000000002" {
+		t.Fatalf("second inserted name = %#v", insertRequest.Mutation.Rows[1].Values[1])
+	}
+}
+
+func TestSQLRuntimeExecuteSQLInsertSelectWithoutColumnListUsesTargetFields(t *testing.T) {
+	catalog := qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "scratch_keys",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "customer_key", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}
+	var insertRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.Mutation.Kind == qsbridge.MutationInsert {
+			insertRequest = request
+			return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: uint64(len(request.Mutation.Rows))}}, nil
+		}
+		return ExecutionResult{
+			RowSet: qsbridge.QuantaProjectedRowSet{
+				Index:   "customer",
+				Rownums: []qsbridge.QuantaRownum{1},
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "c_custkey", Type: qsbridge.DataTypeInt, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueInt, Value: int64(1)}},
+					},
+					{
+						Field:  qsbridge.QuantaProjectionField{Index: "customer", Field: "c_name", Type: qsbridge.DataTypeString, Visible: true},
+						Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "Customer#000000001"}},
+					},
+				},
+			},
+		}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_keys select c_custkey, c_name from customer order by c_custkey limit 1", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if got := insertRequest.Mutation.Columns; len(got) != 2 || got[0].Name != "customer_key" || got[1].Name != "customer_name" {
+		t.Fatalf("insert columns = %#v, want target table fields", got)
+	}
+	if result.Runtime.Statement.AffectedRows != 1 {
+		t.Fatalf("affected rows = %d, want 1", result.Runtime.Statement.AffectedRows)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLCreateTableAsSelectCreatesAndInsertsRows(t *testing.T) {
 	catalog := qsbridge.MemoryCatalog{
 		Tables: []qsbridge.TableDefinition{{

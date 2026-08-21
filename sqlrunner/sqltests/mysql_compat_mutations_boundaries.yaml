@@ -419,12 +419,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.018.insert_select
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_insert_select_boundary
+    feature: mutations_insert_select
     compatibility: mysql
     requires: [insert, select]
-    issue: "INSERT ... SELECT requires result-schema validation and materializing SELECT rows into the write path."
     sql: |
       insert into qs_mysql_compat_mutations_ctas (id, name)
       select c_custkey, c_name

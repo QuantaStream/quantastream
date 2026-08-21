@@ -79,6 +79,7 @@ func TestRuntimeOwnershipForFileSeparatesDurableContractsFromNativeStaging(t *te
 	tests := map[string]RuntimeOwnershipCategory{
 		"bitmap_result_adapter.go":           RuntimeOwnershipComposition,
 		"execution_inspection.go":            RuntimeOwnershipComposition,
+		"insert_select.go":                   RuntimeOwnershipComposition,
 		"inspection_rows.go":                 RuntimeOwnershipComposition,
 		"materialization.go":                 RuntimeOwnershipComposition,
 		"relationship_join_plan.go":          RuntimeOwnershipComposition,
