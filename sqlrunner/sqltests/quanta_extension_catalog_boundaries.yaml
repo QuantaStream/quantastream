@@ -8,7 +8,7 @@ tests:
     feature: catalog_foreign_key_reverse_artifact
     compatibility: quanta_extension
     requires: [alter_table, add_foreign_key, reverse_artifact]
-    issue: "QS needs an ALTER TABLE FK extension that can opt into parent-to-child reverse artifact maintenance for relationship predicates when the child cardinality is appropriate."
+    issue: "Plain MySQL ADD FOREIGN KEY now models a metadata-only artifact policy. This QS extension remains future syntax for explicitly opting into parent-to-child reverse artifact build/maintenance when child cardinality is appropriate."
     sql: |
       alter table lineitem
       add constraint fk_lineitem_orders_reverse

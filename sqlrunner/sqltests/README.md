@@ -51,7 +51,10 @@ diff-safe transaction and cleanup statements. Catalog-backed DML behavior lives
 in `mutate_tests_body.yaml`, where QuantaStream-owned test tables are available.
 `mysql_compat_mutations_boundaries.yaml` tracks MySQL scratch-table workflows
 that currently depend on inline `CREATE TABLE`, `CREATE TABLE AS SELECT`, or
-`DROP TABLE ... CASCADE`.
+post-load `ALTER TABLE` key and relationship catalog activation. Plain
+`ALTER TABLE ... ADD PRIMARY KEY` and `ADD FOREIGN KEY` parse and bind into
+validation metadata, but remain XFAIL until QS can run validation scans, build
+artifacts, and activate catalog metadata.
 
 ## Capturing MySQL Reference Results
 

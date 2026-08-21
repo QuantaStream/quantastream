@@ -287,10 +287,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.037.alter_table_add_primary_key
     status: xfail
     kind: statement
-    feature: mutations_alter_table_keys_boundary
+    feature: mutations_alter_table_primary_key_execution_boundary
     compatibility: mysql
-    requires: [alter_table, add_primary_key]
-    issue: "ALTER TABLE ... ADD PRIMARY KEY is needed for heap-like CTAS workflows; QS must validate existing rows and build primary-key authority artifacts before enabling it."
+    requires: [alter_table, add_primary_key, primary_key_validation, catalog_activation, primary_key_authority_artifacts]
+    issue: "Parser/binder support now models ALTER TABLE ... ADD PRIMARY KEY and the required null/duplicate validation steps. Execution still needs to run those scans, build primary-key authority artifacts, and activate the catalog metadata."
     sql: |
       alter table qs_mysql_compat_mutations_keys
       add primary key (id)
@@ -298,10 +298,10 @@ tests:
   - id: mysql_compat_mutations_boundaries.038.alter_table_add_foreign_key
     status: xfail
     kind: statement
-    feature: mutations_alter_table_keys_boundary
+    feature: mutations_alter_table_foreign_key_execution_boundary
     compatibility: mysql
-    requires: [alter_table, add_foreign_key]
-    issue: "ALTER TABLE ... ADD FOREIGN KEY is needed for post-load relationship metadata; QS must validate existing rows and update relationship/catalog artifacts before enabling it."
+    requires: [alter_table, add_foreign_key, foreign_key_validation, relationship_catalog_activation, metadata_only_artifact_policy]
+    issue: "Parser/binder support now models plain MySQL ALTER TABLE ... ADD FOREIGN KEY, metadata-only artifact policy, and the required parent-key/type/orphan validation steps. Execution still needs to run those checks and activate relationship catalog metadata."
     sql: |
       alter table qs_mysql_compat_mutations_keys
       add constraint fk_qs_mysql_compat_mutations_keys_customer
