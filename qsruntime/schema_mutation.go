@@ -88,9 +88,9 @@ func (h LegacyQuantaSessionHandle) DropTable(ctx context.Context, request Execut
 	return h.dropFileCatalogTable(ctx, schemaName, tableName, request.Mutation.IfExists)
 }
 
-// AlterTableAddPrimaryKey reserves the default parser/binder/runtime path for
-// future validation and artifact work. A guarded catalog-only scaffold lets
-// tests exercise schema metadata writes before full PK authority rebuilds exist.
+// AlterTableAddPrimaryKey activates metadata only when validation proves the
+// table is empty, or when the guarded catalog-only override is enabled for
+// tests and development. Non-empty tables still need PK authority artifact work.
 func (h LegacyQuantaSessionHandle) AlterTableAddPrimaryKey(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if request.Mutation.Kind != qsbridge.MutationAlterTableAddPrimaryKey {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
@@ -103,15 +103,6 @@ func (h LegacyQuantaSessionHandle) AlterTableAddPrimaryKey(ctx context.Context, 
 	}
 	if err := ctx.Err(); err != nil {
 		return qsbridge.StatementResult{}, nil, err
-	}
-	validationSteps := schemaMutationValidationStepKinds(request.Mutation.ValidationSteps)
-	if validationSteps == "" {
-		validationSteps = "primary_key_null_scan, primary_key_duplicate_scan"
-	}
-	if !alterTableAddPrimaryKeyCatalogOnlyEnabled() {
-		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
-			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY is not implemented yet; required validation steps: "+validationSteps+"; QS must validate existing rows and build primary-key authority artifacts before enabling it"),
-		}, nil
 	}
 	if diagnostics := validateAlterTableAddPrimaryKeyCatalogOnlyScaffold(request.Mutation); diagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, diagnostics, nil
@@ -188,6 +179,9 @@ func (h LegacyQuantaSessionHandle) alterFileCatalogTableAddPrimaryKey(ctx contex
 	if diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
 	}
+	if diagnostics := alterTableAddPrimaryKeyActivationDiagnostics(tableName, validation, alterTableAddPrimaryKeyCatalogOnlyEnabled()); diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
 	if diagnostics, err := applyAlterTableAddPrimaryKeyCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
 	}
@@ -227,6 +221,9 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 	validation, diagnostics, err := h.validateAlterTableAddPrimaryKeyCatalogOnly(ctx, tableName, mutation)
 	if diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
+	}
+	if diagnostics := alterTableAddPrimaryKeyActivationDiagnostics(tableName, validation, alterTableAddPrimaryKeyCatalogOnlyEnabled()); diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
 	}
 	if diagnostics, err := applyAlterTableAddPrimaryKeyCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
@@ -347,6 +344,22 @@ func alterTableAddPrimaryKeyValidationPlans(tableName string, mutation qsbridge.
 		})
 	}
 	return plans, nil
+}
+
+func alterTableAddPrimaryKeyActivationDiagnostics(tableName string, validation alterTableAddPrimaryKeyValidationResult, catalogOnly bool) qsbridge.DiagnosticSet {
+	if catalogOnly {
+		return nil
+	}
+	if validation.RowCountKnown && validation.RowCount == 0 {
+		return nil
+	}
+	detail := "row count is unknown"
+	if validation.RowCountKnown {
+		detail = fmt.Sprintf("table has %d existing row(s)", validation.RowCount)
+	}
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY cannot activate metadata for table %s yet: %s; QS must build or probe primary-key authority artifacts before promoting non-empty or unverified tables", tableName, detail)),
+	}
 }
 
 func alterTableAddPrimaryKeyValidationColumns(mutation qsbridge.MutationShape) ([]string, qsbridge.DiagnosticSet) {

@@ -230,11 +230,16 @@ func TestLegacySchemaMutationHandleDropTableIfExistsIgnoresMissingFileCatalogTab
 	}
 }
 
-func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsupported(t *testing.T) {
+func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyBlocksUnknownRowCountWithoutCatalogOnly(t *testing.T) {
 	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "")
+	configDir := t.TempDir()
+	writeSchemaMutationKeylessCatalogSchema(t, configDir, "scratch_orders")
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "scratch_orders", testSchemaMutationTime()); err != nil {
+		t.Fatalf("ActivateCatalogTable() error = %v", err)
+	}
 	handle := LegacyQuantaSessionHandle{
 		TableName: "scratch_orders",
-		Session:   &core.Session{BasePath: t.TempDir()},
+		Session:   &core.Session{BasePath: configDir},
 	}
 	request := ExecutionRequest{
 		Mutation: qsbridge.MutationShape{
@@ -255,10 +260,14 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsuppo
 		t.Fatalf("AlterTableAddPrimaryKey() error = %v", err)
 	}
 	if !diagnostics.BlocksNative() {
-		t.Fatalf("diagnostics = %#v, want unsupported mutation blocker", diagnostics)
+		t.Fatalf("diagnostics = %#v, want authority artifact blocker", diagnostics)
 	}
-	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD PRIMARY KEY is not implemented yet") || !strings.Contains(diagnostics[0].Error(), "primary_key_null_scan, primary_key_duplicate_scan") {
-		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD PRIMARY KEY", diagnostics)
+	if len(diagnostics) == 0 ||
+		diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation ||
+		!strings.Contains(diagnostics[0].Error(), "cannot activate metadata") ||
+		!strings.Contains(diagnostics[0].Error(), "row count is unknown") ||
+		!strings.Contains(diagnostics[0].Error(), "primary-key authority artifacts") {
+		t.Fatalf("diagnostics = %#v, want authority artifact activation blocker", diagnostics)
 	}
 }
 
@@ -390,6 +399,39 @@ func TestAlterTableAddPrimaryKeyCatalogOnlyStatusIncludesKnownRowCount(t *testin
 	}
 	if got := alterTableAddPrimaryKeyCatalogOnlyStatus("scratch_orders", 0, true); got != "Primary key added to table scratch_orders (catalog-only row_count=0)" {
 		t.Fatalf("status = %q, want catalog-only row count", got)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyActivationDiagnosticsAllowsProvenEmptyTable(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyActivationDiagnostics("scratch_orders", alterTableAddPrimaryKeyValidationResult{
+		RowCountKnown: true,
+		RowCount:      0,
+	}, false)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want proven empty table allowed", diagnostics)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyActivationDiagnosticsBlocksNonEmptyWithoutCatalogOnly(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyActivationDiagnostics("scratch_orders", alterTableAddPrimaryKeyValidationResult{
+		RowCountKnown: true,
+		RowCount:      3,
+	}, false)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want non-empty table blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "table has 3 existing row(s)") {
+		t.Fatalf("diagnostics = %#v, want row-count blocker", diagnostics)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyActivationDiagnosticsAllowsCatalogOnlyOverride(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyActivationDiagnostics("scratch_orders", alterTableAddPrimaryKeyValidationResult{
+		RowCountKnown: true,
+		RowCount:      3,
+	}, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want catalog-only override allowed", diagnostics)
 	}
 }
 
