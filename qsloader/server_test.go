@@ -66,6 +66,7 @@ func TestStatsEndpointReturnsLoaderSnapshot(t *testing.T) {
 			Workers:              1,
 			ChannelSize:          100,
 			FlushInterval:        time.Second,
+			CommitOnClose:        true,
 			PhysicalBuildRouting: true,
 		},
 		tables: []*core.Table{
@@ -95,6 +96,9 @@ func TestStatsEndpointReturnsLoaderSnapshot(t *testing.T) {
 	}
 	if stats.Config.NativeGRPCAddr != "127.0.0.1:4100" || !stats.Config.PhysicalBuildRouting {
 		t.Fatalf("config = %+v, want native grpc and physical routing", stats.Config)
+	}
+	if !stats.Config.CommitOnClose {
+		t.Fatalf("commit_on_close = false, want true")
 	}
 	if len(stats.Tables) != 2 || stats.Tables[0] != "lineitem" || stats.Tables[1] != "orders" {
 		t.Fatalf("tables = %v, want sorted lineitem/orders", stats.Tables)

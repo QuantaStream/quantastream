@@ -18,7 +18,7 @@ import (
 	"github.com/QuantaStream/quantastream/version"
 )
 
-const loaderShutdownTimeout = 5 * time.Second
+const loaderShutdownTimeout = 5 * time.Minute
 
 type loaderCloseable interface {
 	Close() error
@@ -44,6 +44,7 @@ func run(ctx context.Context, args []string) int {
 	workers := flags.Int("workers", 1, "session router worker count")
 	channelSize := flags.Int("channel-size", 100000, "session router channel size")
 	flushInterval := flags.Duration("flush-interval", time.Second, "session router idle flush interval")
+	commitOnClose := flags.Bool("commit-on-close", true, "commit native/distributed backend after draining loader sessions on shutdown")
 	defaultSource := flags.String("default-source", "json-http", "source value used when a JSON event omits source")
 	physicalBuildRouting := flags.Bool("physical-build-routing", false, "route by physical time-quantum build shard when safe for the source shape")
 	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6061")
@@ -77,6 +78,7 @@ func run(ctx context.Context, args []string) int {
 		Workers:              *workers,
 		ChannelSize:          *channelSize,
 		FlushInterval:        *flushInterval,
+		CommitOnClose:        *commitOnClose,
 		DefaultSource:        *defaultSource,
 		PhysicalBuildRouting: *physicalBuildRouting,
 	}, logger)

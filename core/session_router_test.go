@@ -1,11 +1,15 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	pb "github.com/QuantaStream/quantastream/grpc"
 	"github.com/QuantaStream/quantastream/shared"
+	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/stretchr/testify/require"
 	"github.com/stvp/rendezvous"
 )
@@ -112,6 +116,41 @@ func TestSessionRouterCloseDoesNotWaitForIdleFlushInterval(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("router Close waited for idle flush interval")
 	}
+}
+
+func TestSessionRouterCommitOnCloseCommitsAfterDrain(t *testing.T) {
+	local := &recordingRouterCommitBitmapService{}
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{LocalNodeServices: shared.LocalNodeServices{BitmapIndex: local}},
+		ShardCount:    1,
+		ChannelSize:   1,
+		FlushInterval: time.Hour,
+		CommitOnClose: true,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, router.Close())
+	require.Equal(t, 1, local.commitCalls)
+	require.NoError(t, router.Close())
+	require.Equal(t, 1, local.commitCalls, "router Close should commit at most once")
+}
+
+func TestSessionRouterCommitOnCloseReturnsCommitError(t *testing.T) {
+	local := &recordingRouterCommitBitmapService{commitErr: errors.New("commit failed")}
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{LocalNodeServices: shared.LocalNodeServices{BitmapIndex: local}},
+		ShardCount:    1,
+		ChannelSize:   1,
+		FlushInterval: time.Hour,
+		CommitOnClose: true,
+	})
+	require.NoError(t, err)
+
+	err = router.Close()
+	require.ErrorContains(t, err, "commit failed")
+	require.Equal(t, 1, local.commitCalls)
 }
 
 func TestSessionRouterDoesNotPublishStaleFlushProfile(t *testing.T) {
@@ -254,4 +293,66 @@ func TestSessionRouterConfiguresSessionPrimaryKeyResolver(t *testing.T) {
 	router.configureSessionResolver(session)
 
 	require.Same(t, customResolver, session.primaryKeyResolver)
+}
+
+type recordingRouterCommitBitmapService struct {
+	commitCalls int
+	commitErr   error
+}
+
+func (s *recordingRouterCommitBitmapService) Query(context.Context, *pb.BitmapQuery) (*pb.QueryResult, error) {
+	return &pb.QueryResult{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) SyncStatus(context.Context, *pb.SyncStatusRequest) (*pb.SyncStatusResponse, error) {
+	return &pb.SyncStatusResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) Projection(context.Context, *pb.ProjectionRequest) (*pb.ProjectionResponse, error) {
+	return &pb.ProjectionResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) CompareBSIFields(context.Context, *pb.CompareBSIFieldsRequest) (*pb.CompareBSIFieldsResponse, error) {
+	return &pb.CompareBSIFieldsResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) BitmapGroupAggregates(context.Context, *pb.BitmapGroupAggregatesRequest) (*pb.BitmapGroupAggregatesResponse, error) {
+	return &pb.BitmapGroupAggregatesResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) RelationshipReverseArtifactCandidates(context.Context, *pb.RelationshipReverseArtifactCandidatesRequest) (*pb.RelationshipReverseArtifactCandidatesResponse, error) {
+	return &pb.RelationshipReverseArtifactCandidatesResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) RelationshipReverseArtifactStats(context.Context, *pb.RelationshipReverseArtifactStatsRequest) (*pb.RelationshipReverseArtifactStatsResponse, error) {
+	return &pb.RelationshipReverseArtifactStatsResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) RelationshipAlignedValueSum(context.Context, *pb.RelationshipAlignedValueSumRequest) (*pb.RelationshipAlignedValueSumResponse, error) {
+	return &pb.RelationshipAlignedValueSumResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) RelationshipVectorValueSum(context.Context, *pb.RelationshipVectorValueSumRequest) (*pb.RelationshipVectorValueSumResponse, error) {
+	return &pb.RelationshipVectorValueSumResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) Join(context.Context, *pb.JoinRequest) (*pb.JoinResponse, error) {
+	return &pb.JoinResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) CheckoutSequence(context.Context, *pb.CheckoutSequenceRequest) (*pb.CheckoutSequenceResponse, error) {
+	return &pb.CheckoutSequenceResponse{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) BulkClear(context.Context, *pb.BulkClearRequest) (*empty.Empty, error) {
+	return &empty.Empty{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) TableOperation(context.Context, *pb.TableOperationRequest) (*empty.Empty, error) {
+	return &empty.Empty{}, nil
+}
+
+func (s *recordingRouterCommitBitmapService) Commit(context.Context, *empty.Empty) (*empty.Empty, error) {
+	s.commitCalls++
+	return &empty.Empty{}, s.commitErr
 }

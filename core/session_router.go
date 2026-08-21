@@ -37,6 +37,7 @@ type SessionRouterConfig struct {
 	FlushInterval             time.Duration
 	PrimaryKeyMode            PrimaryKeyMode
 	PrimaryKeyResolverFactory SessionPrimaryKeyResolverFactory
+	CommitOnClose             bool
 	OnSessionOpen             func()
 	OnSessionClose            func()
 	OnPutRowResult            func(shardID string, record IngestRecord, result PutRowResult)
@@ -58,6 +59,8 @@ type SessionRouter struct {
 	sessionCache  sync.Map
 	eg            errgroup.Group
 	closeOnce     sync.Once
+	commitOnce    sync.Once
+	commitErr     error
 }
 
 // SessionRouterStats is a point-in-time view of router queue/session pressure.
@@ -165,7 +168,16 @@ func (r *SessionRouter) Close() error {
 			close(ch)
 		}
 	})
-	return r.eg.Wait()
+	if err := r.eg.Wait(); err != nil {
+		return err
+	}
+	if r.cfg.CommitOnClose {
+		r.commitOnce.Do(func() {
+			r.commitErr = shared.NewBitmapIndex(r.cfg.Conn).Commit()
+		})
+		return r.commitErr
+	}
+	return nil
 }
 
 func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {

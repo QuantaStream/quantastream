@@ -30,6 +30,7 @@ type Config struct {
 	Workers              int
 	ChannelSize          int
 	FlushInterval        time.Duration
+	CommitOnClose        bool
 	DefaultSource        string
 	PhysicalBuildRouting bool
 }
@@ -91,6 +92,7 @@ type StatsConfig struct {
 	Workers              int                         `json:"workers"`
 	ChannelSize          int                         `json:"channel_size"`
 	FlushInterval        time.Duration               `json:"flush_interval_nanos"`
+	CommitOnClose        bool                        `json:"commit_on_close"`
 	PhysicalBuildRouting bool                        `json:"physical_build_routing"`
 }
 
@@ -136,6 +138,7 @@ func NewServer(ctx context.Context, config Config, logger *log.Logger) (*Server,
 		ChannelSize:               config.ChannelSize,
 		FlushInterval:             config.FlushInterval,
 		PrimaryKeyResolverFactory: qsinabox.NewSharedStandardSessionBSIPrimaryKeyResolverFactory(tableCache),
+		CommitOnClose:             config.CommitOnClose,
 		OnPutRowResult:            putProfile.Callback(),
 		OnFlushProfile:            flushProfile.Callback(),
 		OnDrainProfile:            drainProfile.Callback(),
@@ -322,6 +325,7 @@ func (s *Server) Stats() StatsResponse {
 			Workers:              s.config.Workers,
 			ChannelSize:          s.config.ChannelSize,
 			FlushInterval:        s.config.FlushInterval,
+			CommitOnClose:        s.config.CommitOnClose,
 			PhysicalBuildRouting: s.config.PhysicalBuildRouting,
 		},
 		Tables:  s.tableNames(),

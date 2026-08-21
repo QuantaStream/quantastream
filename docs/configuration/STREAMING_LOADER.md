@@ -68,6 +68,7 @@ Important flags:
 | `-workers` | `1` | Session-router worker count. |
 | `-channel-size` | `100000` | Buffered channel size per router worker. |
 | `-flush-interval` | `1s` | Idle flush interval for router-owned sessions. |
+| `-commit-on-close` | `true` | Drain loader sessions and commit the native/distributed backend during orderly shutdown. |
 | `-default-source` | `json-http` | Source used when a JSON event omits `source`. |
 | `-physical-build-routing` | `false` | Optional time-quantum build-shard routing for safe source shapes. |
 | `-pprof-bind` | disabled | Optional pprof listen address. Use a different port than the engine. |
@@ -86,7 +87,8 @@ curl -s http://127.0.0.1:8088/stats | jq .
 
 The stats response includes router queue depth, open router sessions,
 per-table PutRow counters, flush counters, drain counters, derived rates, and
-coarse Go runtime memory/goroutine counters.
+coarse Go runtime memory/goroutine counters. It also reports whether
+commit-on-close is enabled for the running loader.
 
 When `-pprof-bind` is enabled, capture profiles while a producer run is active:
 

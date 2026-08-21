@@ -137,7 +137,9 @@ Current implementation status:
   barrier is present. Because the current admin-driven local snapshot cannot
   force a running engine to flush in-memory dirty buffers after the barrier is
   created, live-source runbooks must commit or drain writes before invoking
-  backup. When `--wal-path` is supplied, quiescent backup also requires a clean
+  backup; `qstream-loader` defaults `-commit-on-close=true`, so a clean loader
+  shutdown is enough for that packaged ingest path. When `--wal-path` is
+  supplied, quiescent backup also requires a clean
   WAL/checkpoint pair: no committed records awaiting startup replay and no
   pending uncommitted tail. The backup manifest records the WAL/checkpoint
   boundary. For the current local filesystem format, that WAL path must live
@@ -598,8 +600,9 @@ primitive and `inabox-standard` enablement switch exist, including checkpoint
 metadata for successful commit boundaries, standard-mode startup replay, and
 WAL-backed quiescent backup preflight checks. The local snapshot path also has
 an explicit pre-copy filesystem flush hook. For live local engines, commit or
-drain recent writes before `backup create --quiesce`; the command prevents new
-storage mutations during the snapshot, but the current standalone admin path
+drain recent writes before `backup create --quiesce`; packaged `qstream-loader`
+writes are committed by the loader's default close path. The command prevents
+new storage mutations during the snapshot, but the current standalone admin path
 does not yet force the running engine to publish dirty in-memory buffers after
 the barrier is installed. Distributed cluster snapshots and cloud backup targets
 remain separate lifecycle work.
