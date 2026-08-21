@@ -1681,6 +1681,8 @@ func TestStandardProcessRejectsLocalWritesWhileStorageQuiesced(t *testing.T) {
 
 	for _, sql := range []string{
 		"insert into sample (id, city) values (1, 'Seattle')",
+		"insert into sample (id, city) select id, city from sample",
+		"create table sample_copy as select id, city from sample",
 		"commit",
 	} {
 		result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})

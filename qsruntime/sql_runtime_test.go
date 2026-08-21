@@ -2781,6 +2781,92 @@ func TestSQLRuntimeExecuteSQLCreateTableAsSelectCreatesAndInsertsRows(t *testing
 	}
 }
 
+func TestSQLRuntimeCreateTableAsSelectAppliesStorageMutationGuardBeforeSourceExecution(t *testing.T) {
+	catalog := qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "customer",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true},
+			},
+		}},
+	}
+	var sourceExecuted bool
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		sourceExecuted = true
+		return ExecutionResult{}, nil
+	})
+	runtime.StorageMutationGuard = func(ctx context.Context, operation string) qsbridge.DiagnosticSet {
+		if operation != "create_table_as_select" {
+			t.Fatalf("storage mutation operation = %q, want create_table_as_select", operation)
+		}
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, "storage is quiesced"),
+		}
+	}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "create table scratch_customer as select c_custkey as customer_key, c_name as customer_name from customer", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Supported() || !result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("result diagnostics = %#v runtime=%#v, want storage mutation blocker", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if sourceExecuted {
+		t.Fatalf("CTAS source SELECT executed before storage mutation guard")
+	}
+}
+
+func TestSQLRuntimeInsertSelectAppliesStorageMutationGuardBeforeSourceExecution(t *testing.T) {
+	catalog := qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "scratch_customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "customer_key", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "customer_name", Type: qsbridge.DataTypeString, Nullable: true},
+				},
+			},
+		},
+	}
+	var sourceExecuted bool
+	runtime := newTestSQLRuntimeWithCatalog(t, catalog, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		sourceExecuted = true
+		return ExecutionResult{}, nil
+	})
+	runtime.StorageMutationGuard = func(ctx context.Context, operation string) qsbridge.DiagnosticSet {
+		if operation != "insert_select" {
+			t.Fatalf("storage mutation operation = %q, want insert_select", operation)
+		}
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, "storage is quiesced"),
+		}
+	}
+
+	result, err := runtime.ExecuteSQL(context.Background(), "insert into scratch_customer (customer_key, customer_name) select c_custkey, c_name from customer", qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Supported() || !result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("result diagnostics = %#v runtime=%#v, want storage mutation blocker", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if sourceExecuted {
+		t.Fatalf("INSERT SELECT source query executed before storage mutation guard")
+	}
+}
+
 func TestSQLRuntimeExecuteSQLReturnsTransactionStatementsWithoutExecution(t *testing.T) {
 	tests := []struct {
 		sql      string

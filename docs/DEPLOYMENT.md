@@ -129,11 +129,13 @@ Current implementation status:
   records unapplied. The WAL is disabled when the path is empty.
 - `quanta-admin backup create --quiesce` creates a local storage write barrier
   file in the data directory while copying a filesystem snapshot. Standard-mode
-  SQL writes, catalog mutations, and local `COMMIT` refuse to proceed while that
+  SQL writes, catalog mutations, durable `CREATE TABLE AS SELECT`,
+  durable `INSERT ... SELECT`, and local `COMMIT` refuse to proceed while that
   barrier is present. The backup manifest records the WAL/checkpoint boundary
   when `--wal-path` is supplied. For the current local filesystem format, that
-  WAL path must live under the data directory so the snapshot is self-contained.
-  The transient barrier file is not included in the snapshot or restore image.
+  WAL path must live under the data directory so the snapshot is
+  self-contained. The transient barrier file is not included in the snapshot or
+  restore image.
 
 Skeleton status command:
 

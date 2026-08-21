@@ -139,12 +139,30 @@ func buildStandardNativeProxyRuntime(ctx context.Context, config StandardConfig,
 				return direct, nil, nil
 			}),
 		},
+		StorageMutationGuard:    standardStorageMutationGuard(config),
 		EnableFilterExpressions: true,
 	}.Build(ctx)
 	if err != nil || diagnostics.BlocksNative() {
 		return qsruntime.NativeProxyRuntime{}, diagnostics, err
 	}
 	return qsruntime.NativeProxyRuntime{Runtime: runtime}, nil, nil
+}
+
+func standardStorageMutationGuard(config StandardConfig) qsruntime.StorageMutationGuard {
+	config = config.WithDefaults()
+	return func(ctx context.Context, operation string) qsbridge.DiagnosticSet {
+		if err := ctx.Err(); err != nil {
+			return qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, err.Error()),
+			}
+		}
+		if err := core.RejectLocalStorageMutationIfQuiesced(config.DataDir, operation); err != nil {
+			return qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInvalidExecutionOption, qsbridge.PhaseExecute, err.Error()),
+			}
+		}
+		return nil
+	}
 }
 
 func standardCatalogTableLoader(backend StandardLocalBackend, config StandardConfig) qsruntime.LegacyTableLoader {

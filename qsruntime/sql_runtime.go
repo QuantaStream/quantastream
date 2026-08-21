@@ -11,19 +11,24 @@ import (
 
 // SQLRuntime is the SQL-facing runtime facade before protocol-specific plumbing.
 type SQLRuntime struct {
-	Environment         RuntimeEnvironment
-	Parser              qsbridge.ParserBridge
-	Lowerer             qsbridge.QuantaIntermediateLowerer
-	DefaultSchema       string
-	CatalogVersion      qsbridge.CatalogVersion
-	Session             qsbridge.SessionContext
-	Scope               qsbridge.PhysicalScope
-	PreflightHelpers    PreflightHelperExecutor
-	NativeSubquerySteps qsbridge.NativeSubqueryStepExecutor
-	ContextWrapper      func(context.Context) context.Context
+	Environment          RuntimeEnvironment
+	Parser               qsbridge.ParserBridge
+	Lowerer              qsbridge.QuantaIntermediateLowerer
+	DefaultSchema        string
+	CatalogVersion       qsbridge.CatalogVersion
+	Session              qsbridge.SessionContext
+	Scope                qsbridge.PhysicalScope
+	PreflightHelpers     PreflightHelperExecutor
+	NativeSubquerySteps  qsbridge.NativeSubqueryStepExecutor
+	ContextWrapper       func(context.Context) context.Context
+	StorageMutationGuard StorageMutationGuard
 	// EnableFilterExpressions allows a runtime to execute grouped boolean filter trees.
 	EnableFilterExpressions bool
 }
+
+// StorageMutationGuard lets product runtimes reject durable writes before
+// helper paths perform read-side prework such as CTAS source materialization.
+type StorageMutationGuard func(context.Context, string) qsbridge.DiagnosticSet
 
 // SQLExecutionResult captures each stage from SQL planning through runtime execution.
 type SQLExecutionResult struct {
@@ -719,6 +724,7 @@ type SQLRuntimeBuilder struct {
 	PreflightHelpers        PreflightHelperExecutor
 	NativeSubquerySteps     qsbridge.NativeSubqueryStepExecutor
 	ContextWrapper          func(context.Context) context.Context
+	StorageMutationGuard    StorageMutationGuard
 	EnableFilterExpressions bool
 }
 
@@ -748,8 +754,23 @@ func (b SQLRuntimeBuilder) Build(ctx context.Context) (SQLRuntime, qsbridge.Diag
 		PreflightHelpers:        b.PreflightHelpers,
 		NativeSubquerySteps:     b.NativeSubquerySteps,
 		ContextWrapper:          b.ContextWrapper,
+		StorageMutationGuard:    b.StorageMutationGuard,
 		EnableFilterExpressions: b.EnableFilterExpressions,
 	}, nil, nil
+}
+
+func (r SQLRuntime) rejectStorageMutation(ctx context.Context, operation string, status string) (ExecutionResult, bool) {
+	if r.StorageMutationGuard == nil {
+		return ExecutionResult{}, false
+	}
+	diagnostics := r.StorageMutationGuard(ctx, operation)
+	if !diagnostics.BlocksNative() {
+		return ExecutionResult{}, false
+	}
+	return ExecutionResult{
+		Diagnostics: diagnostics,
+		Statement:   qsbridge.StatementResult{Status: status},
+	}, true
 }
 
 func runtimeDiagnosticsWithoutCode(diagnostics qsbridge.DiagnosticSet, code qsbridge.DiagnosticCode) qsbridge.DiagnosticSet {

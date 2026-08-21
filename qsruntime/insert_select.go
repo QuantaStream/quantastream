@@ -19,6 +19,9 @@ func (r SQLRuntime) insertSelectRuntimeResult(ctx context.Context, request qsbri
 			Statement: qsbridge.StatementResult{Status: "INSERT SELECT failed"},
 		}
 	}
+	if result, blocked := r.rejectStorageMutation(ctx, "insert_select", "INSERT SELECT failed"); blocked {
+		return result
+	}
 	columns, diagnostics := r.insertSelectTargetColumns(mutation)
 	if diagnostics.BlocksNative() {
 		return ExecutionResult{

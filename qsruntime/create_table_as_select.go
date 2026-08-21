@@ -19,6 +19,9 @@ func (r SQLRuntime) createDurableTableAsSelectRuntimeResult(ctx context.Context,
 			Statement: qsbridge.StatementResult{Status: "CREATE TABLE AS SELECT failed"},
 		}
 	}
+	if result, blocked := r.rejectStorageMutation(ctx, "create_table_as_select", "CREATE TABLE AS SELECT failed"); blocked {
+		return result
+	}
 	sourceResult, err := r.ExecuteSQL(ctx, sourceSQL, request.Options)
 	if err != nil {
 		return ExecutionResult{
