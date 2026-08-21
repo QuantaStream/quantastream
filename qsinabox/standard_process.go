@@ -33,6 +33,11 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 	}
 	tableCache := core.NewTableCacheStruct()
 	runtimeMount := backend.NewDirectRuntime(config, tableCache, 0)
+	if err := runtimeMount.EnableWriteAheadLog(config.WriteAheadLogPath); err != nil {
+		runtimeMount.Close()
+		backend.Close()
+		return StandardProcess{}, nil, fmt.Errorf("enable inabox-standard WAL: %w", err)
+	}
 	nativeRuntime, diagnostics, err := buildStandardNativeProxyRuntime(ctx, config, backend, tableCache, runtimeMount.Runtime)
 	if err != nil || diagnostics.BlocksNative() {
 		runtimeMount.Close()

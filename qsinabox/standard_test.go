@@ -19,7 +19,7 @@ func TestStandardConfigAppliesStableDefaults(t *testing.T) {
 	if config.NativeGRPCEnabled() {
 		t.Fatalf("NativeGRPCEnabled() = true, want disabled by default")
 	}
-	if config.ConfigDir == "" || config.DataDir == "" || config.Database != "quanta" {
+	if config.ConfigDir == "" || config.DataDir == "" || config.Database != "quanta" || config.WriteAheadLogPath != "" {
 		t.Fatalf("config defaults = %+v", config)
 	}
 	if config.Address() != "127.0.0.1:4000" {
@@ -57,6 +57,17 @@ func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
 	}
 	if !strings.Contains(lines, "native_grpc=disabled") {
 		t.Fatalf("summary lines missing native gRPC state: %s", lines)
+	}
+	if !strings.Contains(lines, "wal=disabled") {
+		t.Fatalf("summary lines missing WAL state: %s", lines)
+	}
+}
+
+func TestStandardPlanReportsWriteAheadLogPath(t *testing.T) {
+	plan := NewStandardPlan(StandardConfig{WriteAheadLogPath: "/tmp/qs.wal"}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	if !strings.Contains(lines, "wal=/tmp/qs.wal") {
+		t.Fatalf("summary lines missing WAL path: %s", lines)
 	}
 }
 

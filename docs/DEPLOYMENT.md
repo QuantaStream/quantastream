@@ -119,6 +119,9 @@ Current implementation status:
   local backend with `-mount-local-node`.
 - Without `-status`, the executable mounts the local backend, composes the
   native SQL runtime, and starts the MySQL-compatible listener.
+- `-wal-path` or `QUANTASTREAM_WAL_PATH` enables the first local write-ahead log
+  hook for put-row intent, update-row intent, and commit boundary records. The
+  WAL is disabled when the path is empty.
 
 Skeleton status command:
 
@@ -127,6 +130,7 @@ cd ~/projects/quantastream
 go run ./cmd/quantastream -status
 go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
 go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
+go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard -wal-path /tmp/quantastream-standard/storage.wal
 ```
 
 Convenience startup command:
@@ -471,9 +475,11 @@ go run ./quanta-admin backup restore \
   --data-dir /path/to/restored-data
 ```
 
-This first slice is intentionally an offline/local snapshot contract. Live
-quiescent backup mode, WAL-backed write replay, distributed cluster snapshots,
-and cloud backup targets remain separate lifecycle work.
+This first slice is intentionally an offline/local snapshot contract. A local WAL
+primitive and `inabox-standard` enablement switch exist, but WAL-backed storage
+startup recovery, checkpoint advancement, live quiescent backup mode,
+distributed cluster snapshots, and cloud backup targets remain separate
+lifecycle work.
 
 Before production use, the project must establish:
 

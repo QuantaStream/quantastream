@@ -25,6 +25,7 @@ type SessionPool struct {
 	semaphores       chan struct{}
 	poolSize         int
 	maxUsed          int32
+	writeAheadLog    SessionWriteAheadLog
 
 	TableCache *TableCacheStruct
 
@@ -85,6 +86,7 @@ func (m *SessionPool) Borrow(tableName string) (*Session, error) {
 		select {
 		case r := <-cp.pool:
 			r.poolGeneration = cp.generation
+			r.SetWriteAheadLog(m.writeAheadLog)
 			return r, nil
 		default:
 			conn, err := m.NewSession(tableName)
@@ -92,6 +94,7 @@ func (m *SessionPool) Borrow(tableName string) (*Session, error) {
 				return nil, fmt.Errorf("borrowSession %v", err)
 			}
 			conn.poolGeneration = cp.generation
+			conn.SetWriteAheadLog(m.writeAheadLog)
 			return conn, nil
 		}
 	default:
@@ -246,6 +249,24 @@ func (m *SessionPool) returnSemaphoreLocked() {
 	case m.semaphores <- struct{}{}:
 	default:
 	}
+}
+
+func (m *SessionPool) SetWriteAheadLog(wal SessionWriteAheadLog) {
+	if m == nil {
+		return
+	}
+	m.sessPoolLock.Lock()
+	defer m.sessPoolLock.Unlock()
+	m.writeAheadLog = wal
+}
+
+func (m *SessionPool) WriteAheadLog() SessionWriteAheadLog {
+	if m == nil {
+		return nil
+	}
+	m.sessPoolLock.RLock()
+	defer m.sessPoolLock.RUnlock()
+	return m.writeAheadLog
 }
 
 func sessionPoolTableKey(tableName string) string {

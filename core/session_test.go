@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +22,26 @@ type recordingPrimaryKeyResolver struct {
 	request PrimaryKeyResolveRequest
 	result  PrimaryKeyResolveResult
 	err     error
+}
+
+type recordingSessionWAL struct {
+	records []LocalWALRecord
+	err     error
+}
+
+func (w *recordingSessionWAL) Append(ctx context.Context, record LocalWALRecord) (LocalWALRecord, error) {
+	if w.err != nil {
+		return LocalWALRecord{}, w.err
+	}
+	record.Version = LocalWALVersion
+	if record.LSN == 0 {
+		record.LSN = uint64(len(w.records) + 1)
+	}
+	if len(record.Payload) == 0 {
+		record.Payload = json.RawMessage(`{}`)
+	}
+	w.records = append(w.records, record)
+	return record, nil
 }
 
 func (r *recordingPrimaryKeyResolver) ResolvePrimaryKeyColumnID(req PrimaryKeyResolveRequest) (PrimaryKeyResolveResult, error) {
@@ -570,6 +593,114 @@ func TestPrimaryKeyModeDefaultsToVerifyExisting(t *testing.T) {
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyMode("surprise").Normalize())
 	assert.Equal(t, PrimaryKeyModeVerifyExisting, PrimaryKeyModeVerifyExisting.Normalize())
 	assert.Equal(t, PrimaryKeyModeAssumeNew, PrimaryKeyMode("ASSUME_NEW").Normalize())
+}
+
+func TestAppendPutRowWALUsesEventIDAndPayload(t *testing.T) {
+	wal := &recordingSessionWAL{}
+	session := &Session{}
+	session.SetWriteAheadLog(wal)
+	eventTime := time.Date(2026, 8, 21, 10, 11, 12, 0, time.UTC)
+
+	err := session.appendPutRowWAL(putRowRequest{
+		tableName:             "customers",
+		row:                   map[string]interface{}{"cust_id": 7, "name": "Ada"},
+		providedColID:         77,
+		ignoreSourcePath:      true,
+		useNerdCapitalization: true,
+		primaryKeyMode:        PrimaryKeyModeAssumeNew,
+		options: PutRowOptions{
+			EventID:      "evt-7",
+			Source:       "driver-smoke",
+			EventTime:    eventTime,
+			SourceOffset: "partition-1:42",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, wal.records, 1)
+	record := wal.records[0]
+	assert.Equal(t, LocalWALRecordKindPutRow, record.Kind)
+	assert.Equal(t, "customers", record.Table)
+	assert.Equal(t, "put_row:evt-7", record.OperationID)
+	var payload struct {
+		Table                 string                 `json:"table"`
+		ProvidedColumnID      uint64                 `json:"provided_column_id"`
+		IgnoreSourcePath      bool                   `json:"ignore_source_path"`
+		UseNerdCapitalization bool                   `json:"use_nerd_capitalization"`
+		PrimaryKeyMode        PrimaryKeyMode         `json:"primary_key_mode"`
+		Options               PutRowOptions          `json:"options"`
+		Row                   map[string]interface{} `json:"row"`
+	}
+	require.NoError(t, json.Unmarshal(record.Payload, &payload))
+	assert.Equal(t, "customers", payload.Table)
+	assert.Equal(t, uint64(77), payload.ProvidedColumnID)
+	assert.True(t, payload.IgnoreSourcePath)
+	assert.True(t, payload.UseNerdCapitalization)
+	assert.Equal(t, PrimaryKeyModeAssumeNew, payload.PrimaryKeyMode)
+	assert.Equal(t, "evt-7", payload.Options.EventID)
+	assert.Equal(t, "driver-smoke", payload.Options.Source)
+	assert.Equal(t, "partition-1:42", payload.Options.SourceOffset)
+	assert.Equal(t, "Ada", payload.Row["name"])
+	assert.Equal(t, float64(7), payload.Row["cust_id"])
+}
+
+func TestAppendPutRowWALFailsClosed(t *testing.T) {
+	walErr := errors.New("disk full")
+	session := &Session{}
+	session.SetWriteAheadLog(&recordingSessionWAL{err: walErr})
+
+	err := session.appendPutRowWAL(putRowRequest{
+		tableName: "customers",
+		row:       map[string]interface{}{"cust_id": 7},
+	})
+
+	require.ErrorIs(t, err, walErr)
+	assert.Contains(t, err.Error(), "append put row WAL record")
+}
+
+func TestAppendUpdateRowWALRecordsAssignedValues(t *testing.T) {
+	wal := &recordingSessionWAL{}
+	session := &Session{}
+	session.SetWriteAheadLog(wal)
+	partition := time.Date(1995, 3, 15, 0, 0, 0, 0, time.UTC)
+
+	err := session.appendUpdateRowWAL("orders", 1001, map[string]*qsbridge.ResultCell{
+		"status": {Value: "done"},
+		"note":   nil,
+	}, partition)
+
+	require.NoError(t, err)
+	require.Len(t, wal.records, 1)
+	record := wal.records[0]
+	assert.Equal(t, LocalWALRecordKindUpdateRow, record.Kind)
+	assert.Equal(t, "orders", record.Table)
+	assert.Equal(t, "update_row:orders:1", record.OperationID)
+	var payload struct {
+		Table         string                 `json:"table"`
+		ColumnID      uint64                 `json:"column_id"`
+		TimePartition time.Time              `json:"time_partition"`
+		Values        map[string]interface{} `json:"values"`
+	}
+	require.NoError(t, json.Unmarshal(record.Payload, &payload))
+	assert.Equal(t, "orders", payload.Table)
+	assert.Equal(t, uint64(1001), payload.ColumnID)
+	assert.Equal(t, partition, payload.TimePartition)
+	assert.Equal(t, "done", payload.Values["status"])
+	assert.Nil(t, payload.Values["note"])
+}
+
+func TestAppendCommitWALRecordsCommitBoundary(t *testing.T) {
+	wal := &recordingSessionWAL{}
+	session := &Session{}
+	session.SetWriteAheadLog(wal)
+
+	require.NoError(t, session.appendCommitWAL())
+
+	require.Len(t, wal.records, 1)
+	record := wal.records[0]
+	assert.Equal(t, LocalWALRecordKindCommit, record.Kind)
+	assert.Equal(t, "commit:1", record.OperationID)
+	assert.JSONEq(t, `{}`, string(record.Payload))
 }
 
 func TestMapAttributeValuesSkipsIdentityAndRelationshipFields(t *testing.T) {

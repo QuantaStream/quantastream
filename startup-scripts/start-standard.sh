@@ -8,6 +8,7 @@ cd "$repo_root"
 
 CONFIG_DIR="${QUANTASTREAM_CONFIG_DIR:-configuration}"
 DATA_DIR="${QUANTASTREAM_DATA_DIR:-data}"
+WAL_PATH="${QUANTASTREAM_WAL_PATH:-}"
 BIND_ADDRESS="${QUANTASTREAM_BIND:-127.0.0.1}"
 MYSQL_PORT="${QUANTASTREAM_MYSQL_PORT:-4000}"
 NATIVE_GRPC_BIND="${QUANTASTREAM_NATIVE_GRPC_BIND:-}"
@@ -22,6 +23,7 @@ Usage: ./start-standard.sh
 Environment:
   QUANTASTREAM_CONFIG_DIR   Schema/catalog config directory. Defaults to configuration.
   QUANTASTREAM_DATA_DIR     Local inabox-standard data directory. Defaults to data.
+  QUANTASTREAM_WAL_PATH     Optional local write-ahead log path. Disabled when empty.
   QUANTASTREAM_BIND         MySQL bind address. Defaults to 127.0.0.1.
   QUANTASTREAM_MYSQL_PORT   MySQL listen port. Defaults to 4000.
   QUANTASTREAM_NATIVE_GRPC_BIND
@@ -59,6 +61,11 @@ done
 echo "Starting inabox-standard process"
 echo "config_dir=${CONFIG_DIR}"
 echo "data_dir=${DATA_DIR}"
+if [[ -n "${WAL_PATH}" ]]; then
+  echo "wal=${WAL_PATH}"
+else
+  echo "wal=disabled"
+fi
 echo "mysql=${BIND_ADDRESS}:${MYSQL_PORT}"
 if [[ "${NATIVE_GRPC_PORT}" != "0" ]]; then
   echo "native_grpc=${NATIVE_GRPC_BIND:-$BIND_ADDRESS}:${NATIVE_GRPC_PORT}"
@@ -101,6 +108,7 @@ go build -o "${server_bin}" ./cmd/quantastream
 "${server_bin}" \
   -config-dir "$CONFIG_DIR" \
   -data-dir "$DATA_DIR" \
+  -wal-path "$WAL_PATH" \
   -bind "$BIND_ADDRESS" \
   -mysql-port "$MYSQL_PORT" \
   -native-grpc-bind "$NATIVE_GRPC_BIND" \

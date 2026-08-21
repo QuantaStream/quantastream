@@ -66,3 +66,22 @@ func TestSessionPoolReturnWithProfileDoesNotReuseStaleFlushProfile(t *testing.T)
 		t.Fatalf("profile.StartedAt = %v, want zero profile for empty fresh release", profile.StartedAt)
 	}
 }
+
+func TestSessionPoolBorrowInstallsWriteAheadLogOnPooledSession(t *testing.T) {
+	pool := NewSessionPool(NewTableCacheStruct(), nil, "", 1)
+	wal := &recordingSessionWAL{}
+	pool.SetWriteAheadLog(wal)
+	pool.sessPoolLock.Lock()
+	entry := pool.getPoolByTableName("orders")
+	entry.pool <- &Session{poolGeneration: entry.generation}
+	pool.sessPoolLock.Unlock()
+
+	session, err := pool.Borrow("orders")
+
+	if err != nil {
+		t.Fatalf("Borrow returned error: %v", err)
+	}
+	if session.writeAheadLog != wal {
+		t.Fatalf("borrowed session writeAheadLog = %#v, want %#v", session.writeAheadLog, wal)
+	}
+}

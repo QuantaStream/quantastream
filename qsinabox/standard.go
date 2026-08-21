@@ -23,6 +23,7 @@ type StandardConfig struct {
 	NativeGRPCPort      int
 	ConfigDir           string
 	DataDir             string
+	WriteAheadLogPath   string
 	Database            string
 	RuntimeProbeLogging bool
 }
@@ -148,11 +149,15 @@ func (p StandardPlan) SummaryLines() []string {
 		"native_grpc=disabled",
 		fmt.Sprintf("config_dir=%s", config.ConfigDir),
 		fmt.Sprintf("data_dir=%s", config.DataDir),
+		"wal=disabled",
 		fmt.Sprintf("database=%s", config.Database),
 		fmt.Sprintf("local_node_ready=%t", p.LocalNode.Ready),
 	}
 	if config.NativeGRPCEnabled() {
 		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())
+	}
+	if config.WriteAheadLogPath != "" {
+		lines[5] = fmt.Sprintf("wal=%s", config.WriteAheadLogPath)
 	}
 	if p.PKAuthority.Status != "" {
 		lines = append(lines,

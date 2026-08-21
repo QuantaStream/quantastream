@@ -44,6 +44,36 @@ func TestMountStandardProcessBuildsReadyNativeFrontDoor(t *testing.T) {
 	}
 }
 
+func TestMountStandardProcessEnablesWriteAheadLogWhenConfigured(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	walPath := filepath.Join(root, "wal", "standard.wal")
+	config := StandardConfig{
+		ConfigDir:         configDir,
+		DataDir:           filepath.Join(root, "data"),
+		WriteAheadLogPath: walPath,
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	if process.RuntimeMount.WriteAheadLog == nil {
+		t.Fatalf("WriteAheadLog = nil, want configured WAL")
+	}
+	if process.RuntimeMount.WriteAheadLog.Path() != walPath {
+		t.Fatalf("WAL path = %s, want %s", process.RuntimeMount.WriteAheadLog.Path(), walPath)
+	}
+	if process.RuntimeMount.Pool == nil || process.RuntimeMount.Pool.WriteAheadLog() == nil {
+		t.Fatalf("session pool did not receive configured WAL")
+	}
+}
+
 func TestStandardProcessNativeGRPCServesNodeAPIs(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

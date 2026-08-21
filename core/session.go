@@ -52,6 +52,8 @@ type Session struct {
 	lastFlushProfile   shared.BatchBufferFlushProfile
 
 	primaryKeyDomainStates map[string]PrimaryKeyDomainState
+	writeAheadLog          SessionWriteAheadLog
+	walOperationSeq        uint64
 }
 
 // PrimaryKeyResolver owns primary-key lookup and rownum assignment.
@@ -472,6 +474,11 @@ func (s *Session) PutRowWithOptions(name string, row interface{}, providedColID 
 		return PutRowResult{}, err
 	}
 	timings.sourceElapsed = time.Since(sourceStart)
+	if s.writeAheadLog != nil {
+		if err := s.appendPutRowWAL(req); err != nil {
+			return PutRowResult{}, err
+		}
+	}
 	return s.putRow(req)
 }
 
@@ -1526,6 +1533,11 @@ func (s *Session) UpdateRow(table string, columnID uint64, updValueMap map[strin
 	}
 	tbuf.CurrentColumnID = columnID
 	tbuf.CurrentTimestamp = timePartition
+	if s.writeAheadLog != nil {
+		if err := s.appendUpdateRowWAL(table, columnID, updValueMap, timePartition); err != nil {
+			return err
+		}
+	}
 	for k, vc := range updValueMap {
 		if _, found := tbuf.PKMap[k]; found {
 			return fmt.Errorf("cannot update PK column %s.%s", table, k)
@@ -1546,7 +1558,13 @@ func (s *Session) Commit() error {
 		return fmt.Errorf("attempting commit of a closed session")
 	}
 
-	return s.BitIndex.Commit()
+	if err := s.BitIndex.Commit(); err != nil {
+		return err
+	}
+	if s.writeAheadLog != nil {
+		return s.appendCommitWAL()
+	}
+	return nil
 
 }
 
