@@ -92,14 +92,19 @@ TPC-H and MySQL compatibility suites. These query forms remain outside the
 current contract unless a focused suite covers the exact shape:
 
 ```sql
+with cte_name as (...)
+select ... from cte_name;
+
 with recursive ...
 
 select ..., row_number() over (partition by ... order by ...)
 from ...
 ```
 
-In other words, recursive CTEs and SQL window functions are not part of the
-current 1.0 query surface.
+In other words, common table expressions, recursive CTEs, and SQL window
+functions are not part of the current 1.0 query surface. Subqueries themselves
+are supported; the remaining boundary is arbitrary deeply nested query
+composition outside covered SQLRunner shapes.
 
 ## View Boundaries
 

@@ -8,6 +8,36 @@ QuantaStream-specific rather than portable MySQL syntax.
 Precise SQL boundaries outside the current 1.0 surface are tracked separately
 in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
+## Core Query Surface
+
+QuantaStream supports the core analytical query shapes used by current
+SQLRunner and TPC-H validation suites:
+
+- `SELECT` projections, aliases, predicates, ordering, `LIMIT`, and `OFFSET`;
+- `GROUP BY`, aggregate functions, grouped ordering, and covered `HAVING`
+  shapes;
+- inner joins and covered outer joins over declared relationship paths;
+- `UNION` and `UNION ALL` in covered query-composition shapes;
+- prepared-statement execution through MySQL-compatible clients;
+- MySQL metadata queries used by command-line clients, MySQL Workbench, and
+  driver inspection paths.
+
+## Subqueries
+
+QuantaStream supports subqueries for the main analytical shapes used by the
+current compatibility suites:
+
+- scalar subqueries in `SELECT`;
+- scalar aggregate subqueries in predicates;
+- `IN` and `NOT IN` membership subqueries;
+- row-value `IN` subqueries for covered tuple shapes;
+- correlated `EXISTS` and `NOT EXISTS` with equality predicates;
+- subqueries over derived-table sources.
+
+Subquery support is part of the current SQL surface. Recursive query forms and
+arbitrary deeply nested query blocks are tracked as advanced query boundaries in
+[`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+
 ## Date And Time Helpers
 
 QuantaStream supports a focused set of date/time scalar helpers in covered
