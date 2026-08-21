@@ -66,6 +66,48 @@ func TestAccessPolicyMatchesQueryLocalTableIDByStableCatalogName(t *testing.T) {
 	}
 }
 
+func TestAccessPolicyAllowsOmittedGrantSchemaToMatchAnySchema(t *testing.T) {
+	grantTable := TableInstance{Table: "orders"}
+	boundTable := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders"}
+	policy := NewAccessPolicy(AccessGrant{
+		PrincipalKind: AccessPrincipalRole,
+		Principal:     "reader",
+		Privilege:     AccessSelect,
+		Table:         grantTable,
+	})
+
+	decision := AuthorizationRequest{
+		Session: SessionContext{User: "moli", Roles: []RoleName{"reader"}},
+		Requirements: []AccessRequirement{{
+			Privilege: AccessSelect,
+			Table:     boundTable,
+		}},
+	}.Authorize(policy)
+	if !decision.Supported() {
+		t.Fatalf("decision = %#v, want schema-agnostic grant to match table", decision)
+	}
+}
+
+func TestAccessPolicyAllowsWildcardTableGrant(t *testing.T) {
+	policy := NewAccessPolicy(AccessGrant{
+		PrincipalKind: AccessPrincipalRole,
+		Principal:     "reader",
+		Privilege:     AccessSelect,
+		Table:         TableInstance{Table: "*"},
+	})
+
+	decision := AuthorizationRequest{
+		Session: SessionContext{User: "moli", Roles: []RoleName{"reader"}},
+		Requirements: []AccessRequirement{{
+			Privilege: AccessSelect,
+			Table:     TableInstance{ID: "cities_1", Schema: "quanta", Table: "cities"},
+		}},
+	}.Authorize(policy)
+	if !decision.Supported() {
+		t.Fatalf("decision = %#v, want wildcard grant to match table", decision)
+	}
+}
+
 func TestAccessPolicyDeniesMissingGrant(t *testing.T) {
 	orders := TableInstance{ID: "orders", Schema: "quanta", Table: "orders"}
 	policy := NewAccessPolicy()

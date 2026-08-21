@@ -88,7 +88,14 @@ func (g AccessGrant) matchesTable(table TableInstance) bool {
 	if g.Table.ID != "" && table.ID != "" && g.Table.ID == table.ID {
 		return true
 	}
-	return g.Table.Schema == table.Schema && g.Table.Table == table.Table
+	if !accessGrantSchemaMatches(g.Table.Schema, table.Schema) {
+		return false
+	}
+	return g.Table.Table == "*" || g.Table.Table == table.Table
+}
+
+func accessGrantSchemaMatches(grantSchema, tableSchema string) bool {
+	return grantSchema == "" || grantSchema == "*" || grantSchema == tableSchema
 }
 
 func (g AccessGrant) coversFields(fields []FieldRef) bool {
