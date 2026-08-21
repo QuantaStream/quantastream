@@ -268,6 +268,9 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		if err := os.Chtimes(destPath, info.ModTime(), info.ModTime()); err != nil {
 			return fmt.Errorf("preserve backup file timestamp %s: %w", relPath, err)
 		}
+		if err := syncFileAndParentDirectory(destPath); err != nil {
+			return fmt.Errorf("sync backup file %s: %w", relPath, err)
+		}
 		backupEntry.Type = "file"
 		backupEntry.Size = size
 		backupEntry.SHA256 = checksum
@@ -456,8 +459,15 @@ func writeLocalStorageQuiescenceLease(dataDir string, lease LocalStorageQuiescen
 		_ = file.Close()
 		return fmt.Errorf("write quiescence lease: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync quiescence lease: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close quiescence lease: %w", err)
+	}
+	if err := syncParentDirectory(path); err != nil {
+		return fmt.Errorf("sync quiescence lease directory: %w", err)
 	}
 	return nil
 }
@@ -550,6 +560,9 @@ func RestoreLocalStorageBackup(ctx context.Context, req RestoreLocalStorageBacku
 		if err := os.Chtimes(targetPath, entry.ModTime, entry.ModTime); err != nil {
 			return manifest, fmt.Errorf("preserve restored file timestamp %s: %w", entry.Path, err)
 		}
+		if err := syncFileAndParentDirectory(targetPath); err != nil {
+			return manifest, fmt.Errorf("sync restored file %s: %w", entry.Path, err)
+		}
 	}
 	return manifest, nil
 }
@@ -561,11 +574,26 @@ func writeLocalStorageBackupManifest(backupDir string, manifest LocalStorageBack
 	}
 	path := filepath.Join(backupDir, LocalStorageBackupManifestFileName)
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
 		return fmt.Errorf("write backup manifest: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write backup manifest: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync backup manifest: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close backup manifest: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("commit backup manifest: %w", err)
+	}
+	if err := syncParentDirectory(path); err != nil {
+		return fmt.Errorf("sync backup manifest directory: %w", err)
 	}
 	return nil
 }
@@ -782,14 +810,50 @@ func copyFileWithSHA256(srcPath, destPath string, mode os.FileMode) (int64, stri
 	}
 	hash := sha256.New()
 	size, copyErr := io.Copy(io.MultiWriter(dst, hash), src)
+	var syncErr error
+	if copyErr == nil {
+		syncErr = dst.Sync()
+	}
 	closeErr := dst.Close()
 	if copyErr != nil {
 		return 0, "", copyErr
+	}
+	if syncErr != nil {
+		return 0, "", syncErr
 	}
 	if closeErr != nil {
 		return 0, "", closeErr
 	}
 	return size, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func syncFileAndParentDirectory(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return syncParentDirectory(path)
+}
+
+func syncParentDirectory(path string) error {
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }
 
 func fileSHA256(path string) (string, error) {
