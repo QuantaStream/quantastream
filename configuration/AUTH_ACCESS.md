@@ -20,7 +20,8 @@ accounts:
     caching_sha2_password_verifier: <hex verifier>
 ```
 
-Use `quanta-admin auth` to avoid storing cleartext passwords:
+Use the admin tool to avoid storing cleartext passwords. Release artifacts use
+`./bin/qstream-admin`; source checkout examples use `go run ./quanta-admin`:
 
 ```bash
 cd /home/ubuntu/quantastream
@@ -68,7 +69,7 @@ grants:
     table: lineitem
 ```
 
-Use `quanta-admin access` to maintain the policy file:
+Use the admin tool to maintain the policy file:
 
 ```bash
 cd /home/ubuntu/quantastream

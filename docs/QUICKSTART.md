@@ -21,10 +21,10 @@ Recommended minimum memory:
 
 ---
 
-# Build QuantaStream
+# Check The Source Build
 
 ```bash
-make build_all
+go test ./...
 ```
 
 ---
@@ -55,7 +55,7 @@ This starts:
 # Verify Cluster Status
 
 ```bash
-./bin/quanta-admin-linux-amd64 status
+go run ./quanta-admin status
 ```
 
 Expected:
@@ -108,3 +108,6 @@ Current project priorities:
 This quick start describes the local QIAB development environment. Container
 and multi-host operational requirements are documented in
 [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+Release bundles use `./bin/qstream-admin` for the same admin commands; see
+[`GETTING_STARTED.md`](GETTING_STARTED.md) for the binary-first runbook.

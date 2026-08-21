@@ -36,6 +36,9 @@ compatibility profile names. Treat those names as transitional handles:
 New prose should prefer **single-node** and **distributed** unless it is
 documenting a specific existing flag, script, suite, or compatibility profile.
 
+Admin examples in this source-checkout guide use `go run ./quanta-admin`.
+Release artifacts expose the same command surface as `./bin/qstream-admin`.
+
 ### `inabox-direct`
 
 `inabox-direct` is primarily a development and conformance mode. Some tooling
