@@ -127,7 +127,7 @@ Primary goals:
 - SQLRunner correctness suites
 - TPC-H-oriented demo and validation path
 - batch loading and basic live-ingest demonstrations
-- basic backup, restart, and recovery guidance
+- basic local backup, restart, and recovery guidance
 - contributor-ready documentation and tests
 
 ### 2.0: Distributed And Operational Readiness

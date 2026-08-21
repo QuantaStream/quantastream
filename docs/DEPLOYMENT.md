@@ -446,7 +446,34 @@ Validation is needed for:
 
 ## Backup and Restore
 
-Backup and restore procedures are not yet formally defined.
+QuantaStream includes an initial local filesystem backup format for offline or
+externally quiesced `inabox-standard` data directories. The format copies the
+data directory into a provider-neutral snapshot tree and writes `manifest.json`
+last. The manifest records the backup format/version, mode, file and directory
+counts, byte count, per-file SHA-256 checksums, and the current checkpoint shape.
+
+Create and validate a local backup:
+
+```bash
+go run ./quanta-admin backup create \
+  --data-dir /path/to/quantastream-data \
+  --target file:///path/to/backup
+
+go run ./quanta-admin backup validate \
+  --source file:///path/to/backup
+```
+
+Restore into an empty data directory:
+
+```bash
+go run ./quanta-admin backup restore \
+  --source file:///path/to/backup \
+  --data-dir /path/to/restored-data
+```
+
+This first slice is intentionally an offline/local snapshot contract. Live
+quiescent backup mode, WAL-backed write replay, distributed cluster snapshots,
+and cloud backup targets remain separate lifecycle work.
 
 Before production use, the project must establish:
 
