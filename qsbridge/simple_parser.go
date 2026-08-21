@@ -1729,6 +1729,16 @@ func parseSimpleDropTableBody(sql string, dropBody string, temporary bool) (Unbo
 	if dropBody == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
 	}
+	cascade := false
+	if remaining, ok := consumeTrailingKeyword(dropBody, "cascade"); ok {
+		cascade = true
+		dropBody = strings.TrimSpace(remaining)
+	} else if remaining, ok := consumeTrailingKeyword(dropBody, "restrict"); ok {
+		dropBody = strings.TrimSpace(remaining)
+	}
+	if dropBody == "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE must include a table"), false
+	}
 	if hasAnyKeyword(dropBody, "if", "exists", "cascade", "restrict", "where", "partition") || strings.Contains(dropBody, ",") {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE only supports one table name"), false
 	}
@@ -1746,6 +1756,7 @@ func parseSimpleDropTableBody(sql string, dropBody string, temporary bool) (Unbo
 			Table:     table,
 			Temporary: temporary,
 			IfExists:  ifExists,
+			Cascade:   cascade,
 			Result:    ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true

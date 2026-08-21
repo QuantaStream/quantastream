@@ -256,9 +256,18 @@ tests:
     feature: mutations_mysql_ddl_boundary
     compatibility: mysql
     requires: [drop_table, cascade]
-    issue: "DROP TABLE ... CASCADE is a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading catalog changes."
+    issue: "Parser/binder support now models DROP TABLE ... CASCADE intent. Dependency-cascading catalog changes remain a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading them."
     sql: |
       drop table qs_mysql_compat_mutations cascade
+
+  - id: mysql_compat_mutations_boundaries.039.drop_table_if_exists_cascade
+    status: supported
+    kind: statement
+    feature: mutations_ddl_safe_noop
+    compatibility: mysql
+    requires: [drop_table, if_exists, cascade]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations cascade
 
   - id: mysql_compat_mutations_boundaries.035.drop_ctas_keys_table_if_exists
     status: supported

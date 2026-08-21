@@ -1095,11 +1095,12 @@ func TestUnboundStatementBindDropTemporaryTableSkipsDurableDependencies(t *testi
 func TestUnboundStatementBindDropTableIfExists(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement := UnboundStatement{
-		SQL:  "drop table if exists customer",
+		SQL:  "drop table if exists customer cascade",
 		Kind: QueryKindDropTable,
 		Drop: UnboundDropTable{
 			Table:    UnboundTable{Name: "customer"},
 			IfExists: true,
+			Cascade:  true,
 			Result:   ResultShape{Kind: ResultStatement},
 		},
 	}
@@ -1113,6 +1114,9 @@ func TestUnboundStatementBindDropTableIfExists(t *testing.T) {
 	}
 	if !query.Mutation.IfExists {
 		t.Fatalf("Mutation.IfExists = false, want true")
+	}
+	if !query.Mutation.Cascade {
+		t.Fatalf("Mutation.Cascade = false, want true")
 	}
 }
 

@@ -457,6 +457,22 @@ func TestSimpleParserBridgeParsesDropTableIfExistsStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesDropTableCascadeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop temporary table if exists qs_tmp_customer_keys cascade;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropTable {
+		t.Fatalf("kind = %q, want drop table", statement.Kind)
+	}
+	if statement.Drop.Table.Name != "qs_tmp_customer_keys" {
+		t.Fatalf("table = %#v, want qs_tmp_customer_keys", statement.Drop.Table)
+	}
+	if !statement.Drop.Temporary || !statement.Drop.IfExists || !statement.Drop.Cascade {
+		t.Fatalf("drop flags temporary/if_exists/cascade = %t/%t/%t, want true/true/true", statement.Drop.Temporary, statement.Drop.IfExists, statement.Drop.Cascade)
+	}
+}
+
 func TestSimpleParserBridgeParsesAlterTableAddPrimaryKeyStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("alter table scratch_orders add primary key (order_key, customer_key);")
 	if diagnostics.BlocksNative() {

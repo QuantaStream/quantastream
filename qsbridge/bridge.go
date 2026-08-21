@@ -243,6 +243,7 @@ type UnboundDropTable struct {
 	Table     UnboundTable
 	Temporary bool
 	IfExists  bool
+	Cascade   bool
 	Result    ResultShape
 	Blockers  []NativeBlocker
 }
@@ -1422,6 +1423,7 @@ func BindDropTable(context *BindContext, dropStmt UnboundDropTable) (QueryIR, Di
 		Target:                 target,
 		Temporary:              dropStmt.Temporary,
 		IfExists:               dropStmt.IfExists,
+		Cascade:                dropStmt.Cascade,
 		DependentRelationships: dependencies,
 	}
 	return query, diagnostics
