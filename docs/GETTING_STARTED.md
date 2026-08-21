@@ -171,7 +171,8 @@ For support, capture a diagnostic bundle:
 The support bundle includes version/runtime metadata, a catalog/config summary,
 WAL planning output, backup manifests, optional log tails, and best-effort
 Consul service-discovery status. It does not include table data files or raw
-auth/access policy files.
+auth/access policy files. For production support collection, use the first
+response runbook in `docs/DEPLOYMENT.md`.
 
 For quick manual triage, capture these lines:
 

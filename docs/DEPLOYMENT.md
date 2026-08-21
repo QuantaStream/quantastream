@@ -634,6 +634,56 @@ optional WAL planning output, backup manifests, optional recent log tails, and
 best-effort Consul service-discovery status. It intentionally excludes table
 data files and raw auth/access policy files.
 
+## First Support Response
+
+When opening an operational support issue, capture diagnostics before changing
+node state whenever possible. Use the packaged admin binary on deployed systems,
+or `go run ./quanta-admin` from a source checkout:
+
+```bash
+qstream-admin support bundle \
+  --output /tmp/qstream-support-$(date -u +%Y%m%dT%H%M%SZ).tar.gz \
+  --data-dir /path/to/quantastream-data \
+  --wal-path /path/to/quantastream-data/storage.wal \
+  --backup-source file:///path/to/latest-backup \
+  --log-path /var/log/quantastream/quantastream.log,/var/log/quantastream/qstream-loader.log
+```
+
+Expected bundle entries include:
+
+- `README.txt`
+- `metadata/version.txt`
+- `metadata/runtime.txt`
+- `config/summary.txt`
+- `wal/plan.txt` or `wal/skipped.txt`
+- `backups/backup-001-manifest.json` or `backups/skipped.txt`
+- `logs/<name>` for each requested log tail
+- `cluster/status.txt` or `cluster/status-skipped.txt`
+
+Check the archive before sending it:
+
+```bash
+tar -tzf /tmp/qstream-support-*.tar.gz | sort
+```
+
+The bundle does not include table data files or raw auth/access policy files.
+It can include recent log tails, so review those logs for application payloads,
+customer identifiers, tokens, or deployment-specific secrets before sharing.
+Use `--max-log-bytes` to reduce log tail size or omit `--log-path` when logs
+need a separate redaction process.
+
+For durability, backup, or startup recovery issues, also run a restore smoke
+against the relevant backup:
+
+```bash
+qstream-admin backup smoke \
+  --source file:///path/to/latest-backup
+```
+
+Use `--keep-restore-dir` only when support needs the temporary restored image
+for deeper inspection. A passing support bundle plus a passing `backup smoke`
+is the preferred first-response package for local single-node durability issues.
+
 Before production use, the project must establish:
 
 - whether node storage can be snapshotted while nodes are active
