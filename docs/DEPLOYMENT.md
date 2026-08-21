@@ -549,6 +549,11 @@ For a running single-node engine, add `--quiesce --engine-flush standard-native
 local storage write barrier is installed and before files are copied. Offline
 snapshots can omit the engine flush.
 
+`--engine-flush distributed` is intentionally narrower: it commits through the
+distributed engine path before a local data-directory snapshot. It is not a
+coordinated multi-node backup/restore suite; that post-release work is tracked
+in [issue #10](https://github.com/QuantaStream/quantastream/issues/10).
+
 Inspect a backup manifest without walking and checksumming every snapshot file:
 
 ```bash

@@ -28,7 +28,7 @@ type BackupCreateCmd struct {
 	Target         string        `help:"Backup target directory. Supports file:///path or a local path." required:""`
 	Quiesce        bool          `help:"Create a local storage write barrier during the snapshot." default:"false"`
 	WALPath        string        `help:"Optional local WAL path to record in the backup checkpoint."`
-	EngineFlush    string        `help:"Optional running engine flush before the local snapshot: none, standard-native, or distributed." default:"none" enum:"none,standard-native,distributed"`
+	EngineFlush    string        `help:"Optional running engine flush before the local snapshot: none, standard-native, or distributed. The distributed option is a commit primitive only, not a coordinated distributed backup." default:"none" enum:"none,standard-native,distributed"`
 	NativeGRPCAddr string        `help:"Native gRPC endpoint used with --engine-flush=standard-native." default:"127.0.0.1:4100"`
 	FlushTimeout   time.Duration `help:"Timeout for running engine flush before snapshot." default:"5m"`
 }
@@ -89,13 +89,7 @@ func (c *BackupCreateCmd) Run(ctx *Context) error {
 	}
 	fmt.Printf("backup_created=%s\n", target)
 	printBackupManifestSummary(manifest)
-	if mode := c.engineFlushMode(); mode != "none" {
-		fmt.Printf("backup_engine_flush=%s\n", mode)
-		if mode == "standard-native" {
-			fmt.Printf("backup_engine_flush_native_grpc_addr=%s\n", strings.TrimSpace(c.NativeGRPCAddr))
-		}
-		fmt.Printf("backup_engine_flush_timeout=%s\n", effectiveBackupFlushTimeout(c.FlushTimeout))
-	}
+	printBackupEngineFlushSummary(c.engineFlushMode(), c.NativeGRPCAddr, c.FlushTimeout)
 	if c.Quiesce {
 		printQuiescentBackupLiveSourceNotes(c.engineFlushMode())
 	}
@@ -164,6 +158,23 @@ func effectiveBackupFlushTimeout(timeout time.Duration) time.Duration {
 		return 5 * time.Minute
 	}
 	return timeout
+}
+
+func printBackupEngineFlushSummary(mode, nativeGRPCAddr string, timeout time.Duration) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "none" {
+		return
+	}
+	fmt.Printf("backup_engine_flush=%s\n", mode)
+	if mode == "standard-native" {
+		fmt.Printf("backup_engine_flush_native_grpc_addr=%s\n", strings.TrimSpace(nativeGRPCAddr))
+	}
+	if mode == "distributed" {
+		fmt.Printf("backup_engine_flush_distributed_scope=commit_only\n")
+		fmt.Printf("backup_engine_flush_distributed_backup_supported=false\n")
+		fmt.Printf("backup_engine_flush_distributed_backup_issue=https://github.com/QuantaStream/quantastream/issues/10\n")
+	}
+	fmt.Printf("backup_engine_flush_timeout=%s\n", effectiveBackupFlushTimeout(timeout))
 }
 
 func commitEngineBeforeSnapshot(parent context.Context, timeout time.Duration, config shared.LoaderConnectionConfig) error {
@@ -364,10 +375,13 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 
 func printQuiescentBackupLiveSourceNotes(engineFlushMode string) {
 	fmt.Printf("backup_live_source_requires_committed_state=true\n")
-	if engineFlushMode != "none" {
-		fmt.Printf("backup_live_source_flush_hint=engine_flush_after_quiesce_drain_external_clients\n")
-	} else {
+	switch strings.ToLower(strings.TrimSpace(engineFlushMode)) {
+	case "none", "":
 		fmt.Printf("backup_live_source_flush_hint=commit_or_drain_live_engine_before_snapshot\n")
+	case "distributed":
+		fmt.Printf("backup_live_source_flush_hint=distributed_commit_only_local_snapshot_not_cluster_backup\n")
+	default:
+		fmt.Printf("backup_live_source_flush_hint=engine_flush_after_quiesce_drain_external_clients\n")
 	}
 	fmt.Printf("backup_live_source_snapshot_scope=durable_filesystem_state\n")
 }

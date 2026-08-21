@@ -142,6 +142,9 @@ snapshot bytes, and `backup smoke` to restore into a temporary directory and
 validate the restored image. The smoke command removes its temporary restore
 directory unless `--keep-restore-dir` is supplied.
 
+Distributed engine flush is currently a commit primitive before a local
+snapshot, not a coordinated multi-node backup/restore suite.
+
 To perform a manual restore, stop the engine first and restore into a new empty
 directory:
 

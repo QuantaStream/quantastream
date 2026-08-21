@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
 )
@@ -112,6 +113,26 @@ func TestBackupCreateCmdEngineFlushRequiresQuiesce(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(backupDir, core.LocalStorageBackupManifestFileName)); !os.IsNotExist(statErr) {
 		t.Fatalf("backup manifest stat err=%v, want not exist", statErr)
 	}
+}
+
+func TestBackupEngineFlushSummaryClarifiesDistributedScope(t *testing.T) {
+	output, err := captureAdminBackupStdout(t, func() error {
+		printBackupEngineFlushSummary("distributed", "", time.Minute)
+		printQuiescentBackupLiveSourceNotes("distributed")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("captureAdminBackupStdout returned error: %v", err)
+	}
+	assertAdminBackupOutputContains(t, output,
+		"backup_engine_flush=distributed",
+		"backup_engine_flush_distributed_scope=commit_only",
+		"backup_engine_flush_distributed_backup_supported=false",
+		"backup_engine_flush_distributed_backup_issue=https://github.com/QuantaStream/quantastream/issues/10",
+		"backup_engine_flush_timeout=1m0s",
+		"backup_live_source_flush_hint=distributed_commit_only_local_snapshot_not_cluster_backup",
+		"backup_live_source_snapshot_scope=durable_filesystem_state",
+	)
 }
 
 func TestBackupInspectCmdReadsManifestWithoutChecksumValidation(t *testing.T) {
