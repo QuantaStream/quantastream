@@ -347,12 +347,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.013.delete_join
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_multi_table_boundary
     compatibility: mysql
     requires: [delete, join, aliases, where, comparison]
-    issue: "DELETE ... JOIN is a MySQL multi-table mutation boundary; QS mutation planning currently targets one catalog table."
     sql: |
       delete t
       from qs_mysql_compat_mutations_ctas as t

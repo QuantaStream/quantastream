@@ -209,11 +209,6 @@ func TestSimpleParserBridgeRejectsMultiTableMutationBoundaries(t *testing.T) {
 			message: "UPDATE JOIN is not supported yet",
 		},
 		{
-			name:    "delete target alias",
-			sql:     "delete c from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
-			message: "multi-table DELETE is not supported yet",
-		},
-		{
 			name:    "delete join",
 			sql:     "delete from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1",
 			message: "DELETE JOIN is not supported yet",
@@ -239,6 +234,36 @@ func TestSimpleParserBridgeParsesDeleteStatement(t *testing.T) {
 	}
 	if len(statement.Delete.Predicates) != 1 {
 		t.Fatalf("predicates = %d, want 1", len(statement.Delete.Predicates))
+	}
+}
+
+func TestSimpleParserBridgeParsesDeleteTargetAliasJoin(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("delete c from customer c inner join orders o on c.c_custkey = o.o_custkey where o.o_orderkey = 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDelete {
+		t.Fatalf("kind = %q, want delete", statement.Kind)
+	}
+	if statement.Delete.Table.Name != "customer" || statement.Delete.Table.Alias != "c" {
+		t.Fatalf("table = %#v, want customer c", statement.Delete.Table)
+	}
+	if got, want := len(statement.Delete.Predicates), 1; got != want {
+		t.Fatalf("predicates = %d, want %d", got, want)
+	}
+	binary, ok := statement.Delete.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate = %T, want UnboundBinaryExpr", statement.Delete.Predicates[0].Expr)
+	}
+	if binary.Op != BinaryOpIn {
+		t.Fatalf("predicate op = %q, want %q", binary.Op, BinaryOpIn)
+	}
+	subquery, ok := binary.Right.(UnboundListSubqueryExpr)
+	if !ok {
+		t.Fatalf("predicate right = %T, want UnboundListSubqueryExpr", binary.Right)
+	}
+	if want := "select o.o_custkey from orders as o where o.o_orderkey = 1"; subquery.SQL != want {
+		t.Fatalf("subquery SQL = %q, want %q", subquery.SQL, want)
 	}
 }
 

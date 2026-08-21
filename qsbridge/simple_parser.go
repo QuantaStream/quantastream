@@ -649,7 +649,7 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 		return UnboundStatement{}, simpleParserDiagnostic("only DELETE statements are supported"), false
 	}
 	if targetAlias, _, ok := splitBeforeTopLevelKeyword(deleteBody, "from"); ok && strings.TrimSpace(targetAlias) != "" {
-		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE is not supported yet"), false
+		return parseSimpleDeleteJoin(sql, strings.TrimSpace(targetAlias), deleteBody)
 	}
 	deleteBody, ok = consumeKeyword(deleteBody, "from")
 	if !ok {
@@ -688,6 +688,117 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 			Result:     ResultShape{Kind: ResultStatement, Limit: limit, HasLimit: hasLimit, Offset: offset},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleDeleteJoin(sql string, targetAlias string, deleteBody string) (UnboundStatement, Diagnostic, bool) {
+	if strings.Contains(targetAlias, ",") || strings.Contains(targetAlias, ".") || !isSimpleIdentifierPathPart(targetAlias) {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE currently supports one target alias"), false
+	}
+	fromBody, ok := consumeKeyword(strings.TrimSpace(deleteBody), targetAlias)
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE target alias is invalid"), false
+	}
+	fromBody, ok = consumeKeyword(fromBody, "from")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("DELETE must include FROM"), false
+	}
+	fromBody, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(fromBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	fromBody, orderBy, _, diagnostic, ok := parseSimpleOrderByClause(fromBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	sourceText, whereText, hasWhere := splitOptionalTopLevelKeyword(fromBody, "where")
+	if !hasAnyTopLevelKeyword(sourceText, "join") {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE requires a JOIN source"), false
+	}
+	tables, joins, diagnostic, ok := parseSimpleSources(sourceText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	targetTable, ok := simpleDeleteJoinTargetTable(tables, targetAlias)
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE target alias must match a joined table"), false
+	}
+	targetField, otherTable, otherQualifier, otherField, ok := simpleDeleteJoinKeyMapping(tables, joins, targetAlias)
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("multi-table DELETE requires an equality join on the target alias"), false
+	}
+	sourceSQL := "select " + otherQualifier + "." + otherField + " from " + simpleDeleteJoinTableSQL(otherTable)
+	if hasWhere {
+		rewrittenWhere, diagnostic, ok := simpleDeleteJoinRewriteWhere(whereText, targetAlias, targetField, otherQualifier, otherField)
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
+		sourceSQL += " where " + rewrittenWhere
+	}
+	predicates := []UnboundPredicate{{
+		Expr:      UnboundBinary(BinaryOpIn, UnboundField(targetAlias, targetField), UnboundListSubquery(sourceSQL, PredicateScopeWhere)),
+		Placement: PredicatePushdown,
+		Scope:     PredicateScopeWhere,
+	}}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindDelete,
+		Delete: UnboundDelete{
+			Table:      targetTable,
+			Predicates: predicates,
+			OrderBy:    orderBy,
+			Result:     ResultShape{Kind: ResultStatement, Limit: limit, HasLimit: hasLimit, Offset: offset},
+		},
+	}, Diagnostic{}, true
+}
+
+func simpleDeleteJoinTargetTable(tables []UnboundTable, targetAlias string) (UnboundTable, bool) {
+	for _, table := range tables {
+		if strings.EqualFold(tableRefName(table.Name, table.Alias), targetAlias) {
+			return table, true
+		}
+	}
+	return UnboundTable{}, false
+}
+
+func simpleDeleteJoinKeyMapping(tables []UnboundTable, joins []UnboundJoin, targetAlias string) (string, UnboundTable, string, string, bool) {
+	for _, join := range joins {
+		if join.Operator != "" && join.Operator != BinaryOpEqual {
+			continue
+		}
+		if strings.EqualFold(join.LeftQualifier, targetAlias) && join.LeftField != "" {
+			if table, ok := simpleDeleteJoinTargetTable(tables, join.RightQualifier); ok && join.RightField != "" {
+				return join.LeftField, table, join.RightQualifier, join.RightField, true
+			}
+		}
+		if strings.EqualFold(join.RightQualifier, targetAlias) && join.RightField != "" {
+			if table, ok := simpleDeleteJoinTargetTable(tables, join.LeftQualifier); ok && join.LeftField != "" {
+				return join.RightField, table, join.LeftQualifier, join.LeftField, true
+			}
+		}
+	}
+	return "", UnboundTable{}, "", "", false
+}
+
+func simpleDeleteJoinTableSQL(table UnboundTable) string {
+	text := table.Name
+	if table.Schema != "" {
+		text = table.Schema + "." + text
+	}
+	if table.Alias != "" {
+		text += " as " + table.Alias
+	}
+	return text
+}
+
+func simpleDeleteJoinRewriteWhere(text string, targetAlias string, targetField string, otherQualifier string, otherField string) (string, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	targetRef := targetAlias + "." + targetField
+	otherRef := otherQualifier + "." + otherField
+	rewritten := strings.ReplaceAll(trimmed, targetRef, otherRef)
+	if strings.Contains(rewritten, targetAlias+".") {
+		return "", simpleParserDiagnostic("multi-table DELETE WHERE can only reference the target join key from the target alias"), false
+	}
+	return rewritten, Diagnostic{}, true
 }
 
 func simpleInsertOnDuplicateKeyDiagnostic(text string) (Diagnostic, bool) {
