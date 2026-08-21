@@ -250,16 +250,6 @@ tests:
     expect:
       ignore_affected_rows: true
 
-  - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
-    status: xfail
-    kind: statement
-    feature: mutations_mysql_ddl_boundary
-    compatibility: mysql
-    requires: [drop_table, cascade]
-    issue: "Parser/binder support now models DROP TABLE ... CASCADE intent. Dependency-cascading catalog changes remain a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading them."
-    sql: |
-      drop table qs_mysql_compat_mutations cascade
-
   - id: mysql_compat_mutations_boundaries.039.drop_table_if_exists_cascade
     status: supported
     kind: statement
@@ -522,6 +512,15 @@ tests:
     sql: |
       alter table qs_mysql_compat_mutations_ctas
       drop column name
+
+  - id: mysql_compat_mutations_boundaries.008.drop_table_cascade
+    status: supported
+    kind: statement
+    feature: mutations_drop_table_cascade
+    compatibility: mysql
+    requires: [drop_table, cascade]
+    sql: |
+      drop table qs_mysql_compat_mutations_ctas cascade
 
   # Cleanup no-ops, safe even when the boundary table creation never happened.
   - id: mysql_compat_mutations_boundaries.900.cleanup
