@@ -368,6 +368,15 @@ func TestAlterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(t *testing.T) {
 	}
 }
 
+func TestAlterTableAddPrimaryKeyCatalogOnlyStatusIncludesKnownRowCount(t *testing.T) {
+	if got := alterTableAddPrimaryKeyCatalogOnlyStatus("scratch_orders", 0, false); got != "Primary key added to table scratch_orders" {
+		t.Fatalf("status = %q, want plain status when row count is unknown", got)
+	}
+	if got := alterTableAddPrimaryKeyCatalogOnlyStatus("scratch_orders", 0, true); got != "Primary key added to table scratch_orders (catalog-only row_count=0)" {
+		t.Fatalf("status = %q, want catalog-only row count", got)
+	}
+}
+
 func TestApplyAlterTableAddPrimaryKeyCatalogMutationAddsCompoundAuthority(t *testing.T) {
 	table := &shared.BasicTable{
 		Name: "scratch_order_lines",
