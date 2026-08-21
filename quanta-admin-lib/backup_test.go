@@ -81,6 +81,36 @@ func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackupInspectCmdReadsManifestWithoutChecksumValidation(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	backupDir := filepath.Join(root, "backup")
+
+	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
+	}
+	writeAdminBackupTestFile(t, filepath.Join(backupDir, core.LocalStorageBackupSnapshotDir), "config/customer/schema.yaml", "name: corrupt!\n")
+
+	output, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupInspectCmd{Source: backupDir}).Run(&Context{})
+	})
+	if err != nil {
+		t.Fatalf("BackupInspectCmd.Run returned error: %v", err)
+	}
+	assertAdminBackupOutputContains(t, output,
+		"backup_inspected=",
+		"backup_format=quantastream-local-storage-backup",
+		"backup_product=QuantaStream",
+		"backup_files=1",
+	)
+	if _, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupValidateCmd{Source: backupDir}).Run(&Context{})
+	}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("BackupValidateCmd.Run error = %v, want checksum mismatch", err)
+	}
+}
+
 func TestBackupSmokeCmdRestoresValidatesAndRemovesTemporaryImage(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")

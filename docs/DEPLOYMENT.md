@@ -170,6 +170,9 @@ go run ./quanta-admin backup create \
 go run ./quanta-admin backup validate \
   --source file:///tmp/quantastream-standard-backup
 
+go run ./quanta-admin backup inspect \
+  --source file:///tmp/quantastream-standard-backup
+
 go run ./quanta-admin backup restore \
   --source file:///tmp/quantastream-standard-backup \
   --data-dir /tmp/quantastream-standard-restore
@@ -534,6 +537,13 @@ go run ./quanta-admin backup validate \
   --source file:///path/to/backup
 ```
 
+Inspect a backup manifest without walking and checksumming every snapshot file:
+
+```bash
+go run ./quanta-admin backup inspect \
+  --source file:///path/to/backup
+```
+
 Restore into an empty data directory:
 
 ```bash
@@ -560,7 +570,9 @@ plans recovery against the WAL and checkpoint files from the restored image.
 
 Treat validation as part of the runbook, not an optional diagnostic. It confirms
 that every manifest entry exists, every file checksum matches, aggregate counts
-match, and the snapshot does not contain unmanifested files.
+match, and the snapshot does not contain unmanifested files. Use `backup inspect`
+for quick metadata triage, and `backup validate` when the bytes need to be
+proven.
 
 Inspect the WAL/checkpoint pair directly when diagnosing local recovery:
 

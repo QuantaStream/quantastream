@@ -13,6 +13,7 @@ import (
 // BackupCmd groups provider-neutral storage backup operations.
 type BackupCmd struct {
 	Create   BackupCreateCmd   `cmd:"" help:"Create a local filesystem storage backup."`
+	Inspect  BackupInspectCmd  `cmd:"" help:"Print a local filesystem storage backup manifest summary without checksum validation."`
 	Validate BackupValidateCmd `cmd:"" help:"Validate a local filesystem storage backup."`
 	Restore  BackupRestoreCmd  `cmd:"" help:"Restore a local filesystem storage backup into an empty data directory."`
 	Smoke    BackupSmokeCmd    `cmd:"" help:"Restore a backup into a temporary directory and validate the restored image."`
@@ -27,6 +28,10 @@ type BackupCreateCmd struct {
 }
 
 type BackupValidateCmd struct {
+	Source string `help:"Backup source directory. Supports file:///path or a local path." required:""`
+}
+
+type BackupInspectCmd struct {
 	Source string `help:"Backup source directory. Supports file:///path or a local path." required:""`
 }
 
@@ -72,6 +77,16 @@ func (c *BackupCreateCmd) Run(ctx *Context) error {
 		return err
 	}
 	fmt.Printf("backup_created=%s\n", target)
+	printBackupManifestSummary(manifest)
+	return nil
+}
+
+func (c *BackupInspectCmd) Run(ctx *Context) error {
+	manifest, source, err := core.LoadLocalStorageBackupManifest(c.Source)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("backup_inspected=%s\n", source)
 	printBackupManifestSummary(manifest)
 	return nil
 }
