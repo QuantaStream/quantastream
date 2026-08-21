@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"gopkg.in/yaml.v2"
 )
 
@@ -127,6 +128,11 @@ func validateStaticAccounts(accounts []StaticAccount) ([]StaticAccount, error) {
 		account.DefaultDatabase = strings.TrimSpace(account.DefaultDatabase)
 		account.MySQLNativePasswordVerifier = strings.TrimSpace(account.MySQLNativePasswordVerifier)
 		account.CachingSHA2PasswordVerifier = strings.TrimSpace(account.CachingSHA2PasswordVerifier)
+		roles, err := normalizeStaticAccountRoles(account.Roles)
+		if err != nil {
+			return nil, fmt.Errorf("mysql static auth account %q: %w", account.Username, err)
+		}
+		account.Roles = roles
 		if account.Username == "" {
 			return nil, fmt.Errorf("mysql static auth account %d has empty username", i+1)
 		}
@@ -145,6 +151,26 @@ func validateStaticAccounts(accounts []StaticAccount) ([]StaticAccount, error) {
 		}
 		seen[account.Username] = struct{}{}
 		normalized = append(normalized, account)
+	}
+	return normalized, nil
+}
+
+func normalizeStaticAccountRoles(roles []qsbridge.RoleName) ([]qsbridge.RoleName, error) {
+	if len(roles) == 0 {
+		return nil, nil
+	}
+	seen := make(map[qsbridge.RoleName]struct{}, len(roles))
+	normalized := make([]qsbridge.RoleName, 0, len(roles))
+	for _, role := range roles {
+		role = qsbridge.RoleName(strings.TrimSpace(string(role)))
+		if role == "" {
+			return nil, fmt.Errorf("role is empty")
+		}
+		if _, ok := seen[role]; ok {
+			return nil, fmt.Errorf("role %q is duplicated", role)
+		}
+		seen[role] = struct{}{}
+		normalized = append(normalized, role)
 	}
 	return normalized, nil
 }

@@ -26,6 +26,7 @@ type AuthDecision struct {
 	Accepted       bool
 	Username       string
 	Database       string
+	Roles          []qsbridge.RoleName
 	AuthPluginName string
 	Failure        qsbridge.ProtocolError
 }

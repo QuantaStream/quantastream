@@ -101,7 +101,13 @@ func TestNativeProxyMySQLCommandHandlerPropagatesUserIntoPreparedSession(t *test
 
 	response, err := handler.HandleCommand(
 		context.Background(),
-		qsmysql.Command{Kind: qsmysql.CommandKindStmtPrepare, SQL: "select count(*) from orders", Username: "bench", Database: "analytics"},
+		qsmysql.Command{
+			Kind:     qsmysql.CommandKindStmtPrepare,
+			SQL:      "select count(*) from orders",
+			Username: "bench",
+			Database: "analytics",
+			Roles:    []qsbridge.RoleName{"reader"},
+		},
 	)
 	if err != nil {
 		t.Fatalf("HandleCommand prepare failed: %v", err)
@@ -115,6 +121,9 @@ func TestNativeProxyMySQLCommandHandlerPropagatesUserIntoPreparedSession(t *test
 	}
 	if prepared.Session.User != "bench" || prepared.Session.CurrentSchema != "analytics" {
 		t.Fatalf("prepared session = %#v, want authenticated user and default schema", prepared.Session)
+	}
+	if len(prepared.Session.Roles) != 1 || prepared.Session.Roles[0] != "reader" {
+		t.Fatalf("prepared session roles = %#v, want reader", prepared.Session.Roles)
 	}
 }
 

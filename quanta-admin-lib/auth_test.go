@@ -18,6 +18,7 @@ func TestAuthUpsertListAndRemoveCommandsManageAccountFile(t *testing.T) {
 		User:            "bench",
 		Password:        "secret",
 		DefaultDatabase: "quanta",
+		Roles:           "reader,writer",
 	}).Run(ctx); err != nil {
 		t.Fatalf("AuthUpsertCmd.Run returned error: %v", err)
 	}
@@ -39,6 +40,9 @@ func TestAuthUpsertListAndRemoveCommandsManageAccountFile(t *testing.T) {
 	if len(accounts) != 2 {
 		t.Fatalf("accounts = %#v, want 2", accounts)
 	}
+	if len(accounts[0].Roles) != 2 || accounts[0].Roles[0] != "reader" || accounts[0].Roles[1] != "writer" {
+		t.Fatalf("bench roles = %#v, want reader/writer", accounts[0].Roles)
+	}
 	for _, account := range accounts {
 		if account.Password != "" || account.MySQLNativePasswordVerifier == "" || account.CachingSHA2PasswordVerifier == "" {
 			t.Fatalf("account should contain verifier hashes only: %#v", account)
@@ -53,6 +57,14 @@ func TestAuthUpsertListAndRemoveCommandsManageAccountFile(t *testing.T) {
 	}
 	if len(accounts) != 1 || accounts[0].Username != "bench" {
 		t.Fatalf("accounts after remove = %#v", accounts)
+	}
+}
+
+func TestAuthUpsertRejectsDuplicateRoles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.yaml")
+	err := (&AuthUpsertCmd{AccountFile: path, User: "bench", Password: "secret", Roles: "reader,reader"}).Run(&Context{})
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("AuthUpsertCmd.Run error = %v, want duplicate role error", err)
 	}
 }
 

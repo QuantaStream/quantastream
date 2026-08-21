@@ -13,11 +13,17 @@ accounts:
   - username: bench
     password: secret
     default_database: quanta
+    roles:
+      - reader
+      - writer
 `))
 	if err != nil {
 		t.Fatalf("DecodeStaticAccountFile failed: %v", err)
 	}
 	if len(accounts) != 1 || accounts[0].Username != "bench" || accounts[0].Password != "secret" || accounts[0].DefaultDatabase != "quanta" {
+		t.Fatalf("accounts = %#v", accounts)
+	}
+	if len(accounts[0].Roles) != 2 || accounts[0].Roles[0] != "reader" || accounts[0].Roles[1] != "writer" {
 		t.Fatalf("accounts = %#v", accounts)
 	}
 }
@@ -30,6 +36,26 @@ accounts:
 `))
 	if err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("err = %v, want duplicated user error", err)
+	}
+}
+
+func TestDecodeStaticAccountFileRejectsEmptyOrDuplicateRoles(t *testing.T) {
+	for _, content := range []string{
+		`
+accounts:
+  - username: bench
+    roles: [reader, ""]
+`,
+		`
+accounts:
+  - username: bench
+    roles: [reader, reader]
+`,
+	} {
+		_, err := DecodeStaticAccountFile([]byte(content))
+		if err == nil || !strings.Contains(err.Error(), "role") {
+			t.Fatalf("DecodeStaticAccountFile(%q) err = %v, want role validation error", content, err)
+		}
 	}
 }
 

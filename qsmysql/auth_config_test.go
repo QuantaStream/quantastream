@@ -50,6 +50,7 @@ accounts:
   - username: bench
     password: secret
     default_database: quanta
+    roles: [reader]
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -63,6 +64,9 @@ accounts:
 		t.Fatalf("authenticator = %T, want StaticAuthenticator", authenticator)
 	}
 	if len(static.Accounts) != 1 || static.Accounts[0].Username != "bench" || static.Accounts[0].Password != "secret" {
+		t.Fatalf("accounts = %#v", static.Accounts)
+	}
+	if len(static.Accounts[0].Roles) != 1 || static.Accounts[0].Roles[0] != "reader" {
 		t.Fatalf("accounts = %#v", static.Accounts)
 	}
 	if got := config.SummaryUser("quanta"); got != "" {

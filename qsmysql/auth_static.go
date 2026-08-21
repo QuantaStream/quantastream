@@ -23,11 +23,12 @@ const (
 // StaticAccount is a small built-in account/password identity used by the
 // public MySQL-compatible auth path before enterprise auth providers are wired.
 type StaticAccount struct {
-	Username                    string `yaml:"username"`
-	Password                    string `yaml:"password,omitempty"`
-	MySQLNativePasswordVerifier string `yaml:"mysql_native_password_verifier,omitempty"`
-	CachingSHA2PasswordVerifier string `yaml:"caching_sha2_password_verifier,omitempty"`
-	DefaultDatabase             string `yaml:"default_database,omitempty"`
+	Username                    string              `yaml:"username"`
+	Password                    string              `yaml:"password,omitempty"`
+	MySQLNativePasswordVerifier string              `yaml:"mysql_native_password_verifier,omitempty"`
+	CachingSHA2PasswordVerifier string              `yaml:"caching_sha2_password_verifier,omitempty"`
+	DefaultDatabase             string              `yaml:"default_database,omitempty"`
+	Roles                       []qsbridge.RoleName `yaml:"roles,omitempty"`
 }
 
 // StaticAuthenticator validates decoded MySQL password auth tokens against an
@@ -67,6 +68,7 @@ func (a StaticAuthenticator) Authenticate(ctx context.Context, request AuthReque
 		Accepted:       true,
 		Username:       request.Username,
 		Database:       database,
+		Roles:          append([]qsbridge.RoleName(nil), account.Roles...),
 		AuthPluginName: staticAuthPluginName(request.AuthPluginName),
 	}, nil
 }

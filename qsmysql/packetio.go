@@ -1,6 +1,10 @@
 package qsmysql
 
-import "context"
+import (
+	"context"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+)
 
 // PacketReader reads decoded MySQL packets from a transport or test stream.
 type PacketReader interface {
@@ -25,6 +29,7 @@ type CommandLoop struct {
 	ConnectionID    uint32
 	Username        string
 	Database        string
+	Roles           []qsbridge.RoleName
 	CapabilityFlags CapabilityFlag
 }
 
@@ -42,6 +47,7 @@ func (l CommandLoop) ServeNext(ctx context.Context) (CommandResponse, error) {
 	command.ConnectionID = l.ConnectionID
 	command.Username = l.Username
 	command.Database = l.Database
+	command.Roles = append([]qsbridge.RoleName(nil), l.Roles...)
 	response, err := l.Handler.HandleCommand(ctx, command)
 	if err != nil {
 		response = ErrorResponseFromError(err)

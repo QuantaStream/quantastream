@@ -80,12 +80,16 @@ func TestCommandLoopAttachesSessionMetadata(t *testing.T) {
 		ConnectionID: 42,
 		Username:     "bench",
 		Database:     "analytics",
+		Roles:        []qsbridge.RoleName{"reader"},
 	}).ServeNext(context.Background())
 	if err != nil {
 		t.Fatalf("ServeNext failed: %v", err)
 	}
 	if handler.got.ConnectionID != 42 || handler.got.Username != "bench" || handler.got.Database != "analytics" {
 		t.Fatalf("command metadata = %#v, want connection/user/database", handler.got)
+	}
+	if len(handler.got.Roles) != 1 || handler.got.Roles[0] != "reader" {
+		t.Fatalf("command roles = %#v, want reader", handler.got.Roles)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
 )
 
@@ -25,6 +26,7 @@ type AuthUpsertCmd struct {
 	User            string `help:"Account username." required:""`
 	Password        string `help:"Account password. Prefer QUANTASTREAM_AUTH_PASSWORD to avoid shell history."`
 	DefaultDatabase string `help:"Default database/schema for the account."`
+	Roles           string `help:"Comma-separated effective roles for this account."`
 }
 
 type AuthRemoveCmd struct {
@@ -51,6 +53,11 @@ func (c *AuthUpsertCmd) Run(ctx *Context) error {
 		return err
 	}
 	account := qsmysql.StaticAccountWithPasswordVerifiers(c.User, password, c.DefaultDatabase)
+	roles, err := parseAuthRoles(c.Roles)
+	if err != nil {
+		return err
+	}
+	account.Roles = roles
 	accounts, err := qsmysql.UpsertStaticAccountFile(c.AccountFile, account)
 	if err != nil {
 		return err
@@ -99,12 +106,46 @@ func printAuthAccounts(path string, accounts []qsmysql.StaticAccount) {
 	fmt.Printf("auth_account_count=%d\n", len(accounts))
 	for _, account := range accounts {
 		fmt.Printf(
-			"auth_account username=%s default_database=%s password_cleartext=%t mysql_native_password_verifier=%t caching_sha2_password_verifier=%t\n",
+			"auth_account username=%s default_database=%s roles=%s password_cleartext=%t mysql_native_password_verifier=%t caching_sha2_password_verifier=%t\n",
 			account.Username,
 			account.DefaultDatabase,
+			authRoleSummary(account.Roles),
 			account.Password != "",
 			account.MySQLNativePasswordVerifier != "",
 			account.CachingSHA2PasswordVerifier != "",
 		)
 	}
+}
+
+func parseAuthRoles(value string) ([]qsbridge.RoleName, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	roles := make([]qsbridge.RoleName, 0, len(parts))
+	seen := make(map[qsbridge.RoleName]struct{}, len(parts))
+	for _, part := range parts {
+		role := qsbridge.RoleName(strings.TrimSpace(part))
+		if role == "" {
+			return nil, fmt.Errorf("auth role is empty")
+		}
+		if _, ok := seen[role]; ok {
+			return nil, fmt.Errorf("auth role %q is duplicated", role)
+		}
+		seen[role] = struct{}{}
+		roles = append(roles, role)
+	}
+	return roles, nil
+}
+
+func authRoleSummary(roles []qsbridge.RoleName) string {
+	if len(roles) == 0 {
+		return ""
+	}
+	values := make([]string, 0, len(roles))
+	for _, role := range roles {
+		values = append(values, string(role))
+	}
+	return strings.Join(values, ",")
 }

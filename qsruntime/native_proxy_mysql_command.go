@@ -162,14 +162,19 @@ func nativeProxyMySQLSessionForCommand(profile *NativeProxyMySQLSessionProfile, 
 	if profile == nil {
 		return qsbridge.SessionContext{
 			User:          qsbridge.UserName(command.Username),
+			Roles:         append([]qsbridge.RoleName(nil), command.Roles...),
 			CurrentSchema: command.Database,
 		}
 	}
 	profile.SetAuthenticatedUser(command.Username)
+	profile.SetAuthenticatedRoles(command.Roles)
 	profile.SetCurrentSchema(command.Database)
 	session := profile.Session()
 	if session.User == "" {
 		session.User = qsbridge.UserName(command.Username)
+	}
+	if len(session.Roles) == 0 {
+		session.Roles = append([]qsbridge.RoleName(nil), command.Roles...)
 	}
 	if session.CurrentSchema == "" {
 		session.CurrentSchema = command.Database

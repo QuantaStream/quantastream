@@ -3,6 +3,8 @@ package qsmysql
 import (
 	"fmt"
 	"strings"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
 // CommandKind identifies a decoded MySQL command.
@@ -37,6 +39,7 @@ type Command struct {
 	ConnectionID uint32
 	Username     string
 	Database     string
+	Roles        []qsbridge.RoleName
 }
 
 // DecodeCommand decodes the payload of a MySQL command packet.

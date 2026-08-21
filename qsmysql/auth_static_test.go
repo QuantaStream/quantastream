@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
 func TestStaticAuthenticatorAcceptsCachingSHA2Password(t *testing.T) {
@@ -12,6 +14,7 @@ func TestStaticAuthenticatorAcceptsCachingSHA2Password(t *testing.T) {
 		Username:        "guy",
 		Password:        "secret",
 		DefaultDatabase: "quanta",
+		Roles:           []qsbridge.RoleName{"reader"},
 	}}}
 	decision, err := authenticator.Authenticate(context.Background(), AuthRequest{
 		Username:       "guy",
@@ -23,6 +26,9 @@ func TestStaticAuthenticatorAcceptsCachingSHA2Password(t *testing.T) {
 		t.Fatalf("Authenticate failed: %v", err)
 	}
 	if !decision.Accepted || decision.Database != "quanta" || decision.AuthPluginName != cachingSHA2PasswordPluginName {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if len(decision.Roles) != 1 || decision.Roles[0] != "reader" {
 		t.Fatalf("decision = %#v", decision)
 	}
 }
@@ -165,6 +171,7 @@ func TestSessionRunnerStaticAuthenticatorUsesHandshakeSeed(t *testing.T) {
 			Username:        "guy",
 			Password:        "secret",
 			DefaultDatabase: "quanta",
+			Roles:           []qsbridge.RoleName{"reader"},
 		}}},
 	})
 	if err := runner.SendHandshake(context.Background()); err != nil {
@@ -189,6 +196,9 @@ func TestSessionRunnerStaticAuthenticatorUsesHandshakeSeed(t *testing.T) {
 		t.Fatalf("AcceptHandshakeResponse failed: %v", err)
 	}
 	if authOK.Kind != CommandResponseOK || !runner.Connection.CanAcceptCommand() || runner.Connection.Database != "quanta" {
+		t.Fatalf("authOK = %#v connection=%#v", authOK, runner.Connection)
+	}
+	if len(runner.Connection.Roles) != 1 || runner.Connection.Roles[0] != "reader" {
 		t.Fatalf("authOK = %#v connection=%#v", authOK, runner.Connection)
 	}
 }

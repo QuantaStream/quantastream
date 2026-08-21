@@ -3,6 +3,8 @@ package qsmysql
 import (
 	"context"
 	"fmt"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
 )
 
 // PacketReadWriter is the packet-level transport contract used by one MySQL session.
@@ -119,6 +121,7 @@ func (r *SessionRunner) AcceptHandshakeResponse(ctx context.Context) (CommandRes
 	}
 	connection.Username = decision.Username
 	connection.Database = decision.Database
+	connection.Roles = append([]qsbridge.RoleName(nil), decision.Roles...)
 	connection.AuthPluginName = decision.AuthPluginName
 	connection, authOK, err := connection.AcceptPermissiveAuth()
 	if err != nil {
@@ -177,6 +180,7 @@ func (r *SessionRunner) ServeNextCommand(ctx context.Context) (CommandResponse, 
 		ConnectionID:    r.Connection.ID,
 		Username:        r.Connection.Username,
 		Database:        r.Connection.Database,
+		Roles:           r.Connection.Roles,
 		CapabilityFlags: r.Connection.CapabilityFlags,
 	}).ServeNext(ctx)
 	if err != nil {

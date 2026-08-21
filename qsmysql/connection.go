@@ -1,6 +1,10 @@
 package qsmysql
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/QuantaStream/quantastream/qsbridge"
+)
 
 // ConnectionState names the socket-free MySQL session state.
 type ConnectionState string
@@ -24,6 +28,7 @@ type Connection struct {
 	State           ConnectionState
 	Username        string
 	Database        string
+	Roles           []qsbridge.RoleName
 	AuthPluginName  string
 	CapabilityFlags CapabilityFlag
 }
