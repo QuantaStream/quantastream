@@ -27,6 +27,9 @@ type StandardProcess struct {
 // MountStandardProcess constructs the full inabox-standard server composition.
 func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardProcess, qsbridge.DiagnosticSet, error) {
 	config = config.WithDefaults()
+	if _, err := config.MySQLAuthenticator(); err != nil {
+		return StandardProcess{}, nil, fmt.Errorf("configure inabox-standard MySQL auth: %w", err)
+	}
 	backend, err := MountStandardLocalBackend(config, nil)
 	if err != nil {
 		return StandardProcess{}, nil, err

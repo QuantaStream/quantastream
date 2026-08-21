@@ -14,6 +14,9 @@ MYSQL_PORT="${QUANTASTREAM_MYSQL_PORT:-4000}"
 NATIVE_GRPC_BIND="${QUANTASTREAM_NATIVE_GRPC_BIND:-}"
 NATIVE_GRPC_PORT="${QUANTASTREAM_NATIVE_GRPC_PORT:-0}"
 DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
+AUTH_MODE="${QUANTASTREAM_AUTH_MODE:-permissive}"
+AUTH_USER="${QUANTASTREAM_AUTH_USER:-}"
+AUTH_PASSWORD="${QUANTASTREAM_AUTH_PASSWORD:-}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 
 usage() {
@@ -32,6 +35,10 @@ Environment:
                            Native node gRPC listen port for high-throughput loaders.
                            Defaults to 0, which disables the listener.
   QUANTASTREAM_DATABASE     Default database/schema. Defaults to quanta.
+  QUANTASTREAM_AUTH_MODE    MySQL auth mode: permissive or static. Defaults to permissive.
+  QUANTASTREAM_AUTH_USER    Static auth username. Defaults to MOLIG004 when static auth is enabled.
+  QUANTASTREAM_AUTH_PASSWORD
+                           Static auth password. Empty password is allowed.
   QUANTASTREAM_RUNTIME_PROBES
                            Set to true to log runtime execution probes.
 
@@ -73,6 +80,10 @@ else
   echo "native_grpc=disabled"
 fi
 echo "database=${DATABASE}"
+echo "auth=${AUTH_MODE}"
+if [[ "${AUTH_MODE}" == "static" && -n "${AUTH_USER}" ]]; then
+  echo "auth_user=${AUTH_USER}"
+fi
 echo "runtime_probes=${RUNTIME_PROBES}"
 
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/quantastream-standard.XXXXXX")"
@@ -114,6 +125,8 @@ go build -o "${server_bin}" ./cmd/quantastream
   -native-grpc-bind "$NATIVE_GRPC_BIND" \
   -native-grpc-port "$NATIVE_GRPC_PORT" \
   -database "$DATABASE" \
+  -auth-mode "$AUTH_MODE" \
+  -auth-user "$AUTH_USER" \
   -runtime-probes="${RUNTIME_PROBES}" &
 server_pid="$!"
 wait "${server_pid}"

@@ -25,6 +25,9 @@ func TestDistributedProxyConfigDefaults(t *testing.T) {
 	if config.Database != "quanta" {
 		t.Fatalf("database = %q, want quanta", config.Database)
 	}
+	if config.mysqlAuthConfig().SummaryMode(config.Database) != "permissive" {
+		t.Fatalf("auth mode = %q, want permissive", config.mysqlAuthConfig().SummaryMode(config.Database))
+	}
 }
 
 func TestDistributedProxySummaryLines(t *testing.T) {
@@ -46,10 +49,36 @@ func TestDistributedProxySummaryLines(t *testing.T) {
 		"node_port=4400",
 		"mysql=0.0.0.0:4000",
 		"schema_dir=tpc-h-benchmark/config",
+		"auth=permissive",
 		"tables=2 [lineitem,orders]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("summary missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestDistributedProxySummaryLinesReportStaticAuthUser(t *testing.T) {
+	process := distributedProxyProcess{
+		Config: distributedProxyConfig{
+			BindAddress:   "127.0.0.1",
+			MySQLPort:     4000,
+			ConsulAddress: "127.0.0.1:8500",
+			NodePort:      4400,
+			SchemaDir:     "configuration",
+			Database:      "quanta",
+			AuthMode:      "static",
+			AuthUser:      "bench",
+			AuthPassword:  "secret",
+		},
+	}
+	output := strings.Join(process.SummaryLines(), "\n")
+	for _, want := range []string{"auth=static", "auth_user=bench"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("summary missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "secret") {
+		t.Fatalf("summary leaked password material:\n%s", output)
 	}
 }

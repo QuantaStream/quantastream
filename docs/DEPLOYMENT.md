@@ -565,6 +565,27 @@ The local development defaults are not a production security profile.
 
 ### Authentication and Authorization
 
+The MySQL front door currently supports two startup auth modes:
+
+- `permissive`, the default local/development mode. It accepts syntactically
+  valid MySQL handshakes and preserves existing smoke-test ergonomics.
+- `static`, a product-style account/password mode backed by the core
+  `qsmysql.StaticAuthenticator`.
+
+Both `inabox-standard` and the distributed proxy accept the same knobs:
+
+```bash
+QUANTASTREAM_AUTH_MODE=static
+QUANTASTREAM_AUTH_USER=MOLIG004
+QUANTASTREAM_AUTH_PASSWORD='<password>'
+```
+
+`QUANTASTREAM_AUTH_PASSWORD` should be supplied through process environment or
+service secret management rather than command history. Static auth is a first
+step, not a complete production security profile: durable account storage,
+password rotation, TLS guidance, authorization policy, audit logging, and
+`quanta-admin` account administration remain part of the 1.0 hardening work.
+
 QuantaStream 1.0 will include a simple MySQL-compatible account and
 password authentication model in the public/core repository. The
 `quanta-admin` tool will provide account and password administration for

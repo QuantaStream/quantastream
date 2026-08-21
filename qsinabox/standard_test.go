@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/qsruntime"
 	"github.com/QuantaStream/quantastream/shared"
 )
@@ -62,6 +63,22 @@ func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
 	if !strings.Contains(lines, "wal=disabled") {
 		t.Fatalf("summary lines missing WAL state: %s", lines)
 	}
+	if !strings.Contains(lines, "auth=permissive") {
+		t.Fatalf("summary lines missing auth state: %s", lines)
+	}
+}
+
+func TestStandardPlanReportsStaticAuthUser(t *testing.T) {
+	plan := NewStandardPlan(StandardConfig{AuthMode: "static", AuthUser: "bench", AuthPassword: "secret"}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	for _, want := range []string{"auth=static", "auth_user=bench"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("summary lines missing %q: %s", want, lines)
+		}
+	}
+	if strings.Contains(lines, "secret") {
+		t.Fatalf("summary lines leaked password material: %s", lines)
+	}
 }
 
 func TestStandardPlanReportsWriteAheadLogPath(t *testing.T) {
@@ -117,6 +134,17 @@ func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
 	}
 	if !config.MySQLAdapter.PacketLoop {
 		t.Fatalf("front door should use current MySQL byte-model readiness")
+	}
+	if _, ok := config.Authenticator.(qsmysql.PermissiveAuthenticator); !ok {
+		t.Fatalf("authenticator = %T, want permissive default", config.Authenticator)
+	}
+}
+
+func TestStandardFrontDoorConfigCanUseStaticAuth(t *testing.T) {
+	config := StandardConfig{AuthMode: "static", AuthUser: "bench", AuthPassword: "secret"}.NativeProxyFrontDoorConfig().WithDefaults()
+
+	if _, ok := config.Authenticator.(qsmysql.StaticAuthenticator); !ok {
+		t.Fatalf("authenticator = %T, want static authenticator", config.Authenticator)
 	}
 }
 

@@ -26,12 +26,41 @@ func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
 		"mode=inabox-standard",
 		"mysql=127.0.0.1:4000",
 		"local_node_ready=false",
+		"auth=permissive",
 		"bsi_pk_authority_manifest=missing",
 		"streaming_risk=",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestRunStatusPrintsStaticAuthWithoutPassword(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-auth-mode", "static", "-auth-user", "bench", "-auth-password", "secret"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"auth=static", "auth_user=bench"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "secret") {
+		t.Fatalf("output leaked password material:\n%s", output)
+	}
+}
+
+func TestRunRejectsUnsupportedAuthMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-auth-mode", "jwt"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("unsupported auth mode exited successfully; stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unsupported mysql auth mode") {
+		t.Fatalf("stderr = %q, want auth mode error", stderr.String())
 	}
 }
 

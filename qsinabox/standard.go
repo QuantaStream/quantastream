@@ -25,6 +25,9 @@ type StandardConfig struct {
 	DataDir             string
 	WriteAheadLogPath   string
 	Database            string
+	AuthMode            string
+	AuthUser            string
+	AuthPassword        string
 	RuntimeProbeLogging bool
 }
 
@@ -69,6 +72,23 @@ func (c StandardConfig) NativeGRPCAddress() string {
 	return fmt.Sprintf("%s:%d", c.NativeGRPCBind, c.NativeGRPCPort)
 }
 
+// MySQLAuthConfig returns the normalized MySQL front-door auth configuration.
+func (c StandardConfig) MySQLAuthConfig() qsmysql.AuthConfig {
+	c = c.WithDefaults()
+	return qsmysql.AuthConfig{
+		Mode:     c.AuthMode,
+		Username: c.AuthUser,
+		Password: c.AuthPassword,
+		Database: c.Database,
+	}.WithDefaults(c.Database)
+}
+
+// MySQLAuthenticator builds the configured MySQL front-door authenticator.
+func (c StandardConfig) MySQLAuthenticator() (qsmysql.Authenticator, error) {
+	c = c.WithDefaults()
+	return c.MySQLAuthConfig().Authenticator(c.Database)
+}
+
 // NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
 func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
 	c = c.WithDefaults()
@@ -80,12 +100,17 @@ func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontD
 			log.Infof("RUNTIME probe section=%s name=%s value=%s detail=%s", probe.Section, probe.Name, probe.Value, probe.Detail)
 		})
 	}
+	authenticator, err := c.MySQLAuthenticator()
+	if err != nil {
+		authenticator = qsmysql.RejectingAuthenticator{Message: err.Error()}
+	}
 	return qsruntime.NativeProxyFrontDoorConfig{
 		Server:        serverConfig,
 		BindAddress:   c.BindAddress,
 		Port:          c.MySQLPort,
 		PacketIOReady: true,
 		MySQLAdapter:  qsmysql.ByteModelReadiness(),
+		Authenticator: authenticator,
 		Protocol: qsbridge.NewProtocolProfile(
 			qsbridge.ProtocolMySQL,
 			"mysql-wire",
@@ -163,7 +188,11 @@ func (p StandardPlan) SummaryLines() []string {
 		fmt.Sprintf("data_dir=%s", config.DataDir),
 		"wal=disabled",
 		fmt.Sprintf("database=%s", config.Database),
+		fmt.Sprintf("auth=%s", config.MySQLAuthConfig().SummaryMode(config.Database)),
 		fmt.Sprintf("local_node_ready=%t", p.LocalNode.Ready),
+	}
+	if user := config.MySQLAuthConfig().SummaryUser(config.Database); user != "" {
+		lines = append(lines, fmt.Sprintf("auth_user=%s", user))
 	}
 	if config.NativeGRPCEnabled() {
 		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())

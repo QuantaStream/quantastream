@@ -44,6 +44,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	sessionPoolSize := flags.Int("session-pool-size", envInt("QUANTASTREAM_SESSION_POOL_SIZE", 0), "direct runtime session pool size; zero uses runtime default")
 	schemaDir := flags.String("schema-dir", envString("QUANTASTREAM_SCHEMA_DIR", "configuration"), "schema/catalog configuration directory for SQL schema mutations")
 	database := flags.String("database", envString("QUANTASTREAM_DATABASE", "quanta"), "default database/schema name")
+	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
+	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
+	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", envString("QUANTASTREAM_PPROF_BIND", ""), "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
@@ -75,6 +78,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		SessionPoolSize: *sessionPoolSize,
 		SchemaDir:       *schemaDir,
 		Database:        *database,
+		AuthMode:        *authMode,
+		AuthUser:        *authUser,
+		AuthPassword:    *authPassword,
 		RuntimeProbes:   *runtimeProbes,
 	})
 	mountElapsed := time.Since(mountStart)
@@ -116,6 +122,9 @@ type distributedProxyConfig struct {
 	SessionPoolSize int
 	SchemaDir       string
 	Database        string
+	AuthMode        string
+	AuthUser        string
+	AuthPassword    string
 	RuntimeProbes   bool
 }
 
@@ -130,6 +139,10 @@ type distributedProxyProcess struct {
 
 func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (distributedProxyProcess, error) {
 	config = config.withDefaults()
+	authenticator, err := config.mysqlAuthenticator()
+	if err != nil {
+		return distributedProxyProcess{}, fmt.Errorf("configure distributed proxy MySQL auth: %w", err)
+	}
 	catalogTableCache := core.NewTableCacheStruct()
 	runtimeTableCache := core.NewTableCacheStruct()
 	directConfig := qsruntime.NewDirectRuntimeConfig("", config.ConsulAddress, config.NodePort, config.SessionPoolSize)
@@ -188,6 +201,7 @@ func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (
 		Port:          config.MySQLPort,
 		PacketIOReady: true,
 		MySQLAdapter:  qsmysql.ByteModelReadiness(),
+		Authenticator: authenticator,
 		Protocol: qsbridge.NewProtocolProfile(
 			qsbridge.ProtocolMySQL,
 			"mysql-wire",
@@ -229,6 +243,21 @@ func (c distributedProxyConfig) withDefaults() distributedProxyConfig {
 	return c
 }
 
+func (c distributedProxyConfig) mysqlAuthConfig() qsmysql.AuthConfig {
+	c = c.withDefaults()
+	return qsmysql.AuthConfig{
+		Mode:     c.AuthMode,
+		Username: c.AuthUser,
+		Password: c.AuthPassword,
+		Database: c.Database,
+	}.WithDefaults(c.Database)
+}
+
+func (c distributedProxyConfig) mysqlAuthenticator() (qsmysql.Authenticator, error) {
+	c = c.withDefaults()
+	return c.mysqlAuthConfig().Authenticator(c.Database)
+}
+
 func (p distributedProxyProcess) Close() {
 	if p.Source != nil {
 		_ = p.Source.Close()
@@ -237,18 +266,23 @@ func (p distributedProxyProcess) Close() {
 
 func (p distributedProxyProcess) SummaryLines() []string {
 	summary := p.FrontDoor.Summary()
-	return []string{
+	lines := []string{
 		"mode=distributed-proxy",
 		fmt.Sprintf("consul=%s", p.Config.ConsulAddress),
 		fmt.Sprintf("node_port=%d", p.Config.NodePort),
 		fmt.Sprintf("mysql=%s:%d", p.Config.BindAddress, p.Config.MySQLPort),
 		fmt.Sprintf("schema_dir=%s", p.Config.SchemaDir),
 		fmt.Sprintf("database=%s", p.Config.Database),
+		fmt.Sprintf("auth=%s", p.Config.mysqlAuthConfig().SummaryMode(p.Config.Database)),
 		fmt.Sprintf("tables=%d [%s]", len(p.Tables), strings.Join(p.Tables, ",")),
 		fmt.Sprintf("runtime_ready=%t", summary.RuntimeReady),
 		fmt.Sprintf("wire_ready=%t", summary.WireReady),
 		fmt.Sprintf("ready=%t", summary.Ready),
 	}
+	if user := p.Config.mysqlAuthConfig().SummaryUser(p.Config.Database); user != "" {
+		lines = append(lines, fmt.Sprintf("auth_user=%s", user))
+	}
+	return lines
 }
 
 func loadDistributedCatalogTables(ctx context.Context, tableCache *core.TableCacheStruct, quantaSource *source.QuantaSource) ([]string, error) {

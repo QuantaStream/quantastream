@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsinabox"
+	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/shared"
 	"gopkg.in/yaml.v2"
 )
@@ -43,6 +44,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	walPath := flags.String("wal-path", envString("QUANTASTREAM_WAL_PATH", ""), "optional local write-ahead log path; disabled when empty")
 	database := flags.String("database", "quanta", "default database/schema name")
+	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
+	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
+	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
@@ -67,7 +71,14 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		DataDir:             *dataDir,
 		WriteAheadLogPath:   *walPath,
 		Database:            *database,
+		AuthMode:            *authMode,
+		AuthUser:            *authUser,
+		AuthPassword:        *authPassword,
 		RuntimeProbeLogging: *runtimeProbes,
+	}
+	if _, err := config.MySQLAuthenticator(); err != nil {
+		fmt.Fprintf(stderr, "configure mysql auth: %v\n", err)
+		return 2
 	}
 
 	if *printBSIPKAuthorityManifest && *writeBSIPKAuthorityManifest {
