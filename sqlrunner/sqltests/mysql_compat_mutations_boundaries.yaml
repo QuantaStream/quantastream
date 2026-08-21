@@ -259,7 +259,7 @@ tests:
     requires: [create_table_as, select]
     sql: |
       create table qs_mysql_compat_mutations_ctas as
-      select c_custkey as id, c_name as name
+      select c_custkey as id, c_name as name, c_nationkey as amount
       from customer
       where c_custkey <= 3
 
@@ -309,15 +309,14 @@ tests:
       references customer(c_custkey)
 
   - id: mysql_compat_mutations_boundaries.010.update_assignment_arithmetic
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_update_assignment_arithmetic
     compatibility: mysql
     requires: [update, arithmetic, where, comparison]
-    issue: "The CTAS table is materialized, but this case attempts to update the projected identity field; QS protects primary-key/identity fields from UPDATE assignment."
     sql: |
       update qs_mysql_compat_mutations_ctas
-      set id = id + 10
+      set amount = amount + 10
       where id = 1
     expect:
       affected_rows: 1
