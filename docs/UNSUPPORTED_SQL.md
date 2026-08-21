@@ -1,6 +1,6 @@
 # Unsupported SQL Syntax
 
-Quanta intentionally supports a practical analytical SQL subset while the
+QuantaStream intentionally supports a practical analytical SQL subset while the
 bitmap execution engine matures. This document records syntax and semantics
 that are currently unsupported or only partially supported so the roadmap
 suites can stay focused on executable behavior instead of becoming noisy with
@@ -98,32 +98,36 @@ supports function-expression `IN` / `NOT IN` predicates directly.
 
 ## Subqueries
 
-Supported subquery behavior is limited and implementation-specific:
+Supported subquery behavior is focused and implementation-specific:
 
-- `IN` and `NOT IN` use membership-oriented semi/anti join rewrites
-- correlated `EXISTS` and `NOT EXISTS` with an equality predicate can rewrite
-  to semi/anti joins
-
-Unsupported subquery shapes include:
-
-- scalar subqueries in predicates, such as
-  `age > (select avg(age) from customers)`
 - scalar subqueries in the `SELECT` list
-- non-correlated `EXISTS` / `NOT EXISTS`
-- subqueries embedded inside larger compound predicates when the parser/planner
-  fails to preserve them as expression-tree nodes
-- arbitrary nested query blocks and derived tables
+- scalar aggregate subqueries in predicates
+- `IN` and `NOT IN` membership subqueries
+- row-value `IN` subqueries for covered tuple shapes
+- correlated `EXISTS` and `NOT EXISTS` with equality predicates
+- covered subqueries over derived-table sources
 
-These require explicit scalar-subquery or subquery-gate execution steps. They
-should not be forced into `JoinMerge`. Compound `WHERE` subqueries are a known
-native-planner requirement because several TPC-H formal shapes fail when
-subqueries are only represented through the current `SqlWhere.Source` side
-channel.
+Unsupported or partial subquery shapes include:
+
+- arbitrary deeply nested query blocks
+- recursive query patterns
+- non-correlated `EXISTS` / `NOT EXISTS` outside covered shapes
+- subqueries embedded in expression forms that are not preserved as structured
+  planner nodes
+
+These require explicit scalar-subquery, membership, or subquery-gate execution
+steps. They should not be forced into generic join machinery when the shape does
+not match a covered execution primitive.
 
 ## Derived Tables And Common Table Expressions
 
-Derived tables, inline views, and `WITH` common table expressions are not part
-of the current supported SQL subset.
+Derived tables are supported for the focused MySQL compatibility shapes covered
+by SQLRunner, including projection/predicate derived tables, derived join
+sources, grouped aggregate derived sources, and constant `UNION ALL` rowsets.
+
+Remaining gaps include deeply nested derived blocks, recursive query behavior,
+and `WITH` common table expressions. CTE support should be implemented as
+structured query metadata rather than SQL text substitution.
 
 ## Repeated Table Aliases And Self-Joins
 
@@ -135,26 +139,21 @@ projection metadata can distinguish repeated base-table aliases reliably.
 
 ## Temporary Tables And Materialized SELECT
 
-Temporary tables are unsupported. `CREATE TABLE ... AS SELECT ...` is also
-unsupported because it needs both result-schema inference and materializing a
-new table from a query result. Today, `SELECT INTO` is used for export file
-workflows rather than materializing temporary relational tables that can be
-queried later in the same session. Future support should distinguish:
+Session-scoped temporary tables and `CREATE TABLE ... AS SELECT ...` are
+supported for focused MySQL compatibility shapes. This includes inline
+temporary table metadata, temporary CTAS, temporary `LIKE`, temporary
+`INSERT ... SELECT`, and persistent CTAS materialization.
 
-- export-oriented `SELECT INTO` file output
-- session-scoped temporary tables
-- persistent `CREATE TABLE ... AS SELECT ...`
-- any persisted or shared materialized result shape
+Remaining gaps include broad MySQL temporary-table metadata parity, advanced
+DDL options, storage-engine options, and any materialized-result lifecycle that
+would imply shared or durable semantics beyond CTAS.
 
-Temporary table support will need catalog metadata, lifecycle cleanup, session
-visibility rules, and mutation/load semantics that fit Quanta's bitmap storage
-model.
-
-`DROP TABLE ... CASCADE` is a post-1.0 compatibility target. Current `DROP
-TABLE` behavior should preserve catalog integrity by refusing to drop tables
-referenced by active views or parent-to-child table relationships unless those
-dependent objects are removed explicitly. In other words, dropping a parent
-table does not implicitly drop its child tables in the 1.0 surface.
+`DROP TABLE ... CASCADE` syntax is accepted for simple drops, but recursive
+dependent-object deletion remains planned. Current `DROP TABLE` behavior should
+preserve catalog integrity by refusing to drop tables referenced by active
+views or parent-to-child table relationships unless those dependent objects are
+removed explicitly. In other words, dropping a parent table does not implicitly
+drop its child tables in the 1.0 surface.
 
 ## View Gaps
 
@@ -164,9 +163,8 @@ single-node and direct-cluster compatibility surface. Remaining view gaps
 include:
 
 - views that reference other views
-- `SHOW CREATE VIEW` output parity with MySQL
+- exact `SHOW CREATE VIEW` formatting parity with MySQL
 - broader MySQL metadata, privilege, algorithm, definer, and security syntax
-- `DROP VIEW ... CASCADE`
 - materialized views
 
 ## Conditional Expressions
@@ -191,9 +189,9 @@ the relevant joined grouping shape.
 
 ## Field-To-Field Predicates
 
-Quanta supports selected field-to-field predicates in join and residual-filter
-paths. Same-table date comparisons used by staged TPC-H Q12 coverage now work,
-including:
+QuantaStream supports selected field-to-field predicates in join and
+residual-filter paths. Same-table date comparisons used by staged TPC-H Q12
+coverage now work, including:
 
 ```sql
 l_commitdate < l_receiptdate
@@ -227,8 +225,8 @@ genuinely need post-join residual evaluation.
 
 ## Date And Interval Syntax
 
-Quanta supports date comparisons using string literal forms already covered in
-the TPC-H suites, such as:
+QuantaStream supports date comparisons using string literal forms already
+covered in the TPC-H suites, such as:
 
 ```sql
 o_orderdate >= '1994-01-01'
@@ -263,8 +261,8 @@ extract(year from l_shipdate)
 
 ## MySQL Database Semantics
 
-Quanta only partially implements MySQL database/schema behavior. Database names
-currently act mostly as connection or schema groupings, not full MySQL
+QuantaStream only partially implements MySQL database/schema behavior. Database
+names currently act mostly as connection or schema groupings, not full MySQL
 catalogs. Client compatibility work, such as `USE <database>` and common schema
 discovery commands, is tracked separately from analytical query support.
 
@@ -272,7 +270,7 @@ discovery commands, is tracked separately from analytical query support.
 ## Query Cancellation
 
 The MySQL client can send `KILL QUERY <connection_id>` after `Ctrl+C`, but
-long-running Quanta queries can still leave the client waiting until the
+long-running QuantaStream queries can still leave the client waiting until the
 MySQL front door or query process is bounced. Query cancellation should become
 an explicit execution contract in the native engine: every long-running scan,
 projection, join, aggregate, and remote shard request needs a
@@ -294,4 +292,4 @@ specific SQLRunner suite already covers the exact shape:
 - transaction isolation semantics beyond the current QuantaStream mutation
   workflow; `BEGIN`, `COMMIT`, and `ROLLBACK` are accepted for client
   compatibility, but `ROLLBACK` does not undo catalog-backed writes
-- DDL compatibility with MySQL beyond Quanta-supported table creation paths
+- DDL compatibility with MySQL beyond QuantaStream-supported table creation paths

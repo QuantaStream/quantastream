@@ -1,7 +1,7 @@
 # Supported SQL
 
-Quanta supports a practical analytical SQL subset plus a small set of
-Quanta-specific SQL extensions. This document records supported behavior that
+QuantaStream supports a practical analytical SQL subset plus a small set of
+QuantaStream-specific SQL extensions. This document records supported behavior that
 is useful to users but may not be portable to MySQL or standard SQL.
 
 Known unsupported or partial SQL behavior is tracked separately in
@@ -9,7 +9,7 @@ Known unsupported or partial SQL behavior is tracked separately in
 
 ## Date And Time Helpers
 
-Quanta supports a focused set of date/time scalar helpers in covered
+QuantaStream supports a focused set of date/time scalar helpers in covered
 select-list and grouping shapes:
 
 - `year(date_value)` returns the four-digit year.
@@ -33,7 +33,7 @@ from orders_qa;
 These functions are inherited from the current expression layer and are not a
 complete MySQL date/time compatibility surface. MySQL-style aliases such as
 `month(...)` and `hour(...)` should be added deliberately with SQLRunner
-coverage if Quanta chooses to expose them.
+coverage if QuantaStream chooses to expose them.
 
 ## Type Coercion Helpers
 
@@ -60,8 +60,8 @@ function-style helpers.
 
 ## String Scalar Helpers
 
-Quanta supports a focused set of string scalar helpers in covered select-list
-shapes:
+QuantaStream supports a focused set of string scalar helpers in covered
+select-list shapes:
 
 - `lower(value)` lowercases a string value; `lcase(value)` is also covered.
 - `upper(value)` uppercases a string value; `ucase(value)` is also covered.
@@ -105,13 +105,44 @@ Views are stored in the catalog and expanded at query-planning time. They are
 logical views, not materialized views. Remaining MySQL metadata and advanced
 view syntax gaps are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
-## Quanta Custom SQL
+## Derived Tables
+
+QuantaStream supports focused MySQL-compatible query composition shapes:
+
+- derived tables in `FROM`;
+- derived tables with inner predicates and outer predicates;
+- derived tables used as join sources;
+- grouped aggregate derived sources.
+
+These are logical query-composition features, not temporary storage. Remaining
+gaps around deeply nested query blocks, common table expressions, and repeated
+base-table aliases are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+
+## Temporary Tables And CTAS
+
+QuantaStream supports session-scoped temporary tables for the current MySQL
+compatibility surface:
+
+- `CREATE TEMPORARY TABLE ... (...)`;
+- `CREATE TEMPORARY TABLE ... AS SELECT ...`;
+- `CREATE TEMPORARY TABLE ... LIKE ...`;
+- `INSERT`, `INSERT ... SELECT`, `SELECT`, and `DROP TEMPORARY TABLE` over
+  temporary tables.
+
+QuantaStream also supports persistent `CREATE TABLE ... AS SELECT ...` as the
+SQL materialization path. Production table definitions remain descriptor-driven:
+use a catalog/YAML descriptor with `CREATE TABLE table_name` to activate a
+first-class configured table. Inline MySQL `CREATE TABLE (...)` definitions are
+not the production schema path.
+
+## QuantaStream Custom SQL
 
 ### `timediff(end_time, start_time, unit)`
 
-`timediff(...)` is a Quanta scalar function for computing elapsed time between
-two date/time values. Current SQLRunner coverage exercises the `'hours'` unit
-in select-list, predicate, aggregate-filter, and joined select-list shapes.
+`timediff(...)` is a QuantaStream scalar function for computing elapsed time
+between two date/time values. Current SQLRunner coverage exercises the
+`'hours'` unit in select-list, predicate, aggregate-filter, and joined
+select-list shapes.
 
 Examples:
 
@@ -127,16 +158,17 @@ where timediff(ship_date, order_date, 'hours') > 3;
 Covered result values include integer and fractional hour strings, such as
 `'3'`, `'4.5'`, and `'2'`.
 
-This is custom Quanta SQL, not a MySQL-compatible `TIMEDIFF()` implementation.
+This is custom QuantaStream SQL, not a MySQL-compatible `TIMEDIFF()`
+implementation.
 Future coverage should characterize additional units, null handling, timezone
 behavior, result typing, negative durations, and parity expectations with any
-MySQL-compatible date/time functions Quanta chooses to expose.
+MySQL-compatible date/time functions QuantaStream chooses to expose.
 
 ### `topn(field)`
 
-`topn(field)` is a Quanta aggregate extension that returns the most frequent
-values for a field, their counts, and their percentage of the scanned result
-set.
+`topn(field)` is a QuantaStream aggregate extension that returns the most
+frequent values for a field, their counts, and their percentage of the scanned
+result set.
 
 Example:
 
@@ -162,9 +194,9 @@ Example result shape:
 +-----------------+------------+--------------+
 ```
 
-This is custom Quanta SQL, not MySQL-compatible syntax. It should be retained
-because it maps naturally to bitmap-native cardinality work and is useful for
-profiling categorical distributions.
+This is custom QuantaStream SQL, not MySQL-compatible syntax. It should be
+retained because it maps naturally to bitmap-native cardinality work and is
+useful for profiling categorical distributions.
 
 Future coverage should characterize:
 

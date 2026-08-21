@@ -1093,7 +1093,7 @@ func parseSimpleCreateTableBody(sql string, createBody string, temporary bool) (
 		return parseSimpleCreateTableAsSelect(sql, targetText, "select "+strings.TrimSpace(selectText), false, false, hasAs)
 	}
 	if hasAnyKeyword(createBody, "if", "exists", "like", "as", "select", "temporary", "where", "partition") || strings.Contains(createBody, "(") {
-		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE only supports one YAML-backed table name"), false
+		return UnboundStatement{}, simpleParserDiagnostic("CREATE TABLE inline definitions are descriptor-driven in QuantaStream; use a catalog/YAML descriptor with CREATE TABLE table_name, or CREATE TABLE ... AS SELECT for materialized query results"), false
 	}
 	table, diagnostic, ok := parseSimpleTable(createBody)
 	if !ok {

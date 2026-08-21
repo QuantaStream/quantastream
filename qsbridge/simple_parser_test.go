@@ -1129,6 +1129,9 @@ func TestSimpleParserBridgeRejectsInlineCreateTableDefinition(t *testing.T) {
 	if !diagnostics.BlocksNative() {
 		t.Fatalf("expected parser diagnostic for inline CREATE TABLE definition")
 	}
+	if len(diagnostics) == 0 || !strings.Contains(diagnostics[0].Message, "descriptor-driven in QuantaStream") || !strings.Contains(diagnostics[0].Message, "CREATE TABLE ... AS SELECT") {
+		t.Fatalf("diagnostics = %#v, want descriptor/CTAS guidance", diagnostics)
+	}
 }
 
 func TestSimpleParserBridgeParsesCreateTableAsSelect(t *testing.T) {
