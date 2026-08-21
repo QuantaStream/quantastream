@@ -657,6 +657,42 @@ func localStoragePathInside(root, candidate string) bool {
 
 func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBackupManifest) error {
 	snapshotDir := filepath.Join(backupDir, manifest.SnapshotDir)
+	snapshotInfo, err := os.Stat(snapshotDir)
+	if err != nil {
+		return fmt.Errorf("stat backup snapshot directory %q: %w", snapshotDir, err)
+	}
+	if !snapshotInfo.IsDir() {
+		return fmt.Errorf("backup snapshot path %q is not a directory", snapshotDir)
+	}
+	manifestEntries := make(map[string]string, len(manifest.Entries))
+	for _, entry := range manifest.Entries {
+		cleanPath, err := cleanManifestPath(entry.Path)
+		if err != nil {
+			return err
+		}
+		if existingType, exists := manifestEntries[cleanPath]; exists {
+			return fmt.Errorf("backup manifest contains duplicate entry %s types=%s/%s", cleanPath, existingType, entry.Type)
+		}
+		manifestEntries[cleanPath] = entry.Type
+	}
+	if err := filepath.WalkDir(snapshotDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == snapshotDir {
+			return nil
+		}
+		relPath, err := manifestRelativePath(snapshotDir, path)
+		if err != nil {
+			return err
+		}
+		if _, found := manifestEntries[relPath]; !found {
+			return fmt.Errorf("backup snapshot contains unmanifested entry %s", relPath)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	var fileCount int
 	var dirCount int
 	var byteCount int64
@@ -665,7 +701,7 @@ func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBack
 		if err != nil {
 			return err
 		}
-		info, err := os.Stat(entryPath)
+		info, err := os.Lstat(entryPath)
 		if err != nil {
 			return fmt.Errorf("validate backup entry %s: %w", entry.Path, err)
 		}

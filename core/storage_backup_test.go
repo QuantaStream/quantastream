@@ -101,6 +101,25 @@ func TestValidateLocalStorageBackupRejectsCorruptFile(t *testing.T) {
 	}
 }
 
+func TestValidateLocalStorageBackupRejectsUnmanifestedSnapshotEntry(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	backupDir := filepath.Join(root, "backup")
+	if _, err := CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+	}); err != nil {
+		t.Fatalf("CreateLocalStorageBackup returned error: %v", err)
+	}
+	writeBackupTestFile(t, filepath.Join(backupDir, LocalStorageBackupSnapshotDir), "config/customer/untracked.yaml", "name: hidden\n")
+
+	_, err := ValidateLocalStorageBackup(backupDir)
+	if err == nil || !strings.Contains(err.Error(), "unmanifested entry") {
+		t.Fatalf("ValidateLocalStorageBackup error = %v, want unmanifested entry", err)
+	}
+}
+
 func TestCreateQuiescentLocalStorageBackupRecordsWALCheckpointAndRemovesLease(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
