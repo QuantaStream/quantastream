@@ -282,6 +282,14 @@ type alterTableAddPrimaryKeyNullScanResult struct {
 	Count  uint64
 }
 
+type alterTableAddPrimaryKeyDuplicateScanResult struct {
+	Known           bool
+	Count           uint64
+	Tuple           []qsbridge.ResultCell
+	FirstRownum     qsbridge.QuantaRownum
+	DuplicateRownum qsbridge.QuantaRownum
+}
+
 func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyCatalogOnly(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
 	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans(tableName, mutation)
 	if diagnostics.BlocksNative() {
@@ -442,6 +450,140 @@ func alterTableAddPrimaryKeyNullDiagnostic(plan alterTableAddPrimaryKeyValidatio
 	return qsbridge.DiagnosticSet{
 		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticMutationPrimaryKeyNull, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY validation failed for table %s: column %s has %d NULL value(s)", plan.Table, scan.Column, scan.Count)),
 	}
+}
+
+func alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(plan alterTableAddPrimaryKeyValidationPlan, rownums []qsbridge.QuantaRownum) qsbridge.QuantaMaterializationRequest {
+	tableName := strings.TrimSpace(plan.Table)
+	fields := make([]qsbridge.QuantaProjectionField, 0, len(plan.Columns))
+	for _, column := range plan.Columns {
+		fields = append(fields, qsbridge.QuantaProjectionField{
+			Index:   tableName,
+			Field:   strings.TrimSpace(column),
+			Visible: false,
+		})
+	}
+	return qsbridge.QuantaMaterializationRequest{
+		Index:            tableName,
+		Rownums:          append([]qsbridge.QuantaRownum(nil), rownums...),
+		ProjectionFields: fields,
+	}
+}
+
+func alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan alterTableAddPrimaryKeyValidationPlan, rowSet qsbridge.QuantaProjectedRowSet) (alterTableAddPrimaryKeyDuplicateScanResult, qsbridge.DiagnosticSet) {
+	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics
+	}
+	vectors, diagnostics := alterTableAddPrimaryKeyDuplicateScanVectors(plan, rowSet)
+	if diagnostics.BlocksNative() {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics
+	}
+	seen := make(map[string]alterTableAddPrimaryKeyDuplicateScanResult, rowSet.CandidateCount())
+	for rowIndex := 0; rowIndex < rowSet.CandidateCount(); rowIndex++ {
+		tuple := alterTableAddPrimaryKeyTupleAt(vectors, rowIndex)
+		if alterTableAddPrimaryKeyTupleHasNull(tuple) {
+			return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, alterTableAddPrimaryKeyDuplicateScanNullDiagnostic(plan, rowIndex)
+		}
+		key := alterTableAddPrimaryKeyTupleKey(tuple)
+		rownum := alterTableAddPrimaryKeyProjectedRownum(rowSet, rowIndex)
+		if first, ok := seen[key]; ok {
+			first.Count++
+			first.DuplicateRownum = rownum
+			return first, nil
+		}
+		seen[key] = alterTableAddPrimaryKeyDuplicateScanResult{
+			Known:       true,
+			Count:       1,
+			Tuple:       tuple,
+			FirstRownum: rownum,
+		}
+	}
+	return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil
+}
+
+func alterTableAddPrimaryKeyDuplicateScanVectors(plan alterTableAddPrimaryKeyValidationPlan, rowSet qsbridge.QuantaProjectedRowSet) ([]qsbridge.QuantaProjectionVector, qsbridge.DiagnosticSet) {
+	vectors := make([]qsbridge.QuantaProjectionVector, 0, len(plan.Columns))
+	for _, column := range plan.Columns {
+		vector, ok := alterTableAddPrimaryKeyProjectedVector(rowSet, plan.Table, column)
+		if !ok {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY duplicate validation missing projected column %s.%s", plan.Table, column)),
+			}
+		}
+		vectors = append(vectors, vector)
+	}
+	if len(vectors) == 0 {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY duplicate validation requires projected columns"),
+		}
+	}
+	return vectors, nil
+}
+
+func alterTableAddPrimaryKeyProjectedVector(rowSet qsbridge.QuantaProjectedRowSet, tableName, column string) (qsbridge.QuantaProjectionVector, bool) {
+	tableName = strings.TrimSpace(tableName)
+	column = strings.TrimSpace(column)
+	for _, vector := range rowSet.ProjectionVectors {
+		if !strings.EqualFold(strings.TrimSpace(vector.Field.Field), column) {
+			continue
+		}
+		if vector.Field.Index != "" && tableName != "" && !strings.EqualFold(strings.TrimSpace(vector.Field.Index), tableName) {
+			continue
+		}
+		return vector, true
+	}
+	return qsbridge.QuantaProjectionVector{}, false
+}
+
+func alterTableAddPrimaryKeyTupleAt(vectors []qsbridge.QuantaProjectionVector, rowIndex int) []qsbridge.ResultCell {
+	tuple := make([]qsbridge.ResultCell, 0, len(vectors))
+	for _, vector := range vectors {
+		tuple = append(tuple, vector.Values[rowIndex])
+	}
+	return tuple
+}
+
+func alterTableAddPrimaryKeyTupleHasNull(tuple []qsbridge.ResultCell) bool {
+	for _, cell := range tuple {
+		if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func alterTableAddPrimaryKeyTupleKey(tuple []qsbridge.ResultCell) string {
+	parts := make([]string, 0, len(tuple))
+	for _, cell := range tuple {
+		parts = append(parts, string(cell.Kind)+":"+fmt.Sprint(cell.Value))
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func alterTableAddPrimaryKeyProjectedRownum(rowSet qsbridge.QuantaProjectedRowSet, rowIndex int) qsbridge.QuantaRownum {
+	if rowIndex >= 0 && rowIndex < len(rowSet.Rownums) {
+		return rowSet.Rownums[rowIndex]
+	}
+	return qsbridge.QuantaRownum(rowIndex + 1)
+}
+
+func alterTableAddPrimaryKeyDuplicateScanNullDiagnostic(plan alterTableAddPrimaryKeyValidationPlan, rowIndex int) qsbridge.DiagnosticSet {
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticMutationPrimaryKeyNull, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY duplicate validation for table %s encountered NULL primary-key data at projected row %d", plan.Table, rowIndex)),
+	}
+}
+
+func alterTableAddPrimaryKeyDuplicateDiagnostic(plan alterTableAddPrimaryKeyValidationPlan, scan alterTableAddPrimaryKeyDuplicateScanResult) qsbridge.DiagnosticSet {
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticMutationPrimaryKeyDuplicate, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY validation failed for table %s: duplicate primary-key tuple %s first_rownum=%d duplicate_rownum=%d", plan.Table, alterTableAddPrimaryKeyTupleDisplay(scan.Tuple), scan.FirstRownum, scan.DuplicateRownum)),
+	}
+}
+
+func alterTableAddPrimaryKeyTupleDisplay(tuple []qsbridge.ResultCell) string {
+	parts := make([]string, 0, len(tuple))
+	for _, cell := range tuple {
+		parts = append(parts, fmt.Sprint(cell.Value))
+	}
+	return "(" + strings.Join(parts, ",") + ")"
 }
 
 func alterTableAddPrimaryKeyCatalogOnlyStatus(tableName string, rowCount uint64, rowCountKnown bool) string {

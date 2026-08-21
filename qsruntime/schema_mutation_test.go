@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,6 +495,122 @@ func TestAlterTableAddPrimaryKeyNullDiagnosticUsesMutationNullCode(t *testing.T)
 	}
 	if message := diagnostics[0].Error(); !strings.Contains(message, "order_key has 2 NULL value(s)") {
 		t.Fatalf("diagnostic = %q, want null count", message)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyDuplicateScanMaterializationRequestProjectsKeyColumns(t *testing.T) {
+	request := alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key", "line_number"},
+	}, []qsbridge.QuantaRownum{7, 8})
+	if request.Index != "scratch_orders" {
+		t.Fatalf("Index = %q, want scratch_orders", request.Index)
+	}
+	if got, want := fmt.Sprint(request.Rownums), "[7 8]"; got != want {
+		t.Fatalf("Rownums = %s, want %s", got, want)
+	}
+	if len(request.ProjectionFields) != 2 {
+		t.Fatalf("ProjectionFields = %#v, want two key columns", request.ProjectionFields)
+	}
+	if request.ProjectionFields[0].Field != "order_key" || request.ProjectionFields[1].Field != "line_number" {
+		t.Fatalf("ProjectionFields = %#v, want key columns in plan order", request.ProjectionFields)
+	}
+	if request.ProjectionFields[0].Visible || request.ProjectionFields[1].Visible {
+		t.Fatalf("ProjectionFields = %#v, want hidden validation fields", request.ProjectionFields)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsDetectsDuplicateTuple(t *testing.T) {
+	plan := alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key", "line_number"},
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "scratch_orders",
+		Rownums: []qsbridge.QuantaRownum{11, 12, 13},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "scratch_orders", Field: "order_key"},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(100)},
+					{Kind: qsbridge.ValueInt, Value: int64(101)},
+					{Kind: qsbridge.ValueInt, Value: int64(100)},
+				},
+			},
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "scratch_orders", Field: "line_number"},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(1)},
+					{Kind: qsbridge.ValueInt, Value: int64(1)},
+					{Kind: qsbridge.ValueInt, Value: int64(1)},
+				},
+			},
+		},
+	}
+	result, diagnostics := alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan, rowSet)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("alterTableAddPrimaryKeyDuplicateScanProjectedRows() diagnostics = %#v", diagnostics)
+	}
+	if !result.Known || result.Count != 2 || result.FirstRownum != 11 || result.DuplicateRownum != 13 {
+		t.Fatalf("result = %#v, want duplicate tuple on rownums 11 and 13", result)
+	}
+	if got, want := alterTableAddPrimaryKeyTupleDisplay(result.Tuple), "(100,1)"; got != want {
+		t.Fatalf("tuple = %q, want %q", got, want)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsAcceptsUniqueTuples(t *testing.T) {
+	plan := alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key"},
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{
+		Index:   "scratch_orders",
+		Rownums: []qsbridge.QuantaRownum{11, 12},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "scratch_orders", Field: "order_key"},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(100)},
+					{Kind: qsbridge.ValueInt, Value: int64(101)},
+				},
+			},
+		},
+	}
+	result, diagnostics := alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan, rowSet)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("alterTableAddPrimaryKeyDuplicateScanProjectedRows() diagnostics = %#v", diagnostics)
+	}
+	if !result.Known || result.Count != 0 {
+		t.Fatalf("result = %#v, want known clean duplicate scan", result)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyDuplicateDiagnosticUsesMutationDuplicateCode(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyDuplicateDiagnostic(alterTableAddPrimaryKeyValidationPlan{
+		Table: "scratch_orders",
+	}, alterTableAddPrimaryKeyDuplicateScanResult{
+		Known:           true,
+		Count:           2,
+		FirstRownum:     11,
+		DuplicateRownum: 13,
+		Tuple: []qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: int64(100)},
+			{Kind: qsbridge.ValueInt, Value: int64(1)},
+		},
+	})
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticMutationPrimaryKeyDuplicate {
+		t.Fatalf("diagnostics = %#v, want mutation primary key duplicate code", diagnostics)
+	}
+	message := diagnostics[0].Error()
+	if !strings.Contains(message, "duplicate primary-key tuple (100,1)") || !strings.Contains(message, "first_rownum=11") || !strings.Contains(message, "duplicate_rownum=13") {
+		t.Fatalf("diagnostic = %q, want duplicate tuple detail", message)
 	}
 }
 
