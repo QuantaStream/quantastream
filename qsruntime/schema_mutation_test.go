@@ -354,6 +354,20 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyRequiresVal
 	}
 }
 
+func TestAlterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(t *testing.T) {
+	diagnostics := alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic("scratch_orders", 3)
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation {
+		t.Fatalf("diagnostics = %#v, want unsupported mutation", diagnostics)
+	}
+	message := diagnostics[0].Error()
+	if !strings.Contains(message, "scratch_orders with 3 existing row(s)") || !strings.Contains(message, "null and duplicate validation scans") {
+		t.Fatalf("diagnostic = %q, want row count and validation guidance", message)
+	}
+}
+
 func TestApplyAlterTableAddPrimaryKeyCatalogMutationAddsCompoundAuthority(t *testing.T) {
 	table := &shared.BasicTable{
 		Name: "scratch_order_lines",

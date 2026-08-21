@@ -183,6 +183,9 @@ func (h LegacyQuantaSessionHandle) alterFileCatalogTableAddPrimaryKey(ctx contex
 	if err != nil {
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("load table schema %s: %w", tableName, err)
 	}
+	if diagnostics, err := h.ensureAlterTableAddPrimaryKeyCatalogOnlyEmpty(ctx, tableName); diagnostics.BlocksNative() || err != nil {
+		return qsbridge.StatementResult{}, diagnostics, err
+	}
 	if diagnostics, err := applyAlterTableAddPrimaryKeyCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
 	}
@@ -219,6 +222,9 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 	if err != nil {
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("load active schema from consul: %w", err)
 	}
+	if diagnostics, err := h.ensureAlterTableAddPrimaryKeyCatalogOnlyEmpty(ctx, tableName); diagnostics.BlocksNative() || err != nil {
+		return qsbridge.StatementResult{}, diagnostics, err
+	}
 	if diagnostics, err := applyAlterTableAddPrimaryKeyCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
 		return qsbridge.StatementResult{}, diagnostics, err
 	}
@@ -245,6 +251,39 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 	h.invalidateSchemaMutationTable(tableName)
 	_ = schemaName
 	return qsbridge.StatementResult{Status: fmt.Sprintf("Primary key added to table %s", tableName)}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) ensureAlterTableAddPrimaryKeyCatalogOnlyEmpty(ctx context.Context, tableName string) (qsbridge.DiagnosticSet, error) {
+	count, known, diagnostics, err := h.alterTableAddPrimaryKeyCatalogOnlyRowCount(ctx, tableName)
+	if err != nil || diagnostics.BlocksNative() || !known || count == 0 {
+		return diagnostics, err
+	}
+	return alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName, count), nil
+}
+
+func alterTableAddPrimaryKeyCatalogOnlyNonEmptyDiagnostic(tableName string, count uint64) qsbridge.DiagnosticSet {
+	return qsbridge.DiagnosticSet{
+		qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, fmt.Sprintf("ALTER TABLE ADD PRIMARY KEY catalog-only mode cannot promote table %s with %d existing row(s); QS must run null and duplicate validation scans before updating primary-key metadata", tableName, count)),
+	}
+}
+
+func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyCatalogOnlyRowCount(ctx context.Context, tableName string) (uint64, bool, qsbridge.DiagnosticSet, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, true, nil, err
+	}
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return 0, false, nil, nil
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SourceIndexes = []string{tableName}
+	if h.cachedRootTable(request) == nil {
+		return 0, false, nil, nil
+	}
+	result, diagnostics, err := h.QueryBitmapCountOnly(ctx, request)
+	if err != nil || diagnostics.BlocksNative() {
+		return 0, true, diagnostics, err
+	}
+	return result.Count, true, nil, nil
 }
 
 func applyAlterTableAddPrimaryKeyCatalogMutation(table *shared.BasicTable, mutation qsbridge.MutationShape) (qsbridge.DiagnosticSet, error) {
