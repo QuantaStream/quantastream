@@ -134,15 +134,17 @@ Current implementation status:
   file in the data directory while copying a filesystem snapshot. Standard-mode
   SQL writes, catalog mutations, durable `CREATE TABLE AS SELECT`,
   durable `INSERT ... SELECT`, and local `COMMIT` refuse to proceed while that
-  barrier is present. The backup manifest records the WAL/checkpoint boundary
-  when `--wal-path` is supplied. For the current local filesystem format, that
-  WAL path must live under the data directory so the snapshot is
-  self-contained. The transient barrier file is not included in the snapshot or
-  restore image. Backup creation and restore fsync copied files, created
-  directories, the quiescence lease, and the manifest path; validation rejects
-  checksum mismatches and unmanifested snapshot entries. The manifest also
-  records the QuantaStream product/build identity so support can identify the
-  binary that produced the backup.
+  barrier is present. When `--wal-path` is supplied, quiescent backup also
+  requires a clean WAL/checkpoint pair: no committed records awaiting startup
+  replay and no pending uncommitted tail. The backup manifest records the
+  WAL/checkpoint boundary. For the current local filesystem format, that WAL
+  path must live under the data directory so the snapshot is self-contained. The
+  transient barrier file is not included in the snapshot or restore image.
+  Backup creation and restore fsync copied files, created directories, the
+  quiescence lease, and the manifest path; validation rejects checksum
+  mismatches and unmanifested snapshot entries. The manifest also records the
+  QuantaStream product/build identity so support can identify the binary that
+  produced the backup.
 
 Skeleton status command:
 
@@ -558,9 +560,9 @@ inspection command only; startup replay remains the recovery path.
 
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
-metadata for successful commit boundaries and standard-mode startup replay, but
-live quiescent backup mode, distributed cluster snapshots, and cloud backup
-targets remain separate lifecycle work.
+metadata for successful commit boundaries, standard-mode startup replay, and
+WAL-backed quiescent backup preflight checks. Distributed cluster snapshots and
+cloud backup targets remain separate lifecycle work.
 
 Before production use, the project must establish:
 

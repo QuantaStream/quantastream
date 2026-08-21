@@ -357,6 +357,12 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 		if err != nil {
 			return LocalStorageQuiescenceLease{}, fmt.Errorf("plan WAL recovery before quiescence: %w", err)
 		}
+		if plan.NeedsReplay() {
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d committed WAL records need startup replay", plan.ReplayRecordCount())
+		}
+		if plan.HasPendingTail() {
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d pending WAL records are not committed", plan.PendingRecordCount())
+		}
 		lease.WALPath = plan.WALPath
 		lease.WALCheckpointPath = plan.CheckpointPath
 		lease.CheckpointLSN = plan.CheckpointLSN

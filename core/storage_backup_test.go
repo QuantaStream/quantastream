@@ -214,6 +214,76 @@ func TestCreateQuiescentLocalStorageBackupRejectsExternalWALPath(t *testing.T) {
 	}
 }
 
+func TestCreateQuiescentLocalStorageBackupRejectsCommittedWALReplayTail(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	walPath := filepath.Join(dataDir, "wal", "standard.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "put-before-crash",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "customer",
+	}); err != nil {
+		t.Fatalf("Append put returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "commit-before-crash",
+		Kind:        LocalWALRecordKindCommit,
+	}); err != nil {
+		t.Fatalf("Append commit returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	_, err = CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  filepath.Join(root, "backup"),
+		Quiesce: true,
+		WALPath: walPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "need startup replay") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want replay tail rejection", err)
+	}
+}
+
+func TestCreateQuiescentLocalStorageBackupRejectsPendingWALTail(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	walPath := filepath.Join(dataDir, "wal", "standard.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "pending-put",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "customer",
+	}); err != nil {
+		t.Fatalf("Append put returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	_, err = CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  filepath.Join(root, "backup"),
+		Quiesce: true,
+		WALPath: walPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "pending WAL records") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want pending tail rejection", err)
+	}
+}
+
 func TestLocalStorageQuiescenceRejectsSecondLeaseAndMutations(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
