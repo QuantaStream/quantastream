@@ -1677,7 +1677,7 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 			),
 		}, nil
 	}
-	if len(request.Mutation.Predicates) == 0 {
+	if len(request.Mutation.Predicates) == 0 && !request.Result.HasResultLimit() {
 		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
 			qsbridge.ErrorDiagnostic(
 				qsbridge.DiagnosticMutationMissingPredicate,

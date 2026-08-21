@@ -488,12 +488,11 @@ tests:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.023.delete_limit_without_where
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_order_limit_boundary
     compatibility: mysql
     requires: [delete, limit]
-    issue: "DELETE ... LIMIT without WHERE is valid MySQL syntax but unsafe for QS until mutation limit semantics are represented explicitly."
     sql: |
       delete from qs_mysql_compat_mutations_ctas
       limit 1

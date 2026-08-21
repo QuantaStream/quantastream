@@ -68,6 +68,48 @@ func TestQueryIRDiagnosticsIncludesMutationPolicy(t *testing.T) {
 	}
 }
 
+func TestQueryIRDiagnosticsAllowsBoundedDeleteWithoutPredicate(t *testing.T) {
+	orders := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders"}
+	query := QueryIR{
+		Kind:   QueryKindDelete,
+		Result: ResultShape{Kind: ResultStatement, Limit: 1, HasLimit: true},
+		Mutation: MutationShape{
+			Kind:   MutationDelete,
+			Target: orders,
+		},
+	}
+
+	if !query.Supported() {
+		t.Fatalf("bounded delete should be supported, diagnostics = %#v", query.Diagnostics())
+	}
+	if containsDiagnosticCode(query.Diagnostics().Codes(), DiagnosticMutationMissingPredicate) {
+		t.Fatalf("diagnostics = %#v, want no missing predicate blocker", query.Diagnostics())
+	}
+}
+
+func TestQueryIRDiagnosticsRejectsBoundedUpdateWithoutPredicate(t *testing.T) {
+	orders := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders"}
+	query := QueryIR{
+		Kind:   QueryKindUpdate,
+		Result: ResultShape{Kind: ResultStatement, Limit: 1, HasLimit: true},
+		Mutation: MutationShape{
+			Kind:   MutationUpdate,
+			Target: orders,
+			Assignments: []MutationAssignment{{
+				Field: FieldRef{Table: orders, Name: "o_totalprice", Type: DataTypeFloat},
+				Value: Literal(ValueFloat, 10.0),
+			}},
+		},
+	}
+
+	if query.Supported() {
+		t.Fatalf("bounded update without predicate should not be supported")
+	}
+	if !containsDiagnosticCode(query.Diagnostics().Codes(), DiagnosticMutationMissingPredicate) {
+		t.Fatalf("diagnostics = %#v, want mutation missing predicate", query.Diagnostics())
+	}
+}
+
 func TestMutationValidationStepFailureDiagnosticCarriesFields(t *testing.T) {
 	orders := TableInstance{ID: "orders_1", Schema: "quanta", Table: "orders", Alias: "o"}
 	customer := TableInstance{ID: "customer_1", Schema: "quanta", Table: "customer", Alias: "c"}

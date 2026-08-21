@@ -7,6 +7,12 @@ import "strings"
 // checks, but broad writes and protected identity updates are planner-level
 // policy decisions.
 func (m MutationShape) Diagnostics() DiagnosticSet {
+	return m.DiagnosticsForResult(ResultShape{})
+}
+
+// DiagnosticsForResult reports mutation-specific legality blockers when the
+// enclosing statement result shape is known.
+func (m MutationShape) DiagnosticsForResult(result ResultShape) DiagnosticSet {
 	diagnostics := make(DiagnosticSet, 0)
 	switch m.Kind {
 	case MutationUpdate:
@@ -31,16 +37,23 @@ func (m MutationShape) Diagnostics() DiagnosticSet {
 			}
 		}
 	case MutationDelete:
-		diagnostics = append(diagnostics, mutationPredicateDiagnostics(m.Kind, m.Predicates)...)
+		diagnostics = append(diagnostics, mutationPredicateDiagnosticsForResult(m.Kind, m.Predicates, result)...)
 	}
 	return diagnostics
 }
 
 func mutationPredicateDiagnostics(kind MutationKind, predicates []Predicate) DiagnosticSet {
+	return mutationPredicateDiagnosticsForResult(kind, predicates, ResultShape{})
+}
+
+func mutationPredicateDiagnosticsForResult(kind MutationKind, predicates []Predicate, result ResultShape) DiagnosticSet {
 	if kind != MutationUpdate && kind != MutationDelete {
 		return nil
 	}
 	if len(predicates) > 0 {
+		return nil
+	}
+	if kind == MutationDelete && result.HasResultLimit() {
 		return nil
 	}
 	return DiagnosticSet{ErrorDiagnostic(

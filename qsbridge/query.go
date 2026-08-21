@@ -219,7 +219,7 @@ func (q QueryIR) Supported() bool {
 			return false
 		}
 	}
-	if q.Mutation.Diagnostics().BlocksNative() {
+	if q.Mutation.DiagnosticsForResult(q.Result).BlocksNative() {
 		return false
 	}
 	return true
@@ -269,7 +269,7 @@ func (q QueryIR) Diagnostics() DiagnosticSet {
 			diagnostics = append(diagnostics, PredicateDiagnostic(predicate))
 		}
 	}
-	diagnostics = append(diagnostics, q.Mutation.Diagnostics()...)
+	diagnostics = append(diagnostics, q.Mutation.DiagnosticsForResult(q.Result)...)
 	return diagnostics
 }
 
