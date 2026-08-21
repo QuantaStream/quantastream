@@ -102,6 +102,110 @@ func TestLocalWALAppendReadReopenAndReplay(t *testing.T) {
 	}
 }
 
+func TestLocalWALCommitBoundaryAdvancesCheckpointAfterCommit(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "storage.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	commitSawRecord := false
+	record, checkpoint, err := wal.CommitBoundary(context.Background(), LocalWALRecord{
+		OperationID: "commit-1",
+		Kind:        "commit",
+	}, func() error {
+		records, err := ReadLocalWAL(walPath)
+		if err != nil {
+			t.Fatalf("ReadLocalWAL during commit returned error: %v", err)
+		}
+		commitSawRecord = len(records) == 1 && records[0].OperationID == "commit-1"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("CommitBoundary returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	if !commitSawRecord {
+		t.Fatalf("storage commit callback did not see durable commit record")
+	}
+	if record.LSN != 1 || checkpoint.LastCommittedLSN != 1 || checkpoint.OperationID != "commit-1" {
+		t.Fatalf("record/checkpoint = %+v/%+v, want LSN 1 commit-1", record, checkpoint)
+	}
+	loaded, found, err := LoadLocalWALCheckpoint(walPath + ".checkpoint.json")
+	if err != nil {
+		t.Fatalf("LoadLocalWALCheckpoint returned error: %v", err)
+	}
+	if !found || loaded.LastCommittedLSN != 1 || loaded.OperationID != "commit-1" {
+		t.Fatalf("loaded checkpoint found=%t checkpoint=%+v", found, loaded)
+	}
+	summary, err := ValidateLocalWAL(walPath)
+	if err != nil {
+		t.Fatalf("ValidateLocalWAL returned error: %v", err)
+	}
+	if !summary.CheckpointExists || summary.CheckpointLSN != 1 {
+		t.Fatalf("summary = %+v, want checkpoint LSN 1", summary)
+	}
+}
+
+func TestLocalWALCommitBoundaryDoesNotCheckpointFailedCommit(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "storage.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	commitErr := os.ErrPermission
+	_, _, err = wal.CommitBoundary(context.Background(), LocalWALRecord{
+		OperationID: "commit-failed",
+		Kind:        "commit",
+	}, func() error {
+		return commitErr
+	})
+	if err == nil || !strings.Contains(err.Error(), commitErr.Error()) {
+		t.Fatalf("CommitBoundary error = %v, want storage commit error", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	records, err := ReadLocalWAL(walPath)
+	if err != nil {
+		t.Fatalf("ReadLocalWAL returned error: %v", err)
+	}
+	if len(records) != 1 || records[0].OperationID != "commit-failed" {
+		t.Fatalf("records = %+v, want failed commit record retained", records)
+	}
+	_, found, err := LoadLocalWALCheckpoint(walPath + ".checkpoint.json")
+	if err != nil {
+		t.Fatalf("LoadLocalWALCheckpoint returned error: %v", err)
+	}
+	if found {
+		t.Fatalf("checkpoint should not exist after failed storage commit")
+	}
+}
+
+func TestLocalWALCheckpointDetectsChecksumMismatch(t *testing.T) {
+	checkpointPath := filepath.Join(t.TempDir(), "storage.wal.checkpoint.json")
+	if err := WriteLocalWALCheckpoint(checkpointPath, LocalWALCheckpoint{
+		WALPath:          "/tmp/storage.wal",
+		LastCommittedLSN: 10,
+		OperationID:      "commit-10",
+	}); err != nil {
+		t.Fatalf("WriteLocalWALCheckpoint returned error: %v", err)
+	}
+	data, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	data = []byte(strings.Replace(string(data), `"last_committed_lsn": 10`, `"last_committed_lsn": 11`, 1))
+	if err := os.WriteFile(checkpointPath, data, 0644); err != nil {
+		t.Fatalf("corrupt checkpoint: %v", err)
+	}
+	_, _, err = LoadLocalWALCheckpoint(checkpointPath)
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("LoadLocalWALCheckpoint error = %v, want checksum mismatch", err)
+	}
+}
+
 func TestLocalWALRejectsInvalidRecord(t *testing.T) {
 	wal, err := OpenLocalWALWithOptions(filepath.Join(t.TempDir(), "storage.wal"), LocalWALOptions{SyncOnAppend: false})
 	if err != nil {

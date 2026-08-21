@@ -1558,13 +1558,7 @@ func (s *Session) Commit() error {
 		return fmt.Errorf("attempting commit of a closed session")
 	}
 
-	if err := s.BitIndex.Commit(); err != nil {
-		return err
-	}
-	if s.writeAheadLog != nil {
-		return s.appendCommitWAL()
-	}
-	return nil
+	return s.commitWithWAL(s.BitIndex.Commit)
 
 }
 

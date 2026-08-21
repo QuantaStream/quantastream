@@ -694,13 +694,45 @@ func TestAppendCommitWALRecordsCommitBoundary(t *testing.T) {
 	session := &Session{}
 	session.SetWriteAheadLog(wal)
 
-	require.NoError(t, session.appendCommitWAL())
+	record, err := session.appendCommitWAL()
 
+	require.NoError(t, err)
 	require.Len(t, wal.records, 1)
-	record := wal.records[0]
 	assert.Equal(t, LocalWALRecordKindCommit, record.Kind)
 	assert.Equal(t, "commit:1", record.OperationID)
 	assert.JSONEq(t, `{}`, string(record.Payload))
+}
+
+func TestCommitWithWALAppendsBeforeStorageCommit(t *testing.T) {
+	wal := &recordingSessionWAL{}
+	session := &Session{}
+	session.SetWriteAheadLog(wal)
+	storageSawCommit := false
+
+	err := session.commitWithWAL(func() error {
+		storageSawCommit = len(wal.records) == 1 && wal.records[0].Kind == LocalWALRecordKindCommit
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.True(t, storageSawCommit)
+	require.Len(t, wal.records, 1)
+	assert.Equal(t, "commit:1", wal.records[0].OperationID)
+}
+
+func TestCommitWithWALDoesNotRunStorageCommitWhenAppendFails(t *testing.T) {
+	walErr := errors.New("wal unavailable")
+	session := &Session{}
+	session.SetWriteAheadLog(&recordingSessionWAL{err: walErr})
+	storageRan := false
+
+	err := session.commitWithWAL(func() error {
+		storageRan = true
+		return nil
+	})
+
+	require.ErrorIs(t, err, walErr)
+	assert.False(t, storageRan)
 }
 
 func TestMapAttributeValuesSkipsIdentityAndRelationshipFields(t *testing.T) {

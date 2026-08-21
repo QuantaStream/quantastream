@@ -20,6 +20,10 @@ type SessionWriteAheadLog interface {
 	Append(context.Context, LocalWALRecord) (LocalWALRecord, error)
 }
 
+type SessionWriteAheadLogCommitBoundary interface {
+	CommitBoundary(context.Context, LocalWALRecord, func() error) (LocalWALRecord, LocalWALCheckpoint, error)
+}
+
 type putRowWALPayload struct {
 	Table                 string         `json:"table"`
 	ProvidedColumnID      uint64         `json:"provided_column_id,omitempty"`
@@ -112,19 +116,41 @@ func (s *Session) appendUpdateRowWAL(table string, columnID uint64, values map[s
 	return nil
 }
 
-func (s *Session) appendCommitWAL() error {
+func (s *Session) commitWithWAL(commitStorage func() error) error {
 	if s == nil || s.writeAheadLog == nil {
+		return commitStorage()
+	}
+	record := s.nextCommitWALRecord()
+	if boundary, ok := s.writeAheadLog.(SessionWriteAheadLogCommitBoundary); ok {
+		_, _, err := boundary.CommitBoundary(context.Background(), record, commitStorage)
+		if err != nil {
+			return fmt.Errorf("commit with WAL boundary: %w", err)
+		}
 		return nil
 	}
-	_, err := s.writeAheadLog.Append(context.Background(), LocalWALRecord{
+	if _, err := s.writeAheadLog.Append(context.Background(), record); err != nil {
+		return fmt.Errorf("append commit WAL record: %w", err)
+	}
+	return commitStorage()
+}
+
+func (s *Session) appendCommitWAL() (LocalWALRecord, error) {
+	if s == nil || s.writeAheadLog == nil {
+		return LocalWALRecord{}, nil
+	}
+	record, err := s.writeAheadLog.Append(context.Background(), s.nextCommitWALRecord())
+	if err != nil {
+		return LocalWALRecord{}, fmt.Errorf("append commit WAL record: %w", err)
+	}
+	return record, nil
+}
+
+func (s *Session) nextCommitWALRecord() LocalWALRecord {
+	return LocalWALRecord{
 		OperationID: s.nextWALOperationID(LocalWALRecordKindCommit, ""),
 		Kind:        LocalWALRecordKindCommit,
 		Payload:     json.RawMessage(`{}`),
-	})
-	if err != nil {
-		return fmt.Errorf("append commit WAL record: %w", err)
 	}
-	return nil
 }
 
 func (s *Session) nextWALOperationID(kind, table string) string {
