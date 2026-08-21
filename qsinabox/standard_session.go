@@ -44,9 +44,10 @@ func (b StandardLocalBackend) NewSessionPool(config StandardConfig, tableCache *
 // StandardDirectRuntimeMount owns a direct bitmap runtime and its local session
 // pool lifecycle.
 type StandardDirectRuntimeMount struct {
-	Runtime       qsruntime.DirectBitmapRuntime
-	Pool          *core.SessionPool
-	WriteAheadLog *core.LocalWAL
+	Runtime               qsruntime.DirectBitmapRuntime
+	Pool                  *core.SessionPool
+	WriteAheadLog         *core.LocalWAL
+	WriteAheadLogRecovery core.LocalWALRecoveryPlan
 }
 
 // Close releases sessions owned by the runtime mount.
@@ -65,11 +66,16 @@ func (m *StandardDirectRuntimeMount) EnableWriteAheadLog(path string) error {
 	if m == nil || m.Pool == nil || strings.TrimSpace(path) == "" {
 		return nil
 	}
+	recoveryPlan, err := core.PlanLocalWALRecovery(path)
+	if err != nil {
+		return err
+	}
 	wal, err := core.OpenLocalWAL(path)
 	if err != nil {
 		return err
 	}
 	m.WriteAheadLog = wal
+	m.WriteAheadLogRecovery = recoveryPlan
 	m.Pool.SetWriteAheadLog(wal)
 	return nil
 }

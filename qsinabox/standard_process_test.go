@@ -69,6 +69,9 @@ func TestMountStandardProcessEnablesWriteAheadLogWhenConfigured(t *testing.T) {
 	if process.RuntimeMount.WriteAheadLog.Path() != walPath {
 		t.Fatalf("WAL path = %s, want %s", process.RuntimeMount.WriteAheadLog.Path(), walPath)
 	}
+	if process.RuntimeMount.WriteAheadLogRecovery.WALPath != walPath {
+		t.Fatalf("WAL recovery path = %s, want %s", process.RuntimeMount.WriteAheadLogRecovery.WALPath, walPath)
+	}
 	if process.RuntimeMount.Pool == nil || process.RuntimeMount.Pool.WriteAheadLog() == nil {
 		t.Fatalf("session pool did not receive configured WAL")
 	}

@@ -122,8 +122,10 @@ Current implementation status:
 - `-wal-path` or `QUANTASTREAM_WAL_PATH` enables the first local write-ahead log
   hook for put-row intent, update-row intent, and commit boundary records. When
   enabled, the commit record is appended before the storage commit and a
-  checkpoint file is advanced after the storage commit succeeds. The WAL is
-  disabled when the path is empty.
+  checkpoint file is advanced after the storage commit succeeds. Startup now
+  validates the WAL/checkpoint pair and reports checkpointed, replayable, and
+  pending WAL tail records. Applying replay records back into storage is still a
+  follow-up recovery step. The WAL is disabled when the path is empty.
 
 Skeleton status command:
 
@@ -479,9 +481,9 @@ go run ./quanta-admin backup restore \
 
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
-metadata for successful commit boundaries, but WAL-backed storage startup
-recovery, live quiescent backup mode, distributed cluster snapshots, and cloud
-backup targets remain separate lifecycle work.
+metadata for successful commit boundaries and startup recovery planning, but
+WAL-backed storage replay, live quiescent backup mode, distributed cluster
+snapshots, and cloud backup targets remain separate lifecycle work.
 
 Before production use, the project must establish:
 

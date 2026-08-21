@@ -1,6 +1,7 @@
 package qsinabox
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,6 +69,29 @@ func TestStandardPlanReportsWriteAheadLogPath(t *testing.T) {
 	lines := strings.Join(plan.SummaryLines(), "\n")
 	if !strings.Contains(lines, "wal=/tmp/qs.wal") {
 		t.Fatalf("summary lines missing WAL path: %s", lines)
+	}
+}
+
+func TestObservedStandardPlanReportsWriteAheadLogRecoveryState(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "standard.wal")
+	plan := NewObservedStandardPlan(StandardConfig{WriteAheadLogPath: walPath}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	if !plan.WALRecoveryObserved {
+		t.Fatalf("WALRecoveryObserved = false, want observed recovery state")
+	}
+	for _, want := range []string{
+		"wal_checkpoint_exists=false",
+		"wal_checkpoint_lsn=0",
+		"wal_last_lsn=0",
+		"wal_record_count=0",
+		"wal_checkpointed_records=0",
+		"wal_replay_records=0",
+		"wal_pending_records=0",
+		"wal_replay_commit_boundaries=0",
+	} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("summary lines missing %q: %s", want, lines)
+		}
 	}
 }
 

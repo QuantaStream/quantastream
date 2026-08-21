@@ -183,6 +183,129 @@ func TestLocalWALCommitBoundaryDoesNotCheckpointFailedCommit(t *testing.T) {
 	}
 }
 
+func TestPlanLocalWALRecoverySeparatesCheckpointReplayAndPendingTail(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "storage.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "put-1",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "customer",
+		Payload:     json.RawMessage(`{"c_custkey":1}`),
+	}); err != nil {
+		t.Fatalf("Append put-1 returned error: %v", err)
+	}
+	if _, _, err := wal.CommitBoundary(context.Background(), LocalWALRecord{
+		OperationID: "commit-2",
+		Kind:        LocalWALRecordKindCommit,
+	}, func() error { return nil }); err != nil {
+		t.Fatalf("CommitBoundary returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "put-3",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "orders",
+		Payload:     json.RawMessage(`{"o_orderkey":10}`),
+	}); err != nil {
+		t.Fatalf("Append put-3 returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "commit-4",
+		Kind:        LocalWALRecordKindCommit,
+	}); err != nil {
+		t.Fatalf("Append commit-4 returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "put-5",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "lineitem",
+		Payload:     json.RawMessage(`{"l_orderkey":10}`),
+	}); err != nil {
+		t.Fatalf("Append put-5 returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	plan, err := PlanLocalWALRecovery(walPath)
+	if err != nil {
+		t.Fatalf("PlanLocalWALRecovery returned error: %v", err)
+	}
+	if !plan.CheckpointExists || plan.CheckpointLSN != 2 || plan.LastLSN != 5 {
+		t.Fatalf("checkpoint/tail = exists:%t checkpoint:%d last:%d, want true/2/5", plan.CheckpointExists, plan.CheckpointLSN, plan.LastLSN)
+	}
+	if plan.CheckpointedRecordCount != 2 || plan.RecordCount != 5 {
+		t.Fatalf("record counts = checkpointed:%d total:%d, want 2/5", plan.CheckpointedRecordCount, plan.RecordCount)
+	}
+	if got := operationIDs(plan.ReplayRecords); got != "put-3,commit-4" {
+		t.Fatalf("replay operations = %s, want put-3,commit-4", got)
+	}
+	if got := operationIDs(plan.PendingRecords); got != "put-5" {
+		t.Fatalf("pending operations = %s, want put-5", got)
+	}
+	if !plan.NeedsReplay() || !plan.HasPendingTail() || plan.ReplayRecordCount() != 2 || plan.PendingRecordCount() != 1 || plan.ReplayCommitBoundaryCount != 1 {
+		t.Fatalf("plan summary = %+v", plan)
+	}
+	var replayed []string
+	if err := ReplayLocalWALRecoveryPlan(plan, func(record LocalWALRecord) error {
+		replayed = append(replayed, record.OperationID)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReplayLocalWALRecoveryPlan returned error: %v", err)
+	}
+	if strings.Join(replayed, ",") != "put-3,commit-4" {
+		t.Fatalf("replayed operations = %v, want put-3,commit-4", replayed)
+	}
+}
+
+func TestPlanLocalWALRecoveryTreatsTailWithoutCommitAsPending(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "storage.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "put-1",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "customer",
+		Payload:     json.RawMessage(`{"c_custkey":1}`),
+	}); err != nil {
+		t.Fatalf("Append returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	plan, err := PlanLocalWALRecovery(walPath)
+	if err != nil {
+		t.Fatalf("PlanLocalWALRecovery returned error: %v", err)
+	}
+	if plan.NeedsReplay() || !plan.HasPendingTail() {
+		t.Fatalf("plan replay/pending = %t/%t, want false/true", plan.NeedsReplay(), plan.HasPendingTail())
+	}
+	if got := operationIDs(plan.PendingRecords); got != "put-1" {
+		t.Fatalf("pending operations = %s, want put-1", got)
+	}
+}
+
+func TestPlanLocalWALRecoveryRejectsCheckpointAheadOfTail(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "storage.wal")
+	if err := WriteLocalWALCheckpoint(walPath+".checkpoint.json", LocalWALCheckpoint{
+		WALPath:          walPath,
+		LastCommittedLSN: 9,
+		OperationID:      "commit-9",
+	}); err != nil {
+		t.Fatalf("WriteLocalWALCheckpoint returned error: %v", err)
+	}
+	_, err := PlanLocalWALRecovery(walPath)
+	if err == nil || !strings.Contains(err.Error(), "ahead of WAL tail") {
+		t.Fatalf("PlanLocalWALRecovery error = %v, want checkpoint ahead rejection", err)
+	}
+}
+
 func TestLocalWALCheckpointDetectsChecksumMismatch(t *testing.T) {
 	checkpointPath := filepath.Join(t.TempDir(), "storage.wal.checkpoint.json")
 	if err := WriteLocalWALCheckpoint(checkpointPath, LocalWALCheckpoint{
@@ -278,4 +401,12 @@ func TestLocalWALMissingFileIsEmpty(t *testing.T) {
 	if summary != (LocalWALSummary{}) {
 		t.Fatalf("summary = %+v, want zero value", summary)
 	}
+}
+
+func operationIDs(records []LocalWALRecord) string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.OperationID)
+	}
+	return strings.Join(ids, ",")
 }

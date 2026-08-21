@@ -99,14 +99,16 @@ func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontD
 // StandardPlan is a non-executing vertical skeleton of standard-mode process
 // composition. It keeps startup explicit while the local backend is mounted.
 type StandardPlan struct {
-	Mode          string
-	Config        StandardConfig
-	LocalNode     shared.LocalNodeReadiness
-	StreamingRisk []shared.LocalNodeStreamingRisk
-	PKAuthority   core.BSIPrimaryKeyAuthorityManifestObservation
-	Ready         bool
-	Blockers      []string
-	Warnings      []string
+	Mode                string
+	Config              StandardConfig
+	LocalNode           shared.LocalNodeReadiness
+	StreamingRisk       []shared.LocalNodeStreamingRisk
+	PKAuthority         core.BSIPrimaryKeyAuthorityManifestObservation
+	WALRecovery         core.LocalWALRecoveryPlan
+	WALRecoveryObserved bool
+	Ready               bool
+	Blockers            []string
+	Warnings            []string
 }
 
 // NewStandardPlan summarizes the current standard-mode boundary readiness.
@@ -137,6 +139,16 @@ func NewObservedStandardPlan(config StandardConfig, services shared.LocalNodeSer
 	if policy.Warning != "" {
 		plan.Warnings = append(plan.Warnings, policy.Warning)
 	}
+	if config.WithDefaults().WriteAheadLogPath != "" {
+		recoveryPlan, err := core.PlanLocalWALRecovery(config.WithDefaults().WriteAheadLogPath)
+		if err != nil {
+			plan.Blockers = append(plan.Blockers, "inabox-standard WAL recovery plan failed: "+err.Error())
+			plan.Ready = false
+		} else {
+			plan.WALRecovery = recoveryPlan
+			plan.WALRecoveryObserved = true
+		}
+	}
 	return plan
 }
 
@@ -158,6 +170,18 @@ func (p StandardPlan) SummaryLines() []string {
 	}
 	if config.WriteAheadLogPath != "" {
 		lines[5] = fmt.Sprintf("wal=%s", config.WriteAheadLogPath)
+	}
+	if p.WALRecoveryObserved {
+		lines = append(lines,
+			fmt.Sprintf("wal_checkpoint_exists=%t", p.WALRecovery.CheckpointExists),
+			fmt.Sprintf("wal_checkpoint_lsn=%d", p.WALRecovery.CheckpointLSN),
+			fmt.Sprintf("wal_last_lsn=%d", p.WALRecovery.LastLSN),
+			fmt.Sprintf("wal_record_count=%d", p.WALRecovery.RecordCount),
+			fmt.Sprintf("wal_checkpointed_records=%d", p.WALRecovery.CheckpointedRecordCount),
+			fmt.Sprintf("wal_replay_records=%d", p.WALRecovery.ReplayRecordCount()),
+			fmt.Sprintf("wal_pending_records=%d", p.WALRecovery.PendingRecordCount()),
+			fmt.Sprintf("wal_replay_commit_boundaries=%d", p.WALRecovery.ReplayCommitBoundaryCount),
+		)
 	}
 	if p.PKAuthority.Status != "" {
 		lines = append(lines,

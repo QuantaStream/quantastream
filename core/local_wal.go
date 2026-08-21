@@ -65,6 +65,38 @@ type LocalWALSummary struct {
 	ByteCount        int64
 }
 
+// LocalWALRecoveryPlan describes the WAL tail visible at startup. It is a
+// planning primitive: applying the replay records to storage is handled by a
+// later recovery step so startup can validate durability state before acting.
+type LocalWALRecoveryPlan struct {
+	WALPath                   string
+	CheckpointPath            string
+	CheckpointExists          bool
+	CheckpointLSN             uint64
+	LastLSN                   uint64
+	RecordCount               int
+	CheckpointedRecordCount   int
+	ReplayRecords             []LocalWALRecord
+	PendingRecords            []LocalWALRecord
+	ReplayCommitBoundaryCount int
+}
+
+func (p LocalWALRecoveryPlan) ReplayRecordCount() int {
+	return len(p.ReplayRecords)
+}
+
+func (p LocalWALRecoveryPlan) PendingRecordCount() int {
+	return len(p.PendingRecords)
+}
+
+func (p LocalWALRecoveryPlan) NeedsReplay() bool {
+	return len(p.ReplayRecords) != 0
+}
+
+func (p LocalWALRecoveryPlan) HasPendingTail() bool {
+	return len(p.PendingRecords) != 0
+}
+
 type LocalWALCheckpoint struct {
 	Version          int       `json:"version"`
 	Format           string    `json:"format"`
@@ -308,6 +340,73 @@ func ValidateLocalWAL(path string) (LocalWALSummary, error) {
 	}, nil
 }
 
+func PlanLocalWALRecovery(path string) (LocalWALRecoveryPlan, error) {
+	return PlanLocalWALRecoveryWithOptions(path, LocalWALOptions{})
+}
+
+func PlanLocalWALRecoveryWithOptions(path string, opts LocalWALOptions) (LocalWALRecoveryPlan, error) {
+	resolved, err := ResolveLocalFileTarget(path)
+	if err != nil {
+		return LocalWALRecoveryPlan{}, err
+	}
+	checkpointPath, err := localWALCheckpointPath(resolved, opts.CheckpointPath)
+	if err != nil {
+		return LocalWALRecoveryPlan{}, err
+	}
+	records, err := ReadLocalWAL(resolved)
+	if err != nil {
+		return LocalWALRecoveryPlan{}, err
+	}
+	var lastLSN uint64
+	for _, record := range records {
+		if record.LSN <= lastLSN {
+			return LocalWALRecoveryPlan{}, fmt.Errorf("WAL LSN sequence is not increasing: got %d after %d", record.LSN, lastLSN)
+		}
+		lastLSN = record.LSN
+	}
+	checkpoint, checkpointExists, err := LoadLocalWALCheckpoint(checkpointPath)
+	if err != nil {
+		return LocalWALRecoveryPlan{}, err
+	}
+	if checkpointExists && checkpoint.LastCommittedLSN > lastLSN {
+		return LocalWALRecoveryPlan{}, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d", checkpoint.LastCommittedLSN, lastLSN)
+	}
+	plan := LocalWALRecoveryPlan{
+		WALPath:          resolved,
+		CheckpointPath:   checkpointPath,
+		CheckpointExists: checkpointExists,
+		CheckpointLSN:    checkpoint.LastCommittedLSN,
+		LastLSN:          lastLSN,
+		RecordCount:      len(records),
+	}
+	var tail []LocalWALRecord
+	for _, record := range records {
+		if record.LSN <= checkpoint.LastCommittedLSN {
+			plan.CheckpointedRecordCount++
+			continue
+		}
+		tail = append(tail, record)
+	}
+	lastCommitIndex := -1
+	for i, record := range tail {
+		if record.Kind == LocalWALRecordKindCommit {
+			lastCommitIndex = i
+		}
+	}
+	if lastCommitIndex >= 0 {
+		plan.ReplayRecords = append([]LocalWALRecord(nil), tail[:lastCommitIndex+1]...)
+		plan.PendingRecords = append([]LocalWALRecord(nil), tail[lastCommitIndex+1:]...)
+		for _, record := range plan.ReplayRecords {
+			if record.Kind == LocalWALRecordKindCommit {
+				plan.ReplayCommitBoundaryCount++
+			}
+		}
+	} else {
+		plan.PendingRecords = append([]LocalWALRecord(nil), tail...)
+	}
+	return plan, nil
+}
+
 func LoadLocalWALCheckpoint(path string) (LocalWALCheckpoint, bool, error) {
 	resolved, err := ResolveLocalFileTarget(path)
 	if err != nil {
@@ -397,6 +496,18 @@ func ReplayLocalWAL(path string, apply func(LocalWALRecord) error) error {
 			return fmt.Errorf("replay WAL record lsn=%d operation_id=%s: %w", record.LSN, record.OperationID, err)
 		}
 		lastLSN = record.LSN
+	}
+	return nil
+}
+
+func ReplayLocalWALRecoveryPlan(plan LocalWALRecoveryPlan, apply func(LocalWALRecord) error) error {
+	if apply == nil {
+		return fmt.Errorf("WAL replay function is required")
+	}
+	for _, record := range plan.ReplayRecords {
+		if err := apply(record); err != nil {
+			return fmt.Errorf("replay WAL recovery record lsn=%d operation_id=%s: %w", record.LSN, record.OperationID, err)
+		}
 	}
 	return nil
 }
