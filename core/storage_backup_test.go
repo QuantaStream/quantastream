@@ -148,6 +148,44 @@ func TestCreateQuiescentLocalStorageBackupRecordsWALCheckpointAndRemovesLease(t 
 	}
 }
 
+func TestCreateQuiescentLocalStorageBackupRejectsExternalWALPath(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	walPath := filepath.Join(root, "external", "standard.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, _, err := wal.CommitBoundary(context.Background(), LocalWALRecord{
+		OperationID: "commit-outside-data-dir",
+		Kind:        LocalWALRecordKindCommit,
+	}, func() error { return nil }); err != nil {
+		t.Fatalf("CommitBoundary returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+
+	backupDir := filepath.Join(root, "backup")
+	_, err = CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+		Quiesce: true,
+		WALPath: walPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside data directory") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want outside data directory", err)
+	}
+	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
+		t.Fatalf("quiescence lease after rejected backup found=%t err=%v, want absent", found, err)
+	}
+	if _, err := os.Stat(backupDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup dir after rejected backup err=%v, want not exist", err)
+	}
+}
+
 func TestLocalStorageQuiescenceRejectsSecondLeaseAndMutations(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {

@@ -332,6 +332,12 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 		lease.LastLSN = plan.LastLSN
 		lease.ReplayRecords = len(plan.ReplayRecords)
 		lease.PendingRecords = len(plan.PendingRecords)
+		if !localStoragePathInside(dataDir, lease.WALPath) {
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL path %q is outside data directory %q; place the WAL under the data directory or omit WAL capture for this local snapshot", lease.WALPath, dataDir)
+		}
+		if !localStoragePathInside(dataDir, lease.WALCheckpointPath) {
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL checkpoint path %q is outside data directory %q; place the WAL checkpoint under the data directory or omit WAL capture for this local snapshot", lease.WALCheckpointPath, dataDir)
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return LocalStorageQuiescenceLease{}, err

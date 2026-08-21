@@ -131,8 +131,9 @@ Current implementation status:
   file in the data directory while copying a filesystem snapshot. Standard-mode
   SQL writes, catalog mutations, and local `COMMIT` refuse to proceed while that
   barrier is present. The backup manifest records the WAL/checkpoint boundary
-  when `--wal-path` is supplied, and the transient barrier file is not included
-  in the snapshot or restore image.
+  when `--wal-path` is supplied. For the current local filesystem format, that
+  WAL path must live under the data directory so the snapshot is self-contained.
+  The transient barrier file is not included in the snapshot or restore image.
 
 Skeleton status command:
 
