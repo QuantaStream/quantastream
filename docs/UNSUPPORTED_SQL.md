@@ -64,11 +64,18 @@ set autocommit = 0;
 set autocommit = 1;
 ```
 
-The current mutation path applies catalog-backed writes immediately.
-`ROLLBACK` does not provide full MySQL MVCC semantics or undo previously
-applied writes. Treat QuantaStream transaction statements as session/client
-compatibility controls unless a future release documents durable transactional
-write rollback.
+Current 1.0 transaction semantics are intentionally narrow:
+
+- Autocommit writes are supported.
+- `COMMIT` is a durability/savepoint operation.
+- Transaction control statements are accepted for client/tool compatibility.
+- Full transactional rollback of writes is not part of the 1.0 SQL contract.
+- The local WAL supports durability/replay and backup safety today; transactional
+  write rollback is future work.
+
+The current mutation path applies catalog-backed writes immediately, so
+`ROLLBACK` does not provide full MySQL MVCC semantics or undo previously applied
+writes.
 
 ## Advanced MySQL Objects
 
@@ -130,7 +137,8 @@ child relationships, or configured tables intentionally.
 ## Text Search And Collation
 
 SQL `LIKE` and `NOT LIKE` are supported for covered bitmap and residual string
-paths. The following text semantics are outside the current surface:
+paths. The remaining text boundaries are compatibility polish rather than
+storage-model limitations:
 
 - full MySQL collation parity across every comparison and ordering edge case;
 - `REGEXP` and `RLIKE`;
