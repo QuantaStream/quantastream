@@ -74,6 +74,32 @@ func TestRunStatusPrintsStaticAuthAccountFile(t *testing.T) {
 	}
 }
 
+func TestRunStatusPrintsAccessPolicyFile(t *testing.T) {
+	policyFile := writeCommandTestAccessPolicyFile(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-access-policy-file", policyFile}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"authorization=static_policy", "access_policy_file=" + policyFile} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestRunRejectsInvalidAccessPolicyFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status", "-access-policy-file", filepath.Join(t.TempDir(), "missing.yaml")}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("missing policy file exited successfully; stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "configure access policy") {
+		t.Fatalf("stderr = %q, want access policy error", stderr.String())
+	}
+}
+
 func TestRunRejectsUnsupportedAuthMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"-status", "-auth-mode", "jwt"}, &stdout, &stderr)
@@ -272,4 +298,20 @@ attributes:
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
 	}
+}
+
+func writeCommandTestAccessPolicyFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	if err := os.WriteFile(path, []byte(`
+grants:
+  - principal_kind: role
+    principal: reader
+    privilege: select
+    schema: quanta
+    table: orders
+`), 0o600); err != nil {
+		t.Fatalf("write access policy file: %v", err)
+	}
+	return path
 }

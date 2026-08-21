@@ -1,6 +1,7 @@
 package qsinabox
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +95,16 @@ func TestStandardPlanReportsStaticAuthAccountFile(t *testing.T) {
 	}
 }
 
+func TestStandardPlanReportsAccessPolicyFile(t *testing.T) {
+	plan := NewStandardPlan(StandardConfig{AccessPolicyFile: "/etc/quantastream/access-policy.yaml"}, shared.LocalNodeServices{})
+	lines := strings.Join(plan.SummaryLines(), "\n")
+	for _, want := range []string{"authorization=static_policy", "access_policy_file=/etc/quantastream/access-policy.yaml"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("summary lines missing %q: %s", want, lines)
+		}
+	}
+}
+
 func TestStandardPlanReportsWriteAheadLogPath(t *testing.T) {
 	plan := NewStandardPlan(StandardConfig{WriteAheadLogPath: "/tmp/qs.wal"}, shared.LocalNodeServices{})
 	lines := strings.Join(plan.SummaryLines(), "\n")
@@ -161,6 +172,14 @@ func TestStandardFrontDoorConfigCanUseStaticAuth(t *testing.T) {
 	}
 }
 
+func TestStandardFrontDoorConfigCanUseAccessPolicyFile(t *testing.T) {
+	config := StandardConfig{AccessPolicyFile: writeStandardTestAccessPolicyFile(t)}.NativeProxyFrontDoorConfig().WithDefaults()
+
+	if config.Server.Authorizer == nil {
+		t.Fatalf("Authorizer = nil, want access policy file authorizer")
+	}
+}
+
 func TestStandardFrontDoorConfigCanEnableRuntimeProbeLogging(t *testing.T) {
 	config := StandardConfig{RuntimeProbeLogging: true}.NativeProxyFrontDoorConfig().WithDefaults()
 
@@ -184,4 +203,20 @@ func TestStandardDirectRuntimeWiresRelationshipReaderSessions(t *testing.T) {
 	if backend.Sessions == nil {
 		t.Fatalf("relationship backend sessions = nil, want standard session provider for direct candidate expansion")
 	}
+}
+
+func writeStandardTestAccessPolicyFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	if err := os.WriteFile(path, []byte(`
+grants:
+  - principal_kind: role
+    principal: reader
+    privilege: select
+    schema: quanta
+    table: orders
+`), 0o600); err != nil {
+		t.Fatalf("write access policy file: %v", err)
+	}
+	return path
 }

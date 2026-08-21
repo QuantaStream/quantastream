@@ -30,6 +30,9 @@ func MountStandardProcess(ctx context.Context, config StandardConfig) (StandardP
 	if _, err := config.MySQLAuthenticator(); err != nil {
 		return StandardProcess{}, nil, fmt.Errorf("configure inabox-standard MySQL auth: %w", err)
 	}
+	if _, err := config.AccessAuthorizer(); err != nil {
+		return StandardProcess{}, nil, fmt.Errorf("configure inabox-standard access policy: %w", err)
+	}
 	backend, err := MountStandardLocalBackend(config, nil)
 	if err != nil {
 		return StandardProcess{}, nil, err

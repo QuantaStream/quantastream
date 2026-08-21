@@ -48,6 +48,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
+	accessPolicyFile := flags.String("access-policy-file", envString("QUANTASTREAM_ACCESS_POLICY_FILE", ""), "YAML static SQL access policy file; empty leaves SQL authorization permissive")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", envString("QUANTASTREAM_PPROF_BIND", ""), "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
@@ -72,18 +73,19 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 
 	mountStart := time.Now()
 	process, err := mountDistributedProxy(ctx, distributedProxyConfig{
-		BindAddress:     *bindAddress,
-		MySQLPort:       *mysqlPort,
-		ConsulAddress:   *consulAddress,
-		NodePort:        *nodePort,
-		SessionPoolSize: *sessionPoolSize,
-		SchemaDir:       *schemaDir,
-		Database:        *database,
-		AuthMode:        *authMode,
-		AuthUser:        *authUser,
-		AuthPassword:    *authPassword,
-		AuthAccountFile: *authAccountFile,
-		RuntimeProbes:   *runtimeProbes,
+		BindAddress:      *bindAddress,
+		MySQLPort:        *mysqlPort,
+		ConsulAddress:    *consulAddress,
+		NodePort:         *nodePort,
+		SessionPoolSize:  *sessionPoolSize,
+		SchemaDir:        *schemaDir,
+		Database:         *database,
+		AuthMode:         *authMode,
+		AuthUser:         *authUser,
+		AuthPassword:     *authPassword,
+		AuthAccountFile:  *authAccountFile,
+		AccessPolicyFile: *accessPolicyFile,
+		RuntimeProbes:    *runtimeProbes,
 	})
 	mountElapsed := time.Since(mountStart)
 	if err != nil {
@@ -117,18 +119,19 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 type distributedProxyConfig struct {
-	BindAddress     string
-	MySQLPort       int
-	ConsulAddress   string
-	NodePort        int
-	SessionPoolSize int
-	SchemaDir       string
-	Database        string
-	AuthMode        string
-	AuthUser        string
-	AuthPassword    string
-	AuthAccountFile string
-	RuntimeProbes   bool
+	BindAddress      string
+	MySQLPort        int
+	ConsulAddress    string
+	NodePort         int
+	SessionPoolSize  int
+	SchemaDir        string
+	Database         string
+	AuthMode         string
+	AuthUser         string
+	AuthPassword     string
+	AuthAccountFile  string
+	AccessPolicyFile string
+	RuntimeProbes    bool
 }
 
 type distributedProxyProcess struct {
@@ -145,6 +148,10 @@ func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (
 	authenticator, err := config.mysqlAuthenticator()
 	if err != nil {
 		return distributedProxyProcess{}, fmt.Errorf("configure distributed proxy MySQL auth: %w", err)
+	}
+	authorizer, err := config.accessAuthorizer()
+	if err != nil {
+		return distributedProxyProcess{}, fmt.Errorf("configure distributed proxy access policy: %w", err)
 	}
 	catalogTableCache := core.NewTableCacheStruct()
 	runtimeTableCache := core.NewTableCacheStruct()
@@ -192,6 +199,7 @@ func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (
 	serverConfig := qsruntime.NativeProxyServerConfig{
 		Route:          qsruntime.ConsulDirectRoute(qsruntime.RuntimeTarget{}),
 		ContextWrapper: qsruntime.WithQueryScratchpad,
+		Authorizer:     authorizer,
 	}
 	if config.RuntimeProbes {
 		serverConfig.ProbeLogger = qsruntime.RuntimeProbeLoggerFunc(func(probe qsruntime.ExecutionProbe) {
@@ -262,6 +270,18 @@ func (c distributedProxyConfig) mysqlAuthenticator() (qsmysql.Authenticator, err
 	return c.mysqlAuthConfig().Authenticator(c.Database)
 }
 
+func (c distributedProxyConfig) accessAuthorizer() (qsbridge.AccessAuthorizer, error) {
+	c = c.withDefaults()
+	if strings.TrimSpace(c.AccessPolicyFile) == "" {
+		return nil, nil
+	}
+	policy, err := qsbridge.LoadAccessPolicyFile(c.AccessPolicyFile)
+	if err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
 func (p distributedProxyProcess) Close() {
 	if p.Source != nil {
 		_ = p.Source.Close()
@@ -270,6 +290,10 @@ func (p distributedProxyProcess) Close() {
 
 func (p distributedProxyProcess) SummaryLines() []string {
 	summary := p.FrontDoor.Summary()
+	authorization := "authorization=permissive"
+	if strings.TrimSpace(p.Config.AccessPolicyFile) != "" {
+		authorization = "authorization=static_policy"
+	}
 	lines := []string{
 		"mode=distributed-proxy",
 		fmt.Sprintf("consul=%s", p.Config.ConsulAddress),
@@ -278,6 +302,7 @@ func (p distributedProxyProcess) SummaryLines() []string {
 		fmt.Sprintf("schema_dir=%s", p.Config.SchemaDir),
 		fmt.Sprintf("database=%s", p.Config.Database),
 		fmt.Sprintf("auth=%s", p.Config.mysqlAuthConfig().SummaryMode(p.Config.Database)),
+		authorization,
 		fmt.Sprintf("tables=%d [%s]", len(p.Tables), strings.Join(p.Tables, ",")),
 		fmt.Sprintf("runtime_ready=%t", summary.RuntimeReady),
 		fmt.Sprintf("wire_ready=%t", summary.WireReady),
@@ -288,6 +313,9 @@ func (p distributedProxyProcess) SummaryLines() []string {
 	}
 	if accountFile := p.Config.mysqlAuthConfig().SummaryAccountFile(p.Config.Database); accountFile != "" {
 		lines = append(lines, fmt.Sprintf("auth_account_file=%s", accountFile))
+	}
+	if strings.TrimSpace(p.Config.AccessPolicyFile) != "" {
+		lines = append(lines, fmt.Sprintf("access_policy_file=%s", p.Config.AccessPolicyFile))
 	}
 	return lines
 }

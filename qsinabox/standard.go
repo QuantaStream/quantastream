@@ -2,6 +2,7 @@ package qsinabox
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -29,6 +30,7 @@ type StandardConfig struct {
 	AuthUser            string
 	AuthPassword        string
 	AuthAccountFile     string
+	AccessPolicyFile    string
 	RuntimeProbeLogging bool
 }
 
@@ -91,6 +93,19 @@ func (c StandardConfig) MySQLAuthenticator() (qsmysql.Authenticator, error) {
 	return c.MySQLAuthConfig().Authenticator(c.Database)
 }
 
+// AccessAuthorizer builds the configured SQL authorization policy.
+func (c StandardConfig) AccessAuthorizer() (qsbridge.AccessAuthorizer, error) {
+	c = c.WithDefaults()
+	if strings.TrimSpace(c.AccessPolicyFile) == "" {
+		return nil, nil
+	}
+	policy, err := qsbridge.LoadAccessPolicyFile(c.AccessPolicyFile)
+	if err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
 // NativeProxyFrontDoorConfig returns the MySQL front-door defaults for this mode.
 func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontDoorConfig {
 	c = c.WithDefaults()
@@ -105,6 +120,10 @@ func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontD
 	authenticator, err := c.MySQLAuthenticator()
 	if err != nil {
 		authenticator = qsmysql.RejectingAuthenticator{Message: err.Error()}
+	}
+	authorizer, err := c.AccessAuthorizer()
+	if err == nil {
+		serverConfig.Authorizer = authorizer
 	}
 	return qsruntime.NativeProxyFrontDoorConfig{
 		Server:        serverConfig,
@@ -182,6 +201,10 @@ func NewObservedStandardPlan(config StandardConfig, services shared.LocalNodeSer
 // SummaryLines returns stable human-readable startup status lines for the CLI.
 func (p StandardPlan) SummaryLines() []string {
 	config := p.Config.WithDefaults()
+	authorization := "authorization=permissive"
+	if strings.TrimSpace(config.AccessPolicyFile) != "" {
+		authorization = "authorization=static_policy"
+	}
 	lines := []string{
 		fmt.Sprintf("mode=%s", p.Mode),
 		fmt.Sprintf("mysql=%s", config.Address()),
@@ -191,6 +214,7 @@ func (p StandardPlan) SummaryLines() []string {
 		"wal=disabled",
 		fmt.Sprintf("database=%s", config.Database),
 		fmt.Sprintf("auth=%s", config.MySQLAuthConfig().SummaryMode(config.Database)),
+		authorization,
 		fmt.Sprintf("local_node_ready=%t", p.LocalNode.Ready),
 	}
 	if user := config.MySQLAuthConfig().SummaryUser(config.Database); user != "" {
@@ -198,6 +222,9 @@ func (p StandardPlan) SummaryLines() []string {
 	}
 	if accountFile := config.MySQLAuthConfig().SummaryAccountFile(config.Database); accountFile != "" {
 		lines = append(lines, fmt.Sprintf("auth_account_file=%s", accountFile))
+	}
+	if strings.TrimSpace(config.AccessPolicyFile) != "" {
+		lines = append(lines, fmt.Sprintf("access_policy_file=%s", config.AccessPolicyFile))
 	}
 	if config.NativeGRPCEnabled() {
 		lines[2] = fmt.Sprintf("native_grpc=%s", config.NativeGRPCAddress())

@@ -48,6 +48,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
+	accessPolicyFile := flags.String("access-policy-file", envString("QUANTASTREAM_ACCESS_POLICY_FILE", ""), "YAML static SQL access policy file; empty leaves SQL authorization permissive")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
 	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
@@ -76,10 +77,15 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		AuthUser:            *authUser,
 		AuthPassword:        *authPassword,
 		AuthAccountFile:     *authAccountFile,
+		AccessPolicyFile:    *accessPolicyFile,
 		RuntimeProbeLogging: *runtimeProbes,
 	}
 	if _, err := config.MySQLAuthenticator(); err != nil {
 		fmt.Fprintf(stderr, "configure mysql auth: %v\n", err)
+		return 2
+	}
+	if _, err := config.AccessAuthorizer(); err != nil {
+		fmt.Fprintf(stderr, "configure access policy: %v\n", err)
 		return 2
 	}
 
