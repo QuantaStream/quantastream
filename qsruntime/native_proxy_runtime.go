@@ -31,6 +31,12 @@ func (r NativeProxyRuntime) WithSession(session qsbridge.SessionContext) NativeP
 	return r
 }
 
+// WithAuthorizer returns a runtime view with an adapter-owned access policy.
+func (r NativeProxyRuntime) WithAuthorizer(authorizer qsbridge.AccessAuthorizer) NativeProxyRuntime {
+	r.Runtime.Authorizer = authorizer
+	return r
+}
+
 // ExecuteSQLWithSession executes SQL using connection-local session metadata.
 func (r NativeProxyRuntime) ExecuteSQLWithSession(ctx context.Context, session qsbridge.SessionContext, sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) (SQLExecutionResult, error) {
 	return r.WithSession(session).ExecuteSQL(ctx, sql, options, values...)

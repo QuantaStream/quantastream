@@ -36,6 +36,30 @@ func TestSQLRuntimeWrapsExecutionContext(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLAuthorizesBeforeExecution(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{Count: 1}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{User: "bench", CurrentSchema: "quanta"}
+	runtime.Authorizer = qsbridge.NewAccessPolicy()
+
+	result, err := runtime.ExecuteSQL(context.Background(), "select o_orderkey from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if executed {
+		t.Fatalf("direct executor should not run when authorization denies access")
+	}
+	if result.Supported() {
+		t.Fatalf("result should not be supported when authorization denies access")
+	}
+	if got := result.Diagnostics.Codes()[0]; got != qsbridge.DiagnosticAccessDenied {
+		t.Fatalf("diagnostic code = %q, want %q", got, qsbridge.DiagnosticAccessDenied)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLUnionAllAppendsBranchRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

@@ -18,6 +18,7 @@ type SQLRuntime struct {
 	CatalogVersion       qsbridge.CatalogVersion
 	Session              qsbridge.SessionContext
 	Scope                qsbridge.PhysicalScope
+	Authorizer           qsbridge.AccessAuthorizer
 	PreflightHelpers     PreflightHelperExecutor
 	NativeSubquerySteps  qsbridge.NativeSubqueryStepExecutor
 	ContextWrapper       func(context.Context) context.Context
@@ -96,10 +97,17 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 			result.Runtime.Probes,
 		)
 	}()
-	service := qsbridge.NewPlanningService(r.Planner(), nil)
+	service := r.planningService()
 	prepareStart := time.Now()
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
 	observeSQLRuntimeElapsed(ctx, "phase_prepare_elapsed", prepareStart, "")
+	if authorizationDiagnostics := r.authorizationDiagnostics(request); authorizationDiagnostics.BlocksNative() {
+		return SQLExecutionResult{
+			Prepared:    request.Bound.Prepared,
+			Request:     request,
+			Diagnostics: append(append(qsbridge.DiagnosticSet(nil), request.Diagnostics...), authorizationDiagnostics...),
+		}, nil
+	}
 	preflightStart := time.Now()
 	request, nativeSubqueries, nativeSubqueryDiagnostics, err := r.materializeCorrelatedAggregatePredicates(ctx, request, values...)
 	observeSQLRuntimeElapsed(ctx, "phase_correlated_aggregate_preflight_elapsed", preflightStart, "")
@@ -142,6 +150,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		Diagnostics:      append(qsbridge.DiagnosticSet(nil), request.Diagnostics...),
 		NativeSubqueries: nativeSubqueries,
 	}
+	result.Diagnostics = append(result.Diagnostics, r.authorizationDiagnostics(request)...)
 	if result.Diagnostics.BlocksNative() {
 		if r.EnableFilterExpressions && prepared.Kind == qsbridge.QueryKindSelect && request.Bound.Prepared.Query.Kind == qsbridge.QueryKindSelect {
 			lowerStart := time.Now()
@@ -673,7 +682,7 @@ func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (q
 
 // InspectSQL prepares, lowers, and inspects runtime routing without executing SQL.
 func (r SQLRuntime) InspectSQL(sql string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) SQLInspectionResult {
-	service := qsbridge.NewPlanningService(r.Planner(), nil)
+	service := r.planningService()
 	prepared, request := service.PrepareExecutionRequest(qsbridge.PlanRequest{SQL: sql}, options, values...)
 	result := SQLInspectionResult{
 		Prepared:    prepared,
@@ -722,6 +731,23 @@ func (r SQLRuntime) InspectPrepared(request ExecutionRequest) ExecutionInspectio
 	return r.Environment.Inspect(request)
 }
 
+func (r SQLRuntime) planningService() qsbridge.PlanningService {
+	service := qsbridge.NewPlanningService(r.Planner(), nil)
+	service.Authorizer = r.Authorizer
+	return service
+}
+
+func (r SQLRuntime) authorizationDiagnostics(request qsbridge.ExecutionRequest) qsbridge.DiagnosticSet {
+	if r.Authorizer == nil {
+		return nil
+	}
+	decision := request.AuthorizationRequest().Authorize(r.Authorizer)
+	if decision.Supported() {
+		return nil
+	}
+	return append(qsbridge.DiagnosticSet(nil), decision.Diagnostics...)
+}
+
 // SQLRuntimeBuilder composes a SQL-facing facade over a runtime environment.
 type SQLRuntimeBuilder struct {
 	EnvironmentBuilder      RuntimeEnvironmentBuilder
@@ -731,6 +757,7 @@ type SQLRuntimeBuilder struct {
 	CatalogVersion          qsbridge.CatalogVersion
 	Session                 qsbridge.SessionContext
 	Scope                   qsbridge.PhysicalScope
+	Authorizer              qsbridge.AccessAuthorizer
 	PreflightHelpers        PreflightHelperExecutor
 	NativeSubquerySteps     qsbridge.NativeSubqueryStepExecutor
 	ContextWrapper          func(context.Context) context.Context
@@ -761,6 +788,7 @@ func (b SQLRuntimeBuilder) Build(ctx context.Context) (SQLRuntime, qsbridge.Diag
 		CatalogVersion:          b.CatalogVersion,
 		Session:                 b.Session.Clone(),
 		Scope:                   b.Scope,
+		Authorizer:              b.Authorizer,
 		PreflightHelpers:        b.PreflightHelpers,
 		NativeSubquerySteps:     b.NativeSubquerySteps,
 		ContextWrapper:          b.ContextWrapper,

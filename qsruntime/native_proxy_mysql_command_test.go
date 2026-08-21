@@ -62,6 +62,35 @@ func TestNativeProxyFrontDoorHandlesQueryCommandAsResultset(t *testing.T) {
 	}
 }
 
+func TestNativeProxyMySQLCommandHandlerReturnsAccessDeniedProtocolError(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{Count: 1}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{
+		Server: NativeProxyServerConfig{Authorizer: qsbridge.NewAccessPolicy()},
+	})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	response, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select o_orderkey from orders", Username: "bench", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand query failed: %v", err)
+	}
+	if executed {
+		t.Fatalf("direct executor should not run when authorization denies access")
+	}
+	if response.Kind != qsmysql.CommandResponseError || len(response.Packets) != 1 || response.Packets[0].Payload[0] != 0xff {
+		t.Fatalf("response = %#v, want access denied error packet", response)
+	}
+}
+
 func TestNativeProxyMySQLCommandHandlerPropagatesUserIntoPreparedSession(t *testing.T) {
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}
 	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
@@ -86,6 +115,31 @@ func TestNativeProxyMySQLCommandHandlerPropagatesUserIntoPreparedSession(t *test
 	}
 	if prepared.Session.User != "bench" || prepared.Session.CurrentSchema != "analytics" {
 		t.Fatalf("prepared session = %#v, want authenticated user and default schema", prepared.Session)
+	}
+}
+
+func TestNativeProxyMySQLCommandHandlerDoesNotRegisterUnauthorizedPreparedStatement(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{
+		Server: NativeProxyServerConfig{Authorizer: qsbridge.NewAccessPolicy()},
+	})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	response, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindStmtPrepare, SQL: "select count(*) from orders", Username: "bench", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand prepare failed: %v", err)
+	}
+	if response.Kind != qsmysql.CommandResponseError {
+		t.Fatalf("prepare response = %#v, want access denied error", response)
+	}
+	if got := len(handler.Profile.PreparedStatements().List()); got != 0 {
+		t.Fatalf("prepared statements = %d, want none registered after denial", got)
 	}
 }
 

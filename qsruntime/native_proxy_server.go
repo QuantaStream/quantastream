@@ -131,6 +131,7 @@ type NativeProxyServerConfig struct {
 	ProbeLogger          RuntimeProbeLogger
 	ContextWrapper       func(context.Context) context.Context
 	SessionActionHandler NativeProxySessionActionHandler
+	Authorizer           qsbridge.AccessAuthorizer
 }
 
 // WithDefaults returns a server config that prefers the local direct QIAB route.
@@ -148,6 +149,7 @@ type NativeProxyServer struct {
 	ProbeLogger          RuntimeProbeLogger
 	ContextWrapper       func(context.Context) context.Context
 	SessionActionHandler NativeProxySessionActionHandler
+	Authorizer           qsbridge.AccessAuthorizer
 }
 
 // NewNativeProxyServer builds the server-side owner for an already composed native runtime.
@@ -159,6 +161,7 @@ func NewNativeProxyServer(runtime NativeProxyRuntime, config NativeProxyServerCo
 		ProbeLogger:          config.ProbeLogger,
 		ContextWrapper:       config.ContextWrapper,
 		SessionActionHandler: config.SessionActionHandler,
+		Authorizer:           config.Authorizer,
 	}
 }
 
@@ -180,7 +183,7 @@ func (s NativeProxyServer) ExecuteSQLWithSession(ctx context.Context, session qs
 	if s.ContextWrapper != nil {
 		ctx = s.ContextWrapper(ctx)
 	}
-	result, err := s.Runtime.ExecuteSQLWithSession(ctx, session, sql, options, values...)
+	result, err := s.runtimeForSession(session).ExecuteSQL(ctx, sql, options, values...)
 	if err == nil && !result.Diagnostics.BlocksNative() && !result.Runtime.Diagnostics.BlocksNative() {
 		result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, s.handleSessionActions(ctx, result)...)
 	}
@@ -206,8 +209,19 @@ func (s NativeProxyServer) PrepareSQLWithSession(sql string, session qsbridge.Se
 	if !s.Ready() {
 		return qsbridge.PreparedPlan{}, nativeProxyServerNotReadyDiagnostics()
 	}
-	prepared := s.Runtime.PrepareSQLWithSession(sql, session)
+	prepared := s.runtimeForSession(session).PrepareSQL(sql)
+	if s.Authorizer != nil {
+		decision := prepared.AuthorizationRequest().Authorize(s.Authorizer)
+		if !decision.Supported() {
+			prepared.Diagnostics = append(prepared.Diagnostics, decision.Diagnostics...)
+			prepared.Supported = false
+		}
+	}
 	return prepared, append(qsbridge.DiagnosticSet(nil), prepared.Diagnostics...)
+}
+
+func (s NativeProxyServer) runtimeForSession(session qsbridge.SessionContext) NativeProxyRuntime {
+	return s.Runtime.WithSession(session).WithAuthorizer(s.Authorizer)
 }
 
 func nativeProxyServerNotReadyDiagnostics() qsbridge.DiagnosticSet {
