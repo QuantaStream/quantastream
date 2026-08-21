@@ -36,6 +36,17 @@ type StaticAuthenticator struct {
 	Accounts []StaticAccount
 }
 
+// StaticAccountWithPasswordVerifiers returns an account record that can verify
+// normal MySQL password tokens without storing the cleartext password.
+func StaticAccountWithPasswordVerifiers(username, password, defaultDatabase string) StaticAccount {
+	return StaticAccount{
+		Username:                    strings.TrimSpace(username),
+		MySQLNativePasswordVerifier: mysqlNativeVerifier(password),
+		CachingSHA2PasswordVerifier: cachingSHA2Verifier(password),
+		DefaultDatabase:             strings.TrimSpace(defaultDatabase),
+	}
+}
+
 // Authenticate validates the request against the configured static accounts.
 func (a StaticAuthenticator) Authenticate(ctx context.Context, request AuthRequest) (AuthDecision, error) {
 	if err := ctx.Err(); err != nil {

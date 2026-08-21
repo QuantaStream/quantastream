@@ -592,14 +592,31 @@ QUANTASTREAM_AUTH_ACCOUNT_FILE=/etc/quantastream/accounts.yaml
 accounts:
   - username: MOLIG004
     default_database: quanta
-    password: "<password>"
+    mysql_native_password_verifier: "<hex SHA1(SHA1(password))>"
+    caching_sha2_password_verifier: "<hex SHA256(SHA256(password))>"
 ```
 
-The account file may use verifier fields instead of cleartext passwords:
-`mysql_native_password_verifier` stores `SHA1(SHA1(password))` as hex, and
-`caching_sha2_password_verifier` stores `SHA256(SHA256(password))` as hex.
-The upcoming `quanta-admin` account commands should own generating and rotating
-those verifier values.
+Use `quanta-admin auth` to generate and rotate verifier values rather than
+editing them by hand:
+
+```bash
+QUANTASTREAM_AUTH_PASSWORD='<password>' \
+go run ./quanta-admin auth upsert \
+  --account-file /etc/quantastream/accounts.yaml \
+  --user MOLIG004 \
+  --default-database quanta
+
+go run ./quanta-admin auth list \
+  --account-file /etc/quantastream/accounts.yaml
+
+go run ./quanta-admin auth remove \
+  --account-file /etc/quantastream/accounts.yaml \
+  --user old_user
+```
+
+The account file may still use `password` for local adapter tests, but
+`quanta-admin auth upsert` writes verifier hashes and does not store the
+cleartext password.
 
 `QUANTASTREAM_AUTH_PASSWORD` should be supplied through process environment or
 service secret management rather than command history. Static auth is a first
@@ -658,8 +675,8 @@ broad MySQL client compatibility:
 - keep the MySQL authentication handshake clean enough for standard drivers and
   tools to connect without special-case behavior. The core `qsmysql`
   package includes a static account verifier for MySQL native password,
-  caching_sha2 fast auth, and clear-password adapter paths; service wiring and
-  durable account administration remain the next steps.
+  caching_sha2 fast auth, and clear-password adapter paths; startup wiring and
+  file-backed `quanta-admin auth` administration are in place.
 - preserve prepared SQL support and add batched insert behavior expected by
   standard drivers
 - make `USE <database>`, selected database state, and `database()` semantics

@@ -3,6 +3,7 @@ package qsmysql
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -32,12 +33,96 @@ func DecodeStaticAccountFile(data []byte) ([]StaticAccount, error) {
 	if err := yaml.UnmarshalStrict(data, &file); err != nil {
 		return nil, err
 	}
-	if len(file.Accounts) == 0 {
+	return validateStaticAccounts(file.Accounts)
+}
+
+// SaveStaticAccountFile writes accounts to a YAML account file atomically enough
+// for local admin workflows.
+func SaveStaticAccountFile(path string, accounts []StaticAccount) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("mysql static auth account file path is empty")
+	}
+	normalized, err := validateStaticAccounts(accounts)
+	if err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(StaticAccountFile{Accounts: normalized})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// UpsertStaticAccountFile inserts or replaces account by username.
+func UpsertStaticAccountFile(path string, account StaticAccount) ([]StaticAccount, error) {
+	var accounts []StaticAccount
+	if _, err := os.Stat(path); err == nil {
+		loaded, err := LoadStaticAccountFile(path)
+		if err != nil {
+			return nil, err
+		}
+		accounts = loaded
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	account.Username = strings.TrimSpace(account.Username)
+	account.DefaultDatabase = strings.TrimSpace(account.DefaultDatabase)
+	replaced := false
+	for i := range accounts {
+		if accounts[i].Username == account.Username {
+			accounts[i] = account
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		accounts = append(accounts, account)
+	}
+	if err := SaveStaticAccountFile(path, accounts); err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
+// RemoveStaticAccountFile removes username from a static account file.
+func RemoveStaticAccountFile(path, username string) ([]StaticAccount, bool, error) {
+	accounts, err := LoadStaticAccountFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	username = strings.TrimSpace(username)
+	remaining := accounts[:0]
+	removed := false
+	for _, account := range accounts {
+		if account.Username == username {
+			removed = true
+			continue
+		}
+		remaining = append(remaining, account)
+	}
+	if !removed {
+		return accounts, false, nil
+	}
+	if len(remaining) == 0 {
+		return nil, false, fmt.Errorf("cannot remove the last mysql static auth account")
+	}
+	if err := SaveStaticAccountFile(path, remaining); err != nil {
+		return nil, false, err
+	}
+	return remaining, true, nil
+}
+
+func validateStaticAccounts(accounts []StaticAccount) ([]StaticAccount, error) {
+	if len(accounts) == 0 {
 		return nil, fmt.Errorf("mysql static auth account file has no accounts")
 	}
-	seen := make(map[string]struct{}, len(file.Accounts))
-	accounts := make([]StaticAccount, 0, len(file.Accounts))
-	for i, account := range file.Accounts {
+	seen := make(map[string]struct{}, len(accounts))
+	normalized := make([]StaticAccount, 0, len(accounts))
+	for i, account := range accounts {
 		account.Username = strings.TrimSpace(account.Username)
 		account.DefaultDatabase = strings.TrimSpace(account.DefaultDatabase)
 		account.MySQLNativePasswordVerifier = strings.TrimSpace(account.MySQLNativePasswordVerifier)
@@ -59,7 +144,7 @@ func DecodeStaticAccountFile(data []byte) ([]StaticAccount, error) {
 			}
 		}
 		seen[account.Username] = struct{}{}
-		accounts = append(accounts, account)
+		normalized = append(normalized, account)
 	}
-	return accounts, nil
+	return normalized, nil
 }
