@@ -2,12 +2,18 @@ package qsruntime
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 func TestNativeProxyListenConfigDefaultsFromFrontDoor(t *testing.T) {
@@ -79,6 +85,81 @@ func TestNativeProxyFrontDoorListenAndServeAcceptsInjectedConnection(t *testing.
 		}
 	case <-time.After(time.Second):
 		t.Fatal("ListenAndServe did not stop after cancellation")
+	}
+}
+
+func TestNativeProxyFrontDoorDatabaseSQLClientReceivesAccessDenied(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var executed atomic.Bool
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed.Store(true)
+		return ExecutionResult{Count: 1}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{
+		PacketIOReady: true,
+		Authenticator: qsmysql.StaticAuthenticator{Accounts: []qsmysql.StaticAccount{{
+			Username:        "guy",
+			Password:        "secret",
+			DefaultDatabase: "quanta",
+			Roles:           []qsbridge.RoleName{"reader"},
+		}}},
+		Server: NativeProxyServerConfig{Authorizer: qsbridge.NewAccessPolicy(qsbridge.AccessGrant{
+			PrincipalKind: qsbridge.AccessPrincipalRole,
+			Principal:     "reader",
+			Privilege:     qsbridge.AccessSelect,
+			Table:         qsbridge.TableInstance{Schema: "quanta", Table: "customer"},
+		})},
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- frontDoor.ListenAndServe(ctx, NativeProxyListenConfig{
+			Listener:         listener,
+			EnableAcceptLoop: true,
+		})
+	}()
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("ListenAndServe err = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("ListenAndServe did not stop after cancellation")
+		}
+	}()
+
+	clientCtx, clientCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer clientCancel()
+	db, err := sql.Open("mysql", fmt.Sprintf("guy:secret@tcp(%s)/quanta", listener.Addr().String()))
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	var orderKey int64
+	err = db.QueryRowContext(clientCtx, "select o_orderkey from orders").Scan(&orderKey)
+	if err == nil {
+		t.Fatalf("query unexpectedly succeeded with order_key=%d", orderKey)
+	}
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		t.Fatalf("query err = %T %v, want MySQLError", err, err)
+	}
+	if mysqlErr.Number != 1142 || !strings.Contains(strings.ToLower(mysqlErr.Message), "access denied") {
+		t.Fatalf("mysql err = %#v, want access denied 1142", mysqlErr)
+	}
+	if executed.Load() {
+		t.Fatal("runtime executed a query that should have been denied by access policy")
 	}
 }
 
