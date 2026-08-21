@@ -38,11 +38,14 @@ func TestPlanningServiceListClientCatalogRelationshipsReturnsRows(t *testing.T) 
 	if relationship.Name != "lineitem_orders" || relationship.ColumnName != "l_orderkey" || relationship.ReferencedTable != "orders" || relationship.ReferencedColumn != "o_orderkey" {
 		t.Fatalf("relationship = %#v, want relationship target metadata", relationship)
 	}
-	if exchange.Result.Status != ExecutionComplete || exchange.Result.RowsReturned != 1 || len(exchange.ResultSchema.Columns) != 10 {
+	if relationship.ArtifactPolicy != RelationshipArtifactPolicyMetadataOnly {
+		t.Fatalf("relationship artifact policy = %#v, want metadata-only default", relationship.ArtifactPolicy)
+	}
+	if exchange.Result.Status != ExecutionComplete || exchange.Result.RowsReturned != 1 || len(exchange.ResultSchema.Columns) != 11 {
 		t.Fatalf("result/schema = %#v/%#v, want relationship result metadata", exchange.Result, exchange.ResultSchema)
 	}
 	row := exchange.Result.Chunks[0].Rows[0]
-	if row[2].Value != "lineitem_orders" || row[6].Value != string(JoinChildToParent) || row[9].Value != "join_reduction,parent_lookup" {
+	if row[2].Value != "lineitem_orders" || row[6].Value != string(JoinChildToParent) || row[9].Value != "join_reduction,parent_lookup" || row[10].Value != string(RelationshipArtifactPolicyMetadataOnly) {
 		t.Fatalf("row = %#v, want relationship row metadata", row)
 	}
 }
@@ -57,7 +60,7 @@ func TestPlanningServiceListClientCatalogRelationshipsReportsMissingInputs(t *te
 	if missingSchema.Supported() || !containsDiagnosticCode(missingSchema.Diagnostics.Codes(), DiagnosticInvalidExecutionOption) {
 		t.Fatalf("missing schema = %#v, want invalid execution option", missingSchema)
 	}
-	if missingSchema.Result.Status != ExecutionFailed || !missingSchema.Result.Complete || len(missingSchema.ResultSchema.Columns) != 10 {
+	if missingSchema.Result.Status != ExecutionFailed || !missingSchema.Result.Complete || len(missingSchema.ResultSchema.Columns) != 11 {
 		t.Fatalf("missing schema result/schema = %#v/%#v, want failed relationship envelope", missingSchema.Result, missingSchema.ResultSchema)
 	}
 

@@ -1154,6 +1154,9 @@ func bindAlterTableAddForeignKey(context *BindContext, query QueryIR, target Bou
 		Encoding: RelationshipEncodingProfile{
 			Kind: RelationshipEncodingVector,
 		},
+		Artifacts: RelationshipArtifactPolicy{
+			Kind: RelationshipArtifactPolicyMetadataOnly,
+		},
 	}
 	query.Mutation = MutationShape{
 		Kind:            MutationAlterTableAddForeignKey,

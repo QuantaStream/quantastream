@@ -106,6 +106,16 @@ func TestRelationshipDefinitionEdge(t *testing.T) {
 	}
 }
 
+func TestRelationshipArtifactPolicyDefaultsAndReverseArtifact(t *testing.T) {
+	if got := (RelationshipArtifactPolicy{}).WithDefaults().Kind; got != RelationshipArtifactPolicyMetadataOnly {
+		t.Fatalf("default artifact policy = %q, want metadata-only", got)
+	}
+	reverse := RelationshipArtifactPolicy{Kind: RelationshipArtifactPolicyReverseArtifact}
+	if got := reverse.WithDefaults().Kind; got != RelationshipArtifactPolicyReverseArtifact {
+		t.Fatalf("reverse artifact policy = %q, want reverse-artifact", got)
+	}
+}
+
 func TestFunctionDefinitionMatchesAliases(t *testing.T) {
 	function := FunctionDefinition{Name: "substr", Aliases: []string{"substring", "mid"}, Native: true}
 

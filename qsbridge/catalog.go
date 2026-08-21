@@ -100,6 +100,32 @@ type RelationshipDefinition struct {
 	Direction   JoinDirection
 	Cardinality string
 	Encoding    RelationshipEncodingProfile
+	Artifacts   RelationshipArtifactPolicy
+}
+
+// RelationshipArtifactPolicyKind describes optional materialized relationship artifacts.
+type RelationshipArtifactPolicyKind string
+
+const (
+	// RelationshipArtifactPolicyUnknown means no policy was specified by older metadata.
+	RelationshipArtifactPolicyUnknown RelationshipArtifactPolicyKind = ""
+	// RelationshipArtifactPolicyMetadataOnly records relationship metadata without building extra artifacts.
+	RelationshipArtifactPolicyMetadataOnly RelationshipArtifactPolicyKind = "metadata_only"
+	// RelationshipArtifactPolicyReverseArtifact requests a parent-to-child reverse artifact.
+	RelationshipArtifactPolicyReverseArtifact RelationshipArtifactPolicyKind = "reverse_artifact"
+)
+
+// RelationshipArtifactPolicy records whether relationship catalog metadata needs auxiliary artifacts.
+type RelationshipArtifactPolicy struct {
+	Kind RelationshipArtifactPolicyKind
+}
+
+// WithDefaults returns the policy that should be used when older metadata omits an explicit value.
+func (p RelationshipArtifactPolicy) WithDefaults() RelationshipArtifactPolicy {
+	if p.Kind == RelationshipArtifactPolicyUnknown {
+		p.Kind = RelationshipArtifactPolicyMetadataOnly
+	}
+	return p
 }
 
 // ParentTable returns the referenced side of the relationship.

@@ -669,6 +669,9 @@ func TestUnboundStatementBindAlterTableAddForeignKey(t *testing.T) {
 	if relationship.Direction != JoinChildToParent || relationship.Cardinality != "many_to_one" || relationship.Encoding.Kind != RelationshipEncodingVector {
 		t.Fatalf("relationship metadata = %#v, want child-to-parent relation vector", relationship)
 	}
+	if relationship.Artifacts.Kind != RelationshipArtifactPolicyMetadataOnly {
+		t.Fatalf("relationship artifact policy = %#v, want metadata-only for plain MySQL FK", relationship.Artifacts)
+	}
 	if got := query.Mutation.ValidationSteps; len(got) != 3 {
 		t.Fatalf("validation steps = %#v, want parent-key/type/orphan checks", got)
 	} else {

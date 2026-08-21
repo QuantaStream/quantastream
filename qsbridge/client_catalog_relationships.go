@@ -14,6 +14,7 @@ type ClientCatalogRelationship struct {
 	Cardinality      string
 	Encoding         RelationshipEncodingKind
 	Capabilities     RelationshipCapabilities
+	ArtifactPolicy   RelationshipArtifactPolicyKind
 }
 
 // ClientCatalogRelationshipExchange is client-facing relationship metadata for one table.
@@ -117,6 +118,7 @@ func catalogRelationshipResultColumns() []ResultColumn {
 		{Name: "Cardinality", Type: DataTypeString, Nullable: true},
 		{Name: "Encoding", Type: DataTypeString, Nullable: true},
 		{Name: "Capabilities", Type: DataTypeString, Nullable: true},
+		{Name: "Artifact_policy", Type: DataTypeString},
 	}
 }
 
@@ -134,6 +136,7 @@ func (e ClientCatalogRelationshipExchange) catalogRelationshipRows() []ResultRow
 			metadataStringCell(relationship.Cardinality),
 			metadataStringCell(string(relationship.Encoding)),
 			metadataStringCell(joinRelationshipCapabilities(relationship.Capabilities)),
+			metadataStringCell(string(relationship.ArtifactPolicy)),
 		})
 	}
 	return rows
@@ -153,6 +156,7 @@ func tableCatalogRelationships(table TableDefinition) []ClientCatalogRelationshi
 			Cardinality:      relationship.Cardinality,
 			Encoding:         relationship.Encoding.Kind,
 			Capabilities:     append(RelationshipCapabilities(nil), relationship.Encoding.Capabilities...),
+			ArtifactPolicy:   relationship.Artifacts.WithDefaults().Kind,
 		})
 	}
 	sort.SliceStable(relationships, func(i, j int) bool {
