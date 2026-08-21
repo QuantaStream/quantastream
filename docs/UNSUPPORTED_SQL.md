@@ -1,294 +1,135 @@
 # SQL Boundaries
 
-QuantaStream intentionally supports a practical analytical SQL subset while the
-bitmap execution engine matures. This document records syntax and semantics
-outside the current support surface so executable SQLRunner suites can stay
-focused on concrete behavior.
+QuantaStream supports the MySQL wire protocol and a focused analytical SQL
+surface for everyday query, integration, and validation work. The supported
+surface includes projections, predicates, ordering, limits, grouping,
+aggregates, joins, subqueries, views, derived tables, temporary tables, CTAS,
+prepared-statement execution, and MySQL client metadata used by common tools.
 
-Use SQLRunner `xfail` cases for near-term implementation targets that exercise
-important engine behavior. Use this document for broader SQL compatibility
-gaps, syntax that would require a new execution primitive, or features that are
-not part of the current support surface. Forward implementation work is tracked
-in GitHub Issues.
+This page records the narrow SQL shapes outside the current QuantaStream 1.0
+contract. Executable compatibility coverage lives in SQLRunner; forward work is
+tracked in GitHub Issues.
 
-## Planner And Engine Refactor Blockers
+## Persistent Table Definition
 
-Several unsupported shapes are symptoms of planner/executor boundaries rather
-than isolated missing functions. These should be treated as native SQL engine
-design requirements and kept aligned with the public architecture guide and the
-internal native-engine design notes:
-
-- preserve structured query shape through parsing, especially compound
-  predicates containing subqueries
-- bind table aliases as distinct table instances so repeated roles of the same
-  base table are reliable
-- classify result-producing `SELECT` statements explicitly, even when function
-  expressions appear in predicates or projections
-- lower membership subqueries, scalar subqueries, and non-correlated `EXISTS`
-  into distinct plan nodes instead of forcing all subquery work through joins
-- classify predicates as bitmap/BSI pushdown, same-table residual work,
-  relationship joins, or unsupported mixed-table residual predicates before
-  execution
-- propagate query cancellation from the MySQL protocol layer into scans,
-  projections, joins, aggregates, and remote shard work
-
-Until those boundaries exist, unsupported shapes should fail with clear errors.
-Crashes, empty-success result behavior, and hung clients are engine defects even
-when the SQL feature remains unsupported.
-
-## Pattern Matching
-
-`LIKE` support is shape- and storage-type-dependent.
-
-`StringEnum` fields support SQL-style `%` and `_` pattern matching by scanning
-the compact enum dictionary and emitting bitmap batch predicates over matching
-enum row IDs. This covers prefix, suffix, contains, and `NOT LIKE` shapes used
-by TPC-H validation, such as:
+Production QuantaStream tables are descriptor-driven. A first-class persistent
+table is defined by catalog/configuration metadata and then activated with:
 
 ```sql
-p_type like 'PROMO%'
-p_type like '%BRASS'
-p_type not like 'MEDIUM POLISHED%'
+create table table_name;
 ```
 
-Backing-store string fields also support residual SQL `LIKE` evaluation over
-hydrated values, which covers probes such as `p_name like 'green%'` and
-`p_name like '%green%'`. This path is useful for correctness but should not be
-confused with an indexed text-search plan.
-
-Fields configured as searchable high-cardinality strings still have a
-bloom-filter-style search path. That path is useful as a pragmatic string-search
-experiment, but it should eventually be exposed through a clearer text-search
-operator or function rather than treated as the default relational `LIKE`
-implementation.
-
-Remaining pattern-matching gaps include escape semantics, broad collation
-behavior, and efficient indexed planning for high-cardinality backing strings.
-Future ordered string storage should use an ordered representation or secondary
-index that can preserve lexicographic order. Left-anchored patterns such as
-`'PROMO%'` can then be planned as a range:
-
-```text
-value >= 'PROMO' and value < next_prefix('PROMO')
-```
-
-That should be treated as a new storage/index capability, not a bloom-filter
-extension.
-
-`StringLexBSI` equality and `IN` predicates are native only when the full string
-is encoded inline. Prefix-plus-remainder fields, such as long comment fields,
-must add suffix rehydration before exact string predicates can be lowered
-without false positives.
-
-## Function Predicate Membership
-
-Function-expression membership predicates are not currently supported
-reliably. Shapes such as:
+The following MySQL-style persistent table definition is not the production
+schema path:
 
 ```sql
-substr(first_name, 1, 2) in ('Ab', 'An')
-substr(first_name, 1, 2) not in ('Ab')
-substr(c_phone, 1, 2) in ('13', '31', '23', '29', '30', '18', '17')
+create table table_name (
+  id bigint primary key,
+  name varchar(255)
+);
 ```
 
-return statement-style `Query OK, 0 rows affected` behavior instead of a
-result set. OR-expanded equality predicates over the same function expression
-can work and should be used in executable probes until the planner supports
-function-expression `IN` / `NOT IN` predicates directly.
+Use descriptor files for configured persistent tables. Use
+`CREATE TEMPORARY TABLE ... (...)` for session-scoped scratch tables, or
+`CREATE TABLE ... AS SELECT ...` for persistent materialization from a query.
 
-## Subqueries
+## SQL ALTER TABLE DDL
 
-Supported subquery behavior is focused and implementation-specific:
+QuantaStream exposes table structure through descriptors and administrative
+tools, not the full MySQL `ALTER TABLE` grammar.
 
-- scalar subqueries in the `SELECT` list
-- scalar aggregate subqueries in predicates
-- `IN` and `NOT IN` membership subqueries
-- row-value `IN` subqueries for covered tuple shapes
-- correlated `EXISTS` and `NOT EXISTS` with equality predicates
-- covered subqueries over derived-table sources
-
-Unsupported or partial subquery shapes include:
-
-- arbitrary deeply nested query blocks
-- recursive query patterns
-- non-correlated `EXISTS` / `NOT EXISTS` outside covered shapes
-- subqueries embedded in expression forms that are not preserved as structured
-  planner nodes
-
-These require explicit scalar-subquery, membership, or subquery-gate execution
-steps. They should not be forced into generic join machinery when the shape does
-not match a covered execution primitive.
-
-## Derived Tables And Common Table Expressions
-
-Derived tables are supported for the focused MySQL compatibility shapes covered
-by SQLRunner, including projection/predicate derived tables, derived join
-sources, grouped aggregate derived sources, and constant `UNION ALL` rowsets.
-
-Remaining gaps include deeply nested derived blocks, recursive query behavior,
-and `WITH` common table expressions. CTE support should be implemented as
-structured query metadata rather than SQL text substitution.
-
-## Repeated Table Aliases And Self-Joins
-
-Using the same base table multiple times in one query through different aliases
-is not generally supported. TPC-H Q7 and Q8 both require `nation` to appear in
-two roles, such as supplier nation and customer nation. Those query shapes
-should remain outside executable suites until the planner, join graph, and
-projection metadata can distinguish repeated base-table aliases reliably.
-
-## Temporary Tables And Materialized SELECT
-
-Session-scoped temporary tables and `CREATE TABLE ... AS SELECT ...` are
-supported for focused MySQL compatibility shapes. This includes inline
-temporary table metadata, temporary CTAS, temporary `LIKE`, temporary
-`INSERT ... SELECT`, and persistent CTAS materialization.
-
-Remaining gaps include broad MySQL temporary-table metadata parity, advanced
-DDL options, storage-engine options, and any materialized-result lifecycle that
-would imply shared or durable semantics beyond CTAS.
-
-`DROP TABLE ... CASCADE` syntax is accepted for simple drops, but recursive
-dependent-object deletion remains planned. Current `DROP TABLE` behavior should
-preserve catalog integrity by refusing to drop tables referenced by active
-views or parent-to-child table relationships unless those dependent objects are
-removed explicitly. In other words, dropping a parent table does not implicitly
-drop its child tables in the 1.0 surface.
-
-## View Gaps
-
-Named views, view catalog storage, view expansion, joins inside view
-definitions, and MySQL compatibility coverage are supported for the current
-single-node and direct-cluster compatibility surface. Remaining view gaps
-include:
-
-- views that reference other views
-- exact `SHOW CREATE VIEW` formatting parity with MySQL
-- broader MySQL metadata, privilege, algorithm, definer, and security syntax
-- materialized views
-
-## Conditional Expressions
-
-Searched `CASE WHEN ... THEN ... ELSE ... END` is supported for the conditional
-aggregate expression shape used by TPC-H Q14. This should not yet be treated as
-complete CASE support across every clause.
-
-Remaining conditional-expression gaps include:
-
-- projection-only CASE shapes without aggregate wrapping
-- CASE in `WHERE`, `GROUP BY`, and `ORDER BY`
-- nested CASE
-- simple CASE syntax
-- string-valued CASE outputs
-- MySQL-style `IF(condition, true_expr, false_expr)` inside aggregate
-  expressions
-
-TPC-H Q12-style conditional aggregates over joined order priority depend on
-both conditional aggregate evaluation and the relevant joined grouping shape.
-
-## Field-To-Field Predicates
-
-QuantaStream supports selected field-to-field predicates in join and
-residual-filter paths. Same-table date comparisons used by staged TPC-H Q12
-coverage now work, including:
+The SQL surface does not currently include:
 
 ```sql
-l_commitdate < l_receiptdate
-l_shipdate < l_commitdate
+alter table table_name add column new_field int;
+alter table table_name drop column old_field;
+alter table table_name add primary key (id);
+alter table child_table add foreign key (parent_id) references parent_table(id);
 ```
 
-This is still not a general field-to-field predicate guarantee. Mixed-table
-residual predicates outside declared join relationships remain limited and
-should return a useful unsupported error rather than being pushed down
-incorrectly, for example:
+Primary keys, relationship vectors, mapper types, and reverse relationship
+artifacts are physical schema decisions in QuantaStream. They should be
+declared in the table descriptor or managed through explicit administrative
+flows rather than inferred from broad MySQL DDL syntax.
+
+## Transaction Rollback Semantics
+
+QuantaStream accepts common transaction statements for client compatibility:
 
 ```sql
-ps.ps_suppkey = l.l_suppkey
+begin;
+commit;
+rollback;
+set autocommit = 0;
+set autocommit = 1;
 ```
 
-Planner work for broader field-to-field predicates should classify each
-predicate as a relationship join, same-table residual comparison, or unsupported
-mixed-table residual before execution.
+The current mutation path applies catalog-backed writes immediately.
+`ROLLBACK` does not provide full MySQL MVCC semantics or undo previously
+applied writes. Treat QuantaStream transaction statements as session/client
+compatibility controls unless a future release documents durable transactional
+write rollback.
 
-## Joined Predicate Coverage
+## Advanced MySQL Objects
 
-Literal predicates over joined tables can work well when each predicate is
-planned against the table that owns its fields. TPC-H Q19 is now covered as a
-formal discounted revenue shape with mixed-table `OR` branches over
-`lineitem -> part`.
+The 1.0 SQL surface is centered on tables, views, temporary tables, CTAS, and
+analytical queries. The following MySQL object families are outside that
+surface:
 
-Broad residual predicate evaluation over arbitrary joined rows is still
-limited. Future work should continue to distinguish predicates that can be
-pushed down into each joined table's bitmap/BSI reduction from predicates that
-genuinely need post-join residual evaluation.
+- stored procedures and stored functions;
+- triggers and events;
+- user-defined SQL functions installed through MySQL plugin syntax;
+- MySQL storage-engine, partitioning, tablespace, and charset/collation DDL
+  options.
 
-## Date And Interval Syntax
+QuantaStream has its own extension points for bitmap-native mappers, loaders,
+and administrative tooling.
 
-QuantaStream supports date comparisons using string literal forms already
-covered in the TPC-H suites, such as:
+## Advanced Query Forms
+
+The analytical query surface is intentionally broad enough for the current
+TPC-H and MySQL compatibility suites. These query forms remain outside the
+current contract unless a focused suite covers the exact shape:
 
 ```sql
-o_orderdate >= '1994-01-01'
+with recursive ...
+
+select ..., row_number() over (partition by ... order by ...)
+from ...
 ```
 
-Formal SQL date literals and interval arithmetic are not broadly supported:
+In other words, recursive CTEs and SQL window functions are not part of the
+current 1.0 query surface.
 
-```sql
-date '1994-01-01'
-date '1994-01-01' + interval '1' year
-```
+## View Boundaries
 
-MySQL-style helper functions such as `year(date_field)` are supported in
-covered projection and grouping shapes. Some historical/custom date/time
-helpers are not currently supported through QuantaStream SQL planning. Probes
-for `yy(date_field)`, `yymm(date_field)`, `hourofweek(date_field)`, and
-`seconds(date_field)` fail during planning with:
+Logical views are supported, including joins inside view definitions. The
+following view-related features remain outside the current surface:
 
-```text
-QLBridge.plan: No datasource found
-```
+- materialized views;
+- MySQL `ALGORITHM`, `DEFINER`, and `SQL SECURITY` view clauses;
+- exact byte-for-byte MySQL `SHOW CREATE VIEW` formatting parity.
 
-Those helpers should remain undocumented as supported SQL until the planner
-routes them through the same residual projection path used by `year(...)`,
-`mm(...)`, `monthofyear(...)`, `dayofweek(...)`, and `hourofday(...)`.
+Use CTAS when a query result should become a persistent materialized table.
 
-Formal SQL date-part extraction remains unsupported:
+## Dependency Cascades
 
-```sql
-extract(year from l_shipdate)
-```
+QuantaStream protects catalog integrity by requiring explicit dependent-object
+management. `DROP TABLE` should not be treated as a recursive dependency
+deletion mechanism for active views or parent/child relationships.
 
-## MySQL Database Semantics
+Simple `DROP ... CASCADE` syntax is accepted where covered, but recursive
+dependent-object deletion is not the current contract. Drop dependent views,
+child relationships, or configured tables intentionally.
 
-QuantaStream only partially implements MySQL database/schema behavior. Database
-names currently act mostly as connection or schema groupings, not full MySQL
-catalogs. Client compatibility work, such as `USE <database>` and common schema
-discovery commands, is tracked separately from analytical query support.
+## Text Search And Collation
 
+SQL `LIKE` and `NOT LIKE` are supported for covered bitmap and residual string
+paths. The following text semantics are outside the current surface:
 
-## Query Cancellation
+- full MySQL collation parity across every comparison and ordering edge case;
+- `REGEXP` and `RLIKE`;
+- indexed full-text search syntax such as `MATCH ... AGAINST`.
 
-The MySQL client can send `KILL QUERY <connection_id>` after `Ctrl+C`, but
-long-running QuantaStream queries can still leave the client waiting until the
-MySQL front door or query process is bounced. Query cancellation should become
-an explicit execution contract in the native engine: every long-running scan,
-projection, join, aggregate, and remote shard request needs a
-cancellation-aware context.
-
-## Full SQL Compatibility
-
-The following broad SQL features should not be assumed supported unless a
-specific SQLRunner suite already covers the exact shape:
-
-- arbitrary joins outside the current bitmap relationship model
-- outer join behavior beyond covered compatibility cases
-- broad `HAVING` expression coverage, especially direct aggregate-expression
-  `HAVING`; alias-based fixed-threshold `HAVING` has staged coverage
-- arbitrary functions in `GROUP BY` and `ORDER BY`; covered cases include
-  single-table `year(...)`, `substr(...)`, and selected function ordering
-- window functions
-- recursive queries
-- transaction isolation semantics beyond the current QuantaStream mutation
-  workflow; `BEGIN`, `COMMIT`, and `ROLLBACK` are accepted for client
-  compatibility, but `ROLLBACK` does not undo catalog-backed writes
-- DDL compatibility with MySQL beyond QuantaStream-supported table creation paths
+StringEnum, StringLexBSI, and backing-string representations should be chosen
+from the descriptor based on the query pattern the application needs.

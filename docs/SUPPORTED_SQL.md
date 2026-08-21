@@ -5,8 +5,8 @@ QuantaStream-specific SQL extensions. This document records supported behavior
 that is useful to users, including behavior that is intentionally
 QuantaStream-specific rather than portable MySQL syntax.
 
-Known unsupported or partial SQL behavior is tracked separately in
-[`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+Precise SQL boundaries outside the current 1.0 surface are tracked separately
+in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
 ## Date And Time Helpers
 
@@ -114,9 +114,9 @@ QuantaStream supports focused MySQL-compatible query composition shapes:
 - derived tables used as join sources;
 - grouped aggregate derived sources.
 
-These are logical query-composition features, not temporary storage. Boundaries
-around deeply nested query blocks, common table expressions, and repeated
-base-table aliases are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+These are logical query-composition features, not temporary storage. Advanced
+query-form boundaries outside the current 1.0 surface are tracked in
+[`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
 ## Temporary Tables And CTAS
 

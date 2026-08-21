@@ -46,7 +46,7 @@ Core components:
 - **SQL and planner layer:** Parses SQL, builds query intent, validates supported shapes, and coordinates execution.
 - **Execution runtime:** Applies bitmap, BSI, relationship-vector, aggregate, and materialization kernels.
 - **Data nodes:** Own shards and store bitmap/BSI-backed column data and supporting persisted values.
-- **Consul metadata and discovery:** Provides cluster coordination, service discovery, and schema metadata storage in the current distributed model.
+- **Consul metadata and discovery:** Provides cluster coordination, service discovery, and schema metadata storage for distributed deployments.
 - **Quanta-in-a-Box:** Runs the local development topology in one process while preserving the same conceptual node/query boundaries.
 
 QuantaStream is designed so Quanta-in-a-Box can be productive for small deployments and demos, while the same core architecture can grow toward multi-node distributed deployments.
@@ -55,19 +55,21 @@ For a deeper architectural overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 
 ## SQL Surface
 
-QuantaStream targets a practical analytical SQL subset rather than immediate full MySQL compatibility. The MySQL protocol matters because it makes the engine accessible from familiar tools and drivers; SQL semantics are being expanded deliberately through test coverage.
+QuantaStream supports a focused, documented MySQL-compatible analytical SQL surface. The MySQL protocol makes the engine accessible from familiar tools and drivers, while the supported SQL contract is defined by executable SQLRunner compatibility suites.
 
-Current SQL work includes:
+The current SQL surface includes:
 
 - projections, filters, ordering, limits, and offsets
 - joins over relationship vectors
 - grouping and aggregate execution
 - function expressions in select lists and predicates
 - subquery and membership shapes used by analytical workloads
+- views, derived tables, temporary tables, and CTAS materialization
+- prepared-statement and metadata paths used by common MySQL clients
 - QuantaStream-specific functions such as `topn(...)`
 - TPC-H query-shape coverage through SQLRunner suites
 
-Supported behavior is tracked in [docs/SUPPORTED_SQL.md](docs/SUPPORTED_SQL.md). Known gaps are tracked in [docs/UNSUPPORTED_SQL.md](docs/UNSUPPORTED_SQL.md).
+Supported behavior is tracked in [docs/SUPPORTED_SQL.md](docs/SUPPORTED_SQL.md). Precise SQL boundaries are tracked in [docs/UNSUPPORTED_SQL.md](docs/UNSUPPORTED_SQL.md).
 
 ## Schema Model
 
@@ -86,14 +88,15 @@ This schema-first design is central to QuantaStream performance. See [docs/SCHEM
 
 ## Quanta-in-a-Box
 
-Quanta-in-a-Box is the primary near-term development and validation environment. It runs the local cluster shape needed for demos, SQL conformance work, and TPC-H experimentation without requiring a full distributed deployment.
+Quanta-in-a-Box is the primary single-node development, demo, and validation environment. It runs the local engine shape needed for SQL conformance work and TPC-H experimentation without requiring a distributed deployment.
 
-Recommended environment:
+Recommended binary environment:
 
 - Linux or WSL2
-- Go 1.22+
-- HashiCorp Consul
+- a MySQL-compatible client, such as `mysql` or MySQL Workbench
 - 16 GB RAM minimum, 32 GB recommended for TPC-H experimentation
+
+Go is required only when building or running QuantaStream from source. HashiCorp Consul is required for distributed mode and direct-cluster development, not for the single-node binary runbook.
 
 Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary runbook or [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source checkout workflow. Deployment assumptions and production-readiness notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
@@ -112,6 +115,7 @@ The goal is broad compatibility with standard MySQL client tooling and network d
 - Python MySQL connectors
 - Node.js MySQL clients
 - MySQL command-line tools
+- MySQL Workbench
 
 The compatibility plan is documented in [docs/MYSQL-COMPATIBILITY.md](docs/MYSQL-COMPATIBILITY.md).
 
@@ -127,7 +131,7 @@ Useful starting points:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Schema Design](docs/SCHEMA_DESIGN.md)
 - [Supported SQL](docs/SUPPORTED_SQL.md)
-- [Unsupported SQL](docs/UNSUPPORTED_SQL.md)
+- [SQL Boundaries](docs/UNSUPPORTED_SQL.md)
 - [TPC-H Validation](docs/TPCH.md)
 - [TPC-H Benchmark Notes](docs/TPCH_BENCHMARK_NOTES.md)
 - [Deployment](docs/DEPLOYMENT.md)
