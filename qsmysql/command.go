@@ -35,6 +35,7 @@ type Command struct {
 	Execute      PreparedExecuteCommand
 	LongData     PreparedLongDataCommand
 	ConnectionID uint32
+	Username     string
 	Database     string
 }
 

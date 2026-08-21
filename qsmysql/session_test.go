@@ -73,6 +73,9 @@ func TestSessionRunnerHandshakeAuthAndCommandLoop(t *testing.T) {
 	if commandOK.Kind != CommandResponseOK || handler.got.Kind != CommandKindPing {
 		t.Fatalf("commandOK = %#v handler=%#v", commandOK, handler.got)
 	}
+	if handler.got.ConnectionID != 77 || handler.got.Username != "guy" || handler.got.Database != "quanta" {
+		t.Fatalf("handler command session metadata = %#v, want authenticated connection metadata", handler.got)
+	}
 	packets = readSessionTestPackets(t, output.Bytes())
 	if len(packets) != 3 || packets[2].Payload[0] != okPacketHeader {
 		t.Fatalf("all output packets = %#v", packets)

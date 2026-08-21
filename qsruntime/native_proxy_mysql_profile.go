@@ -54,6 +54,16 @@ func (p *NativeProxyMySQLSessionProfile) ApplySessionActions(actions []qsbridge.
 	return nil
 }
 
+// SetAuthenticatedUser remembers the MySQL-authenticated user for planning metadata.
+func (p *NativeProxyMySQLSessionProfile) SetAuthenticatedUser(username string) {
+	if p == nil || username == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.session.User = qsbridge.UserName(username)
+}
+
 // SetCurrentSchema remembers the default database selected by the protocol connection.
 func (p *NativeProxyMySQLSessionProfile) SetCurrentSchema(schema string) {
 	if p == nil || schema == "" {

@@ -160,10 +160,17 @@ func (h NativeProxyMySQLCommandHandler) sessionProfile() *NativeProxyMySQLSessio
 
 func nativeProxyMySQLSessionForCommand(profile *NativeProxyMySQLSessionProfile, command qsmysql.Command) qsbridge.SessionContext {
 	if profile == nil {
-		return qsbridge.SessionContext{CurrentSchema: command.Database}
+		return qsbridge.SessionContext{
+			User:          qsbridge.UserName(command.Username),
+			CurrentSchema: command.Database,
+		}
 	}
+	profile.SetAuthenticatedUser(command.Username)
 	profile.SetCurrentSchema(command.Database)
 	session := profile.Session()
+	if session.User == "" {
+		session.User = qsbridge.UserName(command.Username)
+	}
 	if session.CurrentSchema == "" {
 		session.CurrentSchema = command.Database
 	}

@@ -23,6 +23,7 @@ type CommandLoop struct {
 	Writer          PacketWriter
 	Handler         CommandHandler
 	ConnectionID    uint32
+	Username        string
 	Database        string
 	CapabilityFlags CapabilityFlag
 }
@@ -39,6 +40,7 @@ func (l CommandLoop) ServeNext(ctx context.Context) (CommandResponse, error) {
 		return response, writeResponsePackets(ctx, l.Writer, response)
 	}
 	command.ConnectionID = l.ConnectionID
+	command.Username = l.Username
 	command.Database = l.Database
 	response, err := l.Handler.HandleCommand(ctx, command)
 	if err != nil {

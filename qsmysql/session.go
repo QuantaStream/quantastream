@@ -175,6 +175,7 @@ func (r *SessionRunner) ServeNextCommand(ctx context.Context) (CommandResponse, 
 		Writer:          r.Stream,
 		Handler:         r.Handler,
 		ConnectionID:    r.Connection.ID,
+		Username:        r.Connection.Username,
 		Database:        r.Connection.Database,
 		CapabilityFlags: r.Connection.CapabilityFlags,
 	}).ServeNext(ctx)

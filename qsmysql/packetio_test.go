@@ -68,6 +68,27 @@ func TestCommandLoopDecodesHandlesAndWritesResponse(t *testing.T) {
 	}
 }
 
+func TestCommandLoopAttachesSessionMetadata(t *testing.T) {
+	reader := &testPacketReader{packets: []Packet{{SequenceID: 0, Payload: []byte{byte(CommandPing)}}}}
+	writer := &testPacketWriter{}
+	handler := &testCommandHandler{}
+
+	_, err := (CommandLoop{
+		Reader:       reader,
+		Writer:       writer,
+		Handler:      handler,
+		ConnectionID: 42,
+		Username:     "bench",
+		Database:     "analytics",
+	}).ServeNext(context.Background())
+	if err != nil {
+		t.Fatalf("ServeNext failed: %v", err)
+	}
+	if handler.got.ConnectionID != 42 || handler.got.Username != "bench" || handler.got.Database != "analytics" {
+		t.Fatalf("command metadata = %#v, want connection/user/database", handler.got)
+	}
+}
+
 func TestCommandLoopShapesOKForSessionTrackCapability(t *testing.T) {
 	reader := &testPacketReader{packets: []Packet{{SequenceID: 0, Payload: []byte{byte(CommandPing)}}}}
 	writer := &testPacketWriter{}

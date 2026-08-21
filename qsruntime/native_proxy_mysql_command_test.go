@@ -62,6 +62,33 @@ func TestNativeProxyFrontDoorHandlesQueryCommandAsResultset(t *testing.T) {
 	}
 }
 
+func TestNativeProxyMySQLCommandHandlerPropagatesUserIntoPreparedSession(t *testing.T) {
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{
+		FrontDoor: frontDoor,
+		Profile:   NewNativeProxyMySQLSessionProfile(),
+	}
+
+	response, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindStmtPrepare, SQL: "select count(*) from orders", Username: "bench", Database: "analytics"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand prepare failed: %v", err)
+	}
+	if response.Kind != qsmysql.CommandResponsePrepared {
+		t.Fatalf("prepare response = %#v, want prepared", response)
+	}
+	prepared, ok := handler.Profile.PreparedStatements().Get(qsbridge.PreparedStatementHandle{ID: 1})
+	if !ok {
+		t.Fatalf("prepared statement was not registered")
+	}
+	if prepared.Session.User != "bench" || prepared.Session.CurrentSchema != "analytics" {
+		t.Fatalf("prepared session = %#v, want authenticated user and default schema", prepared.Session)
+	}
+}
+
 func TestNativeProxyFrontDoorHandlesQueryDiagnosticsAsError(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}, NativeProxyFrontDoorConfig{})
 
