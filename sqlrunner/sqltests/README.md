@@ -53,8 +53,13 @@ in `mutate_tests_body.yaml`, where QuantaStream-owned test tables are available.
 that currently depend on inline `CREATE TABLE`, `CREATE TABLE AS SELECT`, or
 post-load `ALTER TABLE` key and relationship catalog activation. Plain
 `ALTER TABLE ... ADD PRIMARY KEY` and `ADD FOREIGN KEY` parse and bind into
-validation metadata, but remain XFAIL until QS can run validation scans, build
-artifacts, and activate catalog metadata.
+validation metadata. `ADD PRIMARY KEY` now has runtime validation scaffolding:
+NULL checks use native bitmap count scans, and duplicate tuple checks use
+bounded projection materialization over proposed key columns. It remains XFAIL
+until QS rebuilds or probes primary-key authority artifacts and activates the
+catalog metadata as a durable first-class table change. `ADD FOREIGN KEY`
+remains XFAIL until QS runs parent-key/type/orphan checks and activates
+relationship catalog metadata.
 
 ## Capturing MySQL Reference Results
 

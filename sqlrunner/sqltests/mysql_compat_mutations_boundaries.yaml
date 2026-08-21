@@ -289,8 +289,8 @@ tests:
     kind: statement
     feature: mutations_alter_table_primary_key_execution_boundary
     compatibility: mysql
-    requires: [alter_table, add_primary_key, primary_key_validation, catalog_activation, primary_key_authority_artifacts]
-    issue: "Parser/binder support now models ALTER TABLE ... ADD PRIMARY KEY and the required null/duplicate validation steps. Execution still needs to run those scans, build primary-key authority artifacts, and activate the catalog metadata."
+    requires: [alter_table, add_primary_key, primary_key_null_validation, primary_key_duplicate_validation, catalog_activation, primary_key_authority_artifacts]
+    issue: "Parser/binder support now models ALTER TABLE ... ADD PRIMARY KEY and runtime validation can execute bitmap-native NULL checks plus materialization-backed duplicate tuple checks. This remains XFAIL until ADD PRIMARY KEY rebuilds/probes primary-key authority artifacts and activates catalog metadata as a durable first-class table change."
     sql: |
       alter table qs_mysql_compat_mutations_keys
       add primary key (id)
