@@ -12,6 +12,7 @@ var Cli struct {
 	Tables            TablesCmd            `cmd:"" help:"Show tables."`
 	Shutdown          ShutdownCmd          `cmd:"" help:"Shutdown cluster or one node."`
 	Backup            BackupCmd            `cmd:"" help:"Create, validate, or restore local storage backups."`
+	WAL               WALCmd               `cmd:"" help:"Inspect local write-ahead log state."`
 	Auth              AuthCmd              `cmd:"" help:"Manage local MySQL static auth account files."`
 	Access            AccessCmd            `cmd:"" help:"Manage local static SQL access policy files."`
 	FindKey           FindKeyCmd           `cmd:"" help:"Find nodes for key debug tool."`

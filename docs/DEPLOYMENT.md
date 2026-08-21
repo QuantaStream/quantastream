@@ -181,6 +181,16 @@ go run ./quanta-admin backup quiesce release \
   --lease-id <backup_quiescence_id>
 ```
 
+Local WAL inspection commands:
+
+```bash
+go run ./quanta-admin wal validate \
+  --path /tmp/quantastream-standard/storage.wal
+
+go run ./quanta-admin wal plan \
+  --path /tmp/quantastream-standard/storage.wal
+```
+
 Convenience startup command:
 
 ```bash
@@ -531,6 +541,20 @@ go run ./quanta-admin backup validate \
 Treat validation as part of the runbook, not an optional diagnostic. It confirms
 that every manifest entry exists, every file checksum matches, aggregate counts
 match, and the snapshot does not contain unmanifested files.
+
+Inspect the WAL/checkpoint pair directly when diagnosing local recovery:
+
+```bash
+go run ./quanta-admin wal validate \
+  --path /path/to/quantastream-data/storage.wal
+
+go run ./quanta-admin wal plan \
+  --path /path/to/quantastream-data/storage.wal
+```
+
+`wal validate` confirms the WAL and checkpoint can be read consistently.
+`wal plan` prints checkpointed, replayable, and pending tail counts. It is an
+inspection command only; startup replay remains the recovery path.
 
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
