@@ -379,7 +379,13 @@ func TestAlterTableAddPrimaryKeyCatalogOnlyStatusIncludesKnownRowCount(t *testin
 
 func TestValidateAlterTableAddPrimaryKeyCatalogOnlyAllowsUnknownLightweightCount(t *testing.T) {
 	handle := LegacyQuantaSessionHandle{}
-	result, diagnostics, err := handle.validateAlterTableAddPrimaryKeyCatalogOnly(context.Background(), "scratch_orders", qsbridge.MutationShape{})
+	result, diagnostics, err := handle.validateAlterTableAddPrimaryKeyCatalogOnly(context.Background(), "scratch_orders", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{{Name: "order_key", PrimaryKey: true}},
+		ValidationSteps: []qsbridge.MutationValidationStep{
+			{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+			{Kind: qsbridge.MutationValidationPrimaryKeyDuplicateScan},
+		},
+	})
 	if err != nil {
 		t.Fatalf("validateAlterTableAddPrimaryKeyCatalogOnly() error = %v", err)
 	}
@@ -401,6 +407,78 @@ func TestValidateAlterTableAddPrimaryKeyEmptyTablePropagatesContextCancellation(
 	}
 	if diagnostics.BlocksNative() {
 		t.Fatalf("validateAlterTableAddPrimaryKeyEmptyTable() diagnostics = %#v", diagnostics)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyValidationPlansBuildsNullAndDuplicateScans(t *testing.T) {
+	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans("scratch_orders", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "order_key", PrimaryKey: true},
+			{Name: "line_number", PrimaryKey: true},
+		},
+		ValidationSteps: []qsbridge.MutationValidationStep{
+			{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+			{Kind: qsbridge.MutationValidationPrimaryKeyDuplicateScan},
+		},
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("alterTableAddPrimaryKeyValidationPlans() diagnostics = %#v", diagnostics)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plans = %#v, want two plans", plans)
+	}
+	if plans[0].Mode != alterTableAddPrimaryKeyValidationNullScan || plans[1].Mode != alterTableAddPrimaryKeyValidationDuplicateScan {
+		t.Fatalf("plans = %#v, want null then duplicate scan", plans)
+	}
+	for _, plan := range plans {
+		if plan.Table != "scratch_orders" {
+			t.Fatalf("plan table = %q, want scratch_orders", plan.Table)
+		}
+		if got, want := strings.Join(plan.Columns, ","), "order_key,line_number"; got != want {
+			t.Fatalf("plan columns = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestAlterTableAddPrimaryKeyValidationPlansHonorsStepColumns(t *testing.T) {
+	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans("scratch_orders", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{{Name: "order_key", PrimaryKey: true}},
+		ValidationSteps: []qsbridge.MutationValidationStep{
+			{
+				Kind: qsbridge.MutationValidationPrimaryKeyNullScan,
+				Columns: []qsbridge.FieldRef{
+					{Name: "order_key", PrimaryKey: true},
+					{Name: "line_number", PrimaryKey: true},
+				},
+			},
+		},
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("alterTableAddPrimaryKeyValidationPlans() diagnostics = %#v", diagnostics)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %#v, want one plan", plans)
+	}
+	if got, want := strings.Join(plans[0].Columns, ","), "order_key,line_number"; got != want {
+		t.Fatalf("plan columns = %q, want %q", got, want)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyValidationPlansRejectsDuplicateColumns(t *testing.T) {
+	_, diagnostics := alterTableAddPrimaryKeyValidationPlans("scratch_orders", qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "order_key", PrimaryKey: true},
+			{Name: "ORDER_KEY", PrimaryKey: true},
+		},
+		ValidationSteps: []qsbridge.MutationValidationStep{
+			{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+		},
+	})
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want duplicate-column blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || !strings.Contains(diagnostics[0].Error(), "duplicate column") {
+		t.Fatalf("diagnostics = %#v, want duplicate-column message", diagnostics)
 	}
 }
 

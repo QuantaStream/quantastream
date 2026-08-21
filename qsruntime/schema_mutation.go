@@ -260,12 +260,89 @@ type alterTableAddPrimaryKeyValidationResult struct {
 	RowCountKnown bool
 }
 
+type alterTableAddPrimaryKeyValidationMode string
+
+const (
+	alterTableAddPrimaryKeyValidationNullScan      alterTableAddPrimaryKeyValidationMode = "pk_null_scan"
+	alterTableAddPrimaryKeyValidationDuplicateScan alterTableAddPrimaryKeyValidationMode = "pk_duplicate_scan"
+)
+
+type alterTableAddPrimaryKeyValidationPlan struct {
+	Mode    alterTableAddPrimaryKeyValidationMode
+	Table   string
+	Columns []string
+}
+
 func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyCatalogOnly(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
+	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans(tableName, mutation)
+	if diagnostics.BlocksNative() {
+		return alterTableAddPrimaryKeyValidationResult{}, diagnostics, nil
+	}
 	result, diagnostics, err := h.validateAlterTableAddPrimaryKeyEmptyTable(ctx, tableName, mutation)
 	if err != nil || diagnostics.BlocksNative() {
 		return result, diagnostics, err
 	}
+	_ = plans
 	return result, nil, nil
+}
+
+func alterTableAddPrimaryKeyValidationPlans(tableName string, mutation qsbridge.MutationShape) ([]alterTableAddPrimaryKeyValidationPlan, qsbridge.DiagnosticSet) {
+	columns, diagnostics := alterTableAddPrimaryKeyValidationColumns(mutation)
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	plans := make([]alterTableAddPrimaryKeyValidationPlan, 0, len(mutation.ValidationSteps))
+	for _, step := range mutation.ValidationSteps {
+		var mode alterTableAddPrimaryKeyValidationMode
+		switch step.Kind {
+		case qsbridge.MutationValidationPrimaryKeyNullScan:
+			mode = alterTableAddPrimaryKeyValidationNullScan
+		case qsbridge.MutationValidationPrimaryKeyDuplicateScan:
+			mode = alterTableAddPrimaryKeyValidationDuplicateScan
+		default:
+			continue
+		}
+		planColumns := columns
+		if len(step.Columns) > 0 {
+			planColumns, diagnostics = alterTableAddPrimaryKeyValidationColumns(qsbridge.MutationShape{Columns: step.Columns})
+			if diagnostics.BlocksNative() {
+				return nil, diagnostics
+			}
+		}
+		plans = append(plans, alterTableAddPrimaryKeyValidationPlan{
+			Mode:    mode,
+			Table:   tableName,
+			Columns: planColumns,
+		})
+	}
+	return plans, nil
+}
+
+func alterTableAddPrimaryKeyValidationColumns(mutation qsbridge.MutationShape) ([]string, qsbridge.DiagnosticSet) {
+	columns := make([]string, 0, len(mutation.Columns))
+	seen := make(map[string]struct{}, len(mutation.Columns))
+	for _, column := range mutation.Columns {
+		name := strings.TrimSpace(column.Name)
+		if name == "" {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY validation plan has an empty column"),
+			}
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return nil, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY validation plan has duplicate column: "+name),
+			}
+		}
+		seen[key] = struct{}{}
+		columns = append(columns, name)
+	}
+	if len(columns) == 0 {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD PRIMARY KEY validation plan requires columns"),
+		}
+	}
+	return columns, nil
 }
 
 func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyEmptyTable(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
