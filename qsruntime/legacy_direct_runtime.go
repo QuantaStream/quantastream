@@ -1592,6 +1592,10 @@ func (h LegacyQuantaSessionHandle) UpdateRows(ctx context.Context, request Execu
 	if err != nil || residualDiagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, residualDiagnostics, err
 	}
+	bitmapResult, orderLimitDiagnostics, err := h.applyMutationResultWindow(ctx, request, bitmapResult)
+	if err != nil || orderLimitDiagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, orderLimitDiagnostics, err
+	}
 	tableName := h.TableName
 	if request.Mutation.Target.Table != "" {
 		tableName = request.Mutation.Target.Table
@@ -1690,6 +1694,10 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 	if err != nil || residualDiagnostics.BlocksNative() {
 		return qsbridge.StatementResult{}, residualDiagnostics, err
 	}
+	bitmapResult, orderLimitDiagnostics, err := h.applyMutationResultWindow(ctx, request, bitmapResult)
+	if err != nil || orderLimitDiagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, orderLimitDiagnostics, err
+	}
 	tableName := h.TableName
 	if request.Mutation.Target.Table != "" {
 		tableName = request.Mutation.Target.Table
@@ -1714,6 +1722,60 @@ func (h LegacyQuantaSessionHandle) DeleteRows(ctx context.Context, request Execu
 		AffectedRows: uint64(len(bitmapResult.Rownums)),
 		Status:       fmt.Sprintf("Rows deleted: %d", len(bitmapResult.Rownums)),
 	}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) applyMutationResultWindow(ctx context.Context, request ExecutionRequest, bitmapResult BitmapQueryResult) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+	if len(request.OrderBy) == 0 && !request.Result.AppliesResultWindow() {
+		return bitmapResult, nil, nil
+	}
+	if len(bitmapResult.Rownums) == 0 {
+		return bitmapResult, nil, nil
+	}
+	rowSet := qsbridge.QuantaProjectedRowSet{Rownums: append([]qsbridge.QuantaRownum(nil), bitmapResult.Rownums...)}
+	if len(request.OrderBy) > 0 {
+		if h.Materialization == nil {
+			return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+				qsbridge.ErrorDiagnostic(
+					qsbridge.DiagnosticInternalInvariant,
+					qsbridge.PhaseExecute,
+					"mutation ORDER BY requires a projection materialization kernel",
+				),
+			}, nil
+		}
+		materialization, diagnostics := MaterializationRequestFromExecution(request, bitmapResult)
+		if diagnostics.BlocksNative() {
+			return BitmapQueryResult{}, diagnostics, nil
+		}
+		if len(materialization.ProjectionFields) > 0 {
+			materialized, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, materialization)
+			if err != nil || diagnostics.BlocksNative() {
+				return BitmapQueryResult{}, diagnostics, err
+			}
+			if diagnostics := materialized.ValidateShape(); diagnostics.BlocksNative() {
+				return BitmapQueryResult{}, diagnostics, nil
+			}
+			if materialized.CandidateCount() != len(bitmapResult.Rownums) {
+				return BitmapQueryResult{}, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(
+						qsbridge.DiagnosticInternalInvariant,
+						qsbridge.PhaseExecute,
+						"mutation ORDER BY materialization row count does not match selected row count",
+					),
+				}, nil
+			}
+			rowSet = materialized
+		}
+		var orderDiagnostics qsbridge.DiagnosticSet
+		rowSet, orderDiagnostics = directBitmapOrderProjectedRows(request, rowSet)
+		if orderDiagnostics.BlocksNative() {
+			return BitmapQueryResult{}, orderDiagnostics, nil
+		}
+	}
+	rowSet = directBitmapLimitProjectedRowSet(rowSet, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
+	filtered := bitmapResult.Clone()
+	filtered.Rownums = append([]qsbridge.QuantaRownum(nil), rowSet.Rownums...)
+	filtered.Count = uint64(len(filtered.Rownums))
+	return filtered, nil, nil
 }
 
 func (h LegacyQuantaSessionHandle) filterMutationResiduals(ctx context.Context, request ExecutionRequest, bitmapResult BitmapQueryResult) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {

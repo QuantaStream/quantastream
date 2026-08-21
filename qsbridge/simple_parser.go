@@ -570,7 +570,12 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("UPDATE must include SET"), false
 	}
-	if diagnostic, blocked := simpleMutationOrderLimitDiagnostic("UPDATE", mutationText); blocked {
+	mutationText, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(mutationText)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	mutationText, orderBy, _, diagnostic, ok := parseSimpleOrderByClause(mutationText)
+	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
 	if hasAnyTopLevelKeyword(targetText, "join") {
@@ -599,7 +604,8 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 			Table:       table,
 			Assignments: assignments,
 			Predicates:  predicates,
-			Result:      ResultShape{Kind: ResultStatement},
+			OrderBy:     orderBy,
+			Result:      ResultShape{Kind: ResultStatement, Limit: limit, HasLimit: hasLimit, Offset: offset},
 		},
 	}, Diagnostic{}, true
 }
@@ -649,7 +655,12 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("DELETE must include FROM"), false
 	}
-	if diagnostic, blocked := simpleMutationOrderLimitDiagnostic("DELETE", deleteBody); blocked {
+	deleteBody, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(deleteBody)
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	deleteBody, orderBy, _, diagnostic, ok := parseSimpleOrderByClause(deleteBody)
+	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
 	targetText, whereText, hasWhere := splitOptionalKeyword(deleteBody, "where")
@@ -673,21 +684,10 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 		Delete: UnboundDelete{
 			Table:      table,
 			Predicates: predicates,
-			Result:     ResultShape{Kind: ResultStatement},
+			OrderBy:    orderBy,
+			Result:     ResultShape{Kind: ResultStatement, Limit: limit, HasLimit: hasLimit, Offset: offset},
 		},
 	}, Diagnostic{}, true
-}
-
-func simpleMutationOrderLimitDiagnostic(statement string, text string) (Diagnostic, bool) {
-	if _, orderTail, ok := splitBeforeTopLevelKeyword(text, "order"); ok {
-		if _, ok := consumeKeyword(orderTail, "by"); ok {
-			return simpleParserDiagnostic(statement + " ORDER BY is not supported yet"), true
-		}
-	}
-	if _, _, ok := splitBeforeTopLevelKeyword(text, "limit"); ok {
-		return simpleParserDiagnostic(statement + " LIMIT is not supported yet"), true
-	}
-	return Diagnostic{}, false
 }
 
 func simpleInsertOnDuplicateKeyDiagnostic(text string) (Diagnostic, bool) {

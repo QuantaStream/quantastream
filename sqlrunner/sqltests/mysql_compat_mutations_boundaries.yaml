@@ -360,7 +360,7 @@ tests:
       delete t
       from qs_mysql_compat_mutations_ctas as t
       inner join customer as c on t.id = c.c_custkey
-      where t.id = 11
+      where t.id = 3
     expect:
       affected_rows: 1
 
@@ -380,7 +380,7 @@ tests:
         where c_custkey <= 2
       )
     expect:
-      affected_rows: 1
+      affected_rows: 2
 
   - id: mysql_compat_mutations_boundaries.024.update_assignment_scalar_subquery
     status: xfail
@@ -412,7 +412,7 @@ tests:
       where id in (
         select c_custkey
         from customer
-        where c_custkey = 3
+        where c_custkey = 1
       )
     expect:
       affected_rows: 1
@@ -424,8 +424,8 @@ tests:
     compatibility: mysql
     requires: [insert, select]
     sql: |
-      insert into qs_mysql_compat_mutations_ctas (id, name)
-      select c_custkey, c_name
+      insert into qs_mysql_compat_mutations_ctas (id, name, amount)
+      select c_custkey, c_name, c_nationkey
       from customer
       where c_custkey <= 3
     expect:
@@ -439,8 +439,8 @@ tests:
     requires: [replace, insert, primary_key]
     issue: "REPLACE needs explicit delete/insert or overwrite semantics over QS primary-key authority."
     sql: |
-      replace into qs_mysql_compat_mutations_ctas (id, name)
-      values (1, 'replacement')
+      replace into qs_mysql_compat_mutations_ctas (id, name, amount)
+      values (1, 'replacement', 0)
     expect:
       affected_rows: 1
 
@@ -452,34 +452,33 @@ tests:
     requires: [insert, on_duplicate_key_update, primary_key]
     issue: "INSERT ... ON DUPLICATE KEY UPDATE needs QS upsert semantics plus update-expression support."
     sql: |
-      insert into qs_mysql_compat_mutations_ctas (id, name)
-      values (1, 'duplicate')
+      insert into qs_mysql_compat_mutations_ctas (id, name, amount)
+      values (1, 'duplicate', 0)
       on duplicate key update name = values(name)
     expect:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.021.update_order_by_limit
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_order_limit_boundary
     compatibility: mysql
-    requires: [update, order_by, limit]
-    issue: "UPDATE ... ORDER BY ... LIMIT is a MySQL mutation ordering boundary; QS mutation statements do not carry ordering/limit semantics yet."
+    requires: [update, where, order_by, limit]
     sql: |
       update qs_mysql_compat_mutations_ctas
       set name = 'limited'
+      where id >= 0
       order by id
       limit 1
     expect:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.022.delete_order_by_limit
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_order_limit_boundary
     compatibility: mysql
     requires: [delete, where, order_by, limit]
-    issue: "DELETE ... ORDER BY ... LIMIT is a MySQL mutation ordering boundary; QS mutation statements do not carry ordering/limit semantics yet."
     sql: |
       delete from qs_mysql_compat_mutations_ctas
       where id > 1

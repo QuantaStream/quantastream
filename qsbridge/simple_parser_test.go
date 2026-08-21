@@ -17,6 +17,20 @@ func assertSimpleParserRejects(t *testing.T, sql string, message string) {
 	}
 }
 
+func assertSimpleParserOrderByField(t *testing.T, sorts []UnboundSort, fieldName string) {
+	t.Helper()
+	if len(sorts) != 1 {
+		t.Fatalf("order by = %#v, want one sort", sorts)
+	}
+	field, ok := sorts[0].Expr.(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("order by expr = %#v, want field", sorts[0].Expr)
+	}
+	if field.Name != fieldName {
+		t.Fatalf("order by field = %q, want %q", field.Name, fieldName)
+	}
+}
+
 func TestSimpleParserBridgeParsesUpdateStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set age = 99, phoneType = 'cell;home', last_name = 'Madden, Jr' where state = 'ID'")
 	if diagnostics.BlocksNative() {
@@ -121,38 +135,17 @@ func TestSimpleParserBridgeRejectsUpdateAssignmentScalarSubquery(t *testing.T) {
 	assertSimpleParserRejects(t, "update customers_qa set age = (select max(age) from customers_qa) where state = 'ID'", "UPDATE assignment scalar subqueries are not supported yet")
 }
 
-func TestSimpleParserBridgeRejectsUpdateOrderLimitBoundary(t *testing.T) {
-	tests := []struct {
-		name    string
-		sql     string
-		message string
-	}{
-		{
-			name:    "order by",
-			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id",
-			message: "UPDATE ORDER BY is not supported yet",
-		},
-		{
-			name:    "limit",
-			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' limit 1",
-			message: "UPDATE LIMIT is not supported yet",
-		},
-		{
-			name:    "order by limit",
-			sql:     "update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id limit 1",
-			message: "UPDATE ORDER BY is not supported yet",
-		},
+func TestSimpleParserBridgeParsesUpdateOrderLimitBoundary(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set phoneType = 'cell' where state = 'ID' order by cust_id limit 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, diagnostics := SimpleParserBridge{}.Parse(test.sql)
-			if !diagnostics.BlocksNative() {
-				t.Fatalf("diagnostics = %#v, want parser blocker", diagnostics)
-			}
-			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
-				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
-			}
-		})
+	if statement.Kind != QueryKindUpdate {
+		t.Fatalf("kind = %q, want update", statement.Kind)
+	}
+	assertSimpleParserOrderByField(t, statement.Update.OrderBy, "cust_id")
+	if !statement.Update.Result.HasLimit || statement.Update.Result.Limit != 1 || statement.Update.Result.Offset != 0 {
+		t.Fatalf("result = %#v, want LIMIT 1", statement.Update.Result)
 	}
 }
 
@@ -214,38 +207,17 @@ func TestSimpleParserBridgeParsesDeleteWithoutWhereForValidation(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsDeleteOrderLimitBoundary(t *testing.T) {
-	tests := []struct {
-		name    string
-		sql     string
-		message string
-	}{
-		{
-			name:    "order by",
-			sql:     "delete from customers_qa where state = 'ID' order by cust_id",
-			message: "DELETE ORDER BY is not supported yet",
-		},
-		{
-			name:    "limit",
-			sql:     "delete from customers_qa where state = 'ID' limit 1",
-			message: "DELETE LIMIT is not supported yet",
-		},
-		{
-			name:    "limit without where",
-			sql:     "delete from customers_qa limit 1",
-			message: "DELETE LIMIT is not supported yet",
-		},
+func TestSimpleParserBridgeParsesDeleteOrderLimitBoundary(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("delete from customers_qa where state = 'ID' order by cust_id limit 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, diagnostics := SimpleParserBridge{}.Parse(test.sql)
-			if !diagnostics.BlocksNative() {
-				t.Fatalf("diagnostics = %#v, want parser blocker", diagnostics)
-			}
-			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), test.message) {
-				t.Fatalf("diagnostics = %#v, want message containing %q", diagnostics, test.message)
-			}
-		})
+	if statement.Kind != QueryKindDelete {
+		t.Fatalf("kind = %q, want delete", statement.Kind)
+	}
+	assertSimpleParserOrderByField(t, statement.Delete.OrderBy, "cust_id")
+	if !statement.Delete.Result.HasLimit || statement.Delete.Result.Limit != 1 || statement.Delete.Result.Offset != 0 {
+		t.Fatalf("result = %#v, want LIMIT 1", statement.Delete.Result)
 	}
 }
 

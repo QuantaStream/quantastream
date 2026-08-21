@@ -196,6 +196,7 @@ type UnboundUpdate struct {
 	Table       UnboundTable
 	Assignments []UnboundAssignment
 	Predicates  []UnboundPredicate
+	OrderBy     []UnboundSort
 	Result      ResultShape
 	Blockers    []NativeBlocker
 }
@@ -204,6 +205,7 @@ type UnboundUpdate struct {
 type UnboundDelete struct {
 	Table      UnboundTable
 	Predicates []UnboundPredicate
+	OrderBy    []UnboundSort
 	Result     ResultShape
 	Blockers   []NativeBlocker
 }
@@ -952,6 +954,11 @@ func BindUpdate(context *BindContext, updateStmt UnboundUpdate) (QueryIR, Diagno
 		return query, diagnostics
 	}
 
+	query.OrderBy = bindMutationOrderBy(context, updateStmt.OrderBy, &diagnostics)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+
 	query.Mutation = MutationShape{
 		Kind:        MutationUpdate,
 		Target:      target.Instance,
@@ -970,6 +977,11 @@ func BindDelete(context *BindContext, deleteStmt UnboundDelete) (QueryIR, Diagno
 	}
 
 	predicates := bindMutationPredicates(context, deleteStmt.Predicates, &diagnostics)
+	if diagnostics.BlocksNative() {
+		return query, diagnostics
+	}
+
+	query.OrderBy = bindMutationOrderBy(context, deleteStmt.OrderBy, &diagnostics)
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
@@ -3377,6 +3389,19 @@ func bindMutationPredicates(context *BindContext, predicates []UnboundPredicate,
 		boundPredicates = append(boundPredicates, bound)
 	}
 	return boundPredicates
+}
+
+func bindMutationOrderBy(context *BindContext, sorts []UnboundSort, diagnostics *DiagnosticSet) []SortSpec {
+	orderBy := make([]SortSpec, 0, len(sorts))
+	for _, sort := range sorts {
+		expr, exprDiagnostics := BindExpression(context, sort.Expr, FieldRoleSortKey)
+		if exprDiagnostics.BlocksNative() {
+			*diagnostics = append(*diagnostics, exprDiagnostics...)
+			continue
+		}
+		orderBy = append(orderBy, SortSpec{Expr: expr, Direction: sort.Direction})
+	}
+	return orderBy
 }
 
 func joinKindOrInner(kind JoinKind) JoinKind {
