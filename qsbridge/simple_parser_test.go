@@ -131,8 +131,23 @@ func TestSimpleParserBridgeParsesUpdateAssignmentExpressions(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsUpdateAssignmentScalarSubquery(t *testing.T) {
-	assertSimpleParserRejects(t, "update customers_qa set age = (select max(age) from customers_qa) where state = 'ID'", "UPDATE assignment scalar subqueries are not supported yet")
+func TestSimpleParserBridgeParsesUpdateAssignmentScalarSubquery(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set age = (select max(age) from customers_qa where score > 0) where state = 'ID'")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindUpdate {
+		t.Fatalf("kind = %q, want update", statement.Kind)
+	}
+	if got, want := len(statement.Update.Assignments), 1; got != want {
+		t.Fatalf("assignments = %d, want %d", got, want)
+	}
+	if _, ok := statement.Update.Assignments[0].Value.(UnboundScalarSubqueryExpr); !ok {
+		t.Fatalf("assignment value = %#v, want scalar subquery", statement.Update.Assignments[0].Value)
+	}
+	if got, want := len(statement.Update.Predicates), 1; got != want {
+		t.Fatalf("predicates = %d, want %d", got, want)
+	}
 }
 
 func TestSimpleParserBridgeParsesUpdateOrderLimitBoundary(t *testing.T) {

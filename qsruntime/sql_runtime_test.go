@@ -2049,6 +2049,47 @@ having c > (
 	}
 }
 
+func TestSQLRuntimeExecuteSQLMaterializesScalarSubqueryInUpdateAssignment(t *testing.T) {
+	var updateRequest ExecutionRequest
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		if request.Mutation.Kind == qsbridge.MutationUpdate {
+			updateRequest = request
+			return ExecutionResult{Statement: qsbridge.StatementResult{AffectedRows: 1}}, nil
+		}
+		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{
+			Rownums: []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+				Values: []qsbridge.ResultCell{{Kind: qsbridge.ValueString, Value: "1-URGENT"}},
+			}},
+		}}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `update orders
+set o_orderpriority = (
+  select o_orderpriority
+  from orders
+  where o_orderkey = 1
+)
+where o_orderkey = 7`, qsbridge.ExecutionOptions{})
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if got := updateRequest.Mutation.Kind; got != qsbridge.MutationUpdate {
+		t.Fatalf("mutation kind = %q, want update", got)
+	}
+	if got, want := len(updateRequest.Mutation.Assignments), 1; got != want {
+		t.Fatalf("assignments = %d, want %d", got, want)
+	}
+	literal, ok := updateRequest.Mutation.Assignments[0].Value.(qsbridge.LiteralExpr)
+	if !ok || literal.Kind != qsbridge.ValueString || literal.Value != "1-URGENT" {
+		t.Fatalf("assignment value = %#v, want materialized string literal", updateRequest.Mutation.Assignments[0].Value)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLAppliesCorrelatedAggregateNativePredicate(t *testing.T) {
 	var gotRequest ExecutionRequest
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

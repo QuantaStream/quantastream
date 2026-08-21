@@ -76,7 +76,57 @@ func (r SQLRuntime) materializeScalarSubqueriesInQuery(ctx context.Context, quer
 			changed = true
 		}
 	}
+	mutation, mutationDiagnostics, mutationChanged, err := r.materializeScalarSubqueriesInMutation(ctx, query.Mutation, options)
+	diagnostics = append(diagnostics, mutationDiagnostics...)
+	if err != nil || diagnostics.BlocksNative() {
+		return query, diagnostics, changed || mutationChanged, err
+	}
+	if mutationChanged {
+		query.Mutation = mutation
+		changed = true
+	}
 	return query, diagnostics, changed, nil
+}
+
+func (r SQLRuntime) materializeScalarSubqueriesInMutation(ctx context.Context, mutation qsbridge.MutationShape, options qsbridge.ExecutionOptions) (qsbridge.MutationShape, qsbridge.DiagnosticSet, bool, error) {
+	changed := false
+	diagnostics := qsbridge.DiagnosticSet(nil)
+	for rowIndex := range mutation.Rows {
+		for valueIndex := range mutation.Rows[rowIndex].Values {
+			expr, exprDiagnostics, exprChanged, err := r.materializeScalarSubqueriesInExpr(ctx, mutation.Rows[rowIndex].Values[valueIndex], options)
+			diagnostics = append(diagnostics, exprDiagnostics...)
+			if err != nil || diagnostics.BlocksNative() {
+				return mutation, diagnostics, changed || exprChanged, err
+			}
+			if exprChanged {
+				mutation.Rows[rowIndex].Values[valueIndex] = expr
+				changed = true
+			}
+		}
+	}
+	for assignmentIndex := range mutation.Assignments {
+		expr, exprDiagnostics, exprChanged, err := r.materializeScalarSubqueriesInExpr(ctx, mutation.Assignments[assignmentIndex].Value, options)
+		diagnostics = append(diagnostics, exprDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return mutation, diagnostics, changed || exprChanged, err
+		}
+		if exprChanged {
+			mutation.Assignments[assignmentIndex].Value = expr
+			changed = true
+		}
+	}
+	for predicateIndex := range mutation.Predicates {
+		expr, exprDiagnostics, exprChanged, err := r.materializeScalarSubqueriesInExpr(ctx, mutation.Predicates[predicateIndex].Expr, options)
+		diagnostics = append(diagnostics, exprDiagnostics...)
+		if err != nil || diagnostics.BlocksNative() {
+			return mutation, diagnostics, changed || exprChanged, err
+		}
+		if exprChanged {
+			mutation.Predicates[predicateIndex].Expr = expr
+			changed = true
+		}
+	}
+	return mutation, diagnostics, changed, nil
 }
 
 func (r SQLRuntime) materializeScalarSubqueriesInExpr(ctx context.Context, expr qsbridge.Expr, options qsbridge.ExecutionOptions) (qsbridge.Expr, qsbridge.DiagnosticSet, bool, error) {

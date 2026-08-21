@@ -585,7 +585,7 @@ func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
-	assignmentText, whereText, hasWhere := splitOptionalKeyword(mutationText, "where")
+	assignmentText, whereText, hasWhere := splitOptionalTopLevelKeyword(mutationText, "where")
 	assignments, parameterIndex, diagnostic, ok := parseSimpleUpdateAssignments(assignmentText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
@@ -663,7 +663,7 @@ func parseSimpleDelete(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
-	targetText, whereText, hasWhere := splitOptionalKeyword(deleteBody, "where")
+	targetText, whereText, hasWhere := splitOptionalTopLevelKeyword(deleteBody, "where")
 	if hasAnyTopLevelKeyword(targetText, "join") {
 		return UnboundStatement{}, simpleParserDiagnostic("DELETE JOIN is not supported yet"), false
 	}
@@ -717,8 +717,8 @@ func parseSimpleUpdateAssignmentValue(text string, parameterIndex *int) (Unbound
 	if literal, diagnostic, ok := parseSimpleLiteral(text); ok || diagnostic.Code != "" && !simpleUpdateAssignmentLooksLikeExpression(text) {
 		return literal, diagnostic, ok
 	}
-	if _, ok := parseSimpleScalarSubqueryExpression(text, PredicateScopeWhere); ok {
-		return nil, simpleParserDiagnostic("UPDATE assignment scalar subqueries are not supported yet"), false
+	if subquery, ok := parseSimpleScalarSubqueryExpression(text, PredicateScopeWhere); ok {
+		return subquery, Diagnostic{}, true
 	}
 	if expr, ok := parseSimpleScalarExpression(text); ok {
 		return expr, Diagnostic{}, true
@@ -6715,6 +6715,14 @@ func isSimpleKeywordBoundary(text string, index int) bool {
 
 func splitOptionalKeyword(text string, keyword string) (string, string, bool) {
 	left, right, ok := splitBeforeKeyword(text, keyword)
+	if ok {
+		return left, right, true
+	}
+	return text, "", false
+}
+
+func splitOptionalTopLevelKeyword(text string, keyword string) (string, string, bool) {
+	left, right, ok := splitBeforeTopLevelKeyword(text, keyword)
 	if ok {
 		return left, right, true
 	}

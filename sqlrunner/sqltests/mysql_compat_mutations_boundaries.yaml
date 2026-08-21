@@ -383,15 +383,14 @@ tests:
       affected_rows: 2
 
   - id: mysql_compat_mutations_boundaries.024.update_assignment_scalar_subquery
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_assignment_scalar_subquery_boundary
     compatibility: mysql
     requires: [update, scalar_subquery, aggregate, where, comparison]
-    issue: "UPDATE assignment scalar subqueries need explicit write-time subquery materialization; row-local assignment expressions are supported on catalog-backed tables."
     sql: |
       update qs_mysql_compat_mutations_ctas
-      set id = (
+      set amount = (
         select max(c_custkey)
         from customer
         where c_custkey <= 4
