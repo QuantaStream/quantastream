@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -49,6 +51,50 @@ func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
 	}
 	if manifest.Mode != core.LocalStorageBackupModeQuiescent {
 		t.Fatalf("manifest mode = %s, want quiescent", manifest.Mode)
+	}
+}
+
+func TestBackupQuiesceCommandsStatusAndReleaseLease(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+	lease, err := core.BeginLocalStorageQuiescence(context.Background(), core.BeginLocalStorageQuiescenceRequest{
+		DataDir: dataDir,
+		Owner:   "unit-test",
+		Reason:  "stale lease smoke",
+	})
+	if err != nil {
+		t.Fatalf("BeginLocalStorageQuiescence returned error: %v", err)
+	}
+
+	if err := (&BackupQuiesceStatusCmd{DataDir: dataDir}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupQuiesceStatusCmd.Run returned error: %v", err)
+	}
+	if err := (&BackupQuiesceReleaseCmd{DataDir: dataDir, LeaseID: lease.ID}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupQuiesceReleaseCmd.Run returned error: %v", err)
+	}
+	if _, found, err := core.ObserveLocalStorageQuiescence(dataDir); err != nil || found {
+		t.Fatalf("ObserveLocalStorageQuiescence after release found=%t err=%v, want absent", found, err)
+	}
+}
+
+func TestBackupQuiesceReleaseRequiresLeaseIDOrForce(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+	if _, err := core.BeginLocalStorageQuiescence(context.Background(), core.BeginLocalStorageQuiescenceRequest{DataDir: dataDir}); err != nil {
+		t.Fatalf("BeginLocalStorageQuiescence returned error: %v", err)
+	}
+	err := (&BackupQuiesceReleaseCmd{DataDir: dataDir}).Run(&Context{})
+	if err == nil || !strings.Contains(err.Error(), "--lease-id or --force") {
+		t.Fatalf("BackupQuiesceReleaseCmd.Run error = %v, want lease-id/force requirement", err)
+	}
+	if _, found, err := core.ObserveLocalStorageQuiescence(dataDir); err != nil || !found {
+		t.Fatalf("ObserveLocalStorageQuiescence after rejected release found=%t err=%v, want active", found, err)
 	}
 }
 

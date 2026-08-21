@@ -12,6 +12,7 @@ type BackupCmd struct {
 	Create   BackupCreateCmd   `cmd:"" help:"Create a local filesystem storage backup."`
 	Validate BackupValidateCmd `cmd:"" help:"Validate a local filesystem storage backup."`
 	Restore  BackupRestoreCmd  `cmd:"" help:"Restore a local filesystem storage backup into an empty data directory."`
+	Quiesce  BackupQuiesceCmd  `cmd:"" help:"Inspect or release local backup quiescence leases."`
 }
 
 type BackupCreateCmd struct {
@@ -28,6 +29,21 @@ type BackupValidateCmd struct {
 type BackupRestoreCmd struct {
 	Source  string `help:"Backup source directory. Supports file:///path or a local path." required:""`
 	DataDir string `help:"Empty QuantaStream data directory to restore into." default:"data"`
+}
+
+type BackupQuiesceCmd struct {
+	Status  BackupQuiesceStatusCmd  `cmd:"" help:"Show the active local backup quiescence lease, if any."`
+	Release BackupQuiesceReleaseCmd `cmd:"" help:"Release an active local backup quiescence lease."`
+}
+
+type BackupQuiesceStatusCmd struct {
+	DataDir string `help:"QuantaStream data directory to inspect." default:"data"`
+}
+
+type BackupQuiesceReleaseCmd struct {
+	DataDir string `help:"QuantaStream data directory to release." default:"data"`
+	LeaseID string `help:"Expected active lease id. Omit only with --force."`
+	Force   bool   `help:"Release the active lease without matching an expected lease id." default:"false"`
 }
 
 func (c *BackupCreateCmd) Run(ctx *Context) error {
@@ -81,6 +97,52 @@ func (c *BackupRestoreCmd) Run(ctx *Context) error {
 	return nil
 }
 
+func (c *BackupQuiesceStatusCmd) Run(ctx *Context) error {
+	path, err := core.LocalStorageQuiescencePath(c.DataDir)
+	if err != nil {
+		return err
+	}
+	lease, found, err := core.ObserveLocalStorageQuiescence(c.DataDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("backup_quiescence_path=%s\n", path)
+	fmt.Printf("backup_quiescence_active=%t\n", found)
+	if found {
+		printBackupQuiescenceLeaseSummary(lease)
+	}
+	return nil
+}
+
+func (c *BackupQuiesceReleaseCmd) Run(ctx *Context) error {
+	if c.LeaseID == "" && !c.Force {
+		return fmt.Errorf("backup quiesce release requires --lease-id or --force")
+	}
+	path, err := core.LocalStorageQuiescencePath(c.DataDir)
+	if err != nil {
+		return err
+	}
+	lease, found, err := core.ObserveLocalStorageQuiescence(c.DataDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("backup_quiescence_path=%s\n", path)
+	if !found {
+		fmt.Printf("backup_quiescence_active=false\n")
+		return nil
+	}
+	leaseID := c.LeaseID
+	if c.Force {
+		leaseID = ""
+	}
+	if err := core.EndLocalStorageQuiescence(c.DataDir, leaseID); err != nil {
+		return err
+	}
+	fmt.Printf("backup_quiescence_released=true\n")
+	printBackupQuiescenceLeaseSummary(lease)
+	return nil
+}
+
 func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	fmt.Printf("backup_format=%s\n", manifest.Format)
 	fmt.Printf("backup_version=%d\n", manifest.Version)
@@ -105,5 +167,31 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	}
 	if manifest.Checkpoint.WALPendingRecords != 0 {
 		fmt.Printf("backup_wal_pending_records=%d\n", manifest.Checkpoint.WALPendingRecords)
+	}
+}
+
+func printBackupQuiescenceLeaseSummary(lease core.LocalStorageQuiescenceLease) {
+	fmt.Printf("backup_quiescence_id=%s\n", lease.ID)
+	fmt.Printf("backup_quiescence_owner=%s\n", lease.Owner)
+	fmt.Printf("backup_quiescence_reason=%s\n", lease.Reason)
+	fmt.Printf("backup_quiescence_data_dir=%s\n", lease.DataDir)
+	fmt.Printf("backup_quiescence_created_at=%s\n", lease.CreatedAt.Format("2006-01-02T15:04:05Z07:00"))
+	if lease.WALPath != "" {
+		fmt.Printf("backup_quiescence_wal_path=%s\n", lease.WALPath)
+	}
+	if lease.WALCheckpointPath != "" {
+		fmt.Printf("backup_quiescence_wal_checkpoint_path=%s\n", lease.WALCheckpointPath)
+	}
+	if lease.CheckpointLSN != 0 {
+		fmt.Printf("backup_quiescence_checkpoint_lsn=%d\n", lease.CheckpointLSN)
+	}
+	if lease.LastLSN != 0 {
+		fmt.Printf("backup_quiescence_last_lsn=%d\n", lease.LastLSN)
+	}
+	if lease.ReplayRecords != 0 {
+		fmt.Printf("backup_quiescence_replay_records=%d\n", lease.ReplayRecords)
+	}
+	if lease.PendingRecords != 0 {
+		fmt.Printf("backup_quiescence_pending_records=%d\n", lease.PendingRecords)
 	}
 }

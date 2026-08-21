@@ -160,6 +160,13 @@ go run ./quanta-admin backup validate \
 go run ./quanta-admin backup restore \
   --source file:///tmp/quantastream-standard-backup \
   --data-dir /tmp/quantastream-standard-restore
+
+go run ./quanta-admin backup quiesce status \
+  --data-dir /tmp/quantastream-standard
+
+go run ./quanta-admin backup quiesce release \
+  --data-dir /tmp/quantastream-standard \
+  --lease-id <backup_quiescence_id>
 ```
 
 Convenience startup command:
