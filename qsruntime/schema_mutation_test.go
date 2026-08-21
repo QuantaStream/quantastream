@@ -336,6 +336,53 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyUpdatesFile
 	}
 }
 
+func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyAllowsActiveCatalogWithoutRootAsEmpty(t *testing.T) {
+	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "")
+	configDir := t.TempDir()
+	writeSchemaMutationKeylessCatalogSchema(t, configDir, "scratch_orders")
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "scratch_orders", testSchemaMutationTime()); err != nil {
+		t.Fatalf("ActivateCatalogTable() error = %v", err)
+	}
+	handle := LegacyQuantaSessionHandle{
+		TableName: "scratch_orders",
+		Session: &core.Session{
+			BasePath: configDir,
+			BitIndex: &shared.BitmapIndex{},
+		},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationAlterTableAddPrimaryKey,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "scratch_orders"},
+			Columns: []qsbridge.FieldRef{
+				{Name: "order_key", PrimaryKey: true, Nullable: false},
+			},
+			ValidationSteps: []qsbridge.MutationValidationStep{
+				{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+				{Kind: qsbridge.MutationValidationPrimaryKeyDuplicateScan},
+			},
+		},
+	}
+
+	statement, diagnostics, err := handle.AlterTableAddPrimaryKey(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AlterTableAddPrimaryKey() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("AlterTableAddPrimaryKey() diagnostics = %#v", diagnostics)
+	}
+	if statement.Status != "Primary key added to table scratch_orders (catalog-only row_count=0)" {
+		t.Fatalf("status = %q, want catalog-only zero-row status", statement.Status)
+	}
+	table, err := shared.LoadSchema(configDir, "scratch_orders", nil)
+	if err != nil {
+		t.Fatalf("LoadSchema() error = %v", err)
+	}
+	if table.PrimaryKey != "order_key" {
+		t.Fatalf("primary key = %q, want order_key", table.PrimaryKey)
+	}
+}
+
 func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyRequiresValidationSteps(t *testing.T) {
 	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "1")
 	handle := LegacyQuantaSessionHandle{
@@ -437,7 +484,7 @@ func TestAlterTableAddPrimaryKeyActivationDiagnosticsAllowsCatalogOnlyOverride(t
 
 func TestValidateAlterTableAddPrimaryKeyCatalogOnlyAllowsUnknownLightweightCount(t *testing.T) {
 	handle := LegacyQuantaSessionHandle{}
-	result, diagnostics, err := handle.validateAlterTableAddPrimaryKeyCatalogOnly(context.Background(), "scratch_orders", qsbridge.MutationShape{
+	result, diagnostics, err := handle.validateAlterTableAddPrimaryKeyCatalogOnly(context.Background(), "quanta", "scratch_orders", qsbridge.MutationShape{
 		Columns: []qsbridge.FieldRef{{Name: "order_key", PrimaryKey: true}},
 		ValidationSteps: []qsbridge.MutationValidationStep{
 			{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
@@ -465,7 +512,7 @@ func TestValidateAlterTableAddPrimaryKeyRowCountPropagatesContextCancellation(t 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	handle := LegacyQuantaSessionHandle{}
-	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyRowCount(ctx, "scratch_orders", qsbridge.MutationShape{}, nil)
+	_, diagnostics, err := handle.validateAlterTableAddPrimaryKeyRowCount(ctx, "quanta", "scratch_orders", qsbridge.MutationShape{}, nil)
 	if err == nil {
 		t.Fatalf("validateAlterTableAddPrimaryKeyRowCount() error = nil, want context cancellation")
 	}

@@ -268,6 +268,37 @@ tests:
     sql: |
       drop table if exists qs_mysql_compat_mutations_keys
 
+  - id: mysql_compat_mutations_boundaries.040.drop_empty_ctas_keys_table_if_exists
+    status: supported
+    kind: statement
+    feature: mutations_ddl_safe_noop
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_empty_keys
+
+  - id: mysql_compat_mutations_boundaries.041.create_empty_ctas_table_for_alter_primary_key
+    status: supported
+    kind: statement
+    feature: mutations_ctas
+    compatibility: mysql
+    requires: [create_table_as, select]
+    sql: |
+      create table qs_mysql_compat_mutations_empty_keys as
+      select c_name as id, c_mktsegment as name
+      from customer
+      where c_custkey < 0
+
+  - id: mysql_compat_mutations_boundaries.042.alter_table_add_primary_key_empty_table
+    status: supported
+    kind: statement
+    feature: mutations_alter_table_primary_key_empty_table
+    compatibility: mysql
+    requires: [alter_table, add_primary_key, empty_table, catalog_activation]
+    sql: |
+      alter table qs_mysql_compat_mutations_empty_keys
+      add primary key (id)
+
   - id: mysql_compat_mutations_boundaries.036.create_ctas_table_for_alter_keys
     status: supported
     kind: statement
@@ -286,7 +317,7 @@ tests:
     feature: mutations_alter_table_primary_key_execution_boundary
     compatibility: mysql
     requires: [alter_table, add_primary_key, primary_key_null_validation, primary_key_duplicate_validation, catalog_activation, primary_key_authority_artifacts]
-    issue: "Parser/binder support now models ALTER TABLE ... ADD PRIMARY KEY and runtime validation can execute bitmap-native NULL checks plus materialization-backed duplicate tuple checks. This remains XFAIL until ADD PRIMARY KEY rebuilds/probes primary-key authority artifacts and activates catalog metadata as a durable first-class table change."
+    issue: "ALTER TABLE ... ADD PRIMARY KEY now activates catalog metadata for proven-empty tables. This non-empty-table path remains XFAIL until QS rebuilds/probes primary-key authority artifacts before durable catalog activation."
     sql: |
       alter table qs_mysql_compat_mutations_keys
       add primary key (id)
@@ -549,3 +580,12 @@ tests:
     requires: [drop_table, if_exists]
     sql: |
       drop table if exists qs_mysql_compat_mutations_keys
+
+  - id: mysql_compat_mutations_boundaries.903.cleanup_empty_ctas_keys
+    status: supported
+    kind: statement
+    feature: mutations_ddl_safe_noop
+    compatibility: mysql
+    requires: [drop_table, if_exists]
+    sql: |
+      drop table if exists qs_mysql_compat_mutations_empty_keys
