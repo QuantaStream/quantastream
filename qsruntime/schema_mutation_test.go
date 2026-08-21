@@ -561,6 +561,53 @@ func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsDetectsDuplicateTuple(
 	}
 }
 
+func TestAlterTableAddPrimaryKeyDuplicateScanStateDetectsDuplicateAcrossProjectedRowSets(t *testing.T) {
+	plan := alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key"},
+	}
+	state := alterTableAddPrimaryKeyDuplicateScanState{}
+	first := qsbridge.QuantaProjectedRowSet{
+		Index:   "scratch_orders",
+		Rownums: []qsbridge.QuantaRownum{11},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "scratch_orders", Field: "order_key"},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(100)},
+				},
+			},
+		},
+	}
+	result, diagnostics := state.projectRows(plan, first)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("ProjectRows(first) diagnostics = %#v", diagnostics)
+	}
+	if !result.Known || result.Count != 0 {
+		t.Fatalf("first result = %#v, want clean known batch", result)
+	}
+	second := qsbridge.QuantaProjectedRowSet{
+		Index:   "scratch_orders",
+		Rownums: []qsbridge.QuantaRownum{42},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{
+			{
+				Field: qsbridge.QuantaProjectionField{Index: "scratch_orders", Field: "order_key"},
+				Values: []qsbridge.ResultCell{
+					{Kind: qsbridge.ValueInt, Value: int64(100)},
+				},
+			},
+		},
+	}
+	result, diagnostics = state.projectRows(plan, second)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("ProjectRows(second) diagnostics = %#v", diagnostics)
+	}
+	if !result.Known || result.Count != 2 || result.FirstRownum != 11 || result.DuplicateRownum != 42 {
+		t.Fatalf("second result = %#v, want duplicate across batches", result)
+	}
+}
+
 func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsAcceptsUniqueTuples(t *testing.T) {
 	plan := alterTableAddPrimaryKeyValidationPlan{
 		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
@@ -586,6 +633,27 @@ func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsAcceptsUniqueTuples(t 
 	}
 	if !result.Known || result.Count != 0 {
 		t.Fatalf("result = %#v, want known clean duplicate scan", result)
+	}
+}
+
+func TestAlterTableAddPrimaryKeyDuplicateScanRownumBatchesCopiesBoundedBatches(t *testing.T) {
+	rownums := []qsbridge.QuantaRownum{1, 2, 3, 4, 5}
+	batches := alterTableAddPrimaryKeyDuplicateScanRownumBatches(rownums, 2)
+	if len(batches) != 3 {
+		t.Fatalf("batches = %#v, want 3 batches", batches)
+	}
+	if got, want := fmt.Sprint(batches[0]), "[1 2]"; got != want {
+		t.Fatalf("batch[0] = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(batches[1]), "[3 4]"; got != want {
+		t.Fatalf("batch[1] = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(batches[2]), "[5]"; got != want {
+		t.Fatalf("batch[2] = %s, want %s", got, want)
+	}
+	rownums[0] = 99
+	if batches[0][0] != 1 {
+		t.Fatalf("batch[0][0] = %d, want copied rownum", batches[0][0])
 	}
 }
 

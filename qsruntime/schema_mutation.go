@@ -17,6 +17,7 @@ import (
 )
 
 const alterTableAddPrimaryKeyCatalogOnlyEnv = "QUANTASTREAM_SCHEMA_MUTATION_ADD_PRIMARY_KEY_CATALOG_ONLY"
+const alterTableAddPrimaryKeyDuplicateScanBatchSize = 10000
 
 // NewLegacySchemaMutationHandle creates a short-lived handle for schema mutations
 // that must read YAML before the target table is active in the runtime catalog.
@@ -290,6 +291,10 @@ type alterTableAddPrimaryKeyDuplicateScanResult struct {
 	DuplicateRownum qsbridge.QuantaRownum
 }
 
+type alterTableAddPrimaryKeyDuplicateScanState struct {
+	Seen map[string]alterTableAddPrimaryKeyDuplicateScanResult
+}
+
 func (h LegacyQuantaSessionHandle) validateAlterTableAddPrimaryKeyCatalogOnly(ctx context.Context, tableName string, mutation qsbridge.MutationShape) (alterTableAddPrimaryKeyValidationResult, qsbridge.DiagnosticSet, error) {
 	plans, diagnostics := alterTableAddPrimaryKeyValidationPlans(tableName, mutation)
 	if diagnostics.BlocksNative() {
@@ -483,6 +488,11 @@ func alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(plan alterTableA
 }
 
 func alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan alterTableAddPrimaryKeyValidationPlan, rowSet qsbridge.QuantaProjectedRowSet) (alterTableAddPrimaryKeyDuplicateScanResult, qsbridge.DiagnosticSet) {
+	state := alterTableAddPrimaryKeyDuplicateScanState{}
+	return state.projectRows(plan, rowSet)
+}
+
+func (s *alterTableAddPrimaryKeyDuplicateScanState) projectRows(plan alterTableAddPrimaryKeyValidationPlan, rowSet qsbridge.QuantaProjectedRowSet) (alterTableAddPrimaryKeyDuplicateScanResult, qsbridge.DiagnosticSet) {
 	if diagnostics := rowSet.ValidateShape(); diagnostics.BlocksNative() {
 		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics
 	}
@@ -490,7 +500,9 @@ func alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan alterTableAddPrimary
 	if diagnostics.BlocksNative() {
 		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics
 	}
-	seen := make(map[string]alterTableAddPrimaryKeyDuplicateScanResult, rowSet.CandidateCount())
+	if s.Seen == nil {
+		s.Seen = make(map[string]alterTableAddPrimaryKeyDuplicateScanResult, rowSet.CandidateCount())
+	}
 	for rowIndex := 0; rowIndex < rowSet.CandidateCount(); rowIndex++ {
 		tuple := alterTableAddPrimaryKeyTupleAt(vectors, rowIndex)
 		if alterTableAddPrimaryKeyTupleHasNull(tuple) {
@@ -498,12 +510,12 @@ func alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan alterTableAddPrimary
 		}
 		key := alterTableAddPrimaryKeyTupleKey(tuple)
 		rownum := alterTableAddPrimaryKeyProjectedRownum(rowSet, rowIndex)
-		if first, ok := seen[key]; ok {
+		if first, ok := s.Seen[key]; ok {
 			first.Count++
 			first.DuplicateRownum = rownum
 			return first, nil
 		}
-		seen[key] = alterTableAddPrimaryKeyDuplicateScanResult{
+		s.Seen[key] = alterTableAddPrimaryKeyDuplicateScanResult{
 			Known:       true,
 			Count:       1,
 			Tuple:       tuple,
@@ -530,12 +542,36 @@ func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyDuplicateScan(ctx cont
 	if len(rownums) == 0 {
 		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil, nil
 	}
-	rowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(plan, rownums))
-	if err != nil || diagnostics.BlocksNative() {
-		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics, err
+	state := alterTableAddPrimaryKeyDuplicateScanState{}
+	for _, batch := range alterTableAddPrimaryKeyDuplicateScanRownumBatches(rownums, alterTableAddPrimaryKeyDuplicateScanBatchSize) {
+		rowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(plan, batch))
+		if err != nil || diagnostics.BlocksNative() {
+			return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics, err
+		}
+		scan, diagnostics := state.projectRows(plan, rowSet)
+		if diagnostics.BlocksNative() || scan.Count > 1 {
+			return scan, diagnostics, nil
+		}
 	}
-	scan, diagnostics := alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan, rowSet)
-	return scan, diagnostics, nil
+	return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil, nil
+}
+
+func alterTableAddPrimaryKeyDuplicateScanRownumBatches(rownums []qsbridge.QuantaRownum, batchSize int) [][]qsbridge.QuantaRownum {
+	if len(rownums) == 0 {
+		return nil
+	}
+	if batchSize <= 0 {
+		batchSize = alterTableAddPrimaryKeyDuplicateScanBatchSize
+	}
+	batches := make([][]qsbridge.QuantaRownum, 0, (len(rownums)+batchSize-1)/batchSize)
+	for start := 0; start < len(rownums); start += batchSize {
+		end := start + batchSize
+		if end > len(rownums) {
+			end = len(rownums)
+		}
+		batches = append(batches, append([]qsbridge.QuantaRownum(nil), rownums[start:end]...))
+	}
+	return batches
 }
 
 func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyCatalogOnlyRownums(ctx context.Context, tableName string) ([]qsbridge.QuantaRownum, bool, qsbridge.DiagnosticSet, error) {
