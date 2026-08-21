@@ -607,6 +607,23 @@ go run ./quanta-admin wal plan \
 `wal plan` prints checkpointed, replayable, and pending tail counts. It is an
 inspection command only; startup replay remains the recovery path.
 
+Run a local deployment preflight when validating a host or support bundle input
+paths:
+
+```bash
+go run ./quanta-admin doctor local \
+  --data-dir /path/to/quantastream-data \
+  --config-dir /etc/quantastream/configuration \
+  --wal-path /path/to/quantastream-data/storage.wal \
+  --auth-account-file /etc/quantastream/accounts.yaml \
+  --access-policy-file /etc/quantastream/access-policy.yaml \
+  --mysql-addr 127.0.0.1:4000 \
+  --native-grpc-addr 127.0.0.1:4100
+```
+
+The doctor command composes local path, catalog/schema, WAL, static
+auth/access, backup, and optional endpoint checks into one pass/fail summary.
+
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
 metadata for successful commit boundaries, standard-mode startup replay, and
@@ -669,6 +686,9 @@ Expected bundle entries include:
 Check the archive before sending it:
 
 ```bash
+qstream-admin support inspect \
+  --bundle /tmp/qstream-support-*.tar.gz
+
 tar -tzf /tmp/qstream-support-*.tar.gz | sort
 ```
 

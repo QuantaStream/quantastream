@@ -1,0 +1,30 @@
+[Unit]
+Description=QuantaStream single-node engine
+Documentation=file:/opt/quantastream/docs/GETTING_STARTED.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantastream
+Group=quantastream
+EnvironmentFile=/etc/quantastream/qstream-single-node.env
+ExecStart=/opt/quantastream/bin/quantastream \
+  -mode inabox-standard \
+  -config-dir ${QSTREAM_CONFIG_DIR} \
+  -data-dir ${QSTREAM_DATA_DIR} \
+  -wal-path ${QSTREAM_WAL_PATH} \
+  -bind ${QSTREAM_BIND} \
+  -mysql-port ${QSTREAM_MYSQL_PORT} \
+  -native-grpc-bind ${QSTREAM_NATIVE_GRPC_BIND} \
+  -native-grpc-port ${QSTREAM_NATIVE_GRPC_PORT} \
+  -database ${QSTREAM_DATABASE} \
+  -auth-mode static \
+  -auth-account-file ${QSTREAM_AUTH_ACCOUNT_FILE} \
+  -access-policy-file ${QSTREAM_ACCESS_POLICY_FILE}
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

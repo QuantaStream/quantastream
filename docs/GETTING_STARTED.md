@@ -20,7 +20,35 @@ Verify the binaries:
 ./bin/qstream-stream-loader -version
 ```
 
-## 2. Start The Single-Node Engine
+## 2. Prepare Static Security Files
+
+```bash
+mkdir -p data backups auth
+
+QUANTASTREAM_AUTH_PASSWORD=root \
+./bin/qstream-admin auth upsert \
+  --account-file ./auth/accounts.yaml \
+  --user root \
+  --default-database quanta
+
+./bin/qstream-admin access upsert \
+  --policy-file ./auth/access-policy.yaml \
+  --principal-kind user \
+  --principal root \
+  --privilege select \
+  --table '*'
+
+./bin/qstream-admin auth validate \
+  --account-file ./auth/accounts.yaml
+
+./bin/qstream-admin access validate \
+  --policy-file ./auth/access-policy.yaml
+```
+
+The account file stores verifier hashes, not the cleartext password. Use a real
+password and service-secret mechanism outside local smoke tests.
+
+## 3. Start The Single-Node Engine
 
 ```bash
 mkdir -p data backups
@@ -35,8 +63,8 @@ mkdir -p data backups
   -native-grpc-port 4100 \
   -database quanta \
   -auth-mode static \
-  -auth-user root \
-  -auth-password root
+  -auth-account-file ./auth/accounts.yaml \
+  -access-policy-file ./auth/access-policy.yaml
 ```
 
 Expected startup lines include:
@@ -53,7 +81,7 @@ The `-wal-path` flag enables the local write-ahead log and checkpoint file under
 the data directory. Keeping the WAL inside `./data` makes local backups
 self-contained.
 
-## 3. Inspect Local Durability State
+## 4. Inspect Local Durability State
 
 In a second terminal:
 
@@ -69,7 +97,20 @@ On a fresh engine these commands report an empty or checkpoint-clean WAL. If a
 command reports a replay or pending tail, follow the printed hint before taking a
 backup.
 
-## 4. Connect With A MySQL Client
+Run a local preflight over the same paths and endpoints:
+
+```bash
+./bin/qstream-admin doctor local \
+  --data-dir ./data \
+  --config-dir ./configuration \
+  --wal-path ./data/storage.wal \
+  --auth-account-file ./auth/accounts.yaml \
+  --access-policy-file ./auth/access-policy.yaml \
+  --mysql-addr 127.0.0.1:4000 \
+  --native-grpc-addr 127.0.0.1:4100
+```
+
+## 5. Connect With A MySQL Client
 
 In a second terminal:
 
@@ -81,7 +122,7 @@ mysql -h 127.0.0.1 -P 4000 -u root -proot -D quanta \
 The version comment includes the QuantaStream build identity when the binary was
 created by the release script.
 
-## 5. Start The JSON Loader
+## 6. Start The JSON Loader
 
 The loader accepts JSON event batches and writes them through the native gRPC
 endpoint exposed by the single-node engine.
@@ -95,7 +136,7 @@ endpoint exposed by the single-node engine.
   -native-grpc-addr 127.0.0.1:4100
 ```
 
-## 6. Send A Streaming Smoke Batch
+## 7. Send A Streaming Smoke Batch
 
 ```bash
 ./bin/qstream-stream-loader \
@@ -109,7 +150,7 @@ For TPC-H experiments, use the `qstream-tpch-loader` binary with the TPC-H
 configuration and data directories. The TPC-H runbooks in `docs/TPCH.md` and
 `docs/DEPLOYMENT.md` describe the larger benchmark flow.
 
-## 7. Create And Prove A Local Backup
+## 8. Create And Prove A Local Backup
 
 For this first local snapshot path, make sure the source engine has committed
 or drained any recent writes before taking the backup. The backup command
@@ -154,7 +195,25 @@ directory:
   --data-dir ./data-restored
 ```
 
-## 8. Stop The Engine
+## 9. Optional Systemd Templates
+
+Release bundles include single-node systemd examples under `examples/systemd/`.
+They are templates, not installers:
+
+```bash
+sudo useradd --system --home /var/lib/quantastream --shell /usr/sbin/nologin quantastream
+sudo install -d -o quantastream -g quantastream /etc/quantastream /var/lib/quantastream
+sudo cp -R ./configuration /etc/quantastream/configuration
+sudo cp ./auth/accounts.yaml /etc/quantastream/accounts.yaml
+sudo cp ./auth/access-policy.yaml /etc/quantastream/access-policy.yaml
+sudo cp ./examples/systemd/qstream-single-node.env /etc/quantastream/qstream-single-node.env
+sudo cp ./examples/systemd/qstream-single-node.service /etc/systemd/system/qstream-single-node.service
+```
+
+Edit `/etc/quantastream/qstream-single-node.env` for your installation paths,
+then run `systemctl daemon-reload` and start the service when ready.
+
+## 10. Stop The Engine
 
 Press `Ctrl-C` in the engine terminal. The local data lives under `./data`.
 
@@ -165,14 +224,16 @@ For support, capture a diagnostic bundle:
   --output ./qstream-support.tar.gz \
   --data-dir ./data \
   --wal-path ./data/storage.wal \
+  --auth-account-file ./auth/accounts.yaml \
+  --access-policy-file ./auth/access-policy.yaml \
   --backup-source file://$PWD/backups/smoke-backup
 ```
 
 The support bundle includes version/runtime metadata, a catalog/config summary,
-WAL planning output, backup manifests, optional log tails, and best-effort
-Consul service-discovery status. It does not include table data files or raw
-auth/access policy files. For production support collection, use the first
-response runbook in `docs/DEPLOYMENT.md`.
+redacted static security validation, WAL planning output, backup manifests,
+optional log tails, and best-effort Consul service-discovery status. It does not
+include table data files or raw auth/access policy files. For production support
+collection, use the first response runbook in `docs/DEPLOYMENT.md`.
 
 For quick manual triage, capture these lines:
 

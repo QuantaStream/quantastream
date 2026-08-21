@@ -25,7 +25,8 @@ import (
 const defaultSupportBundleMaxLogBytes int64 = 1024 * 1024
 
 type SupportCmd struct {
-	Bundle SupportBundleCmd `cmd:"" help:"Create a local diagnostic tarball for support."`
+	Bundle  SupportBundleCmd  `cmd:"" help:"Create a local diagnostic tarball for support."`
+	Inspect SupportInspectCmd `cmd:"" help:"Inspect a support diagnostic tarball without extracting it."`
 }
 
 type SupportBundleCmd struct {
@@ -39,6 +40,10 @@ type SupportBundleCmd struct {
 	LogPath           []string `help:"Log file to include as a recent tail. Use a comma-separated list for multiple logs."`
 	MaxLogBytes       int64    `help:"Maximum bytes to include per log file." default:"1048576"`
 	SkipClusterStatus bool     `help:"Skip best-effort Consul service-discovery status." default:"false"`
+}
+
+type SupportInspectCmd struct {
+	Bundle string `help:"Support bundle .tar.gz path. Supports file:///path or a local path." required:""`
 }
 
 func (c *SupportBundleCmd) Run(ctx *Context) error {
@@ -88,6 +93,15 @@ func (c *SupportBundleCmd) Run(ctx *Context) error {
 	return nil
 }
 
+func (c *SupportInspectCmd) Run(ctx *Context) error {
+	summary, err := inspectSupportBundle(c.Bundle)
+	if err != nil {
+		return err
+	}
+	printSupportBundleInspection(summary)
+	return nil
+}
+
 func (c *SupportBundleCmd) outputPath() (string, error) {
 	output := strings.TrimSpace(c.Output)
 	if output == "" {
@@ -98,6 +112,110 @@ func (c *SupportBundleCmd) outputPath() (string, error) {
 		return "", fmt.Errorf("resolve support bundle output %q: %w", output, err)
 	}
 	return filepath.Clean(abs), nil
+}
+
+type supportBundleInspection struct {
+	Path              string
+	Entries           []supportBundleInspectionEntry
+	TotalBytes        int64
+	HasReadme         bool
+	HasVersion        bool
+	HasRuntime        bool
+	HasConfig         bool
+	HasSecurity       bool
+	HasWAL            bool
+	HasBackup         bool
+	LogCount          int
+	HasClusterStatus  bool
+	HasClusterSkipped bool
+}
+
+type supportBundleInspectionEntry struct {
+	Name string
+	Size int64
+}
+
+func inspectSupportBundle(path string) (supportBundleInspection, error) {
+	resolved, err := resolveOptionalLocalPath(path)
+	if err != nil {
+		resolved = filepath.Clean(path)
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return supportBundleInspection{}, fmt.Errorf("open support bundle %s: %w", resolved, err)
+	}
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return supportBundleInspection{}, fmt.Errorf("open support bundle gzip %s: %w", resolved, err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	summary := supportBundleInspection{Path: resolved}
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return supportBundleInspection{}, fmt.Errorf("read support bundle tar %s: %w", resolved, err)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			continue
+		}
+		name := cleanSupportBundleEntryName(header.Name)
+		entry := supportBundleInspectionEntry{Name: name, Size: header.Size}
+		summary.Entries = append(summary.Entries, entry)
+		summary.TotalBytes += header.Size
+		switch {
+		case name == "README.txt":
+			summary.HasReadme = true
+		case name == "metadata/version.txt":
+			summary.HasVersion = true
+		case name == "metadata/runtime.txt":
+			summary.HasRuntime = true
+		case name == "config/summary.txt":
+			summary.HasConfig = true
+		case name == "security/summary.txt":
+			summary.HasSecurity = true
+		case name == "wal/plan.txt" || name == "wal/skipped.txt":
+			summary.HasWAL = true
+		case name == "backups/skipped.txt" || strings.HasPrefix(name, "backups/backup-"):
+			summary.HasBackup = true
+		case strings.HasPrefix(name, "logs/"):
+			summary.LogCount++
+		case name == "cluster/status.txt":
+			summary.HasClusterStatus = true
+		case name == "cluster/status-skipped.txt":
+			summary.HasClusterSkipped = true
+		}
+		if _, err := io.Copy(io.Discard, tarReader); err != nil {
+			return supportBundleInspection{}, fmt.Errorf("read support bundle entry %s: %w", name, err)
+		}
+	}
+	sort.Slice(summary.Entries, func(i, j int) bool {
+		return summary.Entries[i].Name < summary.Entries[j].Name
+	})
+	return summary, nil
+}
+
+func printSupportBundleInspection(summary supportBundleInspection) {
+	fmt.Printf("support_bundle=%s\n", summary.Path)
+	fmt.Printf("support_bundle_readable=true\n")
+	fmt.Printf("support_bundle_entry_count=%d\n", len(summary.Entries))
+	fmt.Printf("support_bundle_uncompressed_bytes=%d\n", summary.TotalBytes)
+	fmt.Printf("support_bundle_has_readme=%t\n", summary.HasReadme)
+	fmt.Printf("support_bundle_has_version=%t\n", summary.HasVersion)
+	fmt.Printf("support_bundle_has_runtime=%t\n", summary.HasRuntime)
+	fmt.Printf("support_bundle_has_config=%t\n", summary.HasConfig)
+	fmt.Printf("support_bundle_has_security=%t\n", summary.HasSecurity)
+	fmt.Printf("support_bundle_has_wal=%t\n", summary.HasWAL)
+	fmt.Printf("support_bundle_has_backup=%t\n", summary.HasBackup)
+	fmt.Printf("support_bundle_log_count=%d\n", summary.LogCount)
+	fmt.Printf("support_bundle_has_cluster=%t\n", summary.HasClusterStatus || summary.HasClusterSkipped)
+	for _, entry := range summary.Entries {
+		fmt.Printf("support_bundle_entry=%s bytes=%d\n", entry.Name, entry.Size)
+	}
 }
 
 func (c *SupportBundleCmd) resolveConfigDir(dataDir string) string {

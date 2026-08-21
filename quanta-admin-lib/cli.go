@@ -14,6 +14,7 @@ var Cli struct {
 	Backup            BackupCmd            `cmd:"" help:"Create, validate, or restore local storage backups."`
 	WAL               WALCmd               `cmd:"" help:"Inspect local write-ahead log state."`
 	Support           SupportCmd           `cmd:"" help:"Create support diagnostic bundles."`
+	Doctor            DoctorCmd            `cmd:"" help:"Run local deployment preflight checks."`
 	Auth              AuthCmd              `cmd:"" help:"Manage local MySQL static auth account files."`
 	Access            AccessCmd            `cmd:"" help:"Manage local static SQL access policy files."`
 	FindKey           FindKeyCmd           `cmd:"" help:"Find nodes for key debug tool."`

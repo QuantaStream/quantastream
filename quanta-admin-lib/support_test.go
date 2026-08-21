@@ -125,6 +125,41 @@ func TestSupportBundleCmdCreatesDiagnosticArchive(t *testing.T) {
 	)
 }
 
+func TestSupportInspectCmdPrintsBundleSummary(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeAdminBackupTestFile(t, configDir, "customer/schema.yaml", "name: customer\n")
+	output := filepath.Join(root, "support.tar.gz")
+	if err := (&SupportBundleCmd{
+		Output:            output,
+		DataDir:           dataDir,
+		SkipClusterStatus: true,
+	}).Run(&Context{}); err != nil {
+		t.Fatalf("SupportBundleCmd.Run returned error: %v", err)
+	}
+
+	inspectOutput, err := captureAdminBackupStdout(t, func() error {
+		return (&SupportInspectCmd{Bundle: output}).Run(&Context{})
+	})
+	if err != nil {
+		t.Fatalf("SupportInspectCmd.Run returned error: %v", err)
+	}
+	assertAdminBackupOutputContains(t, inspectOutput,
+		"support_bundle="+output,
+		"support_bundle_readable=true",
+		"support_bundle_has_readme=true",
+		"support_bundle_has_version=true",
+		"support_bundle_has_runtime=true",
+		"support_bundle_has_config=true",
+		"support_bundle_has_security=true",
+		"support_bundle_has_wal=true",
+		"support_bundle_has_backup=true",
+		"support_bundle_has_cluster=true",
+		"support_bundle_entry=security/summary.txt",
+	)
+}
+
 func readSupportBundleTestArchive(t *testing.T, path string) map[string][]byte {
 	t.Helper()
 	file, err := os.Open(path)
