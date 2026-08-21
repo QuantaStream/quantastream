@@ -69,9 +69,18 @@ func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
 	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
 	backupDir := filepath.Join(root, "backup")
 
-	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir, Quiesce: true}).Run(&Context{}); err != nil {
+	output, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupCreateCmd{DataDir: dataDir, Target: backupDir, Quiesce: true}).Run(&Context{})
+	})
+	if err != nil {
 		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
 	}
+	assertAdminBackupOutputContains(t, output,
+		"backup_mode=quiescent-local-snapshot",
+		"backup_live_source_requires_committed_state=true",
+		"backup_live_source_flush_hint=commit_or_drain_live_engine_before_snapshot",
+		"backup_live_source_snapshot_scope=durable_filesystem_state",
+	)
 	manifest, err := core.ValidateLocalStorageBackup(backupDir)
 	if err != nil {
 		t.Fatalf("ValidateLocalStorageBackup returned error: %v", err)

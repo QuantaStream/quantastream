@@ -111,9 +111,15 @@ configuration and data directories. The TPC-H runbooks in `docs/TPCH.md` and
 
 ## 7. Create And Prove A Local Backup
 
-Run this while the engine is up:
+For this first local snapshot path, make sure the source engine has committed
+or drained any recent writes before taking the backup. The backup command
+quiesces new storage mutations while it copies, but it snapshots durable
+filesystem state. For the local smoke flow above, issue a `COMMIT` through the
+MySQL-compatible endpoint first:
 
 ```bash
+mysql -h 127.0.0.1 -P 4000 -uroot -proot -D quanta -e 'commit;'
+
 ./bin/qstream-admin backup create \
   --data-dir ./data \
   --target file://$PWD/backups/smoke-backup \

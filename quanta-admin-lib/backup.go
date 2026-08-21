@@ -78,6 +78,9 @@ func (c *BackupCreateCmd) Run(ctx *Context) error {
 	}
 	fmt.Printf("backup_created=%s\n", target)
 	printBackupManifestSummary(manifest)
+	if c.Quiesce {
+		printQuiescentBackupLiveSourceNotes()
+	}
 	return nil
 }
 
@@ -261,6 +264,12 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	if manifest.Checkpoint.WALPendingRecords != 0 {
 		fmt.Printf("backup_wal_pending_records=%d\n", manifest.Checkpoint.WALPendingRecords)
 	}
+}
+
+func printQuiescentBackupLiveSourceNotes() {
+	fmt.Printf("backup_live_source_requires_committed_state=true\n")
+	fmt.Printf("backup_live_source_flush_hint=commit_or_drain_live_engine_before_snapshot\n")
+	fmt.Printf("backup_live_source_snapshot_scope=durable_filesystem_state\n")
 }
 
 func planRestoredBackupWAL(restoreDir string, manifest core.LocalStorageBackupManifest) (core.LocalWALRecoveryPlan, error) {
