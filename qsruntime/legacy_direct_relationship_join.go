@@ -895,6 +895,9 @@ func legacyDirectRelationshipCanCountFromVectorExistence(request ExecutionReques
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelationshipVectorJoinChain(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {
+	if result, handled, err := e.legacyDirectRelationshipOuterChainProjectionResult(ctx, request, vector); handled || err != nil {
+		return result, err
+	}
 	if diagnostics := legacyDirectRelationshipChainShapeDiagnostics(request, vector); diagnostics.BlocksNative() {
 		return e.executeLegacyDirectRelationshipVectorJoinGraph(ctx, request, vector)
 	}
@@ -945,6 +948,163 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelations
 	}
 	result.Count = uint64(len(finalRows))
 	return directBitmapCountAggregateResult(request, result), nil
+}
+
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipOuterChainProjectionResult(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, bool, error) {
+	if vector.EdgeCount() < 2 || len(request.SQLAggregates) > 0 || len(request.GroupBy) > 0 || len(request.Memberships) > 0 {
+		return ExecutionResult{}, false, nil
+	}
+	edges, diagnostics := e.legacyDirectRelationshipOrderedChainEdges(vector)
+	if diagnostics.BlocksNative() {
+		return ExecutionResult{}, false, nil
+	}
+	hasNullExtend := false
+	for _, edge := range edges {
+		switch {
+		case edge.sqlKind == qsbridge.JoinKindInner:
+		case edge.sqlKind == qsbridge.JoinKindLeftOuter && edge.leftOuterPreservesParent:
+			hasNullExtend = true
+		default:
+			return ExecutionResult{}, false, nil
+		}
+	}
+	if !hasNullExtend {
+		return ExecutionResult{}, false, nil
+	}
+	projectionFields, diagnostics := legacyDirectRelationshipVisibleProjectionFields(request)
+	result := ExecutionResult{
+		Probes: []ExecutionProbe{
+			legacyDirectRelationshipProbe("graph_shape", "outer_chain_tuple"),
+			legacyDirectRelationshipProbe("outer_chain_edges", strconv.Itoa(len(edges))),
+		},
+	}
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, true, nil
+	}
+	rootRole := edges[0].parentKey()
+	rootTable := edges[0].parentTable
+	rootStart := time.Now()
+	rootRows, diagnostics, err := e.legacyDirectRelationshipRownumsForTable(ctx, request, rootTable, edges[0].parentRole, edges[0].parentField)
+	rootElapsed := time.Since(rootStart)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if err != nil || result.Diagnostics.BlocksNative() {
+		return result, true, err
+	}
+	rowSet := NewRelationshipTupleRowSet(qsbridge.TableInstanceID(rootRole), rootRows)
+	result.Probes = append(result.Probes,
+		legacyDirectRelationshipProbe("outer_chain_root_role", rootRole),
+		legacyDirectRelationshipProbe("outer_chain_root_table", rootTable),
+		legacyDirectRelationshipProbe("outer_chain_root_rows", strconv.Itoa(len(rootRows))),
+		legacyDirectRelationshipProbe("phase_outer_chain_root_rows_elapsed", rootElapsed.String()),
+	)
+	for i, edge := range edges {
+		parentRole := edge.parentKey()
+		childRole := edge.childKey()
+		parentRows := legacyDirectRelationshipTupleRoleRows(rowSet, qsbridge.TableInstanceID(parentRole))
+		childStart := time.Now()
+		childReadRequest := legacyDirectRelationshipChildReadRequest(request, edge)
+		childRows, diagnostics, err := e.legacyDirectRelationshipRownumsForTable(ctx, childReadRequest, edge.childTable, edge.childRole, edge.childField)
+		childElapsed := time.Since(childStart)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, true, err
+		}
+		reduceStart := time.Now()
+		joined, pairs, diagnostics, err := e.legacyDirectRelationshipReduce(ctx, request, edge, parentRows, childRows)
+		reduceElapsed := time.Since(reduceStart)
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if err != nil || result.Diagnostics.BlocksNative() {
+			return result, true, err
+		}
+		nullExtend := edge.sqlKind == qsbridge.JoinKindLeftOuter && edge.leftOuterPreservesParent
+		expandStart := time.Now()
+		rowSet = rowSet.Expand(RelationshipTupleExpansion{
+			ParentRole:        qsbridge.TableInstanceID(parentRole),
+			ChildRole:         qsbridge.TableInstanceID(childRole),
+			ChildRowsByParent: legacyDirectRelationshipChildRowsByParent(parentRows, joined, pairs),
+			NullExtend:        nullExtend,
+		})
+		expandElapsed := time.Since(expandStart)
+		prefix := fmt.Sprintf("outer_chain_edge_%d_", i+1)
+		result.Probes = append(result.Probes,
+			legacyDirectRelationshipProbe(prefix+"parent_role", parentRole),
+			legacyDirectRelationshipProbe(prefix+"parent_table", edge.parentTable),
+			legacyDirectRelationshipProbe(prefix+"parent_rows", strconv.Itoa(len(parentRows))),
+			legacyDirectRelationshipProbe(prefix+"child_role", childRole),
+			legacyDirectRelationshipProbe(prefix+"child_table", edge.childTable),
+			legacyDirectRelationshipProbe(prefix+"child_rows", strconv.Itoa(len(childRows))),
+			legacyDirectRelationshipProbe(prefix+"joined_rows", strconv.Itoa(len(joined))),
+			legacyDirectRelationshipProbe(prefix+"joined_pairs", strconv.Itoa(len(pairs))),
+			legacyDirectRelationshipProbe(prefix+"null_extend", strconv.FormatBool(nullExtend)),
+			legacyDirectRelationshipProbe(prefix+"tuple_rows", strconv.Itoa(rowSet.CandidateCount())),
+			legacyDirectRelationshipProbe(prefix+"phase_child_rows_elapsed", childElapsed.String()),
+			legacyDirectRelationshipProbe(prefix+"phase_reduce_elapsed", reduceElapsed.String()),
+			legacyDirectRelationshipProbe(prefix+"phase_tuple_expand_elapsed", expandElapsed.String()),
+		)
+	}
+	if len(projectionFields) == 0 {
+		result.RowSet = qsbridge.QuantaProjectedRowSet{Index: rootTable, Rownums: make([]qsbridge.QuantaRownum, rowSet.CandidateCount())}
+		for i := range result.RowSet.Rownums {
+			result.RowSet.Rownums[i] = qsbridge.QuantaRownum(i + 1)
+		}
+		result.Count = uint64(rowSet.CandidateCount())
+		result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
+		return result, true, nil
+	}
+	materializationFields := legacyDirectRelationshipGraphProjectionMaterializationFields(request, projectionFields)
+	materializationStart := time.Now()
+	values, materializationProbes, diagnostics, err := e.legacyDirectRelationshipSiblingRootMaterializedValues(ctx, request, rowSet, materializationFields, true)
+	materializationElapsed := time.Since(materializationStart)
+	result.Probes = append(result.Probes, materializationProbes...)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if err != nil || result.Diagnostics.BlocksNative() {
+		return result, true, err
+	}
+	projected, diagnostics := rowSet.ToProjectedRowSet(rootTable, materializationFields, values)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, true, nil
+	}
+	filtered, filteredTupleRows, diagnostics := FilterRelationshipTupleProjectedResiduals(rowSet, request, projected)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, true, nil
+	}
+	filtered, orderDiagnostics := directBitmapOrderProjectedRows(request, filtered)
+	result.Diagnostics = append(result.Diagnostics, orderDiagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, true, nil
+	}
+	filtered, projectionDiagnostics := directBitmapEvaluateProjectionRowSet(request, filtered)
+	result.Diagnostics = append(result.Diagnostics, projectionDiagnostics...)
+	if result.Diagnostics.BlocksNative() {
+		return result, true, nil
+	}
+	if request.Result.Distinct {
+		filtered = directBitmapDistinctProjectedRowSet(filtered)
+	}
+	filtered = directBitmapLimitProjectedRowSet(filtered, request.Result.Offset, request.Result.Limit, request.Result.HasResultLimit())
+	if len(request.Projection) == 0 {
+		filtered = directBitmapOrderVisibleProjectedRowSet(filtered, request.ProjectionOrder)
+	}
+	result.RowSet = filtered
+	result.Count = uint64(filtered.CandidateCount())
+	result.Probes = append(result.Probes,
+		legacyDirectRelationshipProbe("outer_chain_materialization_rows", strconv.Itoa(rowSet.CandidateCount())),
+		legacyDirectRelationshipProbe("outer_chain_filtered_rows", strconv.Itoa(filteredTupleRows.CandidateCount())),
+		legacyDirectRelationshipProbe("outer_chain_materialization_fields", strconv.Itoa(len(materializationFields))),
+		legacyDirectRelationshipProbe("outer_chain_materialization_field_list", legacyDirectRelationshipProjectionFieldsDebug(materializationFields)),
+		legacyDirectRelationshipProbe("phase_outer_chain_materialization_elapsed", materializationElapsed.String()),
+	)
+	result.Probes = append(result.Probes, RelationshipTupleProbes(RelationshipTupleProbeSnapshot{
+		Section:            "relationship_outer_chain_tuple",
+		Expanded:           rowSet,
+		Filtered:           filteredTupleRows,
+		MaterializedFields: materializationFields,
+	})...)
+	result.Probes = append(result.Probes, legacyDirectRelationshipNodeInteractionSummaryProbes(result.Probes)...)
+	return result, true, nil
 }
 
 func (e LegacyDirectRelationshipVectorJoinExecutor) executeLegacyDirectRelationshipVectorJoinGraph(ctx context.Context, request ExecutionRequest, vector RelationshipVectorJoinRequest) (ExecutionResult, error) {
@@ -1439,12 +1599,13 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSibl
 	return rootRows, reduced, result, nil
 }
 
-func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSiblingRootMaterializedValues(ctx context.Context, request ExecutionRequest, tupleRows RelationshipTupleRowSet, fields []qsbridge.QuantaProjectionField) (RelationshipTupleValueStore, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
+func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSiblingRootMaterializedValues(ctx context.Context, request ExecutionRequest, tupleRows RelationshipTupleRowSet, fields []qsbridge.QuantaProjectionField, allowMissingRoles ...bool) (RelationshipTupleValueStore, []ExecutionProbe, qsbridge.DiagnosticSet, error) {
 	materialization := e.projectionMaterializationKernel()
 	rowsByRole := legacyDirectRelationshipTupleRowsByRole(tupleRows)
 	values := make(RelationshipTupleValueStore)
 	var probes []ExecutionProbe
 	var materializationDiagnostics qsbridge.DiagnosticSet
+	allowMissingRole := len(allowMissingRoles) > 0 && allowMissingRoles[0]
 	for _, field := range fields {
 		table := field.Index
 		role := legacyDirectRelationshipProjectionFieldRoleKey(field, table)
@@ -1456,7 +1617,11 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipSibl
 		}
 		rownums, ok := rowsByRole[string(field.Role)]
 		if !ok {
-			return nil, probes, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector sibling-root cannot align materialization field %s.%s role %s; tuple roles=%s", field.Index, field.Field, field.Role, legacyDirectRelationshipTupleRoleDebug(rowsByRole))), nil
+			if !allowMissingRole {
+				return nil, probes, legacyDirectRelationshipDiagnostic(fmt.Sprintf("relationship-vector sibling-root cannot align materialization field %s.%s role %s; tuple roles=%s", field.Index, field.Field, field.Role, legacyDirectRelationshipTupleRoleDebug(rowsByRole))), nil
+			}
+			values[RelationshipTupleValueKeyForField(field)] = map[qsbridge.QuantaRownum]qsbridge.ResultCell{}
+			continue
 		}
 		materialized, materializedProbes, diagnostics, err := e.legacyDirectRelationshipMaterializedValuesWithProbes(ctx, materialization, field.Index, rownums, []qsbridge.QuantaProjectionField{field}, e.legacyDirectRelationshipTimeMaterializationForRole(request, field.Index, string(field.Role)))
 		probes = append(probes, materializedProbes...)

@@ -106,17 +106,27 @@ type RelationshipTupleExpansion struct {
 	ParentRole        TableInstanceID
 	ChildRole         TableInstanceID
 	ChildRowsByParent map[QuantaRownum][]QuantaRownum
+	NullExtend        bool
 }
 
-// Expand returns the inner-join expansion for one child role.
+// Expand returns the expansion for one child role.
 func (s RelationshipTupleRowSet) Expand(expansion RelationshipTupleExpansion) RelationshipTupleRowSet {
 	rows := make([]RelationshipTupleRow, 0, len(s.Rows))
 	for _, row := range s.Rows {
 		parent, ok := row.Rownum(expansion.ParentRole)
 		if !ok {
+			if expansion.NullExtend {
+				rows = append(rows, row)
+			}
 			continue
 		}
 		children := expansion.ChildRowsByParent[parent]
+		if len(children) == 0 {
+			if expansion.NullExtend {
+				rows = append(rows, row)
+			}
+			continue
+		}
 		for _, child := range children {
 			rows = append(rows, row.WithRownum(expansion.ChildRole, child))
 		}
@@ -151,7 +161,8 @@ func (s RelationshipTupleRowSet) ToProjectedRowSet(index string, fields []Quanta
 		for _, row := range s.Rows {
 			rownum, ok := row.Rownum(key.Role)
 			if !ok {
-				return QuantaProjectedRowSet{}, relationshipTupleDiagnostics(fmt.Sprintf("tuple row missing role %s", key.Role))
+				vector.Values = append(vector.Values, ResultCell{Kind: ValueNull, Value: nil})
+				continue
 			}
 			cell, ok := byRownum[rownum]
 			if !ok {

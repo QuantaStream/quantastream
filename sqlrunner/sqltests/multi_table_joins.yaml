@@ -243,9 +243,9 @@ tests:
       row_count: 4
 
   - id: "multi_table_joins.104.mixed_outer_chain"
-    status: xfail
-    issue: "Graph outer-join composition is not supported in this slice; keep the boundary explicit until null-extension is implemented across chained relationship-vector joins."
+    status: supported
     kind: query
+    order: rowsort
     capabilities: [three-table-join, outer-join, join-composition]
     sql: |-
       select c.first_name, o.order_id, l.line_id
@@ -253,7 +253,14 @@ tests:
       outer join orders_qa as o on o.cust_id = c.cust_id
       outer join lineitems_qa as l on l.order_id = o.order_id
     expect:
-      row_count: 6
+      columns: [first_name, order_id, line_id]
+      rows:
+        - ["Abby", 201, "L4"]
+        - ["Abe", 101, "L1"]
+        - ["Abe", 101, "L2"]
+        - ["Abe", 102, "L3"]
+        - ["Annie", null, null]
+        - ["Carl", 401, null]
 
   - id: "multi_table_joins.110.four_table_projection"
     status: supported
