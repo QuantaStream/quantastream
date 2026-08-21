@@ -4,6 +4,9 @@ This file is the field-level schema configuration reference. For physical
 schema design tradeoffs and table modeling guidance, see
 [`docs/SCHEMA_DESIGN.md`](../docs/SCHEMA_DESIGN.md).
 
+For deployment-managed MySQL users, roles, and SQL access policy examples, see
+[`AUTH_ACCESS.md`](AUTH_ACCESS.md).
+
 ## Table level
 ### tableName (required)
 Specifies the name of the underlying roaring bitmap index.
