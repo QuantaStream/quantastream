@@ -313,30 +313,6 @@ func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
 	}
 }
 
-func TestSimpleParserBridgeRejectsReplaceAndOnDuplicateBoundary(t *testing.T) {
-	tests := []struct {
-		name    string
-		sql     string
-		message string
-	}{
-		{
-			name:    "replace",
-			sql:     "replace into customers_qa (cust_id, first_name) values (1, 'Ada')",
-			message: "REPLACE is not supported yet",
-		},
-		{
-			name:    "on duplicate",
-			sql:     "insert into customers_qa (cust_id, first_name) values (1, 'Ada') on duplicate key update first_name = values(first_name)",
-			message: "INSERT ... ON DUPLICATE KEY UPDATE is not supported yet",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assertSimpleParserRejects(t, test.sql, test.message)
-		})
-	}
-}
-
 func TestSimpleParserBridgeParsesTruncateStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("truncate table customers_qa;")
 	if diagnostics.BlocksNative() {
@@ -2104,6 +2080,47 @@ func TestSimpleParserBridgeParsesInsertValues(t *testing.T) {
 	age, ok := statement.Insert.Rows[0][2].(UnboundLiteralExpr)
 	if !ok || age.Kind != ValueInt || age.Value != int64(42) {
 		t.Fatalf("age literal = %#v, want int 42", statement.Insert.Rows[0][2])
+	}
+}
+
+func TestSimpleParserBridgeParsesReplaceAsInsertEquivalent(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("replace into customers_qa (cust_id, first_name) values (1, 'Ada')")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.SQL != "replace into customers_qa (cust_id, first_name) values (1, 'Ada')" {
+		t.Fatalf("SQL = %q, want original REPLACE SQL", statement.SQL)
+	}
+	if statement.Insert.Table.Name != "customers_qa" {
+		t.Fatalf("insert table = %#v, want customers_qa", statement.Insert.Table)
+	}
+	if got := statement.Insert.Columns; len(got) != 2 || got[0] != "cust_id" || got[1] != "first_name" {
+		t.Fatalf("insert columns = %#v, want cust_id, first_name", got)
+	}
+	if len(statement.Insert.Rows) != 1 || len(statement.Insert.Rows[0]) != 2 {
+		t.Fatalf("insert rows = %#v, want one two-value row", statement.Insert.Rows)
+	}
+}
+
+func TestSimpleParserBridgeParsesInsertOnDuplicateKeyUpdateAsInsertEquivalent(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("insert into customers_qa (cust_id, first_name) values (1, 'Ada') on duplicate key update first_name = values(first_name)")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindInsert {
+		t.Fatalf("kind = %q, want insert", statement.Kind)
+	}
+	if statement.Insert.Table.Name != "customers_qa" {
+		t.Fatalf("insert table = %#v, want customers_qa", statement.Insert.Table)
+	}
+	if got := statement.Insert.Columns; len(got) != 2 || got[0] != "cust_id" || got[1] != "first_name" {
+		t.Fatalf("insert columns = %#v, want cust_id, first_name", got)
+	}
+	if len(statement.Insert.Rows) != 1 || len(statement.Insert.Rows[0]) != 2 {
+		t.Fatalf("insert rows = %#v, want one two-value row", statement.Insert.Rows)
 	}
 }
 

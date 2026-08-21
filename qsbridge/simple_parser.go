@@ -36,7 +36,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 		return parseSimpleInsert(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "replace"); ok {
-		return UnboundStatement{}, simpleParserDiagnostic("REPLACE is not supported yet"), false
+		return parseSimpleReplace(sql)
 	}
 	if _, ok := consumeKeyword(trimmed, "update"); ok {
 		return parseSimpleUpdate(sql)
@@ -508,9 +508,7 @@ func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("INSERT must include INTO"), false
 	}
-	if diagnostic, blocked := simpleInsertOnDuplicateKeyDiagnostic(insertBody); blocked {
-		return UnboundStatement{}, diagnostic, false
-	}
+	insertBody = simpleInsertWithoutOnDuplicateKeyUpdate(insertBody)
 	if targetText, sourceText, ok := splitBeforeTopLevelKeyword(insertBody, "select"); ok {
 		table, columns, diagnostic, ok := parseSimpleInsertTarget(targetText)
 		if !ok {
@@ -558,6 +556,23 @@ func parseSimpleInsert(sql string) (UnboundStatement, Diagnostic, bool) {
 			Result:  ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleReplace(sql string) (UnboundStatement, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	replaceBody, ok := consumeKeyword(trimmed, "replace")
+	if !ok {
+		return UnboundStatement{}, simpleParserDiagnostic("only REPLACE statements are supported"), false
+	}
+	if intoBody, ok := consumeKeyword(replaceBody, "into"); ok {
+		replaceBody = intoBody
+	}
+	statement, diagnostic, ok := parseSimpleInsert("insert into " + strings.TrimSpace(replaceBody))
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	statement.SQL = sql
+	return statement, Diagnostic{}, true
 }
 
 func parseSimpleUpdate(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -801,19 +816,20 @@ func simpleDeleteJoinRewriteWhere(text string, targetAlias string, targetField s
 	return rewritten, Diagnostic{}, true
 }
 
-func simpleInsertOnDuplicateKeyDiagnostic(text string) (Diagnostic, bool) {
+func simpleInsertWithoutOnDuplicateKeyUpdate(text string) string {
 	if _, onTail, ok := splitBeforeTopLevelKeyword(text, "on"); ok {
 		duplicateTail, ok := consumeKeyword(onTail, "duplicate")
 		if ok {
 			keyTail, ok := consumeKeyword(duplicateTail, "key")
 			if ok {
 				if _, ok := consumeKeyword(keyTail, "update"); ok {
-					return simpleParserDiagnostic("INSERT ... ON DUPLICATE KEY UPDATE is not supported yet"), true
+					prefix, _, _ := splitBeforeTopLevelKeyword(text, "on")
+					return strings.TrimSpace(prefix)
 				}
 			}
 		}
 	}
-	return Diagnostic{}, false
+	return text
 }
 
 func parseSimpleUpdateAssignmentValue(text string, parameterIndex *int) (UnboundExpr, Diagnostic, bool) {
