@@ -430,8 +430,8 @@ tests:
     kind: statement
     feature: mutations_upsert_boundary
     compatibility: mysql
-    requires: [replace, insert, primary_key]
-    issue: "REPLACE needs explicit delete/insert or overwrite semantics over QS primary-key authority."
+    requires: [replace, insert]
+    issue: "REPLACE syntax is still a parser boundary. True keyed REPLACE semantics should be covered with a keyed fixture once ALTER/primary-key catalog activation can make CTAS data authoritative."
     sql: |
       replace into qs_mysql_compat_mutations_ctas (id, name, amount)
       values (1, 'replacement', 0)
@@ -443,8 +443,8 @@ tests:
     kind: statement
     feature: mutations_upsert_boundary
     compatibility: mysql
-    requires: [insert, on_duplicate_key_update, primary_key]
-    issue: "INSERT ... ON DUPLICATE KEY UPDATE needs QS upsert semantics plus update-expression support."
+    requires: [insert, on_duplicate_key_update]
+    issue: "INSERT ... ON DUPLICATE KEY UPDATE syntax is still a parser boundary. True keyed duplicate-update semantics should be covered with a keyed fixture once ALTER/primary-key catalog activation can make CTAS data authoritative."
     sql: |
       insert into qs_mysql_compat_mutations_ctas (id, name, amount)
       values (1, 'duplicate', 0)
