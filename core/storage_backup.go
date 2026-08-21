@@ -174,8 +174,11 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 	if err := ensureDirectoryEmptyOrMissing(targetDir, "backup target"); err != nil {
 		return manifest, err
 	}
+	if err := mkdirAllAndSync(targetDir, 0755); err != nil {
+		return manifest, fmt.Errorf("create backup target directory: %w", err)
+	}
 	snapshotDir := filepath.Join(targetDir, LocalStorageBackupSnapshotDir)
-	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+	if err := mkdirAllAndSync(snapshotDir, 0755); err != nil {
 		return manifest, fmt.Errorf("create backup snapshot directory: %w", err)
 	}
 
@@ -248,7 +251,7 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		}
 		if entry.IsDir() {
 			backupEntry.Type = "dir"
-			if err := os.MkdirAll(destPath, info.Mode().Perm()); err != nil {
+			if err := mkdirAllAndSync(destPath, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("create backup directory %s: %w", relPath, err)
 			}
 			manifest.DirectoryCount++
@@ -258,7 +261,7 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("backup source contains unsupported file type: %s", relPath)
 		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		if err := mkdirAllAndSync(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("create backup parent for %s: %w", relPath, err)
 		}
 		size, checksum, err := copyFileWithSHA256(srcPath, destPath, info.Mode().Perm())
@@ -444,7 +447,7 @@ func writeLocalStorageQuiescenceLease(dataDir string, lease LocalStorageQuiescen
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := mkdirAllAndSync(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create quiescence lease directory: %w", err)
 	}
 	data, err := json.MarshalIndent(lease, "", "  ")
@@ -517,7 +520,7 @@ func RestoreLocalStorageBackup(ctx context.Context, req RestoreLocalStorageBacku
 	if err := ensureDirectoryEmptyOrMissing(targetDir, "restore data directory"); err != nil {
 		return manifest, err
 	}
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := mkdirAllAndSync(targetDir, 0755); err != nil {
 		return manifest, fmt.Errorf("create restore data directory: %w", err)
 	}
 	snapshotDir := filepath.Join(backupDir, manifest.SnapshotDir)
@@ -532,7 +535,7 @@ func RestoreLocalStorageBackup(ctx context.Context, req RestoreLocalStorageBacku
 		if err != nil {
 			return manifest, err
 		}
-		if err := os.MkdirAll(targetPath, os.FileMode(entry.Mode)); err != nil {
+		if err := mkdirAllAndSync(targetPath, os.FileMode(entry.Mode)); err != nil {
 			return manifest, fmt.Errorf("restore directory %s: %w", entry.Path, err)
 		}
 	}
@@ -551,7 +554,7 @@ func RestoreLocalStorageBackup(ctx context.Context, req RestoreLocalStorageBacku
 		if err != nil {
 			return manifest, err
 		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		if err := mkdirAllAndSync(filepath.Dir(targetPath), 0755); err != nil {
 			return manifest, fmt.Errorf("create restore parent for %s: %w", entry.Path, err)
 		}
 		if _, _, err := copyFileWithSHA256(srcPath, targetPath, os.FileMode(entry.Mode)); err != nil {
@@ -863,6 +866,13 @@ func copyFileWithSHA256(srcPath, destPath string, mode os.FileMode) (int64, stri
 	return size, hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func mkdirAllAndSync(path string, mode os.FileMode) error {
+	if err := os.MkdirAll(path, mode); err != nil {
+		return err
+	}
+	return syncDirectoryAndParent(path)
+}
+
 func syncFileAndParentDirectory(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -870,6 +880,22 @@ func syncFileAndParentDirectory(path string) error {
 	}
 	syncErr := file.Sync()
 	closeErr := file.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return syncParentDirectory(path)
+}
+
+func syncDirectoryAndParent(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
 	if syncErr != nil {
 		return syncErr
 	}
