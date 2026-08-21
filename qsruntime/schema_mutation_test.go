@@ -230,6 +230,7 @@ func TestLegacySchemaMutationHandleDropTableIfExistsIgnoresMissingFileCatalogTab
 }
 
 func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsupported(t *testing.T) {
+	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "")
 	handle := LegacyQuantaSessionHandle{
 		TableName: "scratch_orders",
 		Session:   &core.Session{BasePath: t.TempDir()},
@@ -257,6 +258,137 @@ func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyReportsExplicitUnsuppo
 	}
 	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation || !strings.Contains(diagnostics[0].Error(), "ALTER TABLE ADD PRIMARY KEY is not implemented yet") || !strings.Contains(diagnostics[0].Error(), "primary_key_null_scan, primary_key_duplicate_scan") {
 		t.Fatalf("diagnostics = %#v, want explicit unsupported ALTER TABLE ADD PRIMARY KEY", diagnostics)
+	}
+}
+
+func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyUpdatesFileCatalog(t *testing.T) {
+	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "1")
+	configDir := t.TempDir()
+	writeSchemaMutationKeylessCatalogSchema(t, configDir, "scratch_orders")
+	if err := shared.ActivateCatalogTable(configDir, "quanta", "scratch_orders", testSchemaMutationTime()); err != nil {
+		t.Fatalf("ActivateCatalogTable() error = %v", err)
+	}
+	handle := LegacyQuantaSessionHandle{
+		TableName: "scratch_orders",
+		Session:   &core.Session{BasePath: configDir},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationAlterTableAddPrimaryKey,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "scratch_orders"},
+			Columns: []qsbridge.FieldRef{
+				{Name: "order_key", PrimaryKey: true, Nullable: false},
+			},
+			ValidationSteps: []qsbridge.MutationValidationStep{
+				{Kind: qsbridge.MutationValidationPrimaryKeyNullScan},
+				{Kind: qsbridge.MutationValidationPrimaryKeyDuplicateScan},
+			},
+		},
+	}
+
+	statement, diagnostics, err := handle.AlterTableAddPrimaryKey(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AlterTableAddPrimaryKey() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("AlterTableAddPrimaryKey() diagnostics = %#v", diagnostics)
+	}
+	if statement.Status != "Primary key added to table scratch_orders" {
+		t.Fatalf("status = %q, want primary key added", statement.Status)
+	}
+	active, err := shared.CatalogTableActive(configDir, "quanta", "scratch_orders")
+	if err != nil {
+		t.Fatalf("CatalogTableActive() error = %v", err)
+	}
+	if !active {
+		t.Fatalf("table should remain active after ALTER TABLE ADD PRIMARY KEY")
+	}
+	table, err := shared.LoadSchema(configDir, "scratch_orders", nil)
+	if err != nil {
+		t.Fatalf("LoadSchema() error = %v", err)
+	}
+	if table.PrimaryKey != "order_key" {
+		t.Fatalf("primary key = %q, want order_key", table.PrimaryKey)
+	}
+	orderKey, err := table.GetAttribute("order_key")
+	if err != nil {
+		t.Fatalf("GetAttribute(order_key) error = %v", err)
+	}
+	if !orderKey.ColumnID || !orderKey.Required {
+		t.Fatalf("order_key metadata = columnID:%v required:%v, want true/true", orderKey.ColumnID, orderKey.Required)
+	}
+	customerKey, err := table.GetAttribute("customer_key")
+	if err != nil {
+		t.Fatalf("GetAttribute(customer_key) error = %v", err)
+	}
+	if customerKey.ColumnID {
+		t.Fatalf("customer_key ColumnID = true, want false")
+	}
+}
+
+func TestLegacySchemaMutationHandleAlterTableAddPrimaryKeyCatalogOnlyRequiresValidationSteps(t *testing.T) {
+	t.Setenv(alterTableAddPrimaryKeyCatalogOnlyEnv, "1")
+	handle := LegacyQuantaSessionHandle{
+		TableName: "scratch_orders",
+		Session:   &core.Session{BasePath: t.TempDir()},
+	}
+	request := ExecutionRequest{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationAlterTableAddPrimaryKey,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "scratch_orders"},
+			Columns: []qsbridge.FieldRef{
+				{Name: "order_key", PrimaryKey: true},
+			},
+		},
+	}
+
+	_, diagnostics, err := handle.AlterTableAddPrimaryKey(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AlterTableAddPrimaryKey() error = %v", err)
+	}
+	if !diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want missing validation blocker", diagnostics)
+	}
+	if len(diagnostics) == 0 || diagnostics[0].Code != qsbridge.DiagnosticInternalInvariant || !strings.Contains(diagnostics[0].Error(), "primary_key_null_scan, primary_key_duplicate_scan") {
+		t.Fatalf("diagnostics = %#v, want missing validation step diagnostic", diagnostics)
+	}
+}
+
+func TestApplyAlterTableAddPrimaryKeyCatalogMutationAddsCompoundAuthority(t *testing.T) {
+	table := &shared.BasicTable{
+		Name: "scratch_order_lines",
+		Attributes: []shared.BasicAttribute{
+			{FieldName: "order_key", SourceName: "/order_key", Type: "Integer", MappingStrategy: "IntBSI"},
+			{FieldName: "line_number", SourceName: "/line_number", Type: "Integer", MappingStrategy: "IntBSI"},
+			{FieldName: "amount", SourceName: "/amount", Type: "Float", MappingStrategy: "FloatScaleBSI"},
+		},
+	}
+	diagnostics, err := applyAlterTableAddPrimaryKeyCatalogMutation(table, qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "order_key", PrimaryKey: true},
+			{Name: "line_number", PrimaryKey: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("applyAlterTableAddPrimaryKeyCatalogMutation() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("applyAlterTableAddPrimaryKeyCatalogMutation() diagnostics = %#v", diagnostics)
+	}
+	if table.PrimaryKey != "order_key+line_number" {
+		t.Fatalf("primary key = %q, want order_key+line_number", table.PrimaryKey)
+	}
+	for _, name := range []string{"order_key", "line_number"} {
+		attr := table.Attributes[schemaMutationAttributeIndex(table, name)]
+		if !attr.Required {
+			t.Fatalf("%s Required = false, want true", name)
+		}
+		if attr.ColumnID {
+			t.Fatalf("%s ColumnID = true for compound primary key, want false", name)
+		}
+	}
+	if _, err := table.GetAttribute(shared.CompoundPrimaryKeyAuthorityFieldName); err != nil {
+		t.Fatalf("compound authority attribute missing: %v", err)
 	}
 }
 
@@ -507,6 +639,28 @@ attributes:
   mappingStrategy: IntBSI
   type: Integer
 ` + fkLine
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+}
+
+func writeSchemaMutationKeylessCatalogSchema(t *testing.T, configDir string, table string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	schema := "tableName: " + table + `
+attributes:
+- fieldName: order_key
+  sourceName: /order_key
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: customer_key
+  sourceName: /customer_key
+  mappingStrategy: IntBSI
+  type: Integer
+`
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
 	}
