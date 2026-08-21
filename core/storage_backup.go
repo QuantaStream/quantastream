@@ -100,13 +100,14 @@ type LocalStorageQuiescenceLease struct {
 }
 
 type CreateLocalStorageBackupRequest struct {
-	DataDir string
-	Target  string
-	Now     time.Time
-	Quiesce bool
-	WALPath string
-	Owner   string
-	Reason  string
+	DataDir             string
+	Target              string
+	Now                 time.Time
+	Quiesce             bool
+	WALPath             string
+	Owner               string
+	Reason              string
+	FlushBeforeSnapshot func(context.Context, string) error
 }
 
 type RestoreLocalStorageBackupRequest struct {
@@ -216,6 +217,14 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		}
 	}
 
+	flushBeforeSnapshot := req.FlushBeforeSnapshot
+	if flushBeforeSnapshot == nil {
+		flushBeforeSnapshot = FlushLocalStorageForBackup
+	}
+	if err := flushBeforeSnapshot(ctx, sourceDir); err != nil {
+		return manifest, fmt.Errorf("flush local storage before backup snapshot: %w", err)
+	}
+
 	err = filepath.WalkDir(sourceDir, func(srcPath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -313,6 +322,49 @@ func currentLocalStorageBackupProduct() LocalStorageBackupProduct {
 		BuildDate: version.BuildDate,
 		Summary:   version.Summary(),
 	}
+}
+
+func FlushLocalStorageForBackup(ctx context.Context, dataDir string) error {
+	sourceDir, err := resolveExistingDirectory(dataDir, "backup data directory")
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(sourceDir, func(srcPath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat backup flush source %s: %w", srcPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			relPath, relErr := manifestRelativePath(sourceDir, srcPath)
+			if relErr != nil {
+				return relErr
+			}
+			return fmt.Errorf("backup flush source contains unsupported symlink: %s", relPath)
+		}
+		if entry.IsDir() {
+			if err := syncDirectory(srcPath); err != nil {
+				return fmt.Errorf("sync backup flush directory %s: %w", srcPath, err)
+			}
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			relPath, relErr := manifestRelativePath(sourceDir, srcPath)
+			if relErr != nil {
+				return relErr
+			}
+			return fmt.Errorf("backup flush source contains unsupported file type: %s", relPath)
+		}
+		if err := syncFile(srcPath); err != nil {
+			return fmt.Errorf("sync backup flush file %s: %w", srcPath, err)
+		}
+		return nil
+	})
 }
 
 type BeginLocalStorageQuiescenceRequest struct {
@@ -880,6 +932,20 @@ func mkdirAllAndSync(path string, mode os.FileMode) error {
 }
 
 func syncFileAndParentDirectory(path string) error {
+	if err := syncFile(path); err != nil {
+		return err
+	}
+	return syncParentDirectory(path)
+}
+
+func syncDirectoryAndParent(path string) error {
+	if err := syncDirectory(path); err != nil {
+		return err
+	}
+	return syncParentDirectory(path)
+}
+
+func syncFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -889,13 +955,10 @@ func syncFileAndParentDirectory(path string) error {
 	if syncErr != nil {
 		return syncErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return syncParentDirectory(path)
+	return closeErr
 }
 
-func syncDirectoryAndParent(path string) error {
+func syncDirectory(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {
 		return err
@@ -908,7 +971,7 @@ func syncDirectoryAndParent(path string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return syncParentDirectory(path)
+	return nil
 }
 
 func syncParentDirectory(path string) error {

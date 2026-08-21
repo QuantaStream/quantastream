@@ -176,6 +176,74 @@ func TestCreateQuiescentLocalStorageBackupRecordsWALCheckpointAndRemovesLease(t 
 	}
 }
 
+func TestCreateQuiescentLocalStorageBackupFlushesBeforeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	backupDir := filepath.Join(root, "backup")
+	flushCalled := false
+	manifest, err := CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+		Quiesce: true,
+		Owner:   "unit-test",
+		Reason:  "flush ordering",
+		FlushBeforeSnapshot: func(ctx context.Context, flushedDataDir string) error {
+			if flushedDataDir != dataDir {
+				t.Fatalf("flush data dir = %q, want %q", flushedDataDir, dataDir)
+			}
+			if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || !found {
+				t.Fatalf("flush observed quiescence found=%t err=%v, want active lease", found, err)
+			}
+			writeBackupTestFile(t, dataDir, "flush-marker.txt", "flushed before snapshot")
+			flushCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateLocalStorageBackup returned error: %v", err)
+	}
+	if !flushCalled {
+		t.Fatalf("flush hook was not called")
+	}
+	if manifest.FileCount != 2 {
+		t.Fatalf("manifest file count = %d, want flush-created marker included", manifest.FileCount)
+	}
+	assertBackupTestFile(t, filepath.Join(backupDir, LocalStorageBackupSnapshotDir), "flush-marker.txt", "flushed before snapshot")
+	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
+		t.Fatalf("quiescence lease after backup found=%t err=%v, want removed", found, err)
+	}
+}
+
+func TestCreateQuiescentLocalStorageBackupReleasesLeaseWhenFlushFails(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+
+	backupDir := filepath.Join(root, "backup")
+	_, err := CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+		Quiesce: true,
+		FlushBeforeSnapshot: func(ctx context.Context, flushedDataDir string) error {
+			if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || !found {
+				t.Fatalf("flush observed quiescence found=%t err=%v, want active lease", found, err)
+			}
+			return errors.New("flush failed")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "flush local storage before backup snapshot") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want flush failure", err)
+	}
+	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
+		t.Fatalf("quiescence lease after failed backup found=%t err=%v, want removed", found, err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, LocalStorageBackupManifestFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup manifest after failed flush err=%v, want not exist", err)
+	}
+}
+
 func TestCreateQuiescentLocalStorageBackupRejectsExternalWALPath(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")

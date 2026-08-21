@@ -138,13 +138,15 @@ Current implementation status:
   requires a clean WAL/checkpoint pair: no committed records awaiting startup
   replay and no pending uncommitted tail. The backup manifest records the
   WAL/checkpoint boundary. For the current local filesystem format, that WAL
-  path must live under the data directory so the snapshot is self-contained. The
-  transient barrier file is not included in the snapshot or restore image.
-  Backup creation and restore fsync copied files, created directories, the
-  quiescence lease, and the manifest path; validation rejects checksum
-  mismatches and unmanifested snapshot entries. The manifest also records the
-  QuantaStream product/build identity so support can identify the binary that
-  produced the backup.
+  path must live under the data directory so the snapshot is self-contained.
+  After the barrier is active and before the snapshot walk begins, backup
+  creation calls the explicit local filesystem flush hook so source files and
+  directories are synced before copying. The transient barrier file is not
+  included in the snapshot or restore image. Backup creation and restore fsync
+  copied files, created directories, the quiescence lease, and the manifest
+  path; validation rejects checksum mismatches and unmanifested snapshot
+  entries. The manifest also records the QuantaStream product/build identity so
+  support can identify the binary that produced the backup.
 
 Skeleton status command:
 
@@ -561,7 +563,8 @@ inspection command only; startup replay remains the recovery path.
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
 metadata for successful commit boundaries, standard-mode startup replay, and
-WAL-backed quiescent backup preflight checks. Distributed cluster snapshots and
+WAL-backed quiescent backup preflight checks. The local snapshot path also has
+an explicit pre-copy filesystem flush hook. Distributed cluster snapshots and
 cloud backup targets remain separate lifecycle work.
 
 Before production use, the project must establish:
