@@ -1186,6 +1186,45 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLProjectionAutocommitNormalizesBooleanSessionValues(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int64
+	}{
+		{value: "ON", want: 1},
+		{value: "OFF", want: 0},
+		{value: "true", want: 1},
+		{value: "false", want: 0},
+	}
+
+	for _, tt := range tests {
+		runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+			Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+		}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+			t.Fatalf("@@autocommit projection should not dispatch to the direct executor")
+			return ExecutionResult{}, nil
+		})
+		runtime.Session = qsbridge.SessionContext{
+			Variables: map[string]string{"autocommit": tt.value},
+		}
+
+		result, err := runtime.ExecuteSQL(context.Background(), "select @@autocommit as autocommit_value", qsbridge.ExecutionOptions{})
+		if err != nil {
+			t.Fatalf("%s ExecuteSQL failed: %v", tt.value, err)
+		}
+		if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+			t.Fatalf("%s diagnostics = %#v runtime=%#v", tt.value, result.Diagnostics, result.Runtime.Diagnostics)
+		}
+		chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+		if diagnostics.BlocksNative() {
+			t.Fatalf("%s chunk diagnostics = %#v", tt.value, diagnostics)
+		}
+		if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 || chunk.Rows[0][0].Value != tt.want {
+			t.Fatalf("%s rows = %#v, want autocommit %d", tt.value, chunk.Rows, tt.want)
+		}
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowWarningsCharsetAndCollation(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{

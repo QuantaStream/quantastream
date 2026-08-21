@@ -1558,6 +1558,35 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	requireStandardProcessScalarString(t, reopened, "select count(*) from sample where id = 101", "1")
 }
 
+func TestStandardProcessDocumentsTransactionCompatibilityPosture(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+	defer process.Close()
+
+	requireStandardProcessSQLSuccess(t, process, "begin")
+	requireStandardProcessSQLSuccess(t, process, "set autocommit = 0")
+	requireStandardProcessSQLSuccess(t, process, "insert into sample (id, city) values (202, 'Cartago')")
+	requireStandardProcessSQLSuccess(t, process, "rollback")
+
+	requireStandardProcessScalarString(t, process, "select count(*) from sample where id = 202", "1")
+	requireStandardProcessSQLSuccess(t, process, "set autocommit = ON")
+	requireStandardProcessSQLSuccess(t, process, "delete from sample where id = 202")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+}
+
 func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

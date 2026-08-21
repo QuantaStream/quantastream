@@ -291,5 +291,7 @@ specific SQLRunner suite already covers the exact shape:
   single-table `year(...)`, `substr(...)`, and selected function ordering
 - window functions
 - recursive queries
-- transaction isolation semantics beyond the current Quanta mutation workflow
+- transaction isolation semantics beyond the current QuantaStream mutation
+  workflow; `BEGIN`, `COMMIT`, and `ROLLBACK` are accepted for client
+  compatibility, but `ROLLBACK` does not undo catalog-backed writes
 - DDL compatibility with MySQL beyond Quanta-supported table creation paths

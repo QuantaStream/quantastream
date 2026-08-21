@@ -10,7 +10,9 @@ import (
 )
 
 // StandardSessionActionHandler applies SQL session actions that have concrete
-// local storage meaning in inabox-standard.
+// local storage meaning in inabox-standard. BEGIN and ROLLBACK are accepted as
+// MySQL-compatible session actions, but standard writes remain statement-applied
+// until a fuller transaction lifecycle is implemented.
 type StandardSessionActionHandler struct {
 	Config  StandardConfig
 	Backend StandardLocalBackend
@@ -22,6 +24,9 @@ func (h StandardSessionActionHandler) HandleNativeProxySessionActions(ctx contex
 	var diagnostics qsbridge.DiagnosticSet
 	for _, action := range actions {
 		switch action.Kind {
+		case qsbridge.SessionActionBeginTransaction, qsbridge.SessionActionRollbackTransaction:
+			// Compatibility-only today: the protocol/session layer records the
+			// action, while storage writes are not buffered for rollback.
 		case qsbridge.SessionActionCommitTransaction:
 			diagnostics = append(diagnostics, h.commit(ctx)...)
 		}

@@ -616,7 +616,17 @@ func runtimeSessionTimeZone(session qsbridge.SessionContext) string {
 func metadataVariableLiteral(name string, value string) qsbridge.LiteralExpr {
 	value = strings.TrimSpace(value)
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "autocommit", "max_allowed_packet":
+	case "autocommit":
+		switch strings.ToLower(value) {
+		case "on", "true":
+			return qsbridge.Literal(qsbridge.ValueInt, int64(1))
+		case "off", "false":
+			return qsbridge.Literal(qsbridge.ValueInt, int64(0))
+		}
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return qsbridge.Literal(qsbridge.ValueInt, parsed)
+		}
+	case "max_allowed_packet":
 		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return qsbridge.Literal(qsbridge.ValueInt, parsed)
 		}
