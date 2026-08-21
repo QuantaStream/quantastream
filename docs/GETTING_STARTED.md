@@ -114,16 +114,17 @@ configuration and data directories. The TPC-H runbooks in `docs/TPCH.md` and
 For this first local snapshot path, make sure the source engine has committed
 or drained any recent writes before taking the backup. The backup command
 quiesces new storage mutations while it copies, but it snapshots durable
-filesystem state. The `qstream-loader` command defaults `-commit-on-close=true`,
-so stop it cleanly before backup when you use the loader flow above. If another
-live client performed writes, issue an explicit `COMMIT` or drain that client
-first:
+filesystem state. The command below asks the running single-node engine to
+commit dirty buffers after the quiescence barrier is active and before copying
+the snapshot:
 
 ```bash
 ./bin/qstream-admin backup create \
   --data-dir ./data \
   --target file://$PWD/backups/smoke-backup \
   --quiesce \
+  --engine-flush standard-native \
+  --native-grpc-addr 127.0.0.1:4100 \
   --wal-path ./data/storage.wal
 
 ./bin/qstream-admin backup inspect \

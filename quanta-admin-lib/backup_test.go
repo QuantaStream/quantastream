@@ -90,6 +90,30 @@ func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackupCreateCmdEngineFlushRequiresQuiesce(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	backupDir := filepath.Join(root, "backup")
+
+	_, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupCreateCmd{
+			DataDir:     dataDir,
+			Target:      backupDir,
+			EngineFlush: "standard-native",
+		}).Run(&Context{})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--engine-flush requires --quiesce") {
+		t.Fatalf("BackupCreateCmd.Run error = %v, want quiesce requirement", err)
+	}
+	if _, found, leaseErr := core.ObserveLocalStorageQuiescence(dataDir); leaseErr != nil || found {
+		t.Fatalf("ObserveLocalStorageQuiescence found=%t err=%v, want absent", found, leaseErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(backupDir, core.LocalStorageBackupManifestFileName)); !os.IsNotExist(statErr) {
+		t.Fatalf("backup manifest stat err=%v, want not exist", statErr)
+	}
+}
+
 func TestBackupInspectCmdReadsManifestWithoutChecksumValidation(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")

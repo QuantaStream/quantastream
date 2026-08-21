@@ -170,6 +170,8 @@ go run ./quanta-admin backup create \
   --data-dir /tmp/quantastream-standard \
   --target file:///tmp/quantastream-standard-backup \
   --quiesce \
+  --engine-flush standard-native \
+  --native-grpc-addr 127.0.0.1:4100 \
   --wal-path /tmp/quantastream-standard/storage.wal
 
 go run ./quanta-admin backup validate \
@@ -541,6 +543,11 @@ go run ./quanta-admin backup create \
 go run ./quanta-admin backup validate \
   --source file:///path/to/backup
 ```
+
+For a running single-node engine, add `--quiesce --engine-flush standard-native
+--native-grpc-addr host:4100` so the engine commits dirty buffers after the
+local storage write barrier is installed and before files are copied. Offline
+snapshots can omit the engine flush.
 
 Inspect a backup manifest without walking and checksumming every snapshot file:
 

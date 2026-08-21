@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/QuantaStream/quantastream/core"
+	"github.com/QuantaStream/quantastream/shared"
+	"github.com/hashicorp/consul/api"
 )
 
 // BackupCmd groups provider-neutral storage backup operations.
@@ -21,10 +24,13 @@ type BackupCmd struct {
 }
 
 type BackupCreateCmd struct {
-	DataDir string `help:"QuantaStream data directory to snapshot." default:"data"`
-	Target  string `help:"Backup target directory. Supports file:///path or a local path." required:""`
-	Quiesce bool   `help:"Create a local storage write barrier during the snapshot." default:"false"`
-	WALPath string `help:"Optional local WAL path to record in the backup checkpoint."`
+	DataDir        string        `help:"QuantaStream data directory to snapshot." default:"data"`
+	Target         string        `help:"Backup target directory. Supports file:///path or a local path." required:""`
+	Quiesce        bool          `help:"Create a local storage write barrier during the snapshot." default:"false"`
+	WALPath        string        `help:"Optional local WAL path to record in the backup checkpoint."`
+	EngineFlush    string        `help:"Optional running engine flush before the local snapshot: none, standard-native, or distributed." default:"none" enum:"none,standard-native,distributed"`
+	NativeGRPCAddr string        `help:"Native gRPC endpoint used with --engine-flush=standard-native." default:"127.0.0.1:4100"`
+	FlushTimeout   time.Duration `help:"Timeout for running engine flush before snapshot." default:"5m"`
 }
 
 type BackupValidateCmd struct {
@@ -62,12 +68,17 @@ type BackupQuiesceReleaseCmd struct {
 }
 
 func (c *BackupCreateCmd) Run(ctx *Context) error {
+	flushBeforeSnapshot, err := c.flushBeforeSnapshot(ctx)
+	if err != nil {
+		return err
+	}
 	manifest, err := core.CreateLocalStorageBackup(context.Background(), core.CreateLocalStorageBackupRequest{
-		DataDir: c.DataDir,
-		Target:  c.Target,
-		Quiesce: c.Quiesce,
-		WALPath: c.WALPath,
-		Owner:   "quanta-admin backup create",
+		DataDir:             c.DataDir,
+		Target:              c.Target,
+		Quiesce:             c.Quiesce,
+		WALPath:             c.WALPath,
+		Owner:               "quanta-admin backup create",
+		FlushBeforeSnapshot: flushBeforeSnapshot,
 	})
 	if err != nil {
 		return err
@@ -78,8 +89,93 @@ func (c *BackupCreateCmd) Run(ctx *Context) error {
 	}
 	fmt.Printf("backup_created=%s\n", target)
 	printBackupManifestSummary(manifest)
+	if mode := c.engineFlushMode(); mode != "none" {
+		fmt.Printf("backup_engine_flush=%s\n", mode)
+		if mode == "standard-native" {
+			fmt.Printf("backup_engine_flush_native_grpc_addr=%s\n", strings.TrimSpace(c.NativeGRPCAddr))
+		}
+		fmt.Printf("backup_engine_flush_timeout=%s\n", effectiveBackupFlushTimeout(c.FlushTimeout))
+	}
 	if c.Quiesce {
-		printQuiescentBackupLiveSourceNotes()
+		printQuiescentBackupLiveSourceNotes(c.engineFlushMode())
+	}
+	return nil
+}
+
+func (c *BackupCreateCmd) flushBeforeSnapshot(ctx *Context) (func(context.Context, string) error, error) {
+	mode := c.engineFlushMode()
+	if mode == "none" {
+		return nil, nil
+	}
+	if !c.Quiesce {
+		return nil, fmt.Errorf("--engine-flush requires --quiesce so the engine commit happens under a local storage write barrier")
+	}
+	timeout := effectiveBackupFlushTimeout(c.FlushTimeout)
+	switch mode {
+	case "standard-native":
+		addr := strings.TrimSpace(c.NativeGRPCAddr)
+		if addr == "" {
+			return nil, fmt.Errorf("--native-grpc-addr is required with --engine-flush=standard-native")
+		}
+		return func(parent context.Context, dataDir string) error {
+			if err := commitEngineBeforeSnapshot(parent, timeout, shared.LoaderConnectionConfig{
+				Mode:    shared.LoaderConnectionStandardNative,
+				Owner:   "quanta-admin-backup",
+				Address: addr,
+			}); err != nil {
+				return err
+			}
+			return core.FlushLocalStorageForBackup(parent, dataDir)
+		}, nil
+	case "distributed":
+		return func(parent context.Context, dataDir string) error {
+			consulAddr := "127.0.0.1:8500"
+			if ctx != nil && strings.TrimSpace(ctx.ConsulAddr) != "" {
+				consulAddr = strings.TrimSpace(ctx.ConsulAddr)
+			}
+			consul, err := api.NewClient(&api.Config{Address: consulAddr})
+			if err != nil {
+				return fmt.Errorf("create Consul client for backup engine flush: %w", err)
+			}
+			if err := commitEngineBeforeSnapshot(parent, timeout, shared.LoaderConnectionConfig{
+				Mode:   shared.LoaderConnectionDistributed,
+				Owner:  "quanta-admin-backup",
+				Consul: consul,
+			}); err != nil {
+				return err
+			}
+			return core.FlushLocalStorageForBackup(parent, dataDir)
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported --engine-flush %q", c.EngineFlush)
+	}
+}
+
+func (c *BackupCreateCmd) engineFlushMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.EngineFlush))
+	if mode == "" {
+		return "none"
+	}
+	return mode
+}
+
+func effectiveBackupFlushTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return 5 * time.Minute
+	}
+	return timeout
+}
+
+func commitEngineBeforeSnapshot(parent context.Context, timeout time.Duration, config shared.LoaderConnectionConfig) error {
+	flushCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	conn, err := shared.NewLoaderConnection(flushCtx, config)
+	if err != nil {
+		return fmt.Errorf("connect running engine for backup flush: %w", err)
+	}
+	defer conn.Disconnect()
+	if err := shared.NewBitmapIndex(conn).CommitWithContext(flushCtx); err != nil {
+		return fmt.Errorf("commit running engine for backup flush: %w", err)
 	}
 	return nil
 }
@@ -266,9 +362,13 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	}
 }
 
-func printQuiescentBackupLiveSourceNotes() {
+func printQuiescentBackupLiveSourceNotes(engineFlushMode string) {
 	fmt.Printf("backup_live_source_requires_committed_state=true\n")
-	fmt.Printf("backup_live_source_flush_hint=commit_or_drain_live_engine_before_snapshot\n")
+	if engineFlushMode != "none" {
+		fmt.Printf("backup_live_source_flush_hint=engine_flush_after_quiesce_drain_external_clients\n")
+	} else {
+		fmt.Printf("backup_live_source_flush_hint=commit_or_drain_live_engine_before_snapshot\n")
+	}
 	fmt.Printf("backup_live_source_snapshot_scope=durable_filesystem_state\n")
 }
 

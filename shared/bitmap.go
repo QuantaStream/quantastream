@@ -2440,10 +2440,16 @@ func (c *BitmapIndex) tableOperationClient(client pb.BitmapIndexClient, req *pb.
 
 // Commit - Send commitClient to all nodes. Wait for all to complete.
 func (c *BitmapIndex) Commit() error {
+	ctx, cancel := context.WithTimeout(context.Background(), CommitDeadline)
+	defer cancel()
+	return c.CommitWithContext(ctx)
+}
 
+// CommitWithContext sends commit to all selected nodes using the caller's
+// deadline. It is used by admin workflows that need the commit to share a
+// larger operation timeout.
+func (c *BitmapIndex) CommitWithContext(ctx context.Context) error {
 	if c.local != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), CommitDeadline)
-		defer cancel()
 		_, err := c.local.Commit(ctx, &empty.Empty{})
 		return err
 	}
@@ -2459,7 +2465,7 @@ func (c *BitmapIndex) Commit() error {
 		client := n.client
 		clientIndex := n.index
 		eg.Go(func() error {
-			if err := c.commitClient(client, clientIndex); err != nil {
+			if err := c.commitClient(ctx, client, clientIndex); err != nil {
 				return err
 			}
 			return nil
@@ -2473,10 +2479,7 @@ func (c *BitmapIndex) Commit() error {
 }
 
 // Send a Commit request to a node.
-func (c *BitmapIndex) commitClient(client pb.BitmapIndexClient, clientIndex int) error {
-
-	ctx, cancel := context.WithTimeout(context.Background(), CommitDeadline)
-	defer cancel()
+func (c *BitmapIndex) commitClient(ctx context.Context, client pb.BitmapIndexClient, clientIndex int) error {
 	_, err := client.Commit(ctx, &empty.Empty{}) // where does this go, on the nodes?
 	if err != nil {
 		return fmt.Errorf("%v.Commit(_) = _, %v, node = %s", client, err,
