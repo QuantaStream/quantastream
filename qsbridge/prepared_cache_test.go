@@ -58,6 +58,20 @@ func TestMemoryPreparedPlanCacheReturnsCopies(t *testing.T) {
 		Parameters: []ParameterRef{{Index: 1, Type: DataTypeInt}},
 		Query: QueryIR{
 			Projection: []ProjectionColumn{{Alias: "o_orderkey"}},
+			Subqueries: []SubqueryPlanIntent{{
+				Kind:       SubqueryIntentScalar,
+				Capability: CapabilityScalarSubquery,
+				HelperIntents: []SubqueryHelperIntent{{
+					Name: "scalar_subquery_value",
+					Kind: "scalar_subquery",
+				}},
+				Access: []AccessRequirement{{
+					Privilege: AccessSelect,
+					Table:     TableInstance{Schema: "quanta", Table: "lineitem", Alias: "l"},
+					Fields:    []FieldRef{{Table: TableInstance{Schema: "quanta", Table: "lineitem", Alias: "l"}, Name: "l_orderkey"}},
+				}},
+				Scalar: &ScalarSubqueryIntent{OutputName: "scalar_subquery_value"},
+			}},
 		},
 	}
 
@@ -70,6 +84,9 @@ func TestMemoryPreparedPlanCacheReturnsCopies(t *testing.T) {
 	cached.Session.Variables["autocommit"] = "0"
 	cached.Parameters[0].Type = DataTypeString
 	cached.Query.Projection[0].Alias = "mutated"
+	cached.Query.Subqueries[0].HelperIntents[0].Kind = "mutated"
+	cached.Query.Subqueries[0].Access[0].Fields[0].Name = "mutated"
+	cached.Query.Subqueries[0].Scalar.OutputName = "mutated"
 
 	cachedAgain, ok := cache.Get(plan.CacheKey())
 	if !ok {
@@ -83,6 +100,11 @@ func TestMemoryPreparedPlanCacheReturnsCopies(t *testing.T) {
 	}
 	if cachedAgain.Query.Projection[0].Alias != "o_orderkey" {
 		t.Fatalf("cached query projection alias = %q, want o_orderkey", cachedAgain.Query.Projection[0].Alias)
+	}
+	if cachedAgain.Query.Subqueries[0].HelperIntents[0].Kind != "scalar_subquery" ||
+		cachedAgain.Query.Subqueries[0].Access[0].Fields[0].Name != "l_orderkey" ||
+		cachedAgain.Query.Subqueries[0].Scalar.OutputName != "scalar_subquery_value" {
+		t.Fatalf("cached subquery was mutated: %#v", cachedAgain.Query.Subqueries[0])
 	}
 }
 

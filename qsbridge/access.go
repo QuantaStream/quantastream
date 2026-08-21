@@ -41,6 +41,11 @@ func (q QueryIR) RequiredAccess() []AccessRequirement {
 	for _, source := range q.Sources {
 		collector.ensureTable(AccessSelect, source)
 	}
+	for _, subquery := range q.Subqueries {
+		for _, requirement := range subquery.RequiredAccess() {
+			collector.addRequirement(requirement)
+		}
+	}
 	switch q.Mutation.Kind {
 	case MutationInsert:
 		collector.addFields(AccessInsert, q.Mutation.Target, q.Mutation.Columns)
@@ -153,8 +158,13 @@ func (c *accessCollector) addFields(privilege AccessPrivilege, table TableInstan
 }
 
 func (c *accessCollector) addRequirement(requirement AccessRequirement) {
-	c.ensureTable(requirement.Privilege, requirement.Table)
+	if accessTableHasTarget(requirement.Table) {
+		c.ensureTable(requirement.Privilege, requirement.Table)
+	}
 	for _, field := range requirement.Fields {
+		if !accessFieldHasTarget(field) {
+			continue
+		}
 		c.addField(requirement.Privilege, field)
 	}
 }
@@ -173,6 +183,20 @@ func (c *accessCollector) addField(privilege AccessPrivilege, field FieldRef) {
 	c.requirements[index].Fields = append(c.requirements[index].Fields, field)
 }
 
+func (c *accessCollector) addSubqueryField(field FieldRef) {
+	if !accessFieldHasTarget(field) {
+		return
+	}
+	c.addField(AccessSelect, field)
+}
+
+func (c *accessCollector) ensureSubqueryTable(table TableInstance) {
+	if !accessTableHasTarget(table) {
+		return
+	}
+	c.ensureTable(AccessSelect, table)
+}
+
 func (c *accessCollector) ensureTable(privilege AccessPrivilege, table TableInstance) int {
 	key := accessTableKey(privilege, table)
 	if index, ok := c.index[key]; ok {
@@ -185,6 +209,17 @@ func (c *accessCollector) ensureTable(privilege AccessPrivilege, table TableInst
 		Table:     table,
 	})
 	return index
+}
+
+func accessFieldHasTarget(field FieldRef) bool {
+	if field.Name == "" && field.PhysicalName == "" {
+		return false
+	}
+	return accessTableHasTarget(field.Table)
+}
+
+func accessTableHasTarget(table TableInstance) bool {
+	return table.ID != "" || table.Schema != "" || table.Table != "" || table.Alias != ""
 }
 
 func accessTableKey(privilege AccessPrivilege, table TableInstance) string {

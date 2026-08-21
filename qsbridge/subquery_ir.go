@@ -74,9 +74,32 @@ type SubqueryPlanIntent struct {
 	Kind                 SubqueryIntentKind
 	Capability           PlanCapability
 	HelperIntents        []SubqueryHelperIntent
+	Access               []AccessRequirement
 	Scalar               *ScalarSubqueryIntent
 	CorrelatedAggregate  *CorrelatedAggregateSubqueryIntent
 	CorrelatedMembership *CorrelatedMembershipSubqueryIntent
+}
+
+// RequiredAccess returns authorization metadata implied by this subquery intent.
+func (i SubqueryPlanIntent) RequiredAccess() []AccessRequirement {
+	collector := newAccessCollector()
+	for _, requirement := range i.Access {
+		collector.addRequirement(requirement)
+	}
+	if i.CorrelatedAggregate != nil {
+		collector.addSubqueryField(i.CorrelatedAggregate.OuterValue)
+		collector.addSubqueryField(i.CorrelatedAggregate.InnerValue)
+		collector.addSubqueryField(i.CorrelatedAggregate.InnerKey)
+		collector.addSubqueryField(i.CorrelatedAggregate.OuterKey)
+		for _, field := range i.CorrelatedAggregate.RequiredFilterFields {
+			collector.addSubqueryField(field)
+		}
+	}
+	if i.CorrelatedMembership != nil {
+		collector.ensureSubqueryTable(i.CorrelatedMembership.OuterDomain.Table)
+		collector.ensureSubqueryTable(i.CorrelatedMembership.InnerDomain.Table)
+	}
+	return collector.requirements
 }
 
 // Valid reports whether the intent has the shape required by its kind.

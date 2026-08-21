@@ -163,6 +163,7 @@ func cloneQueryIR(query QueryIR) QueryIR {
 	cloned.Aggregates = append([]Aggregate(nil), query.Aggregates...)
 	cloned.Having = append([]Predicate(nil), query.Having...)
 	cloned.OrderBy = append([]SortSpec(nil), query.OrderBy...)
+	cloned.Subqueries = cloneSubqueryPlanIntents(query.Subqueries)
 	cloned.Result.Columns = append([]FieldRef(nil), query.Result.Columns...)
 	cloned.Result.Statement = cloneStatementResult(query.Result.Statement)
 	cloned.UnionAll = cloneQueryIRs(query.UnionAll)
@@ -186,6 +187,40 @@ func cloneMutationValidationSteps(steps []MutationValidationStep) []MutationVali
 		step.Columns = append([]FieldRef(nil), step.Columns...)
 		step.ReferencedColumns = append([]FieldRef(nil), step.ReferencedColumns...)
 		cloned = append(cloned, step)
+	}
+	return cloned
+}
+
+func cloneSubqueryPlanIntents(intents []SubqueryPlanIntent) []SubqueryPlanIntent {
+	if len(intents) == 0 {
+		return nil
+	}
+	cloned := make([]SubqueryPlanIntent, 0, len(intents))
+	for _, intent := range intents {
+		cloned = append(cloned, cloneSubqueryPlanIntent(intent))
+	}
+	return cloned
+}
+
+func cloneSubqueryPlanIntent(intent SubqueryPlanIntent) SubqueryPlanIntent {
+	cloned := intent
+	cloned.HelperIntents = append([]SubqueryHelperIntent(nil), intent.HelperIntents...)
+	cloned.Access = cloneAccessRequirements(intent.Access)
+	if intent.Scalar != nil {
+		scalar := *intent.Scalar
+		cloned.Scalar = &scalar
+	}
+	if intent.CorrelatedAggregate != nil {
+		correlated := *intent.CorrelatedAggregate
+		correlated.RequiredFilterFields = append([]FieldRef(nil), intent.CorrelatedAggregate.RequiredFilterFields...)
+		correlated.RequiredFilters = append([]string(nil), intent.CorrelatedAggregate.RequiredFilters...)
+		cloned.CorrelatedAggregate = &correlated
+	}
+	if intent.CorrelatedMembership != nil {
+		correlated := *intent.CorrelatedMembership
+		correlated.CrossDomainPredicates = append([]string(nil), intent.CorrelatedMembership.CrossDomainPredicates...)
+		correlated.RequiredFilters = append([]string(nil), intent.CorrelatedMembership.RequiredFilters...)
+		cloned.CorrelatedMembership = &correlated
 	}
 	return cloned
 }
