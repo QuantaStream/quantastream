@@ -138,7 +138,11 @@ Current implementation status:
   when `--wal-path` is supplied. For the current local filesystem format, that
   WAL path must live under the data directory so the snapshot is
   self-contained. The transient barrier file is not included in the snapshot or
-  restore image.
+  restore image. Backup creation and restore fsync copied files, created
+  directories, the quiescence lease, and the manifest path; validation rejects
+  checksum mismatches and unmanifested snapshot entries. The manifest also
+  records the QuantaStream product/build identity so support can identify the
+  binary that produced the backup.
 
 Skeleton status command:
 
@@ -165,6 +169,9 @@ go run ./quanta-admin backup validate \
 go run ./quanta-admin backup restore \
   --source file:///tmp/quantastream-standard-backup \
   --data-dir /tmp/quantastream-standard-restore
+
+go run ./quanta-admin backup validate \
+  --source file:///tmp/quantastream-standard-backup
 
 go run ./quanta-admin backup quiesce status \
   --data-dir /tmp/quantastream-standard
@@ -495,7 +502,9 @@ QuantaStream includes an initial local filesystem backup format for offline or
 externally quiesced `inabox-standard` data directories. The format copies the
 data directory into a provider-neutral snapshot tree and writes `manifest.json`
 last. The manifest records the backup format/version, mode, file and directory
-counts, byte count, per-file SHA-256 checksums, and the current checkpoint shape.
+counts, byte count, per-file SHA-256 checksums, QuantaStream build identity, and
+the current checkpoint shape. Local backup and restore sync copied files,
+created directories, and manifest/lease paths before returning.
 
 Create and validate a local backup:
 
@@ -514,7 +523,14 @@ Restore into an empty data directory:
 go run ./quanta-admin backup restore \
   --source file:///path/to/backup \
   --data-dir /path/to/restored-data
+
+go run ./quanta-admin backup validate \
+  --source file:///path/to/backup
 ```
+
+Treat validation as part of the runbook, not an optional diagnostic. It confirms
+that every manifest entry exists, every file checksum matches, aggregate counts
+match, and the snapshot does not contain unmanifested files.
 
 This first slice is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
