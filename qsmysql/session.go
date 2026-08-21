@@ -90,6 +90,12 @@ func (r *SessionRunner) AcceptHandshakeResponse(ctx context.Context) (CommandRes
 	if err != nil {
 		return CommandResponse{}, err
 	}
+	if response.AuthPluginName == "" {
+		response.AuthPluginName = r.Handshake.AuthPluginName
+		if response.AuthPluginName == "" {
+			response.AuthPluginName = defaultAuthPluginName
+		}
+	}
 	connection, err := r.Connection.AcceptHandshakeResponse(response)
 	if err != nil {
 		return CommandResponse{}, err
@@ -98,7 +104,7 @@ func (r *SessionRunner) AcceptHandshakeResponse(ctx context.Context) (CommandRes
 	if authenticator == nil {
 		authenticator = PermissiveAuthenticator{}
 	}
-	decision, err := authenticator.Authenticate(ctx, authRequestFromHandshake(connection, response))
+	decision, err := authenticator.Authenticate(ctx, authRequestFromHandshake(connection, response, r.Handshake.AuthPluginData))
 	if err != nil {
 		return CommandResponse{}, err
 	}

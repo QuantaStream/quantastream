@@ -613,8 +613,11 @@ preserve driver compatibility at the protocol boundary, not only make the
 command-line MySQL client happy. The built-in replacement should start from
 broad MySQL client compatibility:
 
-- implement the MySQL authentication handshake cleanly enough for standard
-  drivers and tools to connect without special-case behavior
+- keep the MySQL authentication handshake clean enough for standard drivers and
+  tools to connect without special-case behavior. The core `qsmysql`
+  package includes a static account verifier for MySQL native password,
+  caching_sha2 fast auth, and clear-password adapter paths; service wiring and
+  durable account administration remain the next steps.
 - preserve prepared SQL support and add batched insert behavior expected by
   standard drivers
 - make `USE <database>`, selected database state, and `database()` semantics

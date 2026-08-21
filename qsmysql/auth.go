@@ -13,6 +13,7 @@ type AuthRequest struct {
 	Username          string
 	Database          string
 	AuthPluginName    string
+	AuthPluginData    []byte
 	AuthResponse      []byte
 	CapabilityFlags   CapabilityFlag
 	CharacterSet      CharacterSet
@@ -76,12 +77,13 @@ func (a RejectingAuthenticator) Authenticate(ctx context.Context, request AuthRe
 	}, nil
 }
 
-func authRequestFromHandshake(connection Connection, response HandshakeResponse41) AuthRequest {
+func authRequestFromHandshake(connection Connection, response HandshakeResponse41, authPluginData []byte) AuthRequest {
 	return AuthRequest{
 		ConnectionID:      connection.ID,
 		Username:          response.Username,
 		Database:          response.Database,
 		AuthPluginName:    response.AuthPluginName,
+		AuthPluginData:    append([]byte(nil), authPluginData...),
 		AuthResponse:      append([]byte(nil), response.AuthResponse...),
 		CapabilityFlags:   response.CapabilityFlags,
 		CharacterSet:      response.CharacterSet,
