@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/QuantaStream/quantastream/version"
 )
 
 const (
@@ -36,6 +38,7 @@ type LocalStorageBackupManifest struct {
 	Version        int                          `json:"version"`
 	Format         string                       `json:"format"`
 	Mode           string                       `json:"mode"`
+	Product        LocalStorageBackupProduct    `json:"product,omitempty"`
 	CreatedAt      time.Time                    `json:"created_at"`
 	CompletedAt    time.Time                    `json:"completed_at"`
 	SourceDataDir  string                       `json:"source_data_dir"`
@@ -45,6 +48,16 @@ type LocalStorageBackupManifest struct {
 	ByteCount      int64                        `json:"byte_count"`
 	Checkpoint     LocalStorageBackupCheckpoint `json:"checkpoint"`
 	Entries        []LocalStorageBackupEntry    `json:"entries"`
+}
+
+// LocalStorageBackupProduct records the build identity that created a backup.
+type LocalStorageBackupProduct struct {
+	Name      string `json:"name,omitempty"`
+	ShortName string `json:"short_name,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Commit    string `json:"commit,omitempty"`
+	BuildDate string `json:"build_date,omitempty"`
+	Summary   string `json:"summary,omitempty"`
 }
 
 // LocalStorageBackupCheckpoint is intentionally narrow until WAL/checkpoint
@@ -174,6 +187,7 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		Version:       LocalStorageBackupVersion,
 		Format:        LocalStorageBackupFormat,
 		Mode:          LocalStorageBackupModeOffline,
+		Product:       currentLocalStorageBackupProduct(),
 		CreatedAt:     now.UTC(),
 		SourceDataDir: sourceDir,
 		SnapshotDir:   LocalStorageBackupSnapshotDir,
@@ -282,6 +296,17 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		return manifest, err
 	}
 	return manifest, nil
+}
+
+func currentLocalStorageBackupProduct() LocalStorageBackupProduct {
+	return LocalStorageBackupProduct{
+		Name:      version.ProductName,
+		ShortName: version.ShortName,
+		Version:   version.Version,
+		Commit:    version.Commit,
+		BuildDate: version.BuildDate,
+		Summary:   version.Summary(),
+	}
 }
 
 type BeginLocalStorageQuiescenceRequest struct {

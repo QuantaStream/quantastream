@@ -36,6 +36,12 @@ func TestCreateValidateAndRestoreLocalStorageBackup(t *testing.T) {
 	if manifest.Mode != LocalStorageBackupModeOffline {
 		t.Fatalf("manifest mode = %s", manifest.Mode)
 	}
+	if manifest.Product.Name != "QuantaStream" || manifest.Product.ShortName != "QStream" {
+		t.Fatalf("manifest product = %+v, want QuantaStream/QStream", manifest.Product)
+	}
+	if manifest.Product.Version == "" || manifest.Product.Summary == "" {
+		t.Fatalf("manifest product missing version summary: %+v", manifest.Product)
+	}
 	if manifest.FileCount != 3 || manifest.DirectoryCount == 0 {
 		t.Fatalf("manifest counts files=%d dirs=%d", manifest.FileCount, manifest.DirectoryCount)
 	}
@@ -52,6 +58,9 @@ func TestCreateValidateAndRestoreLocalStorageBackup(t *testing.T) {
 	}
 	if validated.FileCount != manifest.FileCount {
 		t.Fatalf("validated file count = %d, want %d", validated.FileCount, manifest.FileCount)
+	}
+	if validated.Product.Summary != manifest.Product.Summary {
+		t.Fatalf("validated product summary = %q, want %q", validated.Product.Summary, manifest.Product.Summary)
 	}
 
 	restoreDir := filepath.Join(root, "restore")

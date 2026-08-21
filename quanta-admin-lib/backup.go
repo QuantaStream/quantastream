@@ -147,6 +147,24 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	fmt.Printf("backup_format=%s\n", manifest.Format)
 	fmt.Printf("backup_version=%d\n", manifest.Version)
 	fmt.Printf("backup_mode=%s\n", manifest.Mode)
+	if manifest.Product.Name != "" {
+		fmt.Printf("backup_product=%s\n", manifest.Product.Name)
+	}
+	if manifest.Product.ShortName != "" {
+		fmt.Printf("backup_product_short=%s\n", manifest.Product.ShortName)
+	}
+	if manifest.Product.Version != "" {
+		fmt.Printf("backup_product_version=%s\n", manifest.Product.Version)
+	}
+	if manifest.Product.Commit != "" {
+		fmt.Printf("backup_product_commit=%s\n", manifest.Product.Commit)
+	}
+	if manifest.Product.BuildDate != "" {
+		fmt.Printf("backup_product_build_date=%s\n", manifest.Product.BuildDate)
+	}
+	if manifest.Product.Summary != "" {
+		fmt.Printf("backup_product_summary=%s\n", manifest.Product.Summary)
+	}
 	fmt.Printf("backup_files=%d\n", manifest.FileCount)
 	fmt.Printf("backup_directories=%d\n", manifest.DirectoryCount)
 	fmt.Printf("backup_bytes=%d\n", manifest.ByteCount)
