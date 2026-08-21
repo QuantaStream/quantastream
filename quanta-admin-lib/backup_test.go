@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,15 +19,41 @@ func TestBackupCommandsCreateValidateAndRestoreLocalSnapshot(t *testing.T) {
 	restoreDir := filepath.Join(root, "restore")
 	ctx := &Context{}
 
-	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir}).Run(ctx); err != nil {
+	createOutput, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupCreateCmd{DataDir: dataDir, Target: backupDir}).Run(ctx)
+	})
+	if err != nil {
 		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
 	}
-	if err := (&BackupValidateCmd{Source: backupDir}).Run(ctx); err != nil {
+	assertAdminBackupOutputContains(t, createOutput,
+		"backup_created=",
+		"backup_product=QuantaStream",
+		"backup_product_short=QStream",
+		"backup_product_version=",
+		"backup_product_summary=QuantaStream",
+	)
+	validateOutput, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupValidateCmd{Source: backupDir}).Run(ctx)
+	})
+	if err != nil {
 		t.Fatalf("BackupValidateCmd.Run returned error: %v", err)
 	}
-	if err := (&BackupRestoreCmd{Source: backupDir, DataDir: restoreDir}).Run(ctx); err != nil {
+	assertAdminBackupOutputContains(t, validateOutput,
+		"backup_valid=",
+		"backup_product=QuantaStream",
+		"backup_product_summary=QuantaStream",
+	)
+	restoreOutput, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupRestoreCmd{Source: backupDir, DataDir: restoreDir}).Run(ctx)
+	})
+	if err != nil {
 		t.Fatalf("BackupRestoreCmd.Run returned error: %v", err)
 	}
+	assertAdminBackupOutputContains(t, restoreOutput,
+		"backup_restored=",
+		"backup_product=QuantaStream",
+		"backup_product_summary=QuantaStream",
+	)
 	data, err := os.ReadFile(filepath.Join(restoreDir, "config/customer/schema.yaml"))
 	if err != nil {
 		t.Fatalf("read restored schema: %v", err)
@@ -95,6 +122,40 @@ func TestBackupQuiesceReleaseRequiresLeaseIDOrForce(t *testing.T) {
 	}
 	if _, found, err := core.ObserveLocalStorageQuiescence(dataDir); err != nil || !found {
 		t.Fatalf("ObserveLocalStorageQuiescence after rejected release found=%t err=%v, want active", found, err)
+	}
+}
+
+func captureAdminBackupStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	orig := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() { os.Stdout = orig }()
+	runErr := fn()
+	closeErr := writer.Close()
+	os.Stdout = orig
+	data, readErr := io.ReadAll(reader)
+	if err := reader.Close(); err != nil && readErr == nil {
+		readErr = err
+	}
+	if readErr != nil {
+		t.Fatalf("read captured stdout: %v", readErr)
+	}
+	if closeErr != nil && runErr == nil {
+		runErr = closeErr
+	}
+	return string(data), runErr
+}
+
+func assertAdminBackupOutputContains(t *testing.T, output string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("backup command output missing %q:\n%s", want, output)
+		}
 	}
 }
 
