@@ -611,13 +611,28 @@ This first slice is intentionally an offline/local snapshot contract. A local WA
 primitive and `inabox-standard` enablement switch exist, including checkpoint
 metadata for successful commit boundaries, standard-mode startup replay, and
 WAL-backed quiescent backup preflight checks. The local snapshot path also has
-an explicit pre-copy filesystem flush hook. For live local engines, commit or
-drain recent writes before `backup create --quiesce`; packaged `qstream-loader`
-writes are committed by the loader's default close path. The command prevents
-new storage mutations during the snapshot, but the current standalone admin path
-does not yet force the running engine to publish dirty in-memory buffers after
-the barrier is installed. Distributed cluster snapshots and cloud backup targets
-remain separate lifecycle work.
+an explicit pre-copy filesystem flush hook. For live single-node engines, use
+`backup create --quiesce --engine-flush standard-native --native-grpc-addr
+host:4100` so dirty in-memory buffers are committed under the local write
+barrier before the snapshot walk begins. Packaged `qstream-loader` writes are
+committed by the loader's default close path. Distributed cluster snapshots and
+cloud backup targets remain separate lifecycle work.
+
+Create a support bundle when filing an operational issue:
+
+```bash
+go run ./quanta-admin support bundle \
+  --output /tmp/qstream-support.tar.gz \
+  --data-dir /path/to/quantastream-data \
+  --wal-path /path/to/quantastream-data/storage.wal \
+  --backup-source file:///path/to/backup \
+  --log-path /var/log/quantastream/quantastream.log
+```
+
+The support bundle includes version/runtime metadata, catalog/config summaries,
+optional WAL planning output, backup manifests, optional recent log tails, and
+best-effort Consul service-discovery status. It intentionally excludes table
+data files and raw auth/access policy files.
 
 Before production use, the project must establish:
 

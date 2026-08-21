@@ -158,7 +158,22 @@ directory:
 
 Press `Ctrl-C` in the engine terminal. The local data lives under `./data`.
 
-For support, capture these lines:
+For support, capture a diagnostic bundle:
+
+```bash
+./bin/qstream-admin support bundle \
+  --output ./qstream-support.tar.gz \
+  --data-dir ./data \
+  --wal-path ./data/storage.wal \
+  --backup-source file://$PWD/backups/smoke-backup
+```
+
+The support bundle includes version/runtime metadata, a catalog/config summary,
+WAL planning output, backup manifests, optional log tails, and best-effort
+Consul service-discovery status. It does not include table data files or raw
+auth/access policy files.
+
+For quick manual triage, capture these lines:
 
 ```bash
 ./bin/quantastream -version
