@@ -572,7 +572,9 @@ Treat validation as part of the runbook, not an optional diagnostic. It confirms
 that every manifest entry exists, every file checksum matches, aggregate counts
 match, and the snapshot does not contain unmanifested files. Use `backup inspect`
 for quick metadata triage, and `backup validate` when the bytes need to be
-proven.
+proven. Backup/WAL preflight errors include the next likely admin command when
+the recovery path is mechanical, such as `backup quiesce status`, `backup
+quiesce release`, `wal plan`, or `wal validate`.
 
 Inspect the WAL/checkpoint pair directly when diagnosing local recovery:
 

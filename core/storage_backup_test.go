@@ -274,6 +274,9 @@ func TestCreateQuiescentLocalStorageBackupRejectsExternalWALPath(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outside data directory") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want outside data directory", err)
 	}
+	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
+	}
 	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
 		t.Fatalf("quiescence lease after rejected backup found=%t err=%v, want absent", found, err)
 	}
@@ -318,6 +321,9 @@ func TestCreateQuiescentLocalStorageBackupRejectsCommittedWALReplayTail(t *testi
 	if err == nil || !strings.Contains(err.Error(), "need startup replay") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want replay tail rejection", err)
 	}
+	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
+	}
 }
 
 func TestCreateQuiescentLocalStorageBackupRejectsPendingWALTail(t *testing.T) {
@@ -350,6 +356,9 @@ func TestCreateQuiescentLocalStorageBackupRejectsPendingWALTail(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pending WAL records") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want pending tail rejection", err)
 	}
+	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
+	}
 }
 
 func TestLocalStorageQuiescenceRejectsSecondLeaseAndMutations(t *testing.T) {
@@ -367,6 +376,8 @@ func TestLocalStorageQuiescenceRejectsSecondLeaseAndMutations(t *testing.T) {
 	}
 	if _, err := BeginLocalStorageQuiescence(context.Background(), BeginLocalStorageQuiescenceRequest{DataDir: dataDir}); err == nil || !strings.Contains(err.Error(), "already quiesced") {
 		t.Fatalf("second BeginLocalStorageQuiescence error = %v, want already quiesced", err)
+	} else if !strings.Contains(err.Error(), "backup quiesce status") || !strings.Contains(err.Error(), "backup quiesce release") {
+		t.Fatalf("second BeginLocalStorageQuiescence error = %v, want quiesce command hints", err)
 	}
 	if err := RejectLocalStorageMutationIfQuiesced(dataDir, "insert"); err == nil || !strings.Contains(err.Error(), "blocked while local storage is quiesced") {
 		t.Fatalf("RejectLocalStorageMutationIfQuiesced error = %v, want blocked", err)
@@ -400,7 +411,20 @@ func TestRestoreLocalStorageBackupRejectsNonEmptyTarget(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must be empty") {
 		t.Fatalf("RestoreLocalStorageBackup error = %v, want non-empty target rejection", err)
 	}
+	if !strings.Contains(err.Error(), "Choose a new directory") {
+		t.Fatalf("RestoreLocalStorageBackup error = %v, want directory recovery hint", err)
+	}
 	assertBackupTestFile(t, restoreDir, "existing", "do-not-overwrite")
+}
+
+func TestResolveLocalFileTargetRejectsUnsupportedSchemeWithAdapterHint(t *testing.T) {
+	_, err := ResolveLocalFileTarget("s3://bucket/backup")
+	if err == nil || !strings.Contains(err.Error(), "only file:// is supported") {
+		t.Fatalf("ResolveLocalFileTarget error = %v, want unsupported scheme rejection", err)
+	}
+	if !strings.Contains(err.Error(), "cloud backup targets are adapter work") {
+		t.Fatalf("ResolveLocalFileTarget error = %v, want cloud adapter hint", err)
+	}
 }
 
 func TestCreateLocalStorageBackupRejectsTargetInsideSource(t *testing.T) {

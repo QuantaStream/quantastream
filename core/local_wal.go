@@ -158,7 +158,7 @@ func OpenLocalWALWithOptions(path string, opts LocalWALOptions) (*LocalWAL, erro
 		return nil, err
 	}
 	if checkpointExists && checkpoint.LastCommittedLSN > lastLSN {
-		return nil, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d", checkpoint.LastCommittedLSN, lastLSN)
+		return nil, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d. Run `quanta-admin wal validate --path %s` and verify the WAL/checkpoint files belong to the same data directory before startup", checkpoint.LastCommittedLSN, lastLSN, resolved)
 	}
 	file, err := os.OpenFile(resolved, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -357,7 +357,7 @@ func ValidateLocalWAL(path string) (LocalWALSummary, error) {
 		return LocalWALSummary{}, err
 	}
 	if checkpointExists && checkpoint.LastCommittedLSN > lastLSN {
-		return LocalWALSummary{}, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d", checkpoint.LastCommittedLSN, lastLSN)
+		return LocalWALSummary{}, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d. Verify the WAL/checkpoint files belong to the same data directory before retrying validation", checkpoint.LastCommittedLSN, lastLSN)
 	}
 	return LocalWALSummary{
 		RecordCount:      len(records),
@@ -398,7 +398,7 @@ func PlanLocalWALRecoveryWithOptions(path string, opts LocalWALOptions) (LocalWA
 		return LocalWALRecoveryPlan{}, err
 	}
 	if checkpointExists && checkpoint.LastCommittedLSN > lastLSN {
-		return LocalWALRecoveryPlan{}, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d", checkpoint.LastCommittedLSN, lastLSN)
+		return LocalWALRecoveryPlan{}, fmt.Errorf("WAL checkpoint LSN %d is ahead of WAL tail %d. Run `quanta-admin wal validate --path %s` and verify the WAL/checkpoint files belong to the same data directory before planning recovery", checkpoint.LastCommittedLSN, lastLSN, resolved)
 	}
 	plan := LocalWALRecoveryPlan{
 		WALPath:          resolved,
