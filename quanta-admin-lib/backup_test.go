@@ -81,6 +81,75 @@ func TestBackupCreateCmdSupportsQuiescentSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackupSmokeCmdRestoresValidatesAndRemovesTemporaryImage(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	backupDir := filepath.Join(root, "backup")
+	tempParent := filepath.Join(root, "smoke-temp")
+
+	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
+	}
+	output, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupSmokeCmd{Source: backupDir, TempDir: tempParent}).Run(&Context{})
+	})
+	if err != nil {
+		t.Fatalf("BackupSmokeCmd.Run returned error: %v", err)
+	}
+	assertAdminBackupOutputContains(t, output,
+		"backup_smoke_valid=",
+		"backup_smoke_restore_dir=",
+		"backup_smoke_restore_kept=false",
+		"backup_product=QuantaStream",
+		"backup_files=1",
+	)
+	restoreDir := adminBackupOutputValue(t, output, "backup_smoke_restore_dir=")
+	if _, err := os.Stat(restoreDir); !os.IsNotExist(err) {
+		t.Fatalf("smoke restore dir stat err=%v, want removed", err)
+	}
+}
+
+func TestBackupSmokeCmdPlansRestoredWAL(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeAdminBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	walPath := filepath.Join(dataDir, "wal", "storage.wal")
+	wal, err := core.OpenLocalWALWithOptions(walPath, core.LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, _, err := wal.CommitBoundary(context.Background(), core.LocalWALRecord{
+		OperationID: "commit-before-smoke",
+		Kind:        core.LocalWALRecordKindCommit,
+	}, func() error { return nil }); err != nil {
+		t.Fatalf("CommitBoundary returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close WAL returned error: %v", err)
+	}
+	backupDir := filepath.Join(root, "backup")
+	if err := (&BackupCreateCmd{DataDir: dataDir, Target: backupDir, Quiesce: true, WALPath: walPath}).Run(&Context{}); err != nil {
+		t.Fatalf("BackupCreateCmd.Run returned error: %v", err)
+	}
+
+	output, err := captureAdminBackupStdout(t, func() error {
+		return (&BackupSmokeCmd{Source: backupDir, TempDir: filepath.Join(root, "smoke-temp")}).Run(&Context{})
+	})
+	if err != nil {
+		t.Fatalf("BackupSmokeCmd.Run returned error: %v", err)
+	}
+	assertAdminBackupOutputContains(t, output,
+		"backup_smoke_wal_plan_valid=true",
+		"backup_wal_included=true",
+		"wal_records=1",
+		"wal_checkpoint_lsn=1",
+		"wal_replay_records=0",
+		"wal_pending_records=0",
+		"wal_needs_replay=false",
+	)
+}
+
 func TestBackupQuiesceCommandsStatusAndReleaseLease(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
@@ -157,6 +226,17 @@ func assertAdminBackupOutputContains(t *testing.T, output string, wants ...strin
 			t.Fatalf("backup command output missing %q:\n%s", want, output)
 		}
 	}
+}
+
+func adminBackupOutputValue(t *testing.T, output, prefix string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	t.Fatalf("backup command output missing value prefix %q:\n%s", prefix, output)
+	return ""
 }
 
 func writeAdminBackupTestFile(t *testing.T, root, rel, body string) {

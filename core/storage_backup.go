@@ -563,6 +563,17 @@ func ValidateLocalStorageBackup(source string) (LocalStorageBackupManifest, erro
 	return manifest, nil
 }
 
+func ValidateLocalStorageRestoredDataDir(dataDir string, manifest LocalStorageBackupManifest) error {
+	if err := validateLocalStorageBackupManifestShape(manifest); err != nil {
+		return err
+	}
+	targetDir, err := resolveExistingDirectory(dataDir, "restored data directory")
+	if err != nil {
+		return err
+	}
+	return validateLocalStorageEntryTree(targetDir, manifest, "restored data directory")
+}
+
 func RestoreLocalStorageBackup(ctx context.Context, req RestoreLocalStorageBackupRequest) (LocalStorageBackupManifest, error) {
 	manifest, backupDir, err := LoadLocalStorageBackupManifest(req.Source)
 	if err != nil {
@@ -718,12 +729,19 @@ func localStoragePathInside(root, candidate string) bool {
 
 func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBackupManifest) error {
 	snapshotDir := filepath.Join(backupDir, manifest.SnapshotDir)
-	snapshotInfo, err := os.Stat(snapshotDir)
+	return validateLocalStorageEntryTree(snapshotDir, manifest, "backup snapshot")
+}
+
+func validateLocalStorageEntryTree(rootDir string, manifest LocalStorageBackupManifest, label string) error {
+	if strings.TrimSpace(label) == "" {
+		label = "backup snapshot"
+	}
+	snapshotInfo, err := os.Stat(rootDir)
 	if err != nil {
-		return fmt.Errorf("stat backup snapshot directory %q: %w", snapshotDir, err)
+		return fmt.Errorf("stat %s directory %q: %w", label, rootDir, err)
 	}
 	if !snapshotInfo.IsDir() {
-		return fmt.Errorf("backup snapshot path %q is not a directory", snapshotDir)
+		return fmt.Errorf("%s path %q is not a directory", label, rootDir)
 	}
 	manifestEntries := make(map[string]string, len(manifest.Entries))
 	for _, entry := range manifest.Entries {
@@ -736,19 +754,19 @@ func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBack
 		}
 		manifestEntries[cleanPath] = entry.Type
 	}
-	if err := filepath.WalkDir(snapshotDir, func(path string, entry os.DirEntry, walkErr error) error {
+	if err := filepath.WalkDir(rootDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path == snapshotDir {
+		if path == rootDir {
 			return nil
 		}
-		relPath, err := manifestRelativePath(snapshotDir, path)
+		relPath, err := manifestRelativePath(rootDir, path)
 		if err != nil {
 			return err
 		}
 		if _, found := manifestEntries[relPath]; !found {
-			return fmt.Errorf("backup snapshot contains unmanifested entry %s", relPath)
+			return fmt.Errorf("%s contains unmanifested entry %s", label, relPath)
 		}
 		return nil
 	}); err != nil {
@@ -758,7 +776,7 @@ func validateLocalStorageBackupFiles(backupDir string, manifest LocalStorageBack
 	var dirCount int
 	var byteCount int64
 	for _, entry := range manifest.Entries {
-		entryPath, err := safeJoin(snapshotDir, entry.Path)
+		entryPath, err := safeJoin(rootDir, entry.Path)
 		if err != nil {
 			return err
 		}

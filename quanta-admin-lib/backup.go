@@ -3,6 +3,9 @@ package admin
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/core"
 )
@@ -12,6 +15,7 @@ type BackupCmd struct {
 	Create   BackupCreateCmd   `cmd:"" help:"Create a local filesystem storage backup."`
 	Validate BackupValidateCmd `cmd:"" help:"Validate a local filesystem storage backup."`
 	Restore  BackupRestoreCmd  `cmd:"" help:"Restore a local filesystem storage backup into an empty data directory."`
+	Smoke    BackupSmokeCmd    `cmd:"" help:"Restore a backup into a temporary directory and validate the restored image."`
 	Quiesce  BackupQuiesceCmd  `cmd:"" help:"Inspect or release local backup quiescence leases."`
 }
 
@@ -29,6 +33,12 @@ type BackupValidateCmd struct {
 type BackupRestoreCmd struct {
 	Source  string `help:"Backup source directory. Supports file:///path or a local path." required:""`
 	DataDir string `help:"Empty QuantaStream data directory to restore into." default:"data"`
+}
+
+type BackupSmokeCmd struct {
+	Source         string `help:"Backup source directory. Supports file:///path or a local path." required:""`
+	TempDir        string `help:"Optional parent directory for the temporary restore smoke directory."`
+	KeepRestoreDir bool   `help:"Keep the temporary restore directory for manual inspection." default:"false"`
 }
 
 type BackupQuiesceCmd struct {
@@ -94,6 +104,56 @@ func (c *BackupRestoreCmd) Run(ctx *Context) error {
 	}
 	fmt.Printf("backup_restored=%s\n", target)
 	printBackupManifestSummary(manifest)
+	return nil
+}
+
+func (c *BackupSmokeCmd) Run(ctx *Context) error {
+	manifest, err := core.ValidateLocalStorageBackup(c.Source)
+	if err != nil {
+		return err
+	}
+	source, err := core.ResolveLocalFileTarget(c.Source)
+	if err != nil {
+		return err
+	}
+	tempParent := strings.TrimSpace(c.TempDir)
+	if tempParent != "" {
+		tempParent, err = core.ResolveLocalFileTarget(tempParent)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(tempParent, 0755); err != nil {
+			return fmt.Errorf("create backup smoke temp parent: %w", err)
+		}
+	}
+	restoreDir, err := os.MkdirTemp(tempParent, "quantastream-backup-smoke-*")
+	if err != nil {
+		return fmt.Errorf("create backup smoke restore directory: %w", err)
+	}
+	if !c.KeepRestoreDir {
+		defer func() { _ = os.RemoveAll(restoreDir) }()
+	}
+	if _, err := core.RestoreLocalStorageBackup(context.Background(), core.RestoreLocalStorageBackupRequest{
+		Source:  c.Source,
+		DataDir: restoreDir,
+	}); err != nil {
+		return err
+	}
+	if err := core.ValidateLocalStorageRestoredDataDir(restoreDir, manifest); err != nil {
+		return err
+	}
+	fmt.Printf("backup_smoke_valid=%s\n", source)
+	fmt.Printf("backup_smoke_restore_dir=%s\n", restoreDir)
+	fmt.Printf("backup_smoke_restore_kept=%t\n", c.KeepRestoreDir)
+	printBackupManifestSummary(manifest)
+	if manifest.Checkpoint.WALIncluded {
+		plan, err := planRestoredBackupWAL(restoreDir, manifest)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("backup_smoke_wal_plan_valid=true\n")
+		printWALRecoveryPlan(plan)
+	}
 	return nil
 }
 
@@ -186,6 +246,40 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	if manifest.Checkpoint.WALPendingRecords != 0 {
 		fmt.Printf("backup_wal_pending_records=%d\n", manifest.Checkpoint.WALPendingRecords)
 	}
+}
+
+func planRestoredBackupWAL(restoreDir string, manifest core.LocalStorageBackupManifest) (core.LocalWALRecoveryPlan, error) {
+	if strings.TrimSpace(manifest.Checkpoint.WALPath) == "" {
+		return core.LocalWALRecoveryPlan{}, fmt.Errorf("backup manifest marks WAL included but has no WAL path")
+	}
+	walPath, err := restoredBackupPathForOriginal(restoreDir, manifest, manifest.Checkpoint.WALPath)
+	if err != nil {
+		return core.LocalWALRecoveryPlan{}, err
+	}
+	opts := core.LocalWALOptions{}
+	if strings.TrimSpace(manifest.Checkpoint.WALCheckpointPath) != "" {
+		checkpointPath, err := restoredBackupPathForOriginal(restoreDir, manifest, manifest.Checkpoint.WALCheckpointPath)
+		if err != nil {
+			return core.LocalWALRecoveryPlan{}, err
+		}
+		opts.CheckpointPath = checkpointPath
+	}
+	return core.PlanLocalWALRecoveryWithOptions(walPath, opts)
+}
+
+func restoredBackupPathForOriginal(restoreDir string, manifest core.LocalStorageBackupManifest, originalPath string) (string, error) {
+	sourceDir := strings.TrimSpace(manifest.SourceDataDir)
+	if sourceDir == "" {
+		return "", fmt.Errorf("backup manifest has no source data directory for restored WAL mapping")
+	}
+	relPath, err := filepath.Rel(filepath.Clean(sourceDir), filepath.Clean(originalPath))
+	if err != nil {
+		return "", fmt.Errorf("map backup WAL path %q into restored data directory: %w", originalPath, err)
+	}
+	if relPath == "." || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+		return "", fmt.Errorf("backup WAL path %q is outside source data directory %q", originalPath, sourceDir)
+	}
+	return filepath.Join(restoreDir, relPath), nil
 }
 
 func printBackupQuiescenceLeaseSummary(lease core.LocalStorageQuiescenceLease) {

@@ -174,6 +174,9 @@ go run ./quanta-admin backup restore \
   --source file:///tmp/quantastream-standard-backup \
   --data-dir /tmp/quantastream-standard-restore
 
+go run ./quanta-admin backup smoke \
+  --source file:///tmp/quantastream-standard-backup
+
 go run ./quanta-admin backup validate \
   --source file:///tmp/quantastream-standard-backup
 
@@ -541,6 +544,19 @@ go run ./quanta-admin backup restore \
 go run ./quanta-admin backup validate \
   --source file:///path/to/backup
 ```
+
+Run a restore smoke without keeping the restored image:
+
+```bash
+go run ./quanta-admin backup smoke \
+  --source file:///path/to/backup
+```
+
+The smoke command validates the backup, restores it into a temporary data
+directory, validates the restored tree against the manifest, prints the backup
+summary, and removes the temporary restore directory unless
+`--keep-restore-dir` is supplied. If the manifest includes a WAL, the smoke also
+plans recovery against the WAL and checkpoint files from the restored image.
 
 Treat validation as part of the runbook, not an optional diagnostic. It confirms
 that every manifest entry exists, every file checksum matches, aggregate counts
