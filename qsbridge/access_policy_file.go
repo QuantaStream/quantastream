@@ -3,6 +3,7 @@ package qsbridge
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -49,6 +50,92 @@ func DecodeAccessPolicyFile(data []byte) (AccessPolicy, error) {
 	return NewAccessPolicy(grants...), nil
 }
 
+// SaveAccessPolicyFile writes grants to a YAML static authorization file.
+func SaveAccessPolicyFile(path string, grants []AccessGrant) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("access policy file path is empty")
+	}
+	files, err := accessGrantFilesFromGrants(grants)
+	if err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(AccessPolicyFile{Grants: files})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// UpsertAccessPolicyFile inserts or replaces one static access grant.
+func UpsertAccessPolicyFile(path string, grant AccessGrant) ([]AccessGrant, error) {
+	var grants []AccessGrant
+	if _, err := os.Stat(path); err == nil {
+		policy, err := LoadAccessPolicyFile(path)
+		if err != nil {
+			return nil, err
+		}
+		grants = policy.Grants()
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	normalized, err := validateAccessGrant(grant)
+	if err != nil {
+		return nil, err
+	}
+	replaced := false
+	for i := range grants {
+		if accessGrantSamePolicySlot(grants[i], normalized) {
+			grants[i] = normalized
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		grants = append(grants, normalized)
+	}
+	if err := SaveAccessPolicyFile(path, grants); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+// RemoveAccessPolicyFile removes one static access grant identified by subject,
+// privilege, and table.
+func RemoveAccessPolicyFile(path string, grant AccessGrant) ([]AccessGrant, bool, error) {
+	policy, err := LoadAccessPolicyFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	target, err := validateAccessGrant(grant)
+	if err != nil {
+		return nil, false, err
+	}
+	grants := policy.Grants()
+	remaining := grants[:0]
+	removed := false
+	for _, current := range grants {
+		if accessGrantSamePolicySlot(current, target) {
+			removed = true
+			continue
+		}
+		remaining = append(remaining, current)
+	}
+	if !removed {
+		return grants, false, nil
+	}
+	if len(remaining) == 0 {
+		return nil, false, fmt.Errorf("cannot remove the last access policy grant")
+	}
+	if err := SaveAccessPolicyFile(path, remaining); err != nil {
+		return nil, false, err
+	}
+	return remaining, true, nil
+}
+
 func validateAccessGrantFiles(files []AccessGrantFile) ([]AccessGrant, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("access policy file has no grants")
@@ -93,6 +180,75 @@ func validateAccessGrantFile(file AccessGrantFile) (AccessGrant, error) {
 		Table:         TableInstance{Schema: file.Schema, Table: file.Table},
 		Fields:        fields,
 	}, nil
+}
+
+func validateAccessGrant(grant AccessGrant) (AccessGrant, error) {
+	file := AccessGrantFile{
+		PrincipalKind: grant.PrincipalKind,
+		Principal:     grant.Principal,
+		Privilege:     grant.Privilege,
+		Schema:        grant.Table.Schema,
+		Table:         grant.Table.Table,
+		Fields:        accessGrantFieldNames(grant.Fields),
+	}
+	return validateAccessGrantFile(file)
+}
+
+func accessGrantFilesFromGrants(grants []AccessGrant) ([]AccessGrantFile, error) {
+	normalized, err := validateAccessGrants(grants)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]AccessGrantFile, 0, len(normalized))
+	for _, grant := range normalized {
+		files = append(files, AccessGrantFile{
+			PrincipalKind: grant.PrincipalKind,
+			Principal:     grant.Principal,
+			Privilege:     grant.Privilege,
+			Schema:        grant.Table.Schema,
+			Table:         grant.Table.Table,
+			Fields:        accessGrantFieldNames(grant.Fields),
+		})
+	}
+	return files, nil
+}
+
+func validateAccessGrants(grants []AccessGrant) ([]AccessGrant, error) {
+	if len(grants) == 0 {
+		return nil, fmt.Errorf("access policy file has no grants")
+	}
+	normalized := make([]AccessGrant, 0, len(grants))
+	for i, grant := range grants {
+		current, err := validateAccessGrant(grant)
+		if err != nil {
+			return nil, fmt.Errorf("access policy grant %d: %w", i+1, err)
+		}
+		normalized = append(normalized, current)
+	}
+	return normalized, nil
+}
+
+func accessGrantFieldNames(fields []FieldRef) []string {
+	if len(fields) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field.PhysicalName != "" {
+			names = append(names, field.PhysicalName)
+			continue
+		}
+		names = append(names, field.Name)
+	}
+	return names
+}
+
+func accessGrantSamePolicySlot(left, right AccessGrant) bool {
+	return left.PrincipalKind == right.PrincipalKind &&
+		left.Principal == right.Principal &&
+		left.Privilege == right.Privilege &&
+		left.Table.Schema == right.Table.Schema &&
+		left.Table.Table == right.Table.Table
 }
 
 func accessGrantFileFields(names []string) ([]FieldRef, error) {

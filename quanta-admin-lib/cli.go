@@ -13,6 +13,7 @@ var Cli struct {
 	Shutdown          ShutdownCmd          `cmd:"" help:"Shutdown cluster or one node."`
 	Backup            BackupCmd            `cmd:"" help:"Create, validate, or restore local storage backups."`
 	Auth              AuthCmd              `cmd:"" help:"Manage local MySQL static auth account files."`
+	Access            AccessCmd            `cmd:"" help:"Manage local static SQL access policy files."`
 	FindKey           FindKeyCmd           `cmd:"" help:"Find nodes for key debug tool."`
 	Config            ConfigCmd            `cmd:"" help:"Configuration key/value pair."`
 	Verify            VerifyCmd            `cmd:"" help:"Verify data for key debug tool."`

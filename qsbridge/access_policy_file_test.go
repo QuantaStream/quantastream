@@ -70,6 +70,73 @@ grants:
 	}
 }
 
+func TestUpsertAccessPolicyFileCreatesAndReplacesGrant(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	grant := AccessGrant{
+		PrincipalKind: AccessPrincipalRole,
+		Principal:     "reader",
+		Privilege:     AccessSelect,
+		Table:         TableInstance{Schema: "quanta", Table: "orders"},
+		Fields:        []FieldRef{{Name: "o_orderkey"}},
+	}
+	if _, err := UpsertAccessPolicyFile(path, grant); err != nil {
+		t.Fatalf("UpsertAccessPolicyFile create failed: %v", err)
+	}
+	grant.Fields = []FieldRef{{Name: "o_orderdate"}}
+	if _, err := UpsertAccessPolicyFile(path, grant); err != nil {
+		t.Fatalf("UpsertAccessPolicyFile replace failed: %v", err)
+	}
+	policy, err := LoadAccessPolicyFile(path)
+	if err != nil {
+		t.Fatalf("LoadAccessPolicyFile failed: %v", err)
+	}
+	grants := policy.Grants()
+	if len(grants) != 1 || len(grants[0].Fields) != 1 || grants[0].Fields[0].Name != "o_orderdate" {
+		t.Fatalf("grants = %#v, want replaced field grant", grants)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat policy file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("policy file mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestRemoveAccessPolicyFileRemovesGrantButKeepsFileValid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access-policy.yaml")
+	grants := []AccessGrant{
+		{
+			PrincipalKind: AccessPrincipalRole,
+			Principal:     "reader",
+			Privilege:     AccessSelect,
+			Table:         TableInstance{Schema: "quanta", Table: "orders"},
+		},
+		{
+			PrincipalKind: AccessPrincipalUser,
+			Principal:     "loader",
+			Privilege:     AccessInsert,
+			Table:         TableInstance{Schema: "quanta", Table: "lineitem"},
+		},
+	}
+	if err := SaveAccessPolicyFile(path, grants); err != nil {
+		t.Fatalf("SaveAccessPolicyFile failed: %v", err)
+	}
+	remaining, removed, err := RemoveAccessPolicyFile(path, grants[1])
+	if err != nil {
+		t.Fatalf("RemoveAccessPolicyFile failed: %v", err)
+	}
+	if !removed || len(remaining) != 1 || remaining[0].Principal != "reader" {
+		t.Fatalf("remaining=%#v removed=%t", remaining, removed)
+	}
+	if _, removed, err := RemoveAccessPolicyFile(path, grants[1]); err != nil || removed {
+		t.Fatalf("missing removal removed=%t err=%v, want no-op", removed, err)
+	}
+	if _, _, err := RemoveAccessPolicyFile(path, grants[0]); err == nil || !strings.Contains(err.Error(), "last access policy grant") {
+		t.Fatalf("remove last err = %v, want last-grant guard", err)
+	}
+}
+
 func TestDecodeAccessPolicyFileRejectsInvalidGrants(t *testing.T) {
 	for _, content := range []string{
 		`grants: []`,
