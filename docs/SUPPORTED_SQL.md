@@ -1,8 +1,9 @@
 # Supported SQL
 
 QuantaStream supports a practical analytical SQL subset plus a small set of
-QuantaStream-specific SQL extensions. This document records supported behavior that
-is useful to users but may not be portable to MySQL or standard SQL.
+QuantaStream-specific SQL extensions. This document records supported behavior
+that is useful to users, including behavior that is intentionally
+QuantaStream-specific rather than portable MySQL syntax.
 
 Known unsupported or partial SQL behavior is tracked separately in
 [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
@@ -30,10 +31,9 @@ select order_id,
 from orders_qa;
 ```
 
-These functions are inherited from the current expression layer and are not a
-complete MySQL date/time compatibility surface. MySQL-style aliases such as
-`month(...)` and `hour(...)` should be added deliberately with SQLRunner
-coverage if QuantaStream chooses to expose them.
+These helpers are the covered date/time surface. Additional MySQL-style aliases
+such as `month(...)` and `hour(...)` should be added with SQLRunner coverage
+when they are exposed.
 
 ## Type Coercion Helpers
 
@@ -85,9 +85,9 @@ select first_name, substr(first_name, 1, 2) as name_prefix
 from customers_qa;
 ```
 
-These functions are inherited from the current expression layer. Coverage
-should be expanded deliberately when adding aliases or broader mixed-projection,
-join, grouping, and aggregate shapes.
+These functions are covered in focused scalar-expression shapes. Add aliases or
+broader mixed-projection, join, grouping, and aggregate shapes with SQLRunner
+coverage.
 
 ## Views
 
@@ -102,8 +102,8 @@ QuantaStream supports named views for the current MySQL compatibility surface:
 - joins inside supported view definitions
 
 Views are stored in the catalog and expanded at query-planning time. They are
-logical views, not materialized views. Remaining MySQL metadata and advanced
-view syntax gaps are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+logical views, not materialized views. MySQL metadata and advanced view syntax
+boundaries are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
 ## Derived Tables
 
@@ -114,8 +114,8 @@ QuantaStream supports focused MySQL-compatible query composition shapes:
 - derived tables used as join sources;
 - grouped aggregate derived sources.
 
-These are logical query-composition features, not temporary storage. Remaining
-gaps around deeply nested query blocks, common table expressions, and repeated
+These are logical query-composition features, not temporary storage. Boundaries
+around deeply nested query blocks, common table expressions, and repeated
 base-table aliases are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
 
 ## Temporary Tables And CTAS
@@ -160,9 +160,9 @@ Covered result values include integer and fractional hour strings, such as
 
 This is custom QuantaStream SQL, not a MySQL-compatible `TIMEDIFF()`
 implementation.
-Future coverage should characterize additional units, null handling, timezone
-behavior, result typing, negative durations, and parity expectations with any
-MySQL-compatible date/time functions QuantaStream chooses to expose.
+Additional units, null handling, timezone behavior, result typing, negative
+durations, and parity expectations belong in focused compatibility coverage
+when those behaviors are exposed.
 
 ### `topn(field)`
 
@@ -198,7 +198,7 @@ This is custom QuantaStream SQL, not MySQL-compatible syntax. It should be
 retained because it maps naturally to bitmap-native cardinality work and is
 useful for profiling categorical distributions.
 
-Future coverage should characterize:
+Additional `topn(...)` coverage should characterize:
 
 - alias behavior
 - ordering guarantees

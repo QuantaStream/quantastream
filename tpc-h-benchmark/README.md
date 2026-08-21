@@ -161,7 +161,7 @@ KEEP_SERVER=1                     # leave the temporary server running
 ```
 
 For an already-loaded `inabox-standard` data directory, use the same helper to
-run the formal TPC-H roadmap suite through an isolated temporary server:
+run the formal TPC-H validation suite through an isolated temporary server:
 
 ```bash
 cd tpc-h-benchmark

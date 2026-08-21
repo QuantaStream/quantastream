@@ -1,10 +1,10 @@
 # QuantaStream
 
-QuantaStream is a bitmap-native analytical database engine being prepared for an open-source 1.0 release. It is designed to execute SQL over compressed bitmap and BSI-backed data structures, with late materialization and relationship-vector joins used wherever possible instead of row-by-row processing.
+QuantaStream is a bitmap-native analytical database engine for SQL over compressed bitmap and BSI-backed data structures. It uses late materialization and relationship-vector joins where they fit the query shape instead of defaulting to row-by-row processing.
 
 The project exposes a MySQL-compatible SQL surface so existing tools and drivers can connect through familiar protocols, while the engine underneath is optimized for analytical filtering, joins, aggregation, categorical distribution analysis, and live-ingest-friendly workloads.
 
-QuantaStream is currently in private pre-1.0 development. The public-facing documentation in this repository describes the intended core product, current development direction, and the local Quanta-in-a-Box workflow that will anchor the first release.
+For latest news and information, as well as benchmark results, please visit [quantastream.org](https://quantastream.org).
 
 ## Why QuantaStream
 
@@ -18,23 +18,24 @@ QuantaStream represents data using bitmap-oriented structures, including Roaring
 - late materialization of strings and scalar values after set reduction
 - relationship-vector traversal for parent/child joins
 
-The long-term goal is an engine that feels accessible through ordinary SQL while taking advantage of bitmap algebra internally.
+The result is an engine that feels accessible through ordinary SQL while taking advantage of bitmap algebra internally.
 
 ## Current Status
 
-QuantaStream is not yet a public 1.0 release. The project is actively consolidating the core engine, SQL planner, execution runtime, schema model, and local deployment story.
+QuantaStream is preparing a first public release centered on a production-credible single-node engine, repeatable correctness suites, and a clear binary getting-started path.
 
-Current development focus:
+Current release surface:
 
-- Quanta-in-a-Box as the default local development and demo environment
-- qsbridge-based SQL planning and execution
-- MySQL-compatible protocol, session, and authentication work
-- SQLRunner-based correctness suites
-- TPC-H-oriented analytical validation
-- schema documentation for bitmap-native data representation
-- cleanup of historical Quanta code paths as the QuantaStream engine stabilizes
+- a single-node QuantaStream runtime with MySQL-compatible client access
+- bitmap-native SQL planning and execution
+- descriptor-driven schema configuration
+- SQLRunner correctness and compatibility suites
+- TPC-H analytical validation suites
+- static account and access-policy files for local deployments
+- local WAL, backup, restore, and support-bundle tooling
+- packaged binary artifacts for first-time users
 
-The repository is intentionally being simplified so the eventual public release is a complete and useful core product, not a limited community edition.
+Forward work is tracked in GitHub Issues instead of duplicated planning lists in the documentation.
 
 ## Architecture At A Glance
 
@@ -98,13 +99,13 @@ Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary run
 
 ## Validation And Benchmarks
 
-QuantaStream uses SQLRunner suites to lock down SQL behavior and result correctness. TPC-H is the primary analytical validation roadmap, first for correctness and capability coverage, then for performance work.
+QuantaStream uses SQLRunner suites to lock down SQL behavior and result correctness. TPC-H is the primary analytical validation suite for query-shape coverage and benchmark discipline.
 
-The TPC-H roadmap tracks supported query shapes, staged probes, and remaining blockers across Q1-Q22. See [docs/TPCH.md](docs/TPCH.md).
+TPC-H validation notes and benchmark methodology are documented in [docs/TPCH.md](docs/TPCH.md) and [docs/TPCH_BENCHMARK_NOTES.md](docs/TPCH_BENCHMARK_NOTES.md).
 
 ## Driver And Tool Compatibility
 
-The goal is broad compatibility with standard MySQL client tooling and network drivers. Existing and target client ecosystems include:
+The goal is broad compatibility with standard MySQL client tooling and network drivers. Covered and actively tested client ecosystems include:
 
 - Go SQL drivers
 - Java/JDBC
@@ -114,37 +115,9 @@ The goal is broad compatibility with standard MySQL client tooling and network d
 
 The compatibility plan is documented in [docs/MYSQL-COMPATIBILITY.md](docs/MYSQL-COMPATIBILITY.md).
 
-## Roadmap
+## Project Tracking
 
-### 1.0: Core QuantaStream
-
-Primary goals:
-
-- Quanta-in-a-Box local runtime
-- bitmap-native SQL planner and execution runtime
-- practical MySQL-compatible SQL endpoint
-- documented schema design model
-- SQLRunner correctness suites
-- TPC-H-oriented demo and validation path
-- batch loading and basic live-ingest demonstrations
-- basic local backup, restart, and recovery guidance
-- contributor-ready documentation and tests
-
-### 2.0: Distributed And Operational Readiness
-
-Planned areas:
-
-- standards-based authentication and authorization integration
-- analyzer tooling to infer schema candidates from sample data
-
-### Future: Enterprise And Multi-Region
-
-Longer-term direction:
-
-- cloud-provider deployment integrations
-- multi-region and multi-data-center topology support
-- active/active high availability and disaster recovery
-- advanced workload management and optimizer guidance
+Use [GitHub Issues](https://github.com/QuantaStream/quantastream/issues) for open work, design follow-through, and release tracking. Public docs describe supported behavior, operating procedures, and validation methods.
 
 ## Documentation
 
@@ -155,7 +128,7 @@ Useful starting points:
 - [Schema Design](docs/SCHEMA_DESIGN.md)
 - [Supported SQL](docs/SUPPORTED_SQL.md)
 - [Unsupported SQL](docs/UNSUPPORTED_SQL.md)
-- [TPC-H Roadmap](docs/TPCH.md)
+- [TPC-H Validation](docs/TPCH.md)
 - [TPC-H Benchmark Notes](docs/TPCH_BENCHMARK_NOTES.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [MySQL Compatibility](docs/MYSQL-COMPATIBILITY.md)
@@ -164,6 +137,4 @@ Useful starting points:
 
 ## Contributing
 
-QuantaStream is currently preparing for its public 1.0 release. External contribution workflow will be documented before the repository is opened broadly.
-
-For now, development follows a simple rule: every engine behavior change should be backed by focused Go tests, SQLRunner coverage, or both.
+Every engine behavior change should be backed by focused Go tests, SQLRunner coverage, or both. Use GitHub Issues to discuss larger changes before starting implementation.

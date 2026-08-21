@@ -1,22 +1,22 @@
-# Unsupported SQL Syntax
+# SQL Boundaries
 
 QuantaStream intentionally supports a practical analytical SQL subset while the
 bitmap execution engine matures. This document records syntax and semantics
-that are currently unsupported or only partially supported so the roadmap
-suites can stay focused on executable behavior instead of becoming noisy with
-every known SQL gap.
+outside the current support surface so executable SQLRunner suites can stay
+focused on concrete behavior.
 
 Use SQLRunner `xfail` cases for near-term implementation targets that exercise
 important engine behavior. Use this document for broader SQL compatibility
 gaps, syntax that would require a new execution primitive, or features that are
-not yet part of the current milestone.
+not part of the current support surface. Forward implementation work is tracked
+in GitHub Issues.
 
 ## Planner And Engine Refactor Blockers
 
 Several unsupported shapes are symptoms of planner/executor boundaries rather
 than isolated missing functions. These should be treated as native SQL engine
 design requirements and kept aligned with the public architecture guide and the
-internal native-engine roadmap:
+internal native-engine design notes:
 
 - preserve structured query shape through parsing, especially compound
   predicates containing subqueries
@@ -43,7 +43,7 @@ when the SQL feature remains unsupported.
 `StringEnum` fields support SQL-style `%` and `_` pattern matching by scanning
 the compact enum dictionary and emitting bitmap batch predicates over matching
 enum row IDs. This covers prefix, suffix, contains, and `NOT LIKE` shapes used
-by the TPC-H roadmap, such as:
+by TPC-H validation, such as:
 
 ```sql
 p_type like 'PROMO%'
@@ -93,8 +93,8 @@ substr(c_phone, 1, 2) in ('13', '31', '23', '29', '30', '18', '17')
 
 return statement-style `Query OK, 0 rows affected` behavior instead of a
 result set. OR-expanded equality predicates over the same function expression
-can work and should be used in executable roadmap probes until the planner
-supports function-expression `IN` / `NOT IN` predicates directly.
+can work and should be used in executable probes until the planner supports
+function-expression `IN` / `NOT IN` predicates directly.
 
 ## Subqueries
 
@@ -183,9 +183,8 @@ Remaining conditional-expression gaps include:
 - MySQL-style `IF(condition, true_expr, false_expr)` inside aggregate
   expressions
 
-TPC-H Q12-style conditional aggregates over joined order priority remain a
-roadmap target because they depend on both conditional aggregate evaluation and
-the relevant joined grouping shape.
+TPC-H Q12-style conditional aggregates over joined order priority depend on
+both conditional aggregate evaluation and the relevant joined grouping shape.
 
 ## Field-To-Field Predicates
 
@@ -207,9 +206,9 @@ incorrectly, for example:
 ps.ps_suppkey = l.l_suppkey
 ```
 
-Future planner work should classify field-to-field predicates as relationship
-joins, same-table residual comparisons, or unsupported mixed-table residuals
-before execution.
+Planner work for broader field-to-field predicates should classify each
+predicate as a relationship join, same-table residual comparison, or unsupported
+mixed-table residual before execution.
 
 ## Joined Predicate Coverage
 
@@ -282,7 +281,7 @@ The following broad SQL features should not be assumed supported unless a
 specific SQLRunner suite already covers the exact shape:
 
 - arbitrary joins outside the current bitmap relationship model
-- outer join behavior beyond covered roadmap cases
+- outer join behavior beyond covered compatibility cases
 - broad `HAVING` expression coverage, especially direct aggregate-expression
   `HAVING`; alias-based fixed-threshold `HAVING` has staged coverage
 - arbitrary functions in `GROUP BY` and `ORDER BY`; covered cases include
