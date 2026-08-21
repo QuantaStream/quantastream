@@ -69,7 +69,7 @@ The older benchmark directory includes:
 - `tpc-h-benchmark/create-tpch.sh`
 - `tpc-h-benchmark/drop-tpch.sh`
 - `tpc-h-benchmark/tpch.sh`
-- `tpc-h-benchmark/tpc-h-kinesis-producer.go`
+- `tpc-h-benchmark/tpc-h-producer.go`
 
 These files should be treated as recoverable prior work. The next step is to
 validate the load path against the current local cluster and SQLRunner roadmap

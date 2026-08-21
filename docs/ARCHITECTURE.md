@@ -284,17 +284,18 @@ loader. Against the full TPC-H schema, dimension and parent tables such as
 rules still apply. See `docs/configuration/STREAMING_LOADER.md` for user-facing
 setup and payload details.
 
-### Kinesis Loader Routing
+### Streaming Loader Routing
 
-The Kinesis consumer uses schema selectors to determine which Quanta table a
+Streaming consumers use schema selectors to determine which Quanta table a
 record belongs to. A selector lets one incoming stream contain multiple record
 shapes or logical table types while still routing each record to the correct
 table schema before mutation.
 
 After table selection, the loader uses its configured shard key and rendezvous
 hashing to route the record to an internal shard channel. This routing is
-independent of Kinesis shard ownership. The purpose is to fan records out across
-Quanta session workers while preserving affinity for like data.
+independent of upstream stream partition ownership. The purpose is to fan
+records out across Quanta session workers while preserving affinity for like
+data.
 
 That affinity is important because records with the same loader shard key should
 flow through the same session and connection objects. This keeps ingestion

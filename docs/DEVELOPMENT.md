@@ -127,9 +127,9 @@ not thread-safe. Do not share one session across concurrent goroutines unless a
 higher-level owner serializes all access.
 
 Parallel ingestion should use deterministic routing to multiple session workers
-instead. The Kinesis consumer follows this pattern by selecting the target table
-from schema selectors, hashing the configured loader shard key, and sending each
-record to one internal shard channel/session owner.
+instead. Streaming consumers should follow this pattern by selecting the target
+table from schema selectors, hashing the configured loader shard key, and
+sending each record to one internal shard channel/session owner.
 
 ---
 

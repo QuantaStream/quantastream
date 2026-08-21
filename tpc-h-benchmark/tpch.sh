@@ -1,8 +1,11 @@
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen region loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen nation loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen customer loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen part loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen supplier loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen partsupp loadtest
-go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen orders loadtest
-nohup go run tpc-h-producer.go ~/TPC-H\ V3.0.1/dbgen lineitem loadtest &
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+DATA_DIR=${1:-local/data/sf-0.01}
+WORKERS=${2:-3}
+BATCH_SIZE=${3:-1000}
+
+exec ./tpch-direct.sh "${DATA_DIR}" "${WORKERS}" "${BATCH_SIZE}"

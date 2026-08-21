@@ -17,9 +17,6 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsinabox"
 	"github.com/QuantaStream/quantastream/shared"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/hashicorp/consul/api"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -49,25 +46,20 @@ const (
 
 // Main strct defines command line arguments variables and various global meta-data associated with record loads.
 type Main struct {
-	Index     string
-	BatchSize int
-	Path      string
-	File      string
-	Prefix    string
-	Pattern   string
-	AWSRegion string
-	//S3svc        *s3.S3
-	//S3files      []*s3.Object
+	Index               string
+	BatchSize           int
+	Path                string
+	File                string
+	Prefix              string
+	Pattern             string
 	totalBytes          int64
 	bytesLock           sync.RWMutex
 	totalRecs           *Counter
 	failedRecs          *Counter
-	Stream              string
 	IsNested            bool
 	ConsulAddr          string
 	ConsulClient        *api.Client
 	Table               *shared.BasicTable
-	outClient           *kinesis.Kinesis
 	conn                *shared.Conn
 	router              *core.SessionRouter
 	tableCache          *core.TableCacheStruct
@@ -91,9 +83,7 @@ type Main struct {
 	recordGenerateElapsed time.Duration
 	jsonMarshalElapsed    time.Duration
 	directEnqueueElapsed  time.Duration
-	kinesisPutElapsed     time.Duration
 	directEnqueueCount    int64
-	kinesisPutCount       int64
 }
 
 type LoadSummary struct {
@@ -108,9 +98,7 @@ type LoadSummary struct {
 	RecordElapsed   time.Duration
 	JSONElapsed     time.Duration
 	DirectEnqueue   time.Duration
-	KinesisPut      time.Duration
 	DirectEnqueues  int64
-	KinesisPuts     int64
 }
 
 // NewMain allocates a new pointer to Main struct with empty record counter
@@ -124,15 +112,13 @@ func NewMain() *Main {
 
 func main() {
 
-	app := kingpin.New(os.Args[0], "Quanta TPC-H Kinesis Data Producer").DefaultEnvars()
+	app := kingpin.New(os.Args[0], "Quanta TPC-H Direct Data Loader").DefaultEnvars()
 	app.Version("Version: " + Version + "\nBuild: " + Build)
 
 	filePath := app.Arg("file-path", "Path to TPC-H data files directory.").Required().String()
 	index := app.Arg("index", "Table name.").Required().String()
-	stream := app.Arg("stream", "Kinesis stream name. Required unless --direct is set.").String()
-	region := app.Flag("aws-region", "AWS region.").Default("us-east-1").String()
-	batchSize := app.Flag("batch-size", "PutRecords batch size").Default("100").Int32()
-	direct := app.Flag("direct", "Load directly into Quanta sessions instead of writing to Kinesis.").Bool()
+	batchSize := app.Flag("batch-size", "Direct-load batch size").Default("100").Int32()
+	app.Flag("direct", "Deprecated no-op; TPC-H loader always writes directly into Quanta sessions.").Bool()
 	directMode := app.Flag("direct-mode", "Direct load target: cluster uses Consul/gRPC nodes; standard-remote connects to a running inabox-standard native gRPC endpoint; standard-offline mounts a local in-process backend.").Default(directModeCluster).Enum(directModeCluster, directModeStandardRemote, directModeStandardOffline, directModeStandard)
 	workers := app.Flag("workers", "Direct-load session worker count.").Default("3").Int()
 	configDir := app.Flag("config-dir", "Schema config directory for inabox-standard direct loads.").Default("config").String()
@@ -150,10 +136,8 @@ func main() {
 	main := NewMain()
 	main.Index = *index
 	main.BatchSize = int(*batchSize)
-	main.AWSRegion = *region
-	main.Stream = *stream
 	main.ConsulAddr = *consul
-	main.Direct = *direct
+	main.Direct = true
 	main.DirectMode = normalizeDirectMode(*directMode)
 	main.Workers = *workers
 	main.ConfigDir = *configDir
@@ -161,27 +145,19 @@ func main() {
 	main.Database = *database
 	main.NativeGRPCAddr = *nativeGRPCAddr
 	main.DirectFlushInterval = *directFlushInterval
-	if !main.Direct && main.Stream == "" {
-		log.Fatal("stream is required unless --direct is set")
-	}
-	if main.Direct && *directMode == directModeStandard {
+	if *directMode == directModeStandard {
 		log.Printf("Direct load mode %s is deprecated; use %s for offline bootstrap loads or %s for a running standard server.\n",
 			directModeStandard, directModeStandardOffline, directModeStandardRemote)
 	}
 
 	log.Printf("Table name %v.\n", main.Index)
 	log.Printf("Batch size %d.\n", main.BatchSize)
-	log.Printf("AWS region %s\n", main.AWSRegion)
-	if main.Direct {
-		log.Printf("Direct load mode %s workers %d flush_interval %s.\n", main.DirectMode, main.Workers, main.directFlushInterval())
-		switch main.DirectMode {
-		case directModeStandardRemote:
-			log.Printf("Direct standard remote config_dir=%s database=%s native_grpc_addr=%s\n", main.ConfigDir, main.Database, main.NativeGRPCAddr)
-		case directModeStandardOffline:
-			log.Printf("Direct standard offline config_dir=%s data_dir=%s database=%s\n", main.ConfigDir, main.DataDir, main.Database)
-		}
-	} else {
-		log.Printf("Kinesis stream  %s.\n", main.Stream)
+	log.Printf("Direct load mode %s workers %d flush_interval %s.\n", main.DirectMode, main.Workers, main.directFlushInterval())
+	switch main.DirectMode {
+	case directModeStandardRemote:
+		log.Printf("Direct standard remote config_dir=%s database=%s native_grpc_addr=%s\n", main.ConfigDir, main.Database, main.NativeGRPCAddr)
+	case directModeStandardOffline:
+		log.Printf("Direct standard offline config_dir=%s data_dir=%s database=%s\n", main.ConfigDir, main.DataDir, main.Database)
 	}
 	log.Printf("Consul agent at [%s]\n", main.ConsulAddr)
 
@@ -245,9 +221,7 @@ func main() {
 		RecordElapsed:   main.recordGenerateElapsed,
 		JSONElapsed:     main.jsonMarshalElapsed,
 		DirectEnqueue:   main.directEnqueueElapsed,
-		KinesisPut:      main.kinesisPutElapsed,
 		DirectEnqueues:  main.directEnqueueCount,
-		KinesisPuts:     main.kinesisPutCount,
 	}
 	main.logLoadSummary(summary)
 	main.logDirectProfileSummary()
@@ -267,16 +241,12 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 	fileScanner := bufio.NewScanner(readFile)
 	fileScanner.Split(bufio.ScanLines)
 
-	putBatch := make([]*kinesis.PutRecordsRequestEntry, 0)
-
-	i := 0
 	for fileScanner.Scan() {
 
 		// Split the pipe delimited text line
 		splitStartedAt := time.Now()
 		s := strings.Split(fileScanner.Text(), "|")
 		m.splitElapsed += time.Since(splitStartedAt)
-		i++
 
 		recordStartedAt := time.Now()
 		shardKey, record := m.generateRecord(s)
@@ -290,62 +260,24 @@ func (m *Main) processRowsForFile(readFile *os.File) {
 			continue
 		}
 
-		if m.Direct {
-			buildShardKey := m.directLoadBuildShardKey(record)
-			enqueueStartedAt := time.Now()
-			if err := m.router.Enqueue(core.IngestRecord{
-				TableName:     m.Index,
-				Data:          record,
-				ShardKey:      shardKey,
-				BuildShardKey: buildShardKey,
-			}); err != nil {
-				m.directEnqueueElapsed += time.Since(enqueueStartedAt)
-				m.failedRecs.Add(1)
-				log.Printf("direct load error %v", err)
-				continue
-			}
+		buildShardKey := m.directLoadBuildShardKey(record)
+		enqueueStartedAt := time.Now()
+		if err := m.router.Enqueue(core.IngestRecord{
+			TableName:     m.Index,
+			Data:          record,
+			ShardKey:      shardKey,
+			BuildShardKey: buildShardKey,
+		}); err != nil {
 			m.directEnqueueElapsed += time.Since(enqueueStartedAt)
-			m.directEnqueueCount++
-		} else {
-			putBatch = append(putBatch, &kinesis.PutRecordsRequestEntry{
-				Data:         outData,
-				PartitionKey: aws.String(shardKey),
-			})
-
-			if i%m.BatchSize == 0 {
-				// put data to stream
-				kinesisStartedAt := time.Now()
-				putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
-					Records:    putBatch,
-					StreamName: aws.String(m.Stream),
-				})
-				m.kinesisPutElapsed += time.Since(kinesisStartedAt)
-				m.kinesisPutCount++
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				m.failedRecs.Add(int(*putOutput.FailedRecordCount))
-				putBatch = make([]*kinesis.PutRecordsRequestEntry, 0)
-			}
+			m.failedRecs.Add(1)
+			log.Printf("direct load error %v", err)
+			continue
 		}
+		m.directEnqueueElapsed += time.Since(enqueueStartedAt)
+		m.directEnqueueCount++
 
 		m.totalRecs.Add(1)
 		m.AddBytes(len(outData))
-	}
-
-	if !m.Direct && len(putBatch) > 0 {
-		kinesisStartedAt := time.Now()
-		putOutput, err := m.outClient.PutRecords(&kinesis.PutRecordsInput{
-			Records:    putBatch,
-			StreamName: aws.String(m.Stream),
-		})
-		m.kinesisPutElapsed += time.Since(kinesisStartedAt)
-		m.kinesisPutCount++
-		if err != nil {
-			log.Println(err)
-		}
-		m.failedRecs.Add(int(*putOutput.FailedRecordCount))
 	}
 }
 
@@ -363,7 +295,7 @@ func (m *Main) logLoadSummary(summary LoadSummary) {
 		enqueueRowsPerSecond /= enqueueSeconds
 	}
 
-	log.Printf("TPC-H load summary table=%s mode=%s records=%d failures=%d bytes=%s enqueue=%s drain=%s total=%s split=%s record=%s json=%s direct_enqueue=%s direct_enqueue_count=%d kinesis_put=%s kinesis_put_count=%d rows_per_sec=%.2f enqueue_rows_per_sec=%.2f bytes_per_sec=%s",
+	log.Printf("TPC-H load summary table=%s mode=%s records=%d failures=%d bytes=%s enqueue=%s drain=%s total=%s split=%s record=%s json=%s direct_enqueue=%s direct_enqueue_count=%d rows_per_sec=%.2f enqueue_rows_per_sec=%.2f bytes_per_sec=%s",
 		summary.Table,
 		m.loadMode(),
 		summary.Records,
@@ -377,8 +309,6 @@ func (m *Main) logLoadSummary(summary LoadSummary) {
 		summary.JSONElapsed.Round(time.Millisecond),
 		summary.DirectEnqueue.Round(time.Millisecond),
 		summary.DirectEnqueues,
-		summary.KinesisPut.Round(time.Millisecond),
-		summary.KinesisPuts,
 		rowsPerSecond,
 		enqueueRowsPerSecond,
 		core.Bytes(bytesPerSecond),
@@ -508,13 +438,10 @@ func formatPutRowMapperProfiles(profiles map[string]core.PutRowMapperProfile) st
 }
 
 func (m *Main) loadMode() string {
-	if m.Direct {
-		if m.DirectMode != "" {
-			return "direct-" + m.DirectMode
-		}
-		return "direct"
+	if m.DirectMode != "" {
+		return "direct-" + m.DirectMode
 	}
-	return "kinesis"
+	return "direct"
 }
 
 func normalizeDirectMode(mode string) string {
@@ -530,7 +457,7 @@ func normalizeDirectMode(mode string) string {
 	}
 }
 
-// generateRecord builds the loader envelope consumed by Kinesis and direct load.
+// generateRecord builds the loader envelope consumed by the direct load path.
 func (m *Main) generateRecord(fields []string) (string, map[string]interface{}) {
 	env := make(map[string]interface{}, 0)
 	data := make(map[string]interface{}, 0)
@@ -578,16 +505,14 @@ func (m *Main) Init() error {
 	var err error
 
 	m.DirectMode = normalizeDirectMode(m.DirectMode)
-	if m.Direct {
-		switch m.DirectMode {
-		case directModeStandardRemote:
-			return m.initStandardRemoteDirect()
-		case directModeStandardOffline:
-			return m.initStandardOfflineDirect()
-		case directModeCluster:
-		default:
-			return fmt.Errorf("unsupported direct load mode %q", m.DirectMode)
-		}
+	switch m.DirectMode {
+	case directModeStandardRemote:
+		return m.initStandardRemoteDirect()
+	case directModeStandardOffline:
+		return m.initStandardOfflineDirect()
+	case directModeCluster:
+	default:
+		return fmt.Errorf("unsupported direct load mode %q", m.DirectMode)
 	}
 
 	m.ConsulClient, err = api.NewClient(&api.Config{Address: m.ConsulAddr})
@@ -605,27 +530,7 @@ func (m *Main) Init() error {
 		return errx
 	}
 	m.shardCols = pkInfo
-	if m.Direct {
-		return m.initDirect()
-	}
-
-	// Initialize AWS client
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(m.AWSRegion)},
-	)
-
-	if err != nil {
-		return fmt.Errorf("error creating S3 session: %v", err)
-	}
-
-	m.outClient = kinesis.New(sess)
-	outStreamName := aws.String(m.Stream)
-	_, err = m.outClient.DescribeStream(&kinesis.DescribeStreamInput{StreamName: outStreamName})
-	if err != nil {
-		return fmt.Errorf("error creating kinesis stream %s: %v", m.Stream, err)
-	}
-
-	return nil
+	return m.initDirect()
 }
 
 func (m *Main) initDirect() error {

@@ -47,8 +47,8 @@ Arguments to `tpch-direct.sh` are:
 tpch-direct.sh <tpch-data-dir> [workers] [batch-size]
 ```
 
-The direct loader uses the same record envelope as the Kinesis producer but
-routes records directly into Quanta sessions through `core.SessionRouter`.
+The direct loader builds the TPC-H record envelope and routes records directly
+into Quanta sessions through `core.SessionRouter`.
 
 The existing cluster direct path remains the default for `tpch-direct.sh`:
 

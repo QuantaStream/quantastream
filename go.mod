@@ -10,7 +10,6 @@ require (
 	github.com/araddon/dateparse v0.0.0-20210207001429-0eec95c9db7e
 	github.com/araddon/gou v0.0.0-20211019181548-e7d08105776c
 	github.com/aviddiviner/go-murmur v0.0.0-20150519214947-b9740d71e571
-	github.com/aws/aws-sdk-go v1.44.146
 	github.com/banzaicloud/logrus-runtime-formatter v0.0.0-20190729070250-5ae5475bae5e
 	github.com/bbalet/stopwords v1.0.0
 	github.com/bufbuild/protocompile v0.14.1
@@ -54,7 +53,6 @@ require (
 	github.com/hashicorp/go-version v1.2.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/serf v0.10.1 // indirect
-	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -76,5 +74,3 @@ require (
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-//replace github.com/harlow/kinesis-consumer => github.com/guymolinari/kinesis-consumer v0.0.0-20241208210820-a50a0f6e2b44
