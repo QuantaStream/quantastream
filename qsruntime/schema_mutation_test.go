@@ -589,6 +589,24 @@ func TestAlterTableAddPrimaryKeyDuplicateScanProjectedRowsAcceptsUniqueTuples(t 
 	}
 }
 
+func TestAlterTableAddPrimaryKeyDuplicateScanWithoutMaterializerIsUnknown(t *testing.T) {
+	handle := LegacyQuantaSessionHandle{}
+	result, diagnostics, err := handle.alterTableAddPrimaryKeyDuplicateScan(context.Background(), alterTableAddPrimaryKeyValidationPlan{
+		Mode:    alterTableAddPrimaryKeyValidationDuplicateScan,
+		Table:   "scratch_orders",
+		Columns: []string{"order_key"},
+	})
+	if err != nil {
+		t.Fatalf("alterTableAddPrimaryKeyDuplicateScan() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("alterTableAddPrimaryKeyDuplicateScan() diagnostics = %#v", diagnostics)
+	}
+	if result.Known {
+		t.Fatalf("result = %#v, want unknown duplicate scan without materializer", result)
+	}
+}
+
 func TestAlterTableAddPrimaryKeyDuplicateDiagnosticUsesMutationDuplicateCode(t *testing.T) {
 	diagnostics := alterTableAddPrimaryKeyDuplicateDiagnostic(alterTableAddPrimaryKeyValidationPlan{
 		Table: "scratch_orders",

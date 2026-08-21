@@ -330,6 +330,7 @@ func (p LegacyQuantaSourceSessionProvider) BorrowDirectSession(ctx context.Conte
 			return nil, nil, err
 		}
 		handle.DictionaryInvalidator = p.DictionaryInvalidator
+		handle.Materialization = p.Materialization
 		return handle, nil, nil
 	}
 	session, err := pool.Borrow(tableName)

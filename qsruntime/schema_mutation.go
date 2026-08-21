@@ -400,6 +400,19 @@ func (h LegacyQuantaSessionHandle) executeAlterTableAddPrimaryKeyValidationPlans
 				return result, alterTableAddPrimaryKeyNullDiagnostic(plan, scan), nil
 			}
 			result.CompletedPlans = append(result.CompletedPlans, plan)
+		case alterTableAddPrimaryKeyValidationDuplicateScan:
+			scan, diagnostics, err := h.alterTableAddPrimaryKeyDuplicateScan(ctx, plan)
+			if err != nil || diagnostics.BlocksNative() {
+				return result, diagnostics, err
+			}
+			if !scan.Known {
+				result.PendingPlans = append(result.PendingPlans, plan)
+				continue
+			}
+			if scan.Count > 1 {
+				return result, alterTableAddPrimaryKeyDuplicateDiagnostic(plan, scan), nil
+			}
+			result.CompletedPlans = append(result.CompletedPlans, plan)
 		default:
 			result.PendingPlans = append(result.PendingPlans, plan)
 		}
@@ -498,6 +511,53 @@ func alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan alterTableAddPrimary
 		}
 	}
 	return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil
+}
+
+func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyDuplicateScan(ctx context.Context, plan alterTableAddPrimaryKeyValidationPlan) (alterTableAddPrimaryKeyDuplicateScanResult, qsbridge.DiagnosticSet, error) {
+	if err := ctx.Err(); err != nil {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil, err
+	}
+	if h.Materialization == nil {
+		return alterTableAddPrimaryKeyDuplicateScanResult{}, nil, nil
+	}
+	rownums, known, diagnostics, err := h.alterTableAddPrimaryKeyCatalogOnlyRownums(ctx, plan.Table)
+	if err != nil || diagnostics.BlocksNative() {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics, err
+	}
+	if !known {
+		return alterTableAddPrimaryKeyDuplicateScanResult{}, nil, nil
+	}
+	if len(rownums) == 0 {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, nil, nil
+	}
+	rowSet, diagnostics, _, err := directBitmapMaterializeWithKernel(ctx, h.Materialization, alterTableAddPrimaryKeyDuplicateScanMaterializationRequest(plan, rownums))
+	if err != nil || diagnostics.BlocksNative() {
+		return alterTableAddPrimaryKeyDuplicateScanResult{Known: true}, diagnostics, err
+	}
+	scan, diagnostics := alterTableAddPrimaryKeyDuplicateScanProjectedRows(plan, rowSet)
+	return scan, diagnostics, nil
+}
+
+func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyCatalogOnlyRownums(ctx context.Context, tableName string) ([]qsbridge.QuantaRownum, bool, qsbridge.DiagnosticSet, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, true, nil, err
+	}
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return nil, false, nil, nil
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{})
+	request.SourceIndexes = []string{tableName}
+	if h.cachedRootTable(request) == nil {
+		return nil, false, nil, nil
+	}
+	result, diagnostics, err := h.QueryBitmap(ctx, request)
+	if err != nil || diagnostics.BlocksNative() {
+		return nil, true, diagnostics, err
+	}
+	if result.Count > 0 && len(result.Rownums) == 0 {
+		return nil, false, nil, nil
+	}
+	return append([]qsbridge.QuantaRownum(nil), result.Rownums...), true, nil, nil
 }
 
 func alterTableAddPrimaryKeyDuplicateScanVectors(plan alterTableAddPrimaryKeyValidationPlan, rowSet qsbridge.QuantaProjectedRowSet) ([]qsbridge.QuantaProjectionVector, qsbridge.DiagnosticSet) {
