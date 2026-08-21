@@ -38,64 +38,73 @@ tests:
         amount int
       )
 
-  # These are DML-shaped MySQL cases, but this fixture depends on the inline
-  # scratch table above. Catalog-backed DML remains covered by mutate_tests_body.
-  - id: mysql_compat_mutations_boundaries.004.multi_row_insert
-    status: xfail
+  - id: mysql_compat_mutations_boundaries.009.create_table_as_select
+    status: supported
     kind: statement
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_ctas
+    compatibility: mysql
+    requires: [create_table_as, select]
+    sql: |
+      create table qs_mysql_compat_mutations_ctas as
+      select c_custkey as id, c_name as name, c_nationkey as amount
+      from customer
+      where c_custkey <= 3
+
+  # DML compatibility uses the CTAS scratch table because QuantaStream table
+  # creation is catalog-backed rather than inline CREATE TABLE-backed.
+  - id: mysql_compat_mutations_boundaries.004.multi_row_insert
+    status: supported
+    kind: statement
+    feature: mutations_scratch_table_dml
     compatibility: mysql
     requires: [insert, values]
-    issue: "This MySQL-compatible insert depends on inline CREATE TABLE support for the scratch table; catalog-backed INSERT coverage lives in mutate_tests_body.yaml."
     sql: |
-      insert into qs_mysql_compat_mutations (id, name, amount)
-      values (1, 'Abe', 10), (2, 'Abby', 20)
+      insert into qs_mysql_compat_mutations_ctas (id, name, amount)
+      values (4, 'Abe', 10), (5, 'Abby', 20)
     expect:
       affected_rows: 2
 
   - id: mysql_compat_mutations_boundaries.005.update_arithmetic_assignment
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_scratch_table_dml
     compatibility: mysql
     requires: [update, arithmetic, where, comparison]
-    issue: "This MySQL-compatible update depends on inline CREATE TABLE support for the scratch table; arithmetic assignment is a follow-up DML compatibility target."
     sql: |
-      update qs_mysql_compat_mutations
+      update qs_mysql_compat_mutations_ctas
       set amount = amount + 5
-      where id = 2
+      where id = 5
     expect:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.006.delete_rows
-    status: xfail
+    status: supported
     kind: statement
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_scratch_table_dml
     compatibility: mysql
     requires: [delete, where, comparison]
-    issue: "This MySQL-compatible delete depends on inline CREATE TABLE support for the scratch table; catalog-backed DELETE coverage lives in mutate_tests_body.yaml."
     sql: |
-      delete from qs_mysql_compat_mutations
-      where id = 1
+      delete from qs_mysql_compat_mutations_ctas
+      where id = 4
     expect:
       affected_rows: 1
 
   - id: mysql_compat_mutations_boundaries.007.select_after_write
-    status: xfail
+    status: supported
     kind: query
     order: exact
-    feature: mutations_scratch_table_dml_boundary
+    feature: mutations_scratch_table_dml
     compatibility: mysql
     requires: [select, order_by]
-    issue: "Read-after-write on a MySQL-created scratch table depends on inline CREATE TABLE support; catalog-backed DML readback coverage lives in mutate_tests_body.yaml."
     sql: |
       select id, name, amount
-      from qs_mysql_compat_mutations
+      from qs_mysql_compat_mutations_ctas
+      where id = 5
       order by id
     expect:
       columns: [id, name, amount]
       rows:
-        - [2, Abby, 25]
+        - [5, Abby, 25]
 
   - id: mysql_compat_mutations_boundaries.025.begin_formatted_catalog_insert
     status: supported
@@ -250,18 +259,6 @@ tests:
     issue: "DROP TABLE ... CASCADE is a post-1.0 compatibility target; QS currently blocks dependent objects explicitly instead of cascading catalog changes."
     sql: |
       drop table qs_mysql_compat_mutations cascade
-
-  - id: mysql_compat_mutations_boundaries.009.create_table_as_select
-    status: supported
-    kind: statement
-    feature: mutations_ctas
-    compatibility: mysql
-    requires: [create_table_as, select]
-    sql: |
-      create table qs_mysql_compat_mutations_ctas as
-      select c_custkey as id, c_name as name, c_nationkey as amount
-      from customer
-      where c_custkey <= 3
 
   - id: mysql_compat_mutations_boundaries.035.drop_ctas_keys_table_if_exists
     status: supported
