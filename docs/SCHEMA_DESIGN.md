@@ -4,7 +4,7 @@ QuantaStream schemas are physical design documents, not just logical table
 definitions. The mapping strategy chosen for each attribute determines how the
 engine can filter, join, group, aggregate, project, and reload that data.
 
-The older field-level configuration reference lives in
+The field-level configuration reference lives in
 [`configuration/README.md`](../configuration/README.md). This guide focuses on
 how to choose schema shapes.
 
@@ -90,12 +90,6 @@ aggregation, or arithmetic:
 
 BSI fields are usually the right choice for facts and measures: prices,
 quantities, balances, dates, timestamps, and numeric foreign keys.
-
-Legacy schemas may still contain names such as `SysSecBSI`, `SysMillisBSI`,
-`SysMicroBSI`, or `SysNanoBSI`. New planner/catalog code treats those as
-compatibility aliases for canonical `TimestampBSI` plus the corresponding
-granularity parameter. New schema work should prefer the canonical shape so the
-representation system does not grow one physical type per timestamp precision.
 
 ### Low-Cardinality Strings
 
