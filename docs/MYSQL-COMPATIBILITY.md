@@ -111,4 +111,4 @@ This lets day-to-day development stay fast while still preserving a credible pat
 
 ## Implementation Plan
 
-See `MYSQL_COMPATIBILITY_LAB.md` for the implementation checklist and near-term work slices.
+See `MYSQL_COMPATIBILITY_LAB.md` for the implementation checklist and near-term work phases.

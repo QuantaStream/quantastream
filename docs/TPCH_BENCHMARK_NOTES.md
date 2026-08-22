@@ -249,7 +249,7 @@ Cluster-mode tests need to cover:
 - Candidate-aware direct session dispatch across remote node boundaries.
 - Probe parity so distributed runs can be debugged without in-process access.
 
-The first cluster-parity slice wires the Q3 relationship aggregate hook in the
+The first cluster-parity phase wires the Q3 relationship aggregate hook in the
 shared runtime using cluster projection plus query-process reduction. That is
 correct for local-cluster and distributed execution and avoids pretending the
 in-process standard bitmap index exists in cluster mode. It is still not the

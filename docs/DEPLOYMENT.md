@@ -627,7 +627,7 @@ go run ./quanta-admin doctor local \
 The doctor command composes local path, catalog/schema, WAL, static
 auth/access, backup, and optional endpoint checks into one pass/fail summary.
 
-This first slice is intentionally an offline/local snapshot contract. A local WAL
+This first phase is intentionally an offline/local snapshot contract. A local WAL
 primitive and `inabox-standard` enablement switch exist, including checkpoint
 metadata for successful commit boundaries, standard-mode startup replay, and
 WAL-backed quiescent backup preflight checks. The local snapshot path also has

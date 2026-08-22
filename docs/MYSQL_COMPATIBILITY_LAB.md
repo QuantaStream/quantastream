@@ -39,9 +39,9 @@ The lean lab framework is in place:
 Further work should deepen the compatibility corpus and use the lab output to
 prioritize engine fixes.
 
-## Work Slices
+## Work Phases
 
-### Slice 1: Roadmap Metadata
+### Phase 1: Roadmap Metadata
 
 Add optional suite metadata to SQLRunner roadmap cases:
 
@@ -51,7 +51,7 @@ Add optional suite metadata to SQLRunner roadmap cases:
 
 Existing suites must continue to parse unchanged.
 
-### Slice 2: Result Categories
+### Phase 2: Result Categories
 
 Add compatibility-level categories that can be reported separately from raw
 SQLRunner result states:
@@ -65,7 +65,7 @@ SQLRunner result states:
 The first implementation can derive categories from existing SQLRunner case
 results. Later implementations can compare two engines directly.
 
-### Slice 3: Canonical Results
+### Phase 3: Canonical Results
 
 Add canonicalization helpers for result sets:
 
@@ -78,7 +78,7 @@ Add canonicalization helpers for result sets:
 Canonicalization must be conservative. For example, string values with leading
 zeros should not be rewritten unless the column type is numeric.
 
-### Slice 4: Seed Suites
+### Phase 4: Seed Suites
 
 Create small compatibility suites by SQL surface:
 
@@ -93,7 +93,7 @@ Create small compatibility suites by SQL surface:
 The first seed suite should be tiny and parser-focused. Coverage breadth matters
 more than performance at this layer.
 
-### Slice 5: Reference Execution
+### Phase 5: Reference Execution
 
 Add a MySQL reference engine mode behind DSN configuration:
 
@@ -104,7 +104,7 @@ go run ./sqlrunner -engine mysql-reference -suite_file sqltests/mysql_compat_sel
 This should execute against a caller-provided MySQL instance. SQLRunner should
 not own MySQL server startup.
 
-### Slice 6: Differential Compare
+### Phase 6: Differential Compare
 
 Add capture/compare and then one-command differential mode:
 

@@ -265,7 +265,7 @@ tests:
     capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
     # This proves dimension filtering can flow through a three-edge chain into
     # the lineitem fact table. The final supplier -> lineitem hop still scans
-    # the full time-sharded child side in this slice.
+    # the full time-sharded child side in this phase.
     sql: |-
       select count(*) as asia_supplier_line_count
       from region as r
@@ -300,7 +300,7 @@ tests:
     capabilities: [inabox-direct, tpch-q5, relationship-vector-chain, fact-table, count, full-child-scan]
     # This proves the customer/orders side can flow into lineitem. The final
     # orders -> lineitem hop still scans the full time-sharded child side in
-    # this slice.
+    # this phase.
     sql: |-
       select count(*) as asia_customer_line_count
       from region as r
@@ -339,7 +339,7 @@ tests:
     kind: query
     timeout: 60s
     capabilities: [inabox-direct, tpch-q5, relationship-vector-graph, fact-table, projection, limit]
-    # This is the first graph projection slice. It intentionally materializes
+    # This is the first graph projection phase. It intentionally materializes
     # sink-table lineitem revenue inputs only; ancestor-field projection needs
     # full joined-tuple reconstruction across the graph.
     sql: |-
@@ -580,7 +580,7 @@ tests:
     order: rowsort
     # Stages Q7's revenue/year grouped output for one nation-pair direction.
     # The formal bidirectional `(FRANCE, GERMANY) OR (GERMANY, FRANCE)` predicate
-    # remains a parser/planner boolean-normalization slice.
+    # remains a parser/planner boolean-normalization phase.
     sql: |-
       select n1.n_name as supp_nation,
              n2.n_name as cust_nation,
@@ -943,7 +943,7 @@ tests:
     # Combines the formal Q12 lineitem date-comparison predicates with the
     # priority conditional aggregates. This keeps the CASE predicates in
     # IN/NOT IN form; the exact formal OR/AND spelling remains a parser cleanup
-    # slice.
+    # phase.
     sql: |-
       select l.l_shipmode,
              sum(case

@@ -1,7 +1,7 @@
 # SQLRunner
 
 SQLRunner executes YAML roadmap suites. It supports MySQL socket harnesses for
-the product paths, in-process runtime harnesses for qsbridge slices, and direct
+the product paths, in-process runtime harnesses for qsbridge phases, and direct
 bitmap harnesses for exercising the query stack against a running local
 QuantaStream node cluster.
 
@@ -137,7 +137,7 @@ basic one-table execution. It keeps a smaller, deliberate set of supported
 cases: numeric and StringEnum filtering, multi-column projection,
 `LIMIT/OFFSET`, and simple global numeric aggregates. Use it when validating
 that a local node cluster can execute the current qsbridge/qsruntime vertical
-slice:
+phase:
 
 ```bash
 go run . \
@@ -239,7 +239,7 @@ through the SQL engine as `CREATE TABLE`, `DROP TABLE`, or `TRUNCATE TABLE`
 statements. New suites should prefer `kind: statement` with SQL DDL directly.
 
 The default standard smoke suite is `sqltests/inabox_standard_qa_smoke.yaml`.
-It checks a self-contained `customers_qa` slice over the MySQL socket,
+It checks a self-contained `customers_qa` case group over the MySQL socket,
 including StringEnum dictionary loading, multiplicity-set inserts, default
 expressions, and StringLexBSI materialization. Override the target with
 `HOST`, `PORT`, `SQL_USER`, `DB`, `SUITE`, and optionally `CASE`:
