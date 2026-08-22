@@ -69,9 +69,7 @@ attributes:
 | --- | --- | --- |
 | `tableName` | yes | Physical table/index name. This should match the table directory name. |
 | `primaryKey` | yes | Logical primary-key field. Compound keys use `+`, for example `l_orderkey+l_linenumber`. |
-| `secondaryKeys` | no | Comma-separated alternate key definitions. Compound key parts use `+`, matching `primaryKey` syntax. |
 | `selector` | no | Loader routing expression used to match source events to this table, for example `type="orders"`. |
-| `defaultPredicate` | no | Default table predicate metadata for specialized load/query paths. Use only when a table has an intentional always-on predicate. |
 | `timeQuantumType` | no | Time partitioning quantum, commonly `YMD`. Omit for non-time-partitioned tables. |
 | `timeQuantumField` | conditional | Field used for time partitioning. Required when `timeQuantumType` is set unless the first compound primary-key field is the date/time partition field. |
 | `attributes` | yes | List of field definitions. |
@@ -89,17 +87,6 @@ primaryKey: l_orderkey+l_linenumber
 When a table is time-partitioned, the partition field must be a `Date` or
 `DateTime` attribute. If `timeQuantumField` is omitted, the first field in a
 compound primary key is treated as the partition field and must be date-like.
-
-### Secondary Keys
-
-`secondaryKeys` supports one or more alternate key definitions:
-
-```yaml
-secondaryKeys: city+zip,phone
-```
-
-Secondary keys are catalog/schema metadata for alternate lookup semantics. They
-do not replace `primaryKey`.
 
 ### Selectors
 
@@ -143,13 +130,10 @@ not constrain the time field.
 | `values` | no | Explicit enum values for value-based mappers. Each entry can include `value`, `rowID`, and `desc`. |
 | `configuration` | no | Mapper-specific options. Required by some custom or specialized mappers. |
 | `maxLen` | no | Maximum source string length. Used by string encoding metadata and SQL type display. |
-| `minValue` | no | Optional lower bound for numeric/range-aware fields. |
-| `maxValue` | no | Optional upper bound for numeric/range-aware fields. |
 | `required` | no | Write-path validation hint. When true, online inserts should provide a value or a default. |
 | `defaultValue` | no | Default expression used by blind inserts when no value is supplied. Example: `now()`. |
 | `searchable` | no | Enables secondary text-search metadata for string fields. The loader/server creates supporting search artifacts. |
 | `nonExclusive` | no | Marks a bitmap-style field as set-valued rather than one-value-per-row. |
-| `highCard` | no | Analyzer/design annotation for high-cardinality fields. |
 | `system` | no | Marks a generated internal field. User schemas normally should not set this manually. |
 | `callTransform` | no | Legacy/custom mapper hook. Use only with mapper code that explicitly expects it. |
 | `sourceOrdinal` | no | Source column order for bulk loaders and generated descriptors. |
@@ -258,13 +242,6 @@ projection.
   type: Integer
   mappingStrategy: IntBSI
   columnID: true
-```
-
-Optional bounds:
-
-```yaml
-minValue: 0
-maxValue: 2147483647
 ```
 
 ### `FloatScaleBSI`
