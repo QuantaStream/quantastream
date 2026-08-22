@@ -121,13 +121,13 @@ coverage.
 
 ## Text Search
 
-QuantaStream supports native text-search predicates for fields configured with a
-searchable `StringLexBSI` mapper:
+QuantaStream supports native text-search predicates for text fields configured
+as searchable in the table descriptor:
 
 ```sql
-select c_name
+select c_comment
 from customer
-where match(c_name) against ('Customer' in natural language mode);
+where match(c_comment) against ('epitaphs nag' in natural language mode);
 ```
 
 The current SQL contract is predicate-oriented: `MATCH(field) AGAINST (...)`
@@ -135,6 +135,14 @@ resolves search terms through the string-search service, materializes matching
 term hashes, and lowers the predicate to bitmap-native equality over the hidden
 search artifact. This is intended for fast filtering, not MySQL relevance-score
 ranking.
+
+Searchable text fields use two durable artifacts:
+
+- the string-search KV index, which maps searchable text to term filters;
+- a hidden BSI hash field, which maps table rows to searchable text hashes.
+
+Those artifacts are part of the QuantaStream storage model and participate in
+backup/restore through the local storage backup manifest.
 
 Covered syntax:
 

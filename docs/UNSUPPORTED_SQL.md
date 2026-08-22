@@ -134,13 +134,13 @@ Simple `DROP ... CASCADE` syntax is accepted where covered, but recursive
 dependent-object deletion is not the current contract. Drop dependent views,
 child relationships, or configured tables intentionally.
 
-## Text Search And Collation
+## Text Search And Collation Boundaries
 
-SQL `LIKE`, `NOT LIKE`, and predicate-form `MATCH(field) AGAINST (...)` are
-supported for covered bitmap, residual string, and searchable `StringLexBSI`
-paths. The remaining text boundaries are compatibility polish rather than
-storage-model limitations:
+QuantaStream supports native `MATCH(field) AGAINST (...)` predicates for
+searchable descriptor fields. The remaining text boundaries are specific MySQL
+compatibility features outside the current 1.0 SQL contract:
 
+- `MATCH ... AGAINST` over fields that are not configured as searchable;
 - full MySQL collation parity across every comparison and ordering edge case;
 - `REGEXP` and `RLIKE`;
 - multi-column `MATCH(field_a, field_b) AGAINST (...)`;
@@ -148,6 +148,9 @@ storage-model limitations:
 - `WITH QUERY EXPANSION` and MySQL-specific full-text ranking behavior;
 - `MATCH ... AGAINST` inside mixed boolean expression trees outside the covered
   top-level predicate shapes.
+
+`LIKE` and `NOT LIKE` remain ordinary string predicates where covered; they are
+not the native text-search interface.
 
 StringEnum, StringLexBSI, and backing-string representations should be chosen
 from the descriptor based on the query pattern the application needs.
