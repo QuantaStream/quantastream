@@ -61,9 +61,10 @@ considered against the deployment models in
 
 ## SQL Layer
 
-Schema design is part of query planning in Quanta. Before adding new benchmark
-schemas or substantial test data, review [`SCHEMA_DESIGN.md`](SCHEMA_DESIGN.md)
-and the field-level reference in [`../configuration/README.md`](../configuration/README.md).
+Schema design is part of query planning in QuantaStream. Before adding new
+benchmark schemas or substantial test data, review
+[`SCHEMA_DESIGN.md`](SCHEMA_DESIGN.md) and the field-level reference in
+[`../configuration/SCHEMA_CONFIG_REFERENCE.md`](../configuration/SCHEMA_CONFIG_REFERENCE.md).
 
 The SQL layer currently supports a practical analytical SQL subset.
 Supported custom SQL extensions are tracked in

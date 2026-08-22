@@ -281,7 +281,7 @@ go run ./cmd/quantastream-loader \
 generates TPC-H-shaped `orders` and `lineitem` JSON events and posts them to the
 loader. Against the full TPC-H schema, dimension and parent tables such as
 `customer`, `part`, and `supplier` must already be loaded because normal FK
-rules still apply. See `docs/configuration/STREAMING_LOADER.md` for user-facing
+rules still apply. See `../configuration/STREAMING_LOADER.md` for user-facing
 setup and payload details.
 
 ### Streaming Loader Routing

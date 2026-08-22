@@ -1,6 +1,6 @@
 # TPC-H Benchmark Helpers
 
-This directory contains Quanta schemas and local helper scripts for TPC-H
+This directory contains QuantaStream schemas and local helper scripts for TPC-H
 validation.
 
 The official TPC-H dbgen/qgen tools and generated `.tbl` data files are not
@@ -214,7 +214,7 @@ The producer emits flat `orders` and `lineitem` records that match the real
 TPC-H schema. When using the full schema, load parent dimension tables first
 (`customer`, `part`, and `supplier`) so FK checks can succeed.
 
-See `docs/configuration/STREAMING_LOADER.md` for the loader endpoint contract,
+See `../configuration/STREAMING_LOADER.md` for the loader endpoint contract,
 JSON payload shapes, and operational notes.
 
 ## Load Data Into Stock MySQL

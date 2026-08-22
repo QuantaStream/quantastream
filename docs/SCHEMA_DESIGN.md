@@ -5,8 +5,8 @@ definitions. The mapping strategy chosen for each attribute determines how the
 engine can filter, join, group, aggregate, project, and reload that data.
 
 The field-level configuration reference lives in
-[`configuration/README.md`](../configuration/README.md). This guide focuses on
-how to choose schema shapes.
+[`configuration/SCHEMA_CONFIG_REFERENCE.md`](../configuration/SCHEMA_CONFIG_REFERENCE.md).
+This guide focuses on how to choose schema shapes.
 
 Future analyzer tooling should help generate and explain draft schemas from
 representative data samples. That work is tracked internally until it is ready
@@ -24,7 +24,7 @@ Important schema concepts:
 
 - `tableName` names the physical table/index.
 - `primaryKey` identifies the logical key used by loads and SQL mutation paths.
-- `columnID: true` means the field value is also the Quanta row ID.
+- `columnID: true` means the field value is also the QuantaStream row ID.
 - `mappingStrategy` chooses the physical representation.
 - `timeQuantumType` partitions table data into time-based shards.
 - `ParentRelation` models relationships to parent tables.
@@ -136,15 +136,15 @@ rehydration check before they can be treated as exact matches.
 
 `StringLexBSI` still exists for compatibility with older schemas, but new
 schema work should prefer `StringLexBSI`. Hash strings solve equality lookups,
-but projection can become expensive because Quanta must use a backing store to
-rehydrate values. That cost matters most when large result sets project string
-columns.
+but projection can become expensive because QuantaStream must use a backing
+store to rehydrate values. That cost matters most when large result sets
+project string columns.
 
 ### Searchable Strings
 
-Quanta has secondary searchable-string support backed by a bloom-filter style
-index. This is currently a pragmatic high-cardinality string workaround rather
-than a complete SQL string indexing model.
+QuantaStream has secondary searchable-string support backed by a bloom-filter
+style index. This is currently a pragmatic high-cardinality string workaround
+rather than a complete SQL string indexing model.
 
 Use searchable strings for fields where lookup/search behavior is more
 important than SQL range semantics. It can provide a practical path for
