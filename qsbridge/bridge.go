@@ -562,6 +562,7 @@ type UnboundAggregate struct {
 	Filter   UnboundExpr
 	Alias    string
 	Type     DataType
+	Limit    int
 	CountAll bool
 }
 
@@ -2969,6 +2970,7 @@ func BindAggregate(context *BindContext, aggregate UnboundAggregate) (Aggregate,
 		Filter:        filter,
 		Alias:         aggregate.Alias,
 		Type:          aggregateReturnType(aggregate.Type, function.ReturnType, input),
+		Limit:         aggregate.Limit,
 		Origin:        function.Origin,
 		Placement:     function.EffectivePlacement(),
 		Deterministic: function.Deterministic,

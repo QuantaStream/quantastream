@@ -456,6 +456,7 @@ type Aggregate struct {
 	Filter        Expr
 	Alias         string
 	Type          DataType
+	Limit         int
 	Origin        FunctionOrigin
 	Placement     FunctionPlacement
 	Deterministic bool

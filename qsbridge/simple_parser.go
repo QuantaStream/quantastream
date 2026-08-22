@@ -3970,7 +3970,7 @@ func resolveSimpleAggregateCall(expr UnboundExpr, aggregates []UnboundAggregate,
 	if !simpleAggregateFunctionName(call.Name) {
 		return UnboundAggregateRefExpr{}, Diagnostic{}, false
 	}
-	if len(call.Args) != 1 {
+	if len(call.Args) != 1 && !(strings.EqualFold(call.Name, "topn") && len(call.Args) == 2) {
 		return UnboundAggregateRefExpr{}, simpleParserDiagnostic(clause + " aggregate call must match a SELECT aggregate"), false
 	}
 	if ref, ok := findSimpleAggregateCallRef(call, aggregates); ok {
@@ -3980,8 +3980,15 @@ func resolveSimpleAggregateCall(expr UnboundExpr, aggregates []UnboundAggregate,
 }
 
 func findSimpleAggregateCallRef(call UnboundCallExpr, aggregates []UnboundAggregate) (UnboundAggregateRefExpr, bool) {
+	limit, ok := simpleAggregateCallLimit(call)
+	if !ok {
+		return UnboundAggregateRefExpr{}, false
+	}
 	for index, aggregate := range aggregates {
 		if !strings.EqualFold(aggregate.Function, call.Name) {
+			continue
+		}
+		if aggregate.Limit != limit {
 			continue
 		}
 		if strings.EqualFold(aggregate.Function, "count") && aggregate.CountAll {
@@ -4426,10 +4433,45 @@ func parseSimpleProjectionAlias(text string) (string, string, Diagnostic, bool) 
 		}
 		return expr, alias, Diagnostic{}, true
 	}
-	if len(fields) == 2 {
+	if len(fields) == 2 && simpleProjectionImplicitAliasExpressionComplete(fields[0]) {
 		return fields[0], fields[1], Diagnostic{}, true
 	}
 	return trimmed, "", Diagnostic{}, true
+}
+
+func simpleProjectionImplicitAliasExpressionComplete(text string) bool {
+	var quote byte
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if ch == '\'' || ch == '"' {
+			if quote == ch && i+1 < len(text) && text[i+1] == ch {
+				i++
+				continue
+			}
+			if quote == ch {
+				quote = 0
+				continue
+			}
+			if quote == 0 {
+				quote = ch
+			}
+			continue
+		}
+		if quote != 0 {
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return false
+			}
+			depth--
+		}
+	}
+	return quote == 0 && depth == 0
 }
 
 func parseSimpleArithmeticExpression(text string) (UnboundExpr, bool) {
@@ -4821,9 +4863,23 @@ func parseSimpleAggregateCallExpression(text string) (UnboundCallExpr, bool) {
 	if !simpleAggregateFunctionName(function) {
 		return UnboundCallExpr{}, false
 	}
-	input, ok := parseSimpleScalarExpression(inputText)
+	parts := splitSimpleCommaList(inputText)
+	if !strings.EqualFold(function, "topn") && len(parts) != 1 {
+		return UnboundCallExpr{}, false
+	}
+	if strings.EqualFold(function, "topn") && (len(parts) < 1 || len(parts) > 2) {
+		return UnboundCallExpr{}, false
+	}
+	input, ok := parseSimpleScalarExpression(parts[0])
 	if !ok {
 		return UnboundCallExpr{}, false
+	}
+	if strings.EqualFold(function, "topn") && len(parts) == 2 {
+		limit, _, ok := parseSimpleLiteral(strings.TrimSpace(parts[1]))
+		if !ok || limit.Kind != ValueInt {
+			return UnboundCallExpr{}, false
+		}
+		return UnboundCall(function, input, limit), true
 	}
 	return UnboundCall(function, input), true
 }
@@ -4969,10 +5025,14 @@ func (p *simpleArithmeticParser) skipSpaces() {
 
 func parseSimpleAggregateProjection(fieldToken string, alias string, aggregateIndex int) (UnboundAggregate, UnboundProjection, bool) {
 	call, ok := parseSimpleAggregateCallExpression(fieldToken)
-	if !ok || call.Name == "count" || len(call.Args) != 1 {
+	if !ok || call.Name == "count" {
 		return UnboundAggregate{}, UnboundProjection{}, false
 	}
 	function := call.Name
+	limit, ok := simpleAggregateCallLimit(call)
+	if !ok {
+		return UnboundAggregate{}, UnboundProjection{}, false
+	}
 	input := call.Args[0]
 	if alias == "" {
 		alias = function
@@ -4983,6 +5043,7 @@ func parseSimpleAggregateProjection(fieldToken string, alias string, aggregateIn
 		Input:    input,
 		Alias:    alias,
 		Type:     returnType,
+		Limit:    limit,
 	}
 	projection := UnboundProjection{
 		Expr:  UnboundAggregateRef(alias, aggregateIndex),
@@ -4990,6 +5051,24 @@ func parseSimpleAggregateProjection(fieldToken string, alias string, aggregateIn
 		Type:  returnType,
 	}
 	return aggregate, projection, true
+}
+
+func simpleAggregateCallLimit(call UnboundCallExpr) (int, bool) {
+	if !strings.EqualFold(call.Name, "topn") {
+		return 0, len(call.Args) == 1
+	}
+	switch len(call.Args) {
+	case 1:
+		return 0, true
+	case 2:
+		limit, ok := simpleUnboundIntegerOrdinal(call.Args[1])
+		if !ok || limit <= 0 {
+			return 0, false
+		}
+		return limit, true
+	default:
+		return 0, false
+	}
 }
 
 func parseSimpleAggregateArithmeticProjection(exprText string, alias string, aggregateIndex int) ([]UnboundAggregate, UnboundProjection, bool) {

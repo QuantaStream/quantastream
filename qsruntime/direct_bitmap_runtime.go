@@ -602,7 +602,7 @@ func directBitmapTopNAggregateResult(request ExecutionRequest, materialized qsbr
 	for _, entry := range entriesByKey {
 		entries = append(entries, entry)
 	}
-	rankRows := qsbridge.BuildTopNRankRows(entries, 0)
+	rankRows := qsbridge.BuildTopNRankRows(entries, aggregate.Limit)
 	index, _ := request.RootIndex()
 	valueName := "topn"
 	if field, ok := directBitmapAggregateInputField(aggregate); ok {

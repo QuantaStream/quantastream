@@ -3099,6 +3099,91 @@ func TestDirectBitmapRuntimeMaterializesNumericAggregates(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapRuntimeAppliesTopNLimit(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "spots", Table: "spots"}
+	field := qsbridge.FieldRef{Table: table, Name: "dx_prefix", Type: qsbridge.DataTypeString, Index: qsbridge.IndexStringEnum}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "spots",
+			Field:     "dx_prefix",
+			Operation: qsbridge.QuantaOperationIntersect,
+			NullCheck: true,
+			Negate:    true,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "spots",
+			Field: "dx_prefix",
+			Type:  qsbridge.DataTypeString,
+		}},
+	})
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "topn",
+		Input:    qsbridge.Field(field),
+		Alias:    "prefix_topn",
+		Type:     qsbridge.DataTypeString,
+		Limit:    2,
+	}}
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					return BitmapQueryResult{Success: true, Rownums: []qsbridge.QuantaRownum{1, 2, 3, 4, 5, 6}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "spots",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field: request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueString, Value: "K"},
+						{Kind: qsbridge.ValueString, Value: "K"},
+						{Kind: qsbridge.ValueString, Value: "K"},
+						{Kind: qsbridge.ValueString, Value: "VE"},
+						{Kind: qsbridge.ValueString, Value: "VE"},
+						{Kind: qsbridge.ValueString, Value: "LU"},
+					},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if len(chunk.Rows) != 4 {
+		t.Fatalf("rows = %#v, want top two plus OTHER and TOTAL", chunk.Rows)
+	}
+	want := []struct {
+		value string
+		count int64
+	}{
+		{value: "K", count: 3},
+		{value: "VE", count: 2},
+		{value: "OTHER:", count: 1},
+		{value: "TOTAL:", count: 6},
+	}
+	for i, expected := range want {
+		if got := chunk.Rows[i][0].Value; got != expected.value {
+			t.Fatalf("row %d value = %#v, want %q", i, got, expected.value)
+		}
+		if got := chunk.Rows[i][1].Value; got != expected.count {
+			t.Fatalf("row %d count = %#v, want %d", i, got, expected.count)
+		}
+	}
+}
+
 func TestDirectBitmapRuntimeMaterializesGroupedArithmeticAggregate(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "partsupp", Table: "partsupp"}
 	partKey := qsbridge.FieldRef{Table: table, Name: "ps_partkey", Type: qsbridge.DataTypeInt}

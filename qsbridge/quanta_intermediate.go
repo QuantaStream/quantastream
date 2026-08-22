@@ -173,7 +173,7 @@ func QuantaAggregateRequestsFromPhysicalNode(node PhysicalAggregateNode) ([]Quan
 			Function:   aggregate.Function,
 			Alias:      aggregate.Alias,
 			Input:      quantaIntermediateProjectionField(field, true),
-			Limit:      0,
+			Limit:      aggregate.Limit,
 			Strategies: []PhysicalStrategy{PhysicalStrategyQuantaTopN},
 		})
 	}

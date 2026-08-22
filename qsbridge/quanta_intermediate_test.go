@@ -732,7 +732,7 @@ func TestQuantaAggregateRequestsFromPhysicalNodeDerivesTopNProjectorRank(t *test
 		Scope:         PhysicalScope{Placement: PlacementLocal},
 	}
 
-	result := planner.Plan("select topn(l.l_shipmode) as shipmode_topn from lineitem as l")
+	result := planner.Plan("select topn(l.l_shipmode, 10) as shipmode_topn from lineitem as l")
 	if result.Diagnostics.BlocksNative() {
 		t.Fatalf("plan diagnostics: %#v", result.Diagnostics)
 	}
@@ -757,6 +757,9 @@ func TestQuantaAggregateRequestsFromPhysicalNodeDerivesTopNProjectorRank(t *test
 	}
 	if request.Function != "topn" || request.Alias != "shipmode_topn" {
 		t.Fatalf("request function/alias = %q/%q, want topn/shipmode_topn", request.Function, request.Alias)
+	}
+	if request.Limit != 10 {
+		t.Fatalf("request limit = %d, want 10", request.Limit)
 	}
 	if request.Input.Index != "lineitem" || request.Input.Field != "l_shipmode" || request.Input.Type != DataTypeString {
 		t.Fatalf("input = %#v, want lineitem.l_shipmode string", request.Input)

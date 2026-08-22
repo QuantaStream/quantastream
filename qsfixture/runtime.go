@@ -1748,30 +1748,22 @@ func runtimeFixtureTopNRows(aggregate qsbridge.Aggregate, rows []runtimeFixtureR
 		return qsbridge.QuantaProjectedRowSet{}, fmt.Errorf("runtime fixture topn requires a direct field input")
 	}
 	counts := make(map[string]int)
+	values := make(map[string]qsbridge.ResultCell)
 	for _, row := range rows {
 		cell, ok := runtimeFixtureFieldCell(row, field.Ref)
 		if !ok || cell.Kind == qsbridge.ValueNull {
 			continue
 		}
-		counts[fmt.Sprint(cell.Value)]++
+		key := fmt.Sprint(cell.Value)
+		counts[key]++
+		values[key] = cell
 	}
-	type topNEntry struct {
-		Label string
-		Count int
-	}
-	entries := make([]topNEntry, 0, len(counts))
-	total := 0
+	entries := make([]qsbridge.TopNRankEntry, 0, len(counts))
 	for label, count := range counts {
-		entries = append(entries, topNEntry{Label: label, Count: count})
-		total += count
+		entries = append(entries, qsbridge.TopNRankEntry{Value: values[label], Count: uint64(count)})
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].Count == entries[j].Count {
-			return entries[i].Label < entries[j].Label
-		}
-		return entries[i].Count > entries[j].Count
-	})
-	rowCount := len(entries) + 1
+	rankRows := qsbridge.BuildTopNRankRows(entries, aggregate.Limit)
+	rowCount := len(rankRows)
 	rowSet := qsbridge.QuantaProjectedRowSet{
 		Index:   field.Ref.Table.Table,
 		Rownums: make([]qsbridge.QuantaRownum, rowCount),
@@ -1790,17 +1782,13 @@ func runtimeFixtureTopNRows(aggregate qsbridge.Aggregate, rows []runtimeFixtureR
 			},
 		},
 	}
-	for index, entry := range entries {
+	for index, rankRow := range rankRows {
 		rowSet.Rownums[index] = qsbridge.QuantaRownum(index + 1)
-		rowSet.ProjectionVectors[0].Values[index] = qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: entry.Label}
-		rowSet.ProjectionVectors[1].Values[index] = qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(entry.Count)}
-		rowSet.ProjectionVectors[2].Values[index] = qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: runtimeFixtureTopNPercent(entry.Count, total)}
+		resultRow := rankRow.ResultRow()
+		for columnIndex := range resultRow {
+			rowSet.ProjectionVectors[columnIndex].Values[index] = resultRow[columnIndex]
+		}
 	}
-	totalIndex := rowCount - 1
-	rowSet.Rownums[totalIndex] = qsbridge.QuantaRownum(rowCount)
-	rowSet.ProjectionVectors[0].Values[totalIndex] = qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: "TOTAL:"}
-	rowSet.ProjectionVectors[1].Values[totalIndex] = qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: int64(total)}
-	rowSet.ProjectionVectors[2].Values[totalIndex] = qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: 100.0}
 	return rowSet, nil
 }
 

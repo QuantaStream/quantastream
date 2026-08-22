@@ -2087,6 +2087,27 @@ func TestBindAggregateSupportsDistinctMode(t *testing.T) {
 	}
 }
 
+func TestBindAggregatePreservesTopNLimit(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	if _, diagnostics := context.AddTable(UnboundTable{Name: "lineitem", Alias: "l"}); diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+
+	aggregate, diagnostics := BindAggregate(context, UnboundAggregate{
+		Function: "topn",
+		Input:    UnboundField("l", "l_shipmode"),
+		Alias:    "shipmode_topn",
+		Type:     DataTypeString,
+		Limit:    10,
+	})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if aggregate.Function != "topn" || aggregate.Alias != "shipmode_topn" || aggregate.Limit != 10 {
+		t.Fatalf("aggregate = %#v, want topn shipmode_topn limit 10", aggregate)
+	}
+}
+
 func TestBindSelectBindsRelationshipJoin(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	selectStmt := UnboundSelect{

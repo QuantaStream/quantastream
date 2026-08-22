@@ -463,6 +463,17 @@ tests:
       columns: [topn_city, topn_count, topn_percent]
       row_count: 4
 
+  - id: "function_expressions.119b.quanta_topn_string_enum_limit"
+    status: supported
+    kind: query
+    capabilities: [aggregate, quanta-custom, topn, string-enum]
+    sql: |-
+      select topn(city, 1)
+      from customers_qa
+    expect:
+      columns: [topn_city, topn_count, topn_percent]
+      row_count: 3
+
   - id: "function_expressions.120.quanta_timediff_select_list"
     status: supported
     kind: query

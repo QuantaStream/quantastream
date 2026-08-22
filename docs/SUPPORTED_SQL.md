@@ -229,16 +229,18 @@ Additional units, null handling, timezone behavior, result typing, negative
 durations, and parity expectations belong in focused compatibility coverage
 when those behaviors are exposed.
 
-### `topn(field)`
+### `topn(field[, count])`
 
-`topn(field)` is a QuantaStream aggregate extension that returns the most
-frequent values for a field, their counts, and their percentage of the scanned
-result set.
+`topn(field[, count])` is a QuantaStream aggregate extension that returns the
+most frequent values for a field, their counts, and their percentage of the
+scanned result set. The optional `count` argument is a positive integer literal
+that limits the concrete value rows; when remaining values exist, QuantaStream
+adds an `OTHER:` bucket before the final `TOTAL:` row.
 
 Example:
 
 ```sql
-select topn(l_shipmode)
+select topn(l_shipmode, 5)
 from lineitem;
 ```
 
@@ -253,8 +255,7 @@ Example result shape:
 | FOB             |       8641 |        14.36 |
 | REG AIR         |       8616 |        14.32 |
 | RAIL            |       8566 |        14.24 |
-| AIR             |       8491 |        14.11 |
-| SHIP            |       8482 |        14.10 |
+| OTHER:          |      16973 |        28.20 |
 | TOTAL:          |      60175 |       100.00 |
 +-----------------+------------+--------------+
 ```
@@ -268,7 +269,6 @@ Additional `topn(...)` coverage should characterize:
 - alias behavior
 - ordering guarantees
 - tie behavior
-- result limits
 - filtered input behavior
 - joined input behavior
 - interaction with other aggregates

@@ -2564,6 +2564,27 @@ func TestSimpleParserBridgeParsesTopNAggregate(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTopNAggregateLimit(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select topn(l.l_shipmode, 10) as shipmode_topn from lineitem as l")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Aggregates) != 1 {
+		t.Fatalf("aggregates = %d, want 1", len(statement.Select.Aggregates))
+	}
+	aggregate := statement.Select.Aggregates[0]
+	if aggregate.Function != "topn" || aggregate.Limit != 10 {
+		t.Fatalf("aggregate = %#v, want topn limit 10", aggregate)
+	}
+	input, ok := aggregate.Input.(UnboundFieldExpr)
+	if !ok {
+		t.Fatalf("aggregate input = %T, want UnboundFieldExpr", aggregate.Input)
+	}
+	if input.Qualifier != "l" || input.Name != "l_shipmode" {
+		t.Fatalf("aggregate input = %#v, want l.l_shipmode", input)
+	}
+}
+
 func TestSimpleParserBridgeParsesAggregateAliasOrderBy(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_custkey as customer_id, count(*) as order_count from orders as o group by o.o_custkey order by order_count desc")
 	if diagnostics.BlocksNative() {
