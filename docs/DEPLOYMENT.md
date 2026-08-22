@@ -5,7 +5,7 @@
 This document describes QuantaStream deployment models, operational requirements,
 and areas that still require validation.
 
-Quanta-in-a-Box (QIAB) is the preferred development and conformance
+QuantaStream-in-a-Box (QIAB) is the preferred development and conformance
 environment. It is not the intended limit of production topology.
 
 ## Deployment Modes

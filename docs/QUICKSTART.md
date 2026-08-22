@@ -99,7 +99,7 @@ mysql -h 127.0.0.1 -P 4000 -u root
 
 Current project priorities:
 
-- Quanta-in-a-Box stabilization
+- QuantaStream-in-a-Box stabilization
 - TPC-H demo coverage
 - Streaming ingestion demonstrations
 - SQL correctness improvements

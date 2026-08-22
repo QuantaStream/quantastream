@@ -139,7 +139,7 @@ make these boundaries visible:
 
 This distinction matters for deployment shape. In distributed mode,
 serialization across the node boundary is an acceptable cost when it preserves
-node isolation and scale-out. In Quanta-in-a-Box, the same logical node
+node isolation and scale-out. In QuantaStream-in-a-Box, the same logical node
 operation should be able to use an in-process adapter that avoids network
 serialization while preserving the planner/executor contract.
 
@@ -330,9 +330,9 @@ Result assembly
 
 ---
 
-# Quanta-in-a-Box
+# QuantaStream-in-a-Box
 
-Quanta-in-a-Box (QIAB) provides:
+QuantaStream-in-a-Box (QIAB) provides:
 
 - local 3-node cluster startup
 - local MySQL-compatible front-door startup

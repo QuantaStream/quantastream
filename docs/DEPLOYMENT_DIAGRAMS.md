@@ -8,7 +8,7 @@ GitHub renders the diagrams from Mermaid source.
 
 ## QIAB Single-Node: `inabox-standard`
 
-`inabox-standard` is the product-facing Quanta-in-a-Box shape. One
+`inabox-standard` is the product-facing QuantaStream-in-a-Box shape. One
 `quantastream` process owns the MySQL-compatible front door, SQL runtime,
 in-process node adapter, catalog files, and local storage. It does not require
 Consul.

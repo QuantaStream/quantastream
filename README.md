@@ -47,9 +47,9 @@ Core components:
 - **Execution runtime:** Applies bitmap, BSI, relationship-vector, aggregate, and materialization kernels.
 - **Data nodes:** Own shards and store bitmap/BSI-backed column data and supporting persisted values.
 - **Consul metadata and discovery:** Provides cluster coordination, service discovery, and schema metadata storage for distributed deployments.
-- **Quanta-in-a-Box:** Runs the local development topology in one process while preserving the same conceptual node/query boundaries.
+- **QuantaStream-in-a-Box:** Runs the local development topology in one process while preserving the same conceptual node/query boundaries.
 
-QuantaStream is designed so Quanta-in-a-Box can be productive for small deployments and demos, while the same core architecture can grow toward multi-node distributed deployments.
+QuantaStream is designed so QuantaStream-in-a-Box can be productive for small deployments and demos, while the same core architecture can grow toward multi-node distributed deployments.
 
 For a deeper architectural overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -86,9 +86,9 @@ Examples include:
 
 This schema-first design is central to QuantaStream performance. See [docs/SCHEMA_DESIGN.md](docs/SCHEMA_DESIGN.md) for details.
 
-## Quanta-in-a-Box
+## QuantaStream-in-a-Box
 
-Quanta-in-a-Box is the primary single-node development, demo, and validation environment. It runs the local engine shape needed for SQL conformance work and TPC-H experimentation without requiring a distributed deployment.
+QuantaStream-in-a-Box is the primary single-node development, demo, and validation environment. It runs the local engine shape needed for SQL conformance work and TPC-H experimentation without requiring a distributed deployment.
 
 Recommended binary environment:
 

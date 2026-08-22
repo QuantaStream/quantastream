@@ -18,7 +18,7 @@ make test
 
 # Integration Testing
 
-Start Quanta-in-a-Box:
+Start QuantaStream-in-a-Box:
 
 ```bash
 cd startup-scripts
@@ -41,7 +41,7 @@ go run . \
 
 # Important Development Notes
 
-## Quanta-in-a-Box
+## QuantaStream-in-a-Box
 
 The preferred development environment is:
 
