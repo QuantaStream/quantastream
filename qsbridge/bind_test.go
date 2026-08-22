@@ -177,6 +177,49 @@ func TestBindPredicateKeepsBSIRangeAsPushdown(t *testing.T) {
 	}
 }
 
+func TestBindPredicateKeepsTextSearchAsPushdown(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	if _, diagnostics := context.AddTable(UnboundTable{Name: "customer", Alias: "c"}); diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+
+	predicate, diagnostics := BindPredicate(context, UnboundPredicate{
+		Expr:      UnboundTextSearch(UnboundField("c", "c_name"), UnboundLiteral(ValueString, "Customer"), ""),
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeWhere,
+	}, FieldRoleResidualInput)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if predicate.Placement != PredicatePushdown {
+		t.Fatalf("Placement = %q, want %q", predicate.Placement, PredicatePushdown)
+	}
+	if len(predicate.Capabilities) != 1 || predicate.Capabilities[0] != CapabilityTextSearch {
+		t.Fatalf("Capabilities = %#v, want text search", predicate.Capabilities)
+	}
+	search, ok := AsTextSearchExpr(predicate.Expr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want TextSearchExpr", predicate.Expr)
+	}
+	if search.Field.QualifiedName() != "c.c_name" || search.Query.ExpressionKind() != ExprLiteral {
+		t.Fatalf("search expression = %#v", search)
+	}
+}
+
+func TestBindPredicateRejectsTextSearchOnNonSearchableField(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	if _, diagnostics := context.AddTable(UnboundTable{Name: "customer", Alias: "c"}); diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+
+	_, diagnostics := BindPredicate(context, UnboundPredicate{
+		Expr:      UnboundTextSearch(UnboundField("c", "c_custkey"), UnboundLiteral(ValueString, "Customer"), ""),
+		Placement: PredicatePushdown,
+		Scope:     PredicateScopeWhere,
+	}, FieldRoleResidualInput)
+	assertSingleDiagnosticCode(t, diagnostics, DiagnosticUnsupportedSQL)
+}
+
 func TestBindContextResolveUnqualifiedUniqueField(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	for _, table := range []UnboundTable{{Name: "orders", Alias: "o"}, {Name: "customer", Alias: "c"}} {

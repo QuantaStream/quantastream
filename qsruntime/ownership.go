@@ -150,7 +150,8 @@ func runtimeOwnershipNativeKernelStagingFile(file string) bool {
 		"relationship_tuple_rowset.go",
 		"relationship_vector_reverse_artifact.go",
 		"relationship_vector_reader.go",
-		"scalar_subquery_materialization.go":
+		"scalar_subquery_materialization.go",
+		"text_search_materialization.go":
 		return true
 	case "same_row_comparison.go":
 		return true

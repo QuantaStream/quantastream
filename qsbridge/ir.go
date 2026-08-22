@@ -147,6 +147,8 @@ const (
 	ExprList ExprKind = "list"
 	// ExprCall is a function call expression.
 	ExprCall ExprKind = "call"
+	// ExprTextSearch is a MATCH(field) AGAINST(query) full-text predicate.
+	ExprTextSearch ExprKind = "text_search"
 	// ExprBinary is a binary operator expression.
 	ExprBinary ExprKind = "binary"
 	// ExprSearchedCase is a searched CASE expression.
@@ -241,6 +243,8 @@ const (
 	CapabilityCancellationAware PlanCapability = "CancellationAware"
 	// CapabilityBitmapDifference identifies anti-membership lowering to bitmap difference.
 	CapabilityBitmapDifference PlanCapability = "BitmapDifference"
+	// CapabilityTextSearch identifies native searchable text predicate pushdown.
+	CapabilityTextSearch PlanCapability = "TextSearch"
 	// CapabilityRelationshipParentLookup identifies child-to-parent traversal through relation storage.
 	CapabilityRelationshipParentLookup PlanCapability = "RelationshipParentLookup"
 	// CapabilityRelationshipChildExpansion identifies parent-to-child traversal through relation storage.

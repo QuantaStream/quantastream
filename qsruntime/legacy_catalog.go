@@ -441,6 +441,9 @@ func legacyCatalogOrderedAttributes(attributes []core.Attribute) []core.Attribut
 	})
 	result := make([]core.Attribute, 0, len(ordered))
 	for _, item := range ordered {
+		if item.attribute.System {
+			continue
+		}
 		result = append(result, item.attribute)
 	}
 	return result

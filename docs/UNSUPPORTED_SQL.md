@@ -136,13 +136,18 @@ child relationships, or configured tables intentionally.
 
 ## Text Search And Collation
 
-SQL `LIKE` and `NOT LIKE` are supported for covered bitmap and residual string
+SQL `LIKE`, `NOT LIKE`, and predicate-form `MATCH(field) AGAINST (...)` are
+supported for covered bitmap, residual string, and searchable `StringLexBSI`
 paths. The remaining text boundaries are compatibility polish rather than
 storage-model limitations:
 
 - full MySQL collation parity across every comparison and ordering edge case;
 - `REGEXP` and `RLIKE`;
-- indexed full-text search syntax such as `MATCH ... AGAINST`.
+- multi-column `MATCH(field_a, field_b) AGAINST (...)`;
+- MySQL relevance-score projections from `MATCH(...) AGAINST(...)`;
+- `WITH QUERY EXPANSION` and MySQL-specific full-text ranking behavior;
+- `MATCH ... AGAINST` inside mixed boolean expression trees outside the covered
+  top-level predicate shapes.
 
 StringEnum, StringLexBSI, and backing-string representations should be chosen
 from the descriptor based on the query pattern the application needs.

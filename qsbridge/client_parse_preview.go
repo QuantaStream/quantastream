@@ -242,6 +242,12 @@ func cloneUnboundExpr(expr UnboundExpr) UnboundExpr {
 		return UnboundListExpr{Items: cloneUnboundExprs(typed.Items)}
 	case UnboundCallExpr:
 		return UnboundCallExpr{Name: typed.Name, Args: cloneUnboundExprs(typed.Args)}
+	case UnboundTextSearchExpr:
+		return UnboundTextSearchExpr{
+			Field: typed.Field,
+			Query: cloneUnboundExpr(typed.Query),
+			Mode:  typed.Mode,
+		}
 	case UnboundBinaryExpr:
 		return UnboundBinaryExpr{Op: typed.Op, Left: cloneUnboundExpr(typed.Left), Right: cloneUnboundExpr(typed.Right)}
 	case UnboundSearchedCaseExpr:

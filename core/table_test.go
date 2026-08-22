@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/QuantaStream/quantastream/searchindex"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/stretchr/testify/assert"
 )
@@ -13,7 +14,7 @@ func TestLoadTable(t *testing.T) {
 	assert.Nil(t, err)
 	if assert.NotNil(t, table) {
 		assert.NotNil(t, table.BasicTable)
-		assert.Equal(t, 15, len(table.Attributes))
+		assert.Equal(t, 16, len(table.Attributes))
 		regionList, err2 := table.GetAttribute("region_list")
 		assert.Nil(t, err2)
 		if assert.NotNil(t, regionList) {
@@ -27,6 +28,12 @@ func TestLoadTable(t *testing.T) {
 		assert.Nil(t, err3)
 		if assert.NotNil(t, name) {
 			assert.True(t, name.IsBSI())
+		}
+		searchHash, err4 := table.GetAttribute(searchindex.HashFieldName("name"))
+		assert.Nil(t, err4)
+		if assert.NotNil(t, searchHash) {
+			assert.True(t, searchHash.System)
+			assert.True(t, searchHash.IsBSI())
 		}
 	}
 }

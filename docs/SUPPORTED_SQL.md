@@ -119,6 +119,33 @@ These functions are covered in focused scalar-expression shapes. Add aliases or
 broader mixed-projection, join, grouping, and aggregate shapes with SQLRunner
 coverage.
 
+## Text Search
+
+QuantaStream supports native text-search predicates for fields configured with a
+searchable `StringLexBSI` mapper:
+
+```sql
+select c_name
+from customer
+where match(c_name) against ('Customer' in natural language mode);
+```
+
+The current SQL contract is predicate-oriented: `MATCH(field) AGAINST (...)`
+resolves search terms through the string-search service, materializes matching
+term hashes, and lowers the predicate to bitmap-native equality over the hidden
+search artifact. This is intended for fast filtering, not MySQL relevance-score
+ranking.
+
+Covered syntax:
+
+- one field inside `MATCH(...)`;
+- string literal or prepared-statement parameter inside `AGAINST(...)`;
+- optional `IN NATURAL LANGUAGE MODE` or `IN BOOLEAN MODE` parsing, with both
+  modes using the current term-search behavior.
+
+Advanced full-text ranking and MySQL text-search edge cases are tracked in
+[`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+
 ## Views
 
 QuantaStream supports named views for the current MySQL compatibility surface:

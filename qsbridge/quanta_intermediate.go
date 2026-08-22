@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/QuantaStream/quantastream/searchindex"
 )
 
 // QuantaFragmentOperation names a logical bitmap operation in Quanta's execution dialect.
@@ -1330,6 +1332,9 @@ func (l QuantaIntermediateLowerer) lowerFilterExpression(expr Expr, parameters P
 }
 
 func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameters ParameterBindingSet) (QuantaQueryFragment, DiagnosticSet, bool) {
+	if fragment, diagnostics, ok := l.lowerTextSearchPredicate(predicate); ok || diagnostics.BlocksNative() {
+		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
+	}
 	if fragment, diagnostics, ok := l.lowerBetweenPredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
 	}
@@ -1415,6 +1420,24 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 		fragment.Operation = QuantaOperationDifference
 	}
 	return quantaIntermediateApplyCombinator(fragment, predicate), nil, true
+}
+
+func (l QuantaIntermediateLowerer) lowerTextSearchPredicate(predicate Predicate) (QuantaQueryFragment, DiagnosticSet, bool) {
+	expr, ok := AsTextSearchExpr(predicate.Expr)
+	if !ok {
+		return QuantaQueryFragment{}, nil, false
+	}
+	if len(expr.Hashes) == 0 {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("MATCH ... AGAINST must be materialized before lowering"), false
+	}
+	return QuantaQueryFragment{
+		Index:     expr.Field.Table.Table,
+		Role:      quantaIntermediateTableRole(expr.Field.Table),
+		Field:     searchindex.HashFieldName(quantaIntermediateFieldName(expr.Field)),
+		Operation: QuantaOperationIntersect,
+		BSIOp:     QuantaBSIOpBatchEQ,
+		Values:    cloneBigIntSlice(expr.Hashes),
+	}, nil, true
 }
 
 func (l QuantaIntermediateLowerer) lowerBetweenPredicate(predicate Predicate, parameters ParameterBindingSet) (QuantaQueryFragment, DiagnosticSet, bool) {

@@ -1280,6 +1280,15 @@ func rewriteViewColumnExpr(expr UnboundExpr, expansion viewExpansion, diagnostic
 			typed.Args[i] = rewriteViewColumnExpr(arg, expansion, diagnostics)
 		}
 		return typed
+	case UnboundTextSearchExpr:
+		rewritten := rewriteViewColumnExpr(typed.Field, expansion, diagnostics)
+		if field, ok := rewritten.(UnboundFieldExpr); ok {
+			typed.Field = field
+		} else {
+			*diagnostics = append(*diagnostics, ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "view text-search column must expand to a base field: "+expansion.viewRef+"."+typed.Field.Name))
+		}
+		typed.Query = rewriteViewColumnExpr(typed.Query, expansion, diagnostics)
+		return typed
 	case UnboundListExpr:
 		for i, item := range typed.Items {
 			typed.Items[i] = rewriteViewColumnExpr(item, expansion, diagnostics)
@@ -1566,6 +1575,13 @@ func rewriteBaseQualifierExpr(expr UnboundExpr, aliases map[string]struct{}, rep
 		for i, arg := range typed.Args {
 			typed.Args[i] = rewriteBaseQualifierExpr(arg, aliases, replacementRef, diagnostics)
 		}
+		return typed
+	case UnboundTextSearchExpr:
+		rewritten := rewriteBaseQualifierExpr(typed.Field, aliases, replacementRef, diagnostics)
+		if field, ok := rewritten.(UnboundFieldExpr); ok {
+			typed.Field = field
+		}
+		typed.Query = rewriteBaseQualifierExpr(typed.Query, aliases, replacementRef, diagnostics)
 		return typed
 	case UnboundListExpr:
 		for i, item := range typed.Items {

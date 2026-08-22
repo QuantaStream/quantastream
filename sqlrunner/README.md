@@ -191,6 +191,35 @@ The broad TPC-H kernel suite is opt-in:
 RUN_TPCH=1 SLOW_THRESHOLD=10s ./run-inabox-direct-readiness.sh
 ```
 
+`sqltests/quanta_text_search.yaml` validates descriptor-backed text-search
+filtering over TPC-H `customer.c_name`. It requires data loaded after
+`customer.c_name` is configured as `searchable: true`, because the hidden
+search-hash BSI is created during writes:
+
+```bash
+go run . \
+  -engine inabox-direct \
+  -suite_file sqltests/quanta_text_search.yaml \
+  -consul 127.0.0.1:8500 \
+  -precise_timing \
+  -capture_profile
+```
+
+For an AWS bench-runner smoke after deploying and reloading TPC-H data:
+
+```bash
+cd ~/quantastream/sqlrunner
+go run . \
+  -engine inabox-direct \
+  -suite_file sqltests/quanta_text_search.yaml \
+  -consul 127.0.0.1:8500 \
+  -precise_timing \
+  -capture_profile \
+  -benchmark_report /tmp/aws-distributed-text-search-smoke.json \
+  -benchmark_runs 1 \
+  -benchmark_profile aws-distributed-text-search-smoke
+```
+
 `-engine inabox-standard` runs SQLRunner through the standalone
 `cmd/quantastream` process. It defaults to `127.0.0.1`, `MOLIG004`,
 database `quanta`, and does not require Consul because the target process owns

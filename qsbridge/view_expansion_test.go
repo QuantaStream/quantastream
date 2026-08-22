@@ -691,3 +691,80 @@ func TestPlannerRejectsUnprojectedLogicalViewColumn(t *testing.T) {
 		t.Fatalf("diagnostic = %q, want %q", got, DiagnosticCatalogFieldNotFound)
 	}
 }
+
+func TestPlannerExpandsLogicalViewTextSearchPredicate(t *testing.T) {
+	catalog := testBindCatalog()
+	catalog.Views = []SQLViewDefinition{{
+		Schema: "quanta",
+		Name:   "customer_text_search",
+		SQL:    "select c_custkey as customer_key, c_name as customer_name from customer",
+	}}
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select customer_key, customer_name
+		from customer_text_search
+		where match(customer_name) against ('Customer#000000001')
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want one text-search predicate", result.Query.Predicates)
+	}
+	search := assertTextSearchPredicate(t, result.Query.Predicates[0], "customer_text_search")
+	if search.Field.Name != "c_name" {
+		t.Fatalf("search field = %#v, want base c_name", search.Field)
+	}
+}
+
+func TestPlannerBindsDerivedTableTextSearchPredicate(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testBindCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		select customer_key, customer_name
+		from (
+			select
+				c_custkey as customer_key,
+				c_name as customer_name
+			from customer
+		) as c
+		where match(customer_name) against ('Customer#000000001')
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want one text-search predicate", result.Query.Predicates)
+	}
+	search := assertTextSearchPredicate(t, result.Query.Predicates[0], "c")
+	if search.Field.Name != "c_name" {
+		t.Fatalf("search field = %#v, want base c_name", search.Field)
+	}
+}
+
+func assertTextSearchPredicate(t *testing.T, predicate Predicate, tableRef string) TextSearchExpr {
+	t.Helper()
+	search, ok := AsTextSearchExpr(predicate.Expr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want TextSearchExpr", predicate.Expr)
+	}
+	if predicate.Placement != PredicatePushdown {
+		t.Fatalf("predicate placement = %q, want pushdown", predicate.Placement)
+	}
+	if search.Field.Table.RefName() != tableRef {
+		t.Fatalf("search table ref = %q, want %q", search.Field.Table.RefName(), tableRef)
+	}
+	if search.Field.Type != DataTypeString || !search.Field.Encoding.Searchable() {
+		t.Fatalf("search field metadata = %#v, want searchable string", search.Field)
+	}
+	return search
+}

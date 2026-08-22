@@ -8,10 +8,11 @@ import (
 	pb "github.com/QuantaStream/quantastream/grpc"
 )
 
-func TestLocalNodeAdapterReportsReadinessWithoutStringSearch(t *testing.T) {
+func TestLocalNodeAdapterReportsReadinessWithStringSearch(t *testing.T) {
 	adapter := LocalNodeAdapter{
-		BitmapIndex: &BitmapIndex{},
-		KVStore:     &KVStore{},
+		BitmapIndex:  &BitmapIndex{},
+		KVStore:      &KVStore{},
+		StringSearch: &StringSearch{},
 	}
 	readiness := adapter.Readiness()
 	if !readiness.Ready {
@@ -20,11 +21,11 @@ func TestLocalNodeAdapterReportsReadinessWithoutStringSearch(t *testing.T) {
 	if !readiness.BitmapIndex || !readiness.KVStore {
 		t.Fatalf("readiness = %+v, want bitmap and kv mounted", readiness)
 	}
-	if readiness.StringSearch {
-		t.Fatalf("readiness.StringSearch = true, want false until local search shim exists")
+	if !readiness.StringSearch {
+		t.Fatalf("readiness.StringSearch = false, want true when local search is mounted")
 	}
-	if len(readiness.StreamingRisks) == 0 {
-		t.Fatalf("streaming risks were not preserved")
+	if len(readiness.StreamingRisks) != 0 {
+		t.Fatalf("streaming risks = %+v, want none when local search is mounted", readiness.StreamingRisks)
 	}
 }
 

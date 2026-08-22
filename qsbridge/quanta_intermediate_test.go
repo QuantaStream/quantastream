@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/QuantaStream/quantastream/searchindex"
 )
 
 func TestQuantaQueryFragmentCacheIdentityCanonicalizesBatchValues(t *testing.T) {
@@ -178,6 +180,56 @@ func TestQuantaIntermediateLowererLowersMutationPredicates(t *testing.T) {
 		t.Fatalf("fragment value = %v, want 8", fragment.Value)
 	}
 }
+
+func TestQuantaIntermediateLowererLowersMaterializedTextSearch(t *testing.T) {
+	field := FieldRef{
+		Table: TableInstance{Schema: "quanta", Table: "customer", Alias: "c"},
+		Name:  "c_name",
+		Type:  DataTypeString,
+		Index: IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{
+			Searchable:   true,
+			PrefixLength: 10,
+			MaxLength:    10,
+		}),
+	}
+	hashes := []*big.Int{big.NewInt(7), new(big.Int).SetUint64(1 << 63)}
+	query := QueryIR{
+		Kind:    QueryKindSelect,
+		Sources: []TableInstance{field.Table},
+		Predicates: []Predicate{{
+			Expr:      TextSearch(field, Literal(ValueString, "Customer"), "").WithHashes(hashes),
+			Placement: PredicatePushdown,
+			Scope:     PredicateScopeWhere,
+		}},
+		Result: ResultShape{Kind: ResultQuery},
+	}
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerQuery(query, ParameterBindingSet{})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics: %#v", diagnostics)
+	}
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %#v, want one text-search fragment", intermediate.Fragments)
+	}
+	fragment := intermediate.Fragments[0]
+	if fragment.Index != "customer" || fragment.Role != "c" {
+		t.Fatalf("fragment target = index %q role %q, want customer/c", fragment.Index, fragment.Role)
+	}
+	if got, want := fragment.Field, searchindex.HashFieldName("c_name"); got != want {
+		t.Fatalf("fragment field = %q, want %q", got, want)
+	}
+	if fragment.Operation != QuantaOperationIntersect || fragment.BSIOp != QuantaBSIOpBatchEQ {
+		t.Fatalf("fragment op = %s/%s, want INTERSECT/BATCH_EQ", fragment.Operation, fragment.BSIOp)
+	}
+	if len(fragment.Values) != 2 || fragment.Values[0].Cmp(hashes[0]) != 0 || fragment.Values[1].Cmp(hashes[1]) != 0 {
+		t.Fatalf("fragment values = %#v, want cloned materialized hashes", fragment.Values)
+	}
+	if &fragment.Values[0] == &hashes[0] || fragment.Values[0] == hashes[0] {
+		t.Fatalf("fragment values should be cloned")
+	}
+}
+
 func TestQuantaIntermediateLowererCarriesProjectionFields(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(

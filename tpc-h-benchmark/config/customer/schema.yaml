@@ -57,5 +57,6 @@ attributes:
   configuration:
     length: "8"
   type: String
+  searchable: true
   maxLen: 256
   sourceOrdinal: 8

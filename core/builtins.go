@@ -19,6 +19,7 @@ import (
 	endian "github.com/dnaeon/go-uuid-endianness/uuid"
 	"github.com/google/uuid"
 
+	"github.com/QuantaStream/quantastream/searchindex"
 	"github.com/QuantaStream/quantastream/shared"
 )
 
@@ -64,6 +65,10 @@ func (m StringLexBSIMapper) MapValue(attr *Attribute, val interface{}, c *Sessio
 		}
 		if attr.Searchable {
 			if err = c.StringIndex.Index(strVal); err != nil {
+				return nil, err
+			}
+			hashValue := new(big.Int).SetUint64(searchindex.HashValue(strVal))
+			if err = c.BatchBuffer.SetValue(attr.Parent.Name, searchindex.HashFieldName(attr.FieldName), tbuf.CurrentColumnID, hashValue, tbuf.CurrentTimestamp); err != nil {
 				return nil, err
 			}
 		}

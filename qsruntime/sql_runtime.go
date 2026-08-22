@@ -145,6 +145,19 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		}, err
 	}
 	prepared = request.Bound.Prepared
+	var textSearchState textSearchMaterializationState
+	preflightStart = time.Now()
+	request, textSearchState, textSearchDiagnostics, err := r.materializeTextSearchPredicates(ctx, request)
+	observeSQLRuntimeElapsed(ctx, "phase_text_search_preflight_elapsed", preflightStart, "")
+	if err != nil || textSearchDiagnostics.BlocksNative() {
+		return SQLExecutionResult{
+			Prepared:         request.Bound.Prepared,
+			Request:          request,
+			Diagnostics:      textSearchDiagnostics,
+			NativeSubqueries: nativeSubqueries,
+		}, err
+	}
+	prepared = request.Bound.Prepared
 	result = SQLExecutionResult{
 		Prepared:         prepared,
 		Request:          request,
@@ -167,7 +180,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 				return result, nil
 			}
 			runtimeRequest := applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates)
-			if existsGate.EmptyCandidateSet {
+			if existsGate.EmptyCandidateSet || textSearchState.EmptyCandidateSet {
 				runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 			}
 			executeStart := time.Now()
@@ -375,7 +388,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	}
 
 	runtimeRequest := applyNativeSubqueryRuntimeState(NewSQLExecutionRequest(intermediate, request), nativeSubqueries.NativePredicates)
-	if existsGate.EmptyCandidateSet {
+	if existsGate.EmptyCandidateSet || textSearchState.EmptyCandidateSet {
 		runtimeRequest = withEmptyCandidateSet(runtimeRequest)
 	}
 	executeStart := time.Now()

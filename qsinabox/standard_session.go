@@ -354,6 +354,12 @@ func (h StandardDirectSessionHandle) QueryBitmapCountOnly(ctx context.Context, r
 	return h.legacyHandle().QueryBitmapCountOnly(ctx, request)
 }
 
+// SearchStringIndex resolves MATCH ... AGAINST search terms through the local
+// standard session's StringSearch client.
+func (h StandardDirectSessionHandle) SearchStringIndex(ctx context.Context, terms string) (map[uint64]struct{}, qsbridge.DiagnosticSet, error) {
+	return h.legacyHandle().SearchStringIndex(ctx, terms)
+}
+
 // ExecuteMutation dispatches in-process SQL mutations through the local session.
 func (h StandardDirectSessionHandle) ExecuteMutation(ctx context.Context, request qsruntime.ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
 	if diagnostics := h.rejectIfStorageQuiesced(string(request.Mutation.Kind)); diagnostics.BlocksNative() {

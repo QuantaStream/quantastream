@@ -26,6 +26,12 @@ type DirectCountOnlyBitmapSessionHandle interface {
 	QueryBitmapCountOnly(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error)
 }
 
+// DirectStringSearchSessionHandle optionally exposes the string-search index
+// through a borrowed direct session for SQL preflight materialization.
+type DirectStringSearchSessionHandle interface {
+	SearchStringIndex(ctx context.Context, terms string) (map[uint64]struct{}, qsbridge.DiagnosticSet, error)
+}
+
 // DirectSessionProvider borrows table-scoped direct execution handles.
 type DirectSessionProvider interface {
 	BorrowDirectSession(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error)
@@ -52,6 +58,7 @@ type DirectSessionHandleFunc struct {
 	CandidateQueryFunc func(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error)
 	MutationFunc       func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
 	InsertFunc         func(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error)
+	SearchFunc         func(ctx context.Context, terms string) (map[uint64]struct{}, qsbridge.DiagnosticSet, error)
 	ReleaseFunc        func(ctx context.Context) qsbridge.DiagnosticSet
 }
 
@@ -106,6 +113,20 @@ func (h DirectSessionHandleFunc) InsertRows(ctx context.Context, request Executi
 		}, nil
 	}
 	return h.InsertFunc(ctx, request)
+}
+
+// SearchStringIndex calls h.SearchFunc when present.
+func (h DirectSessionHandleFunc) SearchStringIndex(ctx context.Context, terms string) (map[uint64]struct{}, qsbridge.DiagnosticSet, error) {
+	if h.SearchFunc == nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"direct session handle has no string search function",
+			),
+		}, nil
+	}
+	return h.SearchFunc(ctx, terms)
 }
 
 // Release calls h.ReleaseFunc when present.

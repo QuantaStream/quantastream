@@ -3,6 +3,7 @@ package shared
 import (
 	"testing"
 
+	"github.com/QuantaStream/quantastream/searchindex"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,6 +72,28 @@ func TestLoadSchemaAddsCompoundPrimaryKeyAuthorityAttribute(t *testing.T) {
 			assert.True(t, attr.IsBSI())
 			assert.True(t, attr.System)
 		}
+	}
+}
+
+func TestEnsureSearchHashAttributesAddsSystemBSI(t *testing.T) {
+	table := &BasicTable{
+		Name: "customer",
+		Attributes: []BasicAttribute{
+			{FieldName: "c_custkey", Type: "Integer", MappingStrategy: "IntBSI"},
+			{FieldName: "c_name", Type: "String", MappingStrategy: "StringLexBSI", Searchable: true},
+		},
+	}
+
+	assert.True(t, EnsureSearchHashAttributes(table))
+	assert.False(t, EnsureSearchHashAttributes(table))
+
+	attr, err := table.GetAttribute(searchindex.HashFieldName("c_name"))
+	assert.Nil(t, err)
+	if assert.NotNil(t, attr) {
+		assert.Equal(t, "IntBSI", attr.MappingStrategy)
+		assert.Equal(t, "Integer", attr.Type)
+		assert.True(t, attr.System)
+		assert.True(t, attr.IsBSI())
 	}
 }
 

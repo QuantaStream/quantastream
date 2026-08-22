@@ -893,6 +893,25 @@ func (h LegacyQuantaSessionHandle) QueryBitmap(ctx context.Context, request Exec
 	return h.Result.ToBitmapQueryResult(response), nil, err
 }
 
+// SearchStringIndex resolves search terms to string hashes through the borrowed
+// legacy session's StringSearch client.
+func (h LegacyQuantaSessionHandle) SearchStringIndex(ctx context.Context, terms string) (map[uint64]struct{}, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.StringIndex == nil {
+		return nil, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(
+				qsbridge.DiagnosticInternalInvariant,
+				qsbridge.PhaseExecute,
+				"legacy quanta session has no string search index",
+			),
+		}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	results, err := h.Session.StringIndex.Search(terms)
+	return results, nil, err
+}
+
 // QueryBitmapWithCandidateSet evaluates a bitmap query against a precomputed
 // row set when the local bitmap boundary can honor found-set pushdown.
 func (h LegacyQuantaSessionHandle) QueryBitmapWithCandidateSet(ctx context.Context, request ExecutionRequest, candidates qsbridge.QuantaCandidateSet) (BitmapQueryResult, qsbridge.DiagnosticSet, bool, error) {

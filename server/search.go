@@ -2,12 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	pb "github.com/QuantaStream/quantastream/grpc"
+	"github.com/QuantaStream/quantastream/searchindex"
 	"github.com/akrylysov/pogreb"
 	u "github.com/araddon/gou"
-	"github.com/aviddiviner/go-murmur"
 	"github.com/bbalet/stopwords"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/golang/protobuf/ptypes/wrappers"
@@ -102,10 +103,13 @@ func (m *StringSearch) JoinCluster() {
 // BatchIndex - Insert a new batch of searchable strings.
 func (m *StringSearch) BatchIndex(stream pb.StringSearch_BatchIndexServer) error {
 
+	batch := make(map[string]struct{})
 	for {
 		sv, err := stream.Recv()
 		if err == io.EOF {
-			m.store.Sync()
+			if err := m.BatchIndexStrings(stream.Context(), batch); err != nil {
+				return err
+			}
 			return stream.SendAndClose(&empty.Empty{})
 		}
 		if err != nil {
@@ -115,9 +119,22 @@ func (m *StringSearch) BatchIndex(stream pb.StringSearch_BatchIndexServer) error
 		if sv == nil || str == "" {
 			return fmt.Errorf("String value must not be empty")
 		}
+		batch[str] = struct{}{}
+	}
+}
 
+// BatchIndexStrings inserts a batch of searchable strings without requiring the
+// streaming gRPC wrapper. Local in-process mode uses this path directly.
+func (m *StringSearch) BatchIndexStrings(ctx context.Context, batch map[string]struct{}) error {
+	if m.store == nil {
+		return fmt.Errorf("string search service is not initialized")
+	}
+	for str := range batch {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Key is hash of original string
-		hashVal := uint64(murmur.MurmurHash2([]byte(str), 0))
+		hashVal := searchindex.HashValue(str)
 		key := make([]byte, 8)
 		binary.LittleEndian.PutUint64(key, hashVal)
 
@@ -142,6 +159,7 @@ func (m *StringSearch) BatchIndex(stream pb.StringSearch_BatchIndexServer) error
 			return err
 		}
 	}
+	return m.store.Sync()
 }
 
 // Search - Execute a text search.
@@ -150,6 +168,26 @@ func (m *StringSearch) Search(searchStr *wrappers.StringValue, stream pb.StringS
 	search := searchStr.GetValue()
 	if searchStr == nil || search == "" {
 		return fmt.Errorf("Search string must not be empty")
+	}
+	results, err := m.SearchTerms(stream.Context(), search)
+	if err != nil {
+		return err
+	}
+	for v := range results {
+		if err := stream.Send(&wrappers.UInt64Value{Value: v}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SearchTerms returns string hashes matching all search terms.
+func (m *StringSearch) SearchTerms(ctx context.Context, search string) (map[uint64]struct{}, error) {
+	if m.store == nil {
+		return nil, fmt.Errorf("string search service is not initialized")
+	}
+	if search == "" {
+		return nil, fmt.Errorf("Search string must not be empty")
 	}
 	terms := parseTerms(search)
 
@@ -163,21 +201,27 @@ func (m *StringSearch) Search(searchStr *wrappers.StringValue, stream pb.StringS
 
 	bloomFilter, err := bloomfilter.NewOptimal(maxElements, probCollide)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	it := m.store.Items()
+	results := make(map[uint64]struct{})
 Top:
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		stringHash, val, err := it.Next()
 		if err != nil {
 			if err != pogreb.ErrIterationDone {
-				return err
+				return nil, err
 			}
 			break
 		}
 
-		bloomFilter.UnmarshalBinary(val)
+		if err := bloomFilter.UnmarshalBinary(val); err != nil {
+			return nil, err
+		}
 
 		// Perform "and" comparison. Item will be selected if all terms are contained.
 		for _, v := range hashedTerms {
@@ -188,11 +232,9 @@ Top:
 
 		// return the hash of the original string value
 		v := binary.LittleEndian.Uint64(stringHash[:8])
-		if err := stream.Send(&wrappers.UInt64Value{Value: v}); err != nil {
-			return err
-		}
+		results[v] = struct{}{}
 	}
-	return nil
+	return results, nil
 }
 
 func parseTerms(content string) [][]byte {

@@ -1,6 +1,9 @@
 package qsbridge
 
-import "strconv"
+import (
+	"math/big"
+	"strconv"
+)
 
 // ValueKind classifies literal values before physical type binding.
 type ValueKind string
@@ -118,6 +121,44 @@ func FunctionCall(function FunctionDefinition, args ...Expr) CallExpr {
 	call.Placement = function.EffectivePlacement()
 	call.Deterministic = function.Deterministic
 	return call
+}
+
+// TextSearchExpr is a bound MATCH(field) AGAINST(query) predicate. Runtime
+// materialization resolves Query into string hashes before bitmap lowering.
+type TextSearchExpr struct {
+	Field  FieldRef
+	Query  Expr
+	Mode   string
+	Hashes []*big.Int
+}
+
+// ExpressionKind reports that TextSearchExpr is a full-text predicate.
+func (TextSearchExpr) ExpressionKind() ExprKind {
+	return ExprTextSearch
+}
+
+// TextSearch creates a text-search predicate expression.
+func TextSearch(field FieldRef, query Expr, mode string) TextSearchExpr {
+	return TextSearchExpr{Field: field, Query: query, Mode: mode}
+}
+
+// AsTextSearchExpr unwraps value or pointer text-search expressions.
+func AsTextSearchExpr(expr Expr) (TextSearchExpr, bool) {
+	switch typed := expr.(type) {
+	case TextSearchExpr:
+		return typed, true
+	case *TextSearchExpr:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return TextSearchExpr{}, false
+}
+
+// WithHashes returns a materialized text-search predicate with copied hash values.
+func (e TextSearchExpr) WithHashes(hashes []*big.Int) TextSearchExpr {
+	e.Hashes = cloneBigIntSlice(hashes)
+	return e
 }
 
 // BinaryOp names a binary SQL operator after parsing.
@@ -320,6 +361,12 @@ func ExprDataType(expr Expr) DataType {
 		if n != nil {
 			return n.Type
 		}
+	case TextSearchExpr:
+		return DataTypeBool
+	case *TextSearchExpr:
+		if n != nil {
+			return DataTypeBool
+		}
 	case BinaryExpr:
 		return binaryDataType(n.Op)
 	case *BinaryExpr:
@@ -377,6 +424,10 @@ func ExprNullable(expr Expr) bool {
 		return n.Ref.Nullable
 	case *ParameterExpr:
 		return n == nil || n.Ref.Nullable
+	case TextSearchExpr:
+		return false
+	case *TextSearchExpr:
+		return n == nil
 	case SearchedCaseExpr:
 		return true
 	case *SearchedCaseExpr:
@@ -465,6 +516,14 @@ func collectFieldRefs(expr Expr, seen map[string]struct{}, refs *[]FieldRef) {
 				collectFieldRefs(arg, seen, refs)
 			}
 		}
+	case TextSearchExpr:
+		appendFieldRef(n.Field, seen, refs)
+		collectFieldRefs(n.Query, seen, refs)
+	case *TextSearchExpr:
+		if n != nil {
+			appendFieldRef(n.Field, seen, refs)
+			collectFieldRefs(n.Query, seen, refs)
+		}
 	case BinaryExpr:
 		collectFieldRefs(n.Left, seen, refs)
 		collectFieldRefs(n.Right, seen, refs)
@@ -527,6 +586,12 @@ func collectParameterRefs(expr Expr, seen map[string]struct{}, refs *[]Parameter
 			for _, arg := range n.Args {
 				collectParameterRefs(arg, seen, refs)
 			}
+		}
+	case TextSearchExpr:
+		collectParameterRefs(n.Query, seen, refs)
+	case *TextSearchExpr:
+		if n != nil {
+			collectParameterRefs(n.Query, seen, refs)
 		}
 	case BinaryExpr:
 		collectParameterRefs(n.Left, seen, refs)
@@ -600,4 +665,19 @@ func parameterRefKey(ref ParameterRef) string {
 		return "name:" + ref.Name
 	}
 	return "index:" + strconv.Itoa(ref.Index)
+}
+
+func cloneBigIntSlice(values []*big.Int) []*big.Int {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make([]*big.Int, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		cloned = append(cloned, new(big.Int).Set(value))
+	}
+	return cloned
 }

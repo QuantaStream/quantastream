@@ -27,6 +27,7 @@ var (
 type StringSearch struct {
 	*Conn
 	client     []pb.StringSearchClient
+	local      LocalStringSearchService
 	indexBatch map[string]struct{}
 	batchSize  int
 	batchMutex sync.Mutex
@@ -35,6 +36,11 @@ type StringSearch struct {
 // NewStringSearch - Construct and Initialize search API.
 func NewStringSearch(conn *Conn, batchSize int) *StringSearch {
 
+	if conn != nil && conn.LocalNodeServices.StringSearch != nil {
+		c := &StringSearch{Conn: conn, batchSize: batchSize, local: conn.LocalNodeServices.StringSearch}
+		conn.RegisterService(c)
+		return c
+	}
 	// Search utilizes the admin connections for the service
 	clients := make([]pb.StringSearchClient, len(conn.ClientConnections()))
 	for i := 0; i < len(conn.ClientConnections()); i++ {
@@ -48,6 +54,9 @@ func NewStringSearch(conn *Conn, batchSize int) *StringSearch {
 // MemberJoined - A new node joined the cluster.
 func (c *StringSearch) MemberJoined(nodeID, ipAddress string, index int) {
 
+	if c.local != nil {
+		return
+	}
 	c.client = append(c.client, nil)
 	copy(c.client[index+1:], c.client[index:])
 	c.client[index] = pb.NewStringSearchClient(c.Conn.clientConn[index])
@@ -56,6 +65,9 @@ func (c *StringSearch) MemberJoined(nodeID, ipAddress string, index int) {
 // MemberLeft - A node left the cluster.
 func (c *StringSearch) MemberLeft(nodeID string, index int) {
 
+	if c.local != nil {
+		return
+	}
 	if len(c.client) <= 1 {
 		c.client = make([]pb.StringSearchClient, 0)
 		return
@@ -87,6 +99,9 @@ func (c *StringSearch) Flush() error {
 // Separate a batch of strings to be indexed by consistant hashing by node key.
 func (c *StringSearch) splitStringBatch(batch map[string]struct{}, replicas int) []map[string]struct{} {
 
+	if c.local != nil {
+		return nil
+	}
 	batches := make([]map[string]struct{}, len(c.client))
 	for i := range batches {
 		batches[i] = make(map[string]struct{}, 0)
@@ -134,6 +149,11 @@ func (c *StringSearch) Index(str string) error {
 // BatchIndex - Process a batch of string for indexing.  Parallelized across nodes.
 func (c *StringSearch) BatchIndex(batch map[string]struct{}) error {
 
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline*time.Second)
+		defer cancel()
+		return c.local.BatchIndex(ctx, batch)
+	}
 	batches := c.splitStringBatch(batch, c.Conn.Replicas)
 
 	var eg errgroup.Group
@@ -190,15 +210,23 @@ func (c *StringSearch) batchIndex(client pb.StringSearchClient, batch map[string
 func (c *StringSearch) Search(searchTerms string) (map[uint64]struct{}, error) {
 
 	results := make(map[uint64]struct{}, 0)
+	if c.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), Deadline)
+		defer cancel()
+		return c.local.Search(ctx, searchTerms)
+	}
 	rchan := make(chan map[uint64]struct{})
 	defer close(rchan)
 	done := make(chan error)
 	defer close(done)
-	count := len(c.client)
 
 	indices, err := c.SelectNodes(searchTerms, ReadIntentAll)
 	if err != nil {
 		return results, fmt.Errorf("Search: %v", err)
+	}
+	count := len(indices)
+	if count == 0 {
+		return results, nil
 	}
 	for _, i := range indices {
 		go func(client pb.StringSearchClient) {

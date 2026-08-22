@@ -90,9 +90,7 @@ type LocalKVStoreBatchService interface {
 	BatchPut(context.Context, []*pb.IndexKVPair) (*empty.Empty, error)
 }
 
-// LocalStringSearchService names the desired local string-search semantic API.
-// The current server implementation exposes streaming gRPC calls, so adapters
-// should satisfy this interface only after local stream shims or direct helpers exist.
+// LocalStringSearchService names the in-process string-search semantic API.
 type LocalStringSearchService interface {
 	Search(context.Context, string) (map[uint64]struct{}, error)
 	BatchIndex(context.Context, map[string]struct{}) error
@@ -114,11 +112,10 @@ func (s LocalNodeServices) Ready() bool {
 // Readiness returns a structured local-node boundary status.
 func (s LocalNodeServices) Readiness() LocalNodeReadiness {
 	readiness := LocalNodeReadiness{
-		Transport:      NodeTransportLocal,
-		BitmapIndex:    s.BitmapIndex != nil,
-		KVStore:        s.KVStore != nil,
-		StringSearch:   s.StringSearch != nil,
-		StreamingRisks: DefaultLocalNodeStreamingRisks(),
+		Transport:    NodeTransportLocal,
+		BitmapIndex:  s.BitmapIndex != nil,
+		KVStore:      s.KVStore != nil,
+		StringSearch: s.StringSearch != nil,
 	}
 	readiness.Ready = readiness.BitmapIndex && readiness.KVStore
 	if !readiness.BitmapIndex {
@@ -129,6 +126,7 @@ func (s LocalNodeServices) Readiness() LocalNodeReadiness {
 	}
 	if !readiness.StringSearch {
 		readiness.Warnings = append(readiness.Warnings, "local StringSearch service is not mounted; searchable string predicates remain a follow-up")
+		readiness.StreamingRisks = DefaultLocalNodeStreamingRisks()
 	}
 	return readiness
 }
@@ -161,8 +159,8 @@ func DefaultLocalNodeStreamingRisks() []LocalNodeStreamingRisk {
 		{
 			Service: "StringSearch",
 			Method:  "BatchIndex/Search",
-			Risk:    "search indexing and search results currently use streaming semantics",
-			Gate:    "provide local string-search helpers before searchable text fields are complete in inabox-standard",
+			Risk:    "search indexing requires local StringSearch mounting for searchable fields",
+			Gate:    "mount the local string-search helper before accepting searchable text predicates",
 		},
 	}
 }

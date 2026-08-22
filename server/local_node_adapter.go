@@ -44,8 +44,9 @@ func (a LocalNodeAdapter) Services() shared.LocalNodeServices {
 	if a.KVStore != nil {
 		services.KVStore = LocalKVStoreAdapter{Store: a.KVStore, Observer: a.Observer}
 	}
-	// StringSearch remains intentionally unmounted until streaming search calls
-	// get a local semantic helper or a stream shim.
+	if a.StringSearch != nil {
+		services.StringSearch = LocalStringSearchAdapter{Service: a.StringSearch, Observer: a.Observer}
+	}
 	return services
 }
 
@@ -58,6 +59,36 @@ func (a LocalNodeAdapter) Readiness() shared.LocalNodeReadiness {
 type LocalBitmapIndexAdapter struct {
 	Index    *BitmapIndex
 	Observer shared.LocalNodeObserver
+}
+
+// LocalStringSearchAdapter forwards semantic string-search calls without a gRPC
+// stream. It is intentionally small: shared.StringSearch keeps batching, and the
+// server service owns tokenization/storage.
+type LocalStringSearchAdapter struct {
+	Service  *StringSearch
+	Observer shared.LocalNodeObserver
+}
+
+// Search forwards a text-search query to the local search service.
+func (a LocalStringSearchAdapter) Search(ctx context.Context, terms string) (map[uint64]struct{}, error) {
+	if a.Service == nil {
+		return nil, fmt.Errorf("local StringSearch adapter is not mounted")
+	}
+	start := time.Now()
+	result, err := a.Service.SearchTerms(ctx, terms)
+	observeLocalNodeCall(a.Observer, "StringSearch", "Search", start, err)
+	return result, err
+}
+
+// BatchIndex forwards a searchable-string batch to the local search service.
+func (a LocalStringSearchAdapter) BatchIndex(ctx context.Context, batch map[string]struct{}) error {
+	if a.Service == nil {
+		return fmt.Errorf("local StringSearch adapter is not mounted")
+	}
+	start := time.Now()
+	err := a.Service.BatchIndexStrings(ctx, batch)
+	observeLocalNodeCall(a.Observer, "StringSearch", "BatchIndex", start, err)
+	return err
 }
 
 // Query forwards a bitmap query without a gRPC client hop.

@@ -1277,6 +1277,37 @@ func TestSimpleParserBridgeParsesOneTableProjectionSelect(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesMatchAgainstPredicate(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select c_name from customer where match(c_name) against ('Customer' in natural language mode)")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	predicate := statement.Select.Predicates[0]
+	search, ok := predicate.Expr.(UnboundTextSearchExpr)
+	if !ok {
+		t.Fatalf("predicate expr = %T, want UnboundTextSearchExpr", predicate.Expr)
+	}
+	if search.Field.Qualifier != "" || search.Field.Name != "c_name" {
+		t.Fatalf("search field = %#v, want c_name", search.Field)
+	}
+	query, ok := search.Query.(UnboundLiteralExpr)
+	if !ok || query.Kind != ValueString || query.Value != "Customer" {
+		t.Fatalf("search query = %#v, want string literal Customer", search.Query)
+	}
+	if search.Mode != "natural" {
+		t.Fatalf("search mode = %q, want natural", search.Mode)
+	}
+	if predicate.Placement != PredicatePushdown || len(predicate.Capabilities) != 1 || predicate.Capabilities[0] != CapabilityTextSearch {
+		t.Fatalf("predicate metadata = %#v, want text-search pushdown", predicate)
+	}
+}
+
 func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select c.customer_key, customer_name

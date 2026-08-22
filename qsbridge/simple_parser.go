@@ -5685,6 +5685,10 @@ func qualifySimpleMembershipExpr(expr UnboundExpr, qualifier string) UnboundExpr
 			typed.Args[i] = qualifySimpleMembershipExpr(typed.Args[i], qualifier)
 		}
 		return typed
+	case UnboundTextSearchExpr:
+		typed.Field = qualifySimpleMembershipExpr(typed.Field, qualifier).(UnboundFieldExpr)
+		typed.Query = qualifySimpleMembershipExpr(typed.Query, qualifier)
+		return typed
 	case UnboundSearchedCaseExpr:
 		for i := range typed.Whens {
 			typed.Whens[i].Condition = qualifySimpleMembershipExpr(typed.Whens[i].Condition, qualifier)
@@ -5847,6 +5851,12 @@ func parseSimpleMembershipSubqueryBody(text string) (string, Diagnostic, bool) {
 }
 
 func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate, Diagnostic, bool) {
+	if predicate, diagnostic, ok := parseSimpleTextSearchPredicate(text, parameterIndex); ok || diagnostic.Code != "" {
+		if !ok {
+			return nil, diagnostic, false
+		}
+		return []UnboundPredicate{predicate}, Diagnostic{}, true
+	}
 	if predicate, diagnostic, ok := parseSimpleNullPredicate(text); ok || diagnostic.Code != "" {
 		if !ok {
 			return nil, diagnostic, false
@@ -5876,7 +5886,7 @@ func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate,
 	}
 	op, left, right, ok := splitBeforeComparisonOperator(text)
 	if !ok {
-		return nil, simpleParserDiagnostic("WHERE must be field comparison literal, BETWEEN range, or IN list"), false
+		return nil, simpleParserDiagnostic("WHERE must be field comparison literal, MATCH ... AGAINST, BETWEEN range, or IN list"), false
 	}
 	leftExpr, ok := parseSimpleScalarExpression(left)
 	if !ok {
@@ -5896,6 +5906,83 @@ func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate,
 		Placement: placement,
 		Scope:     PredicateScopeWhere,
 	}}, Diagnostic{}, true
+}
+
+func parseSimpleTextSearchPredicate(text string, parameterIndex *int) (UnboundPredicate, Diagnostic, bool) {
+	left, right, ok := splitBeforeTopLevelKeyword(text, "against")
+	if !ok {
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	field, diagnostic, ok := parseSimpleMatchField(left)
+	if !ok {
+		if diagnostic.Code != "" {
+			return UnboundPredicate{}, diagnostic, false
+		}
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	query, mode, diagnostic, ok := parseSimpleAgainstQuery(right, parameterIndex)
+	if !ok {
+		return UnboundPredicate{}, diagnostic, false
+	}
+	return UnboundPredicate{
+		Expr:         UnboundTextSearch(field, query, mode),
+		Placement:    PredicatePushdown,
+		Scope:        PredicateScopeWhere,
+		Capabilities: []PlanCapability{CapabilityTextSearch},
+	}, Diagnostic{}, true
+}
+
+func parseSimpleMatchField(text string) (UnboundFieldExpr, Diagnostic, bool) {
+	bodyText, ok := consumeKeyword(text, "match")
+	if !ok {
+		return UnboundFieldExpr{}, Diagnostic{}, false
+	}
+	if !strings.HasPrefix(strings.TrimSpace(bodyText), "(") {
+		return UnboundFieldExpr{}, simpleParserDiagnostic("MATCH requires a parenthesized field"), false
+	}
+	body, ok := simpleStripBalancedParens(strings.TrimSpace(bodyText))
+	if !ok {
+		return UnboundFieldExpr{}, simpleParserDiagnostic("MATCH field list must use balanced parentheses"), false
+	}
+	fields := splitSimpleCommaList(body)
+	if len(fields) != 1 {
+		return UnboundFieldExpr{}, simpleParserDiagnostic("MATCH currently supports exactly one field"), false
+	}
+	qualifier, field := splitProjectionField(strings.TrimSpace(fields[0]))
+	if field == "" || field == "*" {
+		return UnboundFieldExpr{}, simpleParserDiagnostic("MATCH field is empty"), false
+	}
+	return UnboundField(qualifier, field), Diagnostic{}, true
+}
+
+func parseSimpleAgainstQuery(text string, parameterIndex *int) (UnboundExpr, string, Diagnostic, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "(") {
+		return nil, "", simpleParserDiagnostic("AGAINST requires a parenthesized query"), false
+	}
+	body, ok := simpleStripBalancedParens(trimmed)
+	if !ok {
+		return nil, "", simpleParserDiagnostic("AGAINST query must use balanced parentheses"), false
+	}
+	queryText := body
+	mode := ""
+	if left, right, found := splitBeforeTopLevelKeyword(body, "in"); found {
+		queryText = left
+		modeText := strings.ToLower(strings.Join(strings.Fields(right), " "))
+		switch modeText {
+		case "natural language mode":
+			mode = "natural"
+		case "boolean mode":
+			mode = "boolean"
+		default:
+			return nil, "", simpleParserDiagnostic("AGAINST only supports optional IN NATURAL LANGUAGE MODE or IN BOOLEAN MODE"), false
+		}
+	}
+	query, diagnostic, ok := parseSimpleComparisonValue(strings.TrimSpace(queryText), parameterIndex)
+	if !ok {
+		return nil, "", diagnostic, false
+	}
+	return query, mode, Diagnostic{}, true
 }
 
 func parseSimpleRegexpPredicate(text string, parameterIndex *int) (UnboundPredicate, Diagnostic, bool) {

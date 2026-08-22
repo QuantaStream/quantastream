@@ -240,6 +240,7 @@ func LoadSchema(path string, name string, consulClient *api.Client) (*BasicTable
 
 	table.ConsulClient = consulClient
 	EnsureCompoundPrimaryKeyAuthorityAttribute(&table)
+	EnsureSearchHashAttributes(&table)
 	table.attributeNameMap = make(map[string]*BasicAttribute)
 
 	i := 1

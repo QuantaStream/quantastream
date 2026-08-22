@@ -1,0 +1,152 @@
+version: 1
+name: quanta_text_search
+
+tests:
+  - id: quanta_text_search.001.match_against_literal
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_predicate
+    compatibility: quanta
+    requires: [select, where, match_against, searchable_stringlexbsi]
+    sql: |
+      select c_custkey as customer_key
+      from customer
+      where match(c_comment) against ('epitaphs nag')
+      order by customer_key
+    expect:
+      columns: [customer_key]
+      rows:
+        - [1]
+
+  - id: quanta_text_search.002.match_against_natural_mode
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_predicate
+    compatibility: quanta
+    requires: [select, where, match_against, natural_language_mode, searchable_stringlexbsi]
+    sql: |
+      select count(*) as matched
+      from customer
+      where match(c_comment) against ('epitaphs nag' in natural language mode)
+    expect:
+      columns: [matched]
+      rows:
+        - [1]
+
+  - id: quanta_text_search.003.match_against_boolean_mode
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_predicate
+    compatibility: quanta
+    requires: [select, where, match_against, boolean_mode, searchable_stringlexbsi]
+    sql: |
+      select count(*) as matched
+      from customer
+      where match(c_comment) against ('epitaphs nag' in boolean mode)
+    expect:
+      columns: [matched]
+      rows:
+        - [1]
+
+  - id: quanta_text_search.004.match_against_empty_result
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_predicate
+    compatibility: quanta
+    requires: [select, where, match_against, empty_result, searchable_stringlexbsi]
+    sql: |
+      select count(*) as matched
+      from customer
+      where match(c_comment) against ('DefinitelyMissingCustomerToken')
+    expect:
+      columns: [matched]
+      rows:
+        - [0]
+
+  - id: quanta_text_search.005.match_against_non_searchable_field_rejected
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_boundary
+    compatibility: quanta
+    requires: [select, where, match_against, searchable_field_validation]
+    sql: |
+      select count(*) as matched
+      from customer
+      where match(c_custkey) against ('1')
+    expect:
+      error_contains: "requires a searchable text field"
+
+  - id: quanta_text_search.010.drop_customer_text_search_view_if_exists
+    status: supported
+    kind: statement
+    feature: text_search_views
+    compatibility: quanta
+    requires: [drop_view]
+    sql: |
+      drop view if exists qs_quanta_text_search_customer_view
+
+  - id: quanta_text_search.011.create_customer_text_search_view
+    status: supported
+    kind: statement
+    feature: text_search_views
+    compatibility: quanta
+    requires: [create_view, select, aliases]
+    sql: |
+      create or replace view qs_quanta_text_search_customer_view as
+      select
+        c_custkey as customer_key,
+        c_comment as customer_comment
+      from customer
+
+  - id: quanta_text_search.012.match_against_view_alias
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_views
+    compatibility: quanta
+    requires: [select, view_reference, where, match_against, searchable_stringlexbsi]
+    sql: |
+      select customer_key
+      from qs_quanta_text_search_customer_view
+      where match(customer_comment) against ('epitaphs nag')
+      order by customer_key
+    expect:
+      columns: [customer_key]
+      rows:
+        - [1]
+
+  - id: quanta_text_search.013.drop_customer_text_search_view
+    status: supported
+    kind: statement
+    feature: text_search_views
+    compatibility: quanta
+    requires: [drop_view]
+    sql: |
+      drop view qs_quanta_text_search_customer_view
+
+  - id: quanta_text_search.020.match_against_derived_table_alias
+    status: supported
+    kind: query
+    order: exact
+    feature: text_search_derived_tables
+    compatibility: quanta
+    requires: [select, derived_table, where, match_against, searchable_stringlexbsi]
+    sql: |
+      select customer_key
+      from (
+        select
+          c_custkey as customer_key,
+          c_comment as customer_comment
+        from customer
+      ) as c
+      where match(customer_comment) against ('epitaphs nag')
+      order by customer_key
+    expect:
+      columns: [customer_key]
+      rows:
+        - [1]

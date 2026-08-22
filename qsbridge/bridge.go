@@ -769,6 +769,12 @@ func resolveUnboundProjectionAliases(expr UnboundExpr, projections []UnboundProj
 		}
 		typed.Args = args
 		return typed
+	case UnboundTextSearchExpr:
+		if field, ok := resolveUnboundProjectionAliases(typed.Field, projections).(UnboundFieldExpr); ok {
+			typed.Field = field
+		}
+		typed.Query = resolveUnboundProjectionAliases(typed.Query, projections)
+		return typed
 	case UnboundListExpr:
 		items := make([]UnboundExpr, 0, len(typed.Items))
 		for _, item := range typed.Items {
@@ -3107,6 +3113,63 @@ func UnboundCall(name string, args ...UnboundExpr) UnboundCallExpr {
 	return UnboundCallExpr{Name: name, Args: append([]UnboundExpr(nil), args...)}
 }
 
+// UnboundTextSearchExpr is MATCH(field) AGAINST(query) before catalog binding.
+type UnboundTextSearchExpr struct {
+	Field UnboundFieldExpr
+	Query UnboundExpr
+	Mode  string
+}
+
+// BindExpr resolves a text-search predicate and validates that the target field
+// advertises a searchable encoding.
+func (e UnboundTextSearchExpr) BindExpr(context *BindContext, roles FieldRole) (Expr, DiagnosticSet) {
+	fieldExpr, fieldDiagnostics := e.Field.BindExpr(context, roles)
+	if fieldDiagnostics.BlocksNative() {
+		return nil, fieldDiagnostics
+	}
+	field, ok := fieldExpr.(FieldExpr)
+	if !ok || !textSearchFieldSupported(field.Ref) {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "MATCH ... AGAINST requires a searchable text field: "+e.Field.Name),
+		}
+	}
+	query, queryDiagnostics := BindExpression(context, e.Query, roles)
+	if queryDiagnostics.BlocksNative() {
+		return nil, queryDiagnostics
+	}
+	if !textSearchQuerySupported(query) {
+		return nil, DiagnosticSet{
+			ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "MATCH ... AGAINST currently requires a string literal or parameter query"),
+		}
+	}
+	return TextSearch(field.Ref, query, e.Mode), nil
+}
+
+// UnboundTextSearch creates an unbound MATCH(field) AGAINST(query) predicate.
+func UnboundTextSearch(field UnboundFieldExpr, query UnboundExpr, mode string) UnboundTextSearchExpr {
+	return UnboundTextSearchExpr{Field: field, Query: query, Mode: mode}
+}
+
+func textSearchFieldSupported(field FieldRef) bool {
+	return field.Type == DataTypeString &&
+		(field.Encoding.Searchable() || field.SupportsPredicateCapability(PredicateCapabilityTextSearch))
+}
+
+func textSearchQuerySupported(expr Expr) bool {
+	switch typed := expr.(type) {
+	case LiteralExpr:
+		return typed.Kind == ValueString
+	case *LiteralExpr:
+		return typed != nil && typed.Kind == ValueString
+	case ParameterExpr:
+		return true
+	case *ParameterExpr:
+		return typed != nil
+	default:
+		return false
+	}
+}
+
 // UnboundBinaryExpr is a binary operator expression before catalog binding.
 type UnboundBinaryExpr struct {
 	Op    BinaryOp
@@ -3271,6 +3334,9 @@ func BindPredicate(context *BindContext, predicate UnboundPredicate, roles Field
 		return Predicate{}, exprDiagnostics
 	}
 	capabilities := append([]PlanCapability(nil), predicate.Capabilities...)
+	if _, ok := AsTextSearchExpr(expr); ok {
+		capabilities = appendPlanCapabilityOnce(capabilities, CapabilityTextSearch)
+	}
 	if _, _, _, ok := SameRowBSIComparisonPredicate(Predicate{Expr: expr}); ok {
 		capabilities = append(capabilities, CapabilityNativeSameRowBSIComparison)
 	}
@@ -3294,6 +3360,9 @@ func BindPredicate(context *BindContext, predicate UnboundPredicate, roles Field
 }
 
 func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicatePlacement {
+	if _, ok := AsTextSearchExpr(expr); ok {
+		return PredicatePushdown
+	}
 	if placement == PredicateResidualScan && stringEnumPredicateCanUseBitmapPushdown(expr) {
 		return PredicatePushdown
 	}
