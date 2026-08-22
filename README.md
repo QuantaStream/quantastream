@@ -22,7 +22,7 @@ The result is an engine that feels accessible through ordinary SQL while taking 
 
 ## Current Status
 
-QuantaStream is preparing a first public release centered on a production-credible single-node engine, repeatable correctness suites, and a clear binary getting-started path.
+QuantaStream has prepared a public release centered on a production-credible single-node engine, repeatable correctness suites, and a clear binary getting-started path.
 
 Current release surface:
 
