@@ -203,6 +203,95 @@ func TestNativeProxyFrontDoorHandlesBindDiagnosticsAsError(t *testing.T) {
 	}
 }
 
+func TestNativeProxyFrontDoorRetainsLastErrorForWorkbenchDiagnostics(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "spots",
+			Fields: []qsbridge.FieldDefinition{{Name: "spotted_at", Type: qsbridge.DataTypeTime}},
+		}},
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+	handler := NativeProxyMySQLCommandHandler{FrontDoor: frontDoor, Profile: NewNativeProxyMySQLSessionProfile()}
+
+	failed, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select missing_field from spots", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand failing query failed: %v", err)
+	}
+	if failed.Kind != qsmysql.CommandResponseError || failed.ProtocolError == nil {
+		t.Fatalf("failed response = %#v, want structured protocol error", failed)
+	}
+	if executed {
+		t.Fatalf("direct executor should not run for bind diagnostics")
+	}
+
+	metadata, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select EVENT_NAME, TIMER_WAIT from performance_schema.events_stages_history_long", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand workbench metadata failed: %v", err)
+	}
+	if metadata.Kind != qsmysql.CommandResponseQuery {
+		t.Fatalf("metadata response = %#v, want query response", metadata)
+	}
+
+	showErrors, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "show errors", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand show errors failed: %v", err)
+	}
+	if showErrors.Kind != qsmysql.CommandResponseQuery || len(showErrors.Packets) != 7 {
+		t.Fatalf("show errors response = %#v", showErrors)
+	}
+	row := string(showErrors.Packets[5].Payload)
+	if !strings.Contains(row, "1054") || !strings.Contains(row, "catalog_field_not_found") || !strings.Contains(row, "missing_field") {
+		t.Fatalf("show errors row payload = %q", row)
+	}
+
+	showCount, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "show count(*) errors", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand show count errors failed: %v", err)
+	}
+	if showCount.Kind != qsmysql.CommandResponseQuery || len(showCount.Packets) != 5 || string(showCount.Packets[3].Payload) != "\x011" {
+		t.Fatalf("show count errors response = %#v", showCount)
+	}
+
+	success, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select spotted_at from spots", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand success failed: %v", err)
+	}
+	if success.Kind == qsmysql.CommandResponseError {
+		t.Fatalf("success response = %#v", success)
+	}
+
+	cleared, err := handler.HandleCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "show count(*) errors", Database: "quanta"},
+	)
+	if err != nil {
+		t.Fatalf("HandleCommand cleared count failed: %v", err)
+	}
+	if cleared.Kind != qsmysql.CommandResponseQuery || len(cleared.Packets) != 5 || string(cleared.Packets[3].Payload) != "\x010" {
+		t.Fatalf("cleared count response = %#v", cleared)
+	}
+}
+
 func TestNativeProxyFrontDoorHandlesMySQLMetadataSelectsAtProtocolBoundary(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}, NativeProxyFrontDoorConfig{})
 

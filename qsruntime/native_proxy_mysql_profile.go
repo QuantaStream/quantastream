@@ -2,6 +2,7 @@ package qsruntime
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
@@ -17,6 +18,8 @@ type NativeProxyMySQLSessionProfile struct {
 	longDataPayload map[string][]byte
 	parameterTypes  map[qsbridge.PreparedStatementID][]qsmysql.PreparedParameterType
 	session         qsbridge.SessionContext
+	lastError       qsbridge.ProtocolError
+	hasLastError    bool
 }
 
 // NewNativeProxyMySQLSessionProfile creates an empty per-session profile store.
@@ -106,6 +109,42 @@ func (p *NativeProxyMySQLSessionProfile) Snapshot() ExecutionInstrumentationSnap
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return cloneExecutionInstrumentationSnapshot(p.last)
+}
+
+// StoreLastProtocolError remembers the last MySQL-facing statement error for
+// SHOW WARNINGS/SHOW ERRORS consumers on the same connection.
+func (p *NativeProxyMySQLSessionProfile) StoreLastProtocolError(protocolError qsbridge.ProtocolError) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastError = cloneNativeProxyProtocolError(protocolError)
+	p.hasLastError = true
+}
+
+// ClearLastProtocolError clears this connection's last statement error.
+func (p *NativeProxyMySQLSessionProfile) ClearLastProtocolError() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastError = qsbridge.ProtocolError{}
+	p.hasLastError = false
+}
+
+// LastProtocolError returns the last MySQL-facing statement error, if any.
+func (p *NativeProxyMySQLSessionProfile) LastProtocolError() (qsbridge.ProtocolError, bool) {
+	if p == nil {
+		return qsbridge.ProtocolError{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.hasLastError {
+		return qsbridge.ProtocolError{}, false
+	}
+	return cloneNativeProxyProtocolError(p.lastError), true
 }
 
 // PreparedStatements returns the per-session prepared-statement registry.
@@ -270,6 +309,88 @@ func nativeProxyMySQLProfileQueryResponse(command qsmysql.Command, profile *Nati
 	return response, true, err
 }
 
+func nativeProxyMySQLDiagnosticQueryResponse(command qsmysql.Command, profile *NativeProxyMySQLSessionProfile) (qsmysql.CommandResponse, bool, error) {
+	result, ok := nativeProxyMySQLDiagnosticQueryResult(command, profile)
+	if !ok {
+		return qsmysql.CommandResponse{}, false, nil
+	}
+	response, err := qsmysql.QueryResponse(result)
+	return response, true, err
+}
+
+func nativeProxyMySQLDiagnosticQueryResult(command qsmysql.Command, profile *NativeProxyMySQLSessionProfile) (qsbridge.ExecutionResult, bool) {
+	normalized := nativeProxyNormalizeMetadataSQL(command.SQL)
+	switch {
+	case normalized == "show warnings" || strings.HasPrefix(normalized, "show warnings limit "):
+		return nativeProxyMySQLDiagnosticListResult(profile), true
+	case normalized == "show errors" || strings.HasPrefix(normalized, "show errors limit "):
+		return nativeProxyMySQLDiagnosticListResult(profile), true
+	case normalized == "show count(*) warnings":
+		return nativeProxyMySQLDiagnosticCountResult("@@session.warning_count", profile), true
+	case normalized == "show count(*) errors":
+		return nativeProxyMySQLDiagnosticCountResult("@@session.error_count", profile), true
+	default:
+		return qsbridge.ExecutionResult{}, false
+	}
+}
+
+func nativeProxyMySQLDiagnosticListResult(profile *NativeProxyMySQLSessionProfile) qsbridge.ExecutionResult {
+	rows := []qsbridge.ResultRow{}
+	if protocolError, ok := profile.LastProtocolError(); ok {
+		vendorCode := protocolError.VendorCode
+		if vendorCode == 0 {
+			vendorCode = 1105
+		}
+		message := protocolError.Message
+		if message == "" {
+			message = "unknown error"
+		}
+		rows = append(rows, qsbridge.ResultRow{
+			{Kind: qsbridge.ValueString, Value: "Error"},
+			{Kind: qsbridge.ValueInt, Value: int64(vendorCode)},
+			{Kind: qsbridge.ValueString, Value: message},
+		})
+	}
+	return qsbridge.ExecutionResult{
+		Status: qsbridge.ExecutionComplete,
+		Kind:   qsbridge.ResultQuery,
+		Columns: []qsbridge.ResultColumn{
+			{Name: "Level", Type: qsbridge.DataTypeString},
+			{Name: "Code", Type: qsbridge.DataTypeInt},
+			{Name: "Message", Type: qsbridge.DataTypeString},
+		},
+		Chunks: []qsbridge.ResultChunk{{
+			Rows:  rows,
+			Final: true,
+		}},
+		Complete:     true,
+		RowsReturned: uint64(len(rows)),
+	}
+}
+
+func nativeProxyMySQLDiagnosticCountResult(columnName string, profile *NativeProxyMySQLSessionProfile) qsbridge.ExecutionResult {
+	count := int64(0)
+	if _, ok := profile.LastProtocolError(); ok {
+		count = 1
+	}
+	return qsbridge.ExecutionResult{
+		Status: qsbridge.ExecutionComplete,
+		Kind:   qsbridge.ResultQuery,
+		Columns: []qsbridge.ResultColumn{{
+			Name: columnName,
+			Type: qsbridge.DataTypeInt,
+		}},
+		Chunks: []qsbridge.ResultChunk{{
+			Rows: []qsbridge.ResultRow{{
+				{Kind: qsbridge.ValueInt, Value: count},
+			}},
+			Final: true,
+		}},
+		Complete:     true,
+		RowsReturned: 1,
+	}
+}
+
 func nativeProxyMySQLProfileQueryResult(command qsmysql.Command, profile *NativeProxyMySQLSessionProfile) (qsbridge.ExecutionResult, bool) {
 	switch nativeProxyNormalizeMetadataSQL(command.SQL) {
 	case "show quantastream profile",
@@ -320,4 +441,9 @@ func nativeProxyMySQLProfileRow(kind, section, name, value, detail string) qsbri
 		{Kind: qsbridge.ValueString, Value: value},
 		{Kind: qsbridge.ValueString, Value: detail},
 	}
+}
+
+func cloneNativeProxyProtocolError(protocolError qsbridge.ProtocolError) qsbridge.ProtocolError {
+	protocolError.Diagnostic.Fields = append([]qsbridge.FieldRef(nil), protocolError.Diagnostic.Fields...)
+	return protocolError
 }

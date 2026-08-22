@@ -22,10 +22,11 @@ const (
 
 // CommandResponse is the socket-free packet response to one decoded MySQL command.
 type CommandResponse struct {
-	Kind      CommandResponseKind
-	Packets   []Packet
-	Close     bool
-	Statement *qsbridge.StatementResult
+	Kind          CommandResponseKind
+	Packets       []Packet
+	Close         bool
+	Statement     *qsbridge.StatementResult
+	ProtocolError *qsbridge.ProtocolError
 }
 
 const (
@@ -121,10 +122,16 @@ func NoResponse() CommandResponse {
 
 // ErrorResponse encodes a protocol error as a MySQL ERR packet.
 func ErrorResponse(protocolError qsbridge.ProtocolError) CommandResponse {
-	return CommandResponse{Kind: CommandResponseError, Packets: []Packet{ERRPacket(1, protocolError)}}
+	protocolError = cloneProtocolError(protocolError)
+	return CommandResponse{Kind: CommandResponseError, Packets: []Packet{ERRPacket(1, protocolError)}, ProtocolError: &protocolError}
 }
 
 // ErrorResponseFromError encodes an ordinary Go error as a generic MySQL ERR packet.
 func ErrorResponseFromError(err error) CommandResponse {
 	return ErrorResponse(ProtocolErrorFromError(err))
+}
+
+func cloneProtocolError(protocolError qsbridge.ProtocolError) qsbridge.ProtocolError {
+	protocolError.Diagnostic.Fields = append([]qsbridge.FieldRef(nil), protocolError.Diagnostic.Fields...)
+	return protocolError
 }
