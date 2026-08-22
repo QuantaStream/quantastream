@@ -534,7 +534,7 @@ timeQuantumField: l_shipdate
 
 - `tableName` matches the table directory name.
 - `primaryKey` references existing `fieldName` values.
-- Compound keys use `+`; multiple secondary keys use commas.
+- Compound keys use `+`.
 - Time quantum tables identify a `Date` or `DateTime` partition field.
 - `ParentRelation` fields include `foreignKey`.
 - Reverse relationship artifacts are enabled only where the workload benefits.
