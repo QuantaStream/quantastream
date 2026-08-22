@@ -39,6 +39,9 @@ documenting a specific existing flag, script, suite, or compatibility profile.
 Admin examples in this source-checkout guide use `go run ./quanta-admin`.
 Release artifacts expose the same command surface as `./bin/qstream-admin`.
 
+Deployment diagrams for the three QIAB topologies and full distributed mode are
+maintained in [DEPLOYMENT_DIAGRAMS.md](DEPLOYMENT_DIAGRAMS.md).
+
 ### `inabox-direct`
 
 `inabox-direct` is primarily a development and conformance mode. Some tooling
