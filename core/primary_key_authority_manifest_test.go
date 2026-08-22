@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/shared"
@@ -173,6 +174,64 @@ func TestBSIPrimaryKeyAuthorityManifestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("observation summary = artifacts:%d key_count:%d artifact_key_count:%d mismatches:%d clean:%d dirty:%d",
 			observation.ArtifactDescriptors, observation.EntryKeyCount, observation.ArtifactKeyCount,
 			observation.KeyCountMismatches, observation.CleanEntries, observation.DirtyEntries)
+	}
+}
+
+func TestBSIPrimaryKeyAuthorityManifestSaveConcurrentWriters(t *testing.T) {
+	dir := t.TempDir()
+	table := testPrimaryKeyAuthorityTable("spots", "spot_id", "", []shared.BasicAttribute{
+		testPrimaryKeyAuthorityAttribute("spot_id", "Integer", "IntBSI", true),
+	})
+	entry, err := NewBSIPrimaryKeyAuthorityManifestEntry(table, "")
+	if err != nil {
+		t.Fatalf("NewBSIPrimaryKeyAuthorityManifestEntry returned error: %v", err)
+	}
+	manifest := BSIPrimaryKeyAuthorityManifest{
+		Source: "concurrent-test",
+		Entries: []BSIPrimaryKeyAuthorityManifestEntry{
+			entry,
+		},
+	}
+
+	const writers = 32
+	const savesPerWriter = 8
+	start := make(chan struct{})
+	errs := make(chan error, writers*savesPerWriter)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < savesPerWriter; j++ {
+				errs <- SaveBSIPrimaryKeyAuthorityManifest(dir, manifest)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("SaveBSIPrimaryKeyAuthorityManifest returned error under concurrency: %v", err)
+		}
+	}
+
+	loaded, err := LoadBSIPrimaryKeyAuthorityManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+	if len(loaded.Entries) != 1 || loaded.Entries[0].TableName != "spots" {
+		t.Fatalf("loaded entries = %+v", loaded.Entries)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".tmp") {
+			t.Fatalf("temporary manifest file leaked: %s", entry.Name())
+		}
 	}
 }
 

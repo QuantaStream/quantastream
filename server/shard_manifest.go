@@ -349,11 +349,29 @@ func (m *BitmapIndex) saveBitmapShardManifestWithTimings(manifest BitmapShardMan
 	}
 	timings.manifestBytes = len(data)
 	path := m.bitmapShardManifestPath()
-	tmpPath := path + ".tmp"
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return timings, fmt.Errorf("create temporary bitmap shard manifest: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	writeStart := time.Now()
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
 		return timings, fmt.Errorf("write bitmap shard manifest: %w", err)
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		_ = tmp.Close()
+		return timings, fmt.Errorf("chmod temporary bitmap shard manifest: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return timings, fmt.Errorf("close temporary bitmap shard manifest: %w", err)
 	}
 	timings.writeElapsed = time.Since(writeStart)
 
@@ -361,6 +379,7 @@ func (m *BitmapIndex) saveBitmapShardManifestWithTimings(manifest BitmapShardMan
 	if err := os.Rename(tmpPath, path); err != nil {
 		return timings, fmt.Errorf("replace bitmap shard manifest: %w", err)
 	}
+	cleanup = false
 	timings.renameElapsed = time.Since(renameStart)
 	timings.totalElapsed = time.Since(start)
 	return timings, nil
