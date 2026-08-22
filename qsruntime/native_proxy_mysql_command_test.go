@@ -169,6 +169,40 @@ func TestNativeProxyFrontDoorHandlesQueryDiagnosticsAsError(t *testing.T) {
 	}
 }
 
+func TestNativeProxyFrontDoorHandlesBindDiagnosticsAsError(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "spots",
+			Fields: []qsbridge.FieldDefinition{{Name: "spotted_at", Type: qsbridge.DataTypeTime}},
+		}},
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+
+	response, err := frontDoor.HandleMySQLCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: "select missing_field from spots", Database: "quanta"},
+		qsbridge.ExecutionOptions{},
+	)
+	if err != nil {
+		t.Fatalf("HandleMySQLCommand query failed: %v", err)
+	}
+	if executed {
+		t.Fatalf("direct executor should not run for bind diagnostics")
+	}
+	if response.Kind != qsmysql.CommandResponseError || len(response.Packets) != 1 || response.Packets[0].Payload[0] != 0xff {
+		t.Fatalf("error response = %#v", response)
+	}
+	payload := string(response.Packets[0].Payload)
+	if !strings.Contains(payload, "catalog_field_not_found") || !strings.Contains(payload, "missing_field") {
+		t.Fatalf("error payload = %q", payload)
+	}
+}
+
 func TestNativeProxyFrontDoorHandlesMySQLMetadataSelectsAtProtocolBoundary(t *testing.T) {
 	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}, NativeProxyFrontDoorConfig{})
 
@@ -195,6 +229,32 @@ func TestNativeProxyFrontDoorHandlesMySQLMetadataSelectsAtProtocolBoundary(t *te
 		}
 		if string(response.Packets[3].Payload) != test.payload {
 			t.Fatalf("row payload for %q = %q, want %q", test.sql, string(response.Packets[3].Payload), test.payload)
+		}
+	}
+}
+
+func TestNativeProxyFrontDoorHandlesWorkbenchPerformanceSchemaPollsAtProtocolBoundary(t *testing.T) {
+	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}, NativeProxyFrontDoorConfig{})
+
+	tests := []string{
+		"select THREAD_ID, EVENT_ID, SQL_TEXT from performance_schema.events_statements_current where THREAD_ID = 1",
+		"select EVENT_NAME, TIMER_WAIT from performance_schema.events_stages_history_long order by EVENT_ID",
+		"select * from performance_schema.events_waits_history_long",
+	}
+	for _, sql := range tests {
+		response, err := frontDoor.HandleMySQLCommand(
+			context.Background(),
+			qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: sql, Database: "quanta"},
+			qsbridge.ExecutionOptions{},
+		)
+		if err != nil {
+			t.Fatalf("HandleMySQLCommand(%q) failed: %v", sql, err)
+		}
+		if response.Kind != qsmysql.CommandResponseQuery || len(response.Packets) < 3 {
+			t.Fatalf("response for %q = %#v, want empty query response", sql, response)
+		}
+		if response.Packets[0].Payload[0] == 0 || response.Packets[len(response.Packets)-1].Payload[0] != 0xfe {
+			t.Fatalf("packets for %q = %#v", sql, response.Packets)
 		}
 	}
 }

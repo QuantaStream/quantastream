@@ -884,6 +884,28 @@ func TestSimpleParserBridgeParsesExplainStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesExplainFormatJSONStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("explain format=json select count(*) from lineitem;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindExplain {
+		t.Fatalf("kind = %q, want explain", statement.Kind)
+	}
+	if got, want := statement.Explain.Format, "json"; got != want {
+		t.Fatalf("explain format = %q, want %q", got, want)
+	}
+	if got, want := statement.Explain.SQL, "select count(*) from lineitem"; got != want {
+		t.Fatalf("explain SQL = %q, want %q", got, want)
+	}
+	if got, want := len(statement.Explain.Result.Columns), 1; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+	if got, want := statement.Explain.Result.Columns[0].Name, "EXPLAIN"; got != want {
+		t.Fatalf("column = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowCharacterMetadataWhereStatement(t *testing.T) {
 	charsets, diagnostics := SimpleParserBridge{}.Parse("show character set where Charset = 'utf8mb4';")
 	if diagnostics.BlocksNative() {

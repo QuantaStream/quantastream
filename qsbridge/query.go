@@ -138,6 +138,7 @@ type CatalogReadShape struct {
 	ObjectTypes []string
 	Functions   []FunctionDefinition
 	Full        bool
+	Format      string
 	Pattern     string
 	Patterns    []string
 }

@@ -1,6 +1,7 @@
 package qsruntime
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -748,6 +749,9 @@ func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	explainedSQL := strings.TrimSpace(query.Catalog.Pattern)
 	inspection := explainInspectSQL(explainedSQL)
+	if strings.EqualFold(strings.TrimSpace(query.Catalog.Format), "json") {
+		return explainJSONRuntimeResult(inspection)
+	}
 	tableName := inspection.TableName
 	rownums := []qsbridge.QuantaRownum{1}
 	vectors := []qsbridge.QuantaProjectionVector{
@@ -797,6 +801,78 @@ func explainRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 		},
 		Count: 1,
 	}
+}
+
+func explainJSONRuntimeResult(inspection explainSQLInspection) ExecutionResult {
+	explainJSON := explainJSONDocument(inspection)
+	data, err := json.Marshal(explainJSON)
+	if err != nil {
+		data = []byte(`{"query_block":{"select_id":1}}`)
+	}
+	vector := describeProjectionVector("EXPLAIN", qsbridge.DataTypeString, 1)
+	vector.Values[0] = describeStringCell(string(data))
+	return ExecutionResult{
+		RowSet: qsbridge.QuantaProjectedRowSet{
+			Index:             "catalog",
+			Rownums:           []qsbridge.QuantaRownum{1},
+			ProjectionVectors: []qsbridge.QuantaProjectionVector{vector},
+		},
+		Count: 1,
+	}
+}
+
+func explainJSONDocument(inspection explainSQLInspection) map[string]any {
+	queryBlock := map[string]any{
+		"select_id": 1,
+		"cost_info": map[string]string{
+			"query_cost": "0.00",
+		},
+	}
+	if inspection.TableName == "" {
+		queryBlock["message"] = "No tables used"
+		return map[string]any{"query_block": queryBlock}
+	}
+	queryBlock["table"] = map[string]any{
+		"table_name":             inspection.TableName,
+		"access_type":            "QUANTASTREAM",
+		"rows_examined_per_scan": 0,
+		"rows_produced_per_join": 0,
+		"filtered":               "100.00",
+		"cost_info": map[string]string{
+			"read_cost":          "0.00",
+			"eval_cost":          "0.00",
+			"prefix_cost":        "0.00",
+			"data_read_per_join": "0",
+		},
+		"attached_condition": explainJSONAttachedCondition(inspection),
+	}
+	return map[string]any{"query_block": queryBlock}
+}
+
+func explainJSONAttachedCondition(inspection explainSQLInspection) string {
+	var parts []string
+	if inspection.Filtered {
+		parts = append(parts, "filtered")
+	}
+	if inspection.Joined {
+		parts = append(parts, "joined")
+	}
+	if inspection.Grouped {
+		parts = append(parts, "grouped")
+	}
+	if inspection.Ordered {
+		parts = append(parts, "ordered")
+	}
+	if inspection.Limited {
+		parts = append(parts, "limited")
+	}
+	if inspection.Distinct {
+		parts = append(parts, "distinct")
+	}
+	if len(parts) == 0 {
+		return "QuantaStream native plan"
+	}
+	return "QuantaStream native plan; " + strings.Join(parts, "; ")
 }
 
 type explainSQLInspection struct {

@@ -2655,14 +2655,63 @@ func parseSimpleExplain(sql string) (UnboundStatement, Diagnostic, bool) {
 	if body == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("EXPLAIN must include a statement"), false
 	}
+	format := ""
+	if parsedFormat, remaining, found, diagnostic, ok := parseSimpleExplainFormatOption(body); found || !ok {
+		if !ok {
+			return UnboundStatement{}, diagnostic, false
+		}
+		format = parsedFormat
+		body = strings.TrimSpace(remaining)
+		if body == "" {
+			return UnboundStatement{}, simpleParserDiagnostic("EXPLAIN must include a statement after FORMAT option"), false
+		}
+	}
+	result := explainResultShape()
+	if strings.EqualFold(format, "json") {
+		result = explainJSONResultShape()
+	}
 	return UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindExplain,
 		Explain: UnboundExplain{
 			SQL:    body,
-			Result: explainResultShape(),
+			Format: format,
+			Result: result,
 		},
 	}, Diagnostic{}, true
+}
+
+func parseSimpleExplainFormatOption(body string) (format string, remaining string, found bool, diagnostic Diagnostic, ok bool) {
+	rest, hasFormat := consumeKeyword(body, "format")
+	if !hasFormat {
+		return "", body, false, Diagnostic{}, true
+	}
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "=") {
+		return "", "", true, simpleParserDiagnostic("EXPLAIN FORMAT must use FORMAT = JSON or FORMAT = TRADITIONAL"), false
+	}
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+	if rest == "" {
+		return "", "", true, simpleParserDiagnostic("EXPLAIN FORMAT requires JSON or TRADITIONAL"), false
+	}
+	value, tail := readLeadingIdentifier(rest)
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "json", "traditional":
+		return value, tail, true, Diagnostic{}, true
+	default:
+		return "", "", true, simpleParserDiagnostic("EXPLAIN FORMAT only supports JSON or TRADITIONAL"), false
+	}
+}
+
+func readLeadingIdentifier(input string) (string, string) {
+	input = strings.TrimSpace(input)
+	for i, r := range input {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			return input[:i], strings.TrimSpace(input[i:])
+		}
+	}
+	return input, ""
 }
 
 func parseSimpleShowCharacterSet(sql string, characterSetBody string) (UnboundStatement, Diagnostic, bool) {
@@ -3224,6 +3273,15 @@ func explainResultShape() ResultShape {
 			{Name: "rows", Type: DataTypeInt, Nullable: true},
 			{Name: "filtered", Type: DataTypeFloat, Nullable: true},
 			{Name: "extra", Type: DataTypeString, Nullable: true},
+		},
+	}
+}
+
+func explainJSONResultShape() ResultShape {
+	return ResultShape{
+		Kind: ResultQuery,
+		Columns: []FieldRef{
+			{Name: "EXPLAIN", Type: DataTypeString},
 		},
 	}
 }

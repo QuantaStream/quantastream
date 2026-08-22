@@ -459,6 +459,7 @@ type UnboundShowGrants struct {
 // UnboundExplain describes an EXPLAIN metadata read before binding.
 type UnboundExplain struct {
 	SQL      string
+	Format   string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -2194,6 +2195,7 @@ func BindExplain(context *BindContext, explainStmt UnboundExplain) (QueryIR, Dia
 		Blockers: append([]NativeBlocker(nil), explainStmt.Blockers...),
 	}
 	query.Catalog.Pattern = strings.TrimSpace(explainStmt.SQL)
+	query.Catalog.Format = strings.TrimSpace(strings.ToLower(explainStmt.Format))
 	return query, nil
 }
 

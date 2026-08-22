@@ -1433,6 +1433,29 @@ func TestSQLRuntimeExecuteSQLExplainAnnotatesSelectShape(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLExplainFormatJSONReturnsObjectPayload(t *testing.T) {
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		t.Fatalf("EXPLAIN FORMAT=JSON should not execute explained SQL")
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "explain format=json select dx_call from spots where band = '20m' limit 5", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("EXPLAIN FORMAT=JSON failed: %v", err)
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want one JSON explain cell", chunk.Rows)
+	}
+	payload, _ := chunk.Rows[0][0].Value.(string)
+	if !strings.Contains(payload, `"query_block"`) || !strings.Contains(payload, `"table_name":"spots"`) || !strings.Contains(payload, "QuantaStream native plan") {
+		t.Fatalf("explain JSON payload = %s", payload)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLInformationSchemaTablesReturnsCatalogRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
