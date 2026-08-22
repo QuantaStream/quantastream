@@ -353,6 +353,14 @@ func printBackupManifestSummary(manifest core.LocalStorageBackupManifest) {
 	fmt.Printf("backup_files=%d\n", manifest.FileCount)
 	fmt.Printf("backup_directories=%d\n", manifest.DirectoryCount)
 	fmt.Printf("backup_bytes=%d\n", manifest.ByteCount)
+	if manifest.SearchIndex.Observed {
+		fmt.Printf("backup_search_index_present=%t\n", manifest.SearchIndex.Present)
+		fmt.Printf("backup_search_index_kind=%s\n", manifest.SearchIndex.Kind)
+		fmt.Printf("backup_search_index_path=%s\n", manifest.SearchIndex.Path)
+		fmt.Printf("backup_search_index_files=%d\n", manifest.SearchIndex.FileCount)
+		fmt.Printf("backup_search_index_directories=%d\n", manifest.SearchIndex.DirectoryCount)
+		fmt.Printf("backup_search_index_bytes=%d\n", manifest.SearchIndex.ByteCount)
+	}
 	fmt.Printf("backup_checkpoint_kind=%s\n", manifest.Checkpoint.Kind)
 	fmt.Printf("backup_wal_included=%t\n", manifest.Checkpoint.WALIncluded)
 	fmt.Printf("backup_checkpoint_lsn=%d\n", manifest.Checkpoint.LSN)

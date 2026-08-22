@@ -24,6 +24,8 @@ const (
 	LocalStorageBackupSnapshotDir      = "snapshot"
 	LocalStorageBackupFormat           = "quantastream-local-storage-backup"
 	LocalStorageBackupVersion          = 1
+	LocalStorageSearchIndexPath        = "index/search.dat"
+	LocalStorageSearchIndexKind        = "pogreb-string-search"
 	LocalStorageBackupModeOffline      = "offline-local-snapshot"
 	LocalStorageBackupModeQuiescent    = "quiescent-local-snapshot"
 	LocalStorageQuiescenceFormat       = "quantastream-local-storage-quiescence"
@@ -47,6 +49,7 @@ type LocalStorageBackupManifest struct {
 	DirectoryCount int                          `json:"directory_count"`
 	ByteCount      int64                        `json:"byte_count"`
 	Checkpoint     LocalStorageBackupCheckpoint `json:"checkpoint"`
+	SearchIndex    LocalStorageSearchIndex      `json:"search_index,omitempty"`
 	Entries        []LocalStorageBackupEntry    `json:"entries"`
 }
 
@@ -71,6 +74,20 @@ type LocalStorageBackupCheckpoint struct {
 	WALLastLSN        uint64 `json:"wal_last_lsn,omitempty"`
 	WALReplayRecords  int    `json:"wal_replay_records,omitempty"`
 	WALPendingRecords int    `json:"wal_pending_records,omitempty"`
+}
+
+// LocalStorageSearchIndex records the first-class StringSearch KV artifact.
+// The file entries remain authoritative for bytes and checksums; this summary
+// lets backup/restore validation catch search storage that was accidentally
+// dropped from the snapshot.
+type LocalStorageSearchIndex struct {
+	Observed       bool   `json:"observed"`
+	Present        bool   `json:"present"`
+	Kind           string `json:"kind,omitempty"`
+	Path           string `json:"path,omitempty"`
+	FileCount      int    `json:"file_count,omitempty"`
+	DirectoryCount int    `json:"directory_count,omitempty"`
+	ByteCount      int64  `json:"byte_count,omitempty"`
 }
 
 // LocalStorageBackupEntry records one directory or file copied into the backup.
@@ -301,6 +318,7 @@ func CreateLocalStorageBackup(ctx context.Context, req CreateLocalStorageBackupR
 		}
 		return manifest.Entries[i].Path < manifest.Entries[j].Path
 	})
+	manifest.SearchIndex = observeLocalStorageSearchIndex(manifest.Entries)
 	manifest.CompletedAt = time.Now().UTC()
 	if req.Now.IsZero() {
 		manifest.CompletedAt = manifest.CompletedAt.UTC()
@@ -695,6 +713,9 @@ func validateLocalStorageBackupManifestShape(manifest LocalStorageBackupManifest
 			return fmt.Errorf("unsupported backup entry type %q for %s", entry.Type, entry.Path)
 		}
 	}
+	if err := validateLocalStorageSearchIndexManifest(manifest.SearchIndex, manifest.Entries); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -817,7 +838,66 @@ func validateLocalStorageEntryTree(rootDir string, manifest LocalStorageBackupMa
 	if byteCount != manifest.ByteCount {
 		return fmt.Errorf("backup manifest byte count mismatch: got %d want %d", byteCount, manifest.ByteCount)
 	}
+	if err := validateLocalStorageSearchIndexManifest(manifest.SearchIndex, manifest.Entries); err != nil {
+		return err
+	}
 	return nil
+}
+
+func observeLocalStorageSearchIndex(entries []LocalStorageBackupEntry) LocalStorageSearchIndex {
+	search := LocalStorageSearchIndex{
+		Observed: true,
+		Kind:     LocalStorageSearchIndexKind,
+		Path:     LocalStorageSearchIndexPath,
+	}
+	for _, entry := range entries {
+		if !localStorageBackupEntryUnderPath(entry.Path, LocalStorageSearchIndexPath) {
+			continue
+		}
+		search.Present = true
+		switch entry.Type {
+		case "dir":
+			search.DirectoryCount++
+		case "file":
+			search.FileCount++
+			search.ByteCount += entry.Size
+		}
+	}
+	return search
+}
+
+func validateLocalStorageSearchIndexManifest(search LocalStorageSearchIndex, entries []LocalStorageBackupEntry) error {
+	if !search.Observed {
+		// Backward compatibility for backups created before search_index became
+		// a first-class manifest section.
+		return nil
+	}
+	if search.Kind != LocalStorageSearchIndexKind {
+		return fmt.Errorf("unsupported search index kind %q", search.Kind)
+	}
+	if search.Path != LocalStorageSearchIndexPath {
+		return fmt.Errorf("unsupported search index path %q", search.Path)
+	}
+	actual := observeLocalStorageSearchIndex(entries)
+	if search.Present != actual.Present {
+		return fmt.Errorf("search index presence mismatch: manifest=%t entries=%t path=%s", search.Present, actual.Present, LocalStorageSearchIndexPath)
+	}
+	if search.FileCount != actual.FileCount {
+		return fmt.Errorf("search index file count mismatch: got %d want %d", actual.FileCount, search.FileCount)
+	}
+	if search.DirectoryCount != actual.DirectoryCount {
+		return fmt.Errorf("search index directory count mismatch: got %d want %d", actual.DirectoryCount, search.DirectoryCount)
+	}
+	if search.ByteCount != actual.ByteCount {
+		return fmt.Errorf("search index byte count mismatch: got %d want %d", actual.ByteCount, search.ByteCount)
+	}
+	return nil
+}
+
+func localStorageBackupEntryUnderPath(entryPath, rootPath string) bool {
+	entryPath = filepath.ToSlash(filepath.Clean(entryPath))
+	rootPath = filepath.ToSlash(filepath.Clean(rootPath))
+	return entryPath == rootPath || strings.HasPrefix(entryPath, rootPath+"/")
 }
 
 func resolveExistingDirectory(location, name string) (string, error) {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ func TestCreateValidateAndRestoreLocalStorageBackup(t *testing.T) {
 	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
 	writeBackupTestFile(t, dataDir, "bitmap/customer/c_custkey.IntBSI/0", "bitmap-slice")
 	writeBackupTestFile(t, dataDir, "index/customer/c_name.StringEnum/main.pix", "kv-index")
+	writeBackupTestFile(t, dataDir, "index/search.dat/main.pix", "search-index")
+	writeBackupTestFile(t, dataDir, "index/search.dat/segment-0", "search-segment")
 	if err := os.MkdirAll(filepath.Join(dataDir, "empty-dir"), 0755); err != nil {
 		t.Fatalf("mkdir empty-dir: %v", err)
 	}
@@ -42,11 +45,20 @@ func TestCreateValidateAndRestoreLocalStorageBackup(t *testing.T) {
 	if manifest.Product.Version == "" || manifest.Product.Summary == "" {
 		t.Fatalf("manifest product missing version summary: %+v", manifest.Product)
 	}
-	if manifest.FileCount != 3 || manifest.DirectoryCount == 0 {
+	if manifest.FileCount != 5 || manifest.DirectoryCount == 0 {
 		t.Fatalf("manifest counts files=%d dirs=%d", manifest.FileCount, manifest.DirectoryCount)
 	}
 	if manifest.ByteCount == 0 {
 		t.Fatalf("manifest byte count should be non-zero")
+	}
+	if !manifest.SearchIndex.Observed || !manifest.SearchIndex.Present {
+		t.Fatalf("search index summary = %+v, want observed present search index", manifest.SearchIndex)
+	}
+	if manifest.SearchIndex.Kind != LocalStorageSearchIndexKind || manifest.SearchIndex.Path != LocalStorageSearchIndexPath {
+		t.Fatalf("search index identity = %+v", manifest.SearchIndex)
+	}
+	if manifest.SearchIndex.FileCount != 2 || manifest.SearchIndex.DirectoryCount != 1 || manifest.SearchIndex.ByteCount == 0 {
+		t.Fatalf("search index counts = %+v, want files=2 dirs=1 bytes>0", manifest.SearchIndex)
 	}
 	if _, err := os.Stat(filepath.Join(backupDir, LocalStorageBackupManifestFileName)); err != nil {
 		t.Fatalf("backup manifest not written: %v", err)
@@ -77,8 +89,39 @@ func TestCreateValidateAndRestoreLocalStorageBackup(t *testing.T) {
 	assertBackupTestFile(t, restoreDir, "config/customer/schema.yaml", "name: customer\n")
 	assertBackupTestFile(t, restoreDir, "bitmap/customer/c_custkey.IntBSI/0", "bitmap-slice")
 	assertBackupTestFile(t, restoreDir, "index/customer/c_name.StringEnum/main.pix", "kv-index")
+	assertBackupTestFile(t, restoreDir, "index/search.dat/main.pix", "search-index")
+	assertBackupTestFile(t, restoreDir, "index/search.dat/segment-0", "search-segment")
 	if info, err := os.Stat(filepath.Join(restoreDir, "empty-dir")); err != nil || !info.IsDir() {
 		t.Fatalf("empty dir not restored info=%v err=%v", info, err)
+	}
+}
+
+func TestValidateLocalStorageBackupRejectsSearchIndexManifestMismatch(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	writeBackupTestFile(t, dataDir, "config/customer/schema.yaml", "name: customer\n")
+	writeBackupTestFile(t, dataDir, "index/search.dat/main.pix", "search-index")
+
+	backupDir := filepath.Join(root, "backup")
+	manifest, err := CreateLocalStorageBackup(context.Background(), CreateLocalStorageBackupRequest{
+		DataDir: dataDir,
+		Target:  backupDir,
+	})
+	if err != nil {
+		t.Fatalf("CreateLocalStorageBackup returned error: %v", err)
+	}
+	manifest.SearchIndex.FileCount++
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal tampered manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, LocalStorageBackupManifestFileName), data, 0644); err != nil {
+		t.Fatalf("write tampered manifest: %v", err)
+	}
+
+	_, err = ValidateLocalStorageBackup(backupDir)
+	if err == nil || !strings.Contains(err.Error(), "search index file count mismatch") {
+		t.Fatalf("ValidateLocalStorageBackup error = %v, want search index mismatch", err)
 	}
 }
 
