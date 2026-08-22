@@ -19,12 +19,6 @@ to model tables, keys, relationships, and mapper choices. Use the
   startup, JSON ingest envelopes, routing behavior, health checks, and producer
   examples.
 
-## Sample Schemas
-
-- [cities/schema.yaml](cities/schema.yaml) - compact local table example.
-- [cityzip/schema.yaml](cityzip/schema.yaml) - compact local table example with
-  additional lookup-style fields.
-
 ## Related Guides
 
 - [Schema Design Guide](../docs/SCHEMA_DESIGN.md) - physical modeling guidance
