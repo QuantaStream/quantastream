@@ -993,5 +993,3 @@ understood.
 7. Validate rolling restart and upgrade behavior.
 8. Publish the production port, health-check, and security inventory.
 
-The existing deployment architecture image is available at
-[`Quanta_Deployment_Architecture.png`](Quanta_Deployment_Architecture.png).
