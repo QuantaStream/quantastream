@@ -133,7 +133,7 @@ not constrain the time field.
 | `required` | no | Write-path validation hint. When true, online inserts should provide a value or a default. |
 | `defaultValue` | no | Default expression used by blind inserts when no value is supplied. Example: `now()`. |
 | `searchable` | no | Enables secondary text-search metadata for string fields. The loader/server creates supporting search artifacts. |
-| `nonExclusive` | no | Marks a bitmap-style field as set-valued rather than one-value-per-row. |
+| `nonExclusive` | no | Current schema YAML key for set-valued bitmap fields. This maps to planner/catalog `multiplicity=set`; `multiplicity` is not accepted as a schema YAML key yet. |
 | `system` | no | Marks a generated internal field. User schemas normally should not set this manually. |
 | `callTransform` | no | Legacy/custom mapper hook. Use only with mapper code that explicitly expects it. |
 | `sourceOrdinal` | no | Source column order for bulk loaders and generated descriptors. |
@@ -211,23 +211,6 @@ Recommended production mappers:
 | `ParentRelation` | `Integer` | Child-to-parent relationship edge. Requires `foreignKey`. |
 | `BoolDirect` | `Boolean` | Boolean bitmap mapping. |
 | `UUIDBSI` | `String` | UUID encoded into BSI form for UUID-shaped identifiers. |
-
-Specialized or legacy mappers that still appear in code or older schemas:
-
-| Mapper | Notes |
-| --- | --- |
-| `IntDirect` | Uses the integer value directly as a row ID. Prefer `IntBSI` unless direct row-ID semantics are intended. |
-| `IntToBoolDirect` | Converts integer 0/1 style values into boolean bitmap rows. |
-| `IntLinear`, `IntBuckets` | Bucketed integer bitmap representations. |
-| `FloatLinear`, `FloatBuckets` | Bucketed float bitmap representations. |
-| `YearToDay`, `YearToMonth`, `Year`, `DayOfYear`, `DayOfMonth`, `DayOfWeek`, `TimeOfDay`, `HourOfDay` | Date/time bucket strategies for bitmap-style time dimensions. |
-| `SysSecBSI`, `SysMillisBSI`, `SysMicroBSI`, `SysNanoBSI` | System timestamp BSI variants. |
-| `StringHashBSI`, `StringBSI` | Older string BSI/hash naming. Prefer `StringLexBSI` for new schemas. |
-| `StringToIntDirect` | Parses a string source value into an integer direct mapper. |
-| `BoolRegex` | Maps a string to boolean using `configuration.regex`. |
-| `Contains` | Set-style string containment mapper. Requires mapper-specific configuration. |
-| `ChildRelation` | Child-side relationship helper metadata. Most schemas model join edges with `ParentRelation`. |
-| `Custom`, `CustomBSI`, `Delegated` | Plugin/custom mapper integration. |
 
 ## Mapper-Specific Options
 
@@ -315,6 +298,9 @@ configuration:
 ```
 
 `configuration.delim` controls splitting for multi-value source strings.
+The internal planner and catalog metadata call this `multiplicity=set`, but the
+schema YAML field is still `nonExclusive`. Do not write `multiplicity: set` in
+`schema.yaml` until the parser supports that alias.
 
 ### `StringLexBSI`
 
