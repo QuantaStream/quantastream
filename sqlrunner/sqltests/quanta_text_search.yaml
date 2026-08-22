@@ -9,11 +9,15 @@ tests:
     feature: text_search_predicate
     compatibility: quanta
     requires: [select, where, match_against, searchable_stringlexbsi]
+    # TPC-H comments are generated data; this phrase can match many customers at
+    # larger scale factors. Keep the positive case scale-tolerant by asserting
+    # the first deterministic match instead of the total match count.
     sql: |
       select c_custkey as customer_key
       from customer
       where match(c_comment) against ('epitaphs nag')
       order by customer_key
+      limit 1
     expect:
       columns: [customer_key]
       rows:
@@ -27,11 +31,13 @@ tests:
     compatibility: quanta
     requires: [select, where, match_against, natural_language_mode, searchable_stringlexbsi]
     sql: |
-      select count(*) as matched
+      select c_custkey as customer_key
       from customer
       where match(c_comment) against ('epitaphs nag' in natural language mode)
+      order by customer_key
+      limit 1
     expect:
-      columns: [matched]
+      columns: [customer_key]
       rows:
         - [1]
 
@@ -43,11 +49,13 @@ tests:
     compatibility: quanta
     requires: [select, where, match_against, boolean_mode, searchable_stringlexbsi]
     sql: |
-      select count(*) as matched
+      select c_custkey as customer_key
       from customer
       where match(c_comment) against ('epitaphs nag' in boolean mode)
+      order by customer_key
+      limit 1
     expect:
-      columns: [matched]
+      columns: [customer_key]
       rows:
         - [1]
 
@@ -115,6 +123,7 @@ tests:
       from qs_quanta_text_search_customer_view
       where match(customer_comment) against ('epitaphs nag')
       order by customer_key
+      limit 1
     expect:
       columns: [customer_key]
       rows:
@@ -146,6 +155,7 @@ tests:
       ) as c
       where match(customer_comment) against ('epitaphs nag')
       order by customer_key
+      limit 1
     expect:
       columns: [customer_key]
       rows:
