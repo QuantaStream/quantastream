@@ -1,26 +1,14 @@
 # SQL Boundaries
 
-QuantaStream supports the MySQL wire protocol and a focused analytical SQL
-surface for everyday query, integration, and validation work. The supported
-surface includes projections, predicates, ordering, limits, grouping,
-aggregates, joins, subqueries, views, derived tables, temporary tables, CTAS,
-prepared-statement execution, and MySQL client metadata used by common tools.
-
-This page records the narrow SQL shapes outside the current QuantaStream 1.0
-contract. Executable compatibility coverage lives in SQLRunner; forward work is
-tracked in GitHub Issues.
+This page records SQL shapes outside the current QuantaStream 1.0 contract.
+Supported behavior is recorded in [`SUPPORTED_SQL.md`](SUPPORTED_SQL.md).
+Executable compatibility coverage lives in SQLRunner; forward work is tracked
+in GitHub Issues.
 
 ## Persistent Table Definition
 
-Production QuantaStream tables are descriptor-driven. A first-class persistent
-table is defined by catalog/configuration metadata and then activated with:
-
-```sql
-create table table_name;
-```
-
-The following MySQL-style persistent table definition is not the production
-schema path:
+The following MySQL-style persistent table definition is not part of the
+production schema path:
 
 ```sql
 create table table_name (
@@ -29,16 +17,10 @@ create table table_name (
 );
 ```
 
-Use descriptor files for configured persistent tables. Use
-`CREATE TEMPORARY TABLE ... (...)` for session-scoped scratch tables, or
-`CREATE TABLE ... AS SELECT ...` for persistent materialization from a query.
-
 ## SQL ALTER TABLE DDL
 
-QuantaStream exposes table structure through descriptors and administrative
-tools, not the full MySQL `ALTER TABLE` grammar.
-
-The SQL surface does not currently include:
+The SQL surface does not currently include the full MySQL `ALTER TABLE`
+grammar. Unsupported examples include:
 
 ```sql
 alter table table_name add column new_field int;
@@ -47,41 +29,23 @@ alter table table_name add primary key (id);
 alter table child_table add foreign key (parent_id) references parent_table(id);
 ```
 
-Primary keys, relationship vectors, mapper types, and reverse relationship
-artifacts are physical schema decisions in QuantaStream. They should be
-declared in the table descriptor or managed through explicit administrative
-flows rather than inferred from broad MySQL DDL syntax.
+Primary-key, relationship-vector, mapper-type, and reverse-artifact changes via
+broad MySQL DDL remain outside the 1.0 SQL contract.
 
 ## Transaction Rollback Semantics
 
-QuantaStream accepts common transaction statements for client compatibility:
+The current 1.0 SQL contract does not include full MySQL transaction
+semantics. Unsupported transaction behavior includes:
 
-```sql
-begin;
-commit;
-rollback;
-set autocommit = 0;
-set autocommit = 1;
-```
-
-Current 1.0 transaction semantics are intentionally narrow:
-
-- Autocommit writes are supported.
-- `COMMIT` is a durability/savepoint operation.
-- Transaction control statements are accepted for client/tool compatibility.
-- Full transactional rollback of writes is not part of the 1.0 SQL contract.
-- The local WAL supports durability/replay and backup safety today; transactional
-  write rollback is future work.
-
-The current mutation path applies catalog-backed writes immediately, so
-`ROLLBACK` does not provide full MySQL MVCC semantics or undo previously applied
-writes.
+- full transactional rollback of applied writes;
+- MySQL MVCC isolation semantics;
+- undo of already-applied catalog-backed writes;
+- multi-statement write transactions with isolated read-your-own-write
+  behavior.
 
 ## Advanced MySQL Objects
 
-The 1.0 SQL surface is centered on tables, views, temporary tables, CTAS, and
-analytical queries. The following MySQL object families are outside that
-surface:
+The following MySQL object families are outside the 1.0 SQL surface:
 
 - stored procedures and stored functions;
 - triggers and events;
@@ -94,9 +58,8 @@ and administrative tooling.
 
 ## Advanced Query Forms
 
-The analytical query surface is intentionally broad enough for the current
-TPC-H and MySQL compatibility suites. These query forms remain outside the
-current contract unless a focused suite covers the exact shape:
+These query forms remain outside the current contract unless a focused suite
+covers the exact shape:
 
 ```sql
 with cte_name as (...)
@@ -108,37 +71,31 @@ select ..., row_number() over (partition by ... order by ...)
 from ...
 ```
 
-In other words, common table expressions, recursive CTEs, and SQL window
-functions are not part of the current 1.0 query surface. Subqueries themselves
-are supported; the remaining boundary is arbitrary deeply nested query
-composition outside covered SQLRunner shapes.
+In other words, common table expressions, recursive CTEs, SQL window functions,
+and arbitrary deeply nested query composition outside covered SQLRunner shapes
+are not part of the current 1.0 query surface.
 
 ## View Boundaries
 
-Logical views are supported, including joins inside view definitions. The
-following view-related features remain outside the current surface:
+The following view-related features remain outside the current surface:
 
 - materialized views;
 - MySQL `ALGORITHM`, `DEFINER`, and `SQL SECURITY` view clauses;
 - exact byte-for-byte MySQL `SHOW CREATE VIEW` formatting parity.
 
-Use CTAS when a query result should become a persistent materialized table.
-
 ## Dependency Cascades
 
-QuantaStream protects catalog integrity by requiring explicit dependent-object
-management. `DROP TABLE` should not be treated as a recursive dependency
-deletion mechanism for active views or parent/child relationships.
+Recursive dependent-object deletion is not part of the current contract.
+Unsupported cascade behavior includes:
 
-Simple `DROP ... CASCADE` syntax is accepted where covered, but recursive
-dependent-object deletion is not the current contract. Drop dependent views,
-child relationships, or configured tables intentionally.
+- recursive deletion of active views when a referenced table is dropped;
+- recursive deletion of child relationships when a parent table is dropped;
+- broad MySQL-style dependency cleanup through `DROP ... CASCADE`.
 
 ## Text Search And Collation Boundaries
 
-QuantaStream supports native `MATCH(field) AGAINST (...)` predicates for
-searchable descriptor fields. The remaining text boundaries are specific MySQL
-compatibility features outside the current 1.0 SQL contract:
+The following text-search and collation features are outside the current 1.0
+SQL contract:
 
 - `MATCH ... AGAINST` over fields that are not configured as searchable;
 - full MySQL collation parity across every comparison and ordering edge case;
@@ -148,9 +105,3 @@ compatibility features outside the current 1.0 SQL contract:
 - `WITH QUERY EXPANSION` and MySQL-specific full-text ranking behavior;
 - `MATCH ... AGAINST` inside mixed boolean expression trees outside the covered
   top-level predicate shapes.
-
-`LIKE` and `NOT LIKE` remain ordinary string predicates where covered; they are
-not the native text-search interface.
-
-StringEnum, StringLexBSI, and backing-string representations should be chosen
-from the descriptor based on the query pattern the application needs.
