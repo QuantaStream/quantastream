@@ -1651,7 +1651,7 @@ func TestQuantaIntermediateLowererLowersStringLexBSINotPrefixLikePredicate(t *te
 	}
 }
 
-func TestQuantaIntermediateLowererLowersStringLexBSIRemainderPrefixLikePredicate(t *testing.T) {
+func TestQuantaIntermediateLowererLeavesStringLexBSIRemainderPrefixLikeResidual(t *testing.T) {
 	field := FieldRef{
 		Table:    TableInstance{Table: "lineitem"},
 		Name:     "l_comment",
@@ -1659,29 +1659,6 @@ func TestQuantaIntermediateLowererLowersStringLexBSIRemainderPrefixLikePredicate
 		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 44}),
 	}
 	predicate := Predicate{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "pending%"))}
-
-	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSILikePredicate(predicate, ParameterBindingSet{})
-	if !ok || diagnostics.BlocksNative() {
-		t.Fatalf("fragment = %#v diagnostics = %#v ok=%v, want native prefix range", fragment, diagnostics, ok)
-	}
-	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
-		t.Fatalf("fragment = %#v, want StringLexBSI remainder prefix RANGE", fragment)
-	}
-	wantBegin := quantaIntermediateStringLexBSIValue("pending", 8)
-	wantEnd := new(big.Int).Sub(quantaIntermediateStringLexBSIValue("pendinh", 8), big.NewInt(1))
-	if fragment.Begin.Cmp(wantBegin) != 0 || fragment.End.Cmp(wantEnd) != 0 {
-		t.Fatalf("range = %v..%v, want %v..%v", fragment.Begin, fragment.End, wantBegin, wantEnd)
-	}
-}
-
-func TestQuantaIntermediateLowererLeavesStringLexBSILongRemainderPrefixLikeResidual(t *testing.T) {
-	field := FieldRef{
-		Table:    TableInstance{Table: "lineitem"},
-		Name:     "l_comment",
-		Index:    IndexBSI,
-		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 44}),
-	}
-	predicate := Predicate{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "carefully%"))}
 
 	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSILikePredicate(predicate, ParameterBindingSet{})
 	if ok || diagnostics.BlocksNative() || fragment.BSIOp != "" {

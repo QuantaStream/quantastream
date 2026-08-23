@@ -2195,7 +2195,7 @@ func quantaIntermediateStringLexBSILikeParts(predicate Predicate) (BinaryOp, Fie
 		return "", FieldRef{}, nil, false
 	}
 	field, ok := quantaIntermediateFieldExpr(binary.Left)
-	if !ok || field.Encoding.Kind != EncodingStringLexBSI || !quantaIntermediateValueExpr(binary.Right) {
+	if !ok || field.Encoding.Kind != EncodingStringLexBSI || field.Encoding.NeedsStringRemainderLookup() || !quantaIntermediateValueExpr(binary.Right) {
 		return "", FieldRef{}, nil, false
 	}
 	return binary.Op, field, binary.Right, true

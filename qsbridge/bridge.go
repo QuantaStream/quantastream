@@ -3401,7 +3401,7 @@ func stringLexBSIPredicateCanUseBitmapPushdown(expr Expr) bool {
 		return false
 	}
 	field, literal, ok := fieldLiteralPair(binary)
-	if !ok || field.Encoding.Kind != EncodingStringLexBSI || literal.Kind != ValueString {
+	if !ok || field.Encoding.Kind != EncodingStringLexBSI || field.Encoding.NeedsStringRemainderLookup() || literal.Kind != ValueString {
 		return false
 	}
 	pattern, ok := literal.Value.(string)
@@ -3410,7 +3410,7 @@ func stringLexBSIPredicateCanUseBitmapPushdown(expr Expr) bool {
 	}
 	switch simpleLikePattern(pattern) {
 	case likePatternExact:
-		return !field.Encoding.NeedsStringRemainderLookup()
+		return true
 	case likePatternPrefix:
 		prefix := strings.TrimSuffix(pattern, "%")
 		_, _, ok := quantaIntermediateStringLexBSIPrefixRange(prefix, field.Encoding.PrefixLength)
