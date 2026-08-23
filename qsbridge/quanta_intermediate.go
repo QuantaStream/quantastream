@@ -1737,7 +1737,11 @@ func (l QuantaIntermediateLowerer) lowerStringLexBSIPrefixLikeCandidate(predicat
 		return QuantaQueryFragment{}, nil, false
 	}
 	prefix := strings.TrimSuffix(label, "%")
-	begin, end, ok := quantaIntermediateStringLexBSIPrefixRange(prefix, field.Encoding.PrefixLength)
+	candidatePrefix, ok := quantaIntermediateStringLexBSICandidatePrefix(prefix, field.Encoding.PrefixLength)
+	if !ok {
+		return QuantaQueryFragment{}, nil, false
+	}
+	begin, end, ok := quantaIntermediateStringLexBSIPrefixRange(candidatePrefix, field.Encoding.PrefixLength)
 	if !ok {
 		return QuantaQueryFragment{}, nil, false
 	}
@@ -1749,8 +1753,8 @@ func (l QuantaIntermediateLowerer) lowerStringLexBSIPrefixLikeCandidate(predicat
 		BSIOp:           QuantaBSIOpRange,
 		Begin:           begin,
 		End:             end,
-		BeginLiteral:    Literal(ValueString, prefix),
-		EndLiteral:      Literal(ValueString, prefix+"\uffff"),
+		BeginLiteral:    Literal(ValueString, candidatePrefix),
+		EndLiteral:      Literal(ValueString, candidatePrefix+"\uffff"),
 		HasLiteralRange: true,
 	}, nil, true
 }
@@ -1760,6 +1764,16 @@ func quantaIntermediateLikeExactOp(op BinaryOp) BinaryOp {
 		return BinaryOpNotEqual
 	}
 	return BinaryOpEqual
+}
+
+func quantaIntermediateStringLexBSICandidatePrefix(prefix string, prefixLength int) (string, bool) {
+	if prefix == "" || prefixLength <= 0 {
+		return "", false
+	}
+	if len(prefix) <= prefixLength {
+		return prefix, true
+	}
+	return prefix[:prefixLength], true
 }
 
 func quantaIntermediateStringLexBSIPrefixRange(prefix string, prefixLength int) (*big.Int, *big.Int, bool) {
