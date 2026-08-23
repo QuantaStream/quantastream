@@ -6,6 +6,60 @@ The project exposes a MySQL-compatible SQL surface so existing tools and drivers
 
 For latest news and information, as well as benchmark results, please visit [quantastream.org](https://quantastream.org).
 
+## Download QuantaStream
+
+The fastest way to try QuantaStream is the Linux AMD64 binary release bundle.
+It includes the single-node engine, admin tool, JSON loader, TPC-H loader,
+documentation, and example service files. This path does not require Go.
+
+Use the source checkout path when you want to build from source, use the
+development startup scripts, run on macOS or another platform, or make code
+changes. Go must be installed before using the source workflow.
+
+Recommended binary download path:
+
+```bash
+gh release download <version> \
+  --repo QuantaStream/quantastream \
+  --pattern 'qstream-<version>-linux-amd64.tar.gz' \
+  --pattern SHA256SUMS
+
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf qstream-<version>-linux-amd64.tar.gz
+cd qstream-<version>-linux-amd64
+```
+
+The `gh` command downloads the release assets from GitHub. The accompanying
+`SHA256SUMS` file verifies that the bundle you unpack is the bundle published
+with the release.
+
+If you do not have the GitHub CLI installed, open the
+[GitHub Releases](https://github.com/QuantaStream/quantastream/releases) page
+in a browser and download both files manually:
+
+- `qstream-<version>-linux-amd64.tar.gz`
+- `SHA256SUMS`
+
+Then run the same verification and unpack commands:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf qstream-<version>-linux-amd64.tar.gz
+cd qstream-<version>-linux-amd64
+```
+
+For source builds and development scripts:
+
+```bash
+git clone git@github.com:QuantaStream/quantastream.git
+cd quantastream
+go test ./...
+```
+
+Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary
+runbook or [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source checkout
+workflow.
+
 ## Why QuantaStream
 
 Traditional databases usually optimize around row storage, indexes, and tuple-oriented execution. QuantaStream starts from a different assumption: analytical workloads often want to reduce large sets quickly, combine those sets, and materialize only the final values needed by the user.
