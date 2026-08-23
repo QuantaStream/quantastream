@@ -1,33 +1,48 @@
 # Getting Started With QuantaStream Binaries
 
 This runbook starts a local single-node QuantaStream engine from a release
-bundle. Use the full product name in docs and support tickets; the binaries use
-the shorter `qstream-*` names where the full name would be unwieldy.
+bundle, writes one row through the JSON loader, reads it through the
+MySQL-compatible endpoint, and proves a local backup/restore path.
+
+Every command block below is intended to be pasted as-is into a Linux shell. The
+commands assume `bash`, `curl`, and the `mysql` command-line client are
+available.
+
+Use the full product name in docs and support tickets; the binaries use the
+shorter `qstream-*` names where the full name would be unwieldy.
 
 ## 1. Unpack The Release
 
-```bash
-tar -xzf qstream-<version>-linux-amd64.tar.gz
-cd qstream-<version>-linux-amd64
-```
-
-Verify the binaries:
+Run this from the directory containing the downloaded release archive:
 
 ```bash
+set -Eeuo pipefail
+
+archive="$(ls -1 qstream-*-linux-amd64.tar.gz | tail -n 1)"
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf "$archive"
+cd "$(tar -tzf "$archive" | sed -n '1s#/.*##p')"
+
 ./bin/quantastream -version
 ./bin/qstream-admin version
 ./bin/qstream-loader -version
 ./bin/qstream-stream-loader -version
 ```
 
-## 2. Prepare A Runtime Schema And Security Files
+## 2. Prepare Runtime Files
 
 The packaged `configuration/` directory contains configuration documentation and
-reference material. Runtime table schemas should live in a separate directory
-that you own for the deployment. This runbook uses `./runtime/config`.
+schema reference material. Runtime table schemas should live in a separate
+directory owned by the deployment. This runbook uses `./runtime/config`.
+
+The following block resets only the local smoke directories inside the extracted
+release bundle.
 
 ```bash
-mkdir -p data backups auth runtime/config/release_smoke
+set -Eeuo pipefail
+
+rm -rf ./data ./data-restored ./backups ./auth ./runtime ./logs ./qstream-support.tar.gz
+mkdir -p data backups auth runtime/config/release_smoke logs
 
 cat > ./runtime/config/release_smoke/schema.yaml <<'YAML'
 tableName: release_smoke
@@ -73,6 +88,8 @@ QUANTASTREAM_AUTH_PASSWORD=root \
 
 ./bin/qstream-admin access validate \
   --policy-file ./auth/access-policy.yaml
+
+test -f ./runtime/config/release_smoke/schema.yaml
 ```
 
 The account file stores verifier hashes, not the cleartext password. Use a real
@@ -80,8 +97,18 @@ password and service-secret mechanism outside local smoke tests.
 
 ## 3. Start The Single-Node Engine
 
+This block starts the engine in the background, records its process ID under
+`./runtime/quantastream.pid`, and waits for both local ports to open.
+
 ```bash
-mkdir -p data backups
+set -Eeuo pipefail
+
+for port in 4000 4100; do
+  if (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1; then
+    echo "port already in use: $port" >&2
+    exit 1
+  fi
+done
 
 ./bin/quantastream \
   -config-dir ./runtime/config \
@@ -94,7 +121,29 @@ mkdir -p data backups
   -database quanta \
   -auth-mode static \
   -auth-account-file ./auth/accounts.yaml \
-  -access-policy-file ./auth/access-policy.yaml
+  -access-policy-file ./auth/access-policy.yaml \
+  > ./logs/quantastream.log 2>&1 &
+
+echo "$!" > ./runtime/quantastream.pid
+echo "engine_pid=$(cat ./runtime/quantastream.pid)"
+
+for port in 4000 4100; do
+  ready=0
+  for _ in $(seq 1 45); do
+    if (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "engine did not open port $port" >&2
+    tail -80 ./logs/quantastream.log >&2 || true
+    exit 1
+  fi
+done
+
+tail -20 ./logs/quantastream.log
 ```
 
 Expected startup lines include:
@@ -111,25 +160,17 @@ The `-wal-path` flag enables the local write-ahead log and checkpoint file under
 the data directory. Keeping the WAL inside `./data` makes local backups
 self-contained.
 
-## 4. Inspect Local Durability State
-
-In a second terminal:
+## 4. Inspect The Running Engine
 
 ```bash
+set -Eeuo pipefail
+
 ./bin/qstream-admin wal validate \
   --path ./data/storage.wal
 
 ./bin/qstream-admin wal plan \
   --path ./data/storage.wal
-```
 
-On a fresh engine these commands report an empty or checkpoint-clean WAL. If a
-command reports a replay or pending tail, follow the printed hint before taking a
-backup.
-
-Run a local preflight over the same paths and endpoints:
-
-```bash
 ./bin/qstream-admin doctor local \
   --data-dir ./data \
   --config-dir ./runtime/config \
@@ -140,9 +181,10 @@ Run a local preflight over the same paths and endpoints:
   --native-grpc-addr 127.0.0.1:4100
 ```
 
-## 5. Connect With A MySQL Client
+On this smoke setup, `doctor local` should report one table schema from
+`./runtime/config`.
 
-In a second terminal:
+## 5. Connect With A MySQL Client
 
 ```bash
 mysql -h 127.0.0.1 -P 4000 -u root -proot -D quanta \
@@ -158,18 +200,48 @@ The loader accepts JSON event batches and writes them through the native gRPC
 endpoint exposed by the single-node engine.
 
 ```bash
+set -Eeuo pipefail
+
+if (echo > /dev/tcp/127.0.0.1/8088) >/dev/null 2>&1; then
+  echo "port already in use: 8088" >&2
+  exit 1
+fi
+
 ./bin/qstream-loader \
   -listen 127.0.0.1:8088 \
   -config-dir ./runtime/config \
   -database quanta \
   -tables release_smoke \
   -connection-mode standard-native \
-  -native-grpc-addr 127.0.0.1:4100
+  -native-grpc-addr 127.0.0.1:4100 \
+  -flush-interval 100ms \
+  > ./logs/qstream-loader.log 2>&1 &
+
+echo "$!" > ./runtime/qstream-loader.pid
+echo "loader_pid=$(cat ./runtime/qstream-loader.pid)"
+
+ready=0
+for _ in $(seq 1 45); do
+  if curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+  echo "JSON loader did not become ready" >&2
+  tail -80 ./logs/qstream-loader.log >&2 || true
+  exit 1
+fi
+
+curl -fsS http://127.0.0.1:8088/healthz
 ```
 
 ## 7. Send A JSON Smoke Batch
 
 ```bash
+set -Eeuo pipefail
+
 curl -fsS http://127.0.0.1:8088/ingest/json \
   -H 'Content-Type: application/json' \
   -d '{
@@ -192,6 +264,23 @@ curl -fsS http://127.0.0.1:8088/ingest/json \
     ]
   }'
 
+for _ in $(seq 1 30); do
+  row_count="$(mysql -h 127.0.0.1 -P 4000 -u root -proot -D quanta \
+    --batch --skip-column-names \
+    -e "select count(*) from release_smoke where id = 'release-smoke-row-1';" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$row_count" = "1" ]; then
+    break
+  fi
+  sleep 1
+done
+
+if [ "${row_count:-0}" != "1" ]; then
+  echo "release_smoke row was not visible through MySQL" >&2
+  tail -80 ./logs/qstream-loader.log >&2 || true
+  tail -80 ./logs/quantastream.log >&2 || true
+  exit 1
+fi
+
 mysql -h 127.0.0.1 -P 4000 -u root -proot -D quanta \
   -e "select id, name, score, latitude from release_smoke;"
 ```
@@ -207,9 +296,20 @@ or drained any recent writes before taking the backup. The backup command
 quiesces new storage mutations while it copies, but it snapshots durable
 filesystem state. The command below asks the running single-node engine to
 commit dirty buffers after the quiescence barrier is active and before copying
-the snapshot:
+the snapshot.
+
+This smoke stops the JSON loader before the backup so the data set is stable.
 
 ```bash
+set -Eeuo pipefail
+
+if [ -f ./runtime/qstream-loader.pid ]; then
+  kill "$(cat ./runtime/qstream-loader.pid)" 2>/dev/null || true
+  rm -f ./runtime/qstream-loader.pid
+fi
+
+rm -rf ./backups/smoke-backup
+
 ./bin/qstream-admin backup create \
   --data-dir ./data \
   --target file://$PWD/backups/smoke-backup \
@@ -240,6 +340,15 @@ To perform a manual restore, stop the engine first and restore into a new empty
 directory:
 
 ```bash
+set -Eeuo pipefail
+
+if [ -f ./runtime/quantastream.pid ]; then
+  kill "$(cat ./runtime/quantastream.pid)" 2>/dev/null || true
+  rm -f ./runtime/quantastream.pid
+fi
+
+rm -rf ./data-restored
+
 ./bin/qstream-admin backup restore \
   --source file://$PWD/backups/smoke-backup \
   --data-dir ./data-restored
@@ -263,9 +372,23 @@ sudo cp ./examples/systemd/qstream-single-node.service /etc/systemd/system/qstre
 Edit `/etc/quantastream/qstream-single-node.env` for your installation paths,
 then run `systemctl daemon-reload` and start the service when ready.
 
-## 10. Stop The Engine
+## 10. Stop Local Processes
 
-Press `Ctrl-C` in the engine terminal. The local data lives under `./data`.
+```bash
+set -Eeuo pipefail
+
+if [ -f ./runtime/qstream-loader.pid ]; then
+  kill "$(cat ./runtime/qstream-loader.pid)" 2>/dev/null || true
+  rm -f ./runtime/qstream-loader.pid
+fi
+
+if [ -f ./runtime/quantastream.pid ]; then
+  kill "$(cat ./runtime/quantastream.pid)" 2>/dev/null || true
+  rm -f ./runtime/quantastream.pid
+fi
+```
+
+The local data lives under `./data`.
 
 For support, capture a diagnostic bundle:
 
@@ -276,7 +399,8 @@ For support, capture a diagnostic bundle:
   --wal-path ./data/storage.wal \
   --auth-account-file ./auth/accounts.yaml \
   --access-policy-file ./auth/access-policy.yaml \
-  --backup-source file://$PWD/backups/smoke-backup
+  --backup-source file://$PWD/backups/smoke-backup \
+  --log-path ./logs/quantastream.log,./logs/qstream-loader.log
 ```
 
 The support bundle includes version/runtime metadata, a catalog/config summary,
