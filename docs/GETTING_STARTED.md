@@ -29,7 +29,10 @@ echo "Using QStream bundle at: $QSTREAM_HOME"
 ## 2. Restore The Sample Data
 
 The release bundle includes a small TPC-H SF0.01 backup. Restore it into the
-local data directory:
+local data directory.
+
+The restore can take a few minutes and currently does not print progress while
+it copies and validates the backup contents.
 
 ```bash
 rm -rf ./data
