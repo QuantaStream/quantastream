@@ -15,6 +15,7 @@ RUN_CORE="${RUN_CORE:-${RUN_PORTABLE:-0}}"
 RUN_EXTENDED="${RUN_EXTENDED:-0}"
 ALLOW_FAILURES="${ALLOW_FAILURES:-0}"
 SLOW_THRESHOLD="${SLOW_THRESHOLD:-10s}"
+READY_ATTEMPTS="${READY_ATTEMPTS:-160}"
 SUITE_INDEX=0
 SERVER_PID=""
 WORK_DIR=""
@@ -72,20 +73,20 @@ write_catalog_manifest() {
 wait_for_server() {
   local port="$1"
   local log_file="$2"
-  for _ in $(seq 1 80); do
+  for _ in $(seq 1 "${READY_ATTEMPTS}"); do
     if [[ -n "${SERVER_PID}" ]] && ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
       echo "quantastream exited before readiness"
       cat "${log_file}" || true
       exit 1
     fi
+    if (echo >/dev/tcp/"${HOST}"/"${port}") >/dev/null 2>&1; then
+      sleep 0.25
+      return 0
+    fi
     if command -v mysqladmin >/dev/null 2>&1; then
       if mysqladmin --connect-timeout=1 -h "${HOST}" -P "${port}" -u "${SQL_USER}" ping >/dev/null 2>&1; then
         return 0
       fi
-    fi
-    if (echo >/dev/tcp/"${HOST}"/"${port}") >/dev/null 2>&1; then
-      sleep 0.25
-      return 0
     fi
     sleep 0.25
   done

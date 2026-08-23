@@ -20,6 +20,7 @@ DB="${DB:-quanta}"
 SUITE="${SUITE:-inabox_standard_qa_smoke.yaml}"
 CASE="${CASE:-}"
 CLEANUP="${CLEANUP:-1}"
+READY_ATTEMPTS="${READY_ATTEMPTS:-160}"
 SERVER_PID=""
 WORK_DIR=""
 
@@ -38,19 +39,20 @@ trap cleanup EXIT
 
 wait_for_server() {
   local log_file="$1"
-  for _ in $(seq 1 80); do
+  for _ in $(seq 1 "${READY_ATTEMPTS}"); do
     if [[ -n "${SERVER_PID}" ]] && ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
       echo "quantastream exited before readiness"
       cat "${log_file}" || true
       exit 1
     fi
+    if (echo >/dev/tcp/"${HOST}"/"${PORT}") >/dev/null 2>&1; then
+      sleep 0.25
+      return 0
+    fi
     if command -v mysqladmin >/dev/null 2>&1; then
       if mysqladmin --connect-timeout=1 -h "${HOST}" -P "${PORT}" -u "${SQL_USER}" ping >/dev/null 2>&1; then
         return 0
       fi
-    elif (echo >/dev/tcp/"${HOST}"/"${PORT}") >/dev/null 2>&1; then
-      sleep 0.25
-      return 0
     fi
     sleep 0.25
   done
