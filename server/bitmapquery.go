@@ -190,11 +190,11 @@ func (m *BitmapIndex) queryWithPriorIntersect(ctx context.Context, query *pb.Bit
 			}
 			values := make([]*big.Int, len(v.Values))
 			for i, v := range v.Values {
-				values[i] = new(big.Int).SetBytes(v)
+				values[i] = shared.BigIntFromWireBytes(v)
 			}
-			value := new(big.Int).SetBytes(v.Value)
-			begin := new(big.Int).SetBytes(v.Begin)
-			end := new(big.Int).SetBytes(v.End)
+			value := shared.BigIntFromWireBytes(v.Value)
+			begin := shared.BigIntFromWireBytes(v.Begin)
+			end := shared.BigIntFromWireBytes(v.End)
 
 			cacheKey := fmt.Sprintf("%s/%s/%d/%d", v.Index, v.Field, fromTime.UnixNano(), toTime.UnixNano())
 			bsi, bsiCacheHit := bsiQueryCache[cacheKey]

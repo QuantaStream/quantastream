@@ -123,6 +123,64 @@ func TestReadBSIInt64ValuesSafePathPreservesSignedValues(t *testing.T) {
 	}
 }
 
+func TestCompareBigValueSignedRangePreservesNegativeBounds(t *testing.T) {
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(1, big.NewInt(-1220432))
+	bsi.SetBigValue(2, big.NewInt(-655000))
+	bsi.SetBigValue(3, big.NewInt(1164219))
+
+	matches := bsi.CompareBigValue(0, roaring64.RANGE, big.NewInt(-1250000), big.NewInt(-660000), nil)
+	if got, want := matches.ToArray(), []uint64{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("signed range matches = %#v, want %#v", got, want)
+	}
+}
+
+func TestBitmapIndexQueryPreservesSignedBSIRangeBounds(t *testing.T) {
+	table, err := shared.LoadSchema("../tpc-h-benchmark/config", "part", nil)
+	if err != nil {
+		t.Fatalf("load part schema: %v", err)
+	}
+	bsi := roaring64.NewDefaultBSI()
+	bsi.SetBigValue(1, big.NewInt(-1220432))
+	bsi.SetBigValue(2, big.NewInt(-655000))
+	bsi.SetBigValue(3, big.NewInt(1164219))
+
+	index := &BitmapIndex{
+		Node: &Node{},
+		bsiCache: map[string]map[string]map[int64]*BSIBitmap{
+			"part": {
+				"p_size": {
+					time.Unix(0, 0).UnixNano(): {BSI: bsi},
+				},
+			},
+		},
+		tableCache: map[string]*shared.BasicTable{
+			"part": table,
+		},
+	}
+	query := &pb.BitmapQuery{Query: []*pb.QueryFragment{{
+		Id:        "signed-range",
+		Index:     "part",
+		Field:     "p_size",
+		Operation: pb.QueryFragment_UNION,
+		BsiOp:     pb.QueryFragment_RANGE,
+		Begin:     shared.BigIntToWireBytes(big.NewInt(-1250000)),
+		End:       shared.BigIntToWireBytes(big.NewInt(-660000)),
+	}}}
+
+	result, err := index.QueryWithFoundSet(context.Background(), query, "part", []uint64{1, 2, 3})
+	if err != nil {
+		t.Fatalf("QueryWithFoundSet() error = %v", err)
+	}
+	union := roaring64.NewBitmap()
+	if err := union.UnmarshalBinary(result.GetUnions()); err != nil {
+		t.Fatalf("unmarshal union: %v", err)
+	}
+	if got, want := union.ToArray(), []uint64{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("union rownums = %#v, want %#v", got, want)
+	}
+}
+
 func TestQueryPriorIntersectCandidatesSeedBSICompare(t *testing.T) {
 	seed := queryPriorIntersectCandidates{}
 	first := &pb.QueryFragment{

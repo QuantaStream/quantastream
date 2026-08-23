@@ -24,6 +24,41 @@ const (
 	YMDTimeFmt = "2006-01-02"
 )
 
+var signedBigIntWirePrefix = []byte{0, 1}
+
+// BigIntToWireBytes serializes a BSI operand while preserving signed values.
+//
+// Positive values intentionally retain the historical big.Int.Bytes encoding so
+// existing callers and wire payloads remain compatible. Negative values use a
+// sentinel prefix followed by the absolute-value bytes because big.Int.Bytes
+// stores magnitude only.
+func BigIntToWireBytes(value *big.Int) []byte {
+	if value == nil {
+		return nil
+	}
+	if value.Sign() >= 0 {
+		return value.Bytes()
+	}
+	abs := new(big.Int).Abs(value)
+	encoded := make([]byte, len(signedBigIntWirePrefix)+len(abs.Bytes()))
+	copy(encoded, signedBigIntWirePrefix)
+	copy(encoded[len(signedBigIntWirePrefix):], abs.Bytes())
+	return encoded
+}
+
+// BigIntFromWireBytes deserializes a BSI operand produced by BigIntToWireBytes.
+// It also accepts historical unsigned magnitude bytes.
+func BigIntFromWireBytes(data []byte) *big.Int {
+	if len(data) >= len(signedBigIntWirePrefix) &&
+		data[0] == signedBigIntWirePrefix[0] &&
+		data[1] == signedBigIntWirePrefix[1] {
+		value := new(big.Int).SetBytes(data[len(signedBigIntWirePrefix):])
+		value.Neg(value)
+		return value
+	}
+	return new(big.Int).SetBytes(data)
+}
+
 // QueryFragment - Atomic query predicate elements
 type QueryFragment struct {
 	Index     string     `yaml:"index"`
@@ -650,20 +685,20 @@ func (q *BitmapQuery) toProtoFrag(n *QueryFragment, fa *[]*pb.QueryFragment) str
 
 	values := make([][]byte, len(n.Values))
 	for i, v := range n.Values {
-		values[i] = v.Bytes()
+		values[i] = BigIntToWireBytes(v)
 	}
 
 	valueBytes := make([]byte, 0)
 	beginBytes := make([]byte, 0)
 	endBytes := make([]byte, 0)
 	if n.Value != nil {
-		valueBytes = n.Value.Bytes()
+		valueBytes = BigIntToWireBytes(n.Value)
 	}
 	if n.Begin != nil {
-		beginBytes = n.Begin.Bytes()
+		beginBytes = BigIntToWireBytes(n.Begin)
 	}
 	if n.End != nil {
-		endBytes = n.End.Bytes()
+		endBytes = BigIntToWireBytes(n.End)
 	}
 
 	f := &pb.QueryFragment{Index: n.Index, Field: n.Field, RowID: n.RowID, Id: id, ChildrenIds: childIds,
@@ -786,11 +821,11 @@ func FromProto(q *pb.BitmapQuery, dataMap map[string]*roaring64.Bitmap) *BitmapQ
 
 		values := make([]*big.Int, len(v.Values))
 		for i, v := range v.Values {
-			values[i] = new(big.Int).SetBytes(v)
+			values[i] = BigIntFromWireBytes(v)
 		}
-		value := new(big.Int).SetBytes(v.Value)
-		begin := new(big.Int).SetBytes(v.Begin)
-		end := new(big.Int).SetBytes(v.End)
+		value := BigIntFromWireBytes(v.Value)
+		begin := BigIntFromWireBytes(v.Begin)
+		end := BigIntFromWireBytes(v.End)
 		f := &QueryFragment{Index: v.Index, Field: v.Field, RowID: v.RowID, Value: value, End: end,
 			Begin: begin, Fk: v.Fk, Values: values, Operation: op, SamplePct: v.SamplePct, Negate: v.Negate,
 			ORContext: v.OrContext, NullCheck: v.NullCheck}

@@ -56,6 +56,34 @@ func TestBitmapQueryToProtoPreservesRangeEnd(t *testing.T) {
 	}
 }
 
+func TestBitmapQueryToProtoPreservesSignedBSIOperands(t *testing.T) {
+	query := NewBitmapQuery()
+	fragment := query.NewQueryFragment()
+	fragment.SetBSIRangePredicate("qrz_callsigns", "longitude", big.NewInt(-1250000), big.NewInt(-660000))
+	query.AddFragment(fragment)
+
+	proto := query.ToProto()
+	if len(proto.Query) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(proto.Query))
+	}
+	if got := BigIntFromWireBytes(proto.Query[0].Begin).Int64(); got != -1250000 {
+		t.Fatalf("begin = %d, want -1250000", got)
+	}
+	if got := BigIntFromWireBytes(proto.Query[0].End).Int64(); got != -660000 {
+		t.Fatalf("end = %d, want -660000", got)
+	}
+	roundTripped := FromProto(proto, nil)
+	if roundTripped.root == nil {
+		t.Fatal("round-trip root is nil")
+	}
+	if got := roundTripped.root.Begin.Int64(); got != -1250000 {
+		t.Fatalf("round-trip begin = %d, want -1250000", got)
+	}
+	if got := roundTripped.root.End.Int64(); got != -660000 {
+		t.Fatalf("round-trip end = %d, want -660000", got)
+	}
+}
+
 func TestIntermediateResultCountCanExceedCollapsedBitmapCardinality(t *testing.T) {
 	result := NewIntermediateResult("lineitem")
 	result.AddUnion(roaring64.BitmapOf(1, 2))
