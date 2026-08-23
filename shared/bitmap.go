@@ -2226,7 +2226,7 @@ func aggregateProjectionResponses(responses []*pb.ProjectionResponse) (map[strin
 
 			newBsi := roaring64.NewDefaultBSI()
 			if err := UnmarshalBSI(newBsi, v.Bitmaps); err != nil {
-				return nil, nil, fmt.Errorf("unmarshalling BSI projection results - %v", err)
+				return nil, nil, fmt.Errorf("unmarshalling BSI projection results field=%s %s - %v", v.Field, describeBSIPayload(v.Bitmaps), err)
 			}
 			bsiResults[v.Field] = append(bsi, newBsi)
 		}
@@ -2240,7 +2240,7 @@ func aggregateProjectionResponses(responses []*pb.ProjectionResponse) (map[strin
 				bm = make([]*roaring64.Bitmap, 0)
 			}
 			newBm := roaring64.NewBitmap()
-			if err := newBm.UnmarshalBinary(v.Bitmap); err != nil {
+			if err := UnmarshalBitmap(newBm, v.Bitmap); err != nil {
 				return nil, nil, fmt.Errorf("unmarshalling bitmap projection results - %v", err)
 			}
 			field[v.RowId] = append(bm, newBm)

@@ -2,6 +2,7 @@ package shared
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
@@ -42,18 +43,18 @@ func UnmarshalBSI(bsi *roaring64.BSI, data [][]byte) error {
 		return nil
 	}
 	if len(data) < 2 || !bytes.Equal(data[len(data)-1], bsiSignedBinaryMarker) {
-		return bsi.UnmarshalBinary(data)
+		return unmarshalRoaringBSI(bsi, data)
 	}
 	sign := roaring64.NewBitmap()
-	if err := sign.UnmarshalBinary(data[len(data)-2]); err != nil {
+	if err := UnmarshalBitmap(sign, data[len(data)-2]); err != nil {
 		return err
 	}
 	payload := data[:len(data)-2]
 	if sign.IsEmpty() {
-		return bsi.UnmarshalBinary(payload)
+		return unmarshalRoaringBSI(bsi, payload)
 	}
 	unsigned := roaring64.NewDefaultBSI()
-	if err := unsigned.UnmarshalBinary(payload); err != nil {
+	if err := unmarshalRoaringBSI(unsigned, payload); err != nil {
 		return err
 	}
 	valueBitCount := len(payload) - 1
@@ -74,4 +75,55 @@ func UnmarshalBSI(bsi *roaring64.BSI, data [][]byte) error {
 	}
 	*bsi = *rebuilt
 	return nil
+}
+
+func unmarshalRoaringBSI(bsi *roaring64.BSI, data [][]byte) (err error) {
+	if len(data) == 0 {
+		return nil
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("roaring BSI unmarshal failed: %v", recovered)
+		}
+	}()
+	return bsi.UnmarshalBinary(data)
+}
+
+func describeBSIPayload(data [][]byte) string {
+	marker := false
+	if len(data) > 0 {
+		marker = bytes.Equal(data[len(data)-1], bsiSignedBinaryMarker)
+	}
+	limit := len(data)
+	if limit > 10 {
+		limit = 10
+	}
+	summary := fmt.Sprintf("slices=%d marker=%t lengths=[", len(data), marker)
+	for i := 0; i < limit; i++ {
+		if i > 0 {
+			summary += ","
+		}
+		summary += fmt.Sprintf("%d", len(data[i]))
+	}
+	if limit < len(data) {
+		summary += ",..."
+	}
+	summary += "]"
+	return summary
+}
+
+// UnmarshalBitmap wraps roaring64 bitmap deserialization with the same panic
+// boundary used for BSI payloads. Roaring treats malformed byte slices as an
+// internal invariant violation in some paths, but remote projection payloads
+// must surface as regular errors instead of taking down the proxy process.
+func UnmarshalBitmap(bitmap *roaring64.Bitmap, data []byte) (err error) {
+	if bitmap == nil || len(data) == 0 {
+		return nil
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("roaring bitmap unmarshal failed: %v", recovered)
+		}
+	}()
+	return bitmap.UnmarshalBinary(data)
 }
