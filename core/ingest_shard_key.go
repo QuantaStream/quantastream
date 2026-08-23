@@ -117,7 +117,7 @@ func resolvePrimaryKeyIngestShardKey(table *Table, payload map[string]interface{
 		if field == "" {
 			continue
 		}
-		value, err := shared.GetPath(field, payload, false, false)
+		value, err := ingestShardKeyPayloadValue(field, payload)
 		if err != nil {
 			return IngestShardKeyResult{}, fmt.Errorf("ingest shard key primary-key field %q missing: %v", field, err)
 		}
@@ -136,6 +136,19 @@ func resolvePrimaryKeyIngestShardKey(table *Table, payload map[string]interface{
 		Mode:     IngestShardKeyPrimaryKey,
 		Fields:   resolvedFields,
 	}, nil
+}
+
+func ingestShardKeyPayloadValue(field string, payload map[string]interface{}) (interface{}, error) {
+	value, err := shared.GetPath(field, payload, false, false)
+	if err == nil {
+		return value, nil
+	}
+	if data, ok := payload["data"].(map[string]interface{}); ok {
+		if dataValue, dataErr := shared.GetPath(field, data, false, false); dataErr == nil {
+			return dataValue, nil
+		}
+	}
+	return nil, err
 }
 
 func canonicalIngestShardValue(value interface{}) (string, error) {

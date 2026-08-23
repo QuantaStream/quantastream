@@ -52,6 +52,24 @@ func TestResolveIngestShardKeyFallsBackToCompoundPrimaryKey(t *testing.T) {
 	require.Contains(t, result.ShardKey, "l_linenumber=int:1:2;")
 }
 
+func TestResolveIngestShardKeyUsesWrappedPayloadData(t *testing.T) {
+	result, err := ResolveIngestShardKey(IngestShardKeyRequest{
+		Table: ingestTableWithPrimaryKey("spots_flat", "spot_id"),
+		Payload: map[string]interface{}{
+			"type": "rbn_spot_flat",
+			"data": map[string]interface{}{
+				"spot_id": int64(7684299182663830675),
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, IngestShardKeyPrimaryKey, result.Mode)
+	require.Equal(t, []string{"spot_id"}, result.Fields)
+	require.Contains(t, result.ShardKey, "pk:spots_flat:")
+	require.Contains(t, result.ShardKey, "spot_id=int:")
+}
+
 func TestResolveIngestShardKeyReportsMissingPrimaryKeyField(t *testing.T) {
 	_, err := ResolveIngestShardKey(IngestShardKeyRequest{
 		Table:   ingestTableWithPrimaryKey("orders", "o_orderkey"),
