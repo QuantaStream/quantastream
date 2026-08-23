@@ -1675,6 +1675,9 @@ func (l QuantaIntermediateLowerer) lowerStringLexBSILikePredicate(predicate Pred
 	}
 	switch simpleLikePattern(label) {
 	case likePatternExact:
+		if field.Encoding.NeedsStringRemainderLookup() {
+			return QuantaQueryFragment{}, nil, false
+		}
 		return quantaIntermediateStringLexBSIComparisonFragment(quantaIntermediateLikeExactOp(op), field, value)
 	case likePatternPrefix:
 		prefix := strings.TrimSuffix(label, "%")
@@ -2192,7 +2195,7 @@ func quantaIntermediateStringLexBSILikeParts(predicate Predicate) (BinaryOp, Fie
 		return "", FieldRef{}, nil, false
 	}
 	field, ok := quantaIntermediateFieldExpr(binary.Left)
-	if !ok || field.Encoding.Kind != EncodingStringLexBSI || field.Encoding.NeedsStringRemainderLookup() || !quantaIntermediateValueExpr(binary.Right) {
+	if !ok || field.Encoding.Kind != EncodingStringLexBSI || !quantaIntermediateValueExpr(binary.Right) {
 		return "", FieldRef{}, nil, false
 	}
 	return binary.Op, field, binary.Right, true
