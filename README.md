@@ -11,6 +11,9 @@ For latest news and information, as well as benchmark results, please visit [qua
 The fastest way to try QuantaStream is the Linux AMD64 binary release bundle.
 It includes the single-node engine, admin tool, JSON loader, TPC-H loader,
 documentation, and example service files. This path does not require Go.
+The packaged `configuration/` directory is documentation and schema reference
+material; [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) creates a separate
+runtime schema directory for the first local smoke run.
 
 Use the source checkout path when you want to build from source, use the
 development startup scripts, run on macOS or another platform, or make code

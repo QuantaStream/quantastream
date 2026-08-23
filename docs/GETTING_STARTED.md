@@ -20,10 +20,40 @@ Verify the binaries:
 ./bin/qstream-stream-loader -version
 ```
 
-## 2. Prepare Static Security Files
+## 2. Prepare A Runtime Schema And Security Files
+
+The packaged `configuration/` directory contains configuration documentation and
+reference material. Runtime table schemas should live in a separate directory
+that you own for the deployment. This runbook uses `./runtime/config`.
 
 ```bash
-mkdir -p data backups auth
+mkdir -p data backups auth runtime/config/release_smoke
+
+cat > ./runtime/config/release_smoke/schema.yaml <<'YAML'
+tableName: release_smoke
+selector: type = "release_smoke"
+primaryKey: id
+attributes:
+- sourceName: /id
+  fieldName: id
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "0"
+  type: String
+- sourceName: /name
+  fieldName: name
+  mappingStrategy: StringEnum
+  type: String
+- sourceName: /score
+  fieldName: score
+  mappingStrategy: IntBSI
+  type: Integer
+- sourceName: /latitude
+  fieldName: latitude
+  mappingStrategy: FloatScaleBSI
+  type: Float
+  scale: 4
+YAML
 
 QUANTASTREAM_AUTH_PASSWORD=root \
 ./bin/qstream-admin auth upsert \
@@ -54,7 +84,7 @@ password and service-secret mechanism outside local smoke tests.
 mkdir -p data backups
 
 ./bin/quantastream \
-  -config-dir ./configuration \
+  -config-dir ./runtime/config \
   -data-dir ./data \
   -wal-path ./data/storage.wal \
   -bind 127.0.0.1 \
@@ -102,7 +132,7 @@ Run a local preflight over the same paths and endpoints:
 ```bash
 ./bin/qstream-admin doctor local \
   --data-dir ./data \
-  --config-dir ./configuration \
+  --config-dir ./runtime/config \
   --wal-path ./data/storage.wal \
   --auth-account-file ./auth/accounts.yaml \
   --access-policy-file ./auth/access-policy.yaml \
@@ -130,20 +160,40 @@ endpoint exposed by the single-node engine.
 ```bash
 ./bin/qstream-loader \
   -listen 127.0.0.1:8088 \
-  -config-dir ./configuration \
+  -config-dir ./runtime/config \
   -database quanta \
+  -tables release_smoke \
   -connection-mode standard-native \
   -native-grpc-addr 127.0.0.1:4100
 ```
 
-## 7. Send A Streaming Smoke Batch
+## 7. Send A JSON Smoke Batch
 
 ```bash
-./bin/qstream-stream-loader \
-  -target http://127.0.0.1:8088/ingest/json \
-  -orders 10 \
-  -lineitems 4 \
-  -batch-size 25
+curl -fsS http://127.0.0.1:8088/ingest/json \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "events": [
+      {
+        "mode": "stream",
+        "event_id": "release-smoke-row-1",
+        "source": "getting-started",
+        "event_time": "2026-08-21T00:00:00Z",
+        "source_offset": "getting-started:1",
+        "shard_key": "release-smoke-row-1",
+        "payload": {
+          "type": "release_smoke",
+          "id": "release-smoke-row-1",
+          "name": "Release Smoke",
+          "score": 1,
+          "latitude": 9.9281
+        }
+      }
+    ]
+  }'
+
+mysql -h 127.0.0.1 -P 4000 -u root -proot -D quanta \
+  -e "select id, name, score, latitude from release_smoke;"
 ```
 
 For TPC-H experiments, use the `qstream-tpch-loader` binary with the TPC-H
@@ -203,7 +253,7 @@ They are templates, not installers:
 ```bash
 sudo useradd --system --home /var/lib/quantastream --shell /usr/sbin/nologin quantastream
 sudo install -d -o quantastream -g quantastream /etc/quantastream /var/lib/quantastream
-sudo cp -R ./configuration /etc/quantastream/configuration
+sudo cp -R ./runtime/config /etc/quantastream/configuration
 sudo cp ./auth/accounts.yaml /etc/quantastream/accounts.yaml
 sudo cp ./auth/access-policy.yaml /etc/quantastream/access-policy.yaml
 sudo cp ./examples/systemd/qstream-single-node.env /etc/quantastream/qstream-single-node.env
