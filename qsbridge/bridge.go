@@ -3370,6 +3370,9 @@ func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicateP
 	if placement == PredicateResidualScan && stringEnumPredicateCanUseBitmapPushdown(expr) {
 		return PredicatePushdown
 	}
+	if placement == PredicateResidualScan && stringLexBSIPredicateCanUseBitmapPushdown(expr) {
+		return PredicatePushdown
+	}
 	if placement != PredicatePushdown {
 		return placement
 	}
@@ -3390,6 +3393,31 @@ func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicateP
 func stringEnumPredicateCanUseBitmapPushdown(expr Expr) bool {
 	capability, ok := StringEnumPredicateCapability(Predicate{Expr: expr, Placement: PredicatePushdown})
 	return ok && capability != CapabilityStringEnumContainsLike
+}
+
+func stringLexBSIPredicateCanUseBitmapPushdown(expr Expr) bool {
+	binary, ok := asBinaryExpr(expr)
+	if !ok || (binary.Op != BinaryOpLike && binary.Op != BinaryOpNotLike) {
+		return false
+	}
+	field, literal, ok := fieldLiteralPair(binary)
+	if !ok || field.Encoding.Kind != EncodingStringLexBSI || field.Encoding.NeedsStringRemainderLookup() || literal.Kind != ValueString {
+		return false
+	}
+	pattern, ok := literal.Value.(string)
+	if !ok {
+		return false
+	}
+	switch simpleLikePattern(pattern) {
+	case likePatternExact:
+		return true
+	case likePatternPrefix:
+		prefix := strings.TrimSuffix(pattern, "%")
+		_, _, ok := quantaIntermediateStringLexBSIPrefixRange(prefix, field.Encoding.PrefixLength)
+		return ok
+	default:
+		return false
+	}
 }
 
 func stringEnumPredicateUsesBitmapDifference(expr Expr) bool {

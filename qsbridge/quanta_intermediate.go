@@ -1338,6 +1338,9 @@ func (l QuantaIntermediateLowerer) lowerPredicate(predicate Predicate, parameter
 	if fragment, diagnostics, ok := l.lowerBetweenPredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
 	}
+	if fragment, diagnostics, ok := l.lowerStringLexBSILikePredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
+		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
+	}
 	if fragment, diagnostics, ok := l.lowerStringEnumPredicate(predicate, parameters); ok || diagnostics.BlocksNative() {
 		return quantaIntermediateApplyCombinator(fragment, predicate), diagnostics, ok
 	}
@@ -1655,6 +1658,91 @@ func quantaIntermediateStringLexBSIComparisonFragment(op BinaryOp, field FieldRe
 		BSIOp:     QuantaBSIOpEQ,
 		Value:     quantaIntermediateStringLexBSIValue(text, field.Encoding.PrefixLength),
 	}, nil, true
+}
+
+func (l QuantaIntermediateLowerer) lowerStringLexBSILikePredicate(predicate Predicate, parameters ParameterBindingSet) (QuantaQueryFragment, DiagnosticSet, bool) {
+	op, field, valueExpr, ok := quantaIntermediateStringLexBSILikeParts(predicate)
+	if !ok {
+		return QuantaQueryFragment{}, nil, false
+	}
+	value, diagnostics, ok := quantaIntermediateValue(valueExpr, parameters)
+	if !ok {
+		return QuantaQueryFragment{}, diagnostics, false
+	}
+	label, ok := value.Value.(string)
+	if value.Kind != ValueString || !ok {
+		return QuantaQueryFragment{}, quantaIntermediateDiagnostics("StringLexBSI LIKE predicates require string values"), false
+	}
+	switch simpleLikePattern(label) {
+	case likePatternExact:
+		return quantaIntermediateStringLexBSIComparisonFragment(quantaIntermediateLikeExactOp(op), field, value)
+	case likePatternPrefix:
+		prefix := strings.TrimSuffix(label, "%")
+		begin, end, ok := quantaIntermediateStringLexBSIPrefixRange(prefix, field.Encoding.PrefixLength)
+		if !ok {
+			return QuantaQueryFragment{}, nil, false
+		}
+		operation := QuantaOperationIntersect
+		if op == BinaryOpNotLike {
+			operation = QuantaOperationDifference
+		}
+		return QuantaQueryFragment{
+			Index:           field.Table.Table,
+			Role:            quantaIntermediateTableRole(field.Table),
+			Field:           quantaIntermediateFieldName(field),
+			Operation:       operation,
+			BSIOp:           QuantaBSIOpRange,
+			Begin:           begin,
+			End:             end,
+			BeginLiteral:    Literal(ValueString, prefix),
+			EndLiteral:      Literal(ValueString, prefix+"\uffff"),
+			HasLiteralRange: true,
+		}, nil, true
+	default:
+		return QuantaQueryFragment{}, nil, false
+	}
+}
+
+func quantaIntermediateLikeExactOp(op BinaryOp) BinaryOp {
+	if op == BinaryOpNotLike {
+		return BinaryOpNotEqual
+	}
+	return BinaryOpEqual
+}
+
+func quantaIntermediateStringLexBSIPrefixRange(prefix string, prefixLength int) (*big.Int, *big.Int, bool) {
+	if prefix == "" || prefixLength <= 0 || len(prefix) > prefixLength {
+		return nil, nil, false
+	}
+	begin := quantaIntermediateStringLexBSIValue(prefix, prefixLength)
+	upperBytes := make([]byte, prefixLength)
+	copy(upperBytes, prefix)
+	if quantaIntermediateIncrementLexPrefix(upperBytes[:len(prefix)]) {
+		return begin, new(big.Int).Sub(new(big.Int).SetBytes(upperBytes), big.NewInt(1)), true
+	}
+	return begin, quantaIntermediateStringLexBSIMaxValue(prefixLength), true
+}
+
+func quantaIntermediateIncrementLexPrefix(value []byte) bool {
+	for i := len(value) - 1; i >= 0; i-- {
+		if value[i] == 0xff {
+			continue
+		}
+		value[i]++
+		for j := i + 1; j < len(value); j++ {
+			value[j] = 0
+		}
+		return true
+	}
+	return false
+}
+
+func quantaIntermediateStringLexBSIMaxValue(prefixLength int) *big.Int {
+	if prefixLength <= 0 {
+		return nil
+	}
+	max := new(big.Int).Lsh(big.NewInt(1), uint(prefixLength*8))
+	return max.Sub(max, big.NewInt(1))
 }
 
 func quantaIntermediateStringLexBSIValue(value string, prefixLength int) *big.Int {
@@ -2093,6 +2181,18 @@ func quantaIntermediateStringEnumLikeParts(predicate Predicate) (BinaryOp, Field
 	}
 	field, ok := quantaIntermediateFieldExpr(binary.Left)
 	if !ok || field.Index != IndexStringEnum || !quantaIntermediateValueExpr(binary.Right) {
+		return "", FieldRef{}, nil, false
+	}
+	return binary.Op, field, binary.Right, true
+}
+
+func quantaIntermediateStringLexBSILikeParts(predicate Predicate) (BinaryOp, FieldRef, Expr, bool) {
+	binary, ok := quantaIntermediateBinaryExpr(predicate.Expr)
+	if !ok || (binary.Op != BinaryOpLike && binary.Op != BinaryOpNotLike) {
+		return "", FieldRef{}, nil, false
+	}
+	field, ok := quantaIntermediateFieldExpr(binary.Left)
+	if !ok || field.Encoding.Kind != EncodingStringLexBSI || field.Encoding.NeedsStringRemainderLookup() || !quantaIntermediateValueExpr(binary.Right) {
 		return "", FieldRef{}, nil, false
 	}
 	return binary.Op, field, binary.Right, true

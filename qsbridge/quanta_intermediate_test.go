@@ -1547,6 +1547,29 @@ func TestQuantaIntermediateLowererLowersStringLexEqualityPredicate(t *testing.T)
 	}
 }
 
+func TestQuantaIntermediateLowererLowersStringLexPrefixLikeSQL(t *testing.T) {
+	service := simpleRunnerPlanningService()
+	_, request := service.PrepareExecutionRequest(
+		PlanRequest{SQL: "select c.c_custkey as customer_id from customer as c where c.c_name like 'An%'"},
+		ExecutionOptions{},
+	)
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerExecutionRequest(request)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("lower diagnostics: %#v", diagnostics)
+	}
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1", len(intermediate.Fragments))
+	}
+	fragment := intermediate.Fragments[0]
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want StringLexBSI prefix RANGE", fragment)
+	}
+	if fragment.Begin == nil || fragment.End == nil || fragment.Begin.Cmp(fragment.End) > 0 {
+		t.Fatalf("range = %v..%v, want valid prefix bounds", fragment.Begin, fragment.End)
+	}
+}
+
 func TestQuantaIntermediateLowererLowersStringLexInequalityPredicate(t *testing.T) {
 	service := simpleRunnerPlanningService()
 	_, request := service.PrepareExecutionRequest(
@@ -1584,6 +1607,62 @@ func TestQuantaIntermediateLowererLowersStringLexBSIEqualityPredicate(t *testing
 	}
 	if want := quantaIntermediateStringLexBSIValue("Brand#45", 10); fragment.Value.Cmp(want) != 0 {
 		t.Fatalf("value = %v, want lex value %v", fragment.Value, want)
+	}
+}
+
+func TestQuantaIntermediateLowererLowersStringLexBSIPrefixLikePredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "spots_flat"},
+		Name:     "dx_call",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 16, MaxLength: 16}),
+	}
+	predicate := Predicate{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "N7%"))}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSILikePredicate(predicate, ParameterBindingSet{})
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want StringLexBSI RANGE intersect", fragment)
+	}
+	wantBegin := quantaIntermediateStringLexBSIValue("N7", 16)
+	wantEnd := new(big.Int).Sub(quantaIntermediateStringLexBSIValue("N8", 16), big.NewInt(1))
+	if fragment.Begin.Cmp(wantBegin) != 0 || fragment.End.Cmp(wantEnd) != 0 {
+		t.Fatalf("range = %v..%v, want %v..%v", fragment.Begin, fragment.End, wantBegin, wantEnd)
+	}
+}
+
+func TestQuantaIntermediateLowererLowersStringLexBSINotPrefixLikePredicate(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "spots_flat"},
+		Name:     "dx_call",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 16, MaxLength: 16}),
+	}
+	predicate := Predicate{Expr: Binary(BinaryOpNotLike, Field(field), Literal(ValueString, "N7%"))}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSILikePredicate(predicate, ParameterBindingSet{})
+	if !ok || diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v ok=%v", diagnostics, ok)
+	}
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationDifference {
+		t.Fatalf("fragment = %#v, want StringLexBSI RANGE difference", fragment)
+	}
+}
+
+func TestQuantaIntermediateLowererLeavesStringLexBSIRemainderPrefixLikeResidual(t *testing.T) {
+	field := FieldRef{
+		Table:    TableInstance{Table: "lineitem"},
+		Name:     "l_comment",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 44}),
+	}
+	predicate := Predicate{Expr: Binary(BinaryOpLike, Field(field), Literal(ValueString, "pending%"))}
+
+	fragment, diagnostics, ok := QuantaIntermediateLowerer{}.lowerStringLexBSILikePredicate(predicate, ParameterBindingSet{})
+	if ok || diagnostics.BlocksNative() || fragment.BSIOp != "" {
+		t.Fatalf("fragment = %#v diagnostics = %#v ok=%v, want residual", fragment, diagnostics, ok)
 	}
 }
 
