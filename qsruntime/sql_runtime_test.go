@@ -1185,6 +1185,7 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	result, err := runtime.ExecuteSQL(context.Background(), `
 		select @@version as version_value,
 		       @@version_comment as version_comment,
+		       @@version_compile_os as version_compile_os,
 		       @@autocommit as autocommit_value,
 		       @@sql_mode as sql_mode_value,
 		       @@time_zone as time_zone_value
@@ -1202,11 +1203,11 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 5 {
-		t.Fatalf("rows = %#v, want one five-column row", chunk.Rows)
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 6 {
+		t.Fatalf("rows = %#v, want one six-column row", chunk.Rows)
 	}
 	row := chunk.Rows[0]
-	if row[0].Value != version.MySQLVersion() || row[1].Value != version.MySQLVersionComment() || row[2].Value != int64(0) || row[3].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" || row[4].Value != "+00:00" {
+	if row[0].Value != version.MySQLVersion() || row[1].Value != version.MySQLVersionComment() || row[2].Value != "Linux" || row[3].Value != int64(0) || row[4].Value != "STRICT_TRANS_TABLES,NO_ZERO_DATE" || row[5].Value != "+00:00" {
 		t.Fatalf("system variable cells = %#v", row)
 	}
 }

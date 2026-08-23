@@ -612,18 +612,34 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 		return qsbridge.Literal(qsbridge.ValueString, version.MySQLVersion()), true
 	case "version_comment":
 		return qsbridge.Literal(qsbridge.ValueString, version.MySQLVersionComment()), true
+	case "version_compile_machine":
+		return qsbridge.Literal(qsbridge.ValueString, "x86_64"), true
+	case "version_compile_os":
+		return qsbridge.Literal(qsbridge.ValueString, "Linux"), true
+	case "license":
+		return qsbridge.Literal(qsbridge.ValueString, "Apache-2.0"), true
+	case "protocol_version":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(10)), true
+	case "lower_case_table_names":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(0)), true
 	case "autocommit":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
-	case "character_set_client", "character_set_connection", "character_set_results":
+	case "character_set_client", "character_set_connection", "character_set_results", "character_set_server":
 		return qsbridge.Literal(qsbridge.ValueString, "utf8mb4"), true
-	case "collation_connection":
+	case "collation_connection", "collation_server":
 		return qsbridge.Literal(qsbridge.ValueString, "utf8mb4_0900_ai_ci"), true
+	case "performance_schema":
+		return qsbridge.Literal(qsbridge.ValueString, "ON"), true
 	case "sql_mode":
 		return qsbridge.Literal(qsbridge.ValueString, strings.Join(sqlModeStrings(r.Session.SQLModes), ",")), true
+	case "system_time_zone":
+		return qsbridge.Literal(qsbridge.ValueString, "UTC"), true
 	case "time_zone":
 		return qsbridge.Literal(qsbridge.ValueString, runtimeSessionTimeZone(r.Session)), true
 	case "max_allowed_packet":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(67108864)), true
+	case "offline_mode", "super_read_only":
+		return qsbridge.Literal(qsbridge.ValueString, "OFF"), true
 	default:
 		return qsbridge.Literal(qsbridge.ValueString, ""), true
 	}

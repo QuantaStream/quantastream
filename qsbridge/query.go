@@ -470,9 +470,15 @@ func projectionColumnName(column ProjectionColumn) string {
 			return expr.Ref.Name
 		}
 	case CallExpr:
+		if name, ok := systemVariableProjectionName(expr); ok {
+			return name
+		}
 		return expr.Name
 	case *CallExpr:
 		if expr != nil {
+			if name, ok := systemVariableProjectionName(*expr); ok {
+				return name
+			}
 			return expr.Name
 		}
 	case AggregateRefExpr:
@@ -483,6 +489,27 @@ func projectionColumnName(column ProjectionColumn) string {
 		}
 	}
 	return ""
+}
+
+func systemVariableProjectionName(expr CallExpr) (string, bool) {
+	if expr.Name != "qs_session_variable" || len(expr.Args) != 1 {
+		return "", false
+	}
+	literal, ok := expr.Args[0].(LiteralExpr)
+	if !ok {
+		if pointer, pointerOK := expr.Args[0].(*LiteralExpr); pointerOK && pointer != nil {
+			literal = *pointer
+			ok = true
+		}
+	}
+	if !ok || literal.Kind != ValueString {
+		return "", false
+	}
+	name, ok := literal.Value.(string)
+	if !ok || name == "" {
+		return "", false
+	}
+	return "@@" + name, true
 }
 
 // projectionColumnType returns explicit projection metadata or infers it from the expression.

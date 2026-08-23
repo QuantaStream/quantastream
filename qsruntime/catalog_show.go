@@ -585,8 +585,8 @@ func (r SQLRuntime) showVariablesRuntimeResult(request qsbridge.ExecutionRequest
 	rows := r.showVariableRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
-		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
-		describeProjectionVector("value", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
 	}
 	for i, row := range rows {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)
@@ -655,8 +655,8 @@ func showStatusRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 	rows := showStatusRows(catalog.Pattern, catalog.Patterns)
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := []qsbridge.QuantaProjectionVector{
-		describeProjectionVector("variable_name", qsbridge.DataTypeString, len(rows)),
-		describeProjectionVector("value", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Variable_name", qsbridge.DataTypeString, len(rows)),
+		describeProjectionVector("Value", qsbridge.DataTypeString, len(rows)),
 	}
 	for i, row := range rows {
 		rownums[i] = qsbridge.QuantaRownum(i + 1)

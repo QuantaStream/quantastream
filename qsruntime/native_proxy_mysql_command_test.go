@@ -1,6 +1,7 @@
 package qsruntime
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"strings"
@@ -344,6 +345,48 @@ func TestNativeProxyFrontDoorHandlesWorkbenchPerformanceSchemaPollsAtProtocolBou
 		}
 		if response.Packets[0].Payload[0] == 0 || response.Packets[len(response.Packets)-1].Payload[0] != 0xfe {
 			t.Fatalf("packets for %q = %#v", sql, response.Packets)
+		}
+	}
+}
+
+func TestNativeProxyFrontDoorPreservesWorkbenchMetadataColumnLabels(t *testing.T) {
+	frontDoor := NewNativeProxyFrontDoor(NativeProxyRuntime{Runtime: newTestSQLRuntime(t)}, NativeProxyFrontDoorConfig{})
+
+	tests := []struct {
+		sql        string
+		columnDefs []string
+	}{
+		{
+			sql:        "show variables like 'version'",
+			columnDefs: []string{"Variable_name", "Value"},
+		},
+		{
+			sql:        "show status like 'Threads_connected'",
+			columnDefs: []string{"Variable_name", "Value"},
+		},
+		{
+			sql:        "select @@version, @@version_comment",
+			columnDefs: []string{"@@version", "@@version_comment"},
+		},
+	}
+
+	for _, test := range tests {
+		response, err := frontDoor.HandleMySQLCommand(
+			context.Background(),
+			qsmysql.Command{Kind: qsmysql.CommandKindQuery, SQL: test.sql, Database: "quanta"},
+			qsbridge.ExecutionOptions{},
+		)
+		if err != nil {
+			t.Fatalf("HandleMySQLCommand(%q) failed: %v", test.sql, err)
+		}
+		if response.Kind != qsmysql.CommandResponseQuery || len(response.Packets) < len(test.columnDefs)+3 {
+			t.Fatalf("response for %q = %#v, want query packets", test.sql, response)
+		}
+		for i, columnName := range test.columnDefs {
+			payload := response.Packets[i+1].Payload
+			if !bytes.Contains(payload, []byte(columnName)) {
+				t.Fatalf("column %d payload for %q = %q, want label %q", i, test.sql, payload, columnName)
+			}
 		}
 	}
 }
