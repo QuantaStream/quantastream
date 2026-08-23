@@ -3,6 +3,7 @@ package qsmysql
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 )
@@ -37,19 +38,31 @@ type Authenticator interface {
 }
 
 // PermissiveAuthenticator accepts every syntactically valid handshake response.
-type PermissiveAuthenticator struct{}
+type PermissiveAuthenticator struct {
+	DefaultDatabase string
+}
 
 // Authenticate accepts the request while preserving the requested session metadata.
-func (PermissiveAuthenticator) Authenticate(ctx context.Context, request AuthRequest) (AuthDecision, error) {
+func (a PermissiveAuthenticator) Authenticate(ctx context.Context, request AuthRequest) (AuthDecision, error) {
 	if err := ctx.Err(); err != nil {
 		return AuthDecision{}, err
 	}
+	database := authDefaultDatabase(request, a.DefaultDatabase)
 	return AuthDecision{
 		Accepted:       true,
 		Username:       request.Username,
-		Database:       request.Database,
+		Database:       database,
 		AuthPluginName: request.AuthPluginName,
 	}, nil
+}
+
+func isMySQLAuthPluginName(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case cachingSHA2PasswordPluginName, mysqlNativePasswordPluginName, mysqlClearPasswordPluginName:
+		return true
+	default:
+		return false
+	}
 }
 
 // RejectingAuthenticator is a small test/dev implementation that always rejects.

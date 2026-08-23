@@ -42,7 +42,7 @@ func (c AuthConfig) Authenticator(defaultDatabase string) (Authenticator, error)
 	c = c.WithDefaults(defaultDatabase)
 	switch c.Mode {
 	case AuthModePermissive:
-		return PermissiveAuthenticator{}, nil
+		return PermissiveAuthenticator{DefaultDatabase: c.Database}, nil
 	case AuthModeStatic:
 		if strings.TrimSpace(c.AccountFile) != "" {
 			accounts, err := LoadStaticAccountFile(c.AccountFile)

@@ -14,6 +14,10 @@ func TestAuthConfigDefaultsToPermissive(t *testing.T) {
 	if _, ok := authenticator.(PermissiveAuthenticator); !ok {
 		t.Fatalf("authenticator = %T, want PermissiveAuthenticator", authenticator)
 	}
+	permissive := authenticator.(PermissiveAuthenticator)
+	if permissive.DefaultDatabase != "quanta" {
+		t.Fatalf("permissive default database = %q, want quanta", permissive.DefaultDatabase)
+	}
 	if got := (AuthConfig{}).SummaryMode("quanta"); got != AuthModePermissive {
 		t.Fatalf("SummaryMode = %q, want permissive", got)
 	}

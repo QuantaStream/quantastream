@@ -60,10 +60,7 @@ func (a StaticAuthenticator) Authenticate(ctx context.Context, request AuthReque
 	if !staticAuthPasswordMatches(account, request) {
 		return staticAuthDenied(request, fmt.Sprintf("access denied for user %q", request.Username)), nil
 	}
-	database := request.Database
-	if database == "" {
-		database = account.DefaultDatabase
-	}
+	database := authDefaultDatabase(request, account.DefaultDatabase)
 	return AuthDecision{
 		Accepted:       true,
 		Username:       request.Username,
@@ -93,6 +90,21 @@ func staticAuthDenied(request AuthRequest, message string) AuthDecision {
 			Message:    message,
 		},
 	}
+}
+
+func authDefaultDatabase(request AuthRequest, defaultDatabase string) string {
+	database := strings.TrimSpace(request.Database)
+	defaultDatabase = strings.TrimSpace(defaultDatabase)
+	if defaultDatabase == "" {
+		return database
+	}
+	if database == "" {
+		return defaultDatabase
+	}
+	if strings.EqualFold(database, strings.TrimSpace(request.AuthPluginName)) || isMySQLAuthPluginName(database) {
+		return defaultDatabase
+	}
+	return database
 }
 
 func staticAuthPasswordMatches(account StaticAccount, request AuthRequest) bool {

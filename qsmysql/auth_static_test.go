@@ -33,6 +33,28 @@ func TestStaticAuthenticatorAcceptsCachingSHA2Password(t *testing.T) {
 	}
 }
 
+func TestStaticAuthenticatorTreatsAuthPluginDatabaseAsMissing(t *testing.T) {
+	seed := []byte("12345678901234567890")
+	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
+		Username:        "guy",
+		Password:        "secret",
+		DefaultDatabase: "quanta",
+	}}}
+	decision, err := authenticator.Authenticate(context.Background(), AuthRequest{
+		Username:       "guy",
+		Database:       cachingSHA2PasswordPluginName,
+		AuthPluginName: cachingSHA2PasswordPluginName,
+		AuthPluginData: seed,
+		AuthResponse:   cachingSHA2PasswordToken(seed, "secret"),
+	})
+	if err != nil {
+		t.Fatalf("Authenticate failed: %v", err)
+	}
+	if !decision.Accepted || decision.Database != "quanta" {
+		t.Fatalf("decision = %#v, want accepted default quanta database", decision)
+	}
+}
+
 func TestStaticAuthenticatorAcceptsCachingSHA2VerifierWithoutCleartextPassword(t *testing.T) {
 	seed := []byte("12345678901234567890")
 	authenticator := StaticAuthenticator{Accounts: []StaticAccount{{
