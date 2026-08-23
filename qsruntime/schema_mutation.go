@@ -1568,7 +1568,7 @@ func createTableAsSelectMappingStrategy(column qsbridge.FieldRef) string {
 	case qsbridge.DataTypeString, qsbridge.DataTypeBool:
 		return "StringEnum"
 	case qsbridge.DataTypeTime:
-		return "SysMillisBSI"
+		return "TimestampBSI"
 	}
 	legacy := strings.TrimSpace(column.Encoding.LegacyName)
 	if legacy != "" {

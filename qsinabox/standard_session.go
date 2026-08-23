@@ -272,7 +272,12 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 
 func standardSchemaMutationNeedsSyntheticHandle(kind qsbridge.MutationKind) bool {
 	switch kind {
-	case qsbridge.MutationCreateTable, qsbridge.MutationCreateView, qsbridge.MutationDropView:
+	case qsbridge.MutationCreateTable,
+		qsbridge.MutationDropTable,
+		qsbridge.MutationAlterTableAddPrimaryKey,
+		qsbridge.MutationAlterTableAddForeignKey,
+		qsbridge.MutationCreateView,
+		qsbridge.MutationDropView:
 		return true
 	default:
 		return false

@@ -1611,6 +1611,14 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 		t.Fatalf("sample should not be loaded before CREATE TABLE activates the manifest entry")
 	}
 
+	dropMissingResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "drop table if exists missing_sample", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("DROP TABLE IF EXISTS missing error = %v", err)
+	}
+	if dropMissingResult.Diagnostics.BlocksNative() || dropMissingResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("DROP TABLE IF EXISTS missing diagnostics = %#v runtime=%#v", dropMissingResult.Diagnostics, dropMissingResult.Runtime.Diagnostics)
+	}
+
 	createResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "create table sample", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("CREATE TABLE error = %v", err)

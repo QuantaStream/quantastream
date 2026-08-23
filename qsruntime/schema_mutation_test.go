@@ -1089,8 +1089,8 @@ func TestCreateTableAsSelectSchemaFromMutationUsesConservativeMapperDefaults(t *
 	if got := table.Attributes[2]; got.MappingStrategy != "FloatScaleBSI" || got.Scale != 4 {
 		t.Fatalf("revenue attr = %#v, want FloatScaleBSI scale 4", got)
 	}
-	if got := table.Attributes[3]; got.MappingStrategy != "SysMillisBSI" || got.MapperConfig["granularity"] != "millisecond" {
-		t.Fatalf("created_at attr = %#v, want SysMillisBSI millisecond", got)
+	if got := table.Attributes[3]; got.MappingStrategy != "TimestampBSI" || got.MapperConfig["granularity"] != "millisecond" {
+		t.Fatalf("created_at attr = %#v, want TimestampBSI millisecond", got)
 	}
 }
 
