@@ -22,14 +22,16 @@ changes. Go must be installed before using the source workflow.
 Recommended binary download path:
 
 ```bash
-gh release download <version> \
+QS_VERSION=0.1.0-rc8
+
+gh release download "v${QS_VERSION}" \
   --repo QuantaStream/quantastream \
-  --pattern 'qstream-<version>-linux-amd64.tar.gz' \
+  --pattern "qstream-${QS_VERSION}-linux-amd64.tar.gz" \
   --pattern SHA256SUMS
 
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf qstream-<version>-linux-amd64.tar.gz
-cd qstream-<version>-linux-amd64
+tar -xzf "qstream-${QS_VERSION}-linux-amd64.tar.gz"
+cd "qstream-${QS_VERSION}-linux-amd64"
 ```
 
 The `gh` command downloads the release assets from GitHub. The accompanying
@@ -40,15 +42,17 @@ If you do not have the GitHub CLI installed, open the
 [GitHub Releases](https://github.com/QuantaStream/quantastream/releases) page
 in a browser and download both files manually:
 
-- `qstream-<version>-linux-amd64.tar.gz`
+- `qstream-0.1.0-rc8-linux-amd64.tar.gz`
 - `SHA256SUMS`
 
 Then run the same verification and unpack commands:
 
 ```bash
+QS_VERSION=0.1.0-rc8
+
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf qstream-<version>-linux-amd64.tar.gz
-cd qstream-<version>-linux-amd64
+tar -xzf "qstream-${QS_VERSION}-linux-amd64.tar.gz"
+cd "qstream-${QS_VERSION}-linux-amd64"
 ```
 
 For source builds and development scripts:

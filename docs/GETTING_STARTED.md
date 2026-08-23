@@ -17,6 +17,9 @@ archive="$(ls -1 qstream-*-linux-amd64.tar.gz | tail -n 1)"
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "$archive"
 cd "$(tar -tzf "$archive" | sed -n '1s#/.*##p')"
+QSTREAM_HOME="$PWD"
+
+echo "Using QStream bundle at: $QSTREAM_HOME"
 
 ./bin/quantastream -version
 ./bin/qstream-admin version
@@ -32,8 +35,16 @@ local data directory:
 rm -rf ./data
 
 ./bin/qstream-admin backup restore \
-  --source file://$PWD/samples/tpch-sf-0.01/backup \
+  --source "file://${QSTREAM_HOME}/samples/tpch-sf-0.01/backup" \
   --data-dir ./data
+```
+
+`QSTREAM_HOME` is set in step 1 to the unpacked release directory. If you open
+a new terminal, return to that directory and set it again:
+
+```bash
+cd ~/work/qstream-0.1.0-rc8-linux-amd64
+QSTREAM_HOME="$PWD"
 ```
 
 ## 3. Start QuantaStream
