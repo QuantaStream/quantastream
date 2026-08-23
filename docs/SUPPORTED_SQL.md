@@ -144,6 +144,11 @@ Searchable text fields use two durable artifacts:
 Those artifacts are part of the QuantaStream storage model and participate in
 backup/restore through the local storage backup manifest.
 
+Deployment support: text-search predicates are covered in distributed/native
+cluster paths. The single-node standard endpoint supports the same schema model,
+but local text-search execution is not enabled until the standard-mode
+StringSearch helper is mounted.
+
 Covered syntax:
 
 - one field inside `MATCH(...)`;

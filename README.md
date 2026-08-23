@@ -10,10 +10,10 @@ For latest news and information, as well as benchmark results, please visit [qua
 
 The fastest way to try QuantaStream is the Linux AMD64 binary release bundle.
 It includes the single-node engine, admin tool, JSON loader, TPC-H loader,
-documentation, and example service files. This path does not require Go.
-The packaged `configuration/` directory is documentation and schema reference
-material; [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) creates a separate
-runtime schema directory for the first local smoke run.
+documentation, example service files, and a small TPC-H SF0.01 sample backup.
+This path does not require Go. The packaged `configuration/` directory is
+documentation and schema reference material; the first runnable sample lives
+under `samples/tpch-sf-0.01/`.
 
 Use the source checkout path when you want to build from source, use the
 development startup scripts, run on macOS or another platform, or make code
@@ -192,6 +192,7 @@ Useful starting points:
 - [TPC-H Validation](docs/TPCH.md)
 - [TPC-H Benchmark Notes](docs/TPCH_BENCHMARK_NOTES.md)
 - [Deployment](docs/DEPLOYMENT.md)
+- [JSON Loader Tutorial](docs/JSON_LOADER_TUTORIAL.md)
 - [MySQL Compatibility](docs/MYSQL-COMPATIBILITY.md)
 - [Glossary](docs/GLOSSARY.md)
 - [Development Notes](docs/DEVELOPMENT.md)

@@ -98,6 +98,8 @@ The following text-search and collation features are outside the current 1.0
 SQL contract:
 
 - `MATCH ... AGAINST` over fields that are not configured as searchable;
+- `MATCH ... AGAINST` through the single-node standard endpoint until local
+  StringSearch execution is mounted there;
 - full MySQL collation parity across every comparison and ordering edge case;
 - `REGEXP` and `RLIKE`;
 - multi-column `MATCH(field_a, field_b) AGAINST (...)`;
