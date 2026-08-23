@@ -1330,6 +1330,38 @@ func TestSimpleParserBridgeParsesMatchAgainstPredicate(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesWorkbenchSpacedUnaryMinusBetween(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select dx_call from spots where longitude between - 125 and - 66")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(statement.Select.Predicates))
+	}
+	predicate, ok := statement.Select.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want UnboundBinaryExpr", statement.Select.Predicates[0].Expr)
+	}
+	if predicate.Op != BinaryOpBetween {
+		t.Fatalf("predicate op = %q, want %q", predicate.Op, BinaryOpBetween)
+	}
+	list, ok := predicate.Right.(UnboundListExpr)
+	if !ok {
+		t.Fatalf("predicate right = %T, want UnboundListExpr", predicate.Right)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("between bounds = %d, want 2", len(list.Items))
+	}
+	lower, ok := list.Items[0].(UnboundLiteralExpr)
+	if !ok || lower.Kind != ValueInt || lower.Value != int64(-125) {
+		t.Fatalf("lower bound = %#v, want -125 int literal", list.Items[0])
+	}
+	upper, ok := list.Items[1].(UnboundLiteralExpr)
+	if !ok || upper.Kind != ValueInt || upper.Value != int64(-66) {
+		t.Fatalf("upper bound = %#v, want -66 int literal", list.Items[1])
+	}
+}
+
 func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select c.customer_key, customer_name

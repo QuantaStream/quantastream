@@ -6514,6 +6514,7 @@ func parseSimpleScalarSubqueryExpression(text string, scope PredicateScope) (Unb
 }
 
 func parseSimpleLiteral(text string) (UnboundLiteralExpr, Diagnostic, bool) {
+	text = normalizeSimpleSignedNumericLiteral(strings.TrimSpace(text))
 	if strings.EqualFold(text, "null") {
 		return UnboundLiteral(ValueNull, nil), Diagnostic{}, true
 	}
@@ -6538,6 +6539,26 @@ func parseSimpleLiteral(text string) (UnboundLiteralExpr, Diagnostic, bool) {
 		return UnboundLiteralExpr{}, simpleParserDiagnostic("literal must be a quoted string or number"), false
 	}
 	return UnboundLiteral(ValueInt, value), Diagnostic{}, true
+}
+
+func normalizeSimpleSignedNumericLiteral(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) < 2 {
+		return trimmed
+	}
+	sign := trimmed[0]
+	if sign != '-' && sign != '+' {
+		return trimmed
+	}
+	rest := strings.TrimSpace(trimmed[1:])
+	if rest == "" {
+		return trimmed
+	}
+	first := rest[0]
+	if first != '.' && (first < '0' || first > '9') {
+		return trimmed
+	}
+	return string(sign) + rest
 }
 
 func splitSimpleBooleanParts(text string, keyword string) []string {
