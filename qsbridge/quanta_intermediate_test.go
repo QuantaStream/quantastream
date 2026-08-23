@@ -1666,6 +1666,79 @@ func TestQuantaIntermediateLowererLeavesStringLexBSIRemainderPrefixLikeResidual(
 	}
 }
 
+func TestQuantaIntermediateLowererAddsStringLexBSIRemainderPrefixLikeCandidate(t *testing.T) {
+	table := TableInstance{Table: "spots_flat"}
+	field := FieldRef{
+		Table:    table,
+		Name:     "dx_call",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 16}),
+	}
+	predicate := Predicate{
+		Expr:      Binary(BinaryOpLike, Field(field), Literal(ValueString, "N7%")),
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeWhere,
+	}
+	query := QueryIR{
+		Kind:       QueryKindSelect,
+		Sources:    []TableInstance{table},
+		Predicates: []Predicate{predicate},
+		Projection: []ProjectionColumn{{
+			Expr:  Field(field),
+			Alias: "dx_call",
+			Type:  DataTypeString,
+		}},
+	}
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerQuery(query, ParameterBindingSet{})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	}
+	fragment := intermediate.Fragments[0]
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want candidate StringLexBSI RANGE", fragment)
+	}
+	wantBegin := quantaIntermediateStringLexBSIValue("N7", 8)
+	wantEnd := new(big.Int).Sub(quantaIntermediateStringLexBSIValue("N8", 8), big.NewInt(1))
+	if fragment.Begin.Cmp(wantBegin) != 0 || fragment.End.Cmp(wantEnd) != 0 {
+		t.Fatalf("range = %v..%v, want %v..%v", fragment.Begin, fragment.End, wantBegin, wantEnd)
+	}
+	if predicate.Placement != PredicateResidualScan {
+		t.Fatalf("predicate placement changed to %q, want residual", predicate.Placement)
+	}
+}
+
+func TestQuantaIntermediateLowererSkipsStringLexBSIRemainderPrefixLikeCandidateForOr(t *testing.T) {
+	table := TableInstance{Table: "spots_flat"}
+	field := FieldRef{
+		Table:    table,
+		Name:     "dx_call",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 16}),
+	}
+	query := QueryIR{
+		Kind:    QueryKindSelect,
+		Sources: []TableInstance{table},
+		Predicates: []Predicate{{
+			Expr:       Binary(BinaryOpLike, Field(field), Literal(ValueString, "N7%")),
+			Placement:  PredicateResidualScan,
+			Scope:      PredicateScopeWhere,
+			Combinator: PredicateCombinatorOr,
+		}},
+	}
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerQuery(query, ParameterBindingSet{})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(intermediate.Fragments) != 0 {
+		t.Fatalf("fragments = %#v, want no unsafe OR candidate", intermediate.Fragments)
+	}
+}
+
 func TestQuantaIntermediateLowererLeavesStringLexBSIRemainderExactLikeResidual(t *testing.T) {
 	field := FieldRef{
 		Table:    TableInstance{Table: "lineitem"},

@@ -2990,6 +2990,86 @@ func TestDirectBitmapRuntimeMaterializesResidualPredicatesBeforeCount(t *testing
 	}
 }
 
+func TestDirectBitmapRuntimeFiltersHybridStringLexPrefixLikeBeforeCount(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "spots_flat", Table: "spots_flat"}
+	dxCall := qsbridge.FieldRef{Table: table, Name: "dx_call", Type: qsbridge.DataTypeString}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{
+			Index:     "spots_flat",
+			Field:     "dx_call",
+			Operation: qsbridge.QuantaOperationIntersect,
+			BSIOp:     qsbridge.QuantaBSIOpRange,
+		}},
+		ProjectionFields: []qsbridge.QuantaProjectionField{{
+			Index: "spots_flat",
+			Field: "dx_call",
+			Type:  qsbridge.DataTypeString,
+		}},
+	})
+	request.Predicates = []qsbridge.Predicate{{
+		Expr:      qsbridge.Binary(qsbridge.BinaryOpLike, qsbridge.Field(dxCall), qsbridge.Literal(qsbridge.ValueString, "N7%")),
+		Placement: qsbridge.PredicateResidualScan,
+		Scope:     qsbridge.PredicateScopeWhere,
+	}}
+	request.SQLAggregates = []qsbridge.Aggregate{{
+		Function: "count",
+		Alias:    "spot_count",
+		Type:     qsbridge.DataTypeInt,
+	}}
+	queryCalled := false
+	materializedRows := 0
+	runtime := DirectBitmapRuntime{
+		Sessions: DirectSessionProviderFunc(func(ctx context.Context, request ExecutionRequest) (DirectSessionHandle, qsbridge.DiagnosticSet, error) {
+			return DirectSessionHandleFunc{
+				QueryFunc: func(ctx context.Context, request ExecutionRequest) (BitmapQueryResult, qsbridge.DiagnosticSet, error) {
+					queryCalled = true
+					if len(request.Query.Fragments) != 1 || request.Query.Fragments[0].Field != "dx_call" {
+						t.Fatalf("fragments = %#v, want dx_call prefix candidate", request.Query.Fragments)
+					}
+					return BitmapQueryResult{Success: true, Count: 3, Rownums: []qsbridge.QuantaRownum{1, 2, 3}}, nil, nil
+				},
+				ReleaseFunc: func(ctx context.Context) qsbridge.DiagnosticSet { return nil },
+			}, nil, nil
+		}),
+		Materializer: ProjectionMaterializerFunc(func(ctx context.Context, request qsbridge.QuantaMaterializationRequest) (qsbridge.QuantaProjectedRowSet, qsbridge.DiagnosticSet, error) {
+			materializedRows = len(request.Rownums)
+			return qsbridge.QuantaProjectedRowSet{
+				Index:   "spots_flat",
+				Rownums: append([]qsbridge.QuantaRownum(nil), request.Rownums...),
+				ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+					Field: request.ProjectionFields[0],
+					Values: []qsbridge.ResultCell{
+						{Kind: qsbridge.ValueString, Value: "N7ZG"},
+						{Kind: qsbridge.ValueString, Value: "K1ABC"},
+						{Kind: qsbridge.ValueString, Value: "N7ZG/QRP"},
+					},
+				}},
+			}, nil, nil
+		}),
+	}
+
+	result, err := runtime.ExecuteDirect(context.Background(), request)
+	if err != nil {
+		t.Fatalf("execute direct: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if !queryCalled {
+		t.Fatalf("bitmap candidate query was not called")
+	}
+	if materializedRows != 3 {
+		t.Fatalf("materialized rows = %d, want candidate row count 3", materializedRows)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
+	}
+	if got := chunk.Rows[0][0].Value; got != int64(2) {
+		t.Fatalf("count = %#v, want 2", got)
+	}
+}
+
 func TestDirectBitmapEvaluateResidualRegexpPredicate(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "region", Table: "region"}
 	field := qsbridge.FieldRef{Table: table, Name: "r_name", PhysicalName: "r_name", Type: qsbridge.DataTypeString}
