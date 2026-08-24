@@ -22,7 +22,7 @@ changes. Go must be installed before using the source workflow.
 Recommended binary download path:
 
 ```bash
-QS_VERSION=0.1.0-rc8
+QS_VERSION=0.1.0
 
 gh release download "v${QS_VERSION}" \
   --repo QuantaStream/quantastream \
@@ -42,13 +42,13 @@ If you do not have the GitHub CLI installed, open the
 [GitHub Releases](https://github.com/QuantaStream/quantastream/releases) page
 in a browser and download both files manually:
 
-- `qstream-0.1.0-rc8-linux-amd64.tar.gz`
+- `qstream-0.1.0-linux-amd64.tar.gz`
 - `SHA256SUMS`
 
 Then run the same verification and unpack commands:
 
 ```bash
-QS_VERSION=0.1.0-rc8
+QS_VERSION=0.1.0
 
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "qstream-${QS_VERSION}-linux-amd64.tar.gz"

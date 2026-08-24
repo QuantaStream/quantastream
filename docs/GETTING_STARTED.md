@@ -46,7 +46,7 @@ rm -rf ./data
 a new terminal, return to that directory and set it again:
 
 ```bash
-cd ~/work/qstream-0.1.0-rc8-linux-amd64
+cd /path/to/qstream-<version>-linux-amd64
 QSTREAM_HOME="$PWD"
 ```
 
