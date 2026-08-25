@@ -184,6 +184,16 @@ The compatibility plan is documented in [docs/MYSQL-COMPATIBILITY.md](docs/MYSQL
 
 Use [GitHub Issues](https://github.com/QuantaStream/quantastream/issues) for open work, design follow-through, and release tracking. Public docs describe supported behavior, operating procedures, and validation methods.
 
+## License And Notices
+
+QuantaStream is licensed under the Elastic License 2.0. See
+[LICENSE.txt](LICENSE.txt).
+
+QuantaStream includes software derived from or inspired by the public
+Disney/Quanta project. See [NOTICE](NOTICE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and upstream
+license details.
+
 ## Documentation
 
 Useful starting points:

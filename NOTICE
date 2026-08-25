@@ -1,0 +1,13 @@
+QuantaStream
+Copyright 2026 Guy Anthony Molinari
+
+QuantaStream includes software derived from or inspired by Disney/Quanta:
+
+https://github.com/Disney/Quanta
+
+Disney/Quanta is licensed under the Tomorrow Open Source Technology License
+1.0. See THIRD_PARTY_NOTICES.md for upstream license and attribution details.
+
+QuantaStream itself is licensed separately under the Elastic License 2.0. See
+LICENSE.txt for the QuantaStream license terms.
+
