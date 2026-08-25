@@ -1,478 +1,320 @@
 # QuantaStream Development Guide
 
-## Build
+This guide is for people working from a source checkout. If you only want to
+try QuantaStream, start with [`GETTING_STARTED.md`](GETTING_STARTED.md) and the
+published binary bundle instead.
+
+## Requirements
+
+Recommended development environment:
+
+- Linux or WSL2
+- Go version from [`go.mod`](../go.mod)
+- MySQL command-line client for manual endpoint checks
+- MySQL server only when running reference compatibility diffs
+- Consul only for direct-cluster or distributed-mode development
+
+The single-node source workflow does not require Consul. Distributed mode and
+`inabox-direct` do.
+
+## Repository Map
+
+Common entry points:
+
+- `cmd/quantastream` - single-node engine binary
+- `cmd/quantastream-loader` - JSON streaming loader
+- `cmd/quantastream-proxy` - distributed MySQL-compatible proxy
+- `quanta-admin` - source-tree admin command
+- `quanta-admin-lib` - admin implementation used by source and release tools
+- `qsbridge` - SQL parsing, planning, metadata, and client exchange layer
+- `qsmysql` - MySQL wire protocol adapter
+- `qsinabox` - single-node in-a-box runtime wiring
+- `qsruntime` - native query execution and rewrite layer
+- `shared`, `server`, `core` - bitmap storage, query, and session machinery
+- `sqlrunner` - executable SQL behavior and benchmark harness
+- `configuration/` - public schema, auth, and loader configuration references
+- `startup-scripts/` - source checkout startup helpers
+
+Release bundles rename the admin command to `qstream-admin`. In the source tree
+use `go run ./quanta-admin ...`.
+
+## Baseline Checks
+
+The CI baseline is:
 
 ```bash
-make build_all
+go test ./... -count=1 -timeout=2m
 ```
 
----
+Run that before pushing engine or SQL behavior changes. There is no Makefile in
+the public repo; use the Go and shell commands directly.
 
-# Run Tests
+Useful focused checks:
 
 ```bash
-make test
+go test ./qsbridge ./qsmysql ./qsruntime -count=1
+go test ./qsinabox ./server ./shared -count=1
+go test ./cmd/quantastream ./cmd/quantastream-loader ./quanta-admin-lib -count=1
 ```
 
----
-
-# Integration Testing
-
-Start QuantaStream-in-a-Box:
+Current raw Go statement coverage can be measured with:
 
 ```bash
-cd startup-scripts
-./start-local.sh
+go test ./... -count=1 -timeout=2m -coverprofile=/tmp/quantastream-cover.out
+go tool cover -func=/tmp/quantastream-cover.out | tail -1
 ```
 
-Then run SQLRunner:
+Remember that Go statement coverage does not include every SQLRunner,
+Workbench, AWS, or release-runbook validation path unless those paths run
+inside an instrumented `go test` process.
+
+## Build From Source
+
+Build the main binaries explicitly:
+
+```bash
+mkdir -p ./bin
+go build -o ./bin/quantastream ./cmd/quantastream
+go build -o ./bin/qstream-loader ./cmd/quantastream-loader
+go build -o ./bin/quantastream-proxy ./cmd/quantastream-proxy
+go build -o ./bin/qstream-admin ./quanta-admin
+```
+
+For quick iteration it is also fine to run commands with `go run`.
+
+## Local Single-Node Development
+
+The easiest source checkout runtime is the standard single-node process:
+
+```bash
+./startup-scripts/start-standard.sh
+```
+
+By default it starts the MySQL-compatible endpoint on `127.0.0.1:4000` and the
+native gRPC endpoint on `127.0.0.1:4100`. Use environment variables to override
+paths and ports when needed:
+
+```bash
+QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
+QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data-dev \
+QUANTASTREAM_BIND=127.0.0.1 \
+QUANTASTREAM_MYSQL_PORT=4000 \
+QUANTASTREAM_NATIVE_GRPC_BIND=127.0.0.1 \
+QUANTASTREAM_NATIVE_GRPC_PORT=4100 \
+QUANTASTREAM_DATABASE=quanta \
+./startup-scripts/start-standard.sh
+```
+
+Verify from another terminal:
+
+```bash
+mysql -h 127.0.0.1 -P 4000 -u MOLIG004 -D quanta -e 'show tables;'
+go run ./quanta-admin doctor local \
+  --data-dir tpc-h-benchmark/local/standard-data-dev \
+  --config-dir tpc-h-benchmark/config \
+  --mysql-addr 127.0.0.1:4000 \
+  --native-grpc-addr 127.0.0.1:4100
+```
+
+For binary-release users, the equivalent runbook is
+[`GETTING_STARTED.md`](GETTING_STARTED.md).
+
+## Direct Cluster And Distributed Development
+
+Use these paths when work touches Consul discovery, distributed proxy behavior,
+node membership, routing, reverse artifacts, or cluster lifecycle:
+
+- [`DEPLOYMENT.md`](DEPLOYMENT.md)
+- [`DEPLOYMENT_DIAGRAMS.md`](DEPLOYMENT_DIAGRAMS.md)
+- [`startup-scripts/README.md`](../startup-scripts/README.md)
+- [`startup-scripts/aws/README.md`](../startup-scripts/aws/README.md)
+
+Operational AWS scripts are intentionally kept in the repo because they are the
+repeatable benchmark and deployment lane. Do not require distributed mode for
+ordinary single-node SQL or client compatibility work.
+
+## SQLRunner
+
+SQLRunner is the executable SQL behavior map. Reusable SQL semantics belong in
+YAML suites under `sqlrunner/sqltests`; do not add old line-oriented SQL script
+fixtures.
+
+Run a simple single-node suite through the MySQL-compatible endpoint:
 
 ```bash
 cd sqlrunner
 go run . \
-  -suite_file sqltests/joins_sql.yaml \
+  -engine proxy \
   -host 127.0.0.1 \
+  -port 4000 \
   -user MOLIG004 \
   -db quanta \
-  -port 4000
+  -suite_file sqltests/inabox_standard_smoke.yaml \
+  -precise_timing
 ```
 
----
-
-# Important Development Notes
-
-## QuantaStream-in-a-Box
-
-The preferred development environment is:
-
-- local
-- in-process
-- reproducible
-- low-friction
-
-Most development should happen against QIAB.
-
-QIAB is a development and conformance topology. Changes that affect node
-identity, persistence, networking, lifecycle, or recovery must also be
-considered against the deployment models in
-[`DEPLOYMENT.md`](DEPLOYMENT.md).
-
----
-
-## SQL Layer
-
-Schema design is part of query planning in QuantaStream. Before adding new
-benchmark schemas or substantial test data, review
-[`SCHEMA_DESIGN.md`](SCHEMA_DESIGN.md) and the field-level reference in
-[`../configuration/SCHEMA_CONFIG_REFERENCE.md`](../configuration/SCHEMA_CONFIG_REFERENCE.md).
-
-The SQL layer currently supports a practical analytical SQL subset.
-Supported custom SQL extensions are tracked in
-[`SUPPORTED_SQL.md`](SUPPORTED_SQL.md), and known unsupported or partial SQL
-syntax is tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md). The long-term
-direction for the native SQL engine is summarized in
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
-
-The bitmap execution engine is the primary architectural focus.
-
-Avoid broad SQL/parser rewrites unless necessary.
-
-### Local Dependency Overlays
-
-Some development branches may test Roaring Bitmap or BSI changes before the
-selected module version in `go.mod` is updated. When a branch note calls for a
-local Go workspace, run the named checks with that workspace, for example:
+Run a direct-cluster suite when Consul and local cluster nodes are up:
 
 ```bash
-GOWORK=/tmp/qs-roaring.work go test ./qsruntime -count=1
-```
-
-Use normal module mode unless the active branch explicitly requires an overlay.
-
-### Subquery Roadmap
-
-Subquery support is intentionally incremental. `IN` and `NOT IN` use
-membership-oriented semi/anti join rewrites, and correlated `EXISTS` /
-`NOT EXISTS` with an equality predicate can rewrite to semi/anti joins.
-
-Remaining scalar and non-correlated subqueries should not be forced through the
-join path. Non-correlated `EXISTS` needs a subquery-gate execution step that
-runs the child query once and either passes or suppresses the parent result set.
-Scalar predicate and `SELECT`-list subqueries need a scalar-subquery execution
-step that runs the child query once, validates that it produced one scalar
-value, and injects that value into predicate or projection evaluation.
-
-Defer those cases until the planner has an explicit scalar/subquery-gate task
-shape instead of adding another special case to `JoinMerge`.
-
-### MySQL Database/Schema Compatibility
-
-QuantaStream currently treats the MySQL database name mostly as a connection/schema
-grouping and only partially implements MySQL database semantics. This is enough
-for the current MySQL front-door and SQLRunner paths, but some MySQL-compatible
-tools issue database commands during connect or startup and report noisy errors
-even though queries can still run.
-
-Roadmap work should make database/schema handling explicit and tool-friendly:
-
-- accept and track `USE <database>` where it maps cleanly to a Quanta schema
-- return sensible results for common database discovery commands used by
-  clients such as `mycli`
-- preserve the current default `quanta` behavior for existing scripts
-- avoid conflating SQL schema grouping with physical storage topology
-
-## Session Ownership
-
-`core.Session` should be treated as a single-owner object. It is intentionally
-not thread-safe. Do not share one session across concurrent goroutines unless a
-higher-level owner serializes all access.
-
-Parallel ingestion should use deterministic routing to multiple session workers
-instead. Streaming consumers should follow this pattern by selecting the target
-table from schema selectors, hashing the configured loader shard key, and
-sending each record to one internal shard channel/session owner.
-
----
-
-## Historical SQL Bridge
-
-The old qlbridge proxy path has been retired from the active QuantaStream
-engine. Some historical notes, package names, and migration documents may still
-refer to it, but new SQL work should target the native `qsbridge`, `qsmysql`,
-`qsinabox`, `qsruntime`, and SQLRunner inabox paths.
-
-Known technical debt areas include:
-
-- join logic
-- aggregate planning
-- GROUP BY behavior
-- query edge cases
-
-Stabilization is preferred over broad refactoring, but newly eligible dead code
-should be deleted instead of preserved as compatibility scaffolding.
-
----
-
-# Current Development Priorities
-
-1. QIAB stabilization
-2. TPC-H support
-3. SQL correctness
-4. Streaming demo restoration
-5. Documentation improvements
-6. OSS onboarding simplification
-
-Future onboarding work includes analyzer tooling for profiling representative
-data samples and proposing QuantaStream schemas. That design is tracked
-internally until it is ready for public documentation.
-
----
-
-# Known Technical Debt
-
-- commented-out tests
-- dead code cleanup
-- startup ergonomics
-- ingestion abstraction cleanup
-- SQL planner complexity
-- retired SQL bridge terminology and compatibility cleanup
-
----
-
-# Recommended Workflow
-
-```bash
-make build_all
-make test
-
-cd startup-scripts
-./start-local.sh
-
 cd sqlrunner
-go run . -suite_file sqltests/joins_sql.yaml \
-  -host 127.0.0.1 -user MOLIG004 -db quanta -port 4000
+go run . \
+  -engine inabox-direct \
+  -consul 127.0.0.1:8500 \
+  -suite_file sqltests/inabox_direct_smoke.yaml \
+  -precise_timing
 ```
 
-The goal is to maintain:
+Run the standard readiness lane used by CI:
 
-- reproducible local startup
-- repeatable query validation
-- stable integration behavior
+```bash
+cd sqlrunner
+RUN_CORE=1 ./run-inabox-standard-readiness.sh
+```
 
-The YAML suites under `sqlrunner/sqltests` are the SQL behavior map. Supported
-cases protect current behavior; `xfail` cases retain roadmap goals without
-blocking incremental engine work. SQLRunner now executes YAML roadmap suites
-only; the older line-oriented script loader has been retired.
+SQLRunner details live in [`sqlrunner/README.md`](../sqlrunner/README.md) and
+[`sqlrunner/sqltests/README.md`](../sqlrunner/sqltests/README.md).
 
-TPC-H is a benchmark roadmap, but core SQL behavior discovered while working on
-TPC-H should be backfilled into the broader SQLRunner suites. The TPC-H suites
-should prove benchmark-shaped behavior; the broad suites should preserve engine
-contracts such as joins, grouping, aggregate ordering, field-to-field
-predicates, and projection metadata.
+## MySQL Compatibility Work
 
-Grouped join execution currently has two important paths. The newer
-multi-table grouped path is for non-outer grouped joins with `count(*)` and
-`sum(...)` aggregates, and is used by the staged Q15/Q16-style kernels. Grouped
-joins with outer semantics or reducers such as `min`, `max`, and `avg` must
-continue to fall back to the compatibility weighted aggregate path until the
-fast path has explicit reducer support. SQLRunner broad coverage should protect
-both routes.
+The `mysql_compat_*.yaml` suites are the compatibility lab. They compare a
+stock MySQL reference with QuantaStream for supported SQL shapes and track
+roadmap gaps with explicit boundary suites.
 
-Projector-local caches are acceptable when their lifetime is bounded to one
-query/projector and they preserve normal projection semantics for missing
-fields. Server-side query-local caches are also acceptable for immutable
-fragments assembled more than once during one bitmap query, such as repeated
-`timeRangeBSI` assembly for the same `index/field/fromTime/toTime` window.
-Those caches must stay scoped to a single request unless they carry explicit
-invalidation metadata. Any cache that crosses query, session, front-door, shard
-sync, or mutation boundaries should be inventoried here and treated as part of a
-future coherent cache layer.
+Typical diff flow:
 
-Cross-query or cross-session reusable fragments should not be added to the
-projector layer; they belong in a future query-front-door fragment cache with
-explicit versioning and invalidation.
+```bash
+cd sqlrunner
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' \
+MYSQL_COMPAT_MODE=diff \
+TARGET_ENGINE=inabox-standard \
+./run-mysql-compat.sh
+```
 
-### Query Cancellation Roadmap
+Focused suite example:
 
-The MySQL client sends `KILL QUERY <connection_id>` after `Ctrl+C`, but
-long-running Quanta queries can remain hung with no prompt. Bouncing the
-MySQL front door or query process releases the client, which indicates that
-cancellation is not yet propagating from the MySQL protocol/session layer into
-the active planner and executor contexts.
+```bash
+MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/test' \
+MYSQL_COMPAT_SUITE=sqltests/mysql_compat_views.yaml \
+MYSQL_COMPAT_MODE=diff \
+TARGET_ENGINE=inabox-standard \
+./run-mysql-compat.sh
+```
 
-Cancellation support should map connection/query ids to active execution
-contexts and make residual scans, grouped aggregation, subquery membership, and
-join/projector loops observe cancellation. Until that exists, hung analytical
-queries may require a front-door or cluster bounce as the operational recovery.
+Boundary suites should usually be run directly against QuantaStream targets so
+`XFAIL` cases remain visible without making MySQL reference capture fail.
 
-### Function Expression Roadmap
+Compatibility policy and suite organization are documented in
+[`MYSQL-COMPATIBILITY.md`](MYSQL-COMPATIBILITY.md),
+[`MYSQL_COMPATIBILITY_LAB.md`](MYSQL_COMPATIBILITY_LAB.md), and
+[`sqlrunner/sqltests/README.md`](../sqlrunner/sqltests/README.md).
 
-Function and expression execution should be mapped in
-`sqlrunner/sqltests/function_expressions.yaml`, a dedicated broad
-SQLRunner suite separate from the TPC-H benchmark suites. That suite
-should record where expressions are supported and where they remain
-roadmap goals across these SQL locations:
+## Schema And Catalog Work
 
-- scalar expressions and functions in the `SELECT` list
-- functions and arithmetic expressions in `WHERE` predicates
-- expressions inside aggregate arguments, such as `sum(age + 1)` and formal
-  TPC-H revenue arithmetic
-- expressions in `GROUP BY`
-- expressions and aliases in `ORDER BY`
-- function and expression behavior across joined inputs
+Schemas are part of physical planning in QuantaStream. A field declares both SQL
+shape and bitmap-native representation.
 
-Start with supported baseline cases, then retain unsupported expression shapes
-as `xfail` roadmap goals. This lets Quanta incrementally expand expression
-support without blocking forward progress or forcing a broad SQL/parser rewrite
-prematurely.
+Before changing schema behavior, read:
 
-### Core Suite Backfill
+- [`SCHEMA_DESIGN.md`](SCHEMA_DESIGN.md)
+- [`../configuration/SCHEMA_CONFIG_REFERENCE.md`](../configuration/SCHEMA_CONFIG_REFERENCE.md)
+- [`../configuration/AUTH_ACCESS.md`](../configuration/AUTH_ACCESS.md)
 
-When TPC-H work stabilizes a general engine behavior, add or strengthen coverage
-in the broad suites as well as the benchmark suite. Near-term backfill targets
-include:
+Catalog-backed table and view metadata lives under the configured runtime
+configuration directory. Views are tracked under `views/` alongside table schema
+metadata. Public release bundles keep schema documentation in `configuration/`
+and runnable sample schemas under `samples/.../config`.
 
-- `joins` for multi-table joins, residual field-to-field predicates, and
-  projection metadata that does not expose helper columns
-- `group_by` for multiple aggregates, aggregate aliases, numeric aggregate
-  ordering, and decimal comparison/rendering behavior
-- `join_group_by` for grouped join visible headers, multiple aggregates over
-  joins, grouped outer joins, aggregate ordering, and weighted join
-  multiplicity
-- `basic` for scalar predicate edge cases discovered during benchmark work,
-  including any confirmed `IN` predicate anomalies
+When adding schema features, update the reference docs and add SQLRunner or Go
+coverage that proves the catalog behavior.
 
+## Loader And Streaming Work
 
-`sqlrunner/sqltests/group_by.yaml` is the focused roadmap for the partially
-implemented native grouping path. It currently records standard bitmap
-grouping, multiple aggregates, multiple grouping fields, aliases, BSI grouping,
-`HAVING`, and aggregate ordering. Cases remain `xfail` until complete
-SQL-visible values are correct, even when the underlying bitmap cardinalities
-appear correct.
+The JSON streaming loader is `cmd/quantastream-loader`. Configuration and
+producer examples live in:
 
-### GROUP BY Execution Roadmap
+- [`JSON_LOADER_TUTORIAL.md`](JSON_LOADER_TUTORIAL.md)
+- [`../configuration/STREAMING_LOADER.md`](../configuration/STREAMING_LOADER.md)
 
-The likely incremental direction is to select the grouping implementation
-according to query capabilities:
+Use loader tests and small local runs before scaling to AWS. For performance
+work, keep the target table schema, shard key, worker count, batch size, data
+set, and row count in the notes or benchmark artifact.
 
-- use the native bitmap grouping path when grouping
-  expressions are simple columns, every grouping column is backed by a
-  standard bitmap, and all requested aggregates and result semantics are
-  supported
-- otherwise use an explicit materialized grouping path or reject with a clear
-  planner diagnostic when no path can preserve SQL semantics
+## TPC-H And Benchmarks
 
-Native-path eligibility must eventually account for aliases, projection order,
-null behavior, aggregate expressions, `DISTINCT`, joins, `HAVING`, and result
-ordering rather than checking storage type alone. QuantaStream should choose a
-bitmap grouping path only after the complete query has been classified as
-native-capable.
+TPC-H is the analytical validation and benchmark lane, not the only source of
+SQL correctness. General SQL behavior discovered during TPC-H work should be
+backfilled into broad SQLRunner suites.
 
-TPC-H queries should be used to evaluate and expand this boundary. Their
-grouping and aggregation patterns are representative analytical workloads and
-should help identify which operations provide the greatest benefit when moved
-onto bitmap-native execution, while the fallback path preserves incremental
-correctness as support grows.
+Useful docs:
 
-Native single-table grouping supports multiple `COUNT`, `MIN`, `MAX`, `SUM`,
-and `AVG` projections. The focused join path now supports the same aggregate
-set for scalar and grouped inner joins, plus grouped outer joins, when grouping
-and aggregate columns come from the left-side parent table.
+- [`TPCH.md`](TPCH.md)
+- [`TPCH_BENCHMARK_NOTES.md`](TPCH_BENCHMARK_NOTES.md)
+- [`BENCHMARK_LAB.md`](BENCHMARK_LAB.md)
 
-`sqlrunner/sqltests/join_group_by.yaml` protects this boundary. Join
-relationship multiplicity is retained as BSI weights: grouped `COUNT`, `SUM`,
-and `AVG` use those weights, while `MIN` and `MAX` use normal existence
-semantics. Unmatched parent rows in an outer join receive multiplicity one.
-Qualified aggregate arguments such as `sum(c.age)` are supported, and
-duplicate aggregate columns introduced by join source projection are
-normalized before results are exposed.
+Keep public benchmark claims tied to reproducible SQLRunner reports, commit
+hashes, data scale, instance type, worker settings, and schema version.
 
-### Custom Function Inventory
+## Code Change Guidelines
 
-Custom expression functions live under `custom/functions` and are registered by
-`custom/functions/load.go`. This package should be treated as part of Quanta's
-SQL extension surface and reviewed deliberately during SQL engine refactor
-work.
+- Prefer focused changes that match the existing package boundary.
+- Keep SQL behavior changes backed by Go tests, SQLRunner suites, or both.
+- Add boundary or `XFAIL` cases for known MySQL-compatible behavior that is not
+  implemented yet.
+- Do not add broad parser or planner rewrites for a narrow compatibility issue.
+- Keep session ownership explicit. `core.Session` is single-owner; parallel
+  ingestion should route work to independent session workers.
+- Treat cross-query caches as product features, not incidental optimizations.
+  Query-local caches are fine when their lifetime and invalidation are obvious.
+- Avoid adding AWS or cloud-provider dependencies to core ingestion or query
+  paths. Operational scripts can remain cloud-specific.
+- Prefer GitHub Issues for public future work instead of embedding long
+  roadmap inventories in this document.
 
-Currently relevant registered functions:
+## Supported And Unsupported SQL Docs
 
-- `sample_stratified(fieldName, percentage)`
-- `version()`
-- `database()`
-- `add(...)`
-- `timediff(end_time, start_time, unit)`
+Keep user-facing SQL docs current:
 
-The S3 bucket inspection helpers are also registered in `LoadAll`, but they are
-not part of the near-term SQL roadmap. They perform live AWS SDK calls, and
-`is_bucket_writable` writes and deletes `_TEST`, so exclude them from ordinary
-SQLRunner coverage and engine-refactor planning unless a separate integration
-surface is deliberately restored.
+- [`SUPPORTED_SQL.md`](SUPPORTED_SQL.md)
+- [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md)
 
-Current scan notes:
+The supported doc should describe what works with confidence. The unsupported
+doc should list specific unsupported or partial features, not old caveats that
+have since been implemented.
 
-- `timediff(...)` is covered in SQLRunner and documented as supported custom
-  SQL.
-- `sample_stratified(...)` is present and wired through `SamplePct`, but still
-  needs verification, fixes if required, and SQLRunner coverage before it is
-  documented as supported.
-- `database()` currently validates as a zero-arg function but returns
-  `versionEval` from `DatabaseFunc.Validate`; this should be fixed or
-  intentionally documented before relying on it for MySQL compatibility.
-- `Avg` exists in `custom/functions/arithmetic.go`, but `LoadAll` does not
-  register it. Ignore that helper for roadmap purposes because native SQL
-  aggregate `avg(...)` owns the supported surface.
-- `add(...)` is registered using the `Sum` evaluator. It is a scalar helper,
-  not the SQL aggregate `sum(...)`.
+## Release Notes For Developers
 
-### TOPN Aggregate Roadmap
+Release work is separate from ordinary development. Do not roll a new release
+for documentation-only corrections unless the docs are packaged into a release
+artifact that must be corrected immediately.
 
-Quanta has an existing `topn()` aggregate capability documented as custom SQL
-in [`SUPPORTED_SQL.md`](SUPPORTED_SQL.md). It should be retained as part of the
-SQL roadmap because it uses the same bitmap-native ideas as standard-bitmap
-grouping: group membership and cardinality can be computed efficiently without
-materializing every row through the generic SQL engine.
+For source docs, a normal commit to `main` is enough. For packaged binary
+changes, rebuild and publish a new release candidate or release artifact with
+checksums.
 
-Future work should characterize existing `topn()` behavior in a focused
-SQLRunner suite before changing implementation details. The suite should
-distinguish currently supported native behavior from roadmap goals such as
-aliases, ordering, ties, limits, joined inputs, and interaction with other
-aggregates.
+## Quick Pre-Push Checklist
 
-### Data Sampling Custom Function Roadmap
+For most code changes:
 
-Quanta should retain, verify, and extend the existing custom SQL capability for
-data sampling. The current function is registered as
-`sample_stratified(fieldName, percentage)` in `custom/functions/load.go` and
-implemented in `custom/functions/sampling.go`. It annotates query fragments with
-`SamplePct`, and the shared/server bitmap query path carries that sampling
-metadata during execution.
+```bash
+go test ./... -count=1 -timeout=2m
+```
 
-Sampling is a natural Quanta-native feature because it can support schema
-discovery, analyst exploration, smoke-test generation, and approximate
-profiling without forcing callers to materialize broad result sets.
+For SQL behavior changes, also run the most relevant SQLRunner suite. Examples:
 
-Before documenting sampling as supported SQL, `sample_stratified(...)` should
-be verified, fixed where needed, and covered in SQLRunner. The refreshed
-capability should define:
+```bash
+cd sqlrunner
+go run . -engine proxy -host 127.0.0.1 -port 4000 -user MOLIG004 -db quanta \
+  -suite_file sqltests/mysql_compat_functions.yaml -precise_timing
 
-- supported SQL shape and expected placement, especially predicate usage
-- deterministic versus random sampling semantics
-- requested sample size and default limit behavior
-- filtered input behavior
-- projected row versus value-distribution output shape
-- interaction with `StringEnum`, BSI-backed fields, and backing-store strings
-- current BSI restrictions and whether they should remain
-- single-table, joined-input, and grouped-input support boundaries
-- whether the implementation is row-oriented, bitmap-guided, or shard-aware
+go run . -engine inabox-direct -consul 127.0.0.1:8500 \
+  -suite_file sqltests/mysql_compat_views_boundaries.yaml -compat_report
+```
 
-Until coverage exists, treat sampling as an existing custom SQL roadmap
-capability rather than a supported extension.
+For docs-only changes:
 
-### BSI GROUP BY Fallback
+```bash
+git diff --check
+```
 
-Grouping by BSI-backed fields is a planner boundary rather than only a storage
-type question. The native bitmap grouping path is strongest when every grouping
-expression is backed by a standard bitmap. When a query groups by BSI fields,
-or mixes standard bitmap and BSI grouping expressions, a future optimizer should
-be able to choose an explicit materialized grouping path as a correctness
-fallback.
-
-That fallback may be slower, but it avoids rejecting otherwise valid SQL while
-native bitmap support remains incomplete. The planner should make this decision
-from complete query semantics, including projection aliases, aggregate
-expressions, `HAVING`, ordering, joins, null behavior, and result shape.
-
-The implementation remains intentionally localized. It does not yet provide a
-general join aggregation planner. Current limitations include:
-
-- grouping and aggregate fields must belong to the left-side parent table
-- group fields must use standard bitmap mappings
-- aggregate value fields must use BSI mappings
-- aggregate expressions, `DISTINCT`, `HAVING`, and broader multi-join grouping
-  remain roadmap work
-
-`sqlrunner/sqltests/subqueries.yaml` owns subquery and membership behavior.
-Quanta currently rewrites single-column `IN` and `NOT IN` subqueries as
-semi/anti membership operations. The old `JOIN ... ON a != b` anti-join
-shorthand is intentionally not a supported SQL surface; use `NOT IN` or
-correlated `NOT EXISTS` instead. The suite preserves currently supported
-subquery behavior, including filtered single-column `IN` subqueries.
-
-The next subquery implementation phase should remain explicit about SQL
-semantics. `IN` rewriting now uses membership-oriented semi-join behavior
-instead of preserving duplicate matching inner rows. Correlated `EXISTS` and
-`NOT EXISTS` forms with an inner equality predicate are rewritten as semi-joins
-and anti-joins. Non-correlated `EXISTS`, scalar predicate subqueries, and scalar
-select-list subqueries remain parser/planner work. Future work should also
-verify SQL null semantics.
-
-`sqlrunner/sqltests/multi_table_joins.yaml` characterizes chained join
-execution independently of subquery rewriting. Its deterministic
-`customers -> orders -> lineitems -> deliveries` fixture exercises
-three-table projection, multiplicity, grouping, table order, mixed outer joins,
-and four-table composition. Cases remain `xfail`
-until their behavior is both correct and understood; this suite should guide
-localized fixes before any broad join-engine reorganization.
-
-Initial characterization shows that the fixture and each adjacent two-table
-parent relation are correct. Three- and four-table scalar counts are supported
-after making chained join driver selection deterministic. Chained projection
-and grouping still return no rows. Four-table projection also reaches a final
-projection error resolving the deepest `deliveries_qa` relationship,
-indicating that the current projection path does not traverse an arbitrary
-parent-relation chain.
-
-## Retired Line-Oriented SQLRunner Scripts
-
-The older line-oriented SQLRunner scripts under `sqlrunner/sqlscripts` have
-been removed. SQLRunner no longer discovers or parses those files; executable
-SQL coverage should live in YAML roadmap suites under `sqlrunner/sqltests`.
-
-Going forward:
-
-- new SQL behavior and roadmap coverage must use YAML suites
-- new line-oriented scripts should not be added
-- any missing lower-level fixture behavior should be recreated as focused YAML
-  suites or Go unit tests
-- the deprecated roadmap `kind: admin` shorthand may remain temporarily because
-  it is converted to SQL DDL before execution; it is not a script-file loader
+Keep the working tree clean before handing work to another developer or cutting
+a release artifact.
