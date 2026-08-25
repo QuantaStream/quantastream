@@ -15,7 +15,7 @@ if [[ -z "${PORT:-}" ]]; then
     PORT="4000"
   fi
 fi
-SQL_USER="${SQL_USER:-MOLIG004}"
+SQL_USER="${SQL_USER:-qstream}"
 DB="${DB:-quanta}"
 SUITE="${SUITE:-inabox_standard_qa_smoke.yaml}"
 CASE="${CASE:-}"

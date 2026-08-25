@@ -10,7 +10,7 @@ SUITE_FILE="${2:-sqltests/tpch_queries.yaml}"
 
 HOST="${QUANTA_HOST:-127.0.0.1}"
 PORT="${QUANTA_PORT:-4000}"
-USER="${QUANTA_USER:-MOLIG004}"
+USER="${QUANTA_USER:-qstream}"
 DB="${QUANTA_DB:-quanta}"
 ENGINE="${QUANTA_ENGINE:-distributed}"
 CASES="${CASES:-}"

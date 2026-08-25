@@ -17,7 +17,7 @@ Use this against a standard TPC-H single-node server or proxy endpoint:
 
 ```bash
 go run ./cmd/mysql-driver-smoke \
-  -dsn 'MOLIG004@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
+  -dsn 'qstream@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
   -timeout 90s \
   -max-rows 3
 ```
@@ -26,7 +26,7 @@ Add `-prepared-write` to exercise a prepared `INSERT` into the TPC-H `customer` 
 
 ```bash
 go run ./cmd/mysql-driver-smoke \
-  -dsn 'MOLIG004@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
+  -dsn 'qstream@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
   -timeout 90s \
   -max-rows 1 \
   -prepared-write
@@ -38,7 +38,7 @@ Use `-prepared-batch` when the endpoint has the old QA catalog tables installed.
 
 ```bash
 go run ./cmd/mysql-driver-smoke \
-  -dsn 'MOLIG004@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
+  -dsn 'qstream@tcp(127.0.0.1:4000)/quanta?parseTime=true' \
   -timeout 90s \
   -max-rows 1 \
   -prepared-batch

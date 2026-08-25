@@ -632,7 +632,7 @@ func local_Ensure_cluster(count int, state *ClusterLocalState) {
 
 	var proxyConnect ProxyConnectStrings
 	proxyConnect.Host = "127.0.0.1"
-	proxyConnect.User = "MOLIG004"
+	proxyConnect.User = "qstream"
 	proxyConnect.Password = ""
 	proxyConnect.Port = "4000"
 	proxyConnect.Database = "quanta"

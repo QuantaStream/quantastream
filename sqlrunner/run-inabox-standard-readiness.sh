@@ -8,7 +8,7 @@ cd "${script_dir}"
 
 HOST="${HOST:-127.0.0.1}"
 BASE_PORT="${PORT:-4400}"
-SQL_USER="${SQL_USER:-MOLIG004}"
+SQL_USER="${SQL_USER:-qstream}"
 DB="${DB:-quanta}"
 CLEANUP="${CLEANUP:-1}"
 RUN_CORE="${RUN_CORE:-${RUN_PORTABLE:-0}}"

@@ -13,7 +13,7 @@ Environment:
   ENGINE            QuantaStream socket engine. Defaults to inabox-standard.
   HOST              QuantaStream host. Defaults to QUANTA_HOST or 127.0.0.1.
   PORT              QuantaStream port. Defaults to QUANTA_PORT or 4000.
-  USER              QuantaStream user. Defaults to QUANTA_USER or MOLIG004.
+  USER              QuantaStream user. Defaults to QUANTA_USER or qstream.
   PASSWORD          QuantaStream password. Defaults to QUANTA_PASSWORD or empty.
   DB                QuantaStream database. Defaults to QUANTA_DB or quanta.
   CONSUL            Consul address for engines that need it. Defaults to QUANTA_CONSUL or 127.0.0.1:8500.
@@ -45,7 +45,7 @@ CASE="${CASE:-}"
 ENGINE="${ENGINE:-inabox-standard}"
 HOST="${HOST:-${QUANTA_HOST:-127.0.0.1}}"
 PORT="${PORT:-${QUANTA_PORT:-4000}}"
-USER="${USER:-${QUANTA_USER:-MOLIG004}}"
+USER="${USER:-${QUANTA_USER:-qstream}}"
 PASSWORD="${PASSWORD:-${QUANTA_PASSWORD:-}}"
 DB="${DB:-${QUANTA_DB:-quanta}}"
 CONSUL="${CONSUL:-${QUANTA_CONSUL:-127.0.0.1:8500}}"

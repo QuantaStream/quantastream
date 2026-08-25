@@ -46,7 +46,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	schemaDir := flags.String("schema-dir", envString("QUANTASTREAM_SCHEMA_DIR", "configuration"), "schema/catalog configuration directory for SQL schema mutations")
 	database := flags.String("database", envString("QUANTASTREAM_DATABASE", "quanta"), "default database/schema name")
 	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
-	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to MOLIG004 when auth-mode=static")
+	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to qstream when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
 	accessPolicyFile := flags.String("access-policy-file", envString("QUANTASTREAM_ACCESS_POLICY_FILE", ""), "YAML static SQL access policy file; empty leaves SQL authorization permissive")

@@ -136,7 +136,7 @@ standard server, use:
 
 - Host: `127.0.0.1`
 - Port: `4000`
-- User: `root` or `MOLIG004`
+- User: `root` or `qstream`
 - Default schema: `quanta`
 - SSL: disabled or no SSL
 

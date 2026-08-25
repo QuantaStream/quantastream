@@ -771,7 +771,7 @@ Both `inabox-standard` and the distributed proxy accept the same knobs:
 
 ```bash
 QUANTASTREAM_AUTH_MODE=static
-QUANTASTREAM_AUTH_USER=MOLIG004
+QUANTASTREAM_AUTH_USER=qstream
 QUANTASTREAM_AUTH_PASSWORD='<password>'
 ```
 
@@ -785,7 +785,7 @@ QUANTASTREAM_AUTH_ACCOUNT_FILE=/etc/quantastream/accounts.yaml
 
 ```yaml
 accounts:
-  - username: MOLIG004
+  - username: qstream
     default_database: quanta
     mysql_native_password_verifier: "<hex SHA1(SHA1(password))>"
     caching_sha2_password_verifier: "<hex SHA256(SHA256(password))>"
@@ -798,7 +798,7 @@ editing them by hand:
 QUANTASTREAM_AUTH_PASSWORD='<password>' \
 go run ./quanta-admin auth upsert \
   --account-file /etc/quantastream/accounts.yaml \
-  --user MOLIG004 \
+  --user qstream \
   --default-database quanta
 
 go run ./quanta-admin auth list \

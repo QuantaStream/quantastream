@@ -108,7 +108,7 @@ QUANTASTREAM_DATABASE=quanta \
 Verify from another terminal:
 
 ```bash
-mysql -h 127.0.0.1 -P 4000 -u MOLIG004 -D quanta -e 'show tables;'
+mysql -h 127.0.0.1 -P 4000 -u qstream -D quanta -e 'show tables;'
 go run ./quanta-admin doctor local \
   --data-dir tpc-h-benchmark/local/standard-data-dev \
   --config-dir tpc-h-benchmark/config \
@@ -147,7 +147,7 @@ go run . \
   -engine proxy \
   -host 127.0.0.1 \
   -port 4000 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -suite_file sqltests/inabox_standard_smoke.yaml \
   -precise_timing
@@ -303,7 +303,7 @@ For SQL behavior changes, also run the most relevant SQLRunner suite. Examples:
 
 ```bash
 cd sqlrunner
-go run . -engine proxy -host 127.0.0.1 -port 4000 -user MOLIG004 -db quanta \
+go run . -engine proxy -host 127.0.0.1 -port 4000 -user qstream -db quanta \
   -suite_file sqltests/mysql_compat_functions.yaml -precise_timing
 
 go run . -engine inabox-direct -consul 127.0.0.1:8500 \

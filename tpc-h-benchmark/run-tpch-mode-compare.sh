@@ -11,7 +11,7 @@ MODES="${MODES:-inabox-direct inabox-standard}"
 CASES="${CASES:-}"
 
 HOST="${QUANTA_HOST:-127.0.0.1}"
-USER="${QUANTA_USER:-MOLIG004}"
+USER="${QUANTA_USER:-qstream}"
 DB="${QUANTA_DB:-quanta}"
 DEFAULT_PORT="${QUANTA_PORT:-4000}"
 STANDARD_PORT="${STANDARD_PORT:-4400}"

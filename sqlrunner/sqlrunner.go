@@ -260,7 +260,7 @@ func printUsage(err error) {
 	u.Warn()
 	u.Warn("Inabox-standard example: ./sqlrunner -engine inabox-standard -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Inabox-local example: ./sqlrunner -engine inabox-local -suite_file sqltests/joins_sql.yaml")
-	u.Warn("Distributed endpoint example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user MOLIG004 -db quanta -port 4000")
+	u.Warn("Distributed endpoint example: ./sqlrunner -engine distributed -suite_file sqltests/joins_sql.yaml -host 10.0.0.10 -user qstream -db quanta -port 4000")
 	u.Warn("Runtime example: ./sqlrunner -engine runtime -suite_file sqltests/basic_queries.yaml")
 	u.Warn("Runtime inspection example: ./sqlrunner -engine runtime-inspect -suite_file sqltests/runtime_inspection.yaml")
 	u.Warn("Inabox-direct example: ./sqlrunner -engine inabox-direct -suite_file sqltests/inabox_direct_smoke.yaml -consul 127.0.0.1:8500")
@@ -349,7 +349,7 @@ func applyEngineDefaults(cfg runnerConfig) runnerConfig {
 		cfg.Host = "127.0.0.1"
 	}
 	if cfg.User == "" {
-		cfg.User = "MOLIG004"
+		cfg.User = "qstream"
 	}
 	if cfg.Port == "" {
 		cfg.Port = "4000"

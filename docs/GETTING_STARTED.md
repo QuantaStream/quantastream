@@ -96,7 +96,7 @@ native_grpc_listening=127.0.0.1:4100
 Use the MySQL command-line client:
 
 ```bash
-mysql -h 127.0.0.1 -P 4000 -u MOLIG004 -D quanta
+mysql -h 127.0.0.1 -P 4000 -u qstream -D quanta
 ```
 
 Or connect with MySQL Workbench:
@@ -104,7 +104,7 @@ Or connect with MySQL Workbench:
 ```text
 Host: 127.0.0.1
 Port: 4000
-User: MOLIG004
+User: qstream
 Password: leave blank
 Database: quanta
 ```

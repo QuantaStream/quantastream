@@ -555,7 +555,7 @@ func routineStatusDatabase(request qsbridge.ExecutionRequest) string {
 func routineStatusDefiner(request qsbridge.ExecutionRequest) string {
 	user := strings.TrimSpace(string(request.Bound.Prepared.Session.User))
 	if user == "" {
-		user = "MOLIG004"
+		user = "qstream"
 	}
 	return user + "@%"
 }
@@ -949,7 +949,7 @@ func showProcesslistRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 	session := request.Bound.Prepared.Session
 	user := strings.TrimSpace(string(session.User))
 	if user == "" {
-		user = "MOLIG004"
+		user = "qstream"
 	}
 	info := strings.TrimSpace(request.Bound.Prepared.SQL)
 	if !request.Bound.Prepared.Query.Catalog.Full && len(info) > 100 {
@@ -1086,7 +1086,7 @@ func showGrantsRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 	session := request.Bound.Prepared.Session
 	user := strings.TrimSpace(string(session.User))
 	if user == "" {
-		user = "MOLIG004"
+		user = "qstream"
 	}
 	account := quoteSQLString(user) + "@'%'"
 	scope := "*.*"

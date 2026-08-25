@@ -96,7 +96,7 @@ func TestValidateFlagsAllowsInaboxStandardWithoutConnectionFlags(t *testing.T) {
 func TestApplyEngineDefaultsSetsInaboxStandardConnection(t *testing.T) {
 	cfg := applyEngineDefaults(runnerConfig{Engine: engineInaboxStandard})
 
-	if cfg.Host != "127.0.0.1" || cfg.User != "MOLIG004" || cfg.Port != "4000" || cfg.Database != "quanta" {
+	if cfg.Host != "127.0.0.1" || cfg.User != "qstream" || cfg.Port != "4000" || cfg.Database != "quanta" {
 		t.Fatalf("inabox-standard defaults = host=%q user=%q port=%q db=%q", cfg.Host, cfg.User, cfg.Port, cfg.Database)
 	}
 }

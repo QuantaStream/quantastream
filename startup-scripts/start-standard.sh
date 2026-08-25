@@ -37,7 +37,7 @@ Environment:
                            Defaults to 0, which disables the listener.
   QUANTASTREAM_DATABASE     Default database/schema. Defaults to quanta.
   QUANTASTREAM_AUTH_MODE    MySQL auth mode: permissive or static. Defaults to permissive.
-  QUANTASTREAM_AUTH_USER    Static auth username. Defaults to MOLIG004 when static auth is enabled.
+  QUANTASTREAM_AUTH_USER    Static auth username. Defaults to qstream when static auth is enabled.
   QUANTASTREAM_AUTH_PASSWORD
                            Static auth password. Empty password is allowed.
   QUANTASTREAM_AUTH_ACCOUNT_FILE

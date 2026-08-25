@@ -14,7 +14,7 @@ go run . \
   -engine distributed \
   -suite_file sqltests/joins_sql.yaml \
   -host 127.0.0.1 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -port 4000
 ```
@@ -221,7 +221,7 @@ go run . \
 ```
 
 `-engine inabox-standard` runs SQLRunner through the standalone
-`cmd/quantastream` process. It defaults to `127.0.0.1`, `MOLIG004`,
+`cmd/quantastream` process. It defaults to `127.0.0.1`, `qstream`,
 database `quanta`, and does not require Consul because the target process owns
 its local in-process node adapter:
 
@@ -392,7 +392,7 @@ go run . \
   -engine distributed \
   -suite_file ../tpc-h-benchmark/sqltests/tpch_smoke.yaml \
   -host 127.0.0.1 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -port 4000
 ```

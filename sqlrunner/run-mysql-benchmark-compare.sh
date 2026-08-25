@@ -13,7 +13,7 @@ Environment:
   TARGET_ENGINE             QuantaStream target engine. Defaults to inabox-standard.
   TARGET_HOST               QuantaStream host. Defaults to QUANTA_HOST or 127.0.0.1.
   TARGET_PORT               QuantaStream port. Defaults to QUANTA_PORT or 4000.
-  TARGET_USER               QuantaStream user. Defaults to QUANTA_USER or MOLIG004.
+  TARGET_USER               QuantaStream user. Defaults to QUANTA_USER or qstream.
   TARGET_PASSWORD           QuantaStream password. Defaults to QUANTA_PASSWORD or empty.
   TARGET_DB                 QuantaStream database. Defaults to QUANTA_DB or quanta.
   TARGET_CONSUL             Consul address for engines that need it. Defaults to QUANTA_CONSUL or 127.0.0.1:8500.
@@ -48,7 +48,7 @@ SUITE_FILE="${SUITE_FILE:-../tpc-h-benchmark/sqltests/tpch_benchmark_readonly.ya
 TARGET_ENGINE="${TARGET_ENGINE:-inabox-standard}"
 TARGET_HOST="${TARGET_HOST:-${QUANTA_HOST:-127.0.0.1}}"
 TARGET_PORT="${TARGET_PORT:-${QUANTA_PORT:-4000}}"
-TARGET_USER="${TARGET_USER:-${QUANTA_USER:-MOLIG004}}"
+TARGET_USER="${TARGET_USER:-${QUANTA_USER:-qstream}}"
 TARGET_PASSWORD="${TARGET_PASSWORD:-${QUANTA_PASSWORD:-}}"
 TARGET_DB="${TARGET_DB:-${QUANTA_DB:-quanta}}"
 TARGET_CONSUL="${TARGET_CONSUL:-${QUANTA_CONSUL:-127.0.0.1:8500}}"

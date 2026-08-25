@@ -10,7 +10,7 @@ const (
 	AuthModePermissive = "permissive"
 	// AuthModeStatic validates one configured MySQL-compatible account.
 	AuthModeStatic  = "static"
-	defaultAuthUser = "MOLIG004"
+	defaultAuthUser = "qstream"
 )
 
 // AuthConfig is the shared MySQL front-door authentication configuration.

@@ -700,7 +700,7 @@ func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (q
 	case "user", "current_user":
 		user := strings.TrimSpace(string(r.Session.User))
 		if user == "" {
-			user = "MOLIG004@localhost"
+			user = "qstream@localhost"
 		}
 		return qsbridge.Literal(qsbridge.ValueString, user), true
 	case "connection_id":

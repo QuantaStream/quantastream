@@ -73,7 +73,7 @@ cd sqlrunner
 go run . \
   -suite_file sqltests/joins_sql.yaml \
   -host 127.0.0.1 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -port 4000
 ```

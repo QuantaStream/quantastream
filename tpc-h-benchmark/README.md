@@ -310,7 +310,7 @@ cd ../sqlrunner
 go run . \
   -suite_file ../tpc-h-benchmark/sqltests/tpch_smoke.yaml \
   -host 127.0.0.1 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -port 4000
 ```
@@ -321,7 +321,7 @@ Run the formal query roadmap suite with:
 go run . \
   -suite_file ../tpc-h-benchmark/sqltests/tpch_queries.yaml \
   -host 127.0.0.1 \
-  -user MOLIG004 \
+  -user qstream \
   -db quanta \
   -port 4000
 ```
@@ -450,7 +450,7 @@ tpc-h-benchmark/local/logs
 Connection settings can be overridden with environment variables:
 
 ```bash
-QUANTA_HOST=127.0.0.1 QUANTA_PORT=4000 QUANTA_USER=MOLIG004 QUANTA_DB=quanta ./run-tpch-suite.sh 3
+QUANTA_HOST=127.0.0.1 QUANTA_PORT=4000 QUANTA_USER=qstream QUANTA_DB=quanta ./run-tpch-suite.sh 3
 ```
 
 An alternate suite can be supplied as the second argument:

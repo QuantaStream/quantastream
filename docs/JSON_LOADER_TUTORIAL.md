@@ -116,7 +116,7 @@ curl -fsS http://127.0.0.1:8088/ingest/json \
 ## 5. Read It Back
 
 ```bash
-mysql -h 127.0.0.1 -P 4000 -u MOLIG004 -D quanta \
+mysql -h 127.0.0.1 -P 4000 -u qstream -D quanta \
   -e "select id, name, score, latitude from release_smoke;"
 ```
 
