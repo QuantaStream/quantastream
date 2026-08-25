@@ -1,7 +1,7 @@
-# Quanta Glossary
+# QuantaStream Glossary
 
 This glossary records vocabulary that matters when moving between SQL,
-Quanta's logical planning model, and bitmap execution internals. New refactor
+QuantaStream's logical planning model, and bitmap execution internals. New refactor
 work should prefer these terms unless an adapter is explicitly speaking a
 legacy or third-party API.
 
@@ -41,20 +41,20 @@ interfaces, suite names, or benchmark artifacts.
 
 ### rownum
 
-`rownum` is the Quanta tuple or entity identifier.
+`rownum` is the QuantaStream tuple or entity identifier.
 
 In SQL-facing planning, projection, join assembly, and result assembly code,
 use `rownum` for the stable candidate identifier that represents one logical
 row-like entity in a table.
 
-`rownum` is a Quanta concept, not a Roaring Bitmap concept.
+`rownum` is a QuantaStream concept, not a Roaring Bitmap concept.
 
 ### columnID
 
 `columnID` is the bitmap/BSI coordinate term for the numeric position of a set
 bit.
 
-At bitmap adapter boundaries, a Quanta `rownum` is translated to the
+At bitmap adapter boundaries, a QuantaStream `rownum` is translated to the
 bitmap-facing `columnID` terminology. This name is appropriate when code is
 calling into, adapting, or documenting bitmap/BSI primitives.
 
@@ -73,12 +73,12 @@ A bitmap row is not a relational row. Its set bits identify matching
 
 ### rowid
 
-Avoid `rowid` in Quanta-native code and docs unless referring to external
+Avoid `rowid` in QuantaStream-native code and docs unless referring to external
 relational database terminology.
 
 `rowid` is overloaded: relational systems often use it for a tuple identifier,
-while Quanta bitmap processing uses bitmap rows for value buckets. Prefer
-`rownum` for Quanta tuple identifiers and `bitmap row` for value buckets.
+while QuantaStream bitmap processing uses bitmap rows for value buckets. Prefer
+`rownum` for QuantaStream tuple identifiers and `bitmap row` for value buckets.
 
 ## SQL Names And Physical Names
 
@@ -88,8 +88,8 @@ Use `table` for SQL-facing catalog, parser, planner, and user documentation.
 
 ### index
 
-Use `index` for Quanta's physical bitmap storage unit when code is speaking to
-bitmap/runtime internals. In many current schemas, a SQL table maps to a Quanta
+Use `index` for QuantaStream's physical bitmap storage unit when code is speaking to
+bitmap/runtime internals. In many current schemas, a SQL table maps to a QuantaStream
 index, but the terms should not be treated as interchangeable at every layer.
 
 ### column
@@ -99,16 +99,16 @@ documentation.
 
 ### field
 
-Use `field` for Quanta physical schema and bitmap/index adapter vocabulary.
+Use `field` for QuantaStream physical schema and bitmap/index adapter vocabulary.
 
 Legacy code often uses `field` where SQL users would expect `column`. New
 refactor code should use `column` at SQL-facing boundaries and reserve `field`
-for Quanta physical representation or compatibility adapters.
+for QuantaStream physical representation or compatibility adapters.
 
 ### columnID: true
 
 `columnID: true` is a schema-level setting that means a field's value supplies
-the Quanta `rownum` for that table.
+the QuantaStream `rownum` for that table.
 
 The name is inherited from bitmap terminology. SQL-facing design docs should
 explain that this is a rownum source, even when the schema spelling remains

@@ -48,7 +48,7 @@ tpch-direct.sh <tpch-data-dir> [workers] [batch-size]
 ```
 
 The direct loader builds the TPC-H record envelope and routes records directly
-into Quanta sessions through `core.SessionRouter`.
+into QuantaStream sessions through `core.SessionRouter`.
 
 The existing cluster direct path remains the default for `tpch-direct.sh`:
 

@@ -3,7 +3,7 @@ OPEN SOURCE SOFTWARE CONTRIBUTORS
 http://github.com/QuantaStream/quantastream
 
 We would like to acknowledge and 
-thank the following individuals for their contributions to Quanta:
+thank the following individuals for their contributions to QuantaStream:
 
 ©2020-2021 Guy A. Molinari
 ©2021      Curtis Deems
@@ -31,7 +31,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 We look forward to working further with these contributors and many more from
-the open source community as we continue to develop Quanta.
+the open source community as we continue to develop QuantaStream.
 
 Thank You
 

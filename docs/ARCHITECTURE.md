@@ -1,10 +1,10 @@
 # ARCHITECTURE.md
 
-# Quanta Architecture Overview
+# QuantaStream Architecture Overview
 
 ## Overview
 
-Quanta is a distributed bitmap-oriented analytical processing engine optimized for:
+QuantaStream is a distributed bitmap-oriented analytical processing engine optimized for:
 
 - high-speed filtering
 - distributed joins
@@ -17,7 +17,7 @@ Quanta is a distributed bitmap-oriented analytical processing engine optimized f
 
 ## Data Nodes
 
-Quanta data nodes:
+QuantaStream data nodes:
 
 - own shards
 - store bitmap and BSI data
@@ -66,7 +66,7 @@ from:
 
 ### Planning And Per-Table Execution Boundary
 
-Quanta nodes should remain deliberately simple. A node-facing execution request
+QuantaStream nodes should remain deliberately simple. A node-facing execution request
 is expected to describe work for one table at a time: bitmap predicates, BSI
 predicates, dictionary predicates, projection reads, and local aggregate work
 that can be evaluated against that table's shards.
@@ -81,7 +81,7 @@ query processor must understand the full query graph before issuing node work:
 - hidden projection fields required for joins, grouping, ordering, and output
 - driver legality and result assembly strategy
 
-This separation is intentional. The Quanta intermediate language should stay
+This separation is intentional. The QuantaStream intermediate language should stay
 close to node-executable, per-table physical intent, while the planner owns
 relationship-aware query assembly. The initial engine often discovered too much
 join behavior late in execution; the native planning work should make those
@@ -91,7 +91,7 @@ fragments explicit before the nodes are called.
 
 ## Bitmap Execution Engine
 
-The bitmap execution engine is the core architectural focus of Quanta.
+The bitmap execution engine is the core architectural focus of QuantaStream.
 
 Current capabilities include:
 
@@ -183,7 +183,7 @@ Consul is used for:
 
 ## Ingestion
 
-Quanta supports:
+QuantaStream supports:
 
 - streaming ingestion
 - SQL INSERT
@@ -198,12 +198,12 @@ Current ingestion work is focused on:
 
 ### Batch And Stream Ingestion Model
 
-Quanta is intended to support both complete batch-style data sets and
+QuantaStream is intended to support both complete batch-style data sets and
 near-real-time streams through the same storage and query model.
 
 For workloads such as TPC-H, the data set may be presented in whole and loaded
 as a bounded batch. For streaming workloads, data arrives continuously. In both
-cases, Quanta stores incoming records in database-managed bitmap and BSI
+cases, QuantaStream stores incoming records in database-managed bitmap and BSI
 structures that represent the current known state of the data set.
 
 The system intentionally does not model streaming ingestion as independent time
@@ -233,7 +233,7 @@ is dispatch and shape recognition, not query planning.
 ### Batch Data As Stream Replay
 
 Batch data sets can also be replayed through the streaming ingestion contract.
-This gives Quanta a deterministic way to test streaming ingestion without
+This gives QuantaStream a deterministic way to test streaming ingestion without
 depending on live external feeds.
 
 TPC-H is a useful candidate for this mode because the same source data can
@@ -286,7 +286,7 @@ setup and payload details.
 
 ### Streaming Loader Routing
 
-Streaming consumers use schema selectors to determine which Quanta table a
+Streaming consumers use schema selectors to determine which QuantaStream table a
 record belongs to. A selector lets one incoming stream contain multiple record
 shapes or logical table types while still routing each record to the correct
 table schema before mutation.
@@ -294,7 +294,7 @@ table schema before mutation.
 After table selection, the loader uses its configured shard key and rendezvous
 hashing to route the record to an internal shard channel. This routing is
 independent of upstream stream partition ownership. The purpose is to fan
-records out across Quanta session workers while preserving affinity for like
+records out across QuantaStream session workers while preserving affinity for like
 data.
 
 That affinity is important because records with the same loader shard key should
@@ -304,7 +304,7 @@ session across concurrent workers.
 
 ### Session Concurrency Contract
 
-Quanta session objects are intentionally not thread-safe. A session should be
+QuantaStream session objects are intentionally not thread-safe. A session should be
 owned by one worker/goroutine at a time, or protected externally by an owning
 queue/channel. Components that need ingestion parallelism should create or
 reuse multiple sessions and route records to them deterministically rather than

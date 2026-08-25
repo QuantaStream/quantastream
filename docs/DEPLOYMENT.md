@@ -832,7 +832,7 @@ JWT, SSO, cloud-provider identity systems, and other enterprise-grade
 integrations should plug into the same auth/session contract without becoming
 hard-coded behavior in the core MySQL protocol path.
 
-The historical Quanta authentication design used OpenID Connect JWT tokens to
+The historical predecessor authentication design used OpenID Connect JWT tokens to
 gate access to the old query service. In that model, an external identity
 provider such as AWS Cognito manages user accounts, issues valid tokens, and
 owns user policy and governance.

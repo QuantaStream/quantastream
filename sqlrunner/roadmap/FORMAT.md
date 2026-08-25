@@ -1,7 +1,7 @@
 # SQL Roadmap Suite Format
 
 SQL roadmap suites use YAML and describe externally visible behavior. They do
-not prescribe how Quanta implements a feature.
+not prescribe how QuantaStream implements a feature.
 
 ```yaml
 version: 1

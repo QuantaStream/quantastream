@@ -101,7 +101,7 @@ filter while the `part -> partsupp` relationship-vector join remains a separate
 execution boundary.
 
 `-engine inabox-direct` runs SQLRunner through the new qsbridge/qsruntime
-planning path, then adapts the lowered Quanta intermediate query into the
+planning path, then adapts the lowered QuantaStream intermediate query into the
 direct bitmap/node execution path. It requires a running local QuantaStream
 node cluster and Consul, but it bypasses the MySQL socket and network wire path.
 This mode proves SQL against real QuantaStream bitmap data without the MySQL socket:
