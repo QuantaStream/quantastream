@@ -253,7 +253,7 @@ func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName s
 	comment := describeExtra(column)
 	indexComment := strings.TrimSpace(strings.Join(nonEmptyStrings(prefix, describeIndexParameters(column)), " "))
 	nullValue := ""
-	if column.Nullable {
+	if column.Nullable && !column.PrimaryKey {
 		nullValue = "YES"
 	}
 	return showIndexRow{
@@ -264,7 +264,7 @@ func showIndexRowForColumn(tableName string, column qsbridge.FieldRef, keyName s
 		ColumnName:   column.Name,
 		Collation:    "A",
 		Null:         nullValue,
-		IndexType:    "QUANTASTREAM",
+		IndexType:    "BTREE",
 		Comment:      comment,
 		IndexComment: indexComment,
 	}
@@ -378,7 +378,7 @@ func showTablesRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult 
 	query := request.Bound.Prepared.Query
 	tables := query.Catalog.Objects
 	objectTypes := query.Catalog.ObjectTypes
-	if query.Catalog.Full && strings.TrimSpace(query.Catalog.Pattern) != "" {
+	if query.Catalog.Full && strings.EqualFold(query.Catalog.PatternField, "table_type") && strings.TrimSpace(query.Catalog.Pattern) != "" {
 		tables, objectTypes = filterShowTablesByObjectType(tables, objectTypes, query.Catalog.Pattern)
 	}
 	columnName := showTablesRuntimeColumnName(query.Catalog.Schema)
@@ -1381,7 +1381,7 @@ func describeSQLType(field qsbridge.FieldRef) string {
 		if field.Encoding.MaxLength > 0 {
 			return "varchar(" + strconv.Itoa(field.Encoding.MaxLength) + ")"
 		}
-		return "varchar"
+		return "varchar(255)"
 	case qsbridge.DataTypeTime:
 		return "datetime"
 	default:
@@ -1390,6 +1390,9 @@ func describeSQLType(field qsbridge.FieldRef) string {
 }
 
 func describeNullability(field qsbridge.FieldRef) string {
+	if field.PrimaryKey {
+		return "NO"
+	}
 	if field.Nullable {
 		return "YES"
 	}

@@ -170,9 +170,33 @@ tests:
     compatibility: mysql
     requires: [select, system_variables, transactions]
     sql: |
-      select @@session.tx_read_only as tx_read_only
+      select @@session.tx_read_only as session_tx_read_only,
+             @@tx_read_only as tx_read_only,
+             @@transaction_read_only as transaction_read_only
     expect:
-      columns: [tx_read_only]
+      columns: [session_tx_read_only, tx_read_only, transaction_read_only]
+      rows:
+        - [0, 0, 0]
+
+  - id: mysql_compat_tableau_connect.0141.create_hash_scratch_table
+    status: supported
+    kind: statement
+    feature: tableau_connect_scratch_table_probe
+    compatibility: mysql
+    requires: [create_table, temporary_tables, tableau]
+    sql: |
+      CREATE TABLE `#Tableau_Connect_Check` (
+        `COL` INTEGER
+      )
+
+  - id: mysql_compat_tableau_connect.0142.drop_hash_scratch_table
+    status: supported
+    kind: statement
+    feature: tableau_connect_scratch_table_probe
+    compatibility: mysql
+    requires: [drop_table, temporary_tables, tableau]
+    sql: |
+      DROP TABLE IF EXISTS `#Tableau_Connect_Check`
 
   - id: mysql_compat_tableau_connect.015.derived_probe_projection
     status: supported

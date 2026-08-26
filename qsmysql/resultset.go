@@ -48,11 +48,26 @@ type ColumnDefinition struct {
 	Decimals      byte
 }
 
+// ResultSetOptions tunes MySQL result-set metadata for client-specific front doors.
+type ResultSetOptions struct {
+	DefaultSchema string
+}
+
 // NewColumnDefinition maps generic qsbridge protocol metadata to a MySQL column definition.
 func NewColumnDefinition(column qsbridge.ProtocolColumn) ColumnDefinition {
-	table, originalName := sourceParts(column.Source)
+	return NewColumnDefinitionWithOptions(column, ResultSetOptions{})
+}
+
+// NewColumnDefinitionWithOptions maps generic qsbridge protocol metadata to a
+// MySQL column definition using optional connection context.
+func NewColumnDefinitionWithOptions(column qsbridge.ProtocolColumn, options ResultSetOptions) ColumnDefinition {
+	schema, table, originalName := sourceParts(column.Source)
+	if schema == "" && table != "" {
+		schema = strings.TrimSpace(options.DefaultSchema)
+	}
 	definition := ColumnDefinition{
 		Catalog:       "def",
+		Schema:        schema,
 		Table:         table,
 		OriginalTable: table,
 		Name:          column.Name,
@@ -92,6 +107,12 @@ func (c ColumnDefinition) Payload() []byte {
 
 // TextResultSetPackets encodes a protocol-neutral query result into MySQL text-result packets.
 func TextResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
+	return TextResultSetPacketsWithOptions(result, ResultSetOptions{})
+}
+
+// TextResultSetPacketsWithOptions encodes a protocol-neutral query result into
+// MySQL text-result packets using optional connection metadata.
+func TextResultSetPacketsWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions) ([]Packet, error) {
 	if len(result.Columns) == 0 {
 		return nil, fmt.Errorf("mysql text resultset requires at least one column")
 	}
@@ -101,7 +122,7 @@ func TextResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
 	packets = append(packets, Packet{SequenceID: sequence, Payload: encodeLengthEncodedInteger(uint64(len(schema.Columns)))})
 	sequence++
 	for _, column := range schema.Columns {
-		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinition(column).Payload()})
+		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinitionWithOptions(column, options).Payload()})
 		sequence++
 	}
 	packets = append(packets, Packet{SequenceID: sequence, Payload: eofPayload(0)})
@@ -118,6 +139,54 @@ func TextResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
 	}
 	packets = append(packets, Packet{SequenceID: sequence, Payload: eofPayload(0)})
 	return packets, nil
+}
+
+// FieldListPacketsWithOptions encodes COM_FIELD_LIST column metadata packets.
+// Unlike a normal result set, COM_FIELD_LIST sends column definitions directly
+// followed by EOF, without a leading column-count packet or row data.
+func FieldListPacketsWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions, pattern string) ([]Packet, error) {
+	if len(result.Columns) == 0 {
+		return nil, fmt.Errorf("mysql field list requires at least one column")
+	}
+	schema := result.ProtocolResultSchema(qsbridge.NewProtocolProfile(qsbridge.ProtocolMySQL, "mysql-wire"))
+	packets := make([]Packet, 0, len(schema.Columns)+1)
+	sequence := byte(1)
+	for _, column := range schema.Columns {
+		if !fieldListPatternMatches(pattern, column.Name) {
+			continue
+		}
+		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinitionWithOptions(column, options).Payload()})
+		sequence++
+	}
+	packets = append(packets, Packet{SequenceID: sequence, Payload: eofPayload(0)})
+	return packets, nil
+}
+
+func fieldListPatternMatches(pattern string, value string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || pattern == "%" || pattern == "*" {
+		return true
+	}
+	return fieldListPatternMatchRunes([]rune(strings.ToLower(pattern)), []rune(strings.ToLower(value)), 0, 0)
+}
+
+func fieldListPatternMatchRunes(pattern []rune, value []rune, p int, v int) bool {
+	if p == len(pattern) {
+		return v == len(value)
+	}
+	switch pattern[p] {
+	case '%', '*':
+		for i := v; i <= len(value); i++ {
+			if fieldListPatternMatchRunes(pattern, value, p+1, i) {
+				return true
+			}
+		}
+		return false
+	case '_', '?':
+		return v < len(value) && fieldListPatternMatchRunes(pattern, value, p+1, v+1)
+	default:
+		return v < len(value) && pattern[p] == value[v] && fieldListPatternMatchRunes(pattern, value, p+1, v+1)
+	}
 }
 
 func textRowPayload(row qsbridge.ResultRow, columnCount int) ([]byte, error) {
@@ -204,15 +273,18 @@ func floatTextValue(value any) (string, error) {
 	}
 }
 
-func sourceParts(source string) (string, string) {
+func sourceParts(source string) (string, string, string) {
 	if source == "" {
-		return "", ""
+		return "", "", ""
 	}
 	parts := strings.Split(source, ".")
 	if len(parts) == 1 {
-		return "", parts[0]
+		return "", "", parts[0]
 	}
-	return parts[len(parts)-2], parts[len(parts)-1]
+	if len(parts) == 2 {
+		return "", parts[0], parts[1]
+	}
+	return parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1]
 }
 
 func columnType(column qsbridge.ProtocolColumn) ColumnType {

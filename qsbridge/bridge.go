@@ -318,11 +318,12 @@ type UnboundShowTableStatus struct {
 
 // UnboundShowTables describes a SHOW TABLES metadata read before binding.
 type UnboundShowTables struct {
-	Schema   string
-	Full     bool
-	Pattern  string
-	Result   ResultShape
-	Blockers []NativeBlocker
+	Schema       string
+	Full         bool
+	Pattern      string
+	PatternField string
+	Result       ResultShape
+	Blockers     []NativeBlocker
 }
 
 // UnboundShowOpenTables describes a SHOW OPEN TABLES metadata read before binding.
@@ -468,6 +469,7 @@ type UnboundExplain struct {
 type UnboundDescribe struct {
 	Target   UnboundTable
 	Full     bool
+	Pattern  string
 	Result   ResultShape
 	Blockers []NativeBlocker
 }
@@ -1860,6 +1862,7 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	query.Catalog.Schema = schemaName
 	query.Catalog.Full = showStmt.Full
 	query.Catalog.Pattern = strings.TrimSpace(showStmt.Pattern)
+	query.Catalog.PatternField = strings.TrimSpace(showStmt.PatternField)
 
 	objects, diagnostics := collectCatalogTableObjects(context, schemaName, showStmt.Full)
 	if diagnostics.BlocksNative() {
@@ -1868,6 +1871,9 @@ func BindShowTables(context *BindContext, showStmt UnboundShowTables) (QueryIR, 
 	query.Catalog.Objects = make([]TableInstance, 0, len(objects))
 	query.Catalog.ObjectTypes = make([]string, 0, len(objects))
 	for _, object := range objects {
+		if query.Catalog.Pattern != "" && !strings.EqualFold(query.Catalog.PatternField, "table_type") && !sqlCatalogLikeMatch(object.instance.Table, query.Catalog.Pattern) {
+			continue
+		}
 		query.Catalog.Objects = append(query.Catalog.Objects, object.instance)
 		query.Catalog.ObjectTypes = append(query.Catalog.ObjectTypes, object.objectType)
 	}
@@ -2233,8 +2239,9 @@ func BindDescribe(context *BindContext, describeStmt UnboundDescribe) (QueryIR, 
 	query.Catalog.Full = describeStmt.Full
 
 	table, tableDiagnostics := context.Catalog.Table(schemaName, targetName)
+	pattern := strings.TrimSpace(describeStmt.Pattern)
 	if !tableDiagnostics.BlocksNative() {
-		query.Mutation.Columns = describeTableFieldRefs(table, target)
+		query.Mutation.Columns = filterDescribeColumnsByPattern(describeTableFieldRefs(table, target), pattern)
 		return query, nil
 	}
 
@@ -2256,8 +2263,22 @@ func BindDescribe(context *BindContext, describeStmt UnboundDescribe) (QueryIR, 
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
-	query.Mutation.Columns = viewColumns
+	query.Mutation.Columns = filterDescribeColumnsByPattern(viewColumns, pattern)
 	return query, nil
+}
+
+func filterDescribeColumnsByPattern(columns []FieldRef, pattern string) []FieldRef {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return columns
+	}
+	filtered := make([]FieldRef, 0, len(columns))
+	for _, column := range columns {
+		if sqlCatalogLikeMatch(column.Name, pattern) {
+			filtered = append(filtered, column)
+		}
+	}
+	return filtered
 }
 
 func describeTableFieldRefs(table TableDefinition, target TableInstance) []FieldRef {

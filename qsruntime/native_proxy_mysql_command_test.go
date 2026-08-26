@@ -64,6 +64,52 @@ func TestNativeProxyFrontDoorHandlesQueryCommandAsResultset(t *testing.T) {
 	}
 }
 
+func TestNativeProxyFrontDoorHandlesFieldListCommandAsColumnDefinitions(t *testing.T) {
+	executed := false
+	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "superstore_orders",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "row_id", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "order_id", Type: qsbridge.DataTypeString, Nullable: true},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		if len(request.Projection) != 2 {
+			t.Fatalf("field-list backing select projection = %#v, want two", request.Projection)
+		}
+		return ExecutionResult{}, nil
+	})}
+	frontDoor := NewNativeProxyFrontDoor(runtime, NativeProxyFrontDoorConfig{})
+
+	response, err := frontDoor.HandleMySQLCommand(
+		context.Background(),
+		qsmysql.Command{Kind: qsmysql.CommandKindFieldList, Table: "superstore_orders", FieldPattern: "order_id", Database: "quanta"},
+		qsbridge.ExecutionOptions{},
+	)
+	if err != nil {
+		t.Fatalf("HandleMySQLCommand field list failed: %v", err)
+	}
+	if !executed {
+		t.Fatalf("field-list command did not run metadata backing select")
+	}
+	if response.Kind != qsmysql.CommandResponseFieldList || len(response.Packets) != 2 {
+		t.Fatalf("field-list response = %#v", response)
+	}
+	payload := response.Packets[0].Payload
+	for _, want := range [][]byte{[]byte("quanta"), []byte("superstore_orders"), []byte("order_id")} {
+		if !bytes.Contains(payload, want) {
+			t.Fatalf("field-list payload = %q, want %q", payload, want)
+		}
+	}
+	if bytes.Contains(payload, []byte("row_id")) {
+		t.Fatalf("field-list payload = %q, want wildcard filter to exclude row_id", payload)
+	}
+}
+
 func TestNativeProxyMySQLCommandHandlerReturnsAccessDeniedProtocolError(t *testing.T) {
 	executed := false
 	runtime := NativeProxyRuntime{Runtime: newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {

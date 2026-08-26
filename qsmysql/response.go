@@ -8,6 +8,8 @@ type CommandResponseKind string
 const (
 	// CommandResponseQuery carries text resultset packets.
 	CommandResponseQuery CommandResponseKind = "query"
+	// CommandResponseFieldList carries COM_FIELD_LIST column metadata packets.
+	CommandResponseFieldList CommandResponseKind = "field_list"
 	// CommandResponsePrepared carries COM_STMT_PREPARE response packets.
 	CommandResponsePrepared CommandResponseKind = "prepared"
 	// CommandResponseOK carries an OK packet.
@@ -37,16 +39,38 @@ const (
 
 // QueryResponse encodes a query result as MySQL text-result packets.
 func QueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
-	packets, err := TextResultSetPackets(result)
+	return QueryResponseWithOptions(result, ResultSetOptions{})
+}
+
+// QueryResponseWithOptions encodes a query result as MySQL text-result packets
+// using optional connection metadata.
+func QueryResponseWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions) (CommandResponse, error) {
+	packets, err := TextResultSetPacketsWithOptions(result, options)
 	if err != nil {
 		return CommandResponse{}, err
 	}
 	return CommandResponse{Kind: CommandResponseQuery, Packets: packets}, nil
 }
 
+// FieldListResponseWithOptions encodes a COM_FIELD_LIST response using optional
+// connection metadata and a protocol wildcard.
+func FieldListResponseWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions, pattern string) (CommandResponse, error) {
+	packets, err := FieldListPacketsWithOptions(result, options, pattern)
+	if err != nil {
+		return CommandResponse{}, err
+	}
+	return CommandResponse{Kind: CommandResponseFieldList, Packets: packets}, nil
+}
+
 // BinaryQueryResponse encodes a prepared statement query result as MySQL binary-result packets.
 func BinaryQueryResponse(result qsbridge.ExecutionResult) (CommandResponse, error) {
-	packets, err := BinaryResultSetPackets(result)
+	return BinaryQueryResponseWithOptions(result, ResultSetOptions{})
+}
+
+// BinaryQueryResponseWithOptions encodes a prepared statement query result as
+// MySQL binary-result packets using optional connection metadata.
+func BinaryQueryResponseWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions) (CommandResponse, error) {
+	packets, err := BinaryResultSetPacketsWithOptions(result, options)
 	if err != nil {
 		return CommandResponse{}, err
 	}

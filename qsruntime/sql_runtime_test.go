@@ -148,6 +148,7 @@ func TestSQLRuntimeExecuteSQLShowCreateTableReturnsCatalogRow(t *testing.T) {
 			Fields: []qsbridge.FieldDefinition{
 				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
 				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25})},
+				{Name: "notes", Type: qsbridge.DataTypeString, Nullable: true},
 			},
 		}},
 		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
@@ -176,7 +177,7 @@ func TestSQLRuntimeExecuteSQLShowCreateTableReturnsCatalogRow(t *testing.T) {
 	if got, want := chunk.Rows[0][0].Value, "customer"; got != want {
 		t.Fatalf("table name = %#v, want %q", got, want)
 	}
-	wantSQL := "CREATE TABLE `customer` (\n  `c_custkey` int NOT NULL,\n  `c_name` varchar(25) DEFAULT NULL,\n  PRIMARY KEY (`c_custkey`)\n)"
+	wantSQL := "CREATE TABLE `customer` (\n  `c_custkey` int NOT NULL,\n  `c_name` varchar(25) DEFAULT NULL,\n  `notes` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`c_custkey`)\n)"
 	if got := chunk.Rows[0][1].Value; got != wantSQL {
 		t.Fatalf("create table SQL = %#v, want %q", got, wantSQL)
 	}
@@ -545,6 +546,87 @@ func TestSQLRuntimeExecuteSQLShowFullTablesReturnsViewsAndTypes(t *testing.T) {
 	}
 	if got, want := chunk.Rows[1][1].Value, "BASE TABLE"; got != want {
 		t.Fatalf("second object type = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowFullTablesLikeFiltersTableNames(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{Schema: "quanta", Name: "orders"},
+			{Schema: "quanta", Name: "superstore_orders"},
+		},
+		Views: []qsbridge.SQLViewDefinition{
+			{Schema: "quanta", Name: "order_summary", SQL: "select o_orderkey from orders"},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show full tables from `quanta` like 'superstore_orders'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW FULL TABLES should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("rows = %#v, want one two-column row", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "superstore_orders"; got != want {
+		t.Fatalf("object = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][1].Value, "BASE TABLE"; got != want {
+		t.Fatalf("object type = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowFullColumnsFromSchemaLike(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "superstore_orders",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "row_id", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "order_id", Type: qsbridge.DataTypeString},
+				{Name: "region", Type: qsbridge.DataTypeString},
+			},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show full columns from `superstore_orders` from `quanta` like 'order_%'", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW FULL COLUMNS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 {
+		t.Fatalf("rows = %#v, want one row", chunk.Rows)
+	}
+	if got, want := chunk.Rows[0][0].Value, "order_id"; got != want {
+		t.Fatalf("field = %#v, want %q", got, want)
 	}
 }
 
@@ -1267,6 +1349,42 @@ func TestSQLRuntimeExecuteSQLConnectorJStartupVariables(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLConnectorJReadOnlyVariables(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select @@session.tx_read_only as session_tx_read_only,
+		       @@tx_read_only as tx_read_only,
+		       @@transaction_read_only as transaction_read_only
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("Connector/J read-only variables should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 3 {
+		t.Fatalf("rows = %#v, want one three-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != int64(0) || row[1].Value != int64(0) || row[2].Value != int64(0) {
+		t.Fatalf("read-only variable cells = %#v, want all zero", row)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionAutocommitNormalizesBooleanSessionValues(t *testing.T) {
 	tests := []struct {
 		value string
@@ -1797,14 +1915,17 @@ func TestSQLRuntimeExecuteSQLShowIndexReturnsPKAndMapperRows(t *testing.T) {
 	if pk[0].Value != "customer" || pk[1].Value != int64(0) || pk[2].Value != "PRIMARY" || pk[3].Value != int64(1) || pk[4].Value != "c_custkey" {
 		t.Fatalf("primary row = %#v", pk)
 	}
-	if pk[10].Value != "QUANTASTREAM" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true" {
+	if pk[9].Value != "" {
+		t.Fatalf("primary row nullability = %#v, want empty", pk[9])
+	}
+	if pk[10].Value != "BTREE" || pk[11].Value != "mapper=IntBSI" || pk[12].Value != "primary_key=true" {
 		t.Fatalf("primary row mapper metadata = %#v", pk)
 	}
 	mapped := chunk.Rows[1]
 	if mapped[1].Value != int64(1) || mapped[2].Value != "qs_c_name" || mapped[4].Value != "c_name" {
 		t.Fatalf("mapper row = %#v", mapped)
 	}
-	if mapped[9].Value != "YES" || mapped[10].Value != "QUANTASTREAM" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "max_length=25" {
+	if mapped[9].Value != "YES" || mapped[10].Value != "BTREE" || mapped[11].Value != "mapper=StringLexBSI" || mapped[12].Value != "max_length=25" {
 		t.Fatalf("mapper row metadata = %#v", mapped)
 	}
 	if mapped[14].Kind != qsbridge.ValueNull {
@@ -1821,6 +1942,7 @@ func TestSQLRuntimeExecuteSQLShowFullColumnsReturnsCatalogRows(t *testing.T) {
 			Fields: []qsbridge.FieldDefinition{
 				{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true, Encoding: qsbridge.LegacyEncodingProfile("IntBSI", qsbridge.LegacyEncodingOptions{})},
 				{Name: "c_name", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("StringLexBSI", qsbridge.LegacyEncodingOptions{MaxLength: 25})},
+				{Name: "notes", Type: qsbridge.DataTypeString, Nullable: true},
 			},
 		}},
 		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
@@ -1843,14 +1965,17 @@ func TestSQLRuntimeExecuteSQLShowFullColumnsReturnsCatalogRows(t *testing.T) {
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 9 {
-		t.Fatalf("rows = %#v, want two nine-column rows", chunk.Rows)
+	if len(chunk.Rows) != 3 || len(chunk.Rows[0]) != 9 {
+		t.Fatalf("rows = %#v, want three nine-column rows", chunk.Rows)
 	}
 	if got, want := chunk.Rows[0][0].Value, "c_custkey"; got != want {
 		t.Fatalf("first field = %#v, want %q", got, want)
 	}
 	if chunk.Rows[0][2].Kind != qsbridge.ValueNull {
 		t.Fatalf("int collation = %#v, want SQL NULL", chunk.Rows[0][2])
+	}
+	if got, want := chunk.Rows[0][3].Value, "NO"; got != want {
+		t.Fatalf("primary nullability = %#v, want %q", got, want)
 	}
 	if got, want := chunk.Rows[0][4].Value, "PRI"; got != want {
 		t.Fatalf("first key = %#v, want %q", got, want)
@@ -1860,6 +1985,9 @@ func TestSQLRuntimeExecuteSQLShowFullColumnsReturnsCatalogRows(t *testing.T) {
 	}
 	if got, want := chunk.Rows[1][7].Value, "select,insert,update,references"; got != want {
 		t.Fatalf("privileges = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[2][1].Value, "varchar(255)"; got != want {
+		t.Fatalf("unbounded string type = %#v, want %q", got, want)
 	}
 }
 

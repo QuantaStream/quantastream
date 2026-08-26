@@ -132,15 +132,16 @@ type ResultColumn struct {
 
 // CatalogReadShape records bound metadata-read payloads such as SHOW TABLES.
 type CatalogReadShape struct {
-	Schema      string
-	Schemas     []string
-	Objects     []TableInstance
-	ObjectTypes []string
-	Functions   []FunctionDefinition
-	Full        bool
-	Format      string
-	Pattern     string
-	Patterns    []string
+	Schema       string
+	Schemas      []string
+	Objects      []TableInstance
+	ObjectTypes  []string
+	Functions    []FunctionDefinition
+	Full         bool
+	Format       string
+	Pattern      string
+	PatternField string
+	Patterns     []string
 }
 
 // SortSpec describes one ORDER BY expression.

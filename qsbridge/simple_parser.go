@@ -1131,6 +1131,9 @@ func parseSimpleCreateTableBody(sql string, createBody string, temporary bool) (
 	if temporary {
 		return parseSimpleCreateTemporaryTableBody(sql, createBody)
 	}
+	if targetText, _, _, ok := splitSimpleCreateTableTargetAndColumns(createBody); ok && simpleTableNameHasHashPrefix(targetText) {
+		return parseSimpleCreateTemporaryTableBody(sql, createBody)
+	}
 	if targetText, selectText, ok := splitBeforeTopLevelKeyword(createBody, "select"); ok && strings.TrimSpace(targetText) != "" && strings.TrimSpace(selectText) != "" {
 		hasAs := false
 		if tableText, ok := consumeTrailingKeyword(targetText, "as"); ok {
@@ -1796,6 +1799,9 @@ func parseSimpleDropTableBody(sql string, dropBody string, temporary bool) (Unbo
 	if table.Alias != "" {
 		return UnboundStatement{}, simpleParserDiagnostic("DROP TABLE aliases are not supported"), false
 	}
+	if simpleTableNameHasHashPrefix(dropBody) {
+		temporary = true
+	}
 	return UnboundStatement{
 		SQL:  sql,
 		Kind: QueryKindDropTable,
@@ -1807,6 +1813,11 @@ func parseSimpleDropTableBody(sql string, dropBody string, temporary bool) (Unbo
 			Result:    ResultShape{Kind: ResultStatement},
 		},
 	}, Diagnostic{}, true
+}
+
+func simpleTableNameHasHashPrefix(tableText string) bool {
+	table, _, ok := parseSimpleTable(tableText)
+	return ok && strings.HasPrefix(strings.TrimSpace(table.Name), "#")
 }
 
 func parseSimpleDropViewBody(sql string, dropBody string) (UnboundStatement, Diagnostic, bool) {
@@ -2294,7 +2305,55 @@ func parseSimpleShowColumns(sql string, columnsBody string, full bool) (UnboundS
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS must include FROM table"), false
 	}
-	return parseSimpleDescribeTarget(sql, targetBody, full)
+	return parseSimpleShowColumnsTarget(sql, targetBody, full)
+}
+
+func parseSimpleShowColumnsTarget(sql string, targetBody string, full bool) (UnboundStatement, Diagnostic, bool) {
+	targetText := strings.TrimSpace(targetBody)
+	pattern := ""
+	if left, right, found := splitOptionalKeyword(targetText, "like"); found {
+		targetText = strings.TrimSpace(left)
+		patternFields := strings.Fields(strings.TrimSpace(right))
+		if len(patternFields) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS LIKE must use one literal pattern"), false
+		}
+		pattern = strings.Trim(patternFields[0], "'\"")
+	}
+	schemaText := ""
+	if left, right, found := splitOptionalKeyword(targetText, "from"); found {
+		targetText = strings.TrimSpace(left)
+		schemaText = strings.TrimSpace(right)
+	} else if left, right, found := splitOptionalKeyword(targetText, "in"); found {
+		targetText = strings.TrimSpace(left)
+		schemaText = strings.TrimSpace(right)
+	}
+	if schemaText != "" {
+		schemaFields := strings.Fields(schemaText)
+		if len(schemaFields) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW COLUMNS schema must be a single name"), false
+		}
+		schemaText = stripSimpleIdentifierQuotes(schemaFields[0])
+	}
+	target, diagnostic, ok := parseSimpleTable(strings.TrimSpace(targetText))
+	if !ok {
+		return UnboundStatement{}, diagnostic, false
+	}
+	if target.Alias != "" {
+		return UnboundStatement{}, simpleParserDiagnostic("DESCRIBE aliases are not supported"), false
+	}
+	if schemaText != "" {
+		target.Schema = schemaText
+	}
+	return UnboundStatement{
+		SQL:  sql,
+		Kind: QueryKindDescribe,
+		Describe: UnboundDescribe{
+			Target:  target,
+			Full:    full,
+			Pattern: pattern,
+			Result:  describeResultShape(full),
+		},
+	}, Diagnostic{}, true
 }
 
 func parseSimpleShowIndex(sql string, indexBody string) (UnboundStatement, Diagnostic, bool) {
@@ -2409,6 +2468,7 @@ func parseSimpleSchemaAndOptionalLike(text string) (string, string, bool) {
 func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundStatement, Diagnostic, bool) {
 	schemaName := ""
 	pattern := ""
+	patternField := ""
 	trimmed := strings.TrimSpace(tablesBody)
 	if trimmed != "" {
 		schemaText := trimmed
@@ -2431,6 +2491,7 @@ func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundSta
 			if !ok {
 				return UnboundStatement{}, diagnostic, false
 			}
+			patternField = "table_type"
 		}
 		schemaText = strings.TrimSpace(schemaText)
 		if schemaText != "" {
@@ -2448,6 +2509,7 @@ func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundSta
 			schemaName = parsedSchema
 			if parsedPattern != "" {
 				pattern = parsedPattern
+				patternField = "table_name"
 			}
 		}
 	}
@@ -2455,10 +2517,11 @@ func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundSta
 		SQL:  sql,
 		Kind: QueryKindShowTables,
 		ShowTables: UnboundShowTables{
-			Schema:  schemaName,
-			Full:    full,
-			Pattern: pattern,
-			Result:  showTablesResultShape(schemaName, full),
+			Schema:       schemaName,
+			Full:         full,
+			Pattern:      pattern,
+			PatternField: patternField,
+			Result:       showTablesResultShape(schemaName, full),
 		},
 	}, Diagnostic{}, true
 }

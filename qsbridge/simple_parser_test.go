@@ -425,6 +425,25 @@ func TestSimpleParserBridgeParsesCreateTemporaryTableStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesHashCreateTableAsTemporaryTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("create table `#Tableau_Connect_Check` (`COL` integer);")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindCreateTable {
+		t.Fatalf("kind = %q, want create table", statement.Kind)
+	}
+	if !statement.Create.Temporary {
+		t.Fatalf("temporary = false, want true")
+	}
+	if statement.Create.Table.Name != "#Tableau_Connect_Check" {
+		t.Fatalf("table = %#v, want #Tableau_Connect_Check", statement.Create.Table)
+	}
+	if len(statement.Create.Columns) != 1 || statement.Create.Columns[0].Name != "COL" || statement.Create.Columns[0].Type != DataTypeInt {
+		t.Fatalf("columns = %#v, want one integer COL", statement.Create.Columns)
+	}
+}
+
 func TestSimpleParserBridgeParsesDropTableStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("drop table customers_qa;")
 	if diagnostics.BlocksNative() {
@@ -451,6 +470,22 @@ func TestSimpleParserBridgeParsesDropTemporaryTableIfExistsStatement(t *testing.
 	}
 	if statement.Drop.Table.Name != "qs_tmp_customer_keys" {
 		t.Fatalf("table = %#v, want qs_tmp_customer_keys", statement.Drop.Table)
+	}
+	if !statement.Drop.Temporary || !statement.Drop.IfExists {
+		t.Fatalf("drop flags temporary/if_exists = %t/%t, want true/true", statement.Drop.Temporary, statement.Drop.IfExists)
+	}
+}
+
+func TestSimpleParserBridgeParsesHashDropTableAsTemporaryTableStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("drop table if exists `#Tableau_Connect_Check`;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDropTable {
+		t.Fatalf("kind = %q, want drop table", statement.Kind)
+	}
+	if statement.Drop.Table.Name != "#Tableau_Connect_Check" {
+		t.Fatalf("table = %#v, want #Tableau_Connect_Check", statement.Drop.Table)
 	}
 	if !statement.Drop.Temporary || !statement.Drop.IfExists {
 		t.Fatalf("drop flags temporary/if_exists = %t/%t, want true/true", statement.Drop.Temporary, statement.Drop.IfExists)
@@ -685,6 +720,9 @@ func TestSimpleParserBridgeParsesShowFullTablesFromSchemaLikeStatement(t *testin
 	if statement.ShowTables.Pattern != "superstore_orders" {
 		t.Fatalf("pattern = %q, want superstore_orders", statement.ShowTables.Pattern)
 	}
+	if got, want := statement.ShowTables.PatternField, "table_name"; got != want {
+		t.Fatalf("pattern field = %q, want %q", got, want)
+	}
 	if got, want := len(statement.ShowTables.Result.Columns), 2; got != want {
 		t.Fatalf("columns = %d, want %d", got, want)
 	}
@@ -703,6 +741,9 @@ func TestSimpleParserBridgeParsesShowFullTablesWhereTableTypeStatement(t *testin
 	}
 	if got, want := statement.ShowTables.Pattern, "VIEW"; got != want {
 		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got, want := statement.ShowTables.PatternField, "table_type"; got != want {
+		t.Fatalf("pattern field = %q, want %q", got, want)
 	}
 	if got, want := len(statement.ShowTables.Result.Columns), 2; got != want {
 		t.Fatalf("columns = %d, want %d", got, want)
@@ -1116,6 +1157,25 @@ func TestSimpleParserBridgeParsesShowColumnsStatement(t *testing.T) {
 	}
 	if statement.Describe.Result.Columns[0].Name != "Field" || statement.Describe.Result.Columns[4].Name != "Default" {
 		t.Fatalf("result columns = %#v", statement.Describe.Result.Columns)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowFullColumnsFromSchemaLikeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show full columns from `superstore_orders` from `quanta` like '%';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindDescribe {
+		t.Fatalf("kind = %q, want describe", statement.Kind)
+	}
+	if statement.Describe.Target.Schema != "quanta" || statement.Describe.Target.Name != "superstore_orders" {
+		t.Fatalf("target = %#v, want quanta.superstore_orders", statement.Describe.Target)
+	}
+	if !statement.Describe.Full {
+		t.Fatalf("full = false, want true")
+	}
+	if got, want := statement.Describe.Pattern, "%"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
 	}
 }
 

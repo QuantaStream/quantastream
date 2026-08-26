@@ -3,6 +3,7 @@ package qsruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsmysql"
@@ -41,6 +42,8 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 		return qsmysql.PingResponse(), nil
 	case qsmysql.CommandKindQuit:
 		return qsmysql.QuitResponse(), nil
+	case qsmysql.CommandKindFieldList:
+		return h.handleMySQLFieldList(ctx, command)
 	case qsmysql.CommandKindStmtPrepare:
 		return h.handleMySQLPreparedStatementPrepare(command)
 	case qsmysql.CommandKindStmtExecute:
@@ -75,11 +78,32 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLCommand(ctx context.Context, 
 		}
 		profile.Store(result.Instrumentation)
 		result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, profile.ApplySessionActions(nativeProxySessionActions(result))...)
-		response, responseErr := nativeProxyMySQLResponseFromSQLResult(result)
+		response, responseErr := nativeProxyMySQLResponseFromSQLResult(result, command.Database)
 		return h.rememberMySQLCommandResponse(response, responseErr, true)
 	default:
 		return h.rememberMySQLCommandResponse(qsmysql.ErrorResponse(qsmysql.ProtocolErrorFromError(nil)), nil, true)
 	}
+}
+
+func (h NativeProxyMySQLCommandHandler) handleMySQLFieldList(ctx context.Context, command qsmysql.Command) (qsmysql.CommandResponse, error) {
+	table := strings.TrimSpace(command.Table)
+	if table == "" {
+		return h.rememberMySQLCommandResponse(qsmysql.ErrorResponse(qsbridge.ProtocolError{
+			SQLState:   qsbridge.SQLStateBaseTableNotFound,
+			VendorCode: 1146,
+			Message:    "COM_FIELD_LIST requires table name",
+		}), nil, true)
+	}
+	profile := h.sessionProfile()
+	sql := "select * from " + nativeProxyMySQLQuoteIdentifierPath(table) + " limit 0"
+	result, err := h.FrontDoor.Server.ExecuteSQLWithSession(ctx, nativeProxyMySQLSessionForCommand(profile, command), sql, h.Options)
+	if err != nil {
+		return h.rememberMySQLCommandResponse(qsmysql.ErrorResponseFromError(err), nil, true)
+	}
+	profile.Store(result.Instrumentation)
+	result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, profile.ApplySessionActions(nativeProxySessionActions(result))...)
+	response, responseErr := nativeProxyMySQLFieldListResponseFromSQLResult(result, command.Database, command.FieldPattern)
+	return h.rememberMySQLCommandResponse(response, responseErr, true)
 }
 
 func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementPrepare(command qsmysql.Command) (qsmysql.CommandResponse, error) {
@@ -125,7 +149,7 @@ func (h NativeProxyMySQLCommandHandler) handleMySQLPreparedStatementExecute(ctx 
 	}
 	profile.Store(result.Instrumentation)
 	result.Runtime.Diagnostics = append(result.Runtime.Diagnostics, profile.ApplySessionActions(nativeProxySessionActions(result))...)
-	response, responseErr := nativeProxyMySQLPreparedResponseFromSQLResult(result)
+	response, responseErr := nativeProxyMySQLPreparedResponseFromSQLResult(result, command.Database)
 	return h.rememberMySQLCommandResponse(response, responseErr, true)
 }
 
@@ -225,7 +249,7 @@ func nativeProxyMySQLLongDataParameter(parameters []qsbridge.ParameterRef, oneBa
 	return qsbridge.IndexedParameterValue(index, qsbridge.ValueString, nil), true
 }
 
-func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult) (qsmysql.CommandResponse, error) {
+func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult, database string) (qsmysql.CommandResponse, error) {
 	if protocolError, ok := result.Diagnostics.FirstProtocolError(); ok {
 		return qsmysql.ErrorResponse(protocolError), nil
 	}
@@ -237,12 +261,12 @@ func nativeProxyMySQLResponseFromSQLResult(result SQLExecutionResult) (qsmysql.C
 		return qsmysql.ErrorResponse(protocolError), nil
 	}
 	if clientResult.Kind == qsbridge.ResultQuery || len(clientResult.Columns) > 0 {
-		return qsmysql.QueryResponse(clientResult)
+		return qsmysql.QueryResponseWithOptions(clientResult, nativeProxyMySQLResultSetOptions(database))
 	}
 	return qsmysql.StatementOKResponse(clientResult.Statement), nil
 }
 
-func nativeProxyMySQLPreparedResponseFromSQLResult(result SQLExecutionResult) (qsmysql.CommandResponse, error) {
+func nativeProxyMySQLPreparedResponseFromSQLResult(result SQLExecutionResult, database string) (qsmysql.CommandResponse, error) {
 	if protocolError, ok := result.Diagnostics.FirstProtocolError(); ok {
 		return qsmysql.ErrorResponse(protocolError), nil
 	}
@@ -254,9 +278,42 @@ func nativeProxyMySQLPreparedResponseFromSQLResult(result SQLExecutionResult) (q
 		return qsmysql.ErrorResponse(protocolError), nil
 	}
 	if clientResult.Kind == qsbridge.ResultQuery || len(clientResult.Columns) > 0 {
-		return qsmysql.BinaryQueryResponse(clientResult)
+		return qsmysql.BinaryQueryResponseWithOptions(clientResult, nativeProxyMySQLResultSetOptions(database))
 	}
 	return qsmysql.StatementOKResponse(clientResult.Statement), nil
+}
+
+func nativeProxyMySQLFieldListResponseFromSQLResult(result SQLExecutionResult, database string, pattern string) (qsmysql.CommandResponse, error) {
+	if protocolError, ok := result.Diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	if protocolError, ok := result.Runtime.Diagnostics.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	clientResult := nativeProxyClientExecutionResult(result)
+	if protocolError, ok := clientResult.FirstProtocolError(); ok {
+		return qsmysql.ErrorResponse(protocolError), nil
+	}
+	return qsmysql.FieldListResponseWithOptions(clientResult, nativeProxyMySQLResultSetOptions(database), pattern)
+}
+
+func nativeProxyMySQLResultSetOptions(database string) qsmysql.ResultSetOptions {
+	return qsmysql.ResultSetOptions{DefaultSchema: nativeProxyDefaultSchema(database)}
+}
+
+func nativeProxyMySQLQuoteIdentifierPath(identifier string) string {
+	parts := strings.Split(identifier, ".")
+	for i, part := range parts {
+		parts[i] = "`" + strings.ReplaceAll(strings.TrimSpace(part), "`", "``") + "`"
+	}
+	return strings.Join(parts, ".")
+}
+
+func nativeProxyDefaultSchema(database string) string {
+	if database != "" {
+		return database
+	}
+	return "quanta"
 }
 
 func nativeProxyClientExecutionResult(result SQLExecutionResult) qsbridge.ExecutionResult {

@@ -12,6 +12,19 @@ func TestDecodeCommandQuery(t *testing.T) {
 	}
 }
 
+func TestDecodeCommandFieldList(t *testing.T) {
+	payload := append([]byte{byte(CommandFieldList)}, []byte("superstore_orders")...)
+	payload = append(payload, 0)
+	payload = append(payload, []byte("order_%")...)
+	command, err := DecodeCommand(payload)
+	if err != nil {
+		t.Fatalf("DecodeCommand failed: %v", err)
+	}
+	if command.Kind != CommandKindFieldList || command.Table != "superstore_orders" || command.FieldPattern != "order_%" {
+		t.Fatalf("command = %#v, want COM_FIELD_LIST table/pattern", command)
+	}
+}
+
 func TestDecodeCommandPingAndQuit(t *testing.T) {
 	for _, tc := range []struct {
 		payload []byte

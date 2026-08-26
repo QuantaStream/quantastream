@@ -19,6 +19,8 @@ type CommandTraceEvent struct {
 	Database      string
 	Kind          CommandKind
 	SQL           string
+	Table         string
+	FieldPattern  string
 	StatementID   uint32
 	ParameterID   int
 	LongDataBytes int
@@ -50,6 +52,8 @@ func (c Command) TraceEvent() CommandTraceEvent {
 		Database:     c.Database,
 		Kind:         c.Kind,
 		SQL:          c.SQL,
+		Table:        c.Table,
+		FieldPattern: c.FieldPattern,
 		StatementID:  c.StatementID,
 	}
 	if c.Kind == CommandKindStmtSendLongData {
@@ -70,6 +74,12 @@ func (e CommandTraceEvent) LogLine() string {
 	}
 	if strings.TrimSpace(e.SQL) != "" {
 		parts = append(parts, "sql="+strconv.Quote(commandTraceSQL(e.SQL)))
+	}
+	if strings.TrimSpace(e.Table) != "" {
+		parts = append(parts, "table="+strconv.Quote(e.Table))
+	}
+	if strings.TrimSpace(e.FieldPattern) != "" {
+		parts = append(parts, "field_pattern="+strconv.Quote(e.FieldPattern))
 	}
 	if e.StatementID != 0 || commandTraceStatementKind(e.Kind) {
 		parts = append(parts, fmt.Sprintf("statement_id=%d", e.StatementID))

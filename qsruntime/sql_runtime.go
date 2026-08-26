@@ -658,6 +658,8 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 		return qsbridge.Literal(qsbridge.ValueString, "OFF"), true
 	case "transaction_isolation", "tx_isolation":
 		return qsbridge.Literal(qsbridge.ValueString, "READ-COMMITTED"), true
+	case "transaction_read_only", "tx_read_only":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(0)), true
 	case "init_connect":
 		return qsbridge.Literal(qsbridge.ValueString, ""), true
 	case "offline_mode", "super_read_only":

@@ -11,6 +11,12 @@ import (
 // BinaryResultSetPackets encodes a protocol-neutral query result into MySQL
 // binary-result packets for COM_STMT_EXECUTE responses.
 func BinaryResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
+	return BinaryResultSetPacketsWithOptions(result, ResultSetOptions{})
+}
+
+// BinaryResultSetPacketsWithOptions encodes a protocol-neutral query result into
+// MySQL binary-result packets using optional connection metadata.
+func BinaryResultSetPacketsWithOptions(result qsbridge.ExecutionResult, options ResultSetOptions) ([]Packet, error) {
 	if len(result.Columns) == 0 {
 		return nil, fmt.Errorf("mysql binary resultset requires at least one column")
 	}
@@ -20,7 +26,7 @@ func BinaryResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
 	packets = append(packets, Packet{SequenceID: sequence, Payload: encodeLengthEncodedInteger(uint64(len(schema.Columns)))})
 	sequence++
 	for _, column := range schema.Columns {
-		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinition(column).Payload()})
+		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinitionWithOptions(column, options).Payload()})
 		sequence++
 	}
 	packets = append(packets, Packet{SequenceID: sequence, Payload: eofPayload(0)})

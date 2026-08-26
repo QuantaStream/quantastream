@@ -15,6 +15,8 @@ const (
 	CommandQuit CommandByte = 0x01
 	// CommandQuery is COM_QUERY.
 	CommandQuery CommandByte = 0x03
+	// CommandFieldList is COM_FIELD_LIST.
+	CommandFieldList CommandByte = 0x04
 	// CommandPing is COM_PING.
 	CommandPing CommandByte = 0x0e
 	// CommandStmtPrepare is COM_STMT_PREPARE.

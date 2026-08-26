@@ -13,6 +13,8 @@ type CommandKind string
 const (
 	// CommandKindQuery is a decoded COM_QUERY command.
 	CommandKindQuery CommandKind = "query"
+	// CommandKindFieldList is a decoded COM_FIELD_LIST command.
+	CommandKindFieldList CommandKind = "field_list"
 	// CommandKindStmtPrepare is a decoded COM_STMT_PREPARE command.
 	CommandKindStmtPrepare CommandKind = "stmt_prepare"
 	// CommandKindStmtExecute is a decoded COM_STMT_EXECUTE command.
@@ -33,6 +35,8 @@ const (
 type Command struct {
 	Kind         CommandKind
 	SQL          string
+	Table        string
+	FieldPattern string
 	StatementID  uint32
 	Execute      PreparedExecuteCommand
 	LongData     PreparedLongDataCommand
@@ -54,6 +58,12 @@ func DecodeCommand(payload []byte) (Command, error) {
 			return Command{}, fmt.Errorf("COM_QUERY requires SQL text")
 		}
 		return Command{Kind: CommandKindQuery, SQL: sql}, nil
+	case CommandFieldList:
+		table, pattern, err := decodeFieldListCommand(payload)
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: CommandKindFieldList, Table: table, FieldPattern: pattern}, nil
 	case CommandStmtPrepare:
 		sql := string(payload[1:])
 		if strings.TrimSpace(sql) == "" {
@@ -97,6 +107,28 @@ func DecodeCommand(payload []byte) (Command, error) {
 	default:
 		return Command{}, fmt.Errorf("unsupported mysql command byte 0x%02x", payload[0])
 	}
+}
+
+func decodeFieldListCommand(payload []byte) (string, string, error) {
+	if len(payload) < 3 {
+		return "", "", fmt.Errorf("COM_FIELD_LIST requires table name and terminator")
+	}
+	body := payload[1:]
+	terminator := -1
+	for i, b := range body {
+		if b == 0 {
+			terminator = i
+			break
+		}
+	}
+	if terminator < 0 {
+		return "", "", fmt.Errorf("COM_FIELD_LIST table name must be null-terminated")
+	}
+	table := strings.TrimSpace(string(body[:terminator]))
+	if table == "" {
+		return "", "", fmt.Errorf("COM_FIELD_LIST requires table name")
+	}
+	return table, string(body[terminator+1:]), nil
 }
 
 func decodeStatementIDCommand(command CommandByte, payload []byte) (uint32, error) {
