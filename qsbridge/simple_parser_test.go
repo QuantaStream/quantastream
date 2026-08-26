@@ -1412,6 +1412,30 @@ func TestSimpleParserBridgeParsesDerivedTableSource(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeUnquotesDerivedTableIdentifiers(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("SELECT `COL` FROM (SELECT 1 AS `COL`) AS `SUBQUERY`")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 1 {
+		t.Fatalf("projections = %#v, want one", statement.Select.Projection)
+	}
+	field, ok := statement.Select.Projection[0].Expr.(UnboundFieldExpr)
+	if !ok || field.Name != "COL" {
+		t.Fatalf("outer projection = %#v, want unquoted COL field", statement.Select.Projection[0].Expr)
+	}
+	if len(statement.Select.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one derived source", statement.Select.Tables)
+	}
+	table := statement.Select.Tables[0]
+	if table.Name != "SUBQUERY" || table.Alias != "SUBQUERY" || table.InlineRows == nil {
+		t.Fatalf("table = %#v, want unquoted SUBQUERY inline source", table)
+	}
+	if len(table.InlineRows.Columns) != 1 || table.InlineRows.Columns[0].Alias != "COL" {
+		t.Fatalf("inline columns = %#v, want unquoted COL alias", table.InlineRows.Columns)
+	}
+}
+
 func TestSimpleParserBridgeParsesInlineConstantUnionDerivedTableSource(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 		select c.name, c.cust_id

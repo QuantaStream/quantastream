@@ -163,6 +163,67 @@ tests:
         - transaction_isolation
         - wait_timeout
 
+  - id: mysql_compat_tableau_connect.014.select_tx_read_only_variable
+    status: supported
+    kind: query
+    feature: tableau_connect_transaction_probe
+    compatibility: mysql
+    requires: [select, system_variables, transactions]
+    sql: |
+      select @@session.tx_read_only as tx_read_only
+    expect:
+      columns: [tx_read_only]
+
+  - id: mysql_compat_tableau_connect.015.derived_probe_projection
+    status: supported
+    kind: query
+    feature: tableau_connect_capability_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases]
+    sql: |
+      SELECT `COL` FROM (SELECT 1 AS `COL`) AS `SUBQUERY`
+    expect:
+      columns: [COL]
+      rows:
+        - [1]
+
+  - id: mysql_compat_tableau_connect.016.derived_probe_limit
+    status: supported
+    kind: query
+    feature: tableau_connect_capability_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases, limit]
+    sql: |
+      SELECT `COL` FROM (SELECT 1 AS `COL`) AS `CHECKTOP` LIMIT 1
+    expect:
+      columns: [COL]
+      rows:
+        - [1]
+
+  - id: mysql_compat_tableau_connect.017.derived_probe_group_by_ordinal
+    status: supported
+    kind: query
+    feature: tableau_connect_capability_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases, group_by]
+    sql: |
+      SELECT `SUBCOL` AS `COL` FROM ( SELECT 1 AS `SUBCOL` ) `SUBQUERY` GROUP BY 1
+    expect:
+      columns: [COL]
+      rows:
+        - [1]
+
+  - id: mysql_compat_tableau_connect.018.derived_probe_group_by_ordinal_error
+    status: supported
+    kind: query
+    feature: tableau_connect_capability_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases, group_by]
+    sql: |
+      SELECT `SUBCOL` AS `COL` FROM ( SELECT 1 AS `SUBCOL` ) `SUBQUERY` GROUP BY 2
+    expect:
+      error_contains: GROUP BY ordinal is out of range
+
   - id: mysql_compat_tableau_connect.020.show_connect_variables
     status: supported
     kind: query

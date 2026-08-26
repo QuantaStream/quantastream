@@ -4258,13 +4258,13 @@ func parseSimpleTable(sourceText string) (UnboundTable, Diagnostic, bool) {
 			return UnboundTable{}, simpleParserDiagnostic("table alias is missing after AS"), false
 		}
 		schema, table := splitQualifiedName(fields[0])
-		return UnboundTable{Schema: schema, Name: table, Alias: fields[1]}, Diagnostic{}, true
+		return UnboundTable{Schema: schema, Name: table, Alias: stripSimpleIdentifierQuotes(fields[1])}, Diagnostic{}, true
 	case 3:
 		if !strings.EqualFold(fields[1], "as") {
 			return UnboundTable{}, simpleParserDiagnostic("unexpected table source syntax"), false
 		}
 		schema, table := splitQualifiedName(fields[0])
-		return UnboundTable{Schema: schema, Name: table, Alias: fields[2]}, Diagnostic{}, true
+		return UnboundTable{Schema: schema, Name: table, Alias: stripSimpleIdentifierQuotes(fields[2])}, Diagnostic{}, true
 	default:
 		return UnboundTable{}, simpleParserDiagnostic("expected one table source"), false
 	}
@@ -4294,7 +4294,7 @@ func parseSimpleDerivedTable(sourceText string) (UnboundTable, Diagnostic, bool,
 	if len(aliasFields) != 1 || strings.Contains(aliasFields[0], ".") {
 		return UnboundTable{}, simpleParserDiagnostic("derived table alias must be a simple identifier"), true, false
 	}
-	alias := aliasFields[0]
+	alias := stripSimpleIdentifierQuotes(aliasFields[0])
 	if inlineRows, diagnostic, found, ok := parseSimpleConstantUnionAllRowSet(inner); found || diagnostic.Code != "" {
 		if !ok {
 			return UnboundTable{}, diagnostic, true, false
@@ -4466,10 +4466,10 @@ func parseSimpleProjectionAlias(text string) (string, string, Diagnostic, bool) 
 		if len(strings.Fields(alias)) != 1 {
 			return "", "", simpleParserDiagnostic("unexpected projection alias syntax"), false
 		}
-		return expr, alias, Diagnostic{}, true
+		return expr, stripSimpleIdentifierQuotes(alias), Diagnostic{}, true
 	}
 	if len(fields) == 2 && simpleProjectionImplicitAliasExpressionComplete(fields[0]) {
-		return fields[0], fields[1], Diagnostic{}, true
+		return fields[0], stripSimpleIdentifierQuotes(fields[1]), Diagnostic{}, true
 	}
 	return trimmed, "", Diagnostic{}, true
 }
@@ -7417,17 +7417,17 @@ func findTopLevelSimpleKeyword(text string, keyword string) (int, int, bool) {
 func splitQualifiedName(name string) (string, string) {
 	parts := strings.Split(name, ".")
 	if len(parts) == 2 {
-		return parts[0], parts[1]
+		return stripSimpleIdentifierQuotes(parts[0]), stripSimpleIdentifierQuotes(parts[1])
 	}
-	return "", name
+	return "", stripSimpleIdentifierQuotes(name)
 }
 
 func splitProjectionField(name string) (string, string) {
 	parts := strings.Split(name, ".")
 	if len(parts) == 2 {
-		return parts[0], parts[1]
+		return stripSimpleIdentifierQuotes(parts[0]), stripSimpleIdentifierQuotes(parts[1])
 	}
-	return "", name
+	return "", stripSimpleIdentifierQuotes(name)
 }
 
 func simpleParserDiagnostic(message string) Diagnostic {
