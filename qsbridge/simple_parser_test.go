@@ -1579,6 +1579,44 @@ func TestSimpleParserBridgeParsesProjectionOnlyWhere(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesProjectionOnlyLimit(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select @@version_comment limit 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Tables) != 0 {
+		t.Fatalf("tables = %#v, want projection-only select", statement.Select.Tables)
+	}
+	if got, want := len(statement.Select.Projection), 1; got != want {
+		t.Fatalf("projection count = %d, want %d", got, want)
+	}
+	if !statement.Select.Result.HasLimit || statement.Select.Result.Limit != 1 || statement.Select.Result.Offset != 0 {
+		t.Fatalf("result = %#v, want LIMIT 1", statement.Select.Result)
+	}
+}
+
+func TestSimpleParserBridgeParsesProjectionOnlyWhereLimit(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select 1 as matched where 3 > 2 limit 1")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if len(statement.Select.Tables) != 0 {
+		t.Fatalf("tables = %#v, want projection-only select", statement.Select.Tables)
+	}
+	if got, want := len(statement.Select.Predicates), 1; got != want {
+		t.Fatalf("predicate count = %d, want %d", got, want)
+	}
+	if !statement.Select.Result.HasLimit || statement.Select.Result.Limit != 1 || statement.Select.Result.Offset != 0 {
+		t.Fatalf("result = %#v, want LIMIT 1", statement.Select.Result)
+	}
+}
+
 func TestSimpleParserBridgeParsesQ17CorrelatedAggregateIntent(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse(`
 select count(*)

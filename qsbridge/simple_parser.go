@@ -162,7 +162,19 @@ func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
 			projectionOnlyHasWhere = true
 		}
 	}
-	sourceText, limit, offset, hasLimit, diagnostic, ok := parseSimpleLimitClause(sourceText)
+	limit := 0
+	offset := 0
+	hasLimit := false
+	var diagnostic Diagnostic
+	if !hasSource {
+		if projectionOnlyHasWhere {
+			projectionOnlyWhereText, limit, offset, hasLimit, diagnostic, ok = parseSimpleLimitClause(projectionOnlyWhereText)
+		} else {
+			projectionText, limit, offset, hasLimit, diagnostic, ok = parseSimpleLimitClause(projectionText)
+		}
+	} else {
+		sourceText, limit, offset, hasLimit, diagnostic, ok = parseSimpleLimitClause(sourceText)
+	}
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
