@@ -34,10 +34,9 @@ func OKPayloadWithCapabilities(statement qsbridge.StatementResult, capabilities 
 	payload = appendLengthEncodedInteger(payload, statement.LastInsertID)
 	payload = appendUint16LE(payload, uint16(StatusAutocommit))
 	payload = appendUint16LE(payload, statement.Warnings)
-	if capabilities&CapabilitySessionTrack != 0 {
+	// Connector/J 8.4 parses OK info as length-encoded; keep non-empty status text portable.
+	if statement.Status != "" || capabilities&CapabilitySessionTrack != 0 {
 		payload = appendLengthEncodedString(payload, statement.Status)
-	} else if statement.Status != "" {
-		payload = append(payload, []byte(statement.Status)...)
 	}
 	return payload
 }

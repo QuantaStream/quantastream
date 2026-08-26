@@ -15,12 +15,17 @@ func TestOKPayloadEncodesStatementMetadata(t *testing.T) {
 		Status:       "Rows matched",
 	})
 
-	wantPrefix := []byte{okPacketHeader, 3, 42, byte(StatusAutocommit), 0, 2, 0}
-	if !bytes.Equal(payload[:len(wantPrefix)], wantPrefix) {
-		t.Fatalf("OK prefix = %v, want %v", payload[:len(wantPrefix)], wantPrefix)
+	want := []byte{okPacketHeader, 3, 42, byte(StatusAutocommit), 0, 2, 0, 12}
+	want = append(want, []byte("Rows matched")...)
+	if !bytes.Equal(payload, want) {
+		t.Fatalf("OK payload = %v, want %v", payload, want)
 	}
-	if !bytes.Contains(payload, []byte("Rows matched")) {
-		t.Fatalf("OK payload = %q, want status info", payload)
+}
+
+func TestOKPayloadOmitsEmptyInfoWithoutSessionTrack(t *testing.T) {
+	payload := OKPayload(qsbridge.StatementResult{})
+	if !bytes.Equal(payload, []byte{okPacketHeader, 0, 0, byte(StatusAutocommit), 0, 0, 0}) {
+		t.Fatalf("OK payload = %v, want compact empty OK", payload)
 	}
 }
 
