@@ -668,6 +668,28 @@ func TestSimpleParserBridgeParsesShowFullTablesStatement(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesShowFullTablesFromSchemaLikeStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show full tables from `quanta` like 'superstore_orders';")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowTables {
+		t.Fatalf("kind = %q, want show_tables", statement.Kind)
+	}
+	if !statement.ShowTables.Full {
+		t.Fatalf("show full flag = false, want true")
+	}
+	if statement.ShowTables.Schema != "quanta" {
+		t.Fatalf("schema = %q, want quanta", statement.ShowTables.Schema)
+	}
+	if statement.ShowTables.Pattern != "superstore_orders" {
+		t.Fatalf("pattern = %q, want superstore_orders", statement.ShowTables.Pattern)
+	}
+	if got, want := len(statement.ShowTables.Result.Columns), 2; got != want {
+		t.Fatalf("columns = %d, want %d", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesShowFullTablesWhereTableTypeStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("show full tables where Table_type = 'VIEW';")
 	if diagnostics.BlocksNative() {
@@ -1046,6 +1068,22 @@ func TestSimpleParserBridgeParsesShowKeysStatement(t *testing.T) {
 	}
 	if statement.Kind != QueryKindShowIndex || statement.ShowIndex.Table.Name != "customer" {
 		t.Fatalf("statement = %#v, want show index customer", statement)
+	}
+}
+
+func TestSimpleParserBridgeParsesShowKeysFromTableFromSchemaStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("show keys from `superstore_orders` from `quanta`;")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindShowIndex {
+		t.Fatalf("kind = %q, want show_index", statement.Kind)
+	}
+	if statement.ShowIndex.Table.Schema != "quanta" || statement.ShowIndex.Table.Name != "superstore_orders" {
+		t.Fatalf("target = %#v, want quanta.superstore_orders", statement.ShowIndex.Table)
+	}
+	if statement.ShowIndex.Result.Kind != ResultQuery || len(statement.ShowIndex.Result.Columns) != 15 {
+		t.Fatalf("result = %#v, want fifteen-column query result", statement.ShowIndex.Result)
 	}
 }
 

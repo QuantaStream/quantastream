@@ -2305,12 +2305,31 @@ func parseSimpleShowIndex(sql string, indexBody string) (UnboundStatement, Diagn
 	if !ok {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW INDEX must include FROM table"), false
 	}
-	target, diagnostic, ok := parseSimpleTable(strings.TrimSpace(targetBody))
+	targetText := strings.TrimSpace(targetBody)
+	schemaText := ""
+	if left, right, found := splitOptionalKeyword(targetText, "from"); found {
+		targetText = left
+		schemaText = right
+	} else if left, right, found := splitOptionalKeyword(targetText, "in"); found {
+		targetText = left
+		schemaText = right
+	}
+	if schemaText != "" {
+		schemaFields := strings.Fields(strings.TrimSpace(schemaText))
+		if len(schemaFields) != 1 {
+			return UnboundStatement{}, simpleParserDiagnostic("SHOW INDEX schema must be a single name"), false
+		}
+		schemaText = stripSimpleIdentifierQuotes(schemaFields[0])
+	}
+	target, diagnostic, ok := parseSimpleTable(targetText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
 	if target.Alias != "" {
 		return UnboundStatement{}, simpleParserDiagnostic("SHOW INDEX aliases are not supported"), false
+	}
+	if schemaText != "" {
+		target.Schema = schemaText
 	}
 	return UnboundStatement{
 		SQL:  sql,
@@ -2378,13 +2397,13 @@ func parseSimpleSchemaAndOptionalLike(text string) (string, string, bool) {
 		return "", "", false
 	}
 	if !hasLike {
-		return schemaFields[0], "", true
+		return stripSimpleIdentifierQuotes(schemaFields[0]), "", true
 	}
 	likeFields := strings.Fields(likeText)
 	if len(likeFields) != 1 {
 		return "", "", false
 	}
-	return schemaFields[0], strings.Trim(likeFields[0], "'\""), true
+	return stripSimpleIdentifierQuotes(schemaFields[0]), strings.Trim(likeFields[0], "'\""), true
 }
 
 func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundStatement, Diagnostic, bool) {
@@ -2422,11 +2441,14 @@ func parseSimpleShowTables(sql string, tablesBody string, full bool) (UnboundSta
 			if !ok {
 				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES only supports optional FROM/IN schema and SHOW FULL TABLES WHERE Table_type = literal"), false
 			}
-			fields := strings.Fields(schemaBody)
-			if len(fields) != 1 {
+			parsedSchema, parsedPattern, ok := parseSimpleSchemaAndOptionalLike(schemaBody)
+			if !ok {
 				return UnboundStatement{}, simpleParserDiagnostic("SHOW TABLES schema must be a single name"), false
 			}
-			schemaName = fields[0]
+			schemaName = parsedSchema
+			if parsedPattern != "" {
+				pattern = parsedPattern
+			}
 		}
 	}
 	return UnboundStatement{

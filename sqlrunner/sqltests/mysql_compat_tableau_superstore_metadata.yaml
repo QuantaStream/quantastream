@@ -38,7 +38,16 @@ tests:
     sql: |
       show full tables
 
-  - id: mysql_compat_tableau_superstore_metadata.005.show_table_status
+  - id: mysql_compat_tableau_superstore_metadata.005.show_full_tables_from_schema_like
+    status: supported
+    kind: query
+    feature: tableau_superstore_catalog_discovery
+    compatibility: mysql
+    requires: [show_full_tables, like]
+    sql: |
+      show full tables from `quanta` like 'superstore_orders'
+
+  - id: mysql_compat_tableau_superstore_metadata.006.show_table_status
     status: supported
     kind: query
     feature: tableau_superstore_table_metadata
@@ -47,7 +56,7 @@ tests:
     sql: |
       show table status like 'superstore_orders'
 
-  - id: mysql_compat_tableau_superstore_metadata.006.show_open_tables
+  - id: mysql_compat_tableau_superstore_metadata.007.show_open_tables
     status: supported
     kind: query
     feature: tableau_superstore_table_metadata
@@ -92,7 +101,16 @@ tests:
     sql: |
       show indexes from superstore_orders
 
-  - id: mysql_compat_tableau_superstore_metadata.014.show_create_table
+  - id: mysql_compat_tableau_superstore_metadata.014.show_keys_from_table_from_schema
+    status: supported
+    kind: query
+    feature: tableau_superstore_index_metadata
+    compatibility: mysql
+    requires: [show_index]
+    sql: |
+      show keys from `superstore_orders` from `quanta`
+
+  - id: mysql_compat_tableau_superstore_metadata.015.show_create_table
     status: supported
     kind: query
     feature: tableau_superstore_table_metadata
