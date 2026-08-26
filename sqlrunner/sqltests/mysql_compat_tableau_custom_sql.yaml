@@ -1,0 +1,177 @@
+version: 1
+name: mysql_compat_tableau_custom_sql
+
+tests:
+  - id: mysql_compat_tableau_custom_sql.001.wrapper_preview_all_columns
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, limit]
+    sql: |
+      select *
+      from (
+        select c_custkey, c_name, c_mktsegment
+        from customer
+      ) TableauSQL
+      limit 10
+
+  - id: mysql_compat_tableau_custom_sql.002.wrapper_outer_projection_filter_order
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, where, order_by, limit]
+    sql: |
+      select TableauSQL.customer_key,
+             TableauSQL.customer_name,
+             TableauSQL.market_segment
+      from (
+        select c_custkey as customer_key,
+               c_name as customer_name,
+               c_mktsegment as market_segment
+        from customer
+      ) TableauSQL
+      where TableauSQL.market_segment = 'BUILDING'
+      order by TableauSQL.customer_key asc
+      limit 20
+
+  - id: mysql_compat_tableau_custom_sql.003.wrapper_outer_limit_offset
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, order_by, limit, offset]
+    sql: |
+      select TableauSQL.customer_key,
+             TableauSQL.customer_name
+      from (
+        select c_custkey as customer_key,
+               c_name as customer_name
+        from customer
+      ) TableauSQL
+      order by TableauSQL.customer_key asc
+      limit 10 offset 10
+
+  - id: mysql_compat_tableau_custom_sql.010.wrapper_outer_grouped_count
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper_aggregate
+    compatibility: mysql
+    requires: [select, derived_table, aliases, group_by, count, order_by, limit]
+    sql: |
+      select TableauSQL.market_segment,
+             count(*) as customer_count
+      from (
+        select c_custkey as customer_key,
+               c_mktsegment as market_segment
+        from customer
+      ) TableauSQL
+      group by TableauSQL.market_segment
+      order by customer_count desc, TableauSQL.market_segment asc
+      limit 10
+
+  - id: mysql_compat_tableau_custom_sql.011.wrapper_outer_filtered_grouped_sum
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper_aggregate
+    compatibility: mysql
+    requires: [select, derived_table, aliases, where, in, group_by, sum, order_by, limit]
+    sql: |
+      select TableauSQL.market_segment,
+             sum(TableauSQL.account_balance) as account_balance
+      from (
+        select c_custkey as customer_key,
+               c_nationkey as nation_key,
+               c_mktsegment as market_segment,
+               c_acctbal as account_balance
+        from customer
+      ) TableauSQL
+      where TableauSQL.nation_key in (1, 2, 3, 4, 5)
+      group by TableauSQL.market_segment
+      order by account_balance desc
+      limit 10
+
+  - id: mysql_compat_tableau_custom_sql.020.wrapper_join_preview
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper_join
+    compatibility: mysql
+    requires: [select, derived_table, join, aliases, where, order_by, limit]
+    sql: |
+      select TableauSQL.customer_key,
+             TableauSQL.order_key,
+             TableauSQL.order_date,
+             TableauSQL.market_segment
+      from (
+        select c.c_custkey as customer_key,
+               c.c_mktsegment as market_segment,
+               o.o_orderkey as order_key,
+               o.o_orderdate as order_date
+        from customer as c
+        inner join orders as o on c.c_custkey = o.o_custkey
+      ) TableauSQL
+      where TableauSQL.market_segment = 'BUILDING'
+      order by TableauSQL.order_date asc, TableauSQL.order_key asc
+      limit 20
+
+  - id: mysql_compat_tableau_custom_sql.021.wrapper_join_aggregate
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper_join
+    compatibility: mysql
+    requires: [select, derived_table, join, aliases, where, group_by, count, order_by, limit]
+    sql: |
+      select TableauSQL.market_segment,
+             count(*) as orders_count
+      from (
+        select c.c_mktsegment as market_segment,
+               o.o_orderkey as order_key,
+               o.o_orderdate as order_date
+        from customer as c
+        inner join orders as o on c.c_custkey = o.o_custkey
+      ) TableauSQL
+      where TableauSQL.order_date between '1995-01-01' and '1995-12-31'
+      group by TableauSQL.market_segment
+      order by orders_count desc, TableauSQL.market_segment asc
+      limit 10
+
+  - id: mysql_compat_tableau_custom_sql.030.wrapper_calculated_revenue
+    status: supported
+    kind: query
+    feature: tableau_custom_sql_wrapper_calculated_field
+    compatibility: mysql
+    requires: [select, derived_table, join, aliases, arithmetic, where, group_by, sum, order_by, limit]
+    sql: |
+      select TableauSQL.market_segment,
+             sum(TableauSQL.revenue) as revenue
+      from (
+        select c.c_mktsegment as market_segment,
+               o.o_orderdate as order_date,
+               l.l_shipdate as ship_date,
+               l.l_extendedprice * (1 - l.l_discount) as revenue
+        from customer as c
+        inner join orders as o on c.c_custkey = o.o_custkey
+        inner join lineitem as l on o.o_orderkey = l.l_orderkey
+      ) TableauSQL
+      where TableauSQL.market_segment = 'BUILDING'
+        and TableauSQL.order_date < '1995-03-15'
+        and TableauSQL.ship_date > '1995-03-15'
+      group by TableauSQL.market_segment
+      order by revenue desc
+      limit 10
+
+  - id: mysql_compat_tableau_custom_sql.040.wrapper_extract_count_probe
+    status: supported
+    kind: query
+    feature: tableau_extract_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases, count]
+    sql: |
+      select count(*) as row_count
+      from (
+        select c_custkey as customer_key,
+               c_name as customer_name,
+               c_mktsegment as market_segment
+        from customer
+      ) TableauSQL
