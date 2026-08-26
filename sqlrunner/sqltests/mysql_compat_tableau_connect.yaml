@@ -1,0 +1,181 @@
+version: 1
+name: mysql_compat_tableau_connect
+
+tests:
+  - id: mysql_compat_tableau_connect.001.set_names_utf8mb4
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set_names, session_variables, charset]
+    sql: |
+      set names utf8mb4
+
+  - id: mysql_compat_tableau_connect.002.set_names_utf8mb4_collation
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set_names, session_variables, charset, collations]
+    sql: |
+      set names utf8mb4 collate utf8mb4_0900_ai_ci
+
+  - id: mysql_compat_tableau_connect.003.set_character_set_results_null
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set, session_variables, charset]
+    sql: |
+      set character_set_results = NULL
+
+  - id: mysql_compat_tableau_connect.004.set_mixed_session_defaults
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set, session_variables, session_scope]
+    sql: |
+      set character_set_results = NULL, session sql_mode = 'ANSI_QUOTES', session sql_select_limit = DEFAULT
+
+  - id: mysql_compat_tableau_connect.005.set_time_zone
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set, time_zone]
+    sql: |
+      set time_zone = '+00:00'
+
+  - id: mysql_compat_tableau_connect.006.set_autocommit
+    status: supported
+    kind: statement
+    feature: tableau_connect_session_setup
+    compatibility: mysql
+    requires: [set, autocommit]
+    sql: |
+      set autocommit = 1
+
+  - id: mysql_compat_tableau_connect.010.select_version_variables
+    status: supported
+    kind: query
+    feature: tableau_connect_version_probe
+    compatibility: mysql
+    requires: [select, system_variables, version]
+    sql: |
+      select @@version as version_value,
+             @@version_comment as version_comment,
+             @@version_compile_os as version_compile_os,
+             @@version_compile_machine as version_compile_machine
+    expect:
+      columns: [version_value, version_comment, version_compile_os, version_compile_machine]
+
+  - id: mysql_compat_tableau_connect.011.select_connection_metadata_functions
+    status: supported
+    kind: query
+    feature: tableau_connect_metadata_probe
+    compatibility: mysql
+    requires: [select, database, schema, version, user, current_user, connection_id]
+    sql: |
+      select database() as db_name,
+             schema() as schema_name,
+             version() as version_value,
+             user() as user_value,
+             current_user() as current_user_value,
+             connection_id() as connection_id_value
+    expect:
+      columns: [db_name, schema_name, version_value, user_value, current_user_value, connection_id_value]
+
+  - id: mysql_compat_tableau_connect.012.select_session_variables
+    status: supported
+    kind: query
+    feature: tableau_connect_session_probe
+    compatibility: mysql
+    requires: [select, system_variables]
+    sql: |
+      select @@autocommit as autocommit_value,
+             @@sql_mode as sql_mode_value,
+             @@time_zone as time_zone_value,
+             @@character_set_client as character_set_client,
+             @@character_set_connection as character_set_connection,
+             @@character_set_results as character_set_results,
+             @@collation_connection as collation_connection
+    expect:
+      columns:
+        - autocommit_value
+        - sql_mode_value
+        - time_zone_value
+        - character_set_client
+        - character_set_connection
+        - character_set_results
+        - collation_connection
+
+  - id: mysql_compat_tableau_connect.020.show_connect_variables
+    status: supported
+    kind: query
+    feature: tableau_connect_session_probe
+    compatibility: mysql
+    requires: [show_variables, where, in]
+    sql: |
+      show variables where Variable_name in ('version', 'version_comment', 'sql_mode', 'autocommit', 'time_zone')
+
+  - id: mysql_compat_tableau_connect.021.show_character_set
+    status: supported
+    kind: query
+    feature: tableau_connect_charset_probe
+    compatibility: mysql
+    requires: [show_character_set]
+    sql: |
+      show character set like 'utf8mb4'
+
+  - id: mysql_compat_tableau_connect.022.show_collation
+    status: supported
+    kind: query
+    feature: tableau_connect_charset_probe
+    compatibility: mysql
+    requires: [show_collation]
+    sql: |
+      show collation like 'utf8mb4%'
+
+  - id: mysql_compat_tableau_connect.030.use_database
+    status: supported
+    kind: statement
+    feature: tableau_connect_database_selection
+    compatibility: mysql
+    requires: [use]
+    sql: |
+      use quanta
+
+  - id: mysql_compat_tableau_connect.031.select_database_after_use
+    status: supported
+    kind: query
+    feature: tableau_connect_database_selection
+    compatibility: mysql
+    requires: [select, database, schema]
+    sql: |
+      select database() as db_name,
+             schema() as schema_name
+    expect:
+      columns: [db_name, schema_name]
+
+  - id: mysql_compat_tableau_connect.040.show_warnings_empty_ok
+    status: supported
+    kind: query
+    feature: tableau_connect_diagnostics
+    compatibility: mysql
+    requires: [show_warnings]
+    sql: |
+      show warnings
+
+  - id: mysql_compat_tableau_connect.041.ping_select_one
+    status: supported
+    kind: query
+    feature: tableau_connect_ping
+    compatibility: mysql
+    requires: [select, literals]
+    sql: |
+      select 1 as ping_value
+    expect:
+      columns: [ping_value]
+      rows:
+        - [1]
