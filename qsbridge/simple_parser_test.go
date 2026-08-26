@@ -31,6 +31,22 @@ func assertSimpleParserOrderByField(t *testing.T, sorts []UnboundSort, fieldName
 	}
 }
 
+func TestSimpleParserBridgeStripsLeadingClientComments(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("/* mysql-connector-j-8.4.0 */SELECT @@session.auto_increment_increment AS auto_increment_increment")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindSelect {
+		t.Fatalf("kind = %q, want select", statement.Kind)
+	}
+	if got, want := len(statement.Select.Projection), 1; got != want {
+		t.Fatalf("projection count = %d, want %d", got, want)
+	}
+	if got, want := statement.Select.Projection[0].Alias, "auto_increment_increment"; got != want {
+		t.Fatalf("projection alias = %q, want %q", got, want)
+	}
+}
+
 func TestSimpleParserBridgeParsesUpdateStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("update customers_qa set age = 99, phoneType = 'cell;home', last_name = 'Madden, Jr' where state = 'ID'")
 	if diagnostics.BlocksNative() {

@@ -24,7 +24,42 @@ func (SimpleParserBridge) Parse(sql string) (UnboundStatement, DiagnosticSet) {
 	return statement, nil
 }
 
+func stripSimpleLeadingComments(sql string) string {
+	text := strings.TrimSpace(sql)
+	for {
+		if strings.HasPrefix(text, "/*") {
+			end := strings.Index(text, "*/")
+			if end < 0 {
+				return text
+			}
+			text = strings.TrimSpace(text[end+len("*/"):])
+			continue
+		}
+		if strings.HasPrefix(text, "--") {
+			if len(text) > 2 && text[2] != ' ' && text[2] != '\t' && text[2] != '\r' && text[2] != '\n' {
+				return text
+			}
+			newline := strings.IndexAny(text, "\r\n")
+			if newline < 0 {
+				return ""
+			}
+			text = strings.TrimSpace(text[newline+1:])
+			continue
+		}
+		if strings.HasPrefix(text, "#") {
+			newline := strings.IndexAny(text, "\r\n")
+			if newline < 0 {
+				return ""
+			}
+			text = strings.TrimSpace(text[newline+1:])
+			continue
+		}
+		return text
+	}
+}
+
 func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
+	sql = stripSimpleLeadingComments(sql)
 	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
 	if trimmed == "" {
 		return UnboundStatement{}, simpleParserDiagnostic("empty SQL"), false

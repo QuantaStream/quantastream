@@ -599,8 +599,16 @@ func (r SQLRuntime) runtimeMetadataVariableCallLiteral(call qsbridge.CallExpr) (
 	return r.runtimeMetadataVariableLiteral(name)
 }
 
-func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.LiteralExpr, bool) {
+func normalizeRuntimeMetadataVariableName(name string) string {
 	normalized := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range []string{"@@", "session.", "global."} {
+		normalized = strings.TrimSpace(strings.TrimPrefix(normalized, prefix))
+	}
+	return normalized
+}
+
+func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.LiteralExpr, bool) {
+	normalized := normalizeRuntimeMetadataVariableName(name)
 	if normalized == "" {
 		return qsbridge.LiteralExpr{}, false
 	}
@@ -622,6 +630,8 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 		return qsbridge.Literal(qsbridge.ValueInt, int64(10)), true
 	case "lower_case_table_names":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(0)), true
+	case "auto_increment_increment":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
 	case "autocommit":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
 	case "character_set_client", "character_set_connection", "character_set_results", "character_set_server":
@@ -638,6 +648,18 @@ func (r SQLRuntime) runtimeMetadataVariableLiteral(name string) (qsbridge.Litera
 		return qsbridge.Literal(qsbridge.ValueString, runtimeSessionTimeZone(r.Session)), true
 	case "max_allowed_packet":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(67108864)), true
+	case "interactive_timeout", "wait_timeout":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(28800)), true
+	case "net_write_timeout":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(60)), true
+	case "query_cache_size":
+		return qsbridge.Literal(qsbridge.ValueInt, int64(0)), true
+	case "query_cache_type":
+		return qsbridge.Literal(qsbridge.ValueString, "OFF"), true
+	case "transaction_isolation", "tx_isolation":
+		return qsbridge.Literal(qsbridge.ValueString, "READ-COMMITTED"), true
+	case "init_connect":
+		return qsbridge.Literal(qsbridge.ValueString, ""), true
 	case "offline_mode", "super_read_only":
 		return qsbridge.Literal(qsbridge.ValueString, "OFF"), true
 	default:

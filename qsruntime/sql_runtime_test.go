@@ -1212,6 +1212,61 @@ func TestSQLRuntimeExecuteSQLProjectionSystemVariables(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLConnectorJStartupVariables(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+	runtime.Session = qsbridge.SessionContext{TimeZone: "+00:00"}
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		/* mysql-connector-j-8.4.0 (Revision: test) */SELECT @@session.auto_increment_increment AS auto_increment_increment,
+		       @@character_set_client AS character_set_client,
+		       @@character_set_connection AS character_set_connection,
+		       @@character_set_results AS character_set_results,
+		       @@character_set_server AS character_set_server,
+		       @@collation_server AS collation_server,
+		       @@collation_connection AS collation_connection,
+		       @@init_connect AS init_connect,
+		       @@interactive_timeout AS interactive_timeout,
+		       @@license AS license,
+		       @@lower_case_table_names AS lower_case_table_names,
+		       @@max_allowed_packet AS max_allowed_packet,
+		       @@net_write_timeout AS net_write_timeout,
+		       @@performance_schema AS performance_schema,
+		       @@query_cache_size AS query_cache_size,
+		       @@query_cache_type AS query_cache_type,
+		       @@sql_mode AS sql_mode,
+		       @@system_time_zone AS system_time_zone,
+		       @@time_zone AS time_zone,
+		       @@tx_isolation AS transaction_isolation,
+		       @@wait_timeout AS wait_timeout
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("Connector/J startup variables should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 21 {
+		t.Fatalf("rows = %#v, want one twenty-one-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != int64(1) || row[10].Value != int64(0) || row[11].Value != int64(67108864) || row[19].Value != "READ-COMMITTED" || row[20].Value != int64(28800) {
+		t.Fatalf("Connector/J metadata row = %#v", row)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLProjectionAutocommitNormalizesBooleanSessionValues(t *testing.T) {
 	tests := []struct {
 		value string
