@@ -1,0 +1,195 @@
+version: 1
+name: mysql_compat_tableau_metadata
+
+tests:
+  - id: mysql_compat_tableau_metadata.001.set_names_utf8mb4
+    status: supported
+    kind: statement
+    feature: tableau_session_setup
+    compatibility: mysql
+    requires: [set_names, charset]
+    sql: |
+      set names utf8mb4
+
+  - id: mysql_compat_tableau_metadata.002.set_client_session_defaults
+    status: supported
+    kind: statement
+    feature: tableau_session_setup
+    compatibility: mysql
+    requires: [set, session_variables]
+    sql: |
+      set character_set_results = NULL, session sql_mode = 'ANSI_QUOTES', session sql_select_limit = DEFAULT
+
+  - id: mysql_compat_tableau_metadata.010.select_version_variables
+    status: supported
+    kind: query
+    feature: tableau_session_metadata
+    compatibility: mysql
+    requires: [select, session_variables]
+    sql: |
+      select @@version as version_value,
+             @@version_comment as version_comment,
+             @@version_compile_os as version_compile_os,
+             @@version_compile_machine as version_compile_machine
+
+  - id: mysql_compat_tableau_metadata.011.show_version_variables
+    status: supported
+    kind: query
+    feature: tableau_session_metadata
+    compatibility: mysql
+    requires: [show_variables, where, in]
+    sql: |
+      show variables where Variable_name in ('version', 'version_comment')
+
+  - id: mysql_compat_tableau_metadata.012.show_character_variables
+    status: supported
+    kind: query
+    feature: tableau_session_metadata
+    compatibility: mysql
+    requires: [show_variables, where, like, or]
+    sql: |
+      show variables where Variable_name like 'character_set_%' or Variable_name = 'collation_connection'
+
+  - id: mysql_compat_tableau_metadata.013.show_status_threads
+    status: supported
+    kind: query
+    feature: tableau_session_metadata
+    compatibility: mysql
+    requires: [show_status, where, like, or]
+    sql: |
+      show status where Variable_name = 'Connections' or Variable_name like 'Threads_%'
+
+  - id: mysql_compat_tableau_metadata.020.show_databases
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [show_databases]
+    sql: |
+      show databases
+
+  - id: mysql_compat_tableau_metadata.021.use_database
+    status: supported
+    kind: statement
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [use]
+    sql: |
+      use quanta
+
+  - id: mysql_compat_tableau_metadata.022.show_tables
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [show_tables]
+    sql: |
+      show tables
+
+  - id: mysql_compat_tableau_metadata.023.show_full_tables
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [show_full_tables]
+    sql: |
+      show full tables
+
+  - id: mysql_compat_tableau_metadata.024.show_table_status
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [show_table_status, like]
+    sql: |
+      show table status like 'customer'
+
+  - id: mysql_compat_tableau_metadata.025.show_open_tables
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [show_open_tables, like]
+    sql: |
+      show open tables from quanta like 'customer'
+
+  - id: mysql_compat_tableau_metadata.030.show_columns
+    status: supported
+    kind: query
+    feature: tableau_table_metadata
+    compatibility: mysql
+    requires: [show_columns]
+    sql: |
+      show columns from customer
+
+  - id: mysql_compat_tableau_metadata.031.show_full_columns
+    status: supported
+    kind: query
+    feature: tableau_table_metadata
+    compatibility: mysql
+    requires: [show_full_columns]
+    sql: |
+      show full columns from customer
+
+  - id: mysql_compat_tableau_metadata.032.describe_table
+    status: supported
+    kind: query
+    feature: tableau_table_metadata
+    compatibility: mysql
+    requires: [describe]
+    sql: |
+      describe customer
+
+  - id: mysql_compat_tableau_metadata.033.show_indexes
+    status: supported
+    kind: query
+    feature: tableau_table_metadata
+    compatibility: mysql
+    requires: [show_index]
+    sql: |
+      show indexes from customer
+
+  - id: mysql_compat_tableau_metadata.034.show_create_table
+    status: supported
+    kind: query
+    feature: tableau_table_metadata
+    compatibility: mysql
+    requires: [show_create_table]
+    sql: |
+      show create table customer
+
+  - id: mysql_compat_tableau_metadata.040.preview_rows_limit
+    status: supported
+    kind: query
+    feature: tableau_preview
+    compatibility: mysql
+    requires: [select, projection, limit]
+    sql: |
+      select c_custkey, c_name, c_mktsegment
+      from customer
+      limit 10
+
+  - id: mysql_compat_tableau_metadata.041.preview_rows_ordered
+    status: supported
+    kind: query
+    feature: tableau_preview
+    compatibility: mysql
+    requires: [select, aliases, order_by, limit]
+    sql: |
+      select c.c_custkey as customer_key,
+             c.c_name as customer_name,
+             c.c_mktsegment as market_segment
+      from customer as c
+      order by c.c_custkey asc
+      limit 10
+
+  - id: mysql_compat_tableau_metadata.042.explain_preview_query
+    status: supported
+    kind: query
+    feature: tableau_preview
+    compatibility: mysql
+    requires: [explain, select, aliases, limit]
+    sql: |
+      explain select c.c_custkey, c.c_name
+      from customer as c
+      limit 5
