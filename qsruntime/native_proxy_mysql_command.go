@@ -23,9 +23,10 @@ func (h NativeProxyMySQLCommandHandler) HandleCommand(ctx context.Context, comma
 // ServeMySQLCommand reads, handles, and writes one MySQL command through packet interfaces.
 func (f NativeProxyFrontDoor) ServeMySQLCommand(ctx context.Context, reader qsmysql.PacketReader, writer qsmysql.PacketWriter, options qsbridge.ExecutionOptions) (qsmysql.CommandResponse, error) {
 	return (qsmysql.CommandLoop{
-		Reader:  reader,
-		Writer:  writer,
-		Handler: NativeProxyMySQLCommandHandler{FrontDoor: f, Options: options, Profile: NewNativeProxyMySQLSessionProfile()},
+		Reader:        reader,
+		Writer:        writer,
+		Handler:       NativeProxyMySQLCommandHandler{FrontDoor: f, Options: options, Profile: NewNativeProxyMySQLSessionProfile()},
+		CommandLogger: f.MySQLCommandLogger,
 	}).ServeNext(ctx)
 }
 

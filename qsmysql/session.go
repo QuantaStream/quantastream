@@ -21,6 +21,7 @@ type SessionRunnerConfig struct {
 	Stream         PacketReadWriter
 	Handler        CommandHandler
 	Authenticator  Authenticator
+	CommandLogger  CommandLogger
 }
 
 // SessionRunner drives one MySQL connection over an already-mounted packet stream.
@@ -30,6 +31,7 @@ type SessionRunner struct {
 	Stream        PacketReadWriter
 	Handler       CommandHandler
 	Authenticator Authenticator
+	CommandLogger CommandLogger
 }
 
 // NewSessionRunner returns a connection runner with deterministic default handshake data.
@@ -56,6 +58,7 @@ func NewSessionRunner(config SessionRunnerConfig) SessionRunner {
 		Stream:        config.Stream,
 		Handler:       config.Handler,
 		Authenticator: authenticator,
+		CommandLogger: config.CommandLogger,
 	}
 }
 
@@ -182,6 +185,7 @@ func (r *SessionRunner) ServeNextCommand(ctx context.Context) (CommandResponse, 
 		Database:        r.Connection.Database,
 		Roles:           r.Connection.Roles,
 		CapabilityFlags: r.Connection.CapabilityFlags,
+		CommandLogger:   r.CommandLogger,
 	}).ServeNext(ctx)
 	if err != nil {
 		return response, err

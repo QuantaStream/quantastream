@@ -188,6 +188,14 @@ func TestStandardFrontDoorConfigCanEnableRuntimeProbeLogging(t *testing.T) {
 	}
 }
 
+func TestStandardFrontDoorConfigCanEnableMySQLCommandTraceLogging(t *testing.T) {
+	config := StandardConfig{MySQLCommandTraceLogging: true}.NativeProxyFrontDoorConfig().WithDefaults()
+
+	if config.MySQLCommandLogger == nil {
+		t.Fatalf("MySQLCommandLogger = nil, want command trace logger when enabled")
+	}
+}
+
 func TestStandardDirectRuntimeWiresRelationshipReaderSessions(t *testing.T) {
 	mount := (StandardLocalBackend{}).NewDirectRuntime(StandardConfig{DataDir: t.TempDir()}, nil, 1)
 	defer mount.Close()

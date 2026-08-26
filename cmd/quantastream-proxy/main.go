@@ -51,6 +51,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
 	accessPolicyFile := flags.String("access-policy-file", envString("QUANTASTREAM_ACCESS_POLICY_FILE", ""), "YAML static SQL access policy file; empty leaves SQL authorization permissive")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
+	mysqlCommandTrace := flags.Bool("mysql-command-trace", envBool("QUANTASTREAM_MYSQL_COMMAND_TRACE"), "log decoded MySQL commands and responses for client compatibility capture")
 	pprofBind := flags.String("pprof-bind", envString("QUANTASTREAM_PPROF_BIND", ""), "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	showVersion := flags.Bool("version", false, "print QuantaStream version and exit")
@@ -79,19 +80,20 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 
 	mountStart := time.Now()
 	process, err := mountDistributedProxy(ctx, distributedProxyConfig{
-		BindAddress:      *bindAddress,
-		MySQLPort:        *mysqlPort,
-		ConsulAddress:    *consulAddress,
-		NodePort:         *nodePort,
-		SessionPoolSize:  *sessionPoolSize,
-		SchemaDir:        *schemaDir,
-		Database:         *database,
-		AuthMode:         *authMode,
-		AuthUser:         *authUser,
-		AuthPassword:     *authPassword,
-		AuthAccountFile:  *authAccountFile,
-		AccessPolicyFile: *accessPolicyFile,
-		RuntimeProbes:    *runtimeProbes,
+		BindAddress:       *bindAddress,
+		MySQLPort:         *mysqlPort,
+		ConsulAddress:     *consulAddress,
+		NodePort:          *nodePort,
+		SessionPoolSize:   *sessionPoolSize,
+		SchemaDir:         *schemaDir,
+		Database:          *database,
+		AuthMode:          *authMode,
+		AuthUser:          *authUser,
+		AuthPassword:      *authPassword,
+		AuthAccountFile:   *authAccountFile,
+		AccessPolicyFile:  *accessPolicyFile,
+		RuntimeProbes:     *runtimeProbes,
+		MySQLCommandTrace: *mysqlCommandTrace,
 	})
 	mountElapsed := time.Since(mountStart)
 	if err != nil {
@@ -125,19 +127,20 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 type distributedProxyConfig struct {
-	BindAddress      string
-	MySQLPort        int
-	ConsulAddress    string
-	NodePort         int
-	SessionPoolSize  int
-	SchemaDir        string
-	Database         string
-	AuthMode         string
-	AuthUser         string
-	AuthPassword     string
-	AuthAccountFile  string
-	AccessPolicyFile string
-	RuntimeProbes    bool
+	BindAddress       string
+	MySQLPort         int
+	ConsulAddress     string
+	NodePort          int
+	SessionPoolSize   int
+	SchemaDir         string
+	Database          string
+	AuthMode          string
+	AuthUser          string
+	AuthPassword      string
+	AuthAccountFile   string
+	AccessPolicyFile  string
+	RuntimeProbes     bool
+	MySQLCommandTrace bool
 }
 
 type distributedProxyProcess struct {
@@ -212,7 +215,7 @@ func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (
 			log.Infof("RUNTIME probe section=%s name=%s value=%s detail=%s", probe.Section, probe.Name, probe.Value, probe.Detail)
 		})
 	}
-	frontDoor := qsruntime.NewNativeProxyFrontDoor(nativeRuntime, qsruntime.NativeProxyFrontDoorConfig{
+	frontDoorConfig := qsruntime.NativeProxyFrontDoorConfig{
 		Server:        serverConfig,
 		BindAddress:   config.BindAddress,
 		Port:          config.MySQLPort,
@@ -226,7 +229,13 @@ func mountDistributedProxy(ctx context.Context, config distributedProxyConfig) (
 			qsbridge.ProtocolCapabilitySessionActions,
 			qsbridge.ProtocolCapabilityExplain,
 		),
-	})
+	}
+	if config.MySQLCommandTrace {
+		frontDoorConfig.MySQLCommandLogger = qsmysql.CommandLoggerFunc(func(event qsmysql.CommandTraceEvent) {
+			log.Infof("%s", event.LogLine())
+		})
+	}
+	frontDoor := qsruntime.NewNativeProxyFrontDoor(nativeRuntime, frontDoorConfig)
 	closed = true
 	return distributedProxyProcess{
 		Config:       config,

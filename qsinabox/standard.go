@@ -18,20 +18,21 @@ const StandardMode = "inabox-standard"
 // StandardConfig captures the first process-level configuration surface for
 // the single-process QIAB executable.
 type StandardConfig struct {
-	BindAddress         string
-	MySQLPort           int
-	NativeGRPCBind      string
-	NativeGRPCPort      int
-	ConfigDir           string
-	DataDir             string
-	WriteAheadLogPath   string
-	Database            string
-	AuthMode            string
-	AuthUser            string
-	AuthPassword        string
-	AuthAccountFile     string
-	AccessPolicyFile    string
-	RuntimeProbeLogging bool
+	BindAddress              string
+	MySQLPort                int
+	NativeGRPCBind           string
+	NativeGRPCPort           int
+	ConfigDir                string
+	DataDir                  string
+	WriteAheadLogPath        string
+	Database                 string
+	AuthMode                 string
+	AuthUser                 string
+	AuthPassword             string
+	AuthAccountFile          string
+	AccessPolicyFile         string
+	RuntimeProbeLogging      bool
+	MySQLCommandTraceLogging bool
 }
 
 // WithDefaults fills stable local defaults for inabox-standard.
@@ -125,7 +126,7 @@ func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontD
 	if err == nil {
 		serverConfig.Authorizer = authorizer
 	}
-	return qsruntime.NativeProxyFrontDoorConfig{
+	frontDoorConfig := qsruntime.NativeProxyFrontDoorConfig{
 		Server:        serverConfig,
 		BindAddress:   c.BindAddress,
 		Port:          c.MySQLPort,
@@ -140,6 +141,12 @@ func (c StandardConfig) NativeProxyFrontDoorConfig() qsruntime.NativeProxyFrontD
 			qsbridge.ProtocolCapabilityExplain,
 		),
 	}
+	if c.MySQLCommandTraceLogging {
+		frontDoorConfig.MySQLCommandLogger = qsmysql.CommandLoggerFunc(func(event qsmysql.CommandTraceEvent) {
+			log.Infof("%s", event.LogLine())
+		})
+	}
+	return frontDoorConfig
 }
 
 // StandardPlan is a non-executing vertical skeleton of standard-mode process

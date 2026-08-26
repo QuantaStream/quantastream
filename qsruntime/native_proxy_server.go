@@ -9,13 +9,14 @@ import (
 
 // NativeProxyFrontDoorConfig captures the bounded MySQL-compatible front-door entry point.
 type NativeProxyFrontDoorConfig struct {
-	Server        NativeProxyServerConfig
-	Protocol      qsbridge.ProtocolProfile
-	BindAddress   string
-	Port          int
-	PacketIOReady bool
-	MySQLAdapter  qsmysql.AdapterReadiness
-	Authenticator qsmysql.Authenticator
+	Server             NativeProxyServerConfig
+	Protocol           qsbridge.ProtocolProfile
+	BindAddress        string
+	Port               int
+	PacketIOReady      bool
+	MySQLAdapter       qsmysql.AdapterReadiness
+	Authenticator      qsmysql.Authenticator
+	MySQLCommandLogger qsmysql.CommandLogger
 }
 
 // WithDefaults returns a MySQL/QIAB front-door config without claiming packet IO is implemented.
@@ -45,13 +46,14 @@ func (c NativeProxyFrontDoorConfig) WithDefaults() NativeProxyFrontDoorConfig {
 
 // NativeProxyFrontDoor is a protocol-aware bootstrap view, not a network listener.
 type NativeProxyFrontDoor struct {
-	Server        NativeProxyServer
-	Protocol      qsbridge.ProtocolProfile
-	BindAddress   string
-	Port          int
-	PacketIOReady bool
-	MySQLAdapter  qsmysql.AdapterReadiness
-	Authenticator qsmysql.Authenticator
+	Server             NativeProxyServer
+	Protocol           qsbridge.ProtocolProfile
+	BindAddress        string
+	Port               int
+	PacketIOReady      bool
+	MySQLAdapter       qsmysql.AdapterReadiness
+	Authenticator      qsmysql.Authenticator
+	MySQLCommandLogger qsmysql.CommandLogger
 }
 
 // NewNativeProxyFrontDoor builds a MySQL-facing front-door bootstrap wrapper around the native SQL server.
@@ -62,13 +64,14 @@ func NewNativeProxyFrontDoor(runtime NativeProxyRuntime, config NativeProxyFront
 		authenticator = qsmysql.PermissiveAuthenticator{}
 	}
 	return NativeProxyFrontDoor{
-		Server:        NewNativeProxyServer(runtime, config.Server),
-		Protocol:      config.Protocol.Clone(),
-		BindAddress:   config.BindAddress,
-		Port:          config.Port,
-		PacketIOReady: config.PacketIOReady || config.MySQLAdapter.PacketIOReady(),
-		MySQLAdapter:  config.MySQLAdapter,
-		Authenticator: authenticator,
+		Server:             NewNativeProxyServer(runtime, config.Server),
+		Protocol:           config.Protocol.Clone(),
+		BindAddress:        config.BindAddress,
+		Port:               config.Port,
+		PacketIOReady:      config.PacketIOReady || config.MySQLAdapter.PacketIOReady(),
+		MySQLAdapter:       config.MySQLAdapter,
+		Authenticator:      authenticator,
+		MySQLCommandLogger: config.MySQLCommandLogger,
 	}
 }
 

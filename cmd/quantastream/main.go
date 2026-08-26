@@ -51,6 +51,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
 	accessPolicyFile := flags.String("access-policy-file", envString("QUANTASTREAM_ACCESS_POLICY_FILE", ""), "YAML static SQL access policy file; empty leaves SQL authorization permissive")
 	runtimeProbes := flags.Bool("runtime-probes", envBool("QUANTASTREAM_RUNTIME_PROBES"), "log runtime execution probes after each query")
+	mysqlCommandTrace := flags.Bool("mysql-command-trace", envBool("QUANTASTREAM_MYSQL_COMMAND_TRACE"), "log decoded MySQL commands and responses for client compatibility capture")
 	pprofBind := flags.String("pprof-bind", "", "optional pprof listen address, for example 127.0.0.1:6060")
 	statusOnly := flags.Bool("status", false, "print startup readiness and exit successfully")
 	mountLocalNode := flags.Bool("mount-local-node", false, "construct the in-process local node backend before reporting status; regular startup always mounts it")
@@ -71,20 +72,21 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 
 	config := qsinabox.StandardConfig{
-		BindAddress:         *bindAddress,
-		MySQLPort:           *mysqlPort,
-		NativeGRPCBind:      *nativeGRPCBind,
-		NativeGRPCPort:      *nativeGRPCPort,
-		ConfigDir:           *configDir,
-		DataDir:             *dataDir,
-		WriteAheadLogPath:   *walPath,
-		Database:            *database,
-		AuthMode:            *authMode,
-		AuthUser:            *authUser,
-		AuthPassword:        *authPassword,
-		AuthAccountFile:     *authAccountFile,
-		AccessPolicyFile:    *accessPolicyFile,
-		RuntimeProbeLogging: *runtimeProbes,
+		BindAddress:              *bindAddress,
+		MySQLPort:                *mysqlPort,
+		NativeGRPCBind:           *nativeGRPCBind,
+		NativeGRPCPort:           *nativeGRPCPort,
+		ConfigDir:                *configDir,
+		DataDir:                  *dataDir,
+		WriteAheadLogPath:        *walPath,
+		Database:                 *database,
+		AuthMode:                 *authMode,
+		AuthUser:                 *authUser,
+		AuthPassword:             *authPassword,
+		AuthAccountFile:          *authAccountFile,
+		AccessPolicyFile:         *accessPolicyFile,
+		RuntimeProbeLogging:      *runtimeProbes,
+		MySQLCommandTraceLogging: *mysqlCommandTrace,
 	}
 	if _, err := config.MySQLAuthenticator(); err != nil {
 		fmt.Fprintf(stderr, "configure mysql auth: %v\n", err)
