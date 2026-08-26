@@ -1,0 +1,138 @@
+version: 1
+name: mysql_compat_tableau_extract
+
+tests:
+  - id: mysql_compat_tableau_extract.001.table_count_probe
+    status: supported
+    kind: query
+    feature: tableau_extract_probe
+    compatibility: mysql
+    requires: [select, count]
+    sql: |
+      select count(*) as row_count
+      from customer
+
+  - id: mysql_compat_tableau_extract.002.bounded_projection_scan
+    status: supported
+    kind: query
+    feature: tableau_extract_scan
+    compatibility: mysql
+    requires: [select, projection, order_by, limit]
+    sql: |
+      select c_custkey,
+             c_name,
+             c_address,
+             c_nationkey,
+             c_phone,
+             c_acctbal,
+             c_mktsegment
+      from customer
+      order by c_custkey asc
+      limit 100
+
+  - id: mysql_compat_tableau_extract.003.incremental_timestamp_window
+    status: supported
+    kind: query
+    feature: tableau_extract_incremental_refresh
+    compatibility: mysql
+    requires: [select, projection, where, comparisons, order_by, limit]
+    sql: |
+      select l_orderkey,
+             l_linenumber,
+             l_quantity,
+             l_extendedprice,
+             l_discount,
+             l_shipdate
+      from lineitem
+      where l_shipdate >= '1995-01-01'
+        and l_shipdate < '1995-02-01'
+      order by l_shipdate asc, l_orderkey asc, l_linenumber asc
+      limit 100
+
+  - id: mysql_compat_tableau_extract.004.filtered_extract_page
+    status: supported
+    kind: query
+    feature: tableau_extract_scan
+    compatibility: mysql
+    requires: [select, projection, where, in, order_by, limit]
+    sql: |
+      select c_custkey,
+             c_name,
+             c_nationkey,
+             c_acctbal,
+             c_mktsegment
+      from customer
+      where c_mktsegment in ('AUTOMOBILE', 'BUILDING')
+      order by c_custkey asc
+      limit 100
+
+  - id: mysql_compat_tableau_extract.010.derived_extract_count_probe
+    status: supported
+    kind: query
+    feature: tableau_extract_probe
+    compatibility: mysql
+    requires: [select, derived_table, aliases, count]
+    sql: |
+      select count(*) as row_count
+      from (
+        select c_custkey as customer_key,
+               c_name as customer_name,
+               c_mktsegment as market_segment
+        from customer
+      ) TableauExtract
+
+  - id: mysql_compat_tableau_extract.011.derived_extract_page
+    status: supported
+    kind: query
+    feature: tableau_extract_scan
+    compatibility: mysql
+    requires: [select, derived_table, aliases, where, order_by, limit]
+    sql: |
+      select TableauExtract.customer_key,
+             TableauExtract.customer_name,
+             TableauExtract.market_segment
+      from (
+        select c_custkey as customer_key,
+               c_name as customer_name,
+               c_mktsegment as market_segment
+        from customer
+      ) TableauExtract
+      where TableauExtract.market_segment = 'BUILDING'
+      order by TableauExtract.customer_key asc
+      limit 100
+
+  - id: mysql_compat_tableau_extract.020.extract_aggregate_sanity
+    status: supported
+    kind: query
+    feature: tableau_extract_aggregate_check
+    compatibility: mysql
+    requires: [select, count, sum, arithmetic, where, group_by, order_by, limit]
+    sql: |
+      select l_returnflag,
+             l_linestatus,
+             count(*) as row_count,
+             sum(l_extendedprice * (1 - l_discount)) as revenue
+      from lineitem
+      where l_shipdate >= '1995-01-01'
+        and l_shipdate < '1996-01-01'
+      group by l_returnflag, l_linestatus
+      order by row_count desc, l_returnflag asc, l_linestatus asc
+      limit 20
+
+  - id: mysql_compat_tableau_extract.030.joined_extract_sample
+    status: supported
+    kind: query
+    feature: tableau_extract_join_scan
+    compatibility: mysql
+    requires: [select, join, projection, where, order_by, limit]
+    sql: |
+      select c.c_custkey as customer_key,
+             c.c_mktsegment as market_segment,
+             o.o_orderkey as order_key,
+             o.o_orderdate as order_date
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      where o.o_orderdate >= '1995-01-01'
+        and o.o_orderdate < '1995-02-01'
+      order by o.o_orderdate asc, o.o_orderkey asc
+      limit 100
