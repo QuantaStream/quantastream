@@ -1,0 +1,153 @@
+version: 1
+name: mysql_compat_tableau_worksheets
+
+tests:
+  - id: mysql_compat_tableau_worksheets.001.preview_explicit_projection
+    status: supported
+    kind: query
+    feature: tableau_preview
+    compatibility: mysql
+    requires: [select, aliases, order_by, limit]
+    sql: |
+      select c.c_custkey as customer_key,
+             c.c_name as customer_name,
+             c.c_mktsegment as market_segment
+      from customer as c
+      order by c.c_custkey asc
+      limit 25
+
+  - id: mysql_compat_tableau_worksheets.002.preview_offset_page
+    status: supported
+    kind: query
+    feature: tableau_preview
+    compatibility: mysql
+    requires: [select, order_by, limit, offset]
+    sql: |
+      select c_custkey, c_name, c_mktsegment
+      from customer
+      order by c_custkey asc
+      limit 25 offset 25
+
+  - id: mysql_compat_tableau_worksheets.010.grouped_dimension_count
+    status: supported
+    kind: query
+    feature: tableau_grouped_worksheet
+    compatibility: mysql
+    requires: [select, count, group_by, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment,
+             count(*) as customer_count
+      from customer
+      group by c_mktsegment
+      order by customer_count desc, market_segment asc
+      limit 10
+
+  - id: mysql_compat_tableau_worksheets.011.grouped_filtered_sum
+    status: supported
+    kind: query
+    feature: tableau_grouped_worksheet
+    compatibility: mysql
+    requires: [select, sum, where, in, group_by, order_by, limit]
+    sql: |
+      select c_mktsegment as market_segment,
+             sum(c_acctbal) as account_balance
+      from customer
+      where c_nationkey in (1, 2, 3, 4, 5)
+      group by c_mktsegment
+      order by account_balance desc
+      limit 10
+
+  - id: mysql_compat_tableau_worksheets.012.grouped_date_range_measure
+    status: supported
+    kind: query
+    feature: tableau_date_filter_worksheet
+    compatibility: mysql
+    requires: [select, sum, arithmetic, where, between, group_by, order_by, limit]
+    sql: |
+      select l_shipdate as ship_date,
+             sum(l_extendedprice * (1 - l_discount)) as revenue
+      from lineitem
+      where l_shipdate between '1995-01-01' and '1995-01-31'
+      group by l_shipdate
+      order by ship_date asc
+      limit 31
+
+  - id: mysql_compat_tableau_worksheets.013.grouped_having_measure
+    status: supported
+    kind: query
+    feature: tableau_grouped_worksheet
+    compatibility: mysql
+    requires: [select, count, sum, group_by, having, order_by, limit]
+    sql: |
+      select l_returnflag as return_flag,
+             l_linestatus as line_status,
+             count(*) as row_count,
+             sum(l_quantity) as quantity
+      from lineitem
+      group by l_returnflag, l_linestatus
+      having count(*) > 0
+      order by row_count desc, return_flag asc, line_status asc
+      limit 20
+
+  - id: mysql_compat_tableau_worksheets.020.calculated_measure_projection
+    status: supported
+    kind: query
+    feature: tableau_calculated_field
+    compatibility: mysql
+    requires: [select, arithmetic, aliases, order_by, limit]
+    sql: |
+      select l_orderkey as order_key,
+             l_extendedprice as extended_price,
+             l_discount as discount,
+             l_extendedprice * (1 - l_discount) as discounted_price
+      from lineitem
+      order by discounted_price desc
+      limit 20
+
+  - id: mysql_compat_tableau_worksheets.021.filtered_calculated_measure
+    status: supported
+    kind: query
+    feature: tableau_calculated_field
+    compatibility: mysql
+    requires: [select, sum, arithmetic, where, comparisons, aliases]
+    sql: |
+      select sum(l_extendedprice * l_discount) as discount_amount
+      from lineitem
+      where l_shipdate >= '1995-01-01'
+        and l_shipdate < '1996-01-01'
+        and l_discount between 0.05 and 0.07
+        and l_quantity < 24
+
+  - id: mysql_compat_tableau_worksheets.030.joined_dimension_measure
+    status: supported
+    kind: query
+    feature: tableau_joined_worksheet
+    compatibility: mysql
+    requires: [select, join, count, group_by, order_by, limit]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             count(*) as orders_count
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      group by c.c_mktsegment
+      order by orders_count desc, market_segment asc
+      limit 10
+
+  - id: mysql_compat_tableau_worksheets.031.joined_filtered_measure
+    status: supported
+    kind: query
+    feature: tableau_joined_worksheet
+    compatibility: mysql
+    requires: [select, join, sum, arithmetic, where, group_by, order_by, limit]
+    sql: |
+      select c.c_mktsegment as market_segment,
+             sum(l.l_extendedprice * (1 - l.l_discount)) as revenue
+      from customer as c
+      inner join orders as o on c.c_custkey = o.o_custkey
+      inner join lineitem as l on o.o_orderkey = l.l_orderkey
+      where c.c_mktsegment = 'BUILDING'
+        and o.o_orderdate < '1995-03-15'
+        and l.l_shipdate > '1995-03-15'
+      group by c.c_mktsegment
+      order by revenue desc
+      limit 10
