@@ -166,3 +166,14 @@ tests:
                      s.customer_name
       from superstore_orders as s
       limit 5
+
+  - id: mysql_compat_tableau_superstore_metadata.030.tableau_table_nonempty_validation
+    status: supported
+    kind: query
+    feature: tableau_superstore_table_validation
+    compatibility: mysql
+    requires: [select, aggregate, having]
+    sql: |
+      select sum(1) as `cnt_superstore_orders_ok`
+      from `superstore_orders`
+      having (count(1) > 0)
