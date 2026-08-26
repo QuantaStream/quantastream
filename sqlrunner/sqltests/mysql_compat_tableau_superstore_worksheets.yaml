@@ -1,0 +1,186 @@
+version: 1
+name: mysql_compat_tableau_superstore_worksheets
+
+tests:
+  - id: mysql_compat_tableau_superstore_worksheets.001.count_orders
+    status: supported
+    kind: query
+    feature: tableau_superstore_worksheet
+    compatibility: mysql
+    requires: [select, count]
+    sql: |
+      select count(*) as superstore_orders_count
+      from superstore_orders
+
+  - id: mysql_compat_tableau_superstore_worksheets.002.preview_rows
+    status: supported
+    kind: query
+    feature: tableau_superstore_preview
+    compatibility: mysql
+    requires: [select, projection, order_by, limit]
+    sql: |
+      select row_id,
+             order_id,
+             order_date,
+             ship_mode,
+             customer_name,
+             segment,
+             region,
+             category,
+             sales,
+             profit
+      from superstore_orders
+      order by row_id asc
+      limit 25
+
+  - id: mysql_compat_tableau_superstore_worksheets.010.region_category_sales_profit
+    status: supported
+    kind: query
+    feature: tableau_superstore_grouped_measure
+    compatibility: mysql
+    requires: [select, sum, group_by, order_by, limit]
+    sql: |
+      select region,
+             category,
+             sum(sales) as sales,
+             sum(profit) as profit
+      from superstore_orders
+      group by region, category
+      order by sales desc
+      limit 20
+
+  - id: mysql_compat_tableau_superstore_worksheets.011.segment_subcategory_average_discount
+    status: supported
+    kind: query
+    feature: tableau_superstore_grouped_measure
+    compatibility: mysql
+    requires: [select, count, sum, avg, group_by, order_by, limit]
+    sql: |
+      select segment,
+             sub_category,
+             count(*) as orders,
+             sum(sales) as sales,
+             avg(discount) as avg_discount
+      from superstore_orders
+      group by segment, sub_category
+      order by sales desc
+      limit 20
+
+  - id: mysql_compat_tableau_superstore_worksheets.012.date_window_region_sales_profit
+    status: supported
+    kind: query
+    feature: tableau_superstore_date_filter
+    compatibility: mysql
+    requires: [select, sum, where, comparisons, group_by, order_by, limit]
+    sql: |
+      select order_date,
+             region,
+             sum(sales) as sales,
+             sum(profit) as profit
+      from superstore_orders
+      where order_date >= '2026-01-01'
+        and order_date < '2026-04-01'
+      group by order_date, region
+      order by order_date, region
+      limit 50
+
+  - id: mysql_compat_tableau_superstore_worksheets.013.top_products_sales_profit
+    status: supported
+    kind: query
+    feature: tableau_superstore_topn
+    compatibility: mysql
+    requires: [select, sum, group_by, order_by, limit]
+    sql: |
+      select product_name,
+             category,
+             sub_category,
+             sum(sales) as sales,
+             sum(profit) as profit
+      from superstore_orders
+      group by product_name, category, sub_category
+      order by sales desc
+      limit 20
+
+  - id: mysql_compat_tableau_superstore_worksheets.014.filtered_ship_mode_summary
+    status: supported
+    kind: query
+    feature: tableau_superstore_dimension_filter
+    compatibility: mysql
+    requires: [select, count, sum, where, in, group_by, order_by, limit]
+    sql: |
+      select ship_mode,
+             count(*) as orders,
+             sum(quantity) as quantity,
+             sum(sales) as sales
+      from superstore_orders
+      where region in ('East', 'West')
+      group by ship_mode
+      order by orders desc, ship_mode
+      limit 20
+
+  - id: mysql_compat_tableau_superstore_worksheets.020.wrapper_preview_all_columns
+    status: supported
+    kind: query
+    feature: tableau_superstore_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, limit]
+    sql: |
+      select *
+      from (
+        select row_id,
+               order_id,
+               order_date,
+               customer_name,
+               region,
+               category,
+               sales,
+               profit
+        from superstore_orders
+      ) TableauSQL
+      limit 25
+
+  - id: mysql_compat_tableau_superstore_worksheets.021.wrapper_grouped_measure
+    status: supported
+    kind: query
+    feature: tableau_superstore_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, sum, where, comparisons, group_by, order_by, limit]
+    sql: |
+      select TableauSQL.region,
+             sum(TableauSQL.sales) as sales,
+             sum(TableauSQL.profit) as profit
+      from (
+        select region,
+               order_date,
+               sales,
+               profit
+        from superstore_orders
+      ) TableauSQL
+      where TableauSQL.order_date >= '2026-01-01'
+        and TableauSQL.order_date < '2026-04-01'
+      group by TableauSQL.region
+      order by sales desc, TableauSQL.region asc
+      limit 20
+
+  - id: mysql_compat_tableau_superstore_worksheets.022.wrapper_filtered_dimension
+    status: supported
+    kind: query
+    feature: tableau_superstore_custom_sql_wrapper
+    compatibility: mysql
+    requires: [select, derived_table, aliases, count, sum, where, in, group_by, order_by, limit]
+    sql: |
+      select TableauSQL.ship_mode,
+             count(*) as orders,
+             sum(TableauSQL.quantity) as quantity,
+             sum(TableauSQL.sales) as sales
+      from (
+        select ship_mode,
+               region,
+               quantity,
+               sales
+        from superstore_orders
+      ) TableauSQL
+      where TableauSQL.region in ('East', 'West')
+      group by TableauSQL.ship_mode
+      order by orders desc, TableauSQL.ship_mode asc
+      limit 20
