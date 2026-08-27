@@ -1553,6 +1553,7 @@ func BindShowCreateTable(context *BindContext, showStmt UnboundShowCreateTable) 
 		query.Mutation.Target.Table = strings.TrimSpace(table.Name)
 	}
 	query.Mutation.Columns = describeTableFieldRefs(table, query.Mutation.Target)
+	query.Mutation.Relationships = bindTableRelationships(context, schemaName, table)
 	return query, nil
 }
 
@@ -1691,6 +1692,7 @@ func BindShowIndex(context *BindContext, showStmt UnboundShowIndex) (QueryIR, Di
 		query.Mutation.Target.Table = strings.TrimSpace(table.Name)
 	}
 	query.Mutation.Columns = describeTableFieldRefs(table, query.Mutation.Target)
+	query.Mutation.Relationships = bindTableRelationships(context, schemaName, table)
 	return query, nil
 }
 
@@ -2242,6 +2244,7 @@ func BindDescribe(context *BindContext, describeStmt UnboundDescribe) (QueryIR, 
 	pattern := strings.TrimSpace(describeStmt.Pattern)
 	if !tableDiagnostics.BlocksNative() {
 		query.Mutation.Columns = filterDescribeColumnsByPattern(describeTableFieldRefs(table, target), pattern)
+		query.Mutation.Relationships = bindTableRelationships(context, schemaName, table)
 		return query, nil
 	}
 
@@ -2287,6 +2290,100 @@ func describeTableFieldRefs(table TableDefinition, target TableInstance) []Field
 		fields = append(fields, field.Ref(target, FieldRoleVisible))
 	}
 	return fields
+}
+
+func bindTableRelationships(context *BindContext, schemaName string, table TableDefinition) []RelationshipDefinition {
+	relationships := cloneRelationshipDefinitions(table.Relationships)
+	for i := range relationships {
+		if strings.TrimSpace(relationships[i].FromTable) == "" {
+			relationships[i].FromTable = table.Name
+		}
+		if strings.TrimSpace(bindRelationshipParentField(relationships[i])) == "" {
+			parentField := bindCatalogRelationshipParentField(context, schemaName, relationships[i])
+			if strings.TrimSpace(parentField) != "" {
+				switch relationships[i].Direction {
+				case JoinParentToChild:
+					relationships[i].FromField = parentField
+				default:
+					relationships[i].ToField = parentField
+				}
+			}
+		}
+	}
+	return relationships
+}
+
+func bindCatalogRelationshipParentField(context *BindContext, schemaName string, relationship RelationshipDefinition) string {
+	if context == nil || context.Catalog == nil {
+		return ""
+	}
+	parentTableName := strings.TrimSpace(relationship.ParentTable())
+	if parentTableName == "" {
+		return ""
+	}
+	parent, diagnostics := context.Catalog.Table(schemaName, parentTableName)
+	if diagnostics.BlocksNative() {
+		return ""
+	}
+	primaryColumns := make([]string, 0, len(parent.Fields))
+	for _, field := range parent.Fields {
+		if field.PrimaryKey {
+			primaryColumns = append(primaryColumns, field.Name)
+		}
+	}
+	if len(primaryColumns) == 1 {
+		return primaryColumns[0]
+	}
+	childKey := bindRelationshipKeySuffix(bindRelationshipChildField(relationship))
+	if childKey != "" {
+		for _, parentColumn := range primaryColumns {
+			if bindRelationshipKeySuffix(parentColumn) == childKey {
+				return parentColumn
+			}
+		}
+	}
+	return ""
+}
+
+func bindRelationshipChildField(relationship RelationshipDefinition) string {
+	switch relationship.Direction {
+	case JoinParentToChild:
+		return relationship.ToField
+	case JoinChildToParent:
+		return relationship.FromField
+	default:
+		if relationship.FromField != "" {
+			return relationship.FromField
+		}
+		return relationship.ToField
+	}
+}
+
+func bindRelationshipParentField(relationship RelationshipDefinition) string {
+	switch relationship.Direction {
+	case JoinParentToChild:
+		return relationship.FromField
+	case JoinChildToParent:
+		return relationship.ToField
+	default:
+		if relationship.ToField != "" {
+			return relationship.ToField
+		}
+		return relationship.FromField
+	}
+}
+
+func bindRelationshipKeySuffix(field string) string {
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" {
+		return ""
+	}
+	for _, prefix := range []string{"c_", "o_", "l_", "p_", "s_", "ps_", "n_", "r_"} {
+		if strings.HasPrefix(field, prefix) {
+			return strings.TrimPrefix(field, prefix)
+		}
+	}
+	return field
 }
 
 func createTableFieldRefs(target TableInstance, fields []FieldDefinition) []FieldRef {

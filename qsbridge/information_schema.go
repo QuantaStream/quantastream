@@ -13,6 +13,12 @@ const (
 	InformationSchemaColumnsName = "columns"
 	// InformationSchemaStatisticsName identifies INFORMATION_SCHEMA.STATISTICS.
 	InformationSchemaStatisticsName = "statistics"
+	// InformationSchemaTableConstraintsName identifies INFORMATION_SCHEMA.TABLE_CONSTRAINTS.
+	InformationSchemaTableConstraintsName = "table_constraints"
+	// InformationSchemaKeyColumnUsageName identifies INFORMATION_SCHEMA.KEY_COLUMN_USAGE.
+	InformationSchemaKeyColumnUsageName = "key_column_usage"
+	// InformationSchemaReferentialConstraintsName identifies INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS.
+	InformationSchemaReferentialConstraintsName = "referential_constraints"
 	// InformationSchemaCharacterSetsName identifies INFORMATION_SCHEMA.CHARACTER_SETS.
 	InformationSchemaCharacterSetsName = "character_sets"
 	// InformationSchemaCollationsName identifies INFORMATION_SCHEMA.COLLATIONS.
@@ -88,6 +94,57 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 				{Name: "INDEX_COMMENT", Type: DataTypeString},
 				{Name: "IS_VISIBLE", Type: DataTypeString},
 				{Name: "EXPRESSION", Type: DataTypeString, Nullable: true},
+			},
+		}, true
+	case InformationSchemaTableConstraintsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaTableConstraintsName,
+			Fields: []FieldDefinition{
+				{Name: "CONSTRAINT_CATALOG", Type: DataTypeString},
+				{Name: "CONSTRAINT_SCHEMA", Type: DataTypeString},
+				{Name: "CONSTRAINT_NAME", Type: DataTypeString},
+				{Name: "TABLE_SCHEMA", Type: DataTypeString},
+				{Name: "TABLE_NAME", Type: DataTypeString},
+				{Name: "CONSTRAINT_TYPE", Type: DataTypeString},
+				{Name: "ENFORCED", Type: DataTypeString},
+			},
+		}, true
+	case InformationSchemaKeyColumnUsageName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaKeyColumnUsageName,
+			Fields: []FieldDefinition{
+				{Name: "CONSTRAINT_CATALOG", Type: DataTypeString},
+				{Name: "CONSTRAINT_SCHEMA", Type: DataTypeString},
+				{Name: "CONSTRAINT_NAME", Type: DataTypeString},
+				{Name: "TABLE_CATALOG", Type: DataTypeString},
+				{Name: "TABLE_SCHEMA", Type: DataTypeString},
+				{Name: "TABLE_NAME", Type: DataTypeString},
+				{Name: "COLUMN_NAME", Type: DataTypeString},
+				{Name: "ORDINAL_POSITION", Type: DataTypeInt},
+				{Name: "POSITION_IN_UNIQUE_CONSTRAINT", Type: DataTypeInt, Nullable: true},
+				{Name: "REFERENCED_TABLE_SCHEMA", Type: DataTypeString, Nullable: true},
+				{Name: "REFERENCED_TABLE_NAME", Type: DataTypeString, Nullable: true},
+				{Name: "REFERENCED_COLUMN_NAME", Type: DataTypeString, Nullable: true},
+			},
+		}, true
+	case InformationSchemaReferentialConstraintsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaReferentialConstraintsName,
+			Fields: []FieldDefinition{
+				{Name: "CONSTRAINT_CATALOG", Type: DataTypeString},
+				{Name: "CONSTRAINT_SCHEMA", Type: DataTypeString},
+				{Name: "CONSTRAINT_NAME", Type: DataTypeString},
+				{Name: "UNIQUE_CONSTRAINT_CATALOG", Type: DataTypeString},
+				{Name: "UNIQUE_CONSTRAINT_SCHEMA", Type: DataTypeString},
+				{Name: "UNIQUE_CONSTRAINT_NAME", Type: DataTypeString},
+				{Name: "MATCH_OPTION", Type: DataTypeString},
+				{Name: "UPDATE_RULE", Type: DataTypeString},
+				{Name: "DELETE_RULE", Type: DataTypeString},
+				{Name: "TABLE_NAME", Type: DataTypeString},
+				{Name: "REFERENCED_TABLE_NAME", Type: DataTypeString},
 			},
 		}, true
 	case InformationSchemaCharacterSetsName:

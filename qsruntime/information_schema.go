@@ -39,6 +39,12 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 		return r.informationSchemaColumnRows()
 	case qsbridge.InformationSchemaStatisticsName:
 		return r.informationSchemaStatisticsRows()
+	case qsbridge.InformationSchemaTableConstraintsName:
+		return r.informationSchemaTableConstraintsRows()
+	case qsbridge.InformationSchemaKeyColumnUsageName:
+		return r.informationSchemaKeyColumnUsageRows()
+	case qsbridge.InformationSchemaReferentialConstraintsName:
+		return r.informationSchemaReferentialConstraintsRows()
 	case qsbridge.InformationSchemaCharacterSetsName:
 		return informationSchemaCharacterSetRows(), nil
 	case qsbridge.InformationSchemaCollationsName:
@@ -109,6 +115,7 @@ func (r SQLRuntime) informationSchemaColumnRows() ([]informationSchemaRow, qsbri
 	}
 	rows := make([]informationSchemaRow, 0)
 	for _, table := range tables {
+		relationshipColumns := informationSchemaRelationshipChildColumns(table)
 		for i, field := range table.Fields {
 			fieldRef := field.Ref(qsbridge.TableInstance{Schema: table.Schema, Table: table.Name}, 0)
 			rows = append(rows, informationSchemaRow{
@@ -120,7 +127,7 @@ func (r SQLRuntime) informationSchemaColumnRows() ([]informationSchemaRow, qsbri
 				"IS_NULLABLE":      describeStringCell(describeNullability(fieldRef)),
 				"DATA_TYPE":        describeStringCell(informationSchemaDataType(fieldRef)),
 				"COLUMN_TYPE":      describeStringCell(describeSQLType(fieldRef)),
-				"COLUMN_KEY":       describeStringCell(describeKey(fieldRef)),
+				"COLUMN_KEY":       describeStringCell(informationSchemaColumnKey(fieldRef, relationshipColumns)),
 				"EXTRA":            describeStringCell(describeExtra(fieldRef)),
 			})
 		}
@@ -174,6 +181,133 @@ func (r SQLRuntime) informationSchemaStatisticsRows() ([]informationSchemaRow, q
 		}
 	}
 	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "INDEX_NAME", "SEQ_IN_INDEX", "COLUMN_NAME")
+	return rows, nil
+}
+
+func (r SQLRuntime) informationSchemaTableConstraintsRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	tables, diagnostics := r.catalogTablesForInformationSchema()
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	rows := make([]informationSchemaRow, 0)
+	for _, table := range tables {
+		schemaName := informationSchemaTableSchema(table, r.DefaultSchema)
+		for _, field := range table.Fields {
+			if !field.PrimaryKey {
+				continue
+			}
+			rows = append(rows, informationSchemaRow{
+				"CONSTRAINT_CATALOG": describeStringCell("def"),
+				"CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
+				"CONSTRAINT_NAME":    describeStringCell("PRIMARY"),
+				"TABLE_SCHEMA":       describeStringCell(schemaName),
+				"TABLE_NAME":         describeStringCell(table.Name),
+				"CONSTRAINT_TYPE":    describeStringCell("PRIMARY KEY"),
+				"ENFORCED":           describeStringCell("YES"),
+			})
+			break
+		}
+		for _, relationship := range table.Relationships {
+			if !informationSchemaRelationshipAppliesToChildTable(table, relationship) {
+				continue
+			}
+			rows = append(rows, informationSchemaRow{
+				"CONSTRAINT_CATALOG": describeStringCell("def"),
+				"CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
+				"CONSTRAINT_NAME":    describeStringCell(informationSchemaRelationshipName(table, relationship)),
+				"TABLE_SCHEMA":       describeStringCell(schemaName),
+				"TABLE_NAME":         describeStringCell(table.Name),
+				"CONSTRAINT_TYPE":    describeStringCell("FOREIGN KEY"),
+				"ENFORCED":           describeStringCell("YES"),
+			})
+		}
+	}
+	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CONSTRAINT_TYPE")
+	return rows, nil
+}
+
+func (r SQLRuntime) informationSchemaKeyColumnUsageRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	tables, diagnostics := r.catalogTablesForInformationSchema()
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	parentPrimaryColumns := informationSchemaPrimaryColumnsByTable(tables, r.DefaultSchema)
+	rows := make([]informationSchemaRow, 0)
+	for _, table := range tables {
+		schemaName := informationSchemaTableSchema(table, r.DefaultSchema)
+		primarySeq := 1
+		for _, field := range table.Fields {
+			if !field.PrimaryKey {
+				continue
+			}
+			rows = append(rows, informationSchemaRow{
+				"CONSTRAINT_CATALOG":            describeStringCell("def"),
+				"CONSTRAINT_SCHEMA":             describeStringCell(schemaName),
+				"CONSTRAINT_NAME":               describeStringCell("PRIMARY"),
+				"TABLE_CATALOG":                 describeStringCell("def"),
+				"TABLE_SCHEMA":                  describeStringCell(schemaName),
+				"TABLE_NAME":                    describeStringCell(table.Name),
+				"COLUMN_NAME":                   describeStringCell(field.Name),
+				"ORDINAL_POSITION":              describeIntCell(int64(primarySeq)),
+				"POSITION_IN_UNIQUE_CONSTRAINT": describeNullCell(),
+				"REFERENCED_TABLE_SCHEMA":       describeNullCell(),
+				"REFERENCED_TABLE_NAME":         describeNullCell(),
+				"REFERENCED_COLUMN_NAME":        describeNullCell(),
+			})
+			primarySeq++
+		}
+		for _, relationship := range table.Relationships {
+			if !informationSchemaRelationshipAppliesToChildTable(table, relationship) {
+				continue
+			}
+			rows = append(rows, informationSchemaRow{
+				"CONSTRAINT_CATALOG":            describeStringCell("def"),
+				"CONSTRAINT_SCHEMA":             describeStringCell(schemaName),
+				"CONSTRAINT_NAME":               describeStringCell(informationSchemaRelationshipName(table, relationship)),
+				"TABLE_CATALOG":                 describeStringCell("def"),
+				"TABLE_SCHEMA":                  describeStringCell(schemaName),
+				"TABLE_NAME":                    describeStringCell(table.Name),
+				"COLUMN_NAME":                   describeStringCell(informationSchemaRelationshipChildField(relationship)),
+				"ORDINAL_POSITION":              describeIntCell(1),
+				"POSITION_IN_UNIQUE_CONSTRAINT": describeIntCell(1),
+				"REFERENCED_TABLE_SCHEMA":       describeStringCell(schemaName),
+				"REFERENCED_TABLE_NAME":         describeStringCell(relationship.ParentTable()),
+				"REFERENCED_COLUMN_NAME":        describeStringCell(informationSchemaRelationshipParentField(relationship, schemaName, parentPrimaryColumns)),
+			})
+		}
+	}
+	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "ORDINAL_POSITION", "COLUMN_NAME")
+	return rows, nil
+}
+
+func (r SQLRuntime) informationSchemaReferentialConstraintsRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	tables, diagnostics := r.catalogTablesForInformationSchema()
+	if diagnostics.BlocksNative() {
+		return nil, diagnostics
+	}
+	rows := make([]informationSchemaRow, 0)
+	for _, table := range tables {
+		schemaName := informationSchemaTableSchema(table, r.DefaultSchema)
+		for _, relationship := range table.Relationships {
+			if !informationSchemaRelationshipAppliesToChildTable(table, relationship) {
+				continue
+			}
+			rows = append(rows, informationSchemaRow{
+				"CONSTRAINT_CATALOG":        describeStringCell("def"),
+				"CONSTRAINT_SCHEMA":         describeStringCell(schemaName),
+				"CONSTRAINT_NAME":           describeStringCell(informationSchemaRelationshipName(table, relationship)),
+				"UNIQUE_CONSTRAINT_CATALOG": describeStringCell("def"),
+				"UNIQUE_CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
+				"UNIQUE_CONSTRAINT_NAME":    describeStringCell("PRIMARY"),
+				"MATCH_OPTION":              describeStringCell("NONE"),
+				"UPDATE_RULE":               describeStringCell("RESTRICT"),
+				"DELETE_RULE":               describeStringCell("RESTRICT"),
+				"TABLE_NAME":                describeStringCell(table.Name),
+				"REFERENCED_TABLE_NAME":     describeStringCell(relationship.ParentTable()),
+			})
+		}
+	}
+	sortInformationSchemaRows(rows, "CONSTRAINT_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME")
 	return rows, nil
 }
 
@@ -272,6 +406,134 @@ func informationSchemaSchemaNames(catalog qsbridge.Catalog, defaultSchema string
 		names = append(names, seen[key])
 	}
 	return names
+}
+
+func informationSchemaTableSchema(table qsbridge.TableDefinition, defaultSchema string) string {
+	schemaName := strings.TrimSpace(table.Schema)
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(defaultSchema)
+	}
+	return schemaName
+}
+
+func informationSchemaRelationshipChildColumns(table qsbridge.TableDefinition) map[string]struct{} {
+	columns := make(map[string]struct{})
+	for _, relationship := range table.Relationships {
+		if !informationSchemaRelationshipAppliesToChildTable(table, relationship) {
+			continue
+		}
+		field := informationSchemaRelationshipChildField(relationship)
+		if field != "" {
+			columns[strings.ToLower(field)] = struct{}{}
+		}
+	}
+	return columns
+}
+
+func informationSchemaColumnKey(field qsbridge.FieldRef, relationshipColumns map[string]struct{}) string {
+	if field.PrimaryKey {
+		return "PRI"
+	}
+	if _, ok := relationshipColumns[strings.ToLower(field.Name)]; ok {
+		return "MUL"
+	}
+	return describeKey(field)
+}
+
+func informationSchemaPrimaryColumnsByTable(tables []qsbridge.TableDefinition, defaultSchema string) map[string][]string {
+	columns := make(map[string][]string)
+	for _, table := range tables {
+		schemaName := informationSchemaTableSchema(table, defaultSchema)
+		key := informationSchemaTableKey(schemaName, table.Name)
+		for _, field := range table.Fields {
+			if field.PrimaryKey {
+				columns[key] = append(columns[key], field.Name)
+			}
+		}
+	}
+	return columns
+}
+
+func informationSchemaTableKey(schema string, table string) string {
+	return strings.ToLower(strings.TrimSpace(schema)) + "\x00" + strings.ToLower(strings.TrimSpace(table))
+}
+
+func informationSchemaRelationshipAppliesToChildTable(table qsbridge.TableDefinition, relationship qsbridge.RelationshipDefinition) bool {
+	childTable := strings.TrimSpace(relationship.ChildTable())
+	return childTable == "" || strings.EqualFold(childTable, table.Name)
+}
+
+func informationSchemaRelationshipChildField(relationship qsbridge.RelationshipDefinition) string {
+	switch relationship.Direction {
+	case qsbridge.JoinParentToChild:
+		return relationship.ToField
+	case qsbridge.JoinChildToParent:
+		return relationship.FromField
+	default:
+		if relationship.FromField != "" {
+			return relationship.FromField
+		}
+		return relationship.ToField
+	}
+}
+
+func informationSchemaRelationshipParentField(relationship qsbridge.RelationshipDefinition, schemaName string, primaryColumns map[string][]string) string {
+	field := ""
+	switch relationship.Direction {
+	case qsbridge.JoinParentToChild:
+		field = relationship.FromField
+	case qsbridge.JoinChildToParent:
+		field = relationship.ToField
+	default:
+		if relationship.ToField != "" {
+			field = relationship.ToField
+			break
+		}
+		field = relationship.FromField
+	}
+	if strings.TrimSpace(field) != "" {
+		return field
+	}
+	parentColumns := primaryColumns[informationSchemaTableKey(schemaName, relationship.ParentTable())]
+	if len(parentColumns) == 1 {
+		return parentColumns[0]
+	}
+	childKey := informationSchemaRelationshipKeySuffix(informationSchemaRelationshipChildField(relationship))
+	if childKey != "" {
+		for _, parentColumn := range parentColumns {
+			if informationSchemaRelationshipKeySuffix(parentColumn) == childKey {
+				return parentColumn
+			}
+		}
+	}
+	return field
+}
+
+func informationSchemaRelationshipName(table qsbridge.TableDefinition, relationship qsbridge.RelationshipDefinition) string {
+	name := strings.TrimSpace(relationship.Name)
+	if name != "" {
+		return name
+	}
+	childField := strings.TrimSpace(informationSchemaRelationshipChildField(relationship))
+	parentTable := strings.TrimSpace(relationship.ParentTable())
+	if childField == "" {
+		childField = "field"
+	}
+	if parentTable == "" {
+		parentTable = "parent"
+	}
+	return "fk_" + table.Name + "_" + parentTable + "_" + childField
+}
+
+func informationSchemaRelationshipKeySuffix(field string) string {
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" {
+		return ""
+	}
+	if index := strings.Index(field, "_"); index >= 0 && index+1 < len(field) {
+		return field[index+1:]
+	}
+	return field
 }
 
 func informationSchemaProjectedResult(rows []informationSchemaRow, projections []qsbridge.ProjectionColumn) (ExecutionResult, qsbridge.DiagnosticSet) {
@@ -379,6 +641,22 @@ func informationSchemaPredicateMatches(row informationSchemaRow, expr qsbridge.E
 		field, literal, ok = informationSchemaFieldLiteral(binary.Right, binary.Left)
 	}
 	if !ok {
+		if nullField, nullOK := informationSchemaFieldNull(binary.Left, binary.Right); nullOK {
+			isNull := rowCell(row, nullField).Value == nil
+			if binary.Op == qsbridge.BinaryOpNotEqual {
+				return !isNull
+			}
+			return isNull
+		}
+		if nullField, nullOK := informationSchemaFieldNull(binary.Right, binary.Left); nullOK {
+			isNull := rowCell(row, nullField).Value == nil
+			if binary.Op == qsbridge.BinaryOpNotEqual {
+				return !isNull
+			}
+			return isNull
+		}
+	}
+	if !ok {
 		return true
 	}
 	value := resultCellString(rowCell(row, field))
@@ -459,6 +737,30 @@ func informationSchemaFieldLiteral(left qsbridge.Expr, right qsbridge.Expr) (str
 	}
 	value, _ := literal.Value.(string)
 	return field.Ref.Name, value, true
+}
+
+func informationSchemaFieldNull(left qsbridge.Expr, right qsbridge.Expr) (string, bool) {
+	field, ok := left.(qsbridge.FieldExpr)
+	if !ok {
+		if pointer, pointerOK := left.(*qsbridge.FieldExpr); pointerOK && pointer != nil {
+			field = *pointer
+			ok = true
+		}
+	}
+	if !ok {
+		return "", false
+	}
+	literal, ok := right.(qsbridge.LiteralExpr)
+	if !ok {
+		if pointer, pointerOK := right.(*qsbridge.LiteralExpr); pointerOK && pointer != nil {
+			literal = *pointer
+			ok = true
+		}
+	}
+	if !ok || literal.Kind != qsbridge.ValueNull {
+		return "", false
+	}
+	return field.Ref.Name, true
 }
 
 func orderInformationSchemaRows(rows []informationSchemaRow, orderBy []qsbridge.SortSpec) []informationSchemaRow {

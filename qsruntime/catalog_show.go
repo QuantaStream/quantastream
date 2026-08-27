@@ -55,7 +55,7 @@ func showCreateTableRuntimeResult(request qsbridge.ExecutionRequest) ExecutionRe
 	if tableName == "" {
 		tableName = strings.TrimSpace(string(target.ID))
 	}
-	createSQL := renderCreateTableSQL(tableName, query.Mutation.Columns)
+	createSQL := renderCreateTableSQL(tableName, query.Mutation.Columns, query.Mutation.Relationships)
 	return ExecutionResult{
 		RowSet: qsbridge.QuantaProjectedRowSet{
 			Index:   "catalog",
@@ -109,7 +109,7 @@ func showCreateQualifiedViewName(schema string, viewName string) string {
 	return schema + "." + viewName
 }
 
-func renderCreateTableSQL(tableName string, columns []qsbridge.FieldRef) string {
+func renderCreateTableSQL(tableName string, columns []qsbridge.FieldRef, relationships []qsbridge.RelationshipDefinition) string {
 	tableName = strings.TrimSpace(tableName)
 	if tableName == "" {
 		tableName = "unknown"
@@ -134,6 +134,23 @@ func renderCreateTableSQL(tableName string, columns []qsbridge.FieldRef) string 
 	}
 	if len(primaryKeys) > 0 {
 		lines = append(lines, "  PRIMARY KEY ("+strings.Join(primaryKeys, ", ")+")")
+	}
+	table := qsbridge.TableDefinition{Name: tableName, Relationships: relationships}
+	for _, relationship := range relationships {
+		if !informationSchemaRelationshipAppliesToChildTable(table, relationship) {
+			continue
+		}
+		childField := strings.TrimSpace(informationSchemaRelationshipChildField(relationship))
+		parentTable := strings.TrimSpace(relationship.ParentTable())
+		parentField := strings.TrimSpace(informationSchemaRelationshipParentField(relationship, "", nil))
+		if childField == "" || parentTable == "" || parentField == "" {
+			continue
+		}
+		name := informationSchemaRelationshipName(table, relationship)
+		lines = append(lines,
+			"  CONSTRAINT "+quoteSQLIdentifier(name)+
+				" FOREIGN KEY ("+quoteSQLIdentifier(childField)+")"+
+				" REFERENCES "+quoteSQLIdentifier(parentTable)+" ("+quoteSQLIdentifier(parentField)+")")
 	}
 	if len(lines) == 0 {
 		return "CREATE TABLE " + quoteSQLIdentifier(tableName) + " ()"
@@ -1284,6 +1301,11 @@ func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 	query := request.Bound.Prepared.Query
 	columns := query.Mutation.Columns
 	full := query.Catalog.Full
+	table := qsbridge.TableDefinition{
+		Name:          query.Mutation.Target.Table,
+		Relationships: query.Mutation.Relationships,
+	}
+	relationshipColumns := informationSchemaRelationshipChildColumns(table)
 	rownums := make([]qsbridge.QuantaRownum, len(columns))
 	vectors := []qsbridge.QuantaProjectionVector{
 		describeProjectionVector("Field", qsbridge.DataTypeString, len(columns)),
@@ -1314,7 +1336,7 @@ func describeRuntimeResult(request qsbridge.ExecutionRequest) ExecutionResult {
 			offset++
 		}
 		vectors[offset].Values[i] = describeStringCell(describeNullability(column))
-		vectors[offset+1].Values[i] = describeStringCell(describeKey(column))
+		vectors[offset+1].Values[i] = describeStringCell(describeColumnKey(column, relationshipColumns))
 		vectors[offset+2].Values[i] = describeNullCell()
 		if extra := describeExtra(column); extra != "" {
 			vectors[offset+3].Values[i] = describeStringCell(extra)
@@ -1404,6 +1426,13 @@ func describeKey(field qsbridge.FieldRef) string {
 		return "PRI"
 	}
 	return ""
+}
+
+func describeColumnKey(field qsbridge.FieldRef, relationshipColumns map[string]struct{}) string {
+	if key := informationSchemaColumnKey(field, relationshipColumns); key != "" {
+		return key
+	}
+	return describeKey(field)
 }
 
 func describeExtra(field qsbridge.FieldRef) string {

@@ -183,6 +183,61 @@ func TestSQLRuntimeExecuteSQLShowCreateTableReturnsCatalogRow(t *testing.T) {
 	}
 }
 
+func TestSQLRuntimeExecuteSQLShowCreateTableIncludesForeignKeys(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_since", Type: qsbridge.DataTypeTime, PrimaryKey: true},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "orders",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "o_orderkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "o_custkey", Type: qsbridge.DataTypeInt, Nullable: true},
+				},
+				Relationships: []qsbridge.RelationshipDefinition{{
+					Name:      "orders_customer",
+					FromTable: "orders",
+					FromField: "o_custkey",
+					ToTable:   "customer",
+					Direction: qsbridge.JoinChildToParent,
+				}},
+			},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show create table orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW CREATE TABLE should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	createSQL, _ := chunk.Rows[0][1].Value.(string)
+	want := "CONSTRAINT `orders_customer` FOREIGN KEY (`o_custkey`) REFERENCES `customer` (`c_custkey`)"
+	if !strings.Contains(createSQL, want) {
+		t.Fatalf("create table SQL = %q, want foreign key clause %q", createSQL, want)
+	}
+}
+
 func TestSQLRuntimeExecuteSQLShowCreateDatabaseReturnsCatalogRow(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
@@ -1873,6 +1928,125 @@ func TestSQLRuntimeExecuteSQLInformationSchemaStatisticsReturnsIndexRows(t *test
 	}
 }
 
+func TestSQLRuntimeExecuteSQLInformationSchemaRelationshipsExposeForeignKeys(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{
+				Schema: "quanta",
+				Name:   "customer",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "c_custkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "c_since", Type: qsbridge.DataTypeTime, PrimaryKey: true},
+				},
+			},
+			{
+				Schema: "quanta",
+				Name:   "orders",
+				Fields: []qsbridge.FieldDefinition{
+					{Name: "o_orderkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+					{Name: "o_custkey", Type: qsbridge.DataTypeInt},
+				},
+				Relationships: []qsbridge.RelationshipDefinition{{
+					Name:        "orders_customer",
+					FromTable:   "orders",
+					FromField:   "o_custkey",
+					ToTable:     "customer",
+					Direction:   qsbridge.JoinChildToParent,
+					Cardinality: "many_to_one",
+				}},
+			},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	columns := executeInformationSchemaRows(t, runtime, `
+		select column_name, column_key
+		from information_schema.columns
+		where table_schema = 'quanta' and table_name = 'orders'
+		order by ordinal_position
+	`)
+	if len(columns) != 2 || columns[0][1].Value != "PRI" || columns[1][1].Value != "MUL" {
+		t.Fatalf("columns = %#v, want primary and foreign-key markers", columns)
+	}
+
+	tableConstraints := executeInformationSchemaRows(t, runtime, `
+		select constraint_name, constraint_type, table_name
+		from information_schema.table_constraints
+		where table_schema = 'quanta' and table_name = 'orders'
+		order by constraint_name
+	`)
+	if len(tableConstraints) != 2 {
+		t.Fatalf("table constraints = %#v, want primary and foreign key", tableConstraints)
+	}
+	constraintTypes := map[string]any{}
+	for _, row := range tableConstraints {
+		constraintTypes[fmt.Sprint(row[0].Value)] = row[1].Value
+	}
+	if constraintTypes["PRIMARY"] != "PRIMARY KEY" {
+		t.Fatalf("table constraints = %#v, want PRIMARY KEY row", tableConstraints)
+	}
+	if constraintTypes["orders_customer"] != "FOREIGN KEY" {
+		t.Fatalf("table constraints = %#v, want orders_customer FOREIGN KEY row", tableConstraints)
+	}
+
+	keyUsage := executeInformationSchemaRows(t, runtime, `
+		select constraint_name, column_name, referenced_table_name, referenced_column_name
+		from information_schema.key_column_usage
+		where table_schema = 'quanta' and table_name = 'orders' and referenced_table_name is not null
+		order by constraint_name
+	`)
+	if len(keyUsage) != 1 {
+		t.Fatalf("key usage = %#v, want foreign key row", keyUsage)
+	}
+	var foreignKeyUsage qsbridge.ResultRow
+	for _, row := range keyUsage {
+		if row[0].Value == "orders_customer" {
+			foreignKeyUsage = row
+			break
+		}
+	}
+	if len(foreignKeyUsage) == 0 || foreignKeyUsage[1].Value != "o_custkey" || foreignKeyUsage[2].Value != "customer" || foreignKeyUsage[3].Value != "c_custkey" {
+		t.Fatalf("key usage = %#v, want referenced customer key", keyUsage)
+	}
+
+	referential := executeInformationSchemaRows(t, runtime, `
+		select constraint_name, table_name, referenced_table_name, update_rule, delete_rule
+		from information_schema.referential_constraints
+		where constraint_schema = 'quanta' and table_name = 'orders'
+		order by constraint_name
+	`)
+	if len(referential) != 1 || referential[0][0].Value != "orders_customer" || referential[0][1].Value != "orders" || referential[0][2].Value != "customer" {
+		t.Fatalf("referential constraints = %#v, want orders_customer relationship", referential)
+	}
+	if referential[0][3].Value != "RESTRICT" || referential[0][4].Value != "RESTRICT" {
+		t.Fatalf("referential rules = %#v, want RESTRICT/RESTRICT", referential[0])
+	}
+
+	if executed {
+		t.Fatalf("INFORMATION_SCHEMA relationship metadata should not dispatch to the direct executor")
+	}
+}
+
+func executeInformationSchemaRows(t *testing.T, runtime SQLRuntime, sql string) []qsbridge.ResultRow {
+	t.Helper()
+	result, err := runtime.ExecuteSQL(context.Background(), sql, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed for %q: %v", sql, err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics for %q = %#v runtime=%#v", sql, result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics for %q = %#v", sql, diagnostics)
+	}
+	return chunk.Rows
+}
+
 func TestSQLRuntimeExecuteSQLShowIndexReturnsPKAndMapperRows(t *testing.T) {
 	executed := false
 	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
@@ -1988,6 +2162,54 @@ func TestSQLRuntimeExecuteSQLShowFullColumnsReturnsCatalogRows(t *testing.T) {
 	}
 	if got, want := chunk.Rows[2][1].Value, "varchar(255)"; got != want {
 		t.Fatalf("unbounded string type = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLShowFullColumnsMarksForeignKeyColumns(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{{
+			Schema: "quanta",
+			Name:   "orders",
+			Fields: []qsbridge.FieldDefinition{
+				{Name: "o_orderkey", Type: qsbridge.DataTypeInt, PrimaryKey: true},
+				{Name: "o_custkey", Type: qsbridge.DataTypeInt, Nullable: true, Encoding: qsbridge.LegacyEncodingProfile("ParentRelation", qsbridge.LegacyEncodingOptions{})},
+			},
+			Relationships: []qsbridge.RelationshipDefinition{{
+				Name:      "orders_customer",
+				FromTable: "orders",
+				FromField: "o_custkey",
+				ToTable:   "customer",
+				ToField:   "c_custkey",
+				Direction: qsbridge.JoinChildToParent,
+			}},
+		}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), "show full columns from orders", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("SHOW FULL COLUMNS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 || len(chunk.Rows[1]) != 9 {
+		t.Fatalf("rows = %#v, want two nine-column rows", chunk.Rows)
+	}
+	foreignKeyColumn := chunk.Rows[1]
+	if foreignKeyColumn[0].Value != "o_custkey" || foreignKeyColumn[4].Value != "MUL" {
+		t.Fatalf("foreign key column = %#v, want o_custkey marked MUL", foreignKeyColumn)
 	}
 }
 
