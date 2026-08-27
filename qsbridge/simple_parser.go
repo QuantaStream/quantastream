@@ -4234,7 +4234,8 @@ func parseSimpleJoinOn(text string, kind JoinKind) (UnboundJoin, Diagnostic, boo
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		return UnboundJoin{}, simpleParserDiagnostic("JOIN ON must be an equality between fields"), false
 	}
-	op, leftText, rightText, ok := splitBeforeComparisonOperator(parts[0])
+	edgeText := stripSimpleEnclosingParens(strings.TrimSpace(parts[0]))
+	op, leftText, rightText, ok := splitBeforeComparisonOperator(edgeText)
 	if !ok {
 		return UnboundJoin{}, simpleParserDiagnostic("JOIN ON must be an equality between fields"), false
 	}

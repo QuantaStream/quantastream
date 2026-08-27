@@ -1595,6 +1595,50 @@ func TestSimpleParserBridgeParsesDerivedTableJoinSource(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTableauDerivedJoinWithParenthesizedOn(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		SELECT
+			t0.c_mktsegment AS c_mktsegment,
+			SUM(lineitem.l_extendedprice) AS sum_l_extendedprice_ok
+		FROM lineitem
+		INNER JOIN (
+			SELECT
+				customer.c_mktsegment AS c_mktsegment,
+				lineitem.l_orderkey AS l_orderkey
+			FROM lineitem
+			LEFT JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+			LEFT JOIN customer ON (orders.o_custkey = customer.c_custkey)
+			GROUP BY 1, 2
+		) t0 ON (lineitem.l_orderkey = t0.l_orderkey)
+		GROUP BY 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Tables) != 2 {
+		t.Fatalf("tables = %#v, want lineitem plus derived t0", statement.Select.Tables)
+	}
+	if len(statement.Select.Joins) != 1 {
+		t.Fatalf("joins = %#v, want one outer join to derived t0", statement.Select.Joins)
+	}
+	join := statement.Select.Joins[0]
+	if join.LeftQualifier != "lineitem" || join.LeftField != "l_orderkey" || join.RightQualifier != "t0" || join.RightField != "l_orderkey" {
+		t.Fatalf("join = %#v, want lineitem.l_orderkey = t0.l_orderkey", join)
+	}
+	derived := statement.Select.Tables[1].DerivedSelect
+	if statement.Select.Tables[1].Name != "t0" || derived == nil {
+		t.Fatalf("derived table = %#v, want alias t0", statement.Select.Tables[1])
+	}
+	if len(derived.Tables) != 3 || len(derived.Joins) != 2 {
+		t.Fatalf("derived tables/joins = %#v / %#v, want three tables and two joins", derived.Tables, derived.Joins)
+	}
+	for _, join := range derived.Joins {
+		if join.Kind != JoinKindLeftOuter {
+			t.Fatalf("derived join = %#v, want left outer", join)
+		}
+	}
+}
+
 func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
 	if diagnostics.BlocksNative() {

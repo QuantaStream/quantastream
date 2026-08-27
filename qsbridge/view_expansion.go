@@ -164,6 +164,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	if len(selectStmt.Tables) == 0 {
 		return selectStmt, nil
 	}
+	if rewritten, diagnostics, ok := s.rewriteCardinalityPreservingDerivedDedupSelect(selectStmt); diagnostics.BlocksNative() || ok {
+		if diagnostics.BlocksNative() {
+			return selectStmt, diagnostics
+		}
+		selectStmt = rewritten
+	}
 	memberships, membershipExpansionCount, membershipDiagnostics := s.expandMembershipViews(selectStmt.Memberships)
 	if membershipDiagnostics.BlocksNative() {
 		return selectStmt, membershipDiagnostics
@@ -318,6 +324,185 @@ func validateMultipleLogicalSourceExpansionUsage(expansion viewExpansion) Diagno
 	return DiagnosticSet{
 		ErrorDiagnostic(DiagnosticUnsupportedSQL, PhaseBind, "multiple logical source expansion currently supports simple projection sources only"),
 	}
+}
+
+func (s viewExpansionState) rewriteCardinalityPreservingDerivedDedupSelect(selectStmt UnboundSelect) (UnboundSelect, DiagnosticSet, bool) {
+	if len(selectStmt.Tables) != 2 || len(selectStmt.Joins) != 1 || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 {
+		return selectStmt, nil, false
+	}
+	derivedIndex := -1
+	baseIndex := -1
+	for i, table := range selectStmt.Tables {
+		if table.DerivedSelect != nil {
+			derivedIndex = i
+			continue
+		}
+		if table.InlineRows == nil && baseIndex == -1 {
+			baseIndex = i
+		}
+	}
+	if derivedIndex == -1 || baseIndex == -1 {
+		return selectStmt, nil, false
+	}
+	derivedTable := selectStmt.Tables[derivedIndex]
+	outerBase := selectStmt.Tables[baseIndex]
+	derivedSelect := cloneUnboundSelect(*derivedTable.DerivedSelect)
+	if !aggregateFreeGroupedProjectionSelect(derivedSelect) {
+		return selectStmt, nil, false
+	}
+	columns, diagnostics := buildViewProjectionMap(derivedSelect)
+	if diagnostics.BlocksNative() {
+		return selectStmt, diagnostics, true
+	}
+	derivedRef := tableRefName(derivedTable.Name, derivedTable.Alias)
+	outerBaseRef := tableRefName(outerBase.Name, outerBase.Alias)
+	derivedField, outerField, ok := derivedDedupJoinFields(selectStmt.Joins[0], derivedRef, columns)
+	if !ok || !fieldReferencesTable(outerField, outerBase) {
+		return selectStmt, nil, false
+	}
+	innerBase, ok := unboundTableForRef(derivedSelect.Tables, derivedField.Qualifier)
+	if !ok || !s.samePhysicalTable(innerBase, outerBase) || !strings.EqualFold(derivedField.Name, outerField.Name) {
+		return selectStmt, nil, false
+	}
+	if !s.derivedDedupJoinsAreCardinalityPreserving(derivedSelect, innerBase) {
+		return selectStmt, nil, false
+	}
+
+	expansion := viewExpansion{
+		tables:  derivedSelect.Tables,
+		columns: columns,
+		viewRef: derivedRef,
+	}
+	rewritten, rewriteDiagnostics := rewriteOuterSelectViewReferences(selectStmt, expansion)
+	if rewriteDiagnostics.BlocksNative() {
+		return selectStmt, rewriteDiagnostics, true
+	}
+
+	rewritten.Tables = []UnboundTable{outerBase}
+	for _, table := range derivedSelect.Tables {
+		if s.samePhysicalTable(table, innerBase) && tableRefName(table.Name, table.Alias) == tableRefName(innerBase.Name, innerBase.Alias) {
+			continue
+		}
+		rewritten.Tables = append(rewritten.Tables, table)
+	}
+	rewrittenJoins := make([]UnboundJoin, 0, len(derivedSelect.Joins))
+	for _, join := range derivedSelect.Joins {
+		rewrittenJoin, joinDiagnostics := rewriteJoinBaseQualifier(join, innerBase, outerBaseRef)
+		if joinDiagnostics.BlocksNative() {
+			return selectStmt, joinDiagnostics, true
+		}
+		rewrittenJoin.Kind = JoinKindInner
+		rewrittenJoin.Nulls = NullExtensionNone
+		rewrittenJoins = append(rewrittenJoins, rewrittenJoin)
+	}
+	rewritten.Joins = rewrittenJoins
+	return rewritten, nil, true
+}
+
+func aggregateFreeGroupedProjectionSelect(selectStmt UnboundSelect) bool {
+	if len(selectStmt.Tables) == 0 || len(selectStmt.GroupBy) == 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.Predicates) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || len(selectStmt.OrderBy) > 0 || selectStmt.Result.AppliesResultWindow() || selectStmt.Result.Distinct {
+		return false
+	}
+	if len(selectStmt.GroupBy) != len(selectStmt.Projection) {
+		return false
+	}
+	for _, projection := range selectStmt.Projection {
+		if !unboundExprInList(projection.Expr, selectStmt.GroupBy) {
+			return false
+		}
+	}
+	return true
+}
+
+func derivedDedupJoinFields(join UnboundJoin, derivedRef string, columns viewProjectionMap) (UnboundFieldExpr, UnboundFieldExpr, bool) {
+	if joinKindOrInner(join.Kind) != JoinKindInner || join.Operator != "" && join.Operator != BinaryOpEqual || len(join.Predicates) > 0 {
+		return UnboundFieldExpr{}, UnboundFieldExpr{}, false
+	}
+	left := UnboundField(join.LeftQualifier, join.LeftField)
+	right := UnboundField(join.RightQualifier, join.RightField)
+	if fieldReferencesRef(left, derivedRef) {
+		mapped, ok := expansionMappedExpr(viewExpansion{columns: columns}, left.Name)
+		mappedField, fieldOK := mapped.(UnboundFieldExpr)
+		return mappedField, right, ok && fieldOK
+	}
+	if fieldReferencesRef(right, derivedRef) {
+		mapped, ok := expansionMappedExpr(viewExpansion{columns: columns}, right.Name)
+		mappedField, fieldOK := mapped.(UnboundFieldExpr)
+		return mappedField, left, ok && fieldOK
+	}
+	return UnboundFieldExpr{}, UnboundFieldExpr{}, false
+}
+
+func fieldReferencesRef(field UnboundFieldExpr, ref string) bool {
+	return field.Qualifier != "" && strings.EqualFold(field.Qualifier, ref) && field.Name != "" && field.Name != "*"
+}
+
+func fieldReferencesTable(field UnboundFieldExpr, table UnboundTable) bool {
+	if field.Qualifier == "" || field.Name == "" || field.Name == "*" {
+		return false
+	}
+	_, ok := tableAliases(table)[strings.ToLower(field.Qualifier)]
+	return ok
+}
+
+func (s viewExpansionState) samePhysicalTable(left UnboundTable, right UnboundTable) bool {
+	return strings.EqualFold(s.schemaForTable(left), s.schemaForTable(right)) && strings.EqualFold(left.Name, right.Name)
+}
+
+func (s viewExpansionState) derivedDedupJoinsAreCardinalityPreserving(selectStmt UnboundSelect, base UnboundTable) bool {
+	reachable := tableAliases(base)
+	for _, join := range selectStmt.Joins {
+		if joinKindOrInner(join.Kind) != JoinKindInner && joinKindOrInner(join.Kind) != JoinKindLeftOuter || join.Operator != "" && join.Operator != BinaryOpEqual || len(join.Predicates) > 0 {
+			return false
+		}
+		if _, ok := reachable[strings.ToLower(join.LeftQualifier)]; !ok {
+			return false
+		}
+		childTable, childOK := unboundTableForRef(selectStmt.Tables, join.LeftQualifier)
+		parentTable, parentOK := unboundTableForRef(selectStmt.Tables, join.RightQualifier)
+		if !childOK || !parentOK || !s.parentLookupJoinIsCardinalityPreserving(childTable, join.LeftField, parentTable, join.RightField) {
+			return false
+		}
+		for alias := range tableAliases(parentTable) {
+			reachable[alias] = struct{}{}
+		}
+	}
+	return true
+}
+
+func (s viewExpansionState) parentLookupJoinIsCardinalityPreserving(childTable UnboundTable, childField string, parentTable UnboundTable, parentField string) bool {
+	if s.catalog == nil {
+		return false
+	}
+	definition, diagnostics := s.catalog.Table(s.schemaForTable(parentTable), parentTable.Name)
+	if diagnostics.BlocksNative() {
+		return false
+	}
+	if field, ok := definition.Field(parentField); ok && field.PrimaryKey {
+		return true
+	}
+	return s.catalogHasManyToOneRelationship(childTable, childField, parentTable, parentField)
+}
+
+func rewriteJoinBaseQualifier(join UnboundJoin, base UnboundTable, replacementRef string) (UnboundJoin, DiagnosticSet) {
+	aliases := tableAliases(base)
+	join.LeftQualifier = rewriteQualifierName(join.LeftQualifier, aliases, replacementRef)
+	join.RightQualifier = rewriteQualifierName(join.RightQualifier, aliases, replacementRef)
+	var diagnostics DiagnosticSet
+	for i, predicate := range join.Predicates {
+		join.Predicates[i].Expr = rewriteBaseQualifierExpr(predicate.Expr, aliases, replacementRef, &diagnostics)
+	}
+	return join, diagnostics
+}
+
+func rewriteQualifierName(qualifier string, aliases map[string]struct{}, replacementRef string) string {
+	if qualifier == "" {
+		return qualifier
+	}
+	if _, ok := aliases[strings.ToLower(qualifier)]; ok {
+		return replacementRef
+	}
+	return qualifier
 }
 
 func (s viewExpansionState) expandMembershipViews(memberships []UnboundMembership) ([]UnboundMembership, int, DiagnosticSet) {

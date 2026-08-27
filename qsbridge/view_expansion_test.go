@@ -342,6 +342,89 @@ func TestPlannerExpandsGroupedAggregateDerivedTableJoinedOnUniqueKey(t *testing.
 	}
 }
 
+func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
+	catalog := testBindCatalog()
+	for i := range catalog.Tables {
+		switch catalog.Tables[i].Name {
+		case "lineitem":
+			catalog.Tables[i].Fields = append(catalog.Tables[i].Fields,
+				FieldDefinition{Name: "l_orderkey", Type: DataTypeInt, Index: IndexBSI},
+				FieldDefinition{Name: "l_extendedprice", Type: DataTypeFloat, Index: IndexBSI, Encoding: LegacyEncodingProfile("FloatScaleBSI", LegacyEncodingOptions{Scale: 2})},
+			)
+		case "customer":
+			catalog.Tables[i].Fields = append(catalog.Tables[i].Fields,
+				FieldDefinition{Name: "c_mktsegment", Type: DataTypeString, Index: IndexStringEnum, Encoding: LegacyEncodingProfile("StringEnum", LegacyEncodingOptions{})},
+			)
+		}
+	}
+	catalog.Relationships = append(catalog.Relationships, RelationshipDefinition{
+		Name:        "lineitem_orders",
+		FromTable:   "lineitem",
+		FromField:   "l_orderkey",
+		ToTable:     "orders",
+		ToField:     "o_orderkey",
+		Direction:   JoinChildToParent,
+		Cardinality: "many_to_one",
+	})
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		SELECT
+			t0.c_mktsegment AS c_mktsegment,
+			SUM(lineitem.l_extendedprice) AS sum_l_extendedprice_ok
+		FROM lineitem
+		INNER JOIN (
+			SELECT
+				customer.c_mktsegment AS c_mktsegment,
+				lineitem.l_orderkey AS l_orderkey
+			FROM lineitem
+			LEFT JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+			LEFT JOIN customer ON (orders.o_custkey = customer.c_custkey)
+			GROUP BY 1, 2
+		) t0 ON (lineitem.l_orderkey = t0.l_orderkey)
+		GROUP BY 1
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 3 {
+		t.Fatalf("sources = %#v, want lineitem + orders + customer", result.Query.Sources)
+	}
+	if result.Query.Sources[0].Table != "lineitem" || result.Query.Sources[1].Table != "orders" || result.Query.Sources[2].Table != "customer" {
+		t.Fatalf("sources = %#v, want lineitem -> orders -> customer", result.Query.Sources)
+	}
+	if len(result.Query.Joins) != 2 {
+		t.Fatalf("joins = %#v, want two direct parent joins", result.Query.Joins)
+	}
+	for i, join := range result.Query.Joins {
+		if join.Kind != JoinKindInner || join.Nulls != NullExtensionNone {
+			t.Fatalf("join[%d] kind/nulls = %q/%q, want inner/no null extension", i, join.Kind, join.Nulls)
+		}
+	}
+	if got, want := result.Query.Joins[0].Left.QualifiedName(), "lineitem.l_orderkey"; got != want {
+		t.Fatalf("join[0] left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[0].Right.QualifiedName(), "orders.o_orderkey"; got != want {
+		t.Fatalf("join[0] right = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[1].Left.QualifiedName(), "orders.o_custkey"; got != want {
+		t.Fatalf("join[1] left = %q, want %q", got, want)
+	}
+	if got, want := result.Query.Joins[1].Right.QualifiedName(), "customer.c_custkey"; got != want {
+		t.Fatalf("join[1] right = %q, want %q", got, want)
+	}
+	if len(result.Query.GroupBy) != 1 || !exprReferencesField(result.Query.GroupBy[0], "customer", "c_mktsegment") {
+		t.Fatalf("group by = %#v, want customer.c_mktsegment", result.Query.GroupBy)
+	}
+	if len(result.Query.Aggregates) != 1 || result.Query.Aggregates[0].Function != "sum" || !exprReferencesField(result.Query.Aggregates[0].Input, "lineitem", "l_extendedprice") {
+		t.Fatalf("aggregates = %#v, want sum(lineitem.l_extendedprice)", result.Query.Aggregates)
+	}
+}
+
 func TestPlannerExpandsLogicalViewExpressionProjection(t *testing.T) {
 	catalog := testBindCatalog()
 	catalog.Views = []SQLViewDefinition{{
