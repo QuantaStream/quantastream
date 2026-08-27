@@ -1670,6 +1670,71 @@ func TestSimpleParserBridgeParsesTableauIsNullFunctionPredicate(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTableauParenthesizedYearFilter(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		SELECT customer.c_mktsegment AS c_mktsegment
+		FROM customer
+		INNER JOIN orders ON (customer.c_custkey = orders.o_custkey)
+		WHERE (YEAR(orders.o_orderdate) = 1992)
+		GROUP BY 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want one YEAR predicate", statement.Select.Predicates)
+	}
+	predicate, ok := statement.Select.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want UnboundBinaryExpr", statement.Select.Predicates[0].Expr)
+	}
+	if predicate.Op != BinaryOpEqual {
+		t.Fatalf("predicate op = %q, want %q", predicate.Op, BinaryOpEqual)
+	}
+	call, ok := predicate.Left.(UnboundCallExpr)
+	if !ok || !strings.EqualFold(call.Name, "year") || len(call.Args) != 1 {
+		t.Fatalf("predicate left = %#v, want YEAR call", predicate.Left)
+	}
+	field, ok := call.Args[0].(UnboundFieldExpr)
+	if !ok || field.Qualifier != "orders" || field.Name != "o_orderdate" {
+		t.Fatalf("YEAR arg = %#v, want orders.o_orderdate", call.Args[0])
+	}
+	literal, ok := predicate.Right.(UnboundLiteralExpr)
+	if !ok || literal.Kind != ValueInt || literal.Value != int64(1992) {
+		t.Fatalf("predicate right = %#v, want 1992 literal", predicate.Right)
+	}
+}
+
+func TestSimpleParserBridgeParsesTableauDerivedJoinWithParenthesizedYearFilter(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		SELECT
+			t0.c_mktsegment AS c_mktsegment,
+			SUM(lineitem.l_extendedprice) AS sum_l_extendedprice_ok
+		FROM lineitem
+		INNER JOIN (
+			SELECT
+				customer.c_mktsegment AS c_mktsegment,
+				lineitem.l_orderkey AS l_orderkey
+			FROM lineitem
+			INNER JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+			LEFT JOIN customer ON (orders.o_custkey = customer.c_custkey)
+			WHERE (YEAR(orders.o_orderdate) = 1992)
+			GROUP BY 1, 2
+		) t0 ON (lineitem.l_orderkey = t0.l_orderkey)
+		GROUP BY 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	derived := statement.Select.Tables[1].DerivedSelect
+	if derived == nil {
+		t.Fatalf("derived table = %#v, want derived t0", statement.Select.Tables[1])
+	}
+	if len(derived.Predicates) != 1 {
+		t.Fatalf("derived predicates = %#v, want one YEAR predicate", derived.Predicates)
+	}
+}
+
 func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
 	if diagnostics.BlocksNative() {

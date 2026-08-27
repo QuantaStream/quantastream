@@ -6121,6 +6121,7 @@ func parseSimpleMembershipSubqueryBody(text string) (string, Diagnostic, bool) {
 }
 
 func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate, Diagnostic, bool) {
+	text = stripSimpleEnclosingParens(strings.TrimSpace(text))
 	if predicate, diagnostic, ok := parseSimpleTextSearchPredicate(text, parameterIndex); ok || diagnostic.Code != "" {
 		if !ok {
 			return nil, diagnostic, false

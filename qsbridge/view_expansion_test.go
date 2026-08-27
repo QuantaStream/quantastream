@@ -430,6 +430,78 @@ func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
 	}
 }
 
+func TestPlannerRewritesTableauRelationshipDerivedDedupJoinWithFilter(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testTableauTPCHCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		SELECT
+			t0.c_mktsegment AS c_mktsegment,
+			SUM(lineitem.l_extendedprice) AS sum_l_extendedprice_ok
+		FROM lineitem
+		INNER JOIN (
+			SELECT
+				customer.c_mktsegment AS c_mktsegment,
+				lineitem.l_orderkey AS l_orderkey
+			FROM lineitem
+			INNER JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+			LEFT JOIN customer ON (orders.o_custkey = customer.c_custkey)
+			WHERE (YEAR(orders.o_orderdate) = 1992)
+			GROUP BY 1, 2
+		) t0 ON (lineitem.l_orderkey = t0.l_orderkey)
+		GROUP BY 1
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Joins) != 2 {
+		t.Fatalf("joins = %#v, want two direct parent joins", result.Query.Joins)
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want derived YEAR filter carried into rewritten query", result.Query.Predicates)
+	}
+	if !predicateReferencesField(result.Query.Predicates[0], "orders", "o_orderdate") {
+		t.Fatalf("predicate = %#v, want YEAR(orders.o_orderdate) filter", result.Query.Predicates[0])
+	}
+	if len(result.Query.GroupBy) != 1 || !exprReferencesField(result.Query.GroupBy[0], "customer", "c_mktsegment") {
+		t.Fatalf("group by = %#v, want customer.c_mktsegment", result.Query.GroupBy)
+	}
+	if len(result.Query.Aggregates) != 1 || result.Query.Aggregates[0].Function != "sum" || !exprReferencesField(result.Query.Aggregates[0].Input, "lineitem", "l_extendedprice") {
+		t.Fatalf("aggregates = %#v, want sum(lineitem.l_extendedprice)", result.Query.Aggregates)
+	}
+}
+
+func TestPlannerNormalizesTableauAggregateFreeGroupByToDistinct(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testTableauTPCHCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		SELECT customer.c_mktsegment AS c_mktsegment
+		FROM customer
+		INNER JOIN orders ON (customer.c_custkey = orders.o_custkey)
+		WHERE (YEAR(orders.o_orderdate) = 1992)
+		GROUP BY 1
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if !result.Query.Result.Distinct {
+		t.Fatalf("distinct = false, want true for aggregate-free GROUP BY projection")
+	}
+	if len(result.Query.GroupBy) != 0 {
+		t.Fatalf("group by = %#v, want normalized away", result.Query.GroupBy)
+	}
+	if len(result.Query.Predicates) != 1 || !predicateReferencesField(result.Query.Predicates[0], "orders", "o_orderdate") {
+		t.Fatalf("predicates = %#v, want YEAR(orders.o_orderdate) filter", result.Query.Predicates)
+	}
+}
+
 func TestPlannerRewritesTableauRelationshipOrphanProbe(t *testing.T) {
 	planner := Planner{
 		Parser:        SimpleParserBridge{},

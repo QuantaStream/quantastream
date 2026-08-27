@@ -200,6 +200,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		if membershipExpansionCount > 0 {
 			selectStmt.Memberships = memberships
 		}
+		selectStmt = normalizeAggregateFreeGroupedProjectionDistinct(selectStmt)
 		return selectStmt, nil
 	}
 	if len(selectStmt.Memberships) > 0 {
@@ -320,6 +321,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		selectStmt.Result.HasLimit = expansionWindow.HasLimit
 		selectStmt.Result.Offset = expansionWindow.Offset
 	}
+	selectStmt = normalizeAggregateFreeGroupedProjectionDistinct(selectStmt)
 	return selectStmt, nil
 }
 
@@ -402,13 +404,31 @@ func (s viewExpansionState) rewriteCardinalityPreservingDerivedDedupSelect(selec
 		rewrittenJoins = append(rewrittenJoins, rewrittenJoin)
 	}
 	rewritten.Joins = rewrittenJoins
+	derivedPredicates := rewriteDerivedDedupPredicates(derivedSelect.Predicates, innerBase, outerBaseRef)
+	rewritten.Predicates = append(derivedPredicates, rewritten.Predicates...)
 	return rewritten, nil, true
 }
 
 func aggregateFreeGroupedProjectionSelect(selectStmt UnboundSelect) bool {
-	if len(selectStmt.Tables) == 0 || len(selectStmt.GroupBy) == 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || len(selectStmt.Predicates) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || len(selectStmt.OrderBy) > 0 || selectStmt.Result.AppliesResultWindow() || selectStmt.Result.Distinct {
+	if len(selectStmt.Tables) == 0 || len(selectStmt.GroupBy) == 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || len(selectStmt.OrderBy) > 0 || selectStmt.Result.AppliesResultWindow() || selectStmt.Result.Distinct {
 		return false
 	}
+	return aggregateFreeGroupedProjectionKeysMatch(selectStmt)
+}
+
+func normalizeAggregateFreeGroupedProjectionDistinct(selectStmt UnboundSelect) UnboundSelect {
+	if len(selectStmt.Tables) == 0 || len(selectStmt.GroupBy) == 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 || selectStmt.WhereExpr != nil || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || selectStmt.Result.Distinct {
+		return selectStmt
+	}
+	if !aggregateFreeGroupedProjectionKeysMatch(selectStmt) {
+		return selectStmt
+	}
+	selectStmt.GroupBy = nil
+	selectStmt.Result.Distinct = true
+	return selectStmt
+}
+
+func aggregateFreeGroupedProjectionKeysMatch(selectStmt UnboundSelect) bool {
 	if len(selectStmt.GroupBy) != len(selectStmt.Projection) {
 		return false
 	}
@@ -437,6 +457,58 @@ func derivedDedupJoinFields(join UnboundJoin, derivedRef string, columns viewPro
 		return mappedField, left, ok && fieldOK
 	}
 	return UnboundFieldExpr{}, UnboundFieldExpr{}, false
+}
+
+func rewriteDerivedDedupPredicates(predicates []UnboundPredicate, base UnboundTable, replacementRef string) []UnboundPredicate {
+	aliases := tableAliases(base)
+	rewritten := make([]UnboundPredicate, 0, len(predicates))
+	for _, predicate := range predicates {
+		predicate.Expr = rewriteMatchingBaseQualifierExpr(predicate.Expr, aliases, replacementRef)
+		rewritten = append(rewritten, predicate)
+	}
+	return rewritten
+}
+
+func rewriteMatchingBaseQualifierExpr(expr UnboundExpr, aliases map[string]struct{}, replacementRef string) UnboundExpr {
+	switch typed := expr.(type) {
+	case nil:
+		return nil
+	case UnboundFieldExpr:
+		if _, ok := aliases[strings.ToLower(strings.TrimSpace(typed.Qualifier))]; ok {
+			typed.Qualifier = replacementRef
+		}
+		return typed
+	case UnboundBinaryExpr:
+		typed.Left = rewriteMatchingBaseQualifierExpr(typed.Left, aliases, replacementRef)
+		typed.Right = rewriteMatchingBaseQualifierExpr(typed.Right, aliases, replacementRef)
+		return typed
+	case UnboundCallExpr:
+		for i, arg := range typed.Args {
+			typed.Args[i] = rewriteMatchingBaseQualifierExpr(arg, aliases, replacementRef)
+		}
+		return typed
+	case UnboundTextSearchExpr:
+		rewritten := rewriteMatchingBaseQualifierExpr(typed.Field, aliases, replacementRef)
+		if field, ok := rewritten.(UnboundFieldExpr); ok {
+			typed.Field = field
+		}
+		typed.Query = rewriteMatchingBaseQualifierExpr(typed.Query, aliases, replacementRef)
+		return typed
+	case UnboundListExpr:
+		for i, item := range typed.Items {
+			typed.Items[i] = rewriteMatchingBaseQualifierExpr(item, aliases, replacementRef)
+		}
+		return typed
+	case UnboundSearchedCaseExpr:
+		for i, when := range typed.Whens {
+			typed.Whens[i].Condition = rewriteMatchingBaseQualifierExpr(when.Condition, aliases, replacementRef)
+			typed.Whens[i].Result = rewriteMatchingBaseQualifierExpr(when.Result, aliases, replacementRef)
+		}
+		typed.Else = rewriteMatchingBaseQualifierExpr(typed.Else, aliases, replacementRef)
+		return typed
+	default:
+		return expr
+	}
 }
 
 func fieldReferencesRef(field UnboundFieldExpr, ref string) bool {

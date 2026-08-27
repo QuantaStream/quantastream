@@ -2555,6 +2555,13 @@ func exprReferencesField(expr Expr, qualifier string, name string) bool {
 		return typed.Ref.Table.RefName() == qualifier && typed.Ref.Name == name
 	case BinaryExpr:
 		return exprReferencesField(typed.Left, qualifier, name) || exprReferencesField(typed.Right, qualifier, name)
+	case CallExpr:
+		for _, arg := range typed.Args {
+			if exprReferencesField(arg, qualifier, name) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
