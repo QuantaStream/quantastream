@@ -342,7 +342,7 @@ func TestPlannerExpandsGroupedAggregateDerivedTableJoinedOnUniqueKey(t *testing.
 	}
 }
 
-func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
+func testTableauTPCHCatalog() MemoryCatalog {
 	catalog := testBindCatalog()
 	for i := range catalog.Tables {
 		switch catalog.Tables[i].Name {
@@ -366,9 +366,14 @@ func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
 		Direction:   JoinChildToParent,
 		Cardinality: "many_to_one",
 	})
+	catalog.Functions = append(catalog.Functions, FunctionDefinition{Name: "year", Kind: FunctionScalar, Origin: FunctionOriginMySQLCompatible, Placement: FunctionPlacementExpression, Arguments: []DataType{DataTypeTime}, ReturnType: DataTypeInt, Native: true, Deterministic: true})
+	return catalog
+}
+
+func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
 	planner := Planner{
 		Parser:        SimpleParserBridge{},
-		Catalog:       catalog,
+		Catalog:       testTableauTPCHCatalog(),
 		DefaultSchema: "quanta",
 	}
 
@@ -422,6 +427,46 @@ func TestPlannerRewritesTableauRelationshipDerivedDedupJoin(t *testing.T) {
 	}
 	if len(result.Query.Aggregates) != 1 || result.Query.Aggregates[0].Function != "sum" || !exprReferencesField(result.Query.Aggregates[0].Input, "lineitem", "l_extendedprice") {
 		t.Fatalf("aggregates = %#v, want sum(lineitem.l_extendedprice)", result.Query.Aggregates)
+	}
+}
+
+func TestPlannerRewritesTableauRelationshipOrphanProbe(t *testing.T) {
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       testTableauTPCHCatalog(),
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		SELECT YEAR(orders.o_orderdate) AS yr_o_orderdate_ok
+		FROM lineitem
+		LEFT JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+		WHERE ISNULL(orders.o_orderkey)
+		LIMIT 1
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.Sources) != 1 || result.Query.Sources[0].Table != "orders" {
+		t.Fatalf("sources = %#v, want orders only", result.Query.Sources)
+	}
+	if len(result.Query.Joins) != 0 {
+		t.Fatalf("joins = %#v, want no relationship join after orphan probe rewrite", result.Query.Joins)
+	}
+	if len(result.Query.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want parent key null probe", result.Query.Predicates)
+	}
+	predicate, ok := result.Query.Predicates[0].Expr.(BinaryExpr)
+	if !ok || predicate.Op != BinaryOpEqual {
+		t.Fatalf("predicate = %#v, want equality null probe", result.Query.Predicates[0].Expr)
+	}
+	field, ok := predicate.Left.(FieldExpr)
+	if !ok || field.Ref.QualifiedName() != "orders.o_orderkey" {
+		t.Fatalf("predicate left = %#v, want orders.o_orderkey", predicate.Left)
+	}
+	literal, ok := predicate.Right.(LiteralExpr)
+	if !ok || literal.Kind != ValueNull {
+		t.Fatalf("predicate right = %#v, want NULL literal", predicate.Right)
 	}
 }
 

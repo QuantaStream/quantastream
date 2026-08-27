@@ -1639,6 +1639,37 @@ func TestSimpleParserBridgeParsesTableauDerivedJoinWithParenthesizedOn(t *testin
 	}
 }
 
+func TestSimpleParserBridgeParsesTableauIsNullFunctionPredicate(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		SELECT YEAR(orders.o_orderdate) AS yr_o_orderdate_ok
+		FROM lineitem
+		LEFT JOIN orders ON (lineitem.l_orderkey = orders.o_orderkey)
+		WHERE ISNULL(orders.o_orderkey)
+		LIMIT 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 1 {
+		t.Fatalf("predicates = %#v, want one ISNULL predicate", statement.Select.Predicates)
+	}
+	predicate, ok := statement.Select.Predicates[0].Expr.(UnboundBinaryExpr)
+	if !ok {
+		t.Fatalf("predicate expression = %T, want UnboundBinaryExpr", statement.Select.Predicates[0].Expr)
+	}
+	if predicate.Op != BinaryOpEqual {
+		t.Fatalf("predicate op = %q, want %q", predicate.Op, BinaryOpEqual)
+	}
+	field, ok := predicate.Left.(UnboundFieldExpr)
+	if !ok || field.Qualifier != "orders" || field.Name != "o_orderkey" {
+		t.Fatalf("predicate left = %#v, want orders.o_orderkey", predicate.Left)
+	}
+	literal, ok := predicate.Right.(UnboundLiteralExpr)
+	if !ok || literal.Kind != ValueNull {
+		t.Fatalf("predicate right = %#v, want NULL literal", predicate.Right)
+	}
+}
+
 func TestSimpleParserBridgeParsesSelectListScalarSubqueryWithoutOuterFrom(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select (select avg(age) from customers_qa) as average_age")
 	if diagnostics.BlocksNative() {

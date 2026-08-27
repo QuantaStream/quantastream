@@ -170,6 +170,12 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		}
 		selectStmt = rewritten
 	}
+	if rewritten, diagnostics, ok := s.rewriteDeclaredRelationshipOrphanProbeSelect(selectStmt); diagnostics.BlocksNative() || ok {
+		if diagnostics.BlocksNative() {
+			return selectStmt, diagnostics
+		}
+		selectStmt = rewritten
+	}
 	memberships, membershipExpansionCount, membershipDiagnostics := s.expandMembershipViews(selectStmt.Memberships)
 	if membershipDiagnostics.BlocksNative() {
 		return selectStmt, membershipDiagnostics
@@ -503,6 +509,53 @@ func rewriteQualifierName(qualifier string, aliases map[string]struct{}, replace
 		return replacementRef
 	}
 	return qualifier
+}
+
+func (s viewExpansionState) rewriteDeclaredRelationshipOrphanProbeSelect(selectStmt UnboundSelect) (UnboundSelect, DiagnosticSet, bool) {
+	if len(selectStmt.Tables) != 2 || len(selectStmt.Joins) != 1 || len(selectStmt.Predicates) != 1 || selectStmt.WhereExpr != nil || len(selectStmt.Memberships) > 0 || len(selectStmt.Subqueries) > 0 || len(selectStmt.GroupBy) > 0 || len(selectStmt.Aggregates) > 0 || len(selectStmt.Having) > 0 {
+		return selectStmt, nil, false
+	}
+	join := selectStmt.Joins[0]
+	if joinKindOrInner(join.Kind) != JoinKindLeftOuter || join.Operator != "" && join.Operator != BinaryOpEqual || len(join.Predicates) > 0 {
+		return selectStmt, nil, false
+	}
+	childTable, childOK := unboundTableForRef(selectStmt.Tables, join.LeftQualifier)
+	parentTable, parentOK := unboundTableForRef(selectStmt.Tables, join.RightQualifier)
+	if !childOK || !parentOK {
+		return selectStmt, nil, false
+	}
+	if !s.parentLookupJoinIsCardinalityPreserving(childTable, join.LeftField, parentTable, join.RightField) {
+		return selectStmt, nil, false
+	}
+	nullField, ok := nullCheckField(selectStmt.Predicates[0].Expr)
+	if !ok || !strings.EqualFold(nullField.Qualifier, join.RightQualifier) || !strings.EqualFold(nullField.Name, join.RightField) {
+		return selectStmt, nil, false
+	}
+	rewritten := selectStmt
+	rewritten.Tables = []UnboundTable{parentTable}
+	rewritten.Joins = nil
+	rewritten.Predicates = []UnboundPredicate{{
+		Expr:      UnboundBinary(BinaryOpEqual, UnboundField(tableRefName(parentTable.Name, parentTable.Alias), join.RightField), UnboundLiteral(ValueNull, nil)),
+		Placement: PredicatePushdown,
+		Scope:     PredicateScopeWhere,
+	}}
+	return rewritten, nil, true
+}
+
+func nullCheckField(expr UnboundExpr) (UnboundFieldExpr, bool) {
+	binary, ok := expr.(UnboundBinaryExpr)
+	if !ok || binary.Op != BinaryOpEqual {
+		return UnboundFieldExpr{}, false
+	}
+	if literal, ok := binary.Right.(UnboundLiteralExpr); ok && literal.Kind == ValueNull {
+		field, fieldOK := binary.Left.(UnboundFieldExpr)
+		return field, fieldOK
+	}
+	if literal, ok := binary.Left.(UnboundLiteralExpr); ok && literal.Kind == ValueNull {
+		field, fieldOK := binary.Right.(UnboundFieldExpr)
+		return field, fieldOK
+	}
+	return UnboundFieldExpr{}, false
 }
 
 func (s viewExpansionState) expandMembershipViews(memberships []UnboundMembership) ([]UnboundMembership, int, DiagnosticSet) {

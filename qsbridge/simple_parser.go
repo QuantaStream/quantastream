@@ -6133,6 +6133,12 @@ func parseSimplePredicate(text string, parameterIndex *int) ([]UnboundPredicate,
 		}
 		return []UnboundPredicate{predicate}, Diagnostic{}, true
 	}
+	if predicate, diagnostic, ok := parseSimpleIsNullFunctionPredicate(text); ok || diagnostic.Code != "" {
+		if !ok {
+			return nil, diagnostic, false
+		}
+		return []UnboundPredicate{predicate}, Diagnostic{}, true
+	}
 	if predicates, diagnostic, ok := parseSimpleBetweenPredicate(text, parameterIndex); ok || diagnostic.Code != "" {
 		return predicates, diagnostic, ok
 	}
@@ -6341,6 +6347,36 @@ func parseSimpleNullPredicate(text string) (UnboundPredicate, Diagnostic, bool) 
 	qualifier, field := splitProjectionField(fields[0])
 	if field == "" {
 		return UnboundPredicate{}, simpleParserDiagnostic("IS NULL field is empty"), false
+	}
+	return UnboundPredicate{
+		Expr:      UnboundBinary(op, UnboundField(qualifier, field), UnboundLiteral(ValueNull, nil)),
+		Placement: PredicatePushdown,
+		Scope:     PredicateScopeWhere,
+	}, Diagnostic{}, true
+}
+
+func parseSimpleIsNullFunctionPredicate(text string) (UnboundPredicate, Diagnostic, bool) {
+	trimmed := stripSimpleEnclosingParens(strings.TrimSpace(text))
+	op := BinaryOpEqual
+	if remaining, ok := consumeKeyword(trimmed, "not"); ok {
+		trimmed = strings.TrimSpace(remaining)
+		op = BinaryOpNotEqual
+	}
+	body, ok := consumeKeyword(trimmed, "isnull")
+	if !ok {
+		return UnboundPredicate{}, Diagnostic{}, false
+	}
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, "(") {
+		return UnboundPredicate{}, simpleParserDiagnostic("ISNULL requires a parenthesized field"), false
+	}
+	fieldText, ok := simpleStripBalancedParens(body)
+	if !ok {
+		return UnboundPredicate{}, simpleParserDiagnostic("ISNULL field must use balanced parentheses"), false
+	}
+	qualifier, field := splitProjectionField(strings.TrimSpace(fieldText))
+	if field == "" || field == "*" {
+		return UnboundPredicate{}, simpleParserDiagnostic("ISNULL field is empty"), false
 	}
 	return UnboundPredicate{
 		Expr:      UnboundBinary(op, UnboundField(qualifier, field), UnboundLiteral(ValueNull, nil)),
