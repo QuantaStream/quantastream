@@ -639,9 +639,11 @@ func directBitmapTopNAggregateResult(request ExecutionRequest, materialized qsbr
 }
 
 func directBitmapNumericAggregateCell(aggregate qsbridge.Aggregate, values []qsbridge.ResultCell) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	switch strings.ToLower(aggregate.Function) {
+	case "min", "max":
+		return directBitmapOrderedAggregateCell(aggregate, values)
+	}
 	var sum float64
-	var min float64
-	var max float64
 	seen := 0
 	for _, cell := range values {
 		if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
@@ -650,12 +652,6 @@ func directBitmapNumericAggregateCell(aggregate qsbridge.Aggregate, values []qsb
 		value, ok := directBitmapNumericCellValue(cell)
 		if !ok {
 			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("%s aggregate requires numeric values", aggregate.Function))
-		}
-		if seen == 0 || value < min {
-			min = value
-		}
-		if seen == 0 || value > max {
-			max = value
 		}
 		sum += value
 		seen++
@@ -668,13 +664,41 @@ func directBitmapNumericAggregateCell(aggregate qsbridge.Aggregate, values []qsb
 		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: sum}, nil
 	case "avg":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: sum / float64(seen)}, nil
-	case "min":
-		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: min}, nil
-	case "max":
-		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: max}, nil
 	default:
 		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("direct bitmap runtime does not support %s aggregate in this slice", aggregate.Function))
 	}
+}
+
+func directBitmapOrderedAggregateCell(aggregate qsbridge.Aggregate, values []qsbridge.ResultCell) (qsbridge.ResultCell, qsbridge.DiagnosticSet) {
+	function := strings.ToLower(aggregate.Function)
+	var result qsbridge.ResultCell
+	seen := false
+	for _, cell := range values {
+		if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
+			continue
+		}
+		if !seen {
+			result = cell
+			seen = true
+			continue
+		}
+		switch function {
+		case "min":
+			if directBitmapCellLess(cell, result) {
+				result = cell
+			}
+		case "max":
+			if directBitmapCellLess(result, cell) {
+				result = cell
+			}
+		default:
+			return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("direct bitmap runtime does not support %s aggregate in this slice", aggregate.Function))
+		}
+	}
+	if !seen {
+		return qsbridge.ResultCell{Kind: qsbridge.ValueNull, Value: nil}, nil
+	}
+	return result, nil
 }
 
 func directBitmapDistinctCountCell(values []qsbridge.ResultCell) qsbridge.ResultCell {

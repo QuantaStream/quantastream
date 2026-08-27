@@ -82,6 +82,74 @@ func TestDirectBitmapCellEqualCoercesSQLTimestampLiteral(t *testing.T) {
 	}
 }
 
+func TestDirectBitmapOrderedAggregateCellSupportsTimeMinMax(t *testing.T) {
+	early := time.Date(1992, 1, 2, 0, 0, 0, 0, time.UTC)
+	middle := time.Date(1994, 3, 15, 0, 0, 0, 0, time.UTC)
+	late := time.Date(1998, 12, 30, 0, 0, 0, 0, time.UTC)
+	values := []qsbridge.ResultCell{
+		{Kind: qsbridge.ValueTime, Value: middle},
+		{Kind: qsbridge.ValueNull, Value: nil},
+		{Kind: qsbridge.ValueTime, Value: late},
+		{Kind: qsbridge.ValueTime, Value: early},
+	}
+
+	minCell, diagnostics := directBitmapNumericAggregateCell(qsbridge.Aggregate{Function: "min"}, values)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("min diagnostics = %#v, want none", diagnostics)
+	}
+	if minCell.Kind != qsbridge.ValueTime || !minCell.Value.(time.Time).Equal(early) {
+		t.Fatalf("min cell = %#v, want %v", minCell, early)
+	}
+	maxCell, diagnostics := directBitmapNumericAggregateCell(qsbridge.Aggregate{Function: "max"}, values)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("max diagnostics = %#v, want none", diagnostics)
+	}
+	if maxCell.Kind != qsbridge.ValueTime || !maxCell.Value.(time.Time).Equal(late) {
+		t.Fatalf("max cell = %#v, want %v", maxCell, late)
+	}
+}
+
+func TestDirectBitmapStreamingGroupedAggregateSupportsTimeMinMax(t *testing.T) {
+	early := time.Date(1992, 1, 2, 0, 0, 0, 0, time.UTC)
+	middle := time.Date(1994, 3, 15, 0, 0, 0, 0, time.UTC)
+	late := time.Date(1998, 12, 30, 0, 0, 0, 0, time.UTC)
+	values := []qsbridge.ResultCell{
+		{Kind: qsbridge.ValueTime, Value: middle},
+		{Kind: qsbridge.ValueTime, Value: late},
+		{Kind: qsbridge.ValueTime, Value: early},
+	}
+
+	minAggregate := qsbridge.Aggregate{Function: "min"}
+	var minAccumulator directBitmapStreamingGroupedAggregateAccumulator
+	for _, value := range values {
+		if diagnostics := directBitmapStreamingGroupedAggregateAdd(&minAccumulator, minAggregate, value); diagnostics.BlocksNative() {
+			t.Fatalf("min add diagnostics = %#v, want none", diagnostics)
+		}
+	}
+	minCell, diagnostics := directBitmapStreamingGroupedAggregateCell(minAggregate, minAccumulator)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("min cell diagnostics = %#v, want none", diagnostics)
+	}
+	if minCell.Kind != qsbridge.ValueTime || !minCell.Value.(time.Time).Equal(early) {
+		t.Fatalf("min cell = %#v, want %v", minCell, early)
+	}
+
+	maxAggregate := qsbridge.Aggregate{Function: "max"}
+	var maxAccumulator directBitmapStreamingGroupedAggregateAccumulator
+	for _, value := range values {
+		if diagnostics := directBitmapStreamingGroupedAggregateAdd(&maxAccumulator, maxAggregate, value); diagnostics.BlocksNative() {
+			t.Fatalf("max add diagnostics = %#v, want none", diagnostics)
+		}
+	}
+	maxCell, diagnostics := directBitmapStreamingGroupedAggregateCell(maxAggregate, maxAccumulator)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("max cell diagnostics = %#v, want none", diagnostics)
+	}
+	if maxCell.Kind != qsbridge.ValueTime || !maxCell.Value.(time.Time).Equal(late) {
+		t.Fatalf("max cell = %#v, want %v", maxCell, late)
+	}
+}
+
 func TestDirectBitmapMaterializedDayOfWeekUsesMySQLConvention(t *testing.T) {
 	orderDate := qsbridge.FieldRef{
 		Table:        qsbridge.TableInstance{Table: "orders_qa"},
@@ -3171,9 +3239,9 @@ func TestDirectBitmapRuntimeMaterializesNumericAggregates(t *testing.T) {
 		t.Fatalf("chunk diagnostics = %#v, want none", diagnostics)
 	}
 	got := chunk.Rows[0]
-	want := []float64{26, 3, 14, 26.0 / 3.0}
+	want := []any{float64(26), int64(3), int64(14), 26.0 / 3.0}
 	for i, wantValue := range want {
-		if gotValue, ok := got[i].Value.(float64); !ok || gotValue != wantValue {
+		if got[i].Value != wantValue {
 			t.Fatalf("row[%d] = %#v, want %v", i, got[i].Value, wantValue)
 		}
 	}

@@ -210,6 +210,7 @@ type directBitmapStreamingGroupedAggregateAccumulator struct {
 	Sum      float64
 	Min      float64
 	Max      float64
+	Value    qsbridge.ResultCell
 	Seen     int
 	CountAll int
 }
@@ -281,6 +282,20 @@ func directBitmapStreamingGroupedAggregateAdd(accumulator *directBitmapStreaming
 	if cell.Kind == qsbridge.ValueNull || cell.Value == nil {
 		return nil
 	}
+	switch strings.ToLower(aggregate.Function) {
+	case "min":
+		if accumulator.Seen == 0 || directBitmapCellLess(cell, accumulator.Value) {
+			accumulator.Value = cell
+		}
+		accumulator.Seen++
+		return nil
+	case "max":
+		if accumulator.Seen == 0 || directBitmapCellLess(accumulator.Value, cell) {
+			accumulator.Value = cell
+		}
+		accumulator.Seen++
+		return nil
+	}
 	value, ok := directBitmapNumericCellValue(cell)
 	if !ok {
 		return directBitmapAggregateDiagnostics(fmt.Sprintf("%s aggregate requires numeric values", aggregate.Function))
@@ -309,9 +324,9 @@ func directBitmapStreamingGroupedAggregateCell(aggregate qsbridge.Aggregate, acc
 	case "avg":
 		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: accumulator.Sum / float64(accumulator.Seen)}, nil
 	case "min":
-		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: accumulator.Min}, nil
+		return accumulator.Value, nil
 	case "max":
-		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: accumulator.Max}, nil
+		return accumulator.Value, nil
 	default:
 		return qsbridge.ResultCell{}, directBitmapAggregateDiagnostics(fmt.Sprintf("direct bitmap runtime does not support %s aggregate in this slice", aggregate.Function))
 	}

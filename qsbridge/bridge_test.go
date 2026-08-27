@@ -72,6 +72,47 @@ func TestBindSelectBuildsQueryIR(t *testing.T) {
 	}
 }
 
+func TestBindSelectMinMaxAggregatesInheritInputType(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{{
+			Schema: "quanta",
+			Name:   "lineitem",
+			Fields: []FieldDefinition{
+				{Name: "l_shipdate", Type: DataTypeTime, Index: IndexDateTime},
+			},
+		}},
+		Functions: []FunctionDefinition{
+			{Name: "min", Kind: FunctionAggregate, ReturnType: DataTypeFloat, Native: true},
+			{Name: "max", Kind: FunctionAggregate, ReturnType: DataTypeFloat, Native: true},
+		},
+	}
+	context := NewBindContext(catalog, "quanta")
+	shipDate := UnboundField("l", "l_shipdate")
+	selectStmt := UnboundSelect{
+		Tables: []UnboundTable{{Name: "lineitem", Alias: "l"}},
+		Projection: []UnboundProjection{
+			{Expr: UnboundAggregateRef("min_shipdate", 0), Alias: "min_shipdate", Type: DataTypeFloat},
+			{Expr: UnboundAggregateRef("max_shipdate", 1), Alias: "max_shipdate", Type: DataTypeFloat},
+		},
+		Aggregates: []UnboundAggregate{
+			{Function: "min", Input: shipDate, Alias: "min_shipdate", Type: DataTypeFloat},
+			{Function: "max", Input: shipDate, Alias: "max_shipdate", Type: DataTypeFloat},
+		},
+	}
+
+	query, diagnostics := BindSelect(context, selectStmt)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if len(query.Aggregates) != 2 || query.Aggregates[0].Type != DataTypeTime || query.Aggregates[1].Type != DataTypeTime {
+		t.Fatalf("aggregates = %#v, want min/max DataTypeTime", query.Aggregates)
+	}
+	columns := query.ResultColumns()
+	if len(columns) != 2 || columns[0].Type != DataTypeTime || columns[1].Type != DataTypeTime {
+		t.Fatalf("result columns = %#v, want DataTypeTime min/max columns", columns)
+	}
+}
+
 func TestBindSelectResolvesProjectionAliasesInWherePredicates(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	selectStmt := UnboundSelect{

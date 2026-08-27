@@ -3660,6 +3660,35 @@ func TestSimpleParserBridgeParsesGroupedCount(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesTableauTimestampRangeFilter(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+select
+  q3_order_line_base.market_segment as market_segment,
+  sum(q3_order_line_base.discount) as sum_discount_ok,
+  sum(q3_order_line_base.extended_price) as sum_extended_price_ok,
+  year(q3_order_line_base.order_date) as yr_order_date_ok
+from q3_order_line_base
+where ((q3_order_line_base.ship_date >= timestamp('1995-03-15 00:00:00'))
+  and (q3_order_line_base.ship_date <= timestamp('1998-11-30 00:00:00')))
+group by 1, 4`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Predicates) != 2 {
+		t.Fatalf("predicates = %d, want 2", len(statement.Select.Predicates))
+	}
+	for i, predicate := range statement.Select.Predicates {
+		binary, ok := predicate.Expr.(UnboundBinaryExpr)
+		if !ok {
+			t.Fatalf("predicate %d expr = %T, want UnboundBinaryExpr", i, predicate.Expr)
+		}
+		call, ok := binary.Right.(UnboundCallExpr)
+		if !ok || call.Name != "todate" {
+			t.Fatalf("predicate %d right = %#v, want todate(...) call", i, binary.Right)
+		}
+	}
+}
+
 func TestSimpleParserBridgeParsesGroupByProjectionAlias(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select c_mktsegment as market_segment, count(*) as customer_count from customer group by market_segment order by market_segment")
 	if diagnostics.BlocksNative() {

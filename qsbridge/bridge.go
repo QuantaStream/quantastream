@@ -675,6 +675,7 @@ func BindSelect(context *BindContext, selectStmt UnboundSelect) (QueryIR, Diagno
 		}
 		query.Aggregates = append(query.Aggregates, bound)
 	}
+	query.Projection = bindAggregateProjectionTypes(query.Projection, query.Aggregates)
 
 	having := make([]UnboundPredicate, 0, len(selectStmt.Having))
 	for _, predicate := range selectStmt.Having {
@@ -3087,7 +3088,7 @@ func BindAggregate(context *BindContext, aggregate UnboundAggregate) (Aggregate,
 		Input:         input,
 		Filter:        filter,
 		Alias:         aggregate.Alias,
-		Type:          aggregateReturnType(aggregate.Type, function.ReturnType, input),
+		Type:          aggregateReturnType(function.Name, aggregate.Type, function.ReturnType, input),
 		Limit:         aggregate.Limit,
 		Origin:        function.Origin,
 		Placement:     function.EffectivePlacement(),
@@ -3095,7 +3096,12 @@ func BindAggregate(context *BindContext, aggregate UnboundAggregate) (Aggregate,
 	}, nil
 }
 
-func aggregateReturnType(explicit DataType, functionType DataType, input Expr) DataType {
+func aggregateReturnType(functionName string, explicit DataType, functionType DataType, input Expr) DataType {
+	if strings.EqualFold(functionName, "min") || strings.EqualFold(functionName, "max") {
+		if inputType := ExprDataType(input); inputType != DataTypeUnknown {
+			return inputType
+		}
+	}
 	if explicit != DataTypeUnknown {
 		return explicit
 	}
@@ -3103,6 +3109,32 @@ func aggregateReturnType(explicit DataType, functionType DataType, input Expr) D
 		return functionType
 	}
 	return ExprDataType(input)
+}
+
+func bindAggregateProjectionTypes(projections []ProjectionColumn, aggregates []Aggregate) []ProjectionColumn {
+	if len(projections) == 0 || len(aggregates) == 0 {
+		return projections
+	}
+	for i := range projections {
+		projection := projections[i]
+		switch ref := projection.Expr.(type) {
+		case AggregateRefExpr:
+			if ref.Index >= 0 && ref.Index < len(aggregates) {
+				ref.Type = aggregates[ref.Index].Type
+				projection.Expr = ref
+				projection.Type = aggregates[ref.Index].Type
+			}
+		case *AggregateRefExpr:
+			if ref != nil && ref.Index >= 0 && ref.Index < len(aggregates) {
+				typed := *ref
+				typed.Type = aggregates[typed.Index].Type
+				projection.Expr = typed
+				projection.Type = aggregates[typed.Index].Type
+			}
+		}
+		projections[i] = projection
+	}
+	return projections
 }
 
 // UnboundExpr is a parser-neutral scalar expression before catalog binding.

@@ -4796,6 +4796,13 @@ func parseSimpleScalarCallExpression(text string) (UnboundCallExpr, bool) {
 	if function == "if" {
 		return parseSimpleIfCallExpression(inputText)
 	}
+	if function == "date" || function == "datetime" || function == "timestamp" {
+		value, ok := parseSimpleScalarExpression(inputText)
+		if !ok {
+			return UnboundCallExpr{}, false
+		}
+		return UnboundCall("todate", value), true
+	}
 	if !simpleScalarFunctionName(function) {
 		return UnboundCallExpr{}, false
 	}
@@ -5395,6 +5402,7 @@ func parseSimplePredicates(text string) ([]UnboundPredicate, Diagnostic, bool) {
 }
 
 func parseSimplePredicatesWithParameterIndex(text string, parameterIndex int) ([]UnboundPredicate, Diagnostic, bool) {
+	text = stripSimpleEnclosingParens(strings.TrimSpace(text))
 	orParts := splitSimpleOrPredicates(text)
 	if len(orParts) > 1 {
 		predicates := make([]UnboundPredicate, 0, len(orParts))
@@ -5432,6 +5440,7 @@ func parseSimplePredicatesWithParameterIndex(text string, parameterIndex int) ([
 }
 
 func parseSimpleWhere(text string) ([]UnboundPredicate, []UnboundMembership, UnboundExpr, []UnboundSubqueryPlanIntent, []NativeBlocker, Diagnostic, bool) {
+	text = stripSimpleEnclosingParens(strings.TrimSpace(text))
 	if simpleWhereHasMixedBooleanPredicates(text) {
 		if predicates, diagnostic, ok := parseSimpleMixedBooleanWherePredicates(text); ok || diagnostic.Code != "" {
 			if !ok {
