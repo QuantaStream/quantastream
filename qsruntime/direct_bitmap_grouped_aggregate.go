@@ -941,6 +941,9 @@ func directBitmapFieldRefsEqual(left qsbridge.FieldRef, right qsbridge.FieldRef)
 }
 
 func directBitmapGroupExpressionsEqual(left qsbridge.Expr, right qsbridge.Expr) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
 	if leftField, ok := directBitmapExprField(left); ok {
 		rightField, rightOK := directBitmapExprField(right)
 		return rightOK && directBitmapFieldRefsEqual(leftField, rightField)
@@ -967,6 +970,19 @@ func directBitmapGroupExpressionsEqual(left qsbridge.Expr, right qsbridge.Expr) 
 			leftBinary.Op == rightBinary.Op &&
 			directBitmapGroupExpressionsEqual(leftBinary.Left, rightBinary.Left) &&
 			directBitmapGroupExpressionsEqual(leftBinary.Right, rightBinary.Right)
+	}
+	if leftCase, ok := directBitmapSearchedCaseExpr(left); ok {
+		rightCase, rightOK := directBitmapSearchedCaseExpr(right)
+		if !rightOK || len(leftCase.Whens) != len(rightCase.Whens) || !directBitmapGroupExpressionsEqual(leftCase.Else, rightCase.Else) {
+			return false
+		}
+		for i := range leftCase.Whens {
+			if !directBitmapGroupExpressionsEqual(leftCase.Whens[i].Condition, rightCase.Whens[i].Condition) ||
+				!directBitmapGroupExpressionsEqual(leftCase.Whens[i].Result, rightCase.Whens[i].Result) {
+				return false
+			}
+		}
+		return true
 	}
 	if leftList, ok := directBitmapListExpr(left); ok {
 		rightList, rightOK := directBitmapListExpr(right)

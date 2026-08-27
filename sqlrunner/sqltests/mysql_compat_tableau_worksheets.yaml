@@ -118,6 +118,19 @@ tests:
         and l_discount between 0.05 and 0.07
         and l_quantity < 24
 
+  - id: mysql_compat_tableau_worksheets.022.grouped_calculated_dimension
+    status: supported
+    kind: query
+    feature: tableau_calculated_field
+    compatibility: mysql
+    requires: [select, case, sum, group_by, order_by]
+    sql: |
+      select (case when (`lineitem`.`l_extendedprice` >= 50000) then 'High' else 'Normal' end) as `Calculation_1753485021274116`,
+             sum(`lineitem`.`l_extendedprice`) as `sum_extended_price_ok`
+      from `lineitem`
+      group by 1
+      order by 1
+
   - id: mysql_compat_tableau_worksheets.030.joined_dimension_measure
     status: supported
     kind: query

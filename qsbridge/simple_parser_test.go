@@ -3140,6 +3140,32 @@ func TestSimpleParserBridgeParsesSearchedCaseProjection(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesParenthesizedTableauSearchedCaseGroupOrdinal(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse(`
+		SELECT
+			(CASE WHEN (` + "`tpch_order_line_sales_base`.`extended_price`" + ` >= 50000) THEN 'High' ELSE 'Normal' END) AS ` + "`Calculation_1753485021274116`" + `,
+			SUM(` + "`tpch_order_line_sales_base`.`extended_price`" + `) AS ` + "`sum_extended_price_ok`" + `
+		FROM ` + "`tpch_order_line_sales_base`" + `
+		GROUP BY 1
+	`)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.Projection) != 2 {
+		t.Fatalf("projections = %d, want 2", len(statement.Select.Projection))
+	}
+	searchedCase, ok := statement.Select.Projection[0].Expr.(UnboundSearchedCaseExpr)
+	if !ok {
+		t.Fatalf("projection expression = %T, want UnboundSearchedCaseExpr", statement.Select.Projection[0].Expr)
+	}
+	if len(statement.Select.GroupBy) != 1 {
+		t.Fatalf("group by = %d, want 1", len(statement.Select.GroupBy))
+	}
+	if !reflect.DeepEqual(statement.Select.GroupBy[0], searchedCase) {
+		t.Fatalf("group by = %#v, want projection CASE", statement.Select.GroupBy[0])
+	}
+}
+
 func TestSimpleParserBridgeParsesSearchedCasePredicateComparison(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select c_custkey from customer where case when c_mktsegment = 'BUILDING' then 1 else 0 end = 1")
 	if diagnostics.BlocksNative() {

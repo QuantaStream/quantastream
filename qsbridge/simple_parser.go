@@ -4648,6 +4648,7 @@ func parseSimpleScalarExpression(text string) (UnboundExpr, bool) {
 }
 
 func parseSimpleCaseExpression(text string) (UnboundSearchedCaseExpr, bool) {
+	text = stripSimpleEnclosingParens(strings.TrimSpace(text))
 	if expr, ok := parseSimpleSearchedCaseExpression(text); ok {
 		return expr, true
 	}

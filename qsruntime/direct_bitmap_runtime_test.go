@@ -4120,6 +4120,72 @@ func TestDirectBitmapMaterializedGroupedAggregateUsesDerivedYearProjection(t *te
 	}
 }
 
+func TestDirectBitmapMaterializedGroupedAggregateSupportsSearchedCaseGroup(t *testing.T) {
+	table := qsbridge.TableInstance{ID: "lineitem", Table: "lineitem", Alias: "l"}
+	extendedPrice := qsbridge.FieldRef{Table: table, Name: "l_extendedprice", Type: qsbridge.DataTypeFloat}
+	bucketExpr := qsbridge.SearchedCase(
+		[]qsbridge.SearchedCaseWhen{{
+			Condition: qsbridge.Binary(
+				qsbridge.BinaryOpGreaterEqual,
+				qsbridge.Field(extendedPrice),
+				qsbridge.Literal(qsbridge.ValueInt, int64(50000)),
+			),
+			Result: qsbridge.Literal(qsbridge.ValueString, "High"),
+		}},
+		qsbridge.Literal(qsbridge.ValueString, "Normal"),
+	)
+	request := ExecutionRequest{
+		SourceIndexes: []string{"lineitem"},
+		GroupBy:       []qsbridge.Expr{bucketExpr},
+		Projection: []qsbridge.ProjectionColumn{
+			{Expr: bucketExpr, Alias: "value_bucket", Type: qsbridge.DataTypeString},
+			{Expr: qsbridge.AggregateRef("total_price", 0), Alias: "total_price", Type: qsbridge.DataTypeFloat},
+		},
+		SQLAggregates: []qsbridge.Aggregate{{
+			Function: "sum",
+			Input:    qsbridge.Field(extendedPrice),
+			Alias:    "total_price",
+			Type:     qsbridge.DataTypeFloat,
+		}},
+	}
+	materialized := qsbridge.QuantaProjectedRowSet{
+		Index:   "lineitem",
+		Rownums: []qsbridge.QuantaRownum{1, 2, 3},
+		ProjectionVectors: []qsbridge.QuantaProjectionVector{{
+			Field: qsbridge.QuantaProjectionField{Index: "lineitem", Role: "l", Field: "l_extendedprice", Type: qsbridge.DataTypeFloat},
+			Values: []qsbridge.ResultCell{
+				{Kind: qsbridge.ValueFloat, Value: float64(40000)},
+				{Kind: qsbridge.ValueFloat, Value: float64(60000)},
+				{Kind: qsbridge.ValueFloat, Value: float64(70000)},
+			},
+		}},
+	}
+
+	result := directBitmapMaterializedGroupedAggregateResult(request, materialized, ExecutionResult{})
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	chunk, diagnostics := result.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 2 {
+		t.Fatalf("rows = %#v, want two grouped rows", chunk.Rows)
+	}
+	if got := chunk.Rows[0][0].Value; got != "High" {
+		t.Fatalf("first bucket = %v, want High", got)
+	}
+	if got := chunk.Rows[0][1].Value; got != float64(130000) {
+		t.Fatalf("first total = %v, want 130000", got)
+	}
+	if got := chunk.Rows[1][0].Value; got != "Normal" {
+		t.Fatalf("second bucket = %v, want Normal", got)
+	}
+	if got := chunk.Rows[1][1].Value; got != float64(40000) {
+		t.Fatalf("second total = %v, want 40000", got)
+	}
+}
+
 func TestDirectBitmapMaterializedAggregateCountFieldIgnoresNullInputs(t *testing.T) {
 	table := qsbridge.TableInstance{ID: "orders", Table: "orders", Alias: "o"}
 	orderKey := qsbridge.FieldRef{Table: table, Name: "o_orderkey", Type: qsbridge.DataTypeInt}
