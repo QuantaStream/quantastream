@@ -3970,19 +3970,20 @@ func legacyDirectRelationshipTimeAttribute(table *core.Table, field string) *cor
 	if table == nil || field == "" {
 		return nil
 	}
+	fieldName := legacyDirectRelationshipFragmentFieldName(field)
 	if table.AttributeNameMap != nil {
-		if attr := table.AttributeNameMap[field]; attr != nil {
+		if attr := table.AttributeNameMap[fieldName]; attr != nil {
 			return attr
 		}
 		for name, attr := range table.AttributeNameMap {
-			if strings.EqualFold(name, field) {
+			if strings.EqualFold(name, fieldName) {
 				return attr
 			}
 		}
 	}
 	for i := range table.Attributes {
 		attribute := table.Attributes[i]
-		if strings.EqualFold(attribute.FieldName, field) || strings.EqualFold(attribute.SourceName, field) {
+		if strings.EqualFold(attribute.FieldName, fieldName) || strings.EqualFold(attribute.SourceName, fieldName) {
 			return &table.Attributes[i]
 		}
 	}
@@ -4002,8 +4003,25 @@ func legacyDirectRelationshipTimeMillisToEncoded(table *core.Table, field string
 		return epochMillis / int64(time.Second/time.Millisecond)
 	case qsbridge.TimeGranularityNanosecond:
 		return epochMillis * int64(time.Millisecond)
+	case qsbridge.TimeGranularityDay:
+		return epochMillis / int64((24*time.Hour)/time.Millisecond)
 	default:
 		return epochMillis
+	}
+}
+
+func legacyDirectRelationshipEncodedTimeToMillis(table *core.Table, field string, encoded int64) int64 {
+	switch legacyDirectRelationshipTimeGranularity(table, field) {
+	case qsbridge.TimeGranularityMicrosecond:
+		return encoded / int64(time.Millisecond/time.Microsecond)
+	case qsbridge.TimeGranularitySecond:
+		return encoded * int64(time.Second/time.Millisecond)
+	case qsbridge.TimeGranularityNanosecond:
+		return encoded / int64(time.Millisecond)
+	case qsbridge.TimeGranularityDay:
+		return encoded * int64((24*time.Hour)/time.Millisecond)
+	default:
+		return encoded
 	}
 }
 
@@ -4015,6 +4033,8 @@ func legacyDirectRelationshipEncodedTimeToNanos(table *core.Table, field string,
 		return encoded * int64(time.Second)
 	case qsbridge.TimeGranularityNanosecond:
 		return encoded
+	case qsbridge.TimeGranularityDay:
+		return encoded * int64(24*time.Hour)
 	default:
 		return encoded * int64(time.Millisecond)
 	}
@@ -6420,10 +6440,11 @@ func (e LegacyDirectRelationshipVectorJoinExecutor) legacyDirectRelationshipTime
 		if !e.legacyDirectRelationshipFragmentIsShardTimeField(tableName, fragment) {
 			continue
 		}
+		table := e.legacyDirectCachedTable(tableName)
 		return qsbridge.QuantaMaterializationRequest{
 			Index:           tableName,
-			FromEpochMillis: fragment.Begin.Int64(),
-			ToEpochMillis:   fragment.End.Int64(),
+			FromEpochMillis: legacyDirectRelationshipEncodedTimeToMillis(table, fragment.Field, fragment.Begin.Int64()),
+			ToEpochMillis:   legacyDirectRelationshipEncodedTimeToMillis(table, fragment.Field, fragment.End.Int64()),
 			ProjectionFields: []qsbridge.QuantaProjectionField{{
 				Index:        fragment.Index,
 				Role:         fragment.Role,

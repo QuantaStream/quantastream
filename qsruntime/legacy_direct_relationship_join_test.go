@@ -2436,6 +2436,61 @@ func TestLegacyDirectRelationshipTimeMaterializationUsesChildTimePredicate(t *te
 	}
 }
 
+func TestLegacyDirectRelationshipTimeMaterializationConvertsEncodedSecondGranularity(t *testing.T) {
+	table := &core.Table{
+		BasicTable: &shared.BasicTable{Name: "spots_flat", TimeQuantumType: "YMD", TimeQuantumField: "spotted_at"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"spotted_at": {BasicAttribute: &shared.BasicAttribute{
+				FieldName:       "spotted_at",
+				Type:            "DateTime",
+				MappingStrategy: "TimestampBSI",
+				MapperConfig:    map[string]string{"granularity": "second"},
+			}},
+		},
+	}
+	executor := LegacyDirectRelationshipVectorJoinExecutor{
+		TableCache: &core.TableCacheStruct{TableCache: map[string]*core.Table{"spots_flat": table}},
+	}
+	request := NewExecutionRequest(qsbridge.QuantaIntermediateQuery{Fragments: []qsbridge.QuantaQueryFragment{{
+		Index: "s",
+		Field: "s.spotted_at",
+		BSIOp: qsbridge.QuantaBSIOpRange,
+		Begin: big.NewInt(1764374400),
+		End:   big.NewInt(1764547200),
+	}}})
+	request.Sources = []qsbridge.TableInstance{{Table: "spots_flat", Alias: "s"}}
+
+	materialization := executor.legacyDirectRelationshipTimeMaterialization(request, "spots_flat")
+
+	if materialization.FromEpochMillis != 1764374400000 || materialization.ToEpochMillis != 1764547200000 {
+		t.Fatalf("materialization window = %d..%d, want second-granularity values converted to epoch millis", materialization.FromEpochMillis, materialization.ToEpochMillis)
+	}
+	if len(materialization.ProjectionFields) != 1 || materialization.ProjectionFields[0].PhysicalName != "spotted_at" {
+		t.Fatalf("projection fields = %#v, want spotted_at time field", materialization.ProjectionFields)
+	}
+}
+
+func TestLegacyDirectRelationshipEncodedTimeConversionUsesAliasedGranularity(t *testing.T) {
+	table := &core.Table{
+		BasicTable: &shared.BasicTable{Name: "events", TimeQuantumType: "YMD", TimeQuantumField: "event_time"},
+		AttributeNameMap: map[string]*core.Attribute{
+			"event_time": {BasicAttribute: &shared.BasicAttribute{
+				FieldName:       "event_time",
+				Type:            "DateTime",
+				MappingStrategy: "TimestampBSI",
+				MapperConfig:    map[string]string{"granularity": "microsecond"},
+			}},
+		},
+	}
+
+	if got := legacyDirectRelationshipEncodedTimeToMillis(table, "e.event_time", 1764374400123456); got != 1764374400123 {
+		t.Fatalf("encoded micros to millis = %d, want 1764374400123", got)
+	}
+	if got := legacyDirectRelationshipEncodedTimeToNanos(table, "e.event_time", 1764374400123456); got != 1764374400123456000 {
+		t.Fatalf("encoded micros to nanos = %d, want 1764374400123456000", got)
+	}
+}
+
 func TestLegacyDirectRelationshipTimeMaterializationUsesSyntheticTimeRange(t *testing.T) {
 	table := &core.Table{
 		BasicTable: &shared.BasicTable{
