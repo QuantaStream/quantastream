@@ -19,7 +19,7 @@ for arg in "$@"; do
       cat <<'EOF'
 Usage: ./startup-scripts/aws/cluster-health.sh [--wait[=seconds]]
 
-Shows Consul membership, configured cluster size, Quanta admin status, and
+Shows Consul membership, configured cluster size, QStream admin status, and
 systemd state for the distributed proxy and nodes.
 EOF
       exit 0
@@ -37,14 +37,14 @@ echo "== Consul members =="
 consul members || true
 
 echo
-echo "== Quanta cluster target =="
-go -C "$qs_repo_root" run ./quanta-admin \
+echo "== QuantaStream cluster target =="
+go -C "$qs_repo_root" run ./qstream-admin \
   --consul-addr "$QS_CONSUL_ENDPOINT" \
   --port "$QS_NODE_PORT" \
   config --key cluster-size-target || true
 
 echo
-echo "== Quanta cluster status =="
+echo "== QuantaStream cluster status =="
 if [[ "$wait_seconds" != "0" ]]; then
   qs_wait_for_cluster "$wait_seconds"
 else

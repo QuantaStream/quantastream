@@ -49,7 +49,6 @@ fi
 echo "Loading TPC-H data_dir=$QS_TPCH_DATA_DIR workers=$QS_TPCH_LOAD_WORKERS batch_size=$QS_TPCH_LOAD_BATCH_SIZE cluster_size=$QS_CLUSTER_SIZE"
 (
   cd "$qs_repo_root/tpc-h-benchmark"
-  ADMIN_BIN="$qs_repo_root/tpc-h-benchmark/quanta-admin" \
   ADMIN_CONSUL_ADDR="$QS_CONSUL_ENDPOINT" \
   ADMIN_PORT="$QS_NODE_PORT" \
   WAIT_SECONDS=180 \

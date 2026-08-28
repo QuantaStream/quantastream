@@ -317,7 +317,7 @@ func TestCreateQuiescentLocalStorageBackupRejectsExternalWALPath(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outside data directory") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want outside data directory", err)
 	}
-	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+	if !strings.Contains(err.Error(), "qstream-admin wal plan") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
 	}
 	if _, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil || found {
@@ -364,7 +364,7 @@ func TestCreateQuiescentLocalStorageBackupRejectsCommittedWALReplayTail(t *testi
 	if err == nil || !strings.Contains(err.Error(), "need startup replay") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want replay tail rejection", err)
 	}
-	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+	if !strings.Contains(err.Error(), "qstream-admin wal plan") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
 	}
 }
@@ -399,7 +399,7 @@ func TestCreateQuiescentLocalStorageBackupRejectsPendingWALTail(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pending WAL records") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want pending tail rejection", err)
 	}
-	if !strings.Contains(err.Error(), "quanta-admin wal plan") {
+	if !strings.Contains(err.Error(), "qstream-admin wal plan") {
 		t.Fatalf("CreateLocalStorageBackup error = %v, want wal plan hint", err)
 	}
 }

@@ -63,7 +63,7 @@ Environment:
   QUANTASTREAM_BIND             MySQL bind address. Defaults to 0.0.0.0.
   QUANTASTREAM_MYSQL_PORT       MySQL listen port. Defaults to 4000.
   QUANTASTREAM_CONSUL_ENDPOINT  local Consul agent endpoint. Defaults to 127.0.0.1:8500.
-  QUANTASTREAM_NODE_PORT        Quanta data-node service port. Defaults to 4400.
+  QUANTASTREAM_NODE_PORT        QuantaStream data-node service port. Defaults to 4400.
   QUANTASTREAM_SCHEMA_DIR       schema/catalog directory.
   QUANTASTREAM_DATABASE         default database/schema. Defaults to quanta.
   QUANTASTREAM_RUNTIME_PROBES   set true to log runtime probes.

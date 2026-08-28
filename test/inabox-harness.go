@@ -19,7 +19,7 @@ import (
 	"github.com/QuantaStream/quantastream/core"
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsruntime"
-	admin "github.com/QuantaStream/quantastream/quanta-admin-lib"
+	admin "github.com/QuantaStream/quantastream/qstream-admin-lib"
 	"github.com/QuantaStream/quantastream/server"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/source"

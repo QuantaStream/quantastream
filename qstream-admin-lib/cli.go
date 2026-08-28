@@ -1,0 +1,27 @@
+package admin
+
+var Cli struct {
+	ConsulAddr        string               `default:"127.0.0.1:8500"`
+	Port              int                  `default:"4000"`
+	Debug             bool                 `default:"false"`
+	Create            CreateCmd            `cmd:"" help:"Create table."`
+	Drop              DropCmd              `cmd:"" help:"Drop table."`
+	Truncate          TruncateCmd          `cmd:"" help:"Truncate table."`
+	Status            StatusCmd            `cmd:"" help:"Show status."`
+	Version           VersionCmd           `cmd:"" help:"Show version."`
+	Tables            TablesCmd            `cmd:"" help:"Show tables."`
+	Shutdown          ShutdownCmd          `cmd:"" help:"Shutdown cluster or one node."`
+	Backup            BackupCmd            `cmd:"" help:"Create, validate, or restore local storage backups."`
+	WAL               WALCmd               `cmd:"" help:"Inspect local write-ahead log state."`
+	Support           SupportCmd           `cmd:"" help:"Create support diagnostic bundles."`
+	Doctor            DoctorCmd            `cmd:"" help:"Run local deployment preflight checks."`
+	Auth              AuthCmd              `cmd:"" help:"Manage local MySQL static auth account files."`
+	Access            AccessCmd            `cmd:"" help:"Manage local static SQL access policy files."`
+	FindKey           FindKeyCmd           `cmd:"" help:"Find nodes for key debug tool."`
+	Config            ConfigCmd            `cmd:"" help:"Configuration key/value pair."`
+	Verify            VerifyCmd            `cmd:"" help:"Verify data for key debug tool."`
+	VerifyEnum        VerifyEnumCmd        `cmd:"" help:"Verify a string enum for key debug tool."`
+	VerifyIndex       VerifyIndexCmd       `cmd:"" help:"Verify indices debug tool."`
+	PartitionInfo     PartitionInfoCmd     `cmd:"" help:"Partition age report."`
+	OfflinePartitions OfflinePartitionsCmd `cmd:"" help:"Offline partitions."`
+}

@@ -401,7 +401,7 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 	if existing, found, err := ObserveLocalStorageQuiescence(dataDir); err != nil {
 		return LocalStorageQuiescenceLease{}, err
 	} else if found {
-		return LocalStorageQuiescenceLease{}, fmt.Errorf("storage is already quiesced for backup id=%s owner=%s reason=%s. Run `quanta-admin backup quiesce status --data-dir %s` to inspect it, or `quanta-admin backup quiesce release --data-dir %s --lease-id %s` after confirming no backup is active", existing.ID, existing.Owner, existing.Reason, dataDir, dataDir, existing.ID)
+		return LocalStorageQuiescenceLease{}, fmt.Errorf("storage is already quiesced for backup id=%s owner=%s reason=%s. Run `qstream-admin backup quiesce status --data-dir %s` to inspect it, or `qstream-admin backup quiesce release --data-dir %s --lease-id %s` after confirming no backup is active", existing.ID, existing.Owner, existing.Reason, dataDir, dataDir, existing.ID)
 	}
 	now := req.Now
 	if now.IsZero() {
@@ -417,7 +417,7 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 		CreatedAt: now.UTC(),
 	}
 	if strings.TrimSpace(lease.Owner) == "" {
-		lease.Owner = "quanta-admin backup"
+		lease.Owner = "qstream-admin backup"
 	}
 	if strings.TrimSpace(lease.Reason) == "" {
 		lease.Reason = "local storage backup"
@@ -428,10 +428,10 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 			return LocalStorageQuiescenceLease{}, fmt.Errorf("plan WAL recovery before quiescence: %w", err)
 		}
 		if plan.NeedsReplay() {
-			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d committed WAL records need startup replay. Run `quanta-admin wal plan --path %s`; start standard mode with this WAL to replay committed records before retrying backup", plan.ReplayRecordCount(), plan.WALPath)
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d committed WAL records need startup replay. Run `qstream-admin wal plan --path %s`; start standard mode with this WAL to replay committed records before retrying backup", plan.ReplayRecordCount(), plan.WALPath)
 		}
 		if plan.HasPendingTail() {
-			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d pending WAL records are not committed. Run `quanta-admin wal plan --path %s`; retry after pending writes are committed, rolled back, or cleared by startup recovery policy", plan.PendingRecordCount(), plan.WALPath)
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup requires a clean WAL checkpoint: %d pending WAL records are not committed. Run `qstream-admin wal plan --path %s`; retry after pending writes are committed, rolled back, or cleared by startup recovery policy", plan.PendingRecordCount(), plan.WALPath)
 		}
 		lease.WALPath = plan.WALPath
 		lease.WALCheckpointPath = plan.CheckpointPath
@@ -440,10 +440,10 @@ func BeginLocalStorageQuiescence(ctx context.Context, req BeginLocalStorageQuies
 		lease.ReplayRecords = len(plan.ReplayRecords)
 		lease.PendingRecords = len(plan.PendingRecords)
 		if !localStoragePathInside(dataDir, lease.WALPath) {
-			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL path %q is outside data directory %q; place the WAL under the data directory or omit --wal-path for this local snapshot. Run `quanta-admin wal plan --path %s` to inspect the WAL first", lease.WALPath, dataDir, lease.WALPath)
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL path %q is outside data directory %q; place the WAL under the data directory or omit --wal-path for this local snapshot. Run `qstream-admin wal plan --path %s` to inspect the WAL first", lease.WALPath, dataDir, lease.WALPath)
 		}
 		if !localStoragePathInside(dataDir, lease.WALCheckpointPath) {
-			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL checkpoint path %q is outside data directory %q; place the WAL checkpoint under the data directory or omit --wal-path for this local snapshot. Run `quanta-admin wal plan --path %s` to inspect the WAL first", lease.WALCheckpointPath, dataDir, lease.WALPath)
+			return LocalStorageQuiescenceLease{}, fmt.Errorf("quiescent backup WAL checkpoint path %q is outside data directory %q; place the WAL checkpoint under the data directory or omit --wal-path for this local snapshot. Run `qstream-admin wal plan --path %s` to inspect the WAL first", lease.WALCheckpointPath, dataDir, lease.WALPath)
 		}
 	}
 	if err := ctx.Err(); err != nil {

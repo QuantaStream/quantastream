@@ -8,7 +8,7 @@ import (
 // AdminStatementSQL converts the deprecated roadmap admin shorthand into SQL.
 //
 // Older suites used commands such as "create customers_qa" when table lifecycle
-// operations were routed through quanta-admin. The query engine now owns those
+// operations were routed through qstream-admin. The query engine now owns those
 // operations, so SQLRunner keeps the spelling readable while executing SQL.
 func AdminStatementSQL(sql string) string {
 	sql = strings.TrimSpace(sql)

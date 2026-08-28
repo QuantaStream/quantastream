@@ -36,7 +36,7 @@ compatibility profile names. Treat those names as transitional handles:
 New prose should prefer **single-node** and **distributed** unless it is
 documenting a specific existing flag, script, suite, or compatibility profile.
 
-Admin examples in this source-checkout guide use `go run ./quanta-admin`.
+Admin examples in this source-checkout guide use `go run ./qstream-admin`.
 Release artifacts expose the same command surface as `./bin/qstream-admin`.
 
 Deployment diagrams for the three QIAB topologies and full distributed mode are
@@ -133,7 +133,7 @@ Current implementation status:
   pending WAL tail records. Standard-mode startup applies committed replay
   records before the MySQL front door is marked ready and leaves pending tail
   records unapplied. The WAL is disabled when the path is empty.
-- `quanta-admin backup create --quiesce` creates a local storage write barrier
+- `qstream-admin backup create --quiesce` creates a local storage write barrier
   file in the data directory while copying a filesystem snapshot. Standard-mode
   SQL writes, catalog mutations, durable `CREATE TABLE AS SELECT`,
   durable `INSERT ... SELECT`, and local `COMMIT` refuse to proceed while that
@@ -169,7 +169,7 @@ go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-
 Local backup commands:
 
 ```bash
-go run ./quanta-admin backup create \
+go run ./qstream-admin backup create \
   --data-dir /tmp/quantastream-standard \
   --target file:///tmp/quantastream-standard-backup \
   --quiesce \
@@ -177,26 +177,26 @@ go run ./quanta-admin backup create \
   --native-grpc-addr 127.0.0.1:4100 \
   --wal-path /tmp/quantastream-standard/storage.wal
 
-go run ./quanta-admin backup validate \
+go run ./qstream-admin backup validate \
   --source file:///tmp/quantastream-standard-backup
 
-go run ./quanta-admin backup inspect \
+go run ./qstream-admin backup inspect \
   --source file:///tmp/quantastream-standard-backup
 
-go run ./quanta-admin backup restore \
+go run ./qstream-admin backup restore \
   --source file:///tmp/quantastream-standard-backup \
   --data-dir /tmp/quantastream-standard-restore
 
-go run ./quanta-admin backup smoke \
+go run ./qstream-admin backup smoke \
   --source file:///tmp/quantastream-standard-backup
 
-go run ./quanta-admin backup validate \
+go run ./qstream-admin backup validate \
   --source file:///tmp/quantastream-standard-backup
 
-go run ./quanta-admin backup quiesce status \
+go run ./qstream-admin backup quiesce status \
   --data-dir /tmp/quantastream-standard
 
-go run ./quanta-admin backup quiesce release \
+go run ./qstream-admin backup quiesce release \
   --data-dir /tmp/quantastream-standard \
   --lease-id <backup_quiescence_id>
 ```
@@ -204,10 +204,10 @@ go run ./quanta-admin backup quiesce release \
 Local WAL inspection commands:
 
 ```bash
-go run ./quanta-admin wal validate \
+go run ./qstream-admin wal validate \
   --path /tmp/quantastream-standard/storage.wal
 
-go run ./quanta-admin wal plan \
+go run ./qstream-admin wal plan \
   --path /tmp/quantastream-standard/storage.wal
 ```
 
@@ -433,7 +433,7 @@ not the node's IP address. This is the correct durable identity for data
 placement, restart, and storage mapping.
 
 Operational tooling still needs a routable host/process reference for
-debugging and targeted administration. In QIAB, `quanta-admin status` naturally
+debugging and targeted administration. In QIAB, `qstream-admin status` naturally
 shows `127.0.0.1` for every in-process node. In a multi-host deployment, status
 and administrative commands should expose enough information to distinguish:
 
@@ -443,7 +443,7 @@ and administrative commands should expose enough information to distinguish:
 - data center or placement metadata
 - storage mapping
 
-The current `quanta-admin` shutdown support can target all nodes or an
+The current `qstream-admin` shutdown support can target all nodes or an
 individual node by IP. Multi-host deployment validation should revisit this
 interface so targeted shutdown and debugging can use unambiguous node identity
 and network address information.
@@ -539,11 +539,11 @@ created directories, and manifest/lease paths before returning.
 Create and validate a local backup:
 
 ```bash
-go run ./quanta-admin backup create \
+go run ./qstream-admin backup create \
   --data-dir /path/to/quantastream-data \
   --target file:///path/to/backup
 
-go run ./quanta-admin backup validate \
+go run ./qstream-admin backup validate \
   --source file:///path/to/backup
 ```
 
@@ -560,25 +560,25 @@ in [issue #10](https://github.com/QuantaStream/quantastream/issues/10).
 Inspect a backup manifest without walking and checksumming every snapshot file:
 
 ```bash
-go run ./quanta-admin backup inspect \
+go run ./qstream-admin backup inspect \
   --source file:///path/to/backup
 ```
 
 Restore into an empty data directory:
 
 ```bash
-go run ./quanta-admin backup restore \
+go run ./qstream-admin backup restore \
   --source file:///path/to/backup \
   --data-dir /path/to/restored-data
 
-go run ./quanta-admin backup validate \
+go run ./qstream-admin backup validate \
   --source file:///path/to/backup
 ```
 
 Run a restore smoke without keeping the restored image:
 
 ```bash
-go run ./quanta-admin backup smoke \
+go run ./qstream-admin backup smoke \
   --source file:///path/to/backup
 ```
 
@@ -599,10 +599,10 @@ quiesce release`, `wal plan`, or `wal validate`.
 Inspect the WAL/checkpoint pair directly when diagnosing local recovery:
 
 ```bash
-go run ./quanta-admin wal validate \
+go run ./qstream-admin wal validate \
   --path /path/to/quantastream-data/storage.wal
 
-go run ./quanta-admin wal plan \
+go run ./qstream-admin wal plan \
   --path /path/to/quantastream-data/storage.wal
 ```
 
@@ -614,7 +614,7 @@ Run a local deployment preflight when validating a host or support bundle input
 paths:
 
 ```bash
-go run ./quanta-admin doctor local \
+go run ./qstream-admin doctor local \
   --data-dir /path/to/quantastream-data \
   --config-dir /etc/quantastream/configuration \
   --wal-path /path/to/quantastream-data/storage.wal \
@@ -641,7 +641,7 @@ cloud backup targets remain separate lifecycle work.
 Create a support bundle when filing an operational issue:
 
 ```bash
-go run ./quanta-admin support bundle \
+go run ./qstream-admin support bundle \
   --output /tmp/qstream-support.tar.gz \
   --data-dir /path/to/quantastream-data \
   --wal-path /path/to/quantastream-data/storage.wal \
@@ -661,7 +661,7 @@ auth/access policy files.
 
 When opening an operational support issue, capture diagnostics before changing
 node state whenever possible. Use the packaged admin binary on deployed systems,
-or `go run ./quanta-admin` from a source checkout:
+or `go run ./qstream-admin` from a source checkout:
 
 ```bash
 qstream-admin support bundle \
@@ -791,40 +791,40 @@ accounts:
     caching_sha2_password_verifier: "<hex SHA256(SHA256(password))>"
 ```
 
-Use `quanta-admin auth` to generate and rotate verifier values rather than
+Use `qstream-admin auth` to generate and rotate verifier values rather than
 editing them by hand:
 
 ```bash
 QUANTASTREAM_AUTH_PASSWORD='<password>' \
-go run ./quanta-admin auth upsert \
+go run ./qstream-admin auth upsert \
   --account-file /etc/quantastream/accounts.yaml \
   --user qstream \
   --default-database quanta
 
-go run ./quanta-admin auth list \
+go run ./qstream-admin auth list \
   --account-file /etc/quantastream/accounts.yaml
 
-go run ./quanta-admin auth validate \
+go run ./qstream-admin auth validate \
   --account-file /etc/quantastream/accounts.yaml
 
-go run ./quanta-admin auth remove \
+go run ./qstream-admin auth remove \
   --account-file /etc/quantastream/accounts.yaml \
   --user old_user
 ```
 
 The account file may still use `password` for local adapter tests, but
-`quanta-admin auth upsert` writes verifier hashes and does not store the
+`qstream-admin auth upsert` writes verifier hashes and does not store the
 cleartext password.
 
 `QUANTASTREAM_AUTH_PASSWORD` should be supplied through process environment or
 service secret management rather than command history. Static auth is a first
 step, not a complete production security profile: password rotation, TLS
-guidance, authorization policy, audit logging, and `quanta-admin` account
+guidance, authorization policy, audit logging, and `qstream-admin` account
 administration remain part of the 1.0 hardening work.
 
 QuantaStream 1.0 will include a simple MySQL-compatible account and
 password authentication model in the public/core repository. The
-`quanta-admin` tool will provide account and password administration for
+`qstream-admin` tool will provide account and password administration for
 this built-in core auth path.
 
 Enterprise identity integration is a separate adapter surface. OAuth, OIDC,
@@ -874,7 +874,7 @@ broad MySQL client compatibility:
   tools to connect without special-case behavior. The core `qsmysql`
   package includes a static account verifier for MySQL native password,
   caching_sha2 fast auth, and clear-password adapter paths; startup wiring and
-  file-backed `quanta-admin auth` administration are in place.
+  file-backed `qstream-admin auth` administration are in place.
 - preserve prepared SQL support and add batched insert behavior expected by
   standard drivers
 - make `USE <database>`, selected database state, and `database()` semantics
@@ -883,7 +883,7 @@ broad MySQL client compatibility:
   responsibilities
 - define stable interfaces for local account/password validation, optional
   identity providers, credential validation, and role lookup
-- manage built-in account/password state through `quanta-admin`
+- manage built-in account/password state through `qstream-admin`
 - keep enterprise identity integration pluggable, with JWT/OIDC/OAuth-style
   providers as future adapters rather than hard-coded query-front-door behavior
 - cache small authorization metadata in memory after loading it from the
@@ -926,7 +926,7 @@ Supported 1.0 target:
 - Clear limits around host failure, node replacement, scaling, and regional
   availability.
 - Simple MySQL-compatible account/password authentication is part of the core
-  1.0 path, with `quanta-admin` account and password administration.
+  1.0 path, with `qstream-admin` account and password administration.
 - The default public auth adapter must live in the public/core repository and
   implement the built-in account/password path behind the MySQL auth/session
   contract.

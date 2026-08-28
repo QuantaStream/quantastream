@@ -21,22 +21,22 @@ accounts:
 ```
 
 Use the admin tool to avoid storing cleartext passwords. Release artifacts use
-`./bin/qstream-admin`; source checkout examples use `go run ./quanta-admin`:
+`./bin/qstream-admin`; source checkout examples use `go run ./qstream-admin`:
 
 ```bash
 cd /home/ubuntu/quantastream
 
 QUANTASTREAM_AUTH_PASSWORD='replace-me' \
-go run ./quanta-admin auth upsert \
+go run ./qstream-admin auth upsert \
   --account-file /etc/quantastream/accounts.yaml \
   --user analyst \
   --default-database quanta \
   --roles reader
 
-go run ./quanta-admin auth list \
+go run ./qstream-admin auth list \
   --account-file /etc/quantastream/accounts.yaml
 
-go run ./quanta-admin auth validate \
+go run ./qstream-admin auth validate \
   --account-file /etc/quantastream/accounts.yaml
 ```
 
@@ -77,7 +77,7 @@ Use the admin tool to maintain the policy file:
 ```bash
 cd /home/ubuntu/quantastream
 
-go run ./quanta-admin access upsert \
+go run ./qstream-admin access upsert \
   --policy-file /etc/quantastream/access-policy.yaml \
   --principal-kind role \
   --principal reader \
@@ -85,7 +85,7 @@ go run ./quanta-admin access upsert \
   --schema quanta \
   --table orders
 
-go run ./quanta-admin access upsert \
+go run ./qstream-admin access upsert \
   --policy-file /etc/quantastream/access-policy.yaml \
   --principal-kind role \
   --principal reader \
@@ -94,10 +94,10 @@ go run ./quanta-admin access upsert \
   --table lineitem \
   --fields l_orderkey,l_extendedprice,l_discount
 
-go run ./quanta-admin access list \
+go run ./qstream-admin access list \
   --policy-file /etc/quantastream/access-policy.yaml
 
-go run ./quanta-admin access validate \
+go run ./qstream-admin access validate \
   --policy-file /etc/quantastream/access-policy.yaml
 ```
 

@@ -2,19 +2,19 @@ version: 1
 name: "insert"
 
 tests:
-  - id: "insert.001.quanta-admin"
+  - id: "insert.001.qstream-admin"
     status: supported
     kind: admin
     sql: |-
       drop orders_qa
 
-  - id: "insert.002.quanta-admin"
+  - id: "insert.002.qstream-admin"
     status: supported
     kind: admin
     sql: |-
       drop customers_qa
 
-  - id: "insert.003.quanta-admin"
+  - id: "insert.003.qstream-admin"
     status: supported
     kind: admin
     sql: |-

@@ -27,7 +27,7 @@ for arg in "$@"; do
       cat <<'EOF'
 Usage: ./startup-scripts/aws/sync-schema.sh [--dry-run]
 
-Creates or updates the TPC-H schemas in Consul through quanta-admin. By default
+Creates or updates the TPC-H schemas in Consul through qstream-admin. By default
 passes --confirm so additive schema/artifact changes deploy in place.
 EOF
       exit 0
@@ -42,7 +42,7 @@ done
 qs_load_env
 
 for table in "${TABLES[@]}"; do
-  args=(run ./quanta-admin --consul-addr "$QS_CONSUL_ENDPOINT" --port "$QS_NODE_PORT" create "$table" --schema-dir "$QS_SCHEMA_DIR")
+  args=(run ./qstream-admin --consul-addr "$QS_CONSUL_ENDPOINT" --port "$QS_NODE_PORT" create "$table" --schema-dir "$QS_SCHEMA_DIR")
   if (( confirm )); then
     args+=(--confirm)
   fi

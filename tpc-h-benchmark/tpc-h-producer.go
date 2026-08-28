@@ -113,13 +113,13 @@ func NewMain() *Main {
 
 func main() {
 
-	app := kingpin.New(os.Args[0], "Quanta TPC-H Direct Data Loader").DefaultEnvars()
+	app := kingpin.New(os.Args[0], "QuantaStream TPC-H Direct Data Loader").DefaultEnvars()
 	app.Version("Version: " + Version + "\nBuild: " + Build)
 
 	filePath := app.Arg("file-path", "Path to TPC-H data files directory.").Required().String()
 	index := app.Arg("index", "Table name.").Required().String()
 	batchSize := app.Flag("batch-size", "Direct-load batch size").Default("100").Int32()
-	app.Flag("direct", "Deprecated no-op; TPC-H loader always writes directly into Quanta sessions.").Bool()
+	app.Flag("direct", "Deprecated no-op; TPC-H loader always writes directly into QuantaStream sessions.").Bool()
 	directMode := app.Flag("direct-mode", "Direct load target: cluster uses Consul/gRPC nodes; standard-remote connects to a running inabox-standard native gRPC endpoint; standard-offline mounts a local in-process backend.").Default(directModeCluster).Enum(directModeCluster, directModeStandardRemote, directModeStandardOffline, directModeStandard)
 	workers := app.Flag("workers", "Direct-load session worker count.").Default("3").Int()
 	configDir := app.Flag("config-dir", "Schema config directory for inabox-standard direct loads.").Default("config").String()

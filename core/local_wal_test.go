@@ -304,7 +304,7 @@ func TestPlanLocalWALRecoveryRejectsCheckpointAheadOfTail(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ahead of WAL tail") {
 		t.Fatalf("PlanLocalWALRecovery error = %v, want checkpoint ahead rejection", err)
 	}
-	if !strings.Contains(err.Error(), "quanta-admin wal validate") {
+	if !strings.Contains(err.Error(), "qstream-admin wal validate") {
 		t.Fatalf("PlanLocalWALRecovery error = %v, want wal validate hint", err)
 	}
 }

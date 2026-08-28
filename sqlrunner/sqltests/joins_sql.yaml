@@ -2,25 +2,25 @@ version: 1
 name: "joins_sql"
 
 tests:
-  - id: "joins_sql.001.quanta-admin"
+  - id: "joins_sql.001.qstream-admin"
     status: supported
     kind: admin
     sql: |-
       drop orders_qa
 
-  - id: "joins_sql.002.quanta-admin"
+  - id: "joins_sql.002.qstream-admin"
     status: supported
     kind: admin
     sql: |-
       drop customers_qa
 
-  - id: "joins_sql.003.quanta-admin"
+  - id: "joins_sql.003.qstream-admin"
     status: supported
     kind: admin
     sql: |-
       create customers_qa
 
-  - id: "joins_sql.004.quanta-admin"
+  - id: "joins_sql.004.qstream-admin"
     status: supported
     kind: admin
     sql: |-

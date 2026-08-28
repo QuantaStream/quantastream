@@ -5,7 +5,7 @@ package server
 // to register node membership with Consul.  It is the "base class" containg common node level
 // functions to support business APIs.
 // A node normally listens for grpc messages on port 4000.  This is configurable.
-// See quanta-node.go for the main entry point.
+// See qstream-node.go for the main entry point.
 //
 //
 

@@ -26,7 +26,7 @@ usage() {
   cat <<'EOF'
 Usage: ./start-distributed-node.sh
 
-Starts one distributed Quanta data node. The first four quanta-node inputs are
+Starts one distributed QuantaStream data node. The first four node inputs are
 positional arguments, so this wrapper turns service-friendly environment
 variables into the expected process form.
 

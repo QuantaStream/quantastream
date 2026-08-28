@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH="$PATH:."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QS_REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TPCH_DDL_MODE=${TPCH_DDL_MODE:-admin}
+ADMIN_BIN=${ADMIN_BIN:-}
 QUANTA_HOST=${QUANTA_HOST:-127.0.0.1}
 QUANTA_PORT=${QUANTA_PORT:-4000}
 QUANTA_USER=${QUANTA_USER:-qstream}
@@ -20,10 +22,18 @@ TABLES=(
   region
 )
 
+run_admin() {
+  if [[ -n "${ADMIN_BIN}" ]]; then
+    "${ADMIN_BIN}" "$@"
+    return
+  fi
+  go -C "${QS_REPO_ROOT}" run ./qstream-admin "$@"
+}
+
 case "${TPCH_DDL_MODE}" in
   admin)
     for table in "${TABLES[@]}"; do
-      quanta-admin drop "${table}"
+      run_admin drop "${table}"
     done
     ;;
   sql)

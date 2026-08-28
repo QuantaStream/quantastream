@@ -41,7 +41,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	bindAddress := flags.String("bind", envString("QUANTASTREAM_BIND", "127.0.0.1"), "MySQL bind address")
 	mysqlPort := flags.Int("mysql-port", envInt("QUANTASTREAM_MYSQL_PORT", 4000), "MySQL listen port")
 	consulAddress := flags.String("consul", envString("QUANTASTREAM_CONSUL_ENDPOINT", "127.0.0.1:8500"), "Consul agent address")
-	nodePort := flags.Int("node-port", envInt("QUANTASTREAM_NODE_PORT", defaultDistributedNodePort), "Quanta distributed node service port")
+	nodePort := flags.Int("node-port", envInt("QUANTASTREAM_NODE_PORT", defaultDistributedNodePort), "QuantaStream distributed node service port")
 	sessionPoolSize := flags.Int("session-pool-size", envInt("QUANTASTREAM_SESSION_POOL_SIZE", 0), "direct runtime session pool size; zero uses runtime default")
 	schemaDir := flags.String("schema-dir", envString("QUANTASTREAM_SCHEMA_DIR", "configuration"), "schema/catalog configuration directory for SQL schema mutations")
 	database := flags.String("database", envString("QUANTASTREAM_DATABASE", "quanta"), "default database/schema name")

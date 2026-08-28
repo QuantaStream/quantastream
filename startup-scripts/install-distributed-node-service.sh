@@ -156,7 +156,7 @@ fi
 mkdir -p "$INSTALL_DIR" "$ENV_DIR" "$DATA_DIR"
 chown "$SERVICE_USER":"$SERVICE_USER" "$DATA_DIR"
 GO_BIN="$(resolve_go)"
-"$GO_BIN" -C "$repo_root" build -o "$INSTALL_DIR/quantastream-node" ./quanta-node.go
+"$GO_BIN" -C "$repo_root" build -o "$INSTALL_DIR/quantastream-node" ./qstream-node.go
 chmod 0755 "$INSTALL_DIR/quantastream-node"
 chmod 0755 "$repo_root/startup-scripts/start-distributed-node.sh"
 

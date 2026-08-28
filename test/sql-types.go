@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	admin "github.com/QuantaStream/quantastream/quanta-admin-lib"
+	admin "github.com/QuantaStream/quantastream/qstream-admin-lib"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/alecthomas/kong"
 	"github.com/go-sql-driver/mysql"
@@ -134,7 +134,7 @@ func AnalyzeRow(proxyConfig ProxyConnectStrings, row []string, validate bool) Sq
 		if strings.Contains(sqlInfo.Statement, "count(*)") {
 			statementType = Count
 		}
-	} else if strings.Contains(lowerStmt, "quanta-admin") {
+	} else if strings.Contains(lowerStmt, "qstream-admin") {
 		statementType = Admin
 	} else if strings.Contains(lowerStmt, "create") {
 		statementType = Create

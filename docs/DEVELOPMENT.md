@@ -24,8 +24,8 @@ Common entry points:
 - `cmd/quantastream` - single-node engine binary
 - `cmd/quantastream-loader` - JSON streaming loader
 - `cmd/quantastream-proxy` - distributed MySQL-compatible proxy
-- `quanta-admin` - source-tree admin command
-- `quanta-admin-lib` - admin implementation used by source and release tools
+- `qstream-admin` - source-tree admin command
+- `qstream-admin-lib` - admin implementation used by source and release tools
 - `qsbridge` - SQL parsing, planning, metadata, and client exchange layer
 - `qsmysql` - MySQL wire protocol adapter
 - `qsinabox` - single-node in-a-box runtime wiring
@@ -35,8 +35,8 @@ Common entry points:
 - `configuration/` - public schema, auth, and loader configuration references
 - `startup-scripts/` - source checkout startup helpers
 
-Release bundles rename the admin command to `qstream-admin`. In the source tree
-use `go run ./quanta-admin ...`.
+The admin command is `qstream-admin`. In the source tree, use
+`go run ./qstream-admin ...`; release bundles provide `./bin/qstream-admin`.
 
 ## Baseline Checks
 
@@ -54,7 +54,7 @@ Useful focused checks:
 ```bash
 go test ./qsbridge ./qsmysql ./qsruntime -count=1
 go test ./qsinabox ./server ./shared -count=1
-go test ./cmd/quantastream ./cmd/quantastream-loader ./quanta-admin-lib -count=1
+go test ./cmd/quantastream ./cmd/quantastream-loader ./qstream-admin-lib -count=1
 ```
 
 Current raw Go statement coverage can be measured with:
@@ -77,7 +77,7 @@ mkdir -p ./bin
 go build -o ./bin/quantastream ./cmd/quantastream
 go build -o ./bin/qstream-loader ./cmd/quantastream-loader
 go build -o ./bin/quantastream-proxy ./cmd/quantastream-proxy
-go build -o ./bin/qstream-admin ./quanta-admin
+go build -o ./bin/qstream-admin ./qstream-admin
 ```
 
 For quick iteration it is also fine to run commands with `go run`.
@@ -109,7 +109,7 @@ Verify from another terminal:
 
 ```bash
 mysql -h 127.0.0.1 -P 4000 -u qstream -D quanta -e 'show tables;'
-go run ./quanta-admin doctor local \
+go run ./qstream-admin doctor local \
   --data-dir tpc-h-benchmark/local/standard-data-dev \
   --config-dir tpc-h-benchmark/config \
   --mysql-addr 127.0.0.1:4000 \

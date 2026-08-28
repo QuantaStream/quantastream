@@ -7,7 +7,7 @@ cd "${SCRIPT_DIR}"
 DATA_DIR=${1:-local/data/sf-0.01}
 WORKERS=${2:-3}
 BATCH_SIZE=${3:-1000}
-ADMIN_BIN=${ADMIN_BIN:-./quanta-admin}
+ADMIN_BIN=${ADMIN_BIN:-}
 ADMIN_CONSUL_ADDR=${ADMIN_CONSUL_ADDR:-127.0.0.1:8500}
 ADMIN_PORT=${ADMIN_PORT:-4000}
 WAIT_SECONDS=${WAIT_SECONDS:-120}
@@ -20,6 +20,7 @@ TPCH_STANDARD_DATA_DIR=${TPCH_STANDARD_DATA_DIR:-local/standard-data}
 TPCH_STANDARD_DB=${TPCH_STANDARD_DB:-quanta}
 TPCH_NATIVE_GRPC_ADDR=${TPCH_NATIVE_GRPC_ADDR:-127.0.0.1:4100}
 TPCH_DIRECT_FLUSH_INTERVAL=${TPCH_DIRECT_FLUSH_INTERVAL:-30s}
+QS_REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [[ ! -d "${DATA_DIR}" ]]; then
   echo "TPC-H data directory not found: ${DATA_DIR}" >&2
@@ -56,15 +57,10 @@ elif [[ "${TPCH_LOAD_MODE}" == "standard-offline" ]]; then
 fi
 
 wait_for_cluster() {
-  if [[ ! -x "${ADMIN_BIN}" ]]; then
-    echo "quanta-admin not found or not executable: ${ADMIN_BIN}" >&2
-    exit 1
-  fi
-
   local deadline=$(( $(date +%s) + WAIT_SECONDS ))
   local status
   while true; do
-    status="$("${ADMIN_BIN}" --consul-addr "${ADMIN_CONSUL_ADDR}" --port "${ADMIN_PORT}" status 2>&1 || true)"
+    status="$(admin_status 2>&1 || true)"
     if grep -q "Cluster State = GREEN, Active nodes = ${TPCH_CLUSTER_SIZE}, Target Cluster Size = ${TPCH_CLUSTER_SIZE}" <<<"${status}"; then
       return
     fi
@@ -75,6 +71,21 @@ wait_for_cluster() {
     fi
     sleep 2
   done
+}
+
+admin_status() {
+  if [[ -n "${ADMIN_BIN}" ]]; then
+    if [[ ! -x "${ADMIN_BIN}" ]]; then
+      echo "qstream-admin not found or not executable: ${ADMIN_BIN}" >&2
+      return 1
+    fi
+    "${ADMIN_BIN}" --consul-addr "${ADMIN_CONSUL_ADDR}" --port "${ADMIN_PORT}" status
+    return
+  fi
+  go -C "${QS_REPO_ROOT}" run ./qstream-admin \
+    --consul-addr "${ADMIN_CONSUL_ADDR}" \
+    --port "${ADMIN_PORT}" \
+    status
 }
 
 if [[ "${TPCH_LOAD_MODE}" == "cluster" ]]; then

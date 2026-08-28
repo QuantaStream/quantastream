@@ -55,7 +55,7 @@ This starts:
 # Verify Cluster Status
 
 ```bash
-go run ./quanta-admin status
+go run ./qstream-admin status
 ```
 
 Expected:

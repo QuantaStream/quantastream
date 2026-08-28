@@ -106,14 +106,14 @@ qs_each_node() {
 }
 
 qs_set_cluster_size() {
-  go -C "$qs_repo_root" run ./quanta-admin \
+  go -C "$qs_repo_root" run ./qstream-admin \
     --consul-addr "$QS_CONSUL_ENDPOINT" \
     --port "$QS_NODE_PORT" \
     config --key cluster-size-target --value "$QS_CLUSTER_SIZE"
 }
 
 qs_admin_status() {
-  go -C "$qs_repo_root" run ./quanta-admin \
+  go -C "$qs_repo_root" run ./qstream-admin \
     --consul-addr "$QS_CONSUL_ENDPOINT" \
     --port "$QS_NODE_PORT" \
     status
