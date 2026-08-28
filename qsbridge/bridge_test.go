@@ -72,6 +72,43 @@ func TestBindSelectBuildsQueryIR(t *testing.T) {
 	}
 }
 
+func TestBindSelectKeepsStringLexBSIRemainderEqualityAsResidual(t *testing.T) {
+	catalog := MemoryCatalog{
+		Tables: []TableDefinition{{
+			Schema: "quanta",
+			Name:   "spots_flat",
+			Fields: []FieldDefinition{{
+				Name:     "dx_call",
+				Type:     DataTypeString,
+				Index:    IndexBSI,
+				Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 16}),
+			}},
+		}},
+	}
+	context := NewBindContext(catalog, "quanta")
+	selectStmt := UnboundSelect{
+		Tables: []UnboundTable{{Name: "spots_flat"}},
+		Projection: []UnboundProjection{{
+			Expr:  UnboundField("", "dx_call"),
+			Alias: "dx_call",
+			Type:  DataTypeString,
+		}},
+		Predicates: []UnboundPredicate{{
+			Expr:      UnboundBinary(BinaryOpEqual, UnboundField("", "dx_call"), UnboundLiteral(ValueString, "OE/DL7UZO/P")),
+			Placement: PredicatePushdown,
+			Scope:     PredicateScopeWhere,
+		}},
+	}
+
+	query, diagnostics := BindSelect(context, selectStmt)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if len(query.Predicates) != 1 || query.Predicates[0].Placement != PredicateResidualScan {
+		t.Fatalf("predicates = %#v, want StringLexBSI exact residual", query.Predicates)
+	}
+}
+
 func TestBindSelectMinMaxAggregatesInheritInputType(t *testing.T) {
 	catalog := MemoryCatalog{
 		Tables: []TableDefinition{{

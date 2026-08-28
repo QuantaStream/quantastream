@@ -3517,6 +3517,9 @@ func boundPredicatePlacement(placement PredicatePlacement, expr Expr) PredicateP
 	if _, ok := AsTextSearchExpr(expr); ok {
 		return PredicatePushdown
 	}
+	if placement == PredicatePushdown && stringLexBSIPredicateNeedsExactResidual(expr) {
+		return PredicateResidualScan
+	}
 	if placement == PredicateResidualScan && stringEnumPredicateCanUseBitmapPushdown(expr) {
 		return PredicatePushdown
 	}
@@ -3568,6 +3571,15 @@ func stringLexBSIPredicateCanUseBitmapPushdown(expr Expr) bool {
 	default:
 		return false
 	}
+}
+
+func stringLexBSIPredicateNeedsExactResidual(expr Expr) bool {
+	binary, ok := asBinaryExpr(expr)
+	if !ok || binary.Op != BinaryOpEqual {
+		return false
+	}
+	field, ok := predicateField(binary)
+	return ok && field.Encoding.Kind == EncodingStringLexBSI && field.Encoding.NeedsStringRemainderLookup()
 }
 
 func stringEnumPredicateUsesBitmapDifference(expr Expr) bool {

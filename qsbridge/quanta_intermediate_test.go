@@ -1801,6 +1801,53 @@ func TestQuantaIntermediateLowererLeavesStringLexBSIRemainderExactLikeResidual(t
 	}
 }
 
+func TestQuantaIntermediateLowererAddsStringLexBSIRemainderEqualityCandidate(t *testing.T) {
+	table := TableInstance{Table: "spots_flat"}
+	field := FieldRef{
+		Table:    table,
+		Name:     "dx_call",
+		Index:    IndexBSI,
+		Encoding: LegacyEncodingProfile("StringLexBSI", LegacyEncodingOptions{PrefixLength: 8, MaxLength: 16}),
+	}
+	predicate := Predicate{
+		Expr:      Binary(BinaryOpEqual, Field(field), Literal(ValueString, "OE/DL7UZO/P")),
+		Placement: PredicateResidualScan,
+		Scope:     PredicateScopeWhere,
+	}
+	query := QueryIR{
+		Kind:       QueryKindSelect,
+		Sources:    []TableInstance{table},
+		Predicates: []Predicate{predicate},
+		Projection: []ProjectionColumn{{
+			Expr:  Field(field),
+			Alias: "dx_call",
+			Type:  DataTypeString,
+		}},
+	}
+
+	intermediate, diagnostics := QuantaIntermediateLowerer{}.LowerQuery(query, ParameterBindingSet{})
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if len(intermediate.Fragments) != 1 {
+		t.Fatalf("fragments = %d, want 1: %#v", len(intermediate.Fragments), intermediate.Fragments)
+	}
+	fragment := intermediate.Fragments[0]
+	if fragment.BSIOp != QuantaBSIOpRange || fragment.Operation != QuantaOperationIntersect {
+		t.Fatalf("fragment = %#v, want StringLexBSI equality candidate RANGE", fragment)
+	}
+	wantBegin, wantEnd, ok := quantaIntermediateStringLexBSIPrefixRange("OE/DL7UZ", 8)
+	if !ok {
+		t.Fatalf("expected valid clamped prefix range")
+	}
+	if fragment.Begin.Cmp(wantBegin) != 0 || fragment.End.Cmp(wantEnd) != 0 {
+		t.Fatalf("range = %v..%v, want %v..%v", fragment.Begin, fragment.End, wantBegin, wantEnd)
+	}
+	if got, _ := fragment.BeginLiteral.Value.(string); got != "OE/DL7UZ" {
+		t.Fatalf("begin literal = %q, want clamped equality prefix", got)
+	}
+}
+
 func TestQuantaIntermediateLowererLowersStringLexBSIInPredicate(t *testing.T) {
 	field := FieldRef{
 		Table:    TableInstance{Table: "part"},
