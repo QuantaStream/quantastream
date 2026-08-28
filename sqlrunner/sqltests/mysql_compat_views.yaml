@@ -94,6 +94,27 @@ tests:
       rows:
         - [1, 6, 0]
 
+  - id: mysql_compat_views.012.grouped_count_over_aliased_join_view
+    status: supported
+    kind: query
+    timeout: 180s
+    order: exact
+    feature: views_join_query
+    compatibility: mysql
+    requires: [select, view_reference, aliases, where, group_by, aggregate]
+    sql: |
+      select
+        l.order_key,
+        count(*) as line_count,
+        l.ship_priority
+      from qs_mysql_compat_q3_order_line_base as l
+      where l.order_key = 1
+      group by l.order_key, l.ship_priority
+    expect:
+      columns: [order_key, line_count, ship_priority]
+      rows:
+        - [1, 6, 0]
+
   - id: mysql_compat_views.020.drop_customer_projection_view
     status: supported
     kind: statement

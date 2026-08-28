@@ -216,7 +216,8 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 	expansions := make([]viewExpansion, 0, expansionCount)
 	var foundExpansion bool
 	tables := make([]UnboundTable, 0, len(selectStmt.Tables))
-	joins := make([]UnboundJoin, 0, len(selectStmt.Joins))
+	outerJoins := append([]UnboundJoin(nil), selectStmt.Joins...)
+	expansionJoins := make([]UnboundJoin, 0, len(selectStmt.Joins))
 	predicates := make([]UnboundPredicate, 0)
 	for _, table := range selectStmt.Tables {
 		if table.DerivedSelect != nil {
@@ -227,7 +228,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 			expansions = append(expansions, nextExpansion)
 			foundExpansion = true
 			tables = append(tables, nextExpansion.tables...)
-			joins = append(joins, nextExpansion.joins...)
+			expansionJoins = append(expansionJoins, nextExpansion.joins...)
 			predicates = append(predicates, nextExpansion.predicates...)
 			continue
 		}
@@ -249,14 +250,14 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		expansions = append(expansions, nextExpansion)
 		foundExpansion = true
 		tables = append(tables, nextExpansion.tables...)
-		joins = append(joins, nextExpansion.joins...)
+		expansionJoins = append(expansionJoins, nextExpansion.joins...)
 		predicates = append(predicates, nextExpansion.predicates...)
 	}
 	if !foundExpansion {
 		return selectStmt, nil
 	}
 	selectStmt.Tables = tables
-	selectStmt.Joins = append(joins, selectStmt.Joins...)
+	selectStmt.Joins = outerJoins
 	if len(expansions) > 1 {
 		for _, expansion := range expansions {
 			if diagnostics := validateMultipleLogicalSourceExpansionUsage(expansion); diagnostics.BlocksNative() {
@@ -308,6 +309,7 @@ func (s viewExpansionState) expandSelect(selectStmt UnboundSelect) (UnboundSelec
 		expansionHaving = append(expansionHaving, expansion.having...)
 		expansionOrderBy = append(expansionOrderBy, expansion.orderBy...)
 	}
+	selectStmt.Joins = append(expansionJoins, selectStmt.Joins...)
 	selectStmt.Predicates = append(predicates, selectStmt.Predicates...)
 	selectStmt.GroupBy = append(outerGroupBy, selectStmt.GroupBy...)
 	selectStmt.GroupBy = append(expansionGroupBy, selectStmt.GroupBy...)
