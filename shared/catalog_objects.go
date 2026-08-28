@@ -94,11 +94,16 @@ func ActiveCatalogTables(configDir string, schemaName string) ([]string, error) 
 
 // ActiveCatalogViews returns active VIEW objects from the file-backed catalog.
 func ActiveCatalogViews(configDir string, schemaName string) ([]string, error) {
+	manifestExists := CatalogObjectsFileExists(configDir)
 	catalog, err := LoadCatalogObjectsFile(configDir)
 	if err != nil {
 		return nil, err
 	}
-	return activeCatalogObjectNames(catalog, schemaName, CatalogObjectTypeView), nil
+	names := activeCatalogObjectNames(catalog, schemaName, CatalogObjectTypeView)
+	if len(names) == 0 && catalogShouldFallbackToDiscoveredViews(manifestExists, catalog) {
+		return DiscoverSchemaViews(configDir, schemaName)
+	}
+	return names, nil
 }
 
 // CatalogTableActive reports whether tableName is active in the file-backed catalog.
@@ -126,11 +131,18 @@ func CatalogTableActive(configDir string, schemaName string, tableName string) (
 
 // CatalogViewActive reports whether viewName is active in the file-backed catalog.
 func CatalogViewActive(configDir string, schemaName string, viewName string) (bool, error) {
+	manifestExists := CatalogObjectsFileExists(configDir)
 	catalog, err := LoadCatalogObjectsFile(configDir)
 	if err != nil {
 		return false, err
 	}
-	return catalogObjectActive(catalog, schemaName, viewName, CatalogObjectTypeView), nil
+	if catalogObjectActive(catalog, schemaName, viewName, CatalogObjectTypeView) {
+		return true, nil
+	}
+	if catalogShouldFallbackToDiscoveredViews(manifestExists, catalog) {
+		return ViewDefinitionExists(configDir, viewName), nil
+	}
+	return false, nil
 }
 
 // ActivateCatalogTable marks a table schema as active in the file-backed catalog.
@@ -200,6 +212,12 @@ func catalogShouldFallbackToDiscoveredTables(manifestExists bool, catalog Catalo
 	return manifestExists &&
 		catalogHasObjectType(catalog, CatalogObjectTypeView) &&
 		!catalogHasObjectType(catalog, CatalogObjectTypeTable)
+}
+
+func catalogShouldFallbackToDiscoveredViews(manifestExists bool, catalog CatalogObjectsFile) bool {
+	return manifestExists &&
+		catalogHasObjectType(catalog, CatalogObjectTypeTable) &&
+		!catalogHasObjectType(catalog, CatalogObjectTypeView)
 }
 
 func activateCatalogObject(configDir string, schemaName string, objectName string, objectType string, objectKind string, now time.Time) error {

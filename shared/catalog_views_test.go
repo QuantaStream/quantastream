@@ -59,6 +59,38 @@ func TestCatalogObjectsTrackViewsSeparatelyFromTables(t *testing.T) {
 	}
 }
 
+func TestTableOnlyCatalogManifestFallsBackToDiscoveredViews(t *testing.T) {
+	configDir := t.TempDir()
+	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	if err := ActivateCatalogTable(configDir, "quanta", "orders", now); err != nil {
+		t.Fatalf("ActivateCatalogTable() error = %v", err)
+	}
+	if err := SaveViewDefinition(configDir, ViewDefinition{
+		SchemaName:       "quanta",
+		ViewName:         "order_hours",
+		SQL:              "select o_orderdate as qso_at from orders",
+		CreationDate:     now,
+		ModificationDate: now,
+	}); err != nil {
+		t.Fatalf("SaveViewDefinition() error = %v", err)
+	}
+
+	views, err := ActiveCatalogViews(configDir, "quanta")
+	if err != nil {
+		t.Fatalf("ActiveCatalogViews() error = %v", err)
+	}
+	if len(views) != 1 || views[0] != "order_hours" {
+		t.Fatalf("views = %#v, want discovered order_hours", views)
+	}
+	active, err := CatalogViewActive(configDir, "quanta", "order_hours")
+	if err != nil {
+		t.Fatalf("CatalogViewActive() error = %v", err)
+	}
+	if !active {
+		t.Fatalf("order_hours should be active through discovered-view fallback")
+	}
+}
+
 func TestViewDefinitionRoundTrip(t *testing.T) {
 	configDir := t.TempDir()
 	now := time.Date(2026, 8, 16, 10, 0, 0, 0, time.UTC)

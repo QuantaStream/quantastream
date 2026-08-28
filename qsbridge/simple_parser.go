@@ -4030,7 +4030,7 @@ func resolveSimpleOrderByProjection(sort UnboundSort, projections []UnboundProje
 		if ordinal < 1 || ordinal > len(projections) {
 			return UnboundSort{}, simpleParserDiagnostic("ORDER BY ordinal is out of range"), false
 		}
-		sort.Expr = projections[ordinal-1].Expr
+		sort.Expr = cloneUnboundExpr(projections[ordinal-1].Expr)
 		return sort, Diagnostic{}, true
 	}
 	field, ok := sort.Expr.(UnboundFieldExpr)
@@ -4041,7 +4041,7 @@ func resolveSimpleOrderByProjection(sort UnboundSort, projections []UnboundProje
 		if projection.Alias == "" || !strings.EqualFold(projection.Alias, field.Name) {
 			continue
 		}
-		sort.Expr = projection.Expr
+		sort.Expr = cloneUnboundExpr(projection.Expr)
 		return sort, Diagnostic{}, true
 	}
 	return sort, Diagnostic{}, true
@@ -4066,7 +4066,7 @@ func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []Un
 			if ordinal < 1 || ordinal > len(projections) {
 				return nil, simpleParserDiagnostic("GROUP BY ordinal is out of range"), false
 			}
-			resolved = append(resolved, projections[ordinal-1].Expr)
+			resolved = append(resolved, cloneUnboundExpr(projections[ordinal-1].Expr))
 			continue
 		}
 		field, ok := expr.(UnboundFieldExpr)
@@ -4082,7 +4082,7 @@ func resolveSimpleGroupByProjections(expressions []UnboundExpr, projections []Un
 			if _, aggregateRef := projection.Expr.(UnboundAggregateRefExpr); aggregateRef {
 				break
 			}
-			replacement = projection.Expr
+			replacement = cloneUnboundExpr(projection.Expr)
 			break
 		}
 		resolved = append(resolved, replacement)

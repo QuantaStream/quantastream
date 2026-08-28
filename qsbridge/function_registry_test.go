@@ -13,6 +13,17 @@ func TestBuiltinFunctionDefinitionResolvesAliases(t *testing.T) {
 	if function.ReturnType != DataTypeString {
 		t.Fatalf("ReturnType = %q, want string", function.ReturnType)
 	}
+
+	function, ok = BuiltinScalarFunctionDefinition("HOUR")
+	if !ok {
+		t.Fatalf("expected hour alias to resolve")
+	}
+	if function.Name != "hourofday" {
+		t.Fatalf("Name = %q, want hourofday", function.Name)
+	}
+	if function.ReturnType != DataTypeInt {
+		t.Fatalf("ReturnType = %q, want int", function.ReturnType)
+	}
 }
 
 func TestBuiltinFunctionDefinitionsAreDefensiveCopies(t *testing.T) {

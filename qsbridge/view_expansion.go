@@ -1475,7 +1475,7 @@ func expansionMappedExpr(expansion viewExpansion, name string) (UnboundExpr, boo
 }
 
 func rewriteMappedViewExpr(expr UnboundExpr) UnboundExpr {
-	return expr
+	return cloneUnboundExpr(expr)
 }
 
 func rewriteOuterSelectViewReferences(selectStmt UnboundSelect, expansion viewExpansion) (UnboundSelect, DiagnosticSet) {

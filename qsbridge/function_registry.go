@@ -243,7 +243,7 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinScalarFunction("quarter", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("week", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("dayofweek", DataTypeInt, sqlExpressionFunctionContexts),
-	builtinScalarFunction("hourofday", DataTypeInt, sqlExpressionFunctionContexts),
+	builtinScalarFunction("hourofday", DataTypeInt, sqlExpressionFunctionContexts, "hour"),
 	builtinScalarFunction("hourofweek", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("seconds", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("hash.sha256", DataTypeString, sqlAndCatalogExpressionFunctionContexts),

@@ -110,6 +110,35 @@ func RemoveViewDefinition(configDir string, viewName string) error {
 	return nil
 }
 
+// DiscoverSchemaViews returns view definitions present under configDir/views.
+func DiscoverSchemaViews(configDir string, schemaName string) ([]string, error) {
+	viewsDir := filepath.Join(configDir, CatalogViewsDirName)
+	entries, err := os.ReadDir(viewsDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("discover schema views: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".yaml")
+		view, err := LoadViewDefinition(configDir, name)
+		if err != nil {
+			return nil, err
+		}
+		if schemaName != "" && view.SchemaName != "" && !strings.EqualFold(view.SchemaName, schemaName) {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // ViewDefinitionExists reports whether a logical view definition exists.
 func ViewDefinitionExists(configDir string, viewName string) bool {
 	path, err := catalogViewDefinitionPath(configDir, viewName)

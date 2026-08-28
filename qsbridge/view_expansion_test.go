@@ -366,7 +366,10 @@ func testTableauTPCHCatalog() MemoryCatalog {
 		Direction:   JoinChildToParent,
 		Cardinality: "many_to_one",
 	})
-	catalog.Functions = append(catalog.Functions, FunctionDefinition{Name: "year", Kind: FunctionScalar, Origin: FunctionOriginMySQLCompatible, Placement: FunctionPlacementExpression, Arguments: []DataType{DataTypeTime}, ReturnType: DataTypeInt, Native: true, Deterministic: true})
+	catalog.Functions = append(catalog.Functions,
+		FunctionDefinition{Name: "year", Kind: FunctionScalar, Origin: FunctionOriginMySQLCompatible, Placement: FunctionPlacementExpression, Arguments: []DataType{DataTypeTime}, ReturnType: DataTypeInt, Native: true, Deterministic: true},
+		FunctionDefinition{Name: "hourofday", Kind: FunctionScalar, Origin: FunctionOriginMySQLCompatible, Placement: FunctionPlacementExpression, Arguments: []DataType{DataTypeTime}, ReturnType: DataTypeInt, Aliases: []string{"hour"}, Native: true, Deterministic: true},
+	)
 	return catalog
 }
 
@@ -499,6 +502,54 @@ func TestPlannerNormalizesTableauAggregateFreeGroupByToDistinct(t *testing.T) {
 	}
 	if len(result.Query.Predicates) != 1 || !predicateReferencesField(result.Query.Predicates[0], "orders", "o_orderdate") {
 		t.Fatalf("predicates = %#v, want YEAR(orders.o_orderdate) filter", result.Query.Predicates)
+	}
+}
+
+func TestPlannerExpandsViewGroupByHourAlias(t *testing.T) {
+	catalog := testTableauTPCHCatalog()
+	catalog.Views = append(catalog.Views, SQLViewDefinition{
+		Schema: "quanta",
+		Name:   "order_time_base",
+		SQL:    "select o_orderdate as qso_at, o_totalprice as signal_db from orders",
+	})
+	planner := Planner{
+		Parser:        SimpleParserBridge{},
+		Catalog:       catalog,
+		DefaultSchema: "quanta",
+	}
+
+	result := planner.Plan(`
+		SELECT
+			HOUR(qso_at) AS qso_hour,
+			AVG(signal_db) AS avg_snr,
+			COUNT(*) AS qsos
+		FROM order_time_base
+		GROUP BY HOUR(qso_at)
+		ORDER BY qso_hour
+		LIMIT 10
+	`)
+	if result.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.Query.GroupBy) != 1 {
+		t.Fatalf("group by = %#v, want one HOUR expression", result.Query.GroupBy)
+	}
+	call, ok := result.Query.GroupBy[0].(CallExpr)
+	if !ok {
+		t.Fatalf("group by = %T, want CallExpr", result.Query.GroupBy[0])
+	}
+	if call.Name != "hourofday" {
+		t.Fatalf("group by call name = %q, want hourofday", call.Name)
+	}
+	if len(call.Args) != 1 || !exprReferencesField(call.Args[0], "order_time_base", "o_orderdate") {
+		t.Fatalf("group by call args = %#v, want order_time_base.o_orderdate", call.Args)
+	}
+	if len(result.Query.OrderBy) != 1 {
+		t.Fatalf("order by = %#v, want qso_hour expression", result.Query.OrderBy)
+	}
+	orderCall, ok := result.Query.OrderBy[0].Expr.(CallExpr)
+	if !ok || orderCall.Name != "hourofday" || len(orderCall.Args) != 1 || !exprReferencesField(orderCall.Args[0], "order_time_base", "o_orderdate") {
+		t.Fatalf("order by = %#v, want hourofday(order_time_base.o_orderdate)", result.Query.OrderBy)
 	}
 }
 

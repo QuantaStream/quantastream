@@ -3022,6 +3022,26 @@ func TestSimpleParserBridgeParsesComputedProjectionAliasOrderBy(t *testing.T) {
 	}
 }
 
+func TestSimpleParserBridgeParsesMySQLHourFunctionInGroupBy(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("select hour(qso_at) as qso_hour, count(*) as qsos from contest_best_spot_match_base group by hour(qso_at) order by qso_hour")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if len(statement.Select.GroupBy) != 1 {
+		t.Fatalf("group by = %d, want 1", len(statement.Select.GroupBy))
+	}
+	call, ok := statement.Select.GroupBy[0].(UnboundCallExpr)
+	if !ok {
+		t.Fatalf("group by expression = %T, want UnboundCallExpr", statement.Select.GroupBy[0])
+	}
+	if !strings.EqualFold(call.Name, "hour") || len(call.Args) != 1 {
+		t.Fatalf("group by call = %#v, want hour(field)", call)
+	}
+	if field, ok := call.Args[0].(UnboundFieldExpr); !ok || field.Name != "qso_at" {
+		t.Fatalf("group by call arg = %#v, want qso_at field", call.Args[0])
+	}
+}
+
 func TestSimpleParserBridgeParsesMultiKeyOrderBy(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("select o.o_custkey as customer_id, count(*) as order_count from orders as o group by o.o_custkey order by order_count desc, o.o_custkey asc")
 	if diagnostics.BlocksNative() {
