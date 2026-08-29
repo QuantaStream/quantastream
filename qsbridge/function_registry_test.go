@@ -75,8 +75,11 @@ func TestBuiltinFunctionContextBinding(t *testing.T) {
 	if !IsBuiltinSQLScalarFunction("substring") {
 		t.Fatalf("expected substring to bind as SQL scalar")
 	}
-	if IsBuiltinSQLScalarFunction("now") {
-		t.Fatalf("now should not bind as SQL scalar until runtime supports it")
+	if !IsBuiltinSQLScalarFunction("now") {
+		t.Fatalf("expected now to bind as SQL scalar")
+	}
+	if !IsBuiltinSQLScalarFunction("current_timestamp") {
+		t.Fatalf("expected current_timestamp alias to bind as SQL scalar")
 	}
 	if !IsBuiltinCatalogScalarFunction("current_timestamp", CatalogExpressionPurposeColumnDefault) {
 		t.Fatalf("expected current_timestamp to bind as catalog default function")
@@ -91,8 +94,8 @@ func TestBuiltinFunctionContextBinding(t *testing.T) {
 
 func TestBuiltinSQLFunctionDefinitionsExcludeCatalogOnlyFunctions(t *testing.T) {
 	for _, function := range BuiltinSQLFunctionDefinitions() {
-		if function.Matches("now") {
-			t.Fatalf("SQL function definitions included catalog-only now(): %#v", function)
+		if function.Matches("unixmillis") {
+			t.Fatalf("SQL function definitions included catalog-only unixmillis(): %#v", function)
 		}
 	}
 }

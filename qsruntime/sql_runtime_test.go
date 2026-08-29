@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/version"
@@ -1399,7 +1400,7 @@ func TestSQLRuntimeExecuteSQLConnectorJStartupVariables(t *testing.T) {
 		t.Fatalf("rows = %#v, want one twenty-one-column row", chunk.Rows)
 	}
 	row := chunk.Rows[0]
-	if row[0].Value != int64(1) || row[10].Value != int64(0) || row[11].Value != int64(67108864) || row[19].Value != "READ-COMMITTED" || row[20].Value != int64(28800) {
+	if row[0].Value != int64(1) || row[10].Value != int64(0) || row[11].Value != int64(67108864) || row[17].Value != "UTC" || row[18].Value != "+00:00" || row[19].Value != "READ-COMMITTED" || row[20].Value != int64(28800) {
 		t.Fatalf("Connector/J metadata row = %#v", row)
 	}
 }
@@ -3011,6 +3012,46 @@ func TestSQLRuntimeExecuteSQLRunsConstantScalarProjection(t *testing.T) {
 	}
 	if got, want := chunk.Rows[0][2].Value, "ha"; got != want {
 		t.Fatalf("substring part = %#v, want %q", got, want)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLRunsNowConstantScalarProjection(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	before := time.Now().UTC()
+	result, err := runtime.ExecuteSQL(context.Background(), "select now() as current_time", qsbridge.ExecutionOptions{})
+	after := time.Now().UTC()
+
+	if err != nil {
+		t.Fatalf("execute sql: %v", err)
+	}
+	if !result.Supported() {
+		t.Fatalf("result diagnostics = %#v / runtime %#v, want supported", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("constant now() projection should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 1 {
+		t.Fatalf("rows = %#v, want one one-column row", chunk.Rows)
+	}
+	cell := chunk.Rows[0][0]
+	if cell.Kind != qsbridge.ValueTime {
+		t.Fatalf("now() cell = %#v, want time", cell)
+	}
+	value, ok := cell.Value.(time.Time)
+	if !ok {
+		t.Fatalf("now() value = %#v, want time.Time", cell.Value)
+	}
+	if value.Before(before) || value.After(after) {
+		t.Fatalf("now() value = %v, want between %v and %v", value, before, after)
 	}
 }
 

@@ -174,6 +174,10 @@ func builtinTopNAggregateFunction() FunctionDefinition {
 
 var sqlExpressionFunctionContexts = []FunctionBindingContext{FunctionContextSQLExpression}
 var catalogDefaultFunctionContexts = []FunctionBindingContext{FunctionContextCatalogDefault}
+var sqlAndCatalogDefaultFunctionContexts = []FunctionBindingContext{
+	FunctionContextSQLExpression,
+	FunctionContextCatalogDefault,
+}
 var sqlAndCatalogExpressionFunctionContexts = []FunctionBindingContext{
 	FunctionContextSQLExpression,
 	FunctionContextCatalogDefault,
@@ -247,6 +251,6 @@ var builtinFunctionDefinitions = []FunctionDefinition{
 	builtinScalarFunction("hourofweek", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("seconds", DataTypeInt, sqlExpressionFunctionContexts),
 	builtinScalarFunction("hash.sha256", DataTypeString, sqlAndCatalogExpressionFunctionContexts),
-	builtinVolatileScalarFunction("now", DataTypeTime, catalogDefaultFunctionContexts, "current_timestamp"),
+	builtinVolatileScalarFunction("now", DataTypeTime, sqlAndCatalogDefaultFunctionContexts, "current_timestamp"),
 	builtinScalarFunction("unixmillis", DataTypeInt, []FunctionBindingContext{FunctionContextCatalogDefault}, "unix_millis"),
 }

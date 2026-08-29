@@ -4958,7 +4958,7 @@ func simpleScalarFunctionName(function string) bool {
 
 func simpleZeroArgumentScalarFunctionName(function string) bool {
 	switch strings.ToLower(strings.TrimSpace(function)) {
-	case "database", "schema", "version", "user", "current_user", "connection_id":
+	case "database", "schema", "version", "user", "current_user", "connection_id", "now", "current_timestamp":
 		return true
 	default:
 		return false

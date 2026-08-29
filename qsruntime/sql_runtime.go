@@ -676,7 +676,7 @@ func runtimeSessionTimeZone(session qsbridge.SessionContext) string {
 	if value := strings.TrimSpace(session.TimeZone); value != "" {
 		return value
 	}
-	return "SYSTEM"
+	return "+00:00"
 }
 
 func metadataVariableLiteral(name string, value string) qsbridge.LiteralExpr {
@@ -732,6 +732,8 @@ func (r SQLRuntime) runtimeMetadataFunctionLiteral(name string, argCount int) (q
 		return qsbridge.Literal(qsbridge.ValueString, user), true
 	case "connection_id":
 		return qsbridge.Literal(qsbridge.ValueInt, int64(1)), true
+	case "now", "current_timestamp":
+		return qsbridge.Literal(qsbridge.ValueTime, time.Now().UTC()), true
 	default:
 		return qsbridge.LiteralExpr{}, false
 	}
