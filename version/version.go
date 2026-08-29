@@ -20,12 +20,15 @@ const (
 	MySQLCompatibilityPrefix = "8.0.0"
 )
 
-// These variables are intentionally string vars so release builds can set them
-// with go build -ldflags -X github.com/QuantaStream/quantastream/version.Name=value.
+// These variables are intentionally string vars so release builds can set exact
+// build metadata with go build -ldflags -X
+// github.com/QuantaStream/quantastream/version.Name=value. Source builds carry
+// the current release version and omit commit/build-date metadata unless the
+// caller supplies ldflags.
 var (
-	Version   = "0.0.0-dev"
-	Commit    = "unknown"
-	BuildDate = "unknown"
+	Version   = "0.1.0"
+	Commit    = ""
+	BuildDate = ""
 )
 
 // Summary returns a concise one-line support identifier.
