@@ -23,13 +23,15 @@ The SQL surface does not currently include the full MySQL `ALTER TABLE`
 grammar. Unsupported examples include:
 
 ```sql
-alter table table_name add column new_field int;
+alter table table_name add column new_field int not null default 0;
 alter table table_name drop column old_field;
-alter table table_name add primary key (id);
 alter table child_table add foreign key (parent_id) references parent_table(id);
+alter table table_name partition by hash(id);
 ```
 
-Primary-key, relationship-vector, mapper-type, and reverse-artifact changes via
+Nullable `ALTER TABLE ... ADD COLUMN` is supported, including for non-empty
+tables. Default-value backfills, column removal, relationship-vector changes,
+mapper-type changes, reverse-artifact changes, and partitioning changes via
 broad MySQL DDL remain outside the 1.0 SQL contract.
 
 ## Transaction Rollback Semantics

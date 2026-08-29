@@ -1689,6 +1689,206 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	}
 }
 
+func TestStandardProcessAlterTableAddColumnWorksWithExistingRows(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardDraftTestSchema(t, configDir, "sample")
+	if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
+		t.Fatalf("write empty catalog objects: %v", err)
+	}
+	config := StandardConfig{
+		ConfigDir:           configDir,
+		DataDir:             filepath.Join(root, "data"),
+		BindAddress:         "127.0.0.1",
+		MySQLPort:           0,
+		NativeGRPCBind:      "127.0.0.1",
+		NativeGRPCPort:      0,
+		Database:            "quanta",
+		RuntimeProbeLogging: false,
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	requireStandardProcessSQLSuccess(t, process, "create table sample")
+	requireStandardProcessSQLSuccess(t, process, "insert into sample (id, city) values (1, 'Seattle')")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+	requireStandardProcessSQLSuccess(t, process, "alter table sample add column note varchar(40)")
+
+	dataConfigDir := filepath.Join(config.DataDir, "config")
+	table, err := shared.LoadSchema(dataConfigDir, "sample", nil)
+	if err != nil {
+		t.Fatalf("LoadSchema() error = %v", err)
+	}
+	note, err := table.GetAttribute("note")
+	if err != nil {
+		t.Fatalf("GetAttribute(note) error = %v", err)
+	}
+	if note.MappingStrategy != "StringEnum" || note.Type != "String" || note.Size != 40 || note.Required || note.ColumnID {
+		t.Fatalf("note attribute = %#v, want nullable StringEnum maxLen 40", note)
+	}
+	liveTable := process.Backend.Adapter.BitmapIndex.GetTable("sample")
+	if liveTable == nil {
+		t.Fatalf("sample should remain deployed after ALTER TABLE ADD COLUMN")
+	}
+	if _, err := liveTable.GetAttribute("note"); err != nil {
+		t.Fatalf("live table should expose added note column: %v", err)
+	}
+
+	selectOldResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "select id, note from sample where id = 1", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT added column over existing row error = %v", err)
+	}
+	if selectOldResult.Diagnostics.BlocksNative() || selectOldResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("SELECT added column over existing row diagnostics = %#v runtime=%#v", selectOldResult.Diagnostics, selectOldResult.Runtime.Diagnostics)
+	}
+	oldChunk, oldChunkDiagnostics := selectOldResult.Runtime.RowSet.ToResultChunk(0, true)
+	if oldChunkDiagnostics.BlocksNative() {
+		t.Fatalf("SELECT existing row chunk diagnostics = %#v", oldChunkDiagnostics)
+	}
+	if len(oldChunk.Rows) != 1 || len(oldChunk.Rows[0]) != 2 {
+		t.Fatalf("SELECT existing row chunk rows = %#v, want one projected row", oldChunk.Rows)
+	}
+	if fmt.Sprint(oldChunk.Rows[0][0].Value) != "1" || oldChunk.Rows[0][1].Kind != qsbridge.ValueNull {
+		t.Fatalf("SELECT existing row = %#v, want [1 NULL]", oldChunk.Rows[0])
+	}
+
+	requireStandardProcessSQLSuccess(t, process, "insert into sample (id, city, note) values (2, 'Austin', 'added')")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+	selectResult, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "select id, note from sample where id = 2", qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("SELECT added column error = %v", err)
+	}
+	if selectResult.Diagnostics.BlocksNative() || selectResult.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("SELECT added column diagnostics = %#v runtime=%#v", selectResult.Diagnostics, selectResult.Runtime.Diagnostics)
+	}
+	chunk, chunkDiagnostics := selectResult.Runtime.RowSet.ToResultChunk(0, true)
+	if chunkDiagnostics.BlocksNative() {
+		t.Fatalf("SELECT chunk diagnostics = %#v", chunkDiagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 2 {
+		t.Fatalf("SELECT chunk rows = %#v, want one projected row", chunk.Rows)
+	}
+	if fmt.Sprint(chunk.Rows[0][0].Value) != "2" || fmt.Sprint(chunk.Rows[0][1].Value) != "added" {
+		t.Fatalf("SELECT row = %#v, want [2 added]", chunk.Rows[0])
+	}
+}
+
+func TestStandardProcessCreateTableRejectsInvalidDraftSchemaWithoutCatalogActivation(t *testing.T) {
+	cases := []struct {
+		name    string
+		schema  string
+		wantErr string
+	}{
+		{
+			name: "malformed_yaml",
+			schema: `tableName: broken
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: [
+`,
+			wantErr: "load table schema broken",
+		},
+		{
+			name: "table_name_mismatch",
+			schema: `tableName: other_name
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: Integer
+`,
+			wantErr: `schema tableName "other_name" does not match CREATE TABLE target "broken"`,
+		},
+		{
+			name: "unknown_field_type",
+			schema: `tableName: broken
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: DefinitelyNotAType
+`,
+			wantErr: "unknown type DefinitelyNotAType for field id",
+		},
+		{
+			name: "unknown_mapping_strategy",
+			schema: `tableName: broken
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: DefinitelyNotAMapper
+  type: Integer
+`,
+			wantErr: `invalid mappingStrategy "DefinitelyNotAMapper" for field id`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			configDir := filepath.Join(root, "schemas")
+			writeStandardRawSchema(t, configDir, "broken", tc.schema)
+			if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
+				t.Fatalf("write empty catalog objects: %v", err)
+			}
+			config := StandardConfig{
+				ConfigDir: configDir,
+				DataDir:   filepath.Join(root, "data"),
+			}
+
+			process, diagnostics, err := MountStandardProcess(context.Background(), config)
+			if err != nil {
+				t.Fatalf("MountStandardProcess() error = %v", err)
+			}
+			defer process.Close()
+			if diagnostics.BlocksNative() {
+				t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+			}
+
+			result, err := process.FrontDoor.Server.ExecuteSQL(context.Background(), "create table broken", qsbridge.ExecutionOptions{})
+			if err != nil {
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("CREATE TABLE error = %v, want message containing %q", err, tc.wantErr)
+				}
+			} else {
+				diagnostics := append(qsbridge.DiagnosticSet(nil), result.Diagnostics...)
+				diagnostics = append(diagnostics, result.Runtime.Diagnostics...)
+				if !diagnostics.BlocksNative() {
+					t.Fatalf("CREATE TABLE unexpectedly succeeded: result=%#v", result)
+				}
+				if text := standardProcessDiagnosticText(result.Diagnostics, result.Runtime.Diagnostics); !strings.Contains(text, tc.wantErr) {
+					t.Fatalf("CREATE TABLE diagnostics = %q, want message containing %q", text, tc.wantErr)
+				}
+			}
+
+			dataConfigDir := filepath.Join(config.DataDir, "config")
+			active, err := shared.CatalogTableActive(dataConfigDir, "quanta", "broken")
+			if err != nil {
+				t.Fatalf("CatalogTableActive() error = %v", err)
+			}
+			if active {
+				t.Fatalf("broken should not be active after rejected CREATE TABLE")
+			}
+			if process.Backend.Adapter.BitmapIndex.GetTable("broken") != nil {
+				t.Fatalf("broken should not be deployed after rejected CREATE TABLE")
+			}
+		})
+	}
+}
+
 func TestStandardProcessSearchableTextWorksLocally(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

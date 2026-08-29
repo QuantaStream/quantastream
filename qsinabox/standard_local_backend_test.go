@@ -299,10 +299,6 @@ func writeStandardTestSchema(t *testing.T, configDir, table string) {
 
 func writeStandardDraftTestSchema(t *testing.T, configDir, table string) {
 	t.Helper()
-	tableDir := filepath.Join(configDir, table)
-	if err := os.MkdirAll(tableDir, 0755); err != nil {
-		t.Fatalf("mkdir schema dir: %v", err)
-	}
 	schema := `tableName: ` + table + `
 primaryKey: id
 attributes:
@@ -317,6 +313,15 @@ attributes:
     length: "8"
   type: String
 `
+	writeStandardRawSchema(t, configDir, table, schema)
+}
+
+func writeStandardRawSchema(t *testing.T, configDir, table, schema string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)
 	}

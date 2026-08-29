@@ -59,6 +59,8 @@ func (q QueryIR) RequiredAccess() []AccessRequirement {
 		collector.ensureTable(AccessCreate, q.Mutation.Target)
 	case MutationDropTable:
 		collector.ensureTable(AccessDrop, q.Mutation.Target)
+	case MutationAlterTableAddColumn:
+		collector.addFields(AccessCreate, q.Mutation.Target, q.Mutation.Columns)
 	case MutationAlterTableAddPrimaryKey:
 		collector.addFields(AccessCreate, q.Mutation.Target, q.Mutation.Columns)
 	case MutationAlterTableAddForeignKey:

@@ -352,6 +352,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		observeSQLRuntimeElapsed(ctx, "phase_execute_prepared_elapsed", executeStart, "statement")
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
+		if err == nil && !result.Diagnostics.BlocksNative() {
+			r.invalidateExecutedTableMutation(prepared.Query)
+		}
 		return result, err
 	}
 
@@ -400,6 +403,31 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	result.Runtime = runtimeResult
 	result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 	return result, err
+}
+
+func (r SQLRuntime) invalidateExecutedTableMutation(query qsbridge.QueryIR) {
+	switch query.Mutation.Kind {
+	case qsbridge.MutationCreateTable,
+		qsbridge.MutationDropTable,
+		qsbridge.MutationAlterTableAddColumn,
+		qsbridge.MutationAlterTableAddPrimaryKey,
+		qsbridge.MutationAlterTableAddForeignKey:
+	default:
+		return
+	}
+	table := strings.TrimSpace(query.Mutation.Target.Table)
+	if table == "" {
+		return
+	}
+	catalog, ok := r.Environment.Catalog.(CatalogInvalidationTarget)
+	if !ok {
+		return
+	}
+	invalidator := RuntimeMetadataInvalidator{
+		Catalog:       catalog,
+		DefaultSchema: r.DefaultSchema,
+	}
+	invalidator.InvalidateTable(query.Mutation.Target.Schema, table)
 }
 
 func observeSQLRuntimeElapsed(ctx context.Context, name string, start time.Time, detail string) {

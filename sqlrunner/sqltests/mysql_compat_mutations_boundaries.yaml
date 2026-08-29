@@ -523,12 +523,11 @@ tests:
   # this suite in order, so dropping a column too early can invalidate later
   # reference cases before QS is compared.
   - id: mysql_compat_mutations_boundaries.016.alter_table_add_column
-    status: xfail
+    status: supported
     kind: statement
     feature: mutations_alter_table_boundary
     compatibility: mysql
     requires: [alter_table, add_column, varchar]
-    issue: "ALTER TABLE is post-1.0 compatibility work; QS schema is catalog/YAML-backed."
     sql: |
       alter table qs_mysql_compat_mutations_ctas
       add column note varchar(40)

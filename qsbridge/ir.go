@@ -593,6 +593,8 @@ const (
 	MutationCreateTable MutationKind = "create_table"
 	// MutationDropTable describes dropping an active table schema and data.
 	MutationDropTable MutationKind = "drop_table"
+	// MutationAlterTableAddColumn describes adding nullable column metadata to an existing table.
+	MutationAlterTableAddColumn MutationKind = "alter_table_add_column"
 	// MutationAlterTableAddPrimaryKey describes adding primary-key metadata to an existing table.
 	MutationAlterTableAddPrimaryKey MutationKind = "alter_table_add_primary_key"
 	// MutationAlterTableAddForeignKey describes adding foreign-key metadata to an existing table.

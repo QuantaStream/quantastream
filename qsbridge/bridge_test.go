@@ -717,6 +717,32 @@ func TestUnboundStatementBindAlterTableAddPrimaryKey(t *testing.T) {
 	}
 }
 
+func TestUnboundStatementBindAlterTableAddColumn(t *testing.T) {
+	context := NewBindContext(testBindCatalog(), "quanta")
+	statement, parseDiagnostics := SimpleParserBridge{}.Parse("alter table orders add column note varchar(40)")
+	if parseDiagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", parseDiagnostics)
+	}
+
+	query, diagnostics := statement.Bind(context)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	if query.Kind != QueryKindAlterTable || query.Mutation.Kind != MutationAlterTableAddColumn {
+		t.Fatalf("query kind/mutation = %q/%q, want alter_table/add_column", query.Kind, query.Mutation.Kind)
+	}
+	if query.Mutation.Target.Table != "orders" || query.Mutation.Target.Schema != "quanta" {
+		t.Fatalf("mutation target = %#v, want quanta.orders", query.Mutation.Target)
+	}
+	if got := query.Mutation.Columns; len(got) != 1 || got[0].Name != "note" || got[0].Type != DataTypeString || got[0].Encoding.MaxLength != 40 || !got[0].Nullable {
+		t.Fatalf("mutation columns = %#v, want nullable varchar(40) note", got)
+	}
+	access := query.RequiredAccess()
+	if !hasAccessRequirement(access, AccessCreate, "orders") {
+		t.Fatalf("RequiredAccess = %#v, want create on orders", access)
+	}
+}
+
 func TestUnboundStatementBindAlterTableAddForeignKey(t *testing.T) {
 	context := NewBindContext(testBindCatalog(), "quanta")
 	statement, parseDiagnostics := SimpleParserBridge{}.Parse("alter table orders add constraint fk_orders_customer foreign key (o_custkey) references customer (c_custkey)")

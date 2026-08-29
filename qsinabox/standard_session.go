@@ -274,6 +274,7 @@ func standardSchemaMutationNeedsSyntheticHandle(kind qsbridge.MutationKind) bool
 	switch kind {
 	case qsbridge.MutationCreateTable,
 		qsbridge.MutationDropTable,
+		qsbridge.MutationAlterTableAddColumn,
 		qsbridge.MutationAlterTableAddPrimaryKey,
 		qsbridge.MutationAlterTableAddForeignKey,
 		qsbridge.MutationCreateView,

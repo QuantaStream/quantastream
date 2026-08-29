@@ -121,7 +121,7 @@ func parseSimpleStatement(sql string) (UnboundStatement, Diagnostic, bool) {
 	if _, ok := consumeKeyword(trimmed, "commit"); ok {
 		return parseSimpleCommit(sql)
 	}
-	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, ALTER TABLE ADD PRIMARY KEY, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW ERRORS, SHOW COUNT, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
+	return UnboundStatement{}, simpleParserDiagnostic("only SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, ALTER TABLE ADD COLUMN, ALTER TABLE ADD PRIMARY KEY, ALTER TABLE ADD FOREIGN KEY, SHOW CREATE VIEW, SHOW CREATE TABLE, SHOW CREATE DATABASE, SHOW DATABASES, SHOW TABLE STATUS, SHOW TABLES, SHOW FULL TABLES, SHOW VARIABLES, SHOW STATUS, SHOW WARNINGS, SHOW ERRORS, SHOW COUNT, SHOW CHARACTER SET, SHOW COLLATION, SHOW INDEX, SHOW COLUMNS, SHOW FULL COLUMNS, EXPLAIN, DESCRIBE, USE, SET, BEGIN, START TRANSACTION, ROLLBACK, and COMMIT statements are supported"), false
 }
 
 func parseSimpleSelect(sql string) (UnboundStatement, Diagnostic, bool) {
@@ -1499,9 +1499,13 @@ func parseSimpleCreateTemporaryTableColumnName(part string) (string, string, boo
 }
 
 func parseSimpleCreateTemporaryTableColumnType(rest string) (DataType, EncodingProfile, string, Diagnostic, bool) {
+	return parseSimpleColumnType(rest, "CREATE TEMPORARY TABLE")
+}
+
+func parseSimpleColumnType(rest string, context string) (DataType, EncodingProfile, string, Diagnostic, bool) {
 	rest = strings.TrimSpace(rest)
 	if rest == "" {
-		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic("CREATE TEMPORARY TABLE columns require a type"), false
+		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic(context + " columns require a type"), false
 	}
 	typeToken, afterType := splitSimpleTypeToken(rest)
 	typeName := strings.ToLower(strings.TrimSpace(typeToken))
@@ -1538,7 +1542,7 @@ func parseSimpleCreateTemporaryTableColumnType(rest string) (DataType, EncodingP
 	case "char", "varchar", "text", "tinytext", "mediumtext", "longtext", "enum", "json", "blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary":
 		return DataTypeString, encoding, afterType, Diagnostic{}, true
 	default:
-		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic("CREATE TEMPORARY TABLE unsupported column type: " + typeToken), false
+		return DataTypeUnknown, EncodingProfile{}, "", simpleParserDiagnostic(context + " unsupported column type: " + typeToken), false
 	}
 }
 
@@ -1883,7 +1887,7 @@ func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
 	}
 	tableText, operationText, ok := splitBeforeTopLevelKeyword(alterBody, "add")
 	if !ok || strings.TrimSpace(tableText) == "" || strings.TrimSpace(operationText) == "" {
-		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY"), false
+		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE only supports ADD COLUMN, ADD PRIMARY KEY, or ADD FOREIGN KEY"), false
 	}
 	table, diagnostic, ok := parseSimpleTable(tableText)
 	if !ok {
@@ -1892,7 +1896,7 @@ func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
 	if table.Alias != "" {
 		return UnboundStatement{}, simpleParserDiagnostic("ALTER TABLE aliases are not supported"), false
 	}
-	columns, foreignKey, diagnostic, ok := parseSimpleAlterTableAdd(operationText)
+	add, diagnostic, ok := parseSimpleAlterTableAdd(operationText)
 	if !ok {
 		return UnboundStatement{}, diagnostic, false
 	}
@@ -1901,24 +1905,32 @@ func parseSimpleAlter(sql string) (UnboundStatement, Diagnostic, bool) {
 		Kind: QueryKindAlterTable,
 		Alter: UnboundAlterTable{
 			Table:                table,
-			AddPrimaryKeyColumns: columns,
+			AddColumns:           add.Columns,
+			AddPrimaryKeyColumns: add.PrimaryKeyColumns,
+			AddForeignKey:        add.ForeignKey,
 			Result:               ResultShape{Kind: ResultStatement},
 		},
-	}
-	if foreignKey != nil {
-		statement.Alter.AddForeignKey = foreignKey
 	}
 	return statement, Diagnostic{}, true
 }
 
-func parseSimpleAlterTableAdd(operationText string) ([]string, *UnboundForeignKey, Diagnostic, bool) {
+type simpleAlterTableAddParse struct {
+	Columns           []FieldDefinition
+	PrimaryKeyColumns []string
+	ForeignKey        *UnboundForeignKey
+}
+
+func parseSimpleAlterTableAdd(operationText string) (simpleAlterTableAddParse, Diagnostic, bool) {
 	if columns, diagnostic, found, ok := parseSimpleAlterTableAddPrimaryKey(operationText); found {
-		return columns, nil, diagnostic, ok
+		return simpleAlterTableAddParse{PrimaryKeyColumns: columns}, diagnostic, ok
 	}
 	if foreignKey, diagnostic, found, ok := parseSimpleAlterTableAddForeignKey(operationText); found {
-		return nil, foreignKey, diagnostic, ok
+		return simpleAlterTableAddParse{ForeignKey: foreignKey}, diagnostic, ok
 	}
-	return nil, nil, simpleParserDiagnostic("ALTER TABLE only supports ADD PRIMARY KEY or ADD FOREIGN KEY"), false
+	if columns, diagnostic, found, ok := parseSimpleAlterTableAddColumn(operationText); found {
+		return simpleAlterTableAddParse{Columns: columns}, diagnostic, ok
+	}
+	return simpleAlterTableAddParse{}, simpleParserDiagnostic("ALTER TABLE only supports ADD COLUMN, ADD PRIMARY KEY, or ADD FOREIGN KEY"), false
 }
 
 func parseSimpleAlterTableAddPrimaryKey(operationText string) ([]string, Diagnostic, bool, bool) {
@@ -2022,6 +2034,74 @@ func parseSimpleAlterTableAddForeignKey(operationText string) (*UnboundForeignKe
 		ReferencedTable:   parentTable,
 		ReferencedColumns: parentColumns,
 	}, Diagnostic{}, true, true
+}
+
+func parseSimpleAlterTableAddColumn(operationText string) ([]FieldDefinition, Diagnostic, bool, bool) {
+	remaining := strings.TrimSpace(operationText)
+	if afterColumn, ok := consumeKeyword(remaining, "column"); ok {
+		remaining = afterColumn
+	}
+	if strings.TrimSpace(remaining) == "" {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD COLUMN requires a column definition"), true, false
+	}
+	parts := splitSimpleCommaList(remaining)
+	if len(parts) != 1 {
+		return nil, simpleParserDiagnostic("ALTER TABLE ADD COLUMN currently supports one column at a time"), true, false
+	}
+	column, diagnostic, ok := parseSimpleAlterTableAddColumnDefinition(parts[0])
+	if !ok {
+		return nil, diagnostic, true, false
+	}
+	return []FieldDefinition{column}, Diagnostic{}, true, true
+}
+
+func parseSimpleAlterTableAddColumnDefinition(part string) (FieldDefinition, Diagnostic, bool) {
+	name, rest, ok := parseSimpleCreateTemporaryTableColumnName(part)
+	if !ok {
+		return FieldDefinition{}, simpleParserDiagnostic("ALTER TABLE ADD COLUMN definitions must start with a column name"), false
+	}
+	if name == "" || strings.Contains(name, ".") {
+		return FieldDefinition{}, simpleParserDiagnostic("ALTER TABLE ADD COLUMN names must be simple identifiers"), false
+	}
+	dataType, encoding, rest, diagnostic, ok := parseSimpleColumnType(rest, "ALTER TABLE ADD COLUMN")
+	if !ok {
+		return FieldDefinition{}, diagnostic, false
+	}
+	column := FieldDefinition{
+		Name:     name,
+		Type:     dataType,
+		Nullable: true,
+		Encoding: encoding,
+	}
+	for strings.TrimSpace(rest) != "" {
+		token, remaining, ok := firstSimpleToken(rest)
+		if !ok {
+			break
+		}
+		switch strings.ToLower(token) {
+		case "primary":
+			remaining, ok = consumeKeyword(remaining, "key")
+			if !ok {
+				return FieldDefinition{}, simpleParserDiagnostic("ALTER TABLE ADD COLUMN PRIMARY must be followed by KEY"), false
+			}
+			column.PrimaryKey = true
+			column.Nullable = false
+			rest = remaining
+		case "not":
+			remaining, ok = consumeKeyword(remaining, "null")
+			if !ok {
+				return FieldDefinition{}, simpleParserDiagnostic("ALTER TABLE ADD COLUMN NOT must be followed by NULL"), false
+			}
+			column.Nullable = false
+			rest = remaining
+		case "null":
+			column.Nullable = true
+			rest = remaining
+		default:
+			return FieldDefinition{}, simpleParserDiagnostic("ALTER TABLE ADD COLUMN unsupported column option: " + token), false
+		}
+	}
+	return column, Diagnostic{}, true
 }
 
 func parseSimpleAlterColumnList(columnText string, context string) ([]string, Diagnostic, bool) {

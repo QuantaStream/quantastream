@@ -19,6 +19,35 @@ import (
 const alterTableAddPrimaryKeyCatalogOnlyEnv = "QUANTASTREAM_SCHEMA_MUTATION_ADD_PRIMARY_KEY_CATALOG_ONLY"
 const alterTableAddPrimaryKeyDuplicateScanBatchSize = 10000
 
+func validateCreateTableSchemaDefinition(table *shared.BasicTable) error {
+	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+		return err
+	}
+	for i := range table.Attributes {
+		attribute := &table.Attributes[i]
+		if strings.EqualFold(strings.TrimSpace(attribute.MappingStrategy), "ChildRelation") {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(attribute.MappingStrategy), "Custom") ||
+			strings.EqualFold(strings.TrimSpace(attribute.MappingStrategy), "CustomBSI") {
+			if attribute.MapperConfig == nil {
+				return fmt.Errorf("custom plugin configuration missing for field %s", attribute.FieldName)
+			}
+			if strings.TrimSpace(attribute.MapperConfig["name"]) == "" {
+				return fmt.Errorf("custom plugin name not specified for field %s", attribute.FieldName)
+			}
+			if strings.TrimSpace(attribute.MapperConfig["plugin"]) == "" {
+				return fmt.Errorf("custom plugin SO name not specified for field %s", attribute.FieldName)
+			}
+			continue
+		}
+		if _, err := core.ResolveMapper(&core.Attribute{BasicAttribute: attribute}); err != nil {
+			return fmt.Errorf("invalid mappingStrategy %q for field %s: %w", attribute.MappingStrategy, attribute.FieldName, err)
+		}
+	}
+	return nil
+}
+
 // NewLegacySchemaMutationHandle creates a short-lived handle for schema mutations
 // that must read YAML before the target table is active in the runtime catalog.
 func NewLegacySchemaMutationHandle(quantaSource *source.QuantaSource, tableName, schemaDir string) (LegacyQuantaSessionHandle, error) {
@@ -111,6 +140,28 @@ func (h LegacyQuantaSessionHandle) AlterTableAddPrimaryKey(ctx context.Context, 
 		return h.alterConsulCatalogTableAddPrimaryKey(ctx, consul, schemaName, tableName, request.Mutation)
 	}
 	return h.alterFileCatalogTableAddPrimaryKey(ctx, schemaName, tableName, request.Mutation)
+}
+
+// AlterTableAddColumn appends nullable column metadata to an active table and
+// redeploys the table catalog. Existing rows read the new column as NULL until
+// future writes populate values.
+func (h LegacyQuantaSessionHandle) AlterTableAddColumn(ctx context.Context, request ExecutionRequest) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if request.Mutation.Kind != qsbridge.MutationAlterTableAddColumn {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "alter table add column called for non-ALTER mutation"),
+		}, nil
+	}
+	tableName, schemaName, diagnostics := h.schemaMutationTarget(request, "alter table add column")
+	if diagnostics.BlocksNative() {
+		return qsbridge.StatementResult{}, diagnostics, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if consul := h.schemaMutationConsul(); consul != nil {
+		return h.alterConsulCatalogTableAddColumn(ctx, consul, schemaName, tableName, request.Mutation)
+	}
+	return h.alterFileCatalogTableAddColumn(ctx, schemaName, tableName, request.Mutation)
 }
 
 func alterTableAddPrimaryKeyCatalogOnlyEnabled() bool {
@@ -251,6 +302,110 @@ func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddPrimaryKey(ctx cont
 	h.invalidateSchemaMutationTable(tableName)
 	_ = schemaName
 	return qsbridge.StatementResult{Status: alterTableAddPrimaryKeyCatalogOnlyStatus(tableName, validation.RowCount, validation.RowCountKnown)}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) alterFileCatalogTableAddColumn(ctx context.Context, schemaName, tableName string, mutation qsbridge.MutationShape) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
+		}, nil
+	}
+	configDir := strings.TrimSpace(h.Session.BasePath)
+	if configDir == "" {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN requires a file-backed schema directory"),
+		}, nil
+	}
+	active, err := shared.CatalogTableActive(configDir, schemaName, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if !active {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s doesn't exist", tableName)
+	}
+	table, err := shared.LoadSchema(configDir, tableName, nil)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("load table schema %s: %w", tableName, err)
+	}
+	if diagnostics, err := applyAlterTableAddColumnCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
+		return qsbridge.StatementResult{}, diagnostics, err
+	}
+	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := saveCreateTableAsSelectSchema(configDir, table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.ActivateCatalogTable(configDir, schemaName, tableName, time.Now().UTC()); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := h.Session.BitIndex.TableOperation(tableName, "deploy"); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	h.invalidateSchemaMutationTable(tableName)
+	return qsbridge.StatementResult{Status: fmt.Sprintf("Column %s added to table %s", mutation.Columns[0].Name, tableName)}, nil, nil
+}
+
+func (h LegacyQuantaSessionHandle) alterConsulCatalogTableAddColumn(ctx context.Context, consul *api.Client, schemaName, tableName string, mutation qsbridge.MutationShape) (qsbridge.StatementResult, qsbridge.DiagnosticSet, error) {
+	if h.Session == nil || h.Session.BitIndex == nil {
+		return qsbridge.StatementResult{}, qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "schema mutation session is not initialized"),
+		}, nil
+	}
+	exists, err := shared.TableExists(consul, tableName)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if !exists {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("table %s doesn't exist", tableName)
+	}
+	table, err := shared.LoadSchema("", tableName, consul)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("load active schema from consul: %w", err)
+	}
+	if diagnostics, err := applyAlterTableAddColumnCatalogMutation(table, mutation); diagnostics.BlocksNative() || err != nil {
+		return qsbridge.StatementResult{}, diagnostics, err
+	}
+	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	lock, err := shared.Lock(consul, "admin-tool", "query-engine")
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	defer shared.Unlock(consul, lock)
+	if err := ctx.Err(); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.DeleteTable(consul, tableName); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.UpdateModTimeForTable(consul, tableName); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if err := shared.MarshalConsul(table, consul); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	deployed, err := shared.LoadSchema("", tableName, consul)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("verify active schema from consul: %w", err)
+	}
+	ok, warnings, err := deployed.Compare(table)
+	if err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	if !ok {
+		return qsbridge.StatementResult{}, nil, fmt.Errorf("active schema verification failed for %s: %s", tableName, strings.Join(warnings, "; "))
+	}
+	if err := h.Session.BitIndex.TableOperation(tableName, "deploy"); err != nil {
+		return qsbridge.StatementResult{}, nil, err
+	}
+	h.invalidateSchemaMutationTable(tableName)
+	_ = schemaName
+	return qsbridge.StatementResult{Status: fmt.Sprintf("Column %s added to table %s", mutation.Columns[0].Name, tableName)}, nil, nil
 }
 
 type alterTableAddPrimaryKeyValidationResult struct {
@@ -776,6 +931,44 @@ func (h LegacyQuantaSessionHandle) alterTableAddPrimaryKeyCatalogOnlyTableActive
 	return active, nil, err
 }
 
+func applyAlterTableAddColumnCatalogMutation(table *shared.BasicTable, mutation qsbridge.MutationShape) (qsbridge.DiagnosticSet, error) {
+	if table == nil {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN table schema is nil"),
+		}, nil
+	}
+	if len(mutation.Columns) != 1 {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticParserBoundary, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN currently supports one column at a time"),
+		}, nil
+	}
+	column := mutation.Columns[0]
+	name := strings.TrimSpace(column.Name)
+	if name == "" {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticInternalInvariant, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN resolved column name is empty"),
+		}, nil
+	}
+	if column.PrimaryKey {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN does not add primary-key metadata"),
+		}, nil
+	}
+	if !column.Nullable {
+		return qsbridge.DiagnosticSet{
+			qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedMutation, qsbridge.PhaseExecute, "ALTER TABLE ADD COLUMN on existing QS data supports nullable columns only; NOT NULL/default backfill is future work"),
+		}, nil
+	}
+	if schemaMutationAttributeIndex(table, name) >= 0 {
+		return nil, fmt.Errorf("duplicate column name '%s'", name)
+	}
+	attr := createTableAsSelectAttribute(column, len(table.Attributes)+1)
+	attr.Required = false
+	attr.ColumnID = false
+	table.Attributes = append(table.Attributes, attr)
+	return nil, nil
+}
+
 func applyAlterTableAddPrimaryKeyCatalogMutation(table *shared.BasicTable, mutation qsbridge.MutationShape) (qsbridge.DiagnosticSet, error) {
 	if table == nil {
 		return qsbridge.DiagnosticSet{
@@ -980,7 +1173,7 @@ func (h LegacyQuantaSessionHandle) createFileCatalogTable(ctx context.Context, s
 	if !strings.EqualFold(table.Name, tableName) {
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("schema tableName %q does not match CREATE TABLE target %q", table.Name, tableName)
 	}
-	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+	if err := validateCreateTableSchemaDefinition(table); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	ok, err := shared.CheckParentRelationInCatalog(configDir, schemaName, table)
@@ -1167,7 +1360,7 @@ func (h LegacyQuantaSessionHandle) createConsulCatalogTable(ctx context.Context,
 	if !strings.EqualFold(table.Name, tableName) {
 		return qsbridge.StatementResult{}, nil, fmt.Errorf("schema tableName %q does not match CREATE TABLE target %q", table.Name, tableName)
 	}
-	if err := shared.ValidateCatalogTableDefinition(table); err != nil {
+	if err := validateCreateTableSchemaDefinition(table); err != nil {
 		return qsbridge.StatementResult{}, nil, err
 	}
 	exists, err := shared.TableExists(consul, tableName)

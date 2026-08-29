@@ -205,6 +205,24 @@ use a catalog/YAML descriptor with `CREATE TABLE table_name` to activate a
 first-class configured table. Inline MySQL `CREATE TABLE (...)` definitions are
 not the production schema path.
 
+## Schema DDL
+
+QuantaStream supports descriptor-backed schema activation and focused online
+schema changes:
+
+- `CREATE TABLE table_name` activates a catalog/YAML descriptor for a
+  first-class configured table.
+- `ALTER TABLE table_name ADD COLUMN column_name type` appends a nullable
+  column to an active table, including tables that already contain data.
+  Existing rows read the new column as `NULL`; future writes may populate it.
+- `ALTER TABLE table_name ADD PRIMARY KEY (...)` is covered for the guarded
+  metadata path where validation can prove the table is empty or otherwise safe
+  to promote.
+
+Mapper-specific schema design remains descriptor-driven. Broad MySQL DDL
+grammar, default backfills, column drops, relationship changes, and partitioning
+changes are tracked in [`UNSUPPORTED_SQL.md`](UNSUPPORTED_SQL.md).
+
 ## QuantaStream Custom SQL
 
 ### `timediff(end_time, start_time, unit)`

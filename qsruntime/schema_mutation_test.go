@@ -899,6 +899,66 @@ func TestApplyAlterTableAddPrimaryKeyCatalogMutationAddsCompoundAuthority(t *tes
 	}
 }
 
+func TestApplyAlterTableAddColumnCatalogMutationAppendsNullableColumn(t *testing.T) {
+	table := &shared.BasicTable{
+		Name:       "scratch_orders",
+		PrimaryKey: "id",
+		Attributes: []shared.BasicAttribute{
+			{FieldName: "id", SourceName: "/id", Type: "Integer", MappingStrategy: "IntBSI", Required: true, ColumnID: true, SourceOrdinal: 1},
+		},
+	}
+
+	diagnostics, err := applyAlterTableAddColumnCatalogMutation(table, qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "note", Type: qsbridge.DataTypeString, Nullable: true, Encoding: qsbridge.EncodingProfile{MaxLength: 40}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("applyAlterTableAddColumnCatalogMutation() error = %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("applyAlterTableAddColumnCatalogMutation() diagnostics = %#v", diagnostics)
+	}
+	if len(table.Attributes) != 2 {
+		t.Fatalf("attributes = %#v, want appended note", table.Attributes)
+	}
+	note := table.Attributes[1]
+	if note.FieldName != "note" || note.SourceName != "note" || note.Type != "String" || note.MappingStrategy != "StringEnum" || note.Size != 40 || note.Required || note.ColumnID || note.SourceOrdinal != 2 {
+		t.Fatalf("note attribute = %#v, want nullable StringEnum maxLen 40", note)
+	}
+}
+
+func TestApplyAlterTableAddColumnCatalogMutationRejectsBackfillShapes(t *testing.T) {
+	table := &shared.BasicTable{
+		Name:       "scratch_orders",
+		PrimaryKey: "id",
+		Attributes: []shared.BasicAttribute{
+			{FieldName: "id", SourceName: "/id", Type: "Integer", MappingStrategy: "IntBSI", Required: true, ColumnID: true, SourceOrdinal: 1},
+		},
+	}
+
+	diagnostics, err := applyAlterTableAddColumnCatalogMutation(table, qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "note", Type: qsbridge.DataTypeString, Nullable: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("applyAlterTableAddColumnCatalogMutation() error = %v", err)
+	}
+	if !diagnostics.BlocksNative() || diagnostics[0].Code != qsbridge.DiagnosticUnsupportedMutation {
+		t.Fatalf("diagnostics = %#v, want unsupported NOT NULL/backfill blocker", diagnostics)
+	}
+
+	diagnostics, err = applyAlterTableAddColumnCatalogMutation(table, qsbridge.MutationShape{
+		Columns: []qsbridge.FieldRef{
+			{Name: "id", Type: qsbridge.DataTypeInt, Nullable: true},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate column name") {
+		t.Fatalf("duplicate apply error = %v, diagnostics = %#v; want duplicate column error", err, diagnostics)
+	}
+}
+
 func TestLegacySchemaMutationHandleAlterTableAddForeignKeyReportsExplicitUnsupported(t *testing.T) {
 	handle := LegacyQuantaSessionHandle{
 		TableName: "orders",

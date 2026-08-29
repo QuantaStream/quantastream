@@ -343,9 +343,9 @@ func TestSimpleParserBridgeRejectsAlterTableBoundary(t *testing.T) {
 		message string
 	}{
 		{
-			name:    "add column",
-			sql:     "alter table customers_qa add column nickname varchar(40)",
-			message: "ALTER TABLE only supports ADD PRIMARY KEY or ADD FOREIGN KEY",
+			name:    "drop column",
+			sql:     "alter table customers_qa drop column nickname",
+			message: "ALTER TABLE only supports ADD COLUMN, ADD PRIMARY KEY, or ADD FOREIGN KEY",
 		},
 	}
 	for _, test := range tests {
@@ -543,6 +543,25 @@ func TestSimpleParserBridgeParsesAlterTableAddPrimaryKeyStatement(t *testing.T) 
 	}
 }
 
+func TestSimpleParserBridgeParsesAlterTableAddColumnStatement(t *testing.T) {
+	statement, diagnostics := SimpleParserBridge{}.Parse("alter table scratch_orders add column note varchar(40);")
+	if diagnostics.BlocksNative() {
+		t.Fatalf("parse diagnostics: %#v", diagnostics)
+	}
+	if statement.Kind != QueryKindAlterTable {
+		t.Fatalf("kind = %q, want alter table", statement.Kind)
+	}
+	if statement.Alter.Table.Name != "scratch_orders" {
+		t.Fatalf("table = %#v, want scratch_orders", statement.Alter.Table)
+	}
+	if got := statement.Alter.AddColumns; len(got) != 1 || got[0].Name != "note" || got[0].Type != DataTypeString || got[0].Encoding.MaxLength != 40 || !got[0].Nullable {
+		t.Fatalf("add columns = %#v, want nullable varchar(40) note", got)
+	}
+	if statement.Alter.Result.Kind != ResultStatement {
+		t.Fatalf("result kind = %q, want statement", statement.Alter.Result.Kind)
+	}
+}
+
 func TestSimpleParserBridgeParsesAlterTableAddForeignKeyStatement(t *testing.T) {
 	statement, diagnostics := SimpleParserBridge{}.Parse("alter table orders add constraint fk_orders_customer foreign key (o_custkey) references customer(c_custkey);")
 	if diagnostics.BlocksNative() {
@@ -579,6 +598,13 @@ func TestSimpleParserBridgeRejectsAlterTableAddForeignKeyOptions(t *testing.T) {
 	assertSimpleParserRejects(t,
 		"alter table lineitem add constraint fk_lineitem_orders_reverse foreign key (l_orderkey) references orders(o_orderkey) with reverse artifact",
 		"ALTER TABLE ADD FOREIGN KEY options are not supported yet",
+	)
+}
+
+func TestSimpleParserBridgeRejectsAlterTableAddColumnOptions(t *testing.T) {
+	assertSimpleParserRejects(t,
+		"alter table scratch_orders add column note varchar(40) default 'new'",
+		"ALTER TABLE ADD COLUMN unsupported column option: default",
 	)
 }
 

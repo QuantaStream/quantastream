@@ -251,6 +251,7 @@ type UnboundDropTable struct {
 // UnboundAlterTable describes an ALTER TABLE operation before binding.
 type UnboundAlterTable struct {
 	Table                UnboundTable
+	AddColumns           []FieldDefinition
 	AddPrimaryKeyColumns []string
 	AddForeignKey        *UnboundForeignKey
 	Result               ResultShape
@@ -1066,6 +1067,9 @@ func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR,
 	if diagnostics.BlocksNative() {
 		return query, diagnostics
 	}
+	if len(alterStmt.AddColumns) > 0 {
+		return bindAlterTableAddColumn(context, query, target, alterStmt.AddColumns, diagnostics)
+	}
 	if alterStmt.AddForeignKey != nil {
 		return bindAlterTableAddForeignKey(context, query, target, *alterStmt.AddForeignKey, diagnostics)
 	}
@@ -1104,6 +1108,42 @@ func BindAlterTable(context *BindContext, alterStmt UnboundAlterTable) (QueryIR,
 		Target:          target.Instance,
 		Columns:         columns,
 		ValidationSteps: alterTableAddPrimaryKeyValidationSteps(target.Instance, columns),
+	}
+	return query, diagnostics
+}
+
+func bindAlterTableAddColumn(_ *BindContext, query QueryIR, target BoundTable, columns []FieldDefinition, diagnostics DiagnosticSet) (QueryIR, DiagnosticSet) {
+	if len(columns) != 1 {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD COLUMN currently supports one column at a time"))
+		return query, diagnostics
+	}
+	column := columns[0]
+	column.Name = strings.TrimSpace(column.Name)
+	if column.Name == "" || strings.Contains(column.Name, ".") {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD COLUMN name must be a simple identifier"))
+		return query, diagnostics
+	}
+	if column.Type == DataTypeUnknown {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "ALTER TABLE ADD COLUMN requires a supported column type"))
+		return query, diagnostics
+	}
+	if column.PrimaryKey {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticUnsupportedMutation, PhaseBind, "ALTER TABLE ADD COLUMN does not add primary-key metadata; add the column first, then use ALTER TABLE ADD PRIMARY KEY when the table is empty or validation is available"))
+		return query, diagnostics
+	}
+	if !column.Nullable {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticUnsupportedMutation, PhaseBind, "ALTER TABLE ADD COLUMN on existing QS data supports nullable columns only; NOT NULL/default backfill is future work"))
+		return query, diagnostics
+	}
+	if _, exists := target.Definition.Field(column.Name); exists {
+		diagnostics = append(diagnostics, ErrorDiagnostic(DiagnosticParserBoundary, PhaseBind, "Duplicate column name '"+column.Name+"'"))
+		return query, diagnostics
+	}
+	ref := column.Ref(target.Instance, FieldRoleMutationTarget)
+	query.Mutation = MutationShape{
+		Kind:    MutationAlterTableAddColumn,
+		Target:  target.Instance,
+		Columns: []FieldRef{ref},
 	}
 	return query, diagnostics
 }

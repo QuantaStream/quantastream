@@ -307,10 +307,33 @@ func ValidateCatalogTableDefinition(table *BasicTable) error {
 	if table == nil {
 		return fmt.Errorf("table must not be nil")
 	}
+	if strings.TrimSpace(table.Name) == "" {
+		return fmt.Errorf("tableName must be specified")
+	}
+	if len(table.Attributes) == 0 {
+		return fmt.Errorf("table %s must define at least one attribute", table.Name)
+	}
 	for i := 0; i < len(table.Attributes); i++ {
-		typ := TypeFromString(table.Attributes[i].Type)
-		if typ == NotDefined && table.Attributes[i].MappingStrategy != "ChildRelation" {
-			return fmt.Errorf("unknown type %s for field %s", table.Attributes[i].Type, table.Attributes[i].FieldName)
+		attribute := table.Attributes[i]
+		mappingStrategy := strings.TrimSpace(attribute.MappingStrategy)
+		if mappingStrategy == "" {
+			return fmt.Errorf("mappingStrategy must be specified for attribute %d in table %s", i+1, table.Name)
+		}
+		if mappingStrategy == "ChildRelation" {
+			if strings.TrimSpace(attribute.ChildTable) == "" {
+				return fmt.Errorf("childTable must be specified for ChildRelation attribute %d in table %s", i+1, table.Name)
+			}
+			continue
+		}
+		if strings.TrimSpace(attribute.FieldName) == "" {
+			return fmt.Errorf("fieldName must be specified for attribute %d in table %s", i+1, table.Name)
+		}
+		typ := TypeFromString(attribute.Type)
+		if typ == NotDefined {
+			return fmt.Errorf("unknown type %s for field %s", attribute.Type, attribute.FieldName)
+		}
+		if mappingStrategy == "ParentRelation" && strings.TrimSpace(attribute.ForeignKey) == "" {
+			return fmt.Errorf("foreignKey must be specified for ParentRelation field %s", attribute.FieldName)
 		}
 	}
 	return nil
