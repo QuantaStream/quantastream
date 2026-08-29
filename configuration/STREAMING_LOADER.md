@@ -85,10 +85,48 @@ Use `GET /stats` to inspect live ingest pressure and timing summaries:
 curl -s http://127.0.0.1:8088/stats | jq .
 ```
 
-The stats response includes router queue depth, open router sessions,
-per-table PutRow counters, flush counters, drain counters, derived rates, and
-coarse Go runtime memory/goroutine counters. It also reports whether
-commit-on-close is enabled for the running loader.
+The stats response includes a `pipeline` block with the lifecycle counters most
+useful during a bulk load:
+
+| Field | Meaning |
+| --- | --- |
+| `accepted` | Records accepted by the HTTP adapter and enqueued for router workers. |
+| `failed` | Records rejected before enqueue. |
+| `processed` | Records that completed the worker-owned `PutRow` path. |
+| `flushed` | Worker-owned session buffers flushed to the engine. |
+| `committed` | Explicit loader commit requests that completed successfully. |
+| `pending_queued` | Records and control messages still queued in router worker channels. |
+| `open_sessions` | Router-owned engine sessions currently open. |
+
+The full response also includes router queue depth by worker, per-table PutRow
+counters, flush counters, drain counters, derived rates, coarse Go runtime
+memory/goroutine counters, and whether commit-on-close is enabled for the
+running loader.
+
+## Flush And Commit
+
+`POST /ingest/json` reports that records were accepted into the loader. Accepted
+records are not guaranteed to be flushed or committed yet. Router workers own
+their sessions, so explicit flush requests are routed through the same worker
+queues and run after any accepted records already ahead of the flush marker.
+
+Use `POST /flush` to push accepted records through worker-owned buffers without
+stopping the loader:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8088/flush | jq .
+```
+
+Use `POST /commit` to flush first and then ask the backend to persist the
+current storage savepoint:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8088/commit | jq .
+```
+
+`-commit-on-close=true` still commits during orderly loader shutdown. The
+explicit `/commit` endpoint is the preferred boundary for long-running loaders
+that need a durable checkpoint while the process keeps accepting traffic.
 
 When `-pprof-bind` is enabled, capture profiles while a producer run is active:
 

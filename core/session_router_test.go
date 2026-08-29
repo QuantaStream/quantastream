@@ -153,6 +153,51 @@ func TestSessionRouterCommitOnCloseReturnsCommitError(t *testing.T) {
 	require.Equal(t, 1, local.commitCalls)
 }
 
+func TestSessionRouterFlushVisitsAllWorkers(t *testing.T) {
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{},
+		ShardCount:    2,
+		ChannelSize:   1,
+		FlushInterval: time.Hour,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, router.Close()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := router.Flush(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.ShardCount)
+	require.Zero(t, result.SessionCount)
+	require.Zero(t, result.FlushCount)
+	require.Zero(t, result.ErrorCount)
+	require.GreaterOrEqual(t, result.Elapsed, time.Duration(0))
+}
+
+func TestSessionRouterExplicitCommitCanRunMultipleTimes(t *testing.T) {
+	local := &recordingRouterCommitBitmapService{}
+	router, err := NewSessionRouter(SessionRouterConfig{
+		TableCache:    NewTableCacheStruct(),
+		Conn:          &shared.Conn{LocalNodeServices: shared.LocalNodeServices{BitmapIndex: local}},
+		ShardCount:    1,
+		ChannelSize:   1,
+		FlushInterval: time.Hour,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, router.Close()) }()
+
+	first, err := router.Commit(context.Background())
+	require.NoError(t, err)
+	second, err := router.Commit(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 1, first.CommitCount)
+	require.Equal(t, 1, second.CommitCount)
+	require.Equal(t, 2, local.commitCalls)
+}
+
 func TestSessionRouterDoesNotPublishStaleFlushProfile(t *testing.T) {
 	called := false
 	router := &SessionRouter{
@@ -221,13 +266,13 @@ func TestSessionRouterSnapshotReportsQueueAndSessions(t *testing.T) {
 			ChannelSize:    3,
 			PrimaryKeyMode: PrimaryKeyModeVerifyExisting,
 		},
-		shardChannels: map[string]chan IngestRecord{
-			"shard0": make(chan IngestRecord, 3),
-			"shard1": make(chan IngestRecord, 3),
+		shardChannels: map[string]chan sessionRouterMessage{
+			"shard0": make(chan sessionRouterMessage, 3),
+			"shard1": make(chan sessionRouterMessage, 3),
 		},
 	}
-	router.shardChannels["shard0"] <- IngestRecord{TableName: "orders"}
-	router.shardChannels["shard0"] <- IngestRecord{TableName: "lineitem"}
+	router.shardChannels["shard0"] <- sessionRouterMessage{record: IngestRecord{TableName: "orders"}}
+	router.shardChannels["shard0"] <- sessionRouterMessage{record: IngestRecord{TableName: "lineitem"}}
 	router.sessionCache.Store("shard0+orders", &Session{})
 
 	stats := router.Snapshot()
@@ -254,10 +299,10 @@ func TestIngestRecordRouteShardKeyPrefersBuildShardKey(t *testing.T) {
 func TestSessionRouterEnqueueRoutesByBuildShardKey(t *testing.T) {
 	router := &SessionRouter{
 		hashTable: rendezvous.New([]string{"shard0", "shard1", "shard2"}),
-		shardChannels: map[string]chan IngestRecord{
-			"shard0": make(chan IngestRecord, 1),
-			"shard1": make(chan IngestRecord, 1),
-			"shard2": make(chan IngestRecord, 1),
+		shardChannels: map[string]chan sessionRouterMessage{
+			"shard0": make(chan sessionRouterMessage, 1),
+			"shard1": make(chan sessionRouterMessage, 1),
+			"shard2": make(chan sessionRouterMessage, 1),
 		},
 	}
 	record := IngestRecord{
@@ -271,8 +316,8 @@ func TestSessionRouterEnqueueRoutesByBuildShardKey(t *testing.T) {
 
 	select {
 	case got := <-router.shardChannels[wantShard]:
-		require.Equal(t, record.ShardKey, got.ShardKey)
-		require.Equal(t, record.BuildShardKey, got.BuildShardKey)
+		require.Equal(t, record.ShardKey, got.record.ShardKey)
+		require.Equal(t, record.BuildShardKey, got.record.BuildShardKey)
 	default:
 		t.Fatalf("record was not routed to build shard %s", wantShard)
 	}

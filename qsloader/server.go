@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantaStream/quantastream/core"
@@ -47,6 +48,9 @@ type Server struct {
 	putProfile   *core.RouterPutRowProfile
 	flushProfile *core.RouterFlushProfile
 	drainProfile *core.RouterDrainProfile
+	accepted     atomic.Int64
+	failed       atomic.Int64
+	committed    atomic.Int64
 	startedAt    time.Time
 	logger       *log.Logger
 }
@@ -74,6 +78,7 @@ type StatsResponse struct {
 	StartedAt time.Time                       `json:"started_at"`
 	Uptime    time.Duration                   `json:"uptime_nanos"`
 	Config    StatsConfig                     `json:"config"`
+	Pipeline  StatsPipeline                   `json:"pipeline"`
 	Tables    []string                        `json:"tables"`
 	Rates     StatsRates                      `json:"rates"`
 	Router    core.SessionRouterStats         `json:"router"`
@@ -94,6 +99,18 @@ type StatsConfig struct {
 	FlushInterval        time.Duration               `json:"flush_interval_nanos"`
 	CommitOnClose        bool                        `json:"commit_on_close"`
 	PhysicalBuildRouting bool                        `json:"physical_build_routing"`
+}
+
+// StatsPipeline highlights the loader lifecycle counters that operators care
+// about during bulk loads.
+type StatsPipeline struct {
+	Accepted      int64 `json:"accepted"`
+	Failed        int64 `json:"failed"`
+	Processed     int   `json:"processed"`
+	Flushed       int   `json:"flushed"`
+	Committed     int64 `json:"committed"`
+	PendingQueued int   `json:"pending_queued"`
+	OpenSessions  int   `json:"open_sessions"`
 }
 
 // StatsRates gives quick live throughput signals derived from profile counters.
@@ -261,6 +278,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/stats", s.handleStats)
+	mux.HandleFunc("/flush", s.handleFlush)
+	mux.HandleFunc("/commit", s.handleCommit)
 	mux.HandleFunc("/ingest/json", s.handleJSONIngest)
 	return mux
 }
@@ -303,6 +322,68 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Stats())
 }
 
+func (s *Server) handleFlush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	flush, err := s.Flush(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"flush":  flush,
+		"stats":  s.Stats(),
+	})
+}
+
+func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	flush, commit, err := s.Commit(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"flush":  flush,
+		"commit": commit,
+		"stats":  s.Stats(),
+	})
+}
+
+// Flush drains accepted records through router-owned sessions and flushes their
+// current buffers without closing the loader.
+func (s *Server) Flush(ctx context.Context) (core.RouterFlushResult, error) {
+	if s == nil || s.router == nil {
+		return core.RouterFlushResult{}, fmt.Errorf("loader router is not available")
+	}
+	return s.router.Flush(ctx)
+}
+
+// Commit flushes accepted records and then asks the backend to persist a
+// savepoint.
+func (s *Server) Commit(ctx context.Context) (core.RouterFlushResult, core.RouterCommitResult, error) {
+	flush, err := s.Flush(ctx)
+	if err != nil {
+		return flush, core.RouterCommitResult{}, err
+	}
+	if s == nil || s.router == nil {
+		return flush, core.RouterCommitResult{}, fmt.Errorf("loader router is not available")
+	}
+	commit, err := s.router.Commit(ctx)
+	if err != nil {
+		return flush, commit, err
+	}
+	s.committed.Add(int64(commit.CommitCount))
+	return flush, commit, nil
+}
+
 // Stats returns the current loader instrumentation snapshot.
 func (s *Server) Stats() StatsResponse {
 	now := time.Now().UTC()
@@ -313,6 +394,7 @@ func (s *Server) Stats() StatsResponse {
 	uptime := now.Sub(startedAt)
 	putRow := s.putProfile.Snapshot()
 	flush := s.flushProfile.Snapshot()
+	router := s.router.Snapshot()
 	return StatsResponse{
 		Status:    "ok",
 		StartedAt: startedAt,
@@ -328,9 +410,18 @@ func (s *Server) Stats() StatsResponse {
 			CommitOnClose:        s.config.CommitOnClose,
 			PhysicalBuildRouting: s.config.PhysicalBuildRouting,
 		},
+		Pipeline: StatsPipeline{
+			Accepted:      s.accepted.Load(),
+			Failed:        s.failed.Load(),
+			Processed:     putRow.RecordCount,
+			Flushed:       flush.FlushCount,
+			Committed:     s.committed.Load(),
+			PendingQueued: router.TotalQueued,
+			OpenSessions:  router.OpenSessionCount,
+		},
 		Tables:  s.tableNames(),
 		Rates:   loaderStatsRates(putRow, flush, uptime),
-		Router:  s.router.Snapshot(),
+		Router:  router,
 		PutRow:  putRow,
 		Flush:   flush,
 		Drain:   s.drainProfile.Snapshot(),
@@ -361,6 +452,14 @@ func (s *Server) handleJSONIngest(w http.ResponseWriter, r *http.Request) {
 // Route sends decoded requests through selector routing and into SessionRouter.
 func (s *Server) Route(requests []EnvelopeRequest) IngestResponse {
 	response := IngestResponse{Routes: make([]IngestRouteReply, 0, len(requests))}
+	defer func() {
+		if response.Accepted > 0 {
+			s.accepted.Add(int64(response.Accepted))
+		}
+		if response.Failed > 0 {
+			s.failed.Add(int64(response.Failed))
+		}
+	}()
 	for _, request := range requests {
 		options := request.RouteOptions
 		options.Tables = s.tables

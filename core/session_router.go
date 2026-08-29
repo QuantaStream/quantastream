@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -55,12 +56,50 @@ type SessionPrimaryKeyResolverFactory func(*Session) PrimaryKeyResolver
 type SessionRouter struct {
 	cfg           SessionRouterConfig
 	hashTable     *rendezvous.Table
-	shardChannels map[string]chan IngestRecord
+	shardChannels map[string]chan sessionRouterMessage
 	sessionCache  sync.Map
 	eg            errgroup.Group
 	closeOnce     sync.Once
 	commitOnce    sync.Once
 	commitErr     error
+}
+
+type sessionRouterMessage struct {
+	record  IngestRecord
+	command *sessionRouterCommand
+}
+
+type sessionRouterCommandKind string
+
+const (
+	sessionRouterCommandFlush sessionRouterCommandKind = "flush"
+)
+
+type sessionRouterCommand struct {
+	kind  sessionRouterCommandKind
+	reply chan sessionRouterCommandResult
+}
+
+type sessionRouterCommandResult struct {
+	shardID      string
+	sessionCount int
+	flushCount   int
+	err          error
+}
+
+// RouterFlushResult summarizes an explicit router flush operation.
+type RouterFlushResult struct {
+	ShardCount   int           `json:"shard_count"`
+	SessionCount int           `json:"session_count"`
+	FlushCount   int           `json:"flush_count"`
+	ErrorCount   int           `json:"error_count"`
+	Elapsed      time.Duration `json:"elapsed_nanos"`
+}
+
+// RouterCommitResult summarizes an explicit backend commit operation.
+type RouterCommitResult struct {
+	CommitCount int           `json:"commit_count"`
+	Elapsed     time.Duration `json:"elapsed_nanos"`
 }
 
 // SessionRouterStats is a point-in-time view of router queue/session pressure.
@@ -101,13 +140,13 @@ func NewSessionRouter(cfg SessionRouterConfig) (*SessionRouter, error) {
 
 	router := &SessionRouter{
 		cfg:           cfg,
-		shardChannels: make(map[string]chan IngestRecord),
+		shardChannels: make(map[string]chan sessionRouterMessage),
 	}
 	shardIDs := make([]string, cfg.ShardCount)
 	for i := 0; i < cfg.ShardCount; i++ {
 		shardID := fmt.Sprintf("shard%v", i)
 		shardIDs[i] = shardID
-		router.shardChannels[shardID] = make(chan IngestRecord, cfg.ChannelSize)
+		router.shardChannels[shardID] = make(chan sessionRouterMessage, cfg.ChannelSize)
 	}
 	router.hashTable = rendezvous.New(shardIDs)
 	for _, shardID := range shardIDs {
@@ -157,8 +196,71 @@ func (r *SessionRouter) Enqueue(record IngestRecord) error {
 	if !ok {
 		return fmt.Errorf("cannot locate channel for route shard key %v", routeKey)
 	}
-	ch <- record
+	ch <- sessionRouterMessage{record: record}
 	return nil
+}
+
+// Flush asks every worker to flush its owned sessions after processing any
+// records already queued ahead of the flush marker.
+func (r *SessionRouter) Flush(ctx context.Context) (RouterFlushResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	startedAt := time.Now()
+	result := RouterFlushResult{ShardCount: len(r.shardChannels)}
+	replies := make([]chan sessionRouterCommandResult, 0, len(r.shardChannels))
+	for _, ch := range r.shardChannels {
+		reply := make(chan sessionRouterCommandResult, 1)
+		message := sessionRouterMessage{command: &sessionRouterCommand{
+			kind:  sessionRouterCommandFlush,
+			reply: reply,
+		}}
+		select {
+		case ch <- message:
+			replies = append(replies, reply)
+		case <-ctx.Done():
+			result.Elapsed = time.Since(startedAt)
+			return result, ctx.Err()
+		}
+	}
+	var firstErr error
+	for _, reply := range replies {
+		select {
+		case shard := <-reply:
+			result.SessionCount += shard.sessionCount
+			result.FlushCount += shard.flushCount
+			if shard.err != nil {
+				result.ErrorCount++
+				if firstErr == nil {
+					firstErr = shard.err
+				}
+			}
+		case <-ctx.Done():
+			result.Elapsed = time.Since(startedAt)
+			return result, ctx.Err()
+		}
+	}
+	result.Elapsed = time.Since(startedAt)
+	return result, firstErr
+}
+
+// Commit asks the backend nodes to persist their current storage state.
+func (r *SessionRouter) Commit(ctx context.Context) (RouterCommitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	startedAt := time.Now()
+	select {
+	case <-ctx.Done():
+		return RouterCommitResult{Elapsed: time.Since(startedAt)}, ctx.Err()
+	default:
+	}
+	err := shared.NewBitmapIndex(r.cfg.Conn).CommitWithContext(ctx)
+	result := RouterCommitResult{Elapsed: time.Since(startedAt)}
+	if err == nil {
+		result.CommitCount = 1
+	}
+	return result, err
 }
 
 // Close drains workers and closes all owned sessions.
@@ -180,14 +282,14 @@ func (r *SessionRouter) Close() error {
 	return nil
 }
 
-func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
+func (r *SessionRouter) startWorker(shardID string, ch <-chan sessionRouterMessage) {
 	r.eg.Go(func() error {
 		var shardTableKeys sync.Map
 		ticker := time.NewTicker(r.cfg.FlushInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case record, open := <-ch:
+			case message, open := <-ch:
 				if !open {
 					drainStartedAt := time.Now()
 					sessionCount, err := r.closeWorkerSessions(&shardTableKeys)
@@ -202,7 +304,11 @@ func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 					r.publishDrainProfile(profile)
 					return err
 				}
-				if err := r.putRecord(shardID, record, &shardTableKeys); err != nil {
+				if message.command != nil {
+					r.handleWorkerCommand(shardID, message.command, &shardTableKeys)
+					continue
+				}
+				if err := r.putRecord(shardID, message.record, &shardTableKeys); err != nil {
 					if r.cfg.OnError != nil {
 						r.cfg.OnError(err)
 					}
@@ -218,6 +324,20 @@ func (r *SessionRouter) startWorker(shardID string, ch <-chan IngestRecord) {
 			}
 		}
 	})
+}
+
+func (r *SessionRouter) handleWorkerCommand(shardID string, command *sessionRouterCommand, shardTableKeys *sync.Map) {
+	if command == nil || command.reply == nil {
+		return
+	}
+	result := sessionRouterCommandResult{shardID: shardID}
+	switch command.kind {
+	case sessionRouterCommandFlush:
+		result.sessionCount, result.flushCount, result.err = r.flushWorkerSessions(shardID, shardTableKeys)
+	default:
+		result.err = fmt.Errorf("unknown session router command %q", command.kind)
+	}
+	command.reply <- result
 }
 
 func (r *SessionRouter) putRecord(shardID string, record IngestRecord, shardTableKeys *sync.Map) error {
@@ -361,6 +481,33 @@ func (r *SessionRouter) flushIdleSessions(shardID string, shardTableKeys *sync.M
 		return true
 	})
 	return firstErr
+}
+
+func (r *SessionRouter) flushWorkerSessions(shardID string, shardTableKeys *sync.Map) (int, int, error) {
+	var firstErr error
+	sessionCount := 0
+	flushCount := 0
+	shardTableKeys.Range(func(k, v interface{}) bool {
+		sessionCount++
+		session := v.(*Session)
+		if session.IsFlushing() {
+			return true
+		}
+		tableName := tableNameFromShardTableKey(fmt.Sprint(k))
+		before := session.LastFlushProfile()
+		if err := session.Flush(); err != nil {
+			r.publishNewFlushProfile(shardID, tableName, before, session.LastFlushProfile())
+			firstErr = err
+			return false
+		}
+		after := session.LastFlushProfile()
+		if batchBufferFlushProfileHasActivity(after) && (before.FinishedAt.IsZero() || after.FinishedAt.After(before.FinishedAt)) {
+			flushCount++
+		}
+		r.publishNewFlushProfile(shardID, tableName, before, after)
+		return true
+	})
+	return sessionCount, flushCount, firstErr
 }
 
 func (r *SessionRouter) flushActiveSession(shardID, tableName string, session *Session) error {

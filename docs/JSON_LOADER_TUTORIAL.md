@@ -113,7 +113,29 @@ curl -fsS http://127.0.0.1:8088/ingest/json \
   }'
 ```
 
-## 5. Read It Back
+The response confirms that the loader accepted the event. Accepted means the
+event made it into the loader pipeline; it may still be waiting in a router
+worker queue or an engine batch buffer.
+
+## 5. Flush And Commit
+
+Flush the loader so accepted records leave worker-owned buffers:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8088/flush | python3 -m json.tool
+```
+
+Commit the current engine savepoint:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8088/commit | python3 -m json.tool
+```
+
+`/commit` flushes first, so it is safe to use by itself when you want a durable
+boundary. The separate `/flush` call is useful when you want to inspect pipeline
+state before committing.
+
+## 6. Read It Back
 
 ```bash
 mysql -h 127.0.0.1 -P 4000 -u qstream -D quanta \
@@ -126,7 +148,11 @@ The loader status endpoint is useful while you experiment:
 curl -fsS http://127.0.0.1:8088/stats | python3 -m json.tool | head -80
 ```
 
-## 6. Stop
+The `pipeline` section separates `accepted`, `processed`, `flushed`,
+`committed`, `pending_queued`, and `open_sessions` so you can tell whether data
+is still moving through the loader or has reached a commit boundary.
+
+## 7. Stop
 
 ```bash
 if [ -f ./runtime/qstream-loader.pid ]; then
