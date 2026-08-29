@@ -353,7 +353,7 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, runtimeResult.Diagnostics...)
 		if err == nil && !result.Diagnostics.BlocksNative() {
-			r.invalidateExecutedTableMutation(prepared.Query)
+			r.invalidateExecutedCatalogMutation(prepared.Query)
 		}
 		return result, err
 	}
@@ -405,16 +405,21 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 	return result, err
 }
 
-func (r SQLRuntime) invalidateExecutedTableMutation(query qsbridge.QueryIR) {
+func (r SQLRuntime) invalidateExecutedCatalogMutation(query qsbridge.QueryIR) {
 	switch query.Mutation.Kind {
 	case qsbridge.MutationCreateTable,
 		qsbridge.MutationDropTable,
 		qsbridge.MutationAlterTableAddColumn,
 		qsbridge.MutationAlterTableAddPrimaryKey,
 		qsbridge.MutationAlterTableAddForeignKey:
-	default:
-		return
+		r.invalidateExecutedTableMutation(query)
+	case qsbridge.MutationCreateView,
+		qsbridge.MutationDropView:
+		r.invalidateExecutedViewMutation(query)
 	}
+}
+
+func (r SQLRuntime) invalidateExecutedTableMutation(query qsbridge.QueryIR) {
 	table := strings.TrimSpace(query.Mutation.Target.Table)
 	if table == "" {
 		return
@@ -428,6 +433,22 @@ func (r SQLRuntime) invalidateExecutedTableMutation(query qsbridge.QueryIR) {
 		DefaultSchema: r.DefaultSchema,
 	}
 	invalidator.InvalidateTable(query.Mutation.Target.Schema, table)
+}
+
+func (r SQLRuntime) invalidateExecutedViewMutation(query qsbridge.QueryIR) {
+	view := strings.TrimSpace(query.Mutation.Target.Table)
+	if view == "" {
+		return
+	}
+	catalog, ok := r.Environment.Catalog.(ViewCatalogInvalidationTarget)
+	if !ok {
+		return
+	}
+	invalidator := RuntimeMetadataInvalidator{
+		CatalogViews:  catalog,
+		DefaultSchema: r.DefaultSchema,
+	}
+	invalidator.InvalidateView(query.Mutation.Target.Schema, view)
 }
 
 func observeSQLRuntimeElapsed(ctx context.Context, name string, start time.Time, detail string) {

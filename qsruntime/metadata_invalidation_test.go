@@ -27,6 +27,39 @@ func TestRuntimeMetadataInvalidatorAppliesMetadataChange(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetadataInvalidatorInvalidatesView(t *testing.T) {
+	catalog := &recordingInvalidatableCatalog{}
+	invalidator := RuntimeMetadataInvalidator{
+		CatalogViews:  catalog,
+		DefaultSchema: "quanta",
+	}
+
+	invalidator.InvalidateView("", "customer_projection")
+
+	if len(catalog.views) != 2 || catalog.views[0] != "quanta.customer_projection" || catalog.views[1] != ".customer_projection" {
+		t.Fatalf("invalidated views = %#v, want schema-qualified and unqualified customer_projection", catalog.views)
+	}
+}
+
+func TestSQLRuntimeInvalidatesViewMetadataAfterViewMutation(t *testing.T) {
+	catalog := &recordingInvalidatableCatalog{}
+	runtime := SQLRuntime{
+		Environment:   RuntimeEnvironment{Catalog: catalog},
+		DefaultSchema: "quanta",
+	}
+
+	runtime.invalidateExecutedCatalogMutation(qsbridge.QueryIR{
+		Mutation: qsbridge.MutationShape{
+			Kind:   qsbridge.MutationCreateView,
+			Target: qsbridge.TableInstance{Schema: "quanta", Table: "customer_projection"},
+		},
+	})
+
+	if len(catalog.views) != 2 || catalog.views[0] != "quanta.customer_projection" || catalog.views[1] != ".customer_projection" {
+		t.Fatalf("invalidated views = %#v, want schema-qualified and unqualified customer_projection", catalog.views)
+	}
+}
+
 func TestRuntimeDictionaryInvalidatorInvalidatesStringEnumField(t *testing.T) {
 	dictionaries := &recordingDictionaryCache{}
 	invalidator := RuntimeDictionaryInvalidator{
@@ -77,6 +110,7 @@ func TestSchemaMutationInvalidatesStringEnumDictionariesForCachedTable(t *testin
 
 type recordingInvalidatableCatalog struct {
 	tables []string
+	views  []string
 }
 
 type recordingTableInvalidationTarget struct {
@@ -101,6 +135,10 @@ func (c *recordingInvalidatableCatalog) Function(string) (qsbridge.FunctionDefin
 
 func (c *recordingInvalidatableCatalog) InvalidateTable(schema string, table string) {
 	c.tables = append(c.tables, schema+"."+table)
+}
+
+func (c *recordingInvalidatableCatalog) InvalidateView(schema string, view string) {
+	c.views = append(c.views, schema+"."+view)
 }
 
 type recordingDictionaryCache struct {

@@ -28,6 +28,7 @@ type MetadataChangeEvent struct {
 // metadata and must use RuntimeDictionaryInvalidator instead.
 type RuntimeMetadataInvalidator struct {
 	Catalog       CatalogInvalidationTarget
+	CatalogViews  ViewCatalogInvalidationTarget
 	Tables        TableInvalidationTarget
 	DefaultSchema string
 }
@@ -35,6 +36,11 @@ type RuntimeMetadataInvalidator struct {
 // CatalogInvalidationTarget is the narrow cache hook required for catalog metadata.
 type CatalogInvalidationTarget interface {
 	InvalidateTable(schema string, name string)
+}
+
+// ViewCatalogInvalidationTarget is the narrow cache hook required for view metadata.
+type ViewCatalogInvalidationTarget interface {
+	InvalidateView(schema string, name string)
 }
 
 // TableInvalidationTarget is the runtime hook for table-scoped cached sessions and table metadata.
@@ -68,6 +74,31 @@ func (i RuntimeMetadataInvalidator) InvalidateTable(schema string, table string)
 	i.Catalog.InvalidateTable(schema, table)
 	if schema != "" {
 		i.Catalog.InvalidateTable("", table)
+	}
+}
+
+// InvalidateView evicts cached catalog metadata for a view.
+func (i RuntimeMetadataInvalidator) InvalidateView(schema string, view string) {
+	view = strings.TrimSpace(view)
+	if view == "" {
+		return
+	}
+	schema = strings.TrimSpace(schema)
+	if schema == "" {
+		schema = strings.TrimSpace(i.DefaultSchema)
+	}
+	catalog := i.CatalogViews
+	if catalog == nil {
+		if viewCatalog, ok := i.Catalog.(ViewCatalogInvalidationTarget); ok {
+			catalog = viewCatalog
+		}
+	}
+	if catalog == nil {
+		return
+	}
+	catalog.InvalidateView(schema, view)
+	if schema != "" {
+		catalog.InvalidateView("", view)
 	}
 }
 
