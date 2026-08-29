@@ -24,9 +24,8 @@ type StandardLocalBackend struct {
 }
 
 // MountStandardLocalBackend constructs and initializes the first in-process
-// node backend for inabox-standard. It mounts the local bitmap/KV surfaces
-// needed for the current read, DDL, and insert path; searchable text and broad
-// warmup iteration remain explicit follow-up gates.
+// node backend for inabox-standard. It mounts the local bitmap, KV, and string
+// search surfaces needed for the read, DDL, insert, and searchable text paths.
 func MountStandardLocalBackend(config StandardConfig, observer shared.LocalNodeObserver) (StandardLocalBackend, error) {
 	config = config.WithDefaults()
 	if err := prepareStandardLocalStorage(config); err != nil {
@@ -49,15 +48,19 @@ func MountStandardLocalBackend(config StandardConfig, observer shared.LocalNodeO
 	bitmapIndex := server.NewBitmapIndex(node)
 	node.AddNodeService(bitmapIndex)
 
+	stringSearch := server.NewStringSearch(node)
+	node.AddNodeService(stringSearch)
+
 	if err := node.InitServices(); err != nil {
 		node.ShutdownServices()
 		return StandardLocalBackend{}, err
 	}
 
 	adapter := server.LocalNodeAdapter{
-		BitmapIndex: bitmapIndex,
-		KVStore:     kvStore,
-		Observer:    observer,
+		BitmapIndex:  bitmapIndex,
+		KVStore:      kvStore,
+		StringSearch: stringSearch,
+		Observer:     observer,
 	}
 	return StandardLocalBackend{
 		Config:   config,

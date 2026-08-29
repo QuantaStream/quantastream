@@ -1,0 +1,21 @@
+tableName: search_docs_qa
+primaryKey: doc_id
+attributes:
+- fieldName: doc_id
+  sourceName: /doc_id
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: title
+  sourceName: /title
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
+  type: String
+- fieldName: body_text
+  sourceName: /body_text
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
+  type: String
+  searchable: true
+  maxLen: 128

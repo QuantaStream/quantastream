@@ -1,0 +1,67 @@
+version: 1
+name: inabox_standard_text_search
+
+tests:
+  - id: inabox_standard_text_search.001.create_search_docs
+    status: supported
+    kind: admin
+    sql: |-
+      create search_docs_qa
+
+  - id: inabox_standard_text_search.002.insert_search_doc_match
+    status: supported
+    kind: statement
+    sql: |-
+      insert into search_docs_qa (doc_id, title, body_text) values(1, 'contest', 'rarekeyword contest station')
+
+  - id: inabox_standard_text_search.003.insert_search_doc_miss
+    status: supported
+    kind: statement
+    sql: |-
+      insert into search_docs_qa (doc_id, title, body_text) values(2, 'routine', 'ordinary beacon report')
+
+  - id: inabox_standard_text_search.004.commit
+    status: supported
+    kind: statement
+    sql: |-
+      commit
+
+  - id: inabox_standard_text_search.005.match_against_searchable_field
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as matched
+      from search_docs_qa
+      where match(body_text) against ('rarekeyword')
+    expect:
+      columns: [matched]
+      rows:
+        - [1]
+
+  - id: inabox_standard_text_search.006.match_against_empty_result
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as matched
+      from search_docs_qa
+      where match(body_text) against ('definitelymissingtoken')
+    expect:
+      columns: [matched]
+      rows:
+        - [0]
+
+  - id: inabox_standard_text_search.007.match_against_non_searchable_field_rejected
+    status: supported
+    kind: query
+    sql: |-
+      select count(*) as matched
+      from search_docs_qa
+      where match(title) against ('contest')
+    expect:
+      error_contains: "requires a searchable text field"
+
+  - id: inabox_standard_text_search.008.drop_search_docs
+    status: supported
+    kind: admin
+    sql: |-
+      drop search_docs_qa

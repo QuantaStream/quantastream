@@ -1689,6 +1689,33 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	}
 }
 
+func TestStandardProcessSearchableTextWorksLocally(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardSearchableTextSchema(t, configDir, "search_sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	process, diagnostics, err := MountStandardProcess(context.Background(), config)
+	if err != nil {
+		t.Fatalf("MountStandardProcess() error = %v", err)
+	}
+	defer process.Close()
+	if diagnostics.BlocksNative() {
+		t.Fatalf("MountStandardProcess() diagnostics = %#v, want none", diagnostics)
+	}
+
+	requireStandardProcessSQLSuccess(t, process, "insert into search_sample (id, city, comment_text) values (1, 'Seattle', 'rarekeyword contest station')")
+	requireStandardProcessSQLSuccess(t, process, "insert into search_sample (id, city, comment_text) values (2, 'Austin', 'routine beacon')")
+	requireStandardProcessSQLSuccess(t, process, "commit")
+
+	requireStandardProcessScalarString(t, process, "select count(*) from search_sample where match(comment_text) against ('rarekeyword')", "1")
+	requireStandardProcessScalarString(t, process, "select count(*) from search_sample where match(comment_text) against ('definitelymissingtoken')", "0")
+	requireStandardProcessSQLFailure(t, process, "select count(*) from search_sample where match(city) against ('Seattle')", "requires a searchable text field", "")
+}
+
 func TestStandardProcessRejectsLocalWritesWhileStorageQuiesced(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
@@ -1938,6 +1965,42 @@ attributes:
   sourceName: /status
   mappingStrategy: StringEnum
   type: String
+`
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+	if err := shared.ActivateCatalogTable(configDir, "quanta", table, time.Now().UTC()); err != nil {
+		t.Fatalf("activate catalog object: %v", err)
+	}
+}
+
+func writeStandardSearchableTextSchema(t *testing.T, configDir, table string) {
+	t.Helper()
+	tableDir := filepath.Join(configDir, table)
+	if err := os.MkdirAll(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir schema dir: %v", err)
+	}
+	schema := `tableName: ` + table + `
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: /id
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: city
+  sourceName: /city
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
+  type: String
+- fieldName: comment_text
+  sourceName: /comment_text
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
+  type: String
+  searchable: true
+  maxLen: 128
 `
 	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(schema), 0644); err != nil {
 		t.Fatalf("write schema: %v", err)

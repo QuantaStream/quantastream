@@ -30,8 +30,11 @@ func TestMountStandardLocalBackendStagesConfigAndMountsReadServices(t *testing.T
 	if !readiness.Ready {
 		t.Fatalf("readiness = %+v, want ready read services", readiness)
 	}
-	if !readiness.BitmapIndex || !readiness.KVStore {
-		t.Fatalf("readiness = %+v, want bitmap and kv mounted", readiness)
+	if !readiness.BitmapIndex || !readiness.KVStore || !readiness.StringSearch {
+		t.Fatalf("readiness = %+v, want bitmap, kv, and string search mounted", readiness)
+	}
+	if len(readiness.StreamingRisks) != 0 {
+		t.Fatalf("streaming risks = %+v, want none with local string search mounted", readiness.StreamingRisks)
 	}
 	if backend.Adapter.BitmapIndex == nil || backend.Adapter.BitmapIndex.GetTable("sample") == nil {
 		t.Fatalf("sample schema was not loaded into local BitmapIndex")
@@ -86,8 +89,8 @@ func TestStandardLocalBackendBuildsLocalSessionPool(t *testing.T) {
 	if conn.ServicePort != 0 || !conn.IsLocalCluster {
 		t.Fatalf("local connection = %+v, want in-process local connection", conn)
 	}
-	if conn.LocalNodeServices.BitmapIndex == nil || conn.LocalNodeServices.KVStore == nil {
-		t.Fatalf("local services = %+v, want bitmap and kv facades", conn.LocalNodeServices)
+	if conn.LocalNodeServices.BitmapIndex == nil || conn.LocalNodeServices.KVStore == nil || conn.LocalNodeServices.StringSearch == nil {
+		t.Fatalf("local services = %+v, want bitmap, kv, and string search facades", conn.LocalNodeServices)
 	}
 
 	pool := backend.NewSessionPool(config, nil, 1)
@@ -95,8 +98,8 @@ func TestStandardLocalBackendBuildsLocalSessionPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Borrow(sample) error = %v", err)
 	}
-	if session.BitIndex == nil || session.KVStore == nil {
-		t.Fatalf("session = %+v, want bitmap and kv clients", session)
+	if session.BitIndex == nil || session.KVStore == nil || session.StringIndex == nil {
+		t.Fatalf("session = %+v, want bitmap, kv, and string search clients", session)
 	}
 	pool.Return("sample", session)
 	pool.Shutdown()

@@ -156,6 +156,7 @@ run_suite() {
 }
 
 run_suite inabox_standard_qa_smoke.yaml
+run_suite inabox_standard_text_search.yaml
 
 if [[ "${RUN_CORE}" == "1" ]]; then
   run_suite basic_queries.yaml orders_qa customers_qa
