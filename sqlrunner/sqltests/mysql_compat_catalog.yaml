@@ -165,6 +165,98 @@ tests:
       columns: [COLLATION_NAME, CHARACTER_SET_NAME, IS_DEFAULT, PAD_ATTRIBUTE]
       row_count: 2
 
+  - id: mysql_compat_catalog.0134.information_schema_views
+    status: supported
+    kind: query
+    feature: information_schema_views
+    compatibility: mysql
+    requires: [information_schema, metadata_columns, views]
+    sql: |
+      select table_name, view_definition, check_option, is_updatable, definer
+      from information_schema.views
+      where table_schema = 'quanta'
+      limit 0
+    expect:
+      columns: [TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, IS_UPDATABLE, DEFINER]
+
+  - id: mysql_compat_catalog.0135.information_schema_tables_workbench_shape
+    status: supported
+    kind: query
+    feature: information_schema_tables
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select table_catalog,
+             table_schema,
+             table_name,
+             table_type,
+             engine,
+             row_format,
+             table_collation,
+             table_comment
+      from information_schema.tables
+      where table_schema = 'quanta' and table_name = 'customer'
+    expect:
+      columns: [TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, ROW_FORMAT, TABLE_COLLATION, TABLE_COMMENT]
+
+  - id: mysql_compat_catalog.0136.information_schema_columns_workbench_shape
+    status: supported
+    kind: query
+    feature: information_schema_columns
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select table_catalog,
+             table_schema,
+             table_name,
+             column_name,
+             ordinal_position,
+             column_default,
+             is_nullable,
+             data_type,
+             character_maximum_length,
+             character_octet_length,
+             numeric_precision,
+             numeric_scale,
+             datetime_precision,
+             character_set_name,
+             collation_name,
+             column_type,
+             column_key,
+             extra,
+             privileges,
+             column_comment,
+             generation_expression,
+             srs_id
+      from information_schema.columns
+      where table_schema = 'quanta' and table_name = 'customer'
+      order by ordinal_position
+      limit 0
+    expect:
+      columns:
+        - TABLE_CATALOG
+        - TABLE_SCHEMA
+        - TABLE_NAME
+        - COLUMN_NAME
+        - ORDINAL_POSITION
+        - COLUMN_DEFAULT
+        - IS_NULLABLE
+        - DATA_TYPE
+        - CHARACTER_MAXIMUM_LENGTH
+        - CHARACTER_OCTET_LENGTH
+        - NUMERIC_PRECISION
+        - NUMERIC_SCALE
+        - DATETIME_PRECISION
+        - CHARACTER_SET_NAME
+        - COLLATION_NAME
+        - COLUMN_TYPE
+        - COLUMN_KEY
+        - EXTRA
+        - PRIVILEGES
+        - COLUMN_COMMENT
+        - GENERATION_EXPRESSION
+        - SRS_ID
+
   - id: mysql_compat_catalog.016.information_schema_statistics
     status: supported
     kind: query

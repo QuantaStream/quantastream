@@ -1700,7 +1700,7 @@ func TestSQLRuntimeExecuteSQLInformationSchemaTablesReturnsCatalogRows(t *testin
 		return ExecutionResult{}, nil
 	})
 
-	result, err := runtime.ExecuteSQL(context.Background(), "select table_name, table_type from information_schema.tables where table_schema = 'quanta' order by table_name", qsbridge.ExecutionOptions{})
+	result, err := runtime.ExecuteSQL(context.Background(), "select table_name, table_type, engine, table_collation, table_comment from information_schema.tables where table_schema = 'quanta' order by table_name", qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("ExecuteSQL failed: %v", err)
 	}
@@ -1714,7 +1714,7 @@ func TestSQLRuntimeExecuteSQLInformationSchemaTablesReturnsCatalogRows(t *testin
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 2 {
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 5 {
 		t.Fatalf("rows = %#v, want two rows", chunk.Rows)
 	}
 	if got, want := chunk.Rows[0][0].Value, "customer"; got != want {
@@ -1723,8 +1723,71 @@ func TestSQLRuntimeExecuteSQLInformationSchemaTablesReturnsCatalogRows(t *testin
 	if got, want := chunk.Rows[0][1].Value, "BASE TABLE"; got != want {
 		t.Fatalf("first table type = %#v, want %q", got, want)
 	}
+	if got, want := chunk.Rows[0][2].Value, "QUANTASTREAM"; got != want {
+		t.Fatalf("first table engine = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][3].Value, "utf8mb4_0900_ai_ci"; got != want {
+		t.Fatalf("first table collation = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[0][4].Value, "BASE TABLE"; got != want {
+		t.Fatalf("first table comment = %#v, want %q", got, want)
+	}
 	if got, want := chunk.Rows[1][1].Value, "VIEW"; got != want {
 		t.Fatalf("second table type = %#v, want %q", got, want)
+	}
+	if got := chunk.Rows[1][2].Value; got != nil {
+		t.Fatalf("view engine = %#v, want NULL", got)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLInformationSchemaViewsReturnsCatalogRows(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Tables: []qsbridge.TableDefinition{
+			{Schema: "quanta", Name: "customer"},
+		},
+		Views: []qsbridge.SQLViewDefinition{
+			{
+				Schema:       "quanta",
+				Name:         "customer_projection",
+				SQL:          "create view customer_projection as select c_custkey from customer",
+				CanonicalSQL: "select c_custkey from customer",
+			},
+		},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select table_name, view_definition, check_option, is_updatable, definer
+		from information_schema.views
+		where table_schema = 'quanta'
+		order by table_name
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("INFORMATION_SCHEMA.VIEWS should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 5 {
+		t.Fatalf("rows = %#v, want one five-column row", chunk.Rows)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "customer_projection" || row[1].Value != "select c_custkey from customer" {
+		t.Fatalf("view row = %#v, want stored view definition", row)
+	}
+	if row[2].Value != "NONE" || row[3].Value != "NO" || row[4].Value != "qstream@%" {
+		t.Fatalf("view metadata = %#v, want MySQL-compatible defaults", row)
 	}
 }
 
@@ -1768,6 +1831,51 @@ func TestSQLRuntimeExecuteSQLInformationSchemaSchemataReturnsCatalogRows(t *test
 	row := chunk.Rows[0]
 	if row[0].Value != "quanta" || row[1].Value != "utf8mb4" || row[2].Value != "utf8mb4_0900_ai_ci" {
 		t.Fatalf("schema row = %#v", row)
+	}
+}
+
+func TestSQLRuntimeExecuteSQLInformationSchemaSchemataSupportsWorkbenchObjectProjection(t *testing.T) {
+	executed := false
+	runtime := newTestSQLRuntimeWithCatalog(t, qsbridge.MemoryCatalog{
+		Schemas:   []qsbridge.CatalogSchemaDefinition{{Name: "quanta"}},
+		Functions: qsbridge.BuiltinSQLFunctionDefinitions(),
+	}, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+		executed = true
+		return ExecutionResult{}, nil
+	})
+
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		SELECT 'schema' AS 'OBJECT_TYPE',
+		       CATALOG_NAME as 'CATALOG',
+		       SCHEMA_NAME as 'SCHEMA',
+		       SCHEMA_NAME as 'NAME'
+		FROM information_schema.schemata
+	`, qsbridge.ExecutionOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSQL failed: %v", err)
+	}
+	if result.Diagnostics.BlocksNative() || result.Runtime.Diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v runtime=%#v", result.Diagnostics, result.Runtime.Diagnostics)
+	}
+	if executed {
+		t.Fatalf("INFORMATION_SCHEMA.SCHEMATA should not dispatch to the direct executor")
+	}
+	chunk, diagnostics := result.Runtime.RowSet.ToResultChunk(0, true)
+	if diagnostics.BlocksNative() {
+		t.Fatalf("chunk diagnostics = %#v", diagnostics)
+	}
+	if len(chunk.Rows) != 1 || len(chunk.Rows[0]) != 4 {
+		t.Fatalf("rows = %#v, want one four-column row", chunk.Rows)
+	}
+	if got, want := result.Runtime.RowSet.ProjectionVectors[0].Field.Field, "OBJECT_TYPE"; got != want {
+		t.Fatalf("literal projection column = %q, want %q", got, want)
+	}
+	if got, want := result.Request.ResultColumns[0].Name, "OBJECT_TYPE"; got != want {
+		t.Fatalf("client projection column = %q, want %q", got, want)
+	}
+	row := chunk.Rows[0]
+	if row[0].Value != "schema" || row[1].Value != "def" || row[2].Value != "quanta" || row[3].Value != "quanta" {
+		t.Fatalf("schema object row = %#v", row)
 	}
 }
 
@@ -1849,7 +1957,23 @@ func TestSQLRuntimeExecuteSQLInformationSchemaColumnsReturnsCatalogRows(t *testi
 		return ExecutionResult{}, nil
 	})
 
-	result, err := runtime.ExecuteSQL(context.Background(), "select column_name, column_key, extra from information_schema.columns where table_schema = 'quanta' and table_name = 'customer' order by ordinal_position", qsbridge.ExecutionOptions{})
+	result, err := runtime.ExecuteSQL(context.Background(), `
+		select column_name,
+		       column_type,
+		       character_maximum_length,
+		       character_octet_length,
+		       numeric_precision,
+		       numeric_scale,
+		       character_set_name,
+		       collation_name,
+		       column_key,
+		       extra,
+		       privileges,
+		       column_comment
+		from information_schema.columns
+		where table_schema = 'quanta' and table_name = 'customer'
+		order by ordinal_position
+	`, qsbridge.ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("ExecuteSQL failed: %v", err)
 	}
@@ -1863,17 +1987,50 @@ func TestSQLRuntimeExecuteSQLInformationSchemaColumnsReturnsCatalogRows(t *testi
 	if diagnostics.BlocksNative() {
 		t.Fatalf("chunk diagnostics = %#v", diagnostics)
 	}
-	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 3 {
-		t.Fatalf("rows = %#v, want two three-column rows", chunk.Rows)
+	if len(chunk.Rows) != 2 || len(chunk.Rows[0]) != 12 {
+		t.Fatalf("rows = %#v, want two twelve-column rows", chunk.Rows)
 	}
 	if got, want := chunk.Rows[0][0].Value, "c_custkey"; got != want {
 		t.Fatalf("first column = %#v, want %q", got, want)
 	}
-	if got, want := chunk.Rows[0][1].Value, "PRI"; got != want {
+	if got, want := chunk.Rows[0][1].Value, "int"; got != want {
+		t.Fatalf("first column type = %#v, want %q", got, want)
+	}
+	if got := chunk.Rows[0][2].Value; got != nil {
+		t.Fatalf("first column character length = %#v, want NULL", got)
+	}
+	if got, want := chunk.Rows[0][4].Value, int64(10); got != want {
+		t.Fatalf("first column numeric precision = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[0][5].Value, int64(0); got != want {
+		t.Fatalf("first column numeric scale = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[0][8].Value, "PRI"; got != want {
 		t.Fatalf("first column key = %#v, want %q", got, want)
 	}
-	if got, want := chunk.Rows[1][2].Value, "mapper=StringLexBSI"; got != want {
+	if got, want := chunk.Rows[1][1].Value, "varchar(25)"; got != want {
+		t.Fatalf("second column type = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][2].Value, int64(25); got != want {
+		t.Fatalf("second column character length = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[1][3].Value, int64(100); got != want {
+		t.Fatalf("second column octet length = %#v, want %#v", got, want)
+	}
+	if got, want := chunk.Rows[1][6].Value, "utf8mb4"; got != want {
+		t.Fatalf("second column character set = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][7].Value, "utf8mb4_0900_ai_ci"; got != want {
+		t.Fatalf("second column collation = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][9].Value, "mapper=StringLexBSI"; got != want {
 		t.Fatalf("second column extra = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][10].Value, "select,insert,update,references"; got != want {
+		t.Fatalf("second column privileges = %#v, want %q", got, want)
+	}
+	if got, want := chunk.Rows[1][11].Value, ""; got != want {
+		t.Fatalf("second column comment = %#v, want %q", got, want)
 	}
 }
 

@@ -68,6 +68,21 @@ tests:
     sql: |
       show databases
 
+  - id: mysql_compat_tableau_metadata.0201.workbench_schema_object_list
+    status: supported
+    kind: query
+    feature: tableau_catalog_discovery
+    compatibility: mysql
+    requires: [information_schema, metadata_columns, literal_projection]
+    sql: |
+      SELECT 'schema' AS 'OBJECT_TYPE',
+             CATALOG_NAME as 'CATALOG',
+             SCHEMA_NAME as 'SCHEMA',
+             SCHEMA_NAME as 'NAME'
+      FROM information_schema.schemata
+    expect:
+      columns: [OBJECT_TYPE, CATALOG, SCHEMA, NAME]
+
   - id: mysql_compat_tableau_metadata.021.use_database
     status: supported
     kind: statement
@@ -157,6 +172,115 @@ tests:
     requires: [show_create_table]
     sql: |
       show create table customer
+
+  - id: mysql_compat_tableau_metadata.035.information_schema_workbench_table_shape
+    status: supported
+    kind: query
+    feature: tableau_erd_metadata
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select table_catalog,
+             table_schema,
+             table_name,
+             table_type,
+             engine,
+             row_format,
+             table_collation,
+             table_comment
+      from information_schema.tables
+      where table_schema = 'quanta' and table_name in ('customer', 'orders', 'lineitem')
+      order by table_name
+      limit 0
+    expect:
+      columns: [TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, ROW_FORMAT, TABLE_COLLATION, TABLE_COMMENT]
+
+  - id: mysql_compat_tableau_metadata.036.information_schema_workbench_column_shape
+    status: supported
+    kind: query
+    feature: tableau_erd_metadata
+    compatibility: mysql
+    requires: [information_schema, metadata_columns]
+    sql: |
+      select table_catalog,
+             table_schema,
+             table_name,
+             column_name,
+             ordinal_position,
+             data_type,
+             column_type,
+             column_key,
+             character_maximum_length,
+             numeric_precision,
+             numeric_scale,
+             datetime_precision,
+             character_set_name,
+             collation_name,
+             extra,
+             column_comment
+      from information_schema.columns
+      where table_schema = 'quanta' and table_name in ('customer', 'orders', 'lineitem')
+      order by table_name, ordinal_position
+      limit 0
+    expect:
+      columns:
+        - TABLE_CATALOG
+        - TABLE_SCHEMA
+        - TABLE_NAME
+        - COLUMN_NAME
+        - ORDINAL_POSITION
+        - DATA_TYPE
+        - COLUMN_TYPE
+        - COLUMN_KEY
+        - CHARACTER_MAXIMUM_LENGTH
+        - NUMERIC_PRECISION
+        - NUMERIC_SCALE
+        - DATETIME_PRECISION
+        - CHARACTER_SET_NAME
+        - COLLATION_NAME
+        - EXTRA
+        - COLUMN_COMMENT
+
+  - id: mysql_compat_tableau_metadata.037.information_schema_workbench_relationship_shape
+    status: supported
+    kind: query
+    feature: tableau_erd_metadata
+    compatibility: mysql
+    requires: [information_schema, metadata_columns, foreign_keys]
+    sql: |
+      select constraint_name,
+             table_name,
+             column_name,
+             referenced_table_schema,
+             referenced_table_name,
+             referenced_column_name
+      from information_schema.key_column_usage
+      where table_schema = 'quanta' and referenced_table_name is not null
+      order by table_name, constraint_name, ordinal_position
+      limit 0
+    expect:
+      columns: [CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME]
+
+  - id: mysql_compat_tableau_metadata.038.information_schema_workbench_referential_shape
+    status: supported
+    kind: query
+    feature: tableau_erd_metadata
+    compatibility: mysql
+    requires: [information_schema, metadata_columns, foreign_keys]
+    sql: |
+      select constraint_name,
+             unique_constraint_name,
+             match_option,
+             update_rule,
+             delete_rule,
+             table_name,
+             referenced_table_name
+      from information_schema.referential_constraints
+      where constraint_schema = 'quanta'
+      order by table_name, constraint_name
+      limit 0
+    expect:
+      columns: [CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE, TABLE_NAME, REFERENCED_TABLE_NAME]
 
   - id: mysql_compat_tableau_metadata.040.preview_rows_limit
     status: supported

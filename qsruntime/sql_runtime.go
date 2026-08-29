@@ -361,6 +361,9 @@ func (r SQLRuntime) ExecuteSQL(ctx context.Context, sql string, options qsbridge
 		return result, nil
 	}
 	if runtimeResult, diagnostics, ok := r.informationSchemaExecutionResult(request); ok {
+		request = normalizeInformationSchemaResultColumns(request)
+		result.Request = request
+		result.Prepared = request.Bound.Prepared
 		result.Runtime = runtimeResult
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		return result, nil

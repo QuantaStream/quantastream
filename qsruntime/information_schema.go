@@ -27,7 +27,31 @@ func (r SQLRuntime) informationSchemaExecutionResult(request qsbridge.ExecutionR
 	return result, projectionDiagnostics, true
 }
 
+func normalizeInformationSchemaResultColumns(request qsbridge.ExecutionRequest) qsbridge.ExecutionRequest {
+	query := request.Bound.Prepared.Query
+	if query.Kind != qsbridge.QueryKindSelect || len(query.Sources) != 1 || !qsbridge.IsInformationSchemaTable(query.Sources[0]) {
+		return request
+	}
+	request.ResultColumns = normalizeInformationSchemaColumns(request.ResultColumns)
+	request.Bound.Prepared.ResultColumns = normalizeInformationSchemaColumns(request.Bound.Prepared.ResultColumns)
+	return request
+}
+
+func normalizeInformationSchemaColumns(columns []qsbridge.ResultColumn) []qsbridge.ResultColumn {
+	normalized := append([]qsbridge.ResultColumn(nil), columns...)
+	for i := range normalized {
+		normalized[i].Name = informationSchemaProjectionColumnName(normalized[i].Name)
+	}
+	return normalized
+}
+
 type informationSchemaRow map[string]qsbridge.ResultCell
+
+const (
+	informationSchemaDefaultCatalog   = "def"
+	informationSchemaDefaultCharset   = "utf8mb4"
+	informationSchemaDefaultCollation = "utf8mb4_0900_ai_ci"
+)
 
 func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]informationSchemaRow, qsbridge.DiagnosticSet) {
 	switch strings.ToLower(strings.TrimSpace(source.Table)) {
@@ -35,6 +59,8 @@ func (r SQLRuntime) informationSchemaRows(source qsbridge.TableInstance) ([]info
 		return r.informationSchemaSchemataRows()
 	case qsbridge.InformationSchemaTablesName:
 		return r.informationSchemaTableRows()
+	case qsbridge.InformationSchemaViewsName:
+		return r.informationSchemaViewRows()
 	case qsbridge.InformationSchemaColumnsName:
 		return r.informationSchemaColumnRows()
 	case qsbridge.InformationSchemaStatisticsName:
@@ -59,10 +85,10 @@ func (r SQLRuntime) informationSchemaSchemataRows() ([]informationSchemaRow, qsb
 	rows := make([]informationSchemaRow, 0, len(schemas))
 	for _, schema := range schemas {
 		rows = append(rows, informationSchemaRow{
-			"CATALOG_NAME":               describeStringCell("def"),
+			"CATALOG_NAME":               describeStringCell(informationSchemaDefaultCatalog),
 			"SCHEMA_NAME":                describeStringCell(schema),
-			"DEFAULT_CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
-			"DEFAULT_COLLATION_NAME":     describeStringCell("utf8mb4_0900_ai_ci"),
+			"DEFAULT_CHARACTER_SET_NAME": describeStringCell(informationSchemaDefaultCharset),
+			"DEFAULT_COLLATION_NAME":     describeStringCell(informationSchemaDefaultCollation),
 			"SQL_PATH":                   describeNullCell(),
 			"DEFAULT_ENCRYPTION":         describeStringCell("NO"),
 		})
@@ -79,11 +105,7 @@ func (r SQLRuntime) informationSchemaTableRows() ([]informationSchemaRow, qsbrid
 	}
 	rows := make([]informationSchemaRow, 0, len(tables))
 	for _, table := range tables {
-		rows = append(rows, informationSchemaRow{
-			"TABLE_SCHEMA": describeStringCell(table.Schema),
-			"TABLE_NAME":   describeStringCell(table.Name),
-			"TABLE_TYPE":   describeStringCell("BASE TABLE"),
-		})
+		rows = append(rows, informationSchemaTableRow(table.Schema, table.Name, "BASE TABLE"))
 	}
 	if viewMetadata, ok := catalog.(qsbridge.CatalogViewMetadata); ok {
 		for _, schema := range informationSchemaSchemaNames(catalog, r.DefaultSchema) {
@@ -96,16 +118,99 @@ func (r SQLRuntime) informationSchemaTableRows() ([]informationSchemaRow, qsbrid
 				if schemaName == "" {
 					schemaName = schema
 				}
-				rows = append(rows, informationSchemaRow{
-					"TABLE_SCHEMA": describeStringCell(schemaName),
-					"TABLE_NAME":   describeStringCell(view.Name),
-					"TABLE_TYPE":   describeStringCell("VIEW"),
-				})
+				rows = append(rows, informationSchemaTableRow(schemaName, view.Name, "VIEW"))
 			}
 		}
 	}
 	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE")
 	return rows, nil
+}
+
+func informationSchemaTableRow(schemaName string, tableName string, tableType string) informationSchemaRow {
+	row := informationSchemaRow{
+		"TABLE_CATALOG":   describeStringCell(informationSchemaDefaultCatalog),
+		"TABLE_SCHEMA":    describeStringCell(schemaName),
+		"TABLE_NAME":      describeStringCell(tableName),
+		"TABLE_TYPE":      describeStringCell(tableType),
+		"ENGINE":          describeStringCell("QUANTASTREAM"),
+		"VERSION":         describeIntCell(10),
+		"ROW_FORMAT":      describeStringCell("Compressed"),
+		"TABLE_ROWS":      describeNullCell(),
+		"AVG_ROW_LENGTH":  describeNullCell(),
+		"DATA_LENGTH":     describeNullCell(),
+		"MAX_DATA_LENGTH": describeNullCell(),
+		"INDEX_LENGTH":    describeNullCell(),
+		"DATA_FREE":       describeNullCell(),
+		"AUTO_INCREMENT":  describeNullCell(),
+		"CREATE_TIME":     describeNullCell(),
+		"UPDATE_TIME":     describeNullCell(),
+		"CHECK_TIME":      describeNullCell(),
+		"TABLE_COLLATION": describeStringCell(informationSchemaDefaultCollation),
+		"CHECKSUM":        describeNullCell(),
+		"CREATE_OPTIONS":  describeStringCell(""),
+		"TABLE_COMMENT":   describeStringCell(tableType),
+	}
+	if strings.EqualFold(tableType, "VIEW") {
+		row["ENGINE"] = describeNullCell()
+		row["VERSION"] = describeNullCell()
+		row["ROW_FORMAT"] = describeNullCell()
+	}
+	return row
+}
+
+func (r SQLRuntime) informationSchemaViewRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
+	catalog := r.planningCatalog()
+	viewMetadata, ok := catalog.(qsbridge.CatalogViewMetadata)
+	if !ok {
+		return []informationSchemaRow{}, nil
+	}
+	rows := make([]informationSchemaRow, 0)
+	for _, schema := range informationSchemaSchemaNames(catalog, r.DefaultSchema) {
+		views, diagnostics := viewMetadata.ListViews(schema)
+		if diagnostics.BlocksNative() {
+			return nil, diagnostics
+		}
+		for _, view := range views {
+			schemaName := strings.TrimSpace(view.Schema)
+			if schemaName == "" {
+				schemaName = schema
+			}
+			rows = append(rows, informationSchemaViewRow(schemaName, view))
+		}
+	}
+	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME")
+	return rows, nil
+}
+
+func informationSchemaViewRow(schemaName string, view qsbridge.SQLViewDefinition) informationSchemaRow {
+	viewSQL := informationSchemaViewDefinitionSQL(view)
+	return informationSchemaRow{
+		"TABLE_CATALOG":        describeStringCell(informationSchemaDefaultCatalog),
+		"TABLE_SCHEMA":         describeStringCell(schemaName),
+		"TABLE_NAME":           describeStringCell(view.Name),
+		"VIEW_DEFINITION":      describeStringCell(viewSQL),
+		"CHECK_OPTION":         describeStringCell("NONE"),
+		"IS_UPDATABLE":         describeStringCell("NO"),
+		"DEFINER":              describeStringCell("qstream@%"),
+		"SECURITY_TYPE":        describeStringCell("DEFINER"),
+		"CHARACTER_SET_CLIENT": describeStringCell(informationSchemaDefaultCharset),
+		"COLLATION_CONNECTION": describeStringCell(informationSchemaDefaultCollation),
+	}
+}
+
+func informationSchemaViewDefinitionSQL(view qsbridge.SQLViewDefinition) string {
+	viewSQL := strings.TrimSpace(view.CanonicalSQL)
+	if viewSQL == "" {
+		viewSQL = strings.TrimSpace(view.SQL)
+	}
+	if !strings.HasPrefix(strings.ToLower(viewSQL), "create ") {
+		return viewSQL
+	}
+	lowerSQL := strings.ToLower(viewSQL)
+	if idx := strings.Index(lowerSQL, " as "); idx >= 0 && idx+4 < len(viewSQL) {
+		return strings.TrimSpace(viewSQL[idx+4:])
+	}
+	return viewSQL
 }
 
 func (r SQLRuntime) informationSchemaColumnRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
@@ -119,21 +224,106 @@ func (r SQLRuntime) informationSchemaColumnRows() ([]informationSchemaRow, qsbri
 		for i, field := range table.Fields {
 			fieldRef := field.Ref(qsbridge.TableInstance{Schema: table.Schema, Table: table.Name}, 0)
 			rows = append(rows, informationSchemaRow{
-				"TABLE_SCHEMA":     describeStringCell(table.Schema),
-				"TABLE_NAME":       describeStringCell(table.Name),
-				"COLUMN_NAME":      describeStringCell(field.Name),
-				"ORDINAL_POSITION": describeIntCell(int64(i + 1)),
-				"COLUMN_DEFAULT":   describeNullCell(),
-				"IS_NULLABLE":      describeStringCell(describeNullability(fieldRef)),
-				"DATA_TYPE":        describeStringCell(informationSchemaDataType(fieldRef)),
-				"COLUMN_TYPE":      describeStringCell(describeSQLType(fieldRef)),
-				"COLUMN_KEY":       describeStringCell(informationSchemaColumnKey(fieldRef, relationshipColumns)),
-				"EXTRA":            describeStringCell(describeExtra(fieldRef)),
+				"TABLE_CATALOG":            describeStringCell(informationSchemaDefaultCatalog),
+				"TABLE_SCHEMA":             describeStringCell(table.Schema),
+				"TABLE_NAME":               describeStringCell(table.Name),
+				"COLUMN_NAME":              describeStringCell(field.Name),
+				"ORDINAL_POSITION":         describeIntCell(int64(i + 1)),
+				"COLUMN_DEFAULT":           describeNullCell(),
+				"IS_NULLABLE":              describeStringCell(describeNullability(fieldRef)),
+				"DATA_TYPE":                describeStringCell(informationSchemaDataType(fieldRef)),
+				"CHARACTER_MAXIMUM_LENGTH": informationSchemaCharacterMaximumLength(fieldRef),
+				"CHARACTER_OCTET_LENGTH":   informationSchemaCharacterOctetLength(fieldRef),
+				"NUMERIC_PRECISION":        informationSchemaNumericPrecision(fieldRef),
+				"NUMERIC_SCALE":            informationSchemaNumericScale(fieldRef),
+				"DATETIME_PRECISION":       informationSchemaDatetimePrecision(fieldRef),
+				"CHARACTER_SET_NAME":       informationSchemaCharacterSetName(fieldRef),
+				"COLLATION_NAME":           informationSchemaCollationName(fieldRef),
+				"COLUMN_TYPE":              describeStringCell(describeSQLType(fieldRef)),
+				"COLUMN_KEY":               describeStringCell(informationSchemaColumnKey(fieldRef, relationshipColumns)),
+				"EXTRA":                    describeStringCell(describeExtra(fieldRef)),
+				"PRIVILEGES":               describeStringCell("select,insert,update,references"),
+				"COLUMN_COMMENT":           describeStringCell(""),
+				"GENERATION_EXPRESSION":    describeStringCell(""),
+				"SRS_ID":                   describeNullCell(),
 			})
 		}
 	}
 	sortInformationSchemaRows(rows, "TABLE_SCHEMA", "TABLE_NAME", "ORDINAL_POSITION")
 	return rows, nil
+}
+
+func informationSchemaCharacterMaximumLength(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type != qsbridge.DataTypeString {
+		return describeNullCell()
+	}
+	length := field.Encoding.MaxLength
+	if length <= 0 {
+		length = 255
+	}
+	return describeIntCell(int64(length))
+}
+
+func informationSchemaCharacterOctetLength(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type != qsbridge.DataTypeString {
+		return describeNullCell()
+	}
+	length := field.Encoding.MaxLength
+	if length <= 0 {
+		length = 255
+	}
+	return describeIntCell(int64(length * 4))
+}
+
+func informationSchemaNumericPrecision(field qsbridge.FieldRef) qsbridge.ResultCell {
+	switch field.Type {
+	case qsbridge.DataTypeBool:
+		return describeIntCell(3)
+	case qsbridge.DataTypeInt:
+		return describeIntCell(10)
+	case qsbridge.DataTypeFloat:
+		if field.Encoding.Scale > 0 {
+			return describeIntCell(15)
+		}
+		return describeIntCell(22)
+	default:
+		return describeNullCell()
+	}
+}
+
+func informationSchemaNumericScale(field qsbridge.FieldRef) qsbridge.ResultCell {
+	switch field.Type {
+	case qsbridge.DataTypeBool, qsbridge.DataTypeInt:
+		return describeIntCell(0)
+	case qsbridge.DataTypeFloat:
+		if field.Encoding.Scale > 0 {
+			return describeIntCell(int64(field.Encoding.Scale))
+		}
+		return describeNullCell()
+	default:
+		return describeNullCell()
+	}
+}
+
+func informationSchemaDatetimePrecision(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type == qsbridge.DataTypeTime {
+		return describeIntCell(0)
+	}
+	return describeNullCell()
+}
+
+func informationSchemaCharacterSetName(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type == qsbridge.DataTypeString {
+		return describeStringCell(informationSchemaDefaultCharset)
+	}
+	return describeNullCell()
+}
+
+func informationSchemaCollationName(field qsbridge.FieldRef) qsbridge.ResultCell {
+	if field.Type == qsbridge.DataTypeString {
+		return describeStringCell(informationSchemaDefaultCollation)
+	}
+	return describeNullCell()
 }
 
 func (r SQLRuntime) informationSchemaStatisticsRows() ([]informationSchemaRow, qsbridge.DiagnosticSet) {
@@ -197,7 +387,7 @@ func (r SQLRuntime) informationSchemaTableConstraintsRows() ([]informationSchema
 				continue
 			}
 			rows = append(rows, informationSchemaRow{
-				"CONSTRAINT_CATALOG": describeStringCell("def"),
+				"CONSTRAINT_CATALOG": describeStringCell(informationSchemaDefaultCatalog),
 				"CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
 				"CONSTRAINT_NAME":    describeStringCell("PRIMARY"),
 				"TABLE_SCHEMA":       describeStringCell(schemaName),
@@ -212,7 +402,7 @@ func (r SQLRuntime) informationSchemaTableConstraintsRows() ([]informationSchema
 				continue
 			}
 			rows = append(rows, informationSchemaRow{
-				"CONSTRAINT_CATALOG": describeStringCell("def"),
+				"CONSTRAINT_CATALOG": describeStringCell(informationSchemaDefaultCatalog),
 				"CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
 				"CONSTRAINT_NAME":    describeStringCell(informationSchemaRelationshipName(table, relationship)),
 				"TABLE_SCHEMA":       describeStringCell(schemaName),
@@ -241,10 +431,10 @@ func (r SQLRuntime) informationSchemaKeyColumnUsageRows() ([]informationSchemaRo
 				continue
 			}
 			rows = append(rows, informationSchemaRow{
-				"CONSTRAINT_CATALOG":            describeStringCell("def"),
+				"CONSTRAINT_CATALOG":            describeStringCell(informationSchemaDefaultCatalog),
 				"CONSTRAINT_SCHEMA":             describeStringCell(schemaName),
 				"CONSTRAINT_NAME":               describeStringCell("PRIMARY"),
-				"TABLE_CATALOG":                 describeStringCell("def"),
+				"TABLE_CATALOG":                 describeStringCell(informationSchemaDefaultCatalog),
 				"TABLE_SCHEMA":                  describeStringCell(schemaName),
 				"TABLE_NAME":                    describeStringCell(table.Name),
 				"COLUMN_NAME":                   describeStringCell(field.Name),
@@ -261,10 +451,10 @@ func (r SQLRuntime) informationSchemaKeyColumnUsageRows() ([]informationSchemaRo
 				continue
 			}
 			rows = append(rows, informationSchemaRow{
-				"CONSTRAINT_CATALOG":            describeStringCell("def"),
+				"CONSTRAINT_CATALOG":            describeStringCell(informationSchemaDefaultCatalog),
 				"CONSTRAINT_SCHEMA":             describeStringCell(schemaName),
 				"CONSTRAINT_NAME":               describeStringCell(informationSchemaRelationshipName(table, relationship)),
-				"TABLE_CATALOG":                 describeStringCell("def"),
+				"TABLE_CATALOG":                 describeStringCell(informationSchemaDefaultCatalog),
 				"TABLE_SCHEMA":                  describeStringCell(schemaName),
 				"TABLE_NAME":                    describeStringCell(table.Name),
 				"COLUMN_NAME":                   describeStringCell(informationSchemaRelationshipChildField(relationship)),
@@ -293,10 +483,10 @@ func (r SQLRuntime) informationSchemaReferentialConstraintsRows() ([]information
 				continue
 			}
 			rows = append(rows, informationSchemaRow{
-				"CONSTRAINT_CATALOG":        describeStringCell("def"),
+				"CONSTRAINT_CATALOG":        describeStringCell(informationSchemaDefaultCatalog),
 				"CONSTRAINT_SCHEMA":         describeStringCell(schemaName),
 				"CONSTRAINT_NAME":           describeStringCell(informationSchemaRelationshipName(table, relationship)),
-				"UNIQUE_CONSTRAINT_CATALOG": describeStringCell("def"),
+				"UNIQUE_CONSTRAINT_CATALOG": describeStringCell(informationSchemaDefaultCatalog),
 				"UNIQUE_CONSTRAINT_SCHEMA":  describeStringCell(schemaName),
 				"UNIQUE_CONSTRAINT_NAME":    describeStringCell("PRIMARY"),
 				"MATCH_OPTION":              describeStringCell("NONE"),
@@ -313,8 +503,8 @@ func (r SQLRuntime) informationSchemaReferentialConstraintsRows() ([]information
 
 func informationSchemaCharacterSetRows() []informationSchemaRow {
 	rows := []informationSchemaRow{{
-		"CHARACTER_SET_NAME":   describeStringCell("utf8mb4"),
-		"DEFAULT_COLLATE_NAME": describeStringCell("utf8mb4_0900_ai_ci"),
+		"CHARACTER_SET_NAME":   describeStringCell(informationSchemaDefaultCharset),
+		"DEFAULT_COLLATE_NAME": describeStringCell(informationSchemaDefaultCollation),
 		"DESCRIPTION":          describeStringCell("UTF-8 Unicode"),
 		"MAXLEN":               describeIntCell(4),
 	}}
@@ -326,7 +516,7 @@ func informationSchemaCollationRows() []informationSchemaRow {
 	rows := []informationSchemaRow{
 		{
 			"COLLATION_NAME":     describeStringCell("utf8mb4_0900_ai_ci"),
-			"CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
+			"CHARACTER_SET_NAME": describeStringCell(informationSchemaDefaultCharset),
 			"ID":                 describeIntCell(255),
 			"IS_DEFAULT":         describeStringCell("Yes"),
 			"IS_COMPILED":        describeStringCell("Yes"),
@@ -335,7 +525,7 @@ func informationSchemaCollationRows() []informationSchemaRow {
 		},
 		{
 			"COLLATION_NAME":     describeStringCell("utf8mb4_bin"),
-			"CHARACTER_SET_NAME": describeStringCell("utf8mb4"),
+			"CHARACTER_SET_NAME": describeStringCell(informationSchemaDefaultCharset),
 			"ID":                 describeIntCell(46),
 			"IS_DEFAULT":         describeStringCell(""),
 			"IS_COMPILED":        describeStringCell("Yes"),
@@ -540,17 +730,17 @@ func informationSchemaProjectedResult(rows []informationSchemaRow, projections [
 	rownums := make([]qsbridge.QuantaRownum, len(rows))
 	vectors := make([]qsbridge.QuantaProjectionVector, 0, len(projections))
 	for _, projection := range projections {
-		field, ok := informationSchemaProjectionField(projection)
-		if !ok {
-			return ExecutionResult{}, qsbridge.DiagnosticSet{
-				qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "information_schema only supports direct column projections"),
-			}
-		}
 		column := projection.ResultColumn()
-		vector := describeProjectionVector(column.Name, column.Type, len(rows))
+		vector := describeProjectionVector(informationSchemaProjectionColumnName(column.Name), column.Type, len(rows))
 		for i, row := range rows {
+			cell, ok := informationSchemaProjectionCell(row, projection.Expr)
+			if !ok {
+				return ExecutionResult{}, qsbridge.DiagnosticSet{
+					qsbridge.ErrorDiagnostic(qsbridge.DiagnosticUnsupportedSQL, qsbridge.PhaseExecute, "information_schema only supports direct column and literal projections"),
+				}
+			}
 			rownums[i] = qsbridge.QuantaRownum(i + 1)
-			vector.Values[i] = rowCell(row, field)
+			vector.Values[i] = cell
 		}
 		vectors = append(vectors, vector)
 	}
@@ -562,6 +752,54 @@ func informationSchemaProjectedResult(rows []informationSchemaRow, projections [
 		},
 		Count: uint64(len(rows)),
 	}, nil
+}
+
+func informationSchemaProjectionColumnName(name string) string {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 {
+		return name
+	}
+	first := name[0]
+	last := name[len(name)-1]
+	if (first == '\'' && last == '\'') || (first == '"' && last == '"') || (first == '`' && last == '`') {
+		return name[1 : len(name)-1]
+	}
+	return name
+}
+
+func informationSchemaProjectionCell(row informationSchemaRow, expr qsbridge.Expr) (qsbridge.ResultCell, bool) {
+	switch typed := expr.(type) {
+	case qsbridge.FieldExpr:
+		return rowCell(row, typed.Ref.Name), true
+	case *qsbridge.FieldExpr:
+		if typed != nil {
+			return rowCell(row, typed.Ref.Name), true
+		}
+	case qsbridge.LiteralExpr:
+		return informationSchemaLiteralCell(typed), true
+	case *qsbridge.LiteralExpr:
+		if typed != nil {
+			return informationSchemaLiteralCell(*typed), true
+		}
+	}
+	return qsbridge.ResultCell{}, false
+}
+
+func informationSchemaLiteralCell(literal qsbridge.LiteralExpr) qsbridge.ResultCell {
+	switch literal.Kind {
+	case qsbridge.ValueNull:
+		return describeNullCell()
+	case qsbridge.ValueBool:
+		return qsbridge.ResultCell{Kind: qsbridge.ValueBool, Value: literal.Value}
+	case qsbridge.ValueInt:
+		return qsbridge.ResultCell{Kind: qsbridge.ValueInt, Value: literal.Value}
+	case qsbridge.ValueFloat:
+		return qsbridge.ResultCell{Kind: qsbridge.ValueFloat, Value: literal.Value}
+	case qsbridge.ValueTime:
+		return qsbridge.ResultCell{Kind: qsbridge.ValueTime, Value: literal.Value}
+	default:
+		return qsbridge.ResultCell{Kind: qsbridge.ValueString, Value: resultCellString(qsbridge.ResultCell{Value: literal.Value})}
+	}
 }
 
 func informationSchemaProjectionField(projection qsbridge.ProjectionColumn) (string, bool) {

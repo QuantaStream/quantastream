@@ -7,6 +7,8 @@ const (
 	InformationSchemaName = "information_schema"
 	// InformationSchemaTablesName identifies INFORMATION_SCHEMA.TABLES.
 	InformationSchemaTablesName = "tables"
+	// InformationSchemaViewsName identifies INFORMATION_SCHEMA.VIEWS.
+	InformationSchemaViewsName = "views"
 	// InformationSchemaSchemataName identifies INFORMATION_SCHEMA.SCHEMATA.
 	InformationSchemaSchemataName = "schemata"
 	// InformationSchemaColumnsName identifies INFORMATION_SCHEMA.COLUMNS.
@@ -25,8 +27,8 @@ const (
 	InformationSchemaCollationsName = "collations"
 )
 
-// InformationSchemaTableDefinition returns the small virtual catalog surface
-// currently exposed for MySQL compatibility metadata queries.
+// InformationSchemaTableDefinition returns the virtual catalog surface exposed
+// for MySQL compatibility metadata queries.
 func InformationSchemaTableDefinition(schema string, name string) (TableDefinition, bool) {
 	if !strings.EqualFold(strings.TrimSpace(schema), InformationSchemaName) {
 		return TableDefinition{}, false
@@ -50,9 +52,27 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 			Schema: InformationSchemaName,
 			Name:   InformationSchemaTablesName,
 			Fields: []FieldDefinition{
+				{Name: "TABLE_CATALOG", Type: DataTypeString},
 				{Name: "TABLE_SCHEMA", Type: DataTypeString},
 				{Name: "TABLE_NAME", Type: DataTypeString},
 				{Name: "TABLE_TYPE", Type: DataTypeString},
+				{Name: "ENGINE", Type: DataTypeString, Nullable: true},
+				{Name: "VERSION", Type: DataTypeInt, Nullable: true},
+				{Name: "ROW_FORMAT", Type: DataTypeString, Nullable: true},
+				{Name: "TABLE_ROWS", Type: DataTypeInt, Nullable: true},
+				{Name: "AVG_ROW_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "DATA_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "MAX_DATA_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "INDEX_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "DATA_FREE", Type: DataTypeInt, Nullable: true},
+				{Name: "AUTO_INCREMENT", Type: DataTypeInt, Nullable: true},
+				{Name: "CREATE_TIME", Type: DataTypeTime, Nullable: true},
+				{Name: "UPDATE_TIME", Type: DataTypeTime, Nullable: true},
+				{Name: "CHECK_TIME", Type: DataTypeTime, Nullable: true},
+				{Name: "TABLE_COLLATION", Type: DataTypeString, Nullable: true},
+				{Name: "CHECKSUM", Type: DataTypeInt, Nullable: true},
+				{Name: "CREATE_OPTIONS", Type: DataTypeString},
+				{Name: "TABLE_COMMENT", Type: DataTypeString},
 			},
 		}, true
 	case InformationSchemaColumnsName:
@@ -60,6 +80,7 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 			Schema: InformationSchemaName,
 			Name:   InformationSchemaColumnsName,
 			Fields: []FieldDefinition{
+				{Name: "TABLE_CATALOG", Type: DataTypeString},
 				{Name: "TABLE_SCHEMA", Type: DataTypeString},
 				{Name: "TABLE_NAME", Type: DataTypeString},
 				{Name: "COLUMN_NAME", Type: DataTypeString},
@@ -67,9 +88,37 @@ func InformationSchemaTableDefinition(schema string, name string) (TableDefiniti
 				{Name: "COLUMN_DEFAULT", Type: DataTypeString, Nullable: true},
 				{Name: "IS_NULLABLE", Type: DataTypeString},
 				{Name: "DATA_TYPE", Type: DataTypeString},
+				{Name: "CHARACTER_MAXIMUM_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "CHARACTER_OCTET_LENGTH", Type: DataTypeInt, Nullable: true},
+				{Name: "NUMERIC_PRECISION", Type: DataTypeInt, Nullable: true},
+				{Name: "NUMERIC_SCALE", Type: DataTypeInt, Nullable: true},
+				{Name: "DATETIME_PRECISION", Type: DataTypeInt, Nullable: true},
+				{Name: "CHARACTER_SET_NAME", Type: DataTypeString, Nullable: true},
+				{Name: "COLLATION_NAME", Type: DataTypeString, Nullable: true},
 				{Name: "COLUMN_TYPE", Type: DataTypeString},
 				{Name: "COLUMN_KEY", Type: DataTypeString},
 				{Name: "EXTRA", Type: DataTypeString},
+				{Name: "PRIVILEGES", Type: DataTypeString},
+				{Name: "COLUMN_COMMENT", Type: DataTypeString},
+				{Name: "GENERATION_EXPRESSION", Type: DataTypeString},
+				{Name: "SRS_ID", Type: DataTypeInt, Nullable: true},
+			},
+		}, true
+	case InformationSchemaViewsName:
+		return TableDefinition{
+			Schema: InformationSchemaName,
+			Name:   InformationSchemaViewsName,
+			Fields: []FieldDefinition{
+				{Name: "TABLE_CATALOG", Type: DataTypeString},
+				{Name: "TABLE_SCHEMA", Type: DataTypeString},
+				{Name: "TABLE_NAME", Type: DataTypeString},
+				{Name: "VIEW_DEFINITION", Type: DataTypeString},
+				{Name: "CHECK_OPTION", Type: DataTypeString},
+				{Name: "IS_UPDATABLE", Type: DataTypeString},
+				{Name: "DEFINER", Type: DataTypeString},
+				{Name: "SECURITY_TYPE", Type: DataTypeString},
+				{Name: "CHARACTER_SET_CLIENT", Type: DataTypeString},
+				{Name: "COLLATION_CONNECTION", Type: DataTypeString},
 			},
 		}, true
 	case InformationSchemaStatisticsName:
