@@ -26,7 +26,7 @@ const (
 // the current release version and omit commit/build-date metadata unless the
 // caller supplies ldflags.
 var (
-	Version   = "0.1.0"
+	Version   = "0.1.1-rc1"
 	Commit    = ""
 	BuildDate = ""
 )
