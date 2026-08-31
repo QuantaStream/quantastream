@@ -1,6 +1,8 @@
 package shared
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantaStream/quantastream/searchindex"
@@ -72,6 +74,34 @@ func TestLoadSchemaAddsCompoundPrimaryKeyAuthorityAttribute(t *testing.T) {
 			assert.True(t, attr.IsBSI())
 			assert.True(t, attr.System)
 		}
+	}
+}
+
+func TestLoadSchemaRejectsStringColumnID(t *testing.T) {
+	configDir := t.TempDir()
+	tableDir := filepath.Join(configDir, "people")
+	assert.Nil(t, os.MkdirAll(tableDir, 0755))
+	assert.Nil(t, os.WriteFile(filepath.Join(tableDir, "schema.yaml"), []byte(`tableName: people
+primaryKey: region
+attributes:
+- fieldName: region
+  sourceName: /region
+  mappingStrategy: StringLexBSI
+  configuration:
+    length: "8"
+  type: String
+  columnID: true
+- fieldName: person
+  sourceName: /person
+  mappingStrategy: StringEnum
+  type: String
+`), 0644))
+
+	schema, err := LoadSchema(configDir, "people", nil)
+
+	assert.Nil(t, schema)
+	if assert.NotNil(t, err) {
+		assert.Contains(t, err.Error(), "columnID is only supported for Integer fields")
 	}
 }
 

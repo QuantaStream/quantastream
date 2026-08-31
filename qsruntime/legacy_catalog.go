@@ -172,7 +172,7 @@ func (c LegacyTableCacheCatalog) ListTables(schema string) ([]qsbridge.TableDefi
 		seen[strings.ToLower(table.Name)] = c.tableDefinition(schema, table)
 	}
 	if strings.TrimSpace(c.ConfigDir) != "" {
-		names, err := shared.ActiveCatalogTables(c.ConfigDir, schema)
+		names, err := shared.ActiveOrDiscoveredSchemaTables(c.ConfigDir, schema)
 		if err != nil {
 			return nil, legacyCatalogMetadataDiagnostic("list tables", err)
 		}

@@ -325,6 +325,9 @@ func LoadSchema(path string, name string, consulClient *api.Client) (*BasicTable
 			return nil, fmt.Errorf("time partitions enabled for %s, Type must be Date or DateTime", timeQuantumField)
 		}
 	}
+	if err := ValidateCatalogTableDefinition(&table); err != nil {
+		return nil, err
+	}
 	return &table, nil
 }
 

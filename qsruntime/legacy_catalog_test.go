@@ -185,6 +185,39 @@ attributes:
 	}
 }
 
+func TestLegacyTableCacheCatalogListsDiscoveredTablesWithoutCatalogManifest(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLegacyCatalogSchemaFixture(t, baseDir, "catalog_orders")
+	writeLegacyCatalogSchemaFixture(t, baseDir, "catalog_people")
+	cache := core.NewTableCacheStruct()
+	catalog, diagnostics, err := LegacyTableCacheCatalogFactory{TableCache: cache}.NewRuntimeCatalog(
+		context.Background(),
+		NewDirectRuntimeConfig(baseDir, "", 0, 0),
+	)
+	if err != nil {
+		t.Fatalf("new runtime catalog: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("new runtime catalog diagnostics = %#v", diagnostics)
+	}
+
+	metadata, ok := catalog.(*qsbridge.CachedCatalog)
+	if !ok {
+		t.Fatalf("catalog = %T, want cached catalog", catalog)
+	}
+	tables, tableDiagnostics := metadata.ListTables("quanta")
+
+	if tableDiagnostics.BlocksNative() {
+		t.Fatalf("ListTables diagnostics = %#v", tableDiagnostics)
+	}
+	if len(tables) != 2 {
+		t.Fatalf("tables = %#v, want two discovered schema tables", tables)
+	}
+	if tables[0].Name != "catalog_orders" || tables[1].Name != "catalog_people" {
+		t.Fatalf("tables = %#v, want sorted discovered tables", tables)
+	}
+}
+
 func TestLegacyTableCacheCatalogLoadsTableDefinitionsFromLegacyCache(t *testing.T) {
 	cache := legacyCatalogTestCache()
 	catalog := LegacyTableCacheCatalog{TableCache: cache}
@@ -215,6 +248,30 @@ func TestLegacyTableCacheCatalogLoadsTableDefinitionsFromLegacyCache(t *testing.
 	if orderPriority.Index != qsbridge.IndexStringEnum || orderPriority.Dictionary.Ref.Table != "orders" ||
 		orderPriority.Dictionary.Cardinality != 2 || !orderPriority.Dictionary.AllowsMutation() {
 		t.Fatalf("o_orderpriority dictionary = %#v, want mutable StringEnum metadata", orderPriority.Dictionary)
+	}
+}
+
+func writeLegacyCatalogSchemaFixture(t *testing.T, baseDir, tableName string) {
+	t.Helper()
+	tableDir := filepath.Join(baseDir, tableName)
+	if err := os.Mkdir(tableDir, 0755); err != nil {
+		t.Fatalf("mkdir table fixture: %v", err)
+	}
+	schema := []byte(`tableName: ` + tableName + `
+primaryKey: id
+attributes:
+- fieldName: id
+  sourceName: id
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
+- fieldName: label
+  sourceName: label
+  mappingStrategy: StringEnum
+  type: String
+`)
+	if err := os.WriteFile(filepath.Join(tableDir, "schema.yaml"), schema, 0644); err != nil {
+		t.Fatalf("write schema fixture: %v", err)
 	}
 }
 

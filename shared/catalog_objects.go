@@ -332,6 +332,10 @@ func ValidateCatalogTableDefinition(table *BasicTable) error {
 		if typ == NotDefined {
 			return fmt.Errorf("unknown type %s for field %s", attribute.Type, attribute.FieldName)
 		}
+		if attribute.ColumnID && typ != Integer {
+			return fmt.Errorf("columnID is only supported for Integer fields; field %s in table %s has type %s",
+				attribute.FieldName, table.Name, attribute.Type)
+		}
 		if mappingStrategy == "ParentRelation" && strings.TrimSpace(attribute.ForeignKey) == "" {
 			return fmt.Errorf("foreignKey must be specified for ParentRelation field %s", attribute.FieldName)
 		}
