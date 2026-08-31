@@ -72,6 +72,23 @@ The Q19 profile says the remaining cost is mostly filter-domain normalization
 and filter-tree evaluation, not a failed bitmap lookup. The next Q19 work should
 fall out of broader optimizer work rather than driving the roadmap.
 
+### Q17 Correlated-Subquery Scope
+
+Q17 is covered in compatibility/kernel suites, including the formal
+correlated-average quantity predicate, but it is not part of the SF1 readonly
+checkpoint suite or the final comparison table above. None of the checkpoint
+numbers in this section depend on Q17.
+
+The current formal Q17 correlated-average path is a shape-specific rewrite for
+the TPC-H pattern: `part` filtered by `p_brand` and `p_container`, joined to
+`lineitem`, with an outer `l_quantity` predicate compared to a correlated
+average over matching `l_partkey` rows. The implementation still carries
+Q17-flavored internal names such as `q17PartKeySeed` and `q17PartThreshold`.
+Treat any Q17-specific timing as evidence for that correlated aggregate shape,
+not as proof that arbitrary correlated aggregate subqueries have a general
+native execution path yet. Generalizing this support is tracked in
+[#21](https://github.com/QuantaStream/quantastream/issues/21).
+
 ## Mechanisms Proven During This Pass
 
 The final SF1 result depends on a set of reusable execution mechanisms rather
