@@ -122,8 +122,8 @@ not constrain the time field.
 | `sourceName` | no | Source event or source file path for the value, commonly `/data/<source-field>`. |
 | `type` | yes | Logical value type: `String`, `Integer`, `Float`, `Date`, `DateTime`, `Boolean`, `JSON`, `NotExist`, or `NotDefined`. |
 | `mappingStrategy` | yes | Physical mapper used to encode the field. See [Mapping Strategies](#mapping-strategies). |
-| `foreignKey` | conditional | Parent table name for `ParentRelation` fields. |
-| `childTable` | conditional | Child table name for child-side relationship helper metadata. |
+| `foreignKey` | conditional | Parent table name, or `table.field`, for `ParentRelation` fields. |
+| `childTable` | conditional | Child table name for `ChildRelation` nested-ingest expansion fields. |
 | `relationshipArtifacts` | no | Optional maintained relationship artifacts. Currently supports `parentToChild: true`. |
 | `columnID` | no | When true, the attribute value is also the QuantaStream row ID. This is common for parent table surrogate keys. |
 | `scale` | conditional | Decimal scale for `FloatScaleBSI`. For TPC-H money/decimal fields, `scale: 2` is typical. |
@@ -209,6 +209,7 @@ Recommended production mappers:
 | `StringEnum` | `String` | Low-cardinality strings stored as bitmap enum values. Best for dimensions and grouping keys. |
 | `StringLexBSI` | `String` | Lexical string encoding for high-cardinality projected strings. Can be full-inline or prefix plus backing remainder. |
 | `ParentRelation` | `Integer` | Child-to-parent relationship edge. Requires `foreignKey`. |
+| `ChildRelation` | `NotDefined` | Parent-side nested-ingest expansion edge. Requires `childTable`. |
 | `BoolDirect` | `Boolean` | Boolean bitmap mapping. |
 | `UUIDBSI` | `String` | UUID encoded into BSI form for UUID-shaped identifiers. |
 
@@ -346,7 +347,9 @@ manifest workflows.
 
 ### `ParentRelation`
 
-Use for child-to-parent join edges. `foreignKey` names the parent table.
+Use for child-to-parent join edges. `foreignKey` names the parent table. When
+the parent is not referenced by row ID directly, `foreignKey` can name the
+parent key as `table.field`.
 
 ```yaml
 - fieldName: l_orderkey
@@ -360,6 +363,41 @@ Use for child-to-parent join edges. `foreignKey` names the parent table.
 
 Internally, parent relation values are represented as integer BSI-compatible
 relationship vectors. They are not string or BigValue projection fields.
+
+### `ChildRelation`
+
+Use on a parent table to expand nested streaming payload arrays into rows in a
+child table. `ChildRelation` is not a SQL-projected data field. It is loader
+metadata that tells `qstream-loader` which source array contains child objects
+and which table should receive those child rows.
+
+Parent schema excerpt:
+
+```yaml
+- sourceName: /data/lineitems
+  mappingStrategy: ChildRelation
+  childTable: lineitem
+```
+
+Child schema excerpt:
+
+```yaml
+- fieldName: l_orderkey
+  sourceName: l_orderkey
+  type: Integer
+  mappingStrategy: ParentRelation
+  foreignKey: orders
+```
+
+For a nested order event, the loader first resolves or assigns the `orders`
+row ID, then expands `/data/lineitems` and inserts one `lineitem` row per child
+object. The child's `ParentRelation` back to `orders` can use the current
+parent row ID in the same session, so that enclosing edge does not require a
+separate committed parent lookup.
+
+Use nested ingestion for event-envelope streams where parent and children
+arrive together. For table-by-table migration or arbitrary relational graphs,
+load parent tables first and commit before loading child tables.
 
 ### Relationship Artifacts
 
@@ -537,6 +575,7 @@ timeQuantumField: l_shipdate
 - Compound keys use `+`.
 - Time quantum tables identify a `Date` or `DateTime` partition field.
 - `ParentRelation` fields include `foreignKey`.
+- `ChildRelation` fields include `childTable`.
 - Reverse relationship artifacts are enabled only where the workload benefits.
 - `FloatScaleBSI` fields define the intended `scale`.
 - `TimestampBSI` fields use an explicit granularity when precision matters.

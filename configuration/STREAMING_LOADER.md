@@ -247,6 +247,94 @@ details:
 }
 ```
 
+## Nested Streaming Events
+
+Some streaming sources naturally arrive as one parent event with nested child
+arrays. For example, an order event may include the line items for that order.
+QuantaStream can ingest that shape when the parent schema declares a
+`ChildRelation` and the child schema declares the corresponding
+`ParentRelation`.
+
+Parent schema excerpt:
+
+```yaml
+tableName: orders
+primaryKey: o_orderkey
+selector: type="orders"
+attributes:
+- fieldName: o_orderkey
+  sourceName: /data/o_orderkey
+  mappingStrategy: IntBSI
+  type: Integer
+  columnID: true
+- sourceName: /data/lineitems
+  mappingStrategy: ChildRelation
+  childTable: lineitem
+```
+
+Child schema excerpt:
+
+```yaml
+tableName: lineitem
+primaryKey: l_orderkey+l_linenumber
+selector: type="lineitem"
+attributes:
+- fieldName: l_orderkey
+  sourceName: l_orderkey
+  mappingStrategy: ParentRelation
+  foreignKey: orders
+  type: Integer
+- fieldName: l_linenumber
+  sourceName: l_linenumber
+  mappingStrategy: IntBSI
+  type: Integer
+- fieldName: l_quantity
+  sourceName: l_quantity
+  mappingStrategy: IntBSI
+  type: Integer
+```
+
+Nested event example:
+
+```json
+{
+  "mode": "stream",
+  "event_id": "tpch.orders.100000001",
+  "source": "tpch-stream-producer",
+  "shard_key": "tpch.order.100000001",
+  "payload": {
+    "type": "orders",
+    "data": {
+      "o_orderkey": 100000001,
+      "o_orderstatus": "O",
+      "lineitems": [
+        {
+          "l_orderkey": 100000001,
+          "l_linenumber": 1,
+          "l_quantity": 3
+        },
+        {
+          "l_orderkey": 100000001,
+          "l_linenumber": 2,
+          "l_quantity": 5
+        }
+      ]
+    }
+  }
+}
+```
+
+The loader routes the top-level event to the parent table. During `PutRow`,
+QuantaStream assigns or resolves the parent row ID, expands each child object
+from the configured child array, and maps the child's relationship back to the
+current parent row within the same session. That avoids a separate committed
+parent lookup for the enclosing parent-child edge.
+
+Nested ingestion is a streaming-envelope feature, not a general replacement for
+batch relational load ordering. Additional child foreign keys that do not point
+to the enclosing parent still require the referenced parent rows to exist and
+be visible to the loader.
+
 ## TPC-H Stream Producer
 
 The TPC-H producer is a development driver for the loader endpoint:

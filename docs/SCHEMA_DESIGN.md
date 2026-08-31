@@ -8,9 +8,12 @@ The field-level configuration reference lives in
 [`configuration/SCHEMA_CONFIG_REFERENCE.md`](../configuration/SCHEMA_CONFIG_REFERENCE.md).
 This guide focuses on how to choose schema shapes.
 
-Future analyzer tooling should help generate and explain draft schemas from
-representative data samples. That work is tracked internally until it is ready
-for public documentation.
+For existing MySQL databases, the
+[`qstream-migrate`](https://github.com/QuantaStream/qstream-migrate) toolkit can
+inspect source metadata and representative data, then generate a draft
+QuantaStream schema plan for review. Treat the generated output as a starting
+point for physical design: relationship modeling, time partitioning, and
+high-cardinality string choices still benefit from workload knowledge.
 
 ## Mental Model
 
@@ -190,6 +193,13 @@ When possible:
 - avoid string primary keys in high-volume join paths
 - avoid relationship designs that require repeated lookup of string keys during
   query execution
+
+For streaming sources that naturally arrive as parent envelopes with child
+arrays, model the parent-side array with `ChildRelation` and the child-side
+edge back to the parent with `ParentRelation`. This lets the loader expand the
+child rows and map the enclosing parent relationship within the same session.
+Use this for event-shaped streams, not as a substitute for parent-first
+table-by-table batch loads.
 
 ## Time Quantum Design
 
