@@ -199,10 +199,19 @@ func doctorWALCheck(path string) doctorCheck {
 	if err != nil {
 		return doctorCheck{Name: "wal", Status: doctorStatusFail, Detail: err.Error()}
 	}
+	detail := fmt.Sprintf("records=%d replay=%d pending=%d", plan.RecordCount, plan.ReplayRecordCount(), plan.PendingRecordCount())
+	status := doctorStatusPass
+	if plan.TornTailBytes != 0 {
+		status = doctorStatusWarn
+		detail += fmt.Sprintf(" torn_tail_bytes=%d", plan.TornTailBytes)
+		if plan.TornTailLine != 0 {
+			detail += fmt.Sprintf(" torn_tail_line=%d", plan.TornTailLine)
+		}
+	}
 	return doctorCheck{
 		Name:   "wal",
-		Status: doctorStatusPass,
-		Detail: fmt.Sprintf("records=%d replay=%d pending=%d", plan.RecordCount, plan.ReplayRecordCount(), plan.PendingRecordCount()),
+		Status: status,
+		Detail: detail,
 	}
 }
 

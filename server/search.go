@@ -17,6 +17,7 @@ import (
 	"hash"
 	"hash/fnv"
 	"io"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"time"
@@ -54,7 +55,7 @@ func NewStringSearch(node *Node) *StringSearch {
 // Init search service.
 func (m *StringSearch) Init() error {
 
-	db, err := pogreb.Open(m.dataDir+"/index/"+"search.dat", nil)
+	db, err := openVerifiedPogrebStore(filepath.Join(m.dataDir, "index", "search.dat"))
 	if err != nil {
 		return fmt.Errorf("cannot initialize string search service: %v", err)
 	}

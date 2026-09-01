@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +180,90 @@ func TestKVStorePutStringEnumCachesDictionary(t *testing.T) {
 	}
 }
 
+func TestKVStoreRejectsCleanPogrebChecksumMismatch(t *testing.T) {
+	root := t.TempDir()
+	index := "corrupt-index"
+	dbPath := filepath.Join(root, "index", index)
+	db := openKVStoreShutdownTestDB(t, dbPath)
+	if err := db.Sync(); err != nil {
+		t.Fatalf("pogreb Sync(%s) error = %v", dbPath, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("pogreb Close(%s) error = %v", dbPath, err)
+	}
+	corruptPogrebSegmentByte(t, dbPath)
+
+	store := &KVStore{
+		Node:       &Node{hashKey: "test-node", dataDir: root},
+		storeCache: map[string]*cacheEntry{},
+		exit:       make(chan bool),
+	}
+	t.Cleanup(store.Shutdown)
+
+	_, err := store.Lookup(context.Background(), &pb.IndexKVPair{
+		IndexPath: index,
+		Key:       []byte("key"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "integrity check") {
+		t.Fatalf("Lookup error = %v, want integrity check failure", err)
+	}
+	if _, cached := store.storeCache[index]; cached {
+		t.Fatalf("corrupt store was cached after failed verification")
+	}
+}
+
+func TestKVStoreInitRejectsCleanPogrebChecksumMismatch(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index", "sample-table", "status.StringEnum")
+	db := openKVStoreShutdownTestDB(t, dbPath)
+	if err := db.Sync(); err != nil {
+		t.Fatalf("pogreb Sync(%s) error = %v", dbPath, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("pogreb Close(%s) error = %v", dbPath, err)
+	}
+	corruptPogrebSegmentByte(t, dbPath)
+
+	store := &KVStore{
+		Node:       &Node{hashKey: "test-node", dataDir: root},
+		storeCache: map[string]*cacheEntry{},
+		exit:       make(chan bool),
+	}
+
+	err := store.Init()
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("Init error = %v, want checksum mismatch", err)
+	}
+}
+
+func TestOpenVerifiedPogrebStoreAllowsPogrebTornTailRecovery(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "recovery-index")
+	db := openKVStoreShutdownTestDB(t, dbPath)
+	if err := db.Sync(); err != nil {
+		t.Fatalf("pogreb Sync(%s) error = %v", dbPath, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("pogreb Close(%s) error = %v", dbPath, err)
+	}
+	appendPogrebSegmentTail(t, dbPath, []byte{1, 0, 1})
+	if err := os.WriteFile(filepath.Join(dbPath, "lock"), []byte("stale"), 0644); err != nil {
+		t.Fatalf("write stale pogreb lock: %v", err)
+	}
+
+	db, err := openVerifiedPogrebStore(dbPath)
+	if err != nil {
+		t.Fatalf("openVerifiedPogrebStore(%s) error = %v", dbPath, err)
+	}
+	defer db.Close()
+	value, err := db.Get([]byte("key"))
+	if err != nil {
+		t.Fatalf("pogreb Get after recovery error = %v", err)
+	}
+	if got := string(value); got != "value" {
+		t.Fatalf("pogreb Get after recovery = %q, want value", got)
+	}
+}
+
 func openKVStoreShutdownTestDB(t *testing.T, path string) *pogreb.DB {
 	t.Helper()
 	db, err := pogreb.Open(path, nil)
@@ -202,6 +288,41 @@ func assertKVStoreValue(t *testing.T, store *KVStore, index string, key uint64, 
 	}
 	if got := string(result.Value[0]); got != want {
 		t.Fatalf("Lookup(%s, %d) = %q, want %q", index, key, got, want)
+	}
+}
+
+func corruptPogrebSegmentByte(t *testing.T, dbPath string) {
+	t.Helper()
+	segmentPath := filepath.Join(dbPath, "00000.psg")
+	f, err := os.OpenFile(segmentPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open pogreb segment for corruption: %v", err)
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat pogreb segment for corruption: %v", err)
+	}
+	var b [1]byte
+	if _, err := f.ReadAt(b[:], stat.Size()-1); err != nil {
+		t.Fatalf("read pogreb checksum byte: %v", err)
+	}
+	b[0] ^= 0xff
+	if _, err := f.WriteAt(b[:], stat.Size()-1); err != nil {
+		t.Fatalf("write pogreb checksum byte: %v", err)
+	}
+}
+
+func appendPogrebSegmentTail(t *testing.T, dbPath string, tail []byte) {
+	t.Helper()
+	segmentPath := filepath.Join(dbPath, "00000.psg")
+	f, err := os.OpenFile(segmentPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open pogreb segment for torn tail append: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(tail); err != nil {
+		t.Fatalf("append pogreb torn tail: %v", err)
 	}
 }
 

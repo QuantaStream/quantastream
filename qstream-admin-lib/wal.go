@@ -44,6 +44,10 @@ func printWALSummary(summary core.LocalWALSummary) {
 	fmt.Printf("wal_records=%d\n", summary.RecordCount)
 	fmt.Printf("wal_last_lsn=%d\n", summary.LastLSN)
 	fmt.Printf("wal_bytes=%d\n", summary.ByteCount)
+	fmt.Printf("wal_torn_tail_bytes=%d\n", summary.TornTailBytes)
+	if summary.TornTailLine != 0 {
+		fmt.Printf("wal_torn_tail_line=%d\n", summary.TornTailLine)
+	}
 	fmt.Printf("wal_checkpoint_exists=%t\n", summary.CheckpointExists)
 	fmt.Printf("wal_checkpoint_lsn=%d\n", summary.CheckpointLSN)
 	if summary.CheckpointPath != "" {
@@ -58,6 +62,10 @@ func printWALRecoveryPlan(plan core.LocalWALRecoveryPlan) {
 	fmt.Printf("wal_checkpoint_lsn=%d\n", plan.CheckpointLSN)
 	fmt.Printf("wal_last_lsn=%d\n", plan.LastLSN)
 	fmt.Printf("wal_records=%d\n", plan.RecordCount)
+	fmt.Printf("wal_torn_tail_bytes=%d\n", plan.TornTailBytes)
+	if plan.TornTailLine != 0 {
+		fmt.Printf("wal_torn_tail_line=%d\n", plan.TornTailLine)
+	}
 	fmt.Printf("wal_checkpointed_records=%d\n", plan.CheckpointedRecordCount)
 	fmt.Printf("wal_replay_records=%d\n", plan.ReplayRecordCount())
 	fmt.Printf("wal_pending_records=%d\n", plan.PendingRecordCount())

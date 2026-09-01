@@ -620,6 +620,10 @@ func printWALRecoveryPlanTo(w io.Writer, plan core.LocalWALRecoveryPlan) {
 	fmt.Fprintf(w, "wal_checkpoint_lsn=%d\n", plan.CheckpointLSN)
 	fmt.Fprintf(w, "wal_last_lsn=%d\n", plan.LastLSN)
 	fmt.Fprintf(w, "wal_records=%d\n", plan.RecordCount)
+	fmt.Fprintf(w, "wal_torn_tail_bytes=%d\n", plan.TornTailBytes)
+	if plan.TornTailLine != 0 {
+		fmt.Fprintf(w, "wal_torn_tail_line=%d\n", plan.TornTailLine)
+	}
 	fmt.Fprintf(w, "wal_checkpointed_records=%d\n", plan.CheckpointedRecordCount)
 	fmt.Fprintf(w, "wal_replay_records=%d\n", plan.ReplayRecordCount())
 	fmt.Fprintf(w, "wal_pending_records=%d\n", plan.PendingRecordCount())

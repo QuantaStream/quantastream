@@ -165,6 +165,11 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stdout, line)
 	}
 	if process.RuntimeMount.WriteAheadLog != nil {
+		recovery := process.RuntimeMount.WriteAheadLogRecovery
+		fmt.Fprintf(stdout, "wal_startup_torn_tail_bytes=%d\n", recovery.TornTailBytes)
+		if recovery.TornTailLine != 0 {
+			fmt.Fprintf(stdout, "wal_startup_torn_tail_line=%d\n", recovery.TornTailLine)
+		}
 		replay := process.RuntimeMount.WriteAheadLogReplay
 		fmt.Fprintf(stdout, "wal_startup_replayed_records=%d\n", replay.ReplayRecordCount)
 		fmt.Fprintf(stdout, "wal_startup_replayed_put_rows=%d\n", replay.PutRowCount)

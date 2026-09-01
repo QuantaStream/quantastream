@@ -132,7 +132,18 @@ Current implementation status:
   validates the WAL/checkpoint pair and reports checkpointed, replayable, and
   pending WAL tail records. Standard-mode startup applies committed replay
   records before the MySQL front door is marked ready and leaves pending tail
-  records unapplied. The WAL is disabled when the path is empty.
+  records unapplied. A final unterminated WAL frame is treated as a torn crash
+  tail: inspection reports its byte count, startup truncates it before accepting
+  new writes, and complete corrupt frames remain validation failures. WAL
+  rotation/compaction is still a follow-up. The WAL is disabled when the path is
+  empty.
+- Pogreb-backed KV stores now follow the same integrity posture as the WAL and
+  backup layers. Startup verifies segment headers and per-record CRCs for
+  clean, closed stores without acquiring Pogreb locks. Locked stores are
+  reported and deferred to the normal open path, where Pogreb recovery is
+  allowed to run first after unclean shutdowns and QuantaStream verifies the
+  recovered segment bytes before accepting the store. Clean-looking checksum
+  corruption is rejected instead of being deferred until a later key lookup.
 - `qstream-admin backup create --quiesce` creates a local storage write barrier
   file in the data directory while copying a filesystem snapshot. Standard-mode
   SQL writes, catalog mutations, durable `CREATE TABLE AS SELECT`,
@@ -606,9 +617,10 @@ go run ./qstream-admin wal plan \
   --path /path/to/quantastream-data/storage.wal
 ```
 
-`wal validate` confirms the WAL and checkpoint can be read consistently.
-`wal plan` prints checkpointed, replayable, and pending tail counts. It is an
-inspection command only; startup replay remains the recovery path.
+`wal validate` confirms the WAL and checkpoint can be read consistently and
+reports any recoverable torn-tail bytes. `wal plan` prints checkpointed,
+replayable, pending tail, and torn-tail counts. It is an inspection command
+only; startup replay and torn-tail truncation remain the recovery path.
 
 Run a local deployment preflight when validating a host or support bundle input
 paths:
@@ -992,4 +1004,3 @@ understood.
 6. Define and test backup and restore.
 7. Validate rolling restart and upgrade behavior.
 8. Publish the production port, health-check, and security inventory.
-

@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -64,7 +65,20 @@ func NewKVStore(node *Node) *KVStore {
 // Init - Initialize.
 func (m *KVStore) Init() error {
 
+	integrityStart := time.Now()
+	integrity, err := m.validatePogrebStoresAtStartup()
+	if err != nil {
+		return fmt.Errorf("cannot initialize kv store service: %v", err)
+	}
+	integrityElapsed := time.Since(integrityStart)
+
 	if m.Node.consul == nil {
+		fmt.Println(m.hashKey, "KVStore Init",
+			"kv_integrity_stores", integrity.Stores,
+			"kv_integrity_segments", integrity.SegmentFiles,
+			"kv_integrity_records", integrity.Records,
+			"kv_integrity_skipped_locks", integrity.SkippedLocks,
+			"kv_integrity_elapsed", integrityElapsed)
 		return nil
 	}
 
@@ -92,9 +106,21 @@ func (m *KVStore) Init() error {
 
 	elapsed2 := time.Since(start)
 
-	fmt.Println(m.hashKey, "KVStore Init elapsed1", elapsed1, "elapsed2", elapsed2)
+	fmt.Println(m.hashKey, "KVStore Init elapsed1", elapsed1, "elapsed2", elapsed2,
+		"kv_integrity_stores", integrity.Stores,
+		"kv_integrity_segments", integrity.SegmentFiles,
+		"kv_integrity_records", integrity.Records,
+		"kv_integrity_skipped_locks", integrity.SkippedLocks,
+		"kv_integrity_elapsed", integrityElapsed)
 
 	return nil
+}
+
+func (m *KVStore) validatePogrebStoresAtStartup() (pogrebIntegritySummary, error) {
+	if m == nil || m.Node == nil || strings.TrimSpace(m.Node.dataDir) == "" {
+		return pogrebIntegritySummary{}, nil
+	}
+	return validatePogrebStoreTree(filepath.Join(m.Node.dataDir, "index"))
 }
 
 // background thread to check and close cached DB entries that haven't been accessed in over 24 hours.
@@ -200,7 +226,7 @@ func (m *KVStore) getStore(index string) (db *pogreb.DB, err error) {
 	*/
 	path := m.Node.dataDir + sep + "index" + sep + index
 	// fmt.Println(m.hashKey, "KVStore getStore", path)
-	db, err = pogreb.Open(path, nil)
+	db, err = openVerifiedPogrebStore(path)
 	if err == nil {
 		m.storeCache[index] = &cacheEntry{db: db, accessTime: time.Now()}
 	} else {
@@ -632,7 +658,7 @@ func (m *KVStore) IndexInfo(ctx context.Context, req *pb.IndexInfoRequest) (*pb.
 	ce, res.WasOpen = m.storeCache[req.IndexPath]
 	m.storeCacheLock.RUnlock()
 	if ce == nil {
-		db, err = pogreb.Open(filePath, nil)
+		db, err = openVerifiedPogrebStore(filePath)
 		if err != nil {
 			return res, fmt.Errorf("IndexInfo:Open err - %v", err)
 		}

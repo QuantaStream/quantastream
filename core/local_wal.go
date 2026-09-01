@@ -63,6 +63,8 @@ type LocalWALSummary struct {
 	CheckpointPath   string
 	CheckpointExists bool
 	ByteCount        int64
+	TornTailBytes    int64
+	TornTailLine     int
 }
 
 // LocalWALRecoveryPlan describes the WAL tail visible at startup. It is a
@@ -75,6 +77,8 @@ type LocalWALRecoveryPlan struct {
 	CheckpointLSN             uint64
 	LastLSN                   uint64
 	RecordCount               int
+	TornTailBytes             int64
+	TornTailLine              int
 	CheckpointedRecordCount   int
 	ReplayRecords             []LocalWALRecord
 	PendingRecords            []LocalWALRecord
@@ -142,10 +146,16 @@ func OpenLocalWALWithOptions(path string, opts LocalWALOptions) (*LocalWAL, erro
 	if err := os.MkdirAll(filepath.Dir(checkpointPath), 0755); err != nil {
 		return nil, fmt.Errorf("create WAL checkpoint parent directory: %w", err)
 	}
-	records, err := ReadLocalWAL(resolved)
+	read, err := readLocalWALPath(resolved)
 	if err != nil {
 		return nil, err
 	}
+	if read.TornTailBytes != 0 {
+		if err := truncateLocalWALTail(resolved, read.ValidByteCount); err != nil {
+			return nil, err
+		}
+	}
+	records := read.Records
 	var lastLSN uint64
 	for _, record := range records {
 		if record.LSN <= lastLSN {
@@ -310,16 +320,24 @@ func (w *LocalWAL) Close() error {
 }
 
 func ReadLocalWAL(path string) ([]LocalWALRecord, error) {
-	resolved, err := ResolveLocalFileTarget(path)
+	read, err := readLocalWALPath(path)
 	if err != nil {
 		return nil, err
 	}
+	return read.Records, nil
+}
+
+func readLocalWALPath(path string) (localWALReadResult, error) {
+	resolved, err := ResolveLocalFileTarget(path)
+	if err != nil {
+		return localWALReadResult{}, err
+	}
 	file, err := os.Open(resolved)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return localWALReadResult{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open WAL %q: %w", resolved, err)
+		return localWALReadResult{}, fmt.Errorf("open WAL %q: %w", resolved, err)
 	}
 	defer file.Close()
 	return readLocalWAL(file)
@@ -334,10 +352,11 @@ func ValidateLocalWAL(path string) (LocalWALSummary, error) {
 	if err != nil {
 		return LocalWALSummary{}, err
 	}
-	records, err := ReadLocalWAL(resolved)
+	read, err := readLocalWALPath(resolved)
 	if err != nil {
 		return LocalWALSummary{}, err
 	}
+	records := read.Records
 	info, err := os.Stat(resolved)
 	if errors.Is(err, os.ErrNotExist) {
 		return LocalWALSummary{}, nil
@@ -366,6 +385,8 @@ func ValidateLocalWAL(path string) (LocalWALSummary, error) {
 		CheckpointPath:   checkpointPath,
 		CheckpointExists: checkpointExists,
 		ByteCount:        info.Size(),
+		TornTailBytes:    read.TornTailBytes,
+		TornTailLine:     read.TornTailLine,
 	}, nil
 }
 
@@ -382,10 +403,11 @@ func PlanLocalWALRecoveryWithOptions(path string, opts LocalWALOptions) (LocalWA
 	if err != nil {
 		return LocalWALRecoveryPlan{}, err
 	}
-	records, err := ReadLocalWAL(resolved)
+	read, err := readLocalWALPath(resolved)
 	if err != nil {
 		return LocalWALRecoveryPlan{}, err
 	}
+	records := read.Records
 	var lastLSN uint64
 	for _, record := range records {
 		if record.LSN <= lastLSN {
@@ -407,6 +429,8 @@ func PlanLocalWALRecoveryWithOptions(path string, opts LocalWALOptions) (LocalWA
 		CheckpointLSN:    checkpoint.LastCommittedLSN,
 		LastLSN:          lastLSN,
 		RecordCount:      len(records),
+		TornTailBytes:    read.TornTailBytes,
+		TornTailLine:     read.TornTailLine,
 	}
 	var tail []LocalWALRecord
 	for _, record := range records {
@@ -541,40 +565,76 @@ func ReplayLocalWALRecoveryPlan(plan LocalWALRecoveryPlan, apply func(LocalWALRe
 	return nil
 }
 
-func readLocalWAL(reader io.Reader) ([]LocalWALRecord, error) {
+type localWALReadResult struct {
+	Records        []LocalWALRecord
+	ByteCount      int64
+	ValidByteCount int64
+	TornTailBytes  int64
+	TornTailLine   int
+}
+
+func readLocalWAL(reader io.Reader) (localWALReadResult, error) {
 	buffered := bufio.NewReader(reader)
-	var records []LocalWALRecord
+	var result localWALReadResult
 	var lastLSN uint64
 	lineNumber := 0
 	for {
 		line, err := buffered.ReadBytes('\n')
 		if len(line) > 0 {
+			result.ByteCount += int64(len(line))
+			if errors.Is(err, io.EOF) && !bytes.HasSuffix(line, []byte{'\n'}) {
+				result.TornTailBytes = result.ByteCount - result.ValidByteCount
+				result.TornTailLine = lineNumber + 1
+				break
+			}
 			lineNumber++
 			line = bytes.TrimSpace(line)
 			if len(line) == 0 {
+				result.ValidByteCount = result.ByteCount
 				continue
 			}
 			var frame LocalWALFrame
 			if err := json.Unmarshal(line, &frame); err != nil {
-				return nil, fmt.Errorf("parse WAL frame line %d: %w", lineNumber, err)
+				return localWALReadResult{}, fmt.Errorf("parse WAL frame line %d: %w", lineNumber, err)
 			}
 			if err := validateLocalWALFrame(frame); err != nil {
-				return nil, fmt.Errorf("validate WAL frame line %d: %w", lineNumber, err)
+				return localWALReadResult{}, fmt.Errorf("validate WAL frame line %d: %w", lineNumber, err)
 			}
 			if frame.Record.LSN <= lastLSN {
-				return nil, fmt.Errorf("WAL LSN sequence is not increasing at line %d: got %d after %d", lineNumber, frame.Record.LSN, lastLSN)
+				return localWALReadResult{}, fmt.Errorf("WAL LSN sequence is not increasing at line %d: got %d after %d", lineNumber, frame.Record.LSN, lastLSN)
 			}
 			lastLSN = frame.Record.LSN
-			records = append(records, frame.Record)
+			result.Records = append(result.Records, frame.Record)
+			result.ValidByteCount = result.ByteCount
 		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read WAL frame line %d: %w", lineNumber+1, err)
+			return localWALReadResult{}, fmt.Errorf("read WAL frame line %d: %w", lineNumber+1, err)
 		}
 	}
-	return records, nil
+	return result, nil
+}
+
+func truncateLocalWALTail(path string, size int64) error {
+	file, err := os.OpenFile(path, os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open WAL for torn-tail repair %q: %w", path, err)
+	}
+	truncateErr := file.Truncate(size)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if truncateErr != nil {
+		return fmt.Errorf("truncate WAL torn tail %q: %w", path, truncateErr)
+	}
+	if syncErr != nil {
+		return fmt.Errorf("sync WAL torn-tail repair %q: %w", path, syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close WAL after torn-tail repair %q: %w", path, closeErr)
+	}
+	return nil
 }
 
 func newLocalWALFrame(record LocalWALRecord) (LocalWALFrame, error) {

@@ -245,6 +245,7 @@ func (p StandardPlan) SummaryLines() []string {
 			fmt.Sprintf("wal_checkpoint_lsn=%d", p.WALRecovery.CheckpointLSN),
 			fmt.Sprintf("wal_last_lsn=%d", p.WALRecovery.LastLSN),
 			fmt.Sprintf("wal_record_count=%d", p.WALRecovery.RecordCount),
+			fmt.Sprintf("wal_torn_tail_bytes=%d", p.WALRecovery.TornTailBytes),
 			fmt.Sprintf("wal_checkpointed_records=%d", p.WALRecovery.CheckpointedRecordCount),
 			fmt.Sprintf("wal_replay_records=%d", p.WALRecovery.ReplayRecordCount()),
 			fmt.Sprintf("wal_pending_records=%d", p.WALRecovery.PendingRecordCount()),

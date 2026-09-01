@@ -388,6 +388,110 @@ func TestLocalWALDetectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestLocalWALSkipsTornTailAndTruncatesBeforeAppend(t *testing.T) {
+	walPath := filepath.Join(t.TempDir(), "storage.wal")
+	wal, err := OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("OpenLocalWALWithOptions returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "op-1",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "customer",
+		Payload:     json.RawMessage(`{"value":1}`),
+	}); err != nil {
+		t.Fatalf("Append first returned error: %v", err)
+	}
+	if _, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "op-2",
+		Kind:        LocalWALRecordKindCommit,
+	}); err != nil {
+		t.Fatalf("Append second returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	cleanInfo, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat clean WAL: %v", err)
+	}
+	tornFragment := `{"format":"quantastream-local-wal","record":{"version":1,"lsn":999,"operation_id":"torn-op"`
+	file, err := os.OpenFile(walPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open WAL for torn append: %v", err)
+	}
+	if _, err := file.WriteString(tornFragment); err != nil {
+		_ = file.Close()
+		t.Fatalf("write torn fragment: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close torn WAL writer: %v", err)
+	}
+
+	records, err := ReadLocalWAL(walPath)
+	if err != nil {
+		t.Fatalf("ReadLocalWAL with torn tail returned error: %v", err)
+	}
+	if got := operationIDs(records); got != "op-1,op-2" {
+		t.Fatalf("records = %s, want torn tail skipped", got)
+	}
+	summary, err := ValidateLocalWAL(walPath)
+	if err != nil {
+		t.Fatalf("ValidateLocalWAL with torn tail returned error: %v", err)
+	}
+	if summary.RecordCount != 2 || summary.TornTailBytes != int64(len(tornFragment)) || summary.TornTailLine != 3 {
+		t.Fatalf("summary = %+v, want two records and torn tail line 3", summary)
+	}
+	plan, err := PlanLocalWALRecovery(walPath)
+	if err != nil {
+		t.Fatalf("PlanLocalWALRecovery with torn tail returned error: %v", err)
+	}
+	if plan.RecordCount != 2 || plan.TornTailBytes != int64(len(tornFragment)) || plan.TornTailLine != 3 {
+		t.Fatalf("plan = %+v, want two records and torn tail line 3", plan)
+	}
+
+	wal, err = OpenLocalWALWithOptions(walPath, LocalWALOptions{SyncOnAppend: false})
+	if err != nil {
+		t.Fatalf("reopen WAL with torn tail returned error: %v", err)
+	}
+	repairedInfo, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat repaired WAL: %v", err)
+	}
+	if repairedInfo.Size() != cleanInfo.Size() {
+		t.Fatalf("repaired WAL size = %d, want clean size %d", repairedInfo.Size(), cleanInfo.Size())
+	}
+	third, err := wal.Append(context.Background(), LocalWALRecord{
+		OperationID: "op-3",
+		Kind:        LocalWALRecordKindPutRow,
+		Table:       "orders",
+		Payload:     json.RawMessage(`{"value":3}`),
+	})
+	if err != nil {
+		t.Fatalf("Append after repair returned error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close repaired WAL returned error: %v", err)
+	}
+	if third.LSN != 3 {
+		t.Fatalf("third LSN = %d, want 3", third.LSN)
+	}
+	data, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatalf("read repaired WAL: %v", err)
+	}
+	if strings.Contains(string(data), "torn-op") {
+		t.Fatalf("repaired WAL still contains torn fragment: %s", data)
+	}
+	summary, err = ValidateLocalWAL(walPath)
+	if err != nil {
+		t.Fatalf("ValidateLocalWAL after repair returned error: %v", err)
+	}
+	if summary.RecordCount != 3 || summary.LastLSN != 3 || summary.TornTailBytes != 0 {
+		t.Fatalf("summary after repair = %+v, want three clean records", summary)
+	}
+}
+
 func TestLocalWALMissingFileIsEmpty(t *testing.T) {
 	walPath := filepath.Join(t.TempDir(), "missing.wal")
 	records, err := ReadLocalWAL(walPath)
