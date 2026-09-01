@@ -499,6 +499,67 @@ func (e *testNativeSubqueryStepExecutor) ExecuteNativeSubqueryStep(ctx context.C
 	return e.result, nil
 }
 
+type captureParentKeyNativeStepExecutor struct {
+	last qsbridge.NativeSubqueryStepExecutionRequest
+}
+
+func (e *captureParentKeyNativeStepExecutor) ExecuteNativeSubqueryStep(ctx context.Context, request qsbridge.NativeSubqueryStepExecutionRequest) (qsbridge.NativeSubqueryStepExecutionResult, error) {
+	e.last = request
+	return qsbridge.NativeSubqueryStepExecutionResult{
+		Step: request.Step,
+		RowSet: helperRowSet([]qsbridge.ResultCell{
+			{Kind: qsbridge.ValueInt, Value: int64(101)},
+		}),
+	}, nil
+}
+
+func TestCorrelatedAveragePartKeySeedsUsesBoundFallbackParameters(t *testing.T) {
+	executor := &captureParentKeyNativeStepExecutor{}
+	runtime := newTestSQLRuntime(t)
+	runtime.NativeSubquerySteps = executor
+	brand := "Brand#45\\"
+	container := "MED JAR' OR '1'='1"
+
+	seeds, diagnostics, reports, err := runtime.correlatedAveragePartKeySeeds(
+		context.Background(),
+		"p",
+		brand,
+		container,
+		qsbridge.ExecutionOptions{},
+		qsbridge.IndexedParameterValue(7, qsbridge.ValueString, "outer-query-value"),
+	)
+
+	if err != nil {
+		t.Fatalf("correlated part-key seeds: %v", err)
+	}
+	if diagnostics.BlocksNative() {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	if len(seeds) != 1 || seeds[0].PartKey != 101 {
+		t.Fatalf("seeds = %#v, want one part key", seeds)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(reports))
+	}
+	const wantSQL = "select p.p_partkey from part as p where p.p_brand = ? and p.p_container = ? order by p.p_partkey"
+	if reports[0].SQL != wantSQL {
+		t.Fatalf("helper SQL = %q, want %q", reports[0].SQL, wantSQL)
+	}
+	if strings.Contains(reports[0].SQL, "Brand#45") || strings.Contains(reports[0].SQL, "MED JAR") {
+		t.Fatalf("helper SQL contains client literals: %q", reports[0].SQL)
+	}
+	values := executor.last.Parameters
+	if len(values) != 2 {
+		t.Fatalf("native step parameters = %#v, want only helper-scoped brand/container values", values)
+	}
+	if values[0].Index != 1 || values[0].Kind != qsbridge.ValueString || values[0].Value != brand {
+		t.Fatalf("brand parameter = %#v", values[0])
+	}
+	if values[1].Index != 2 || values[1].Kind != qsbridge.ValueString || values[1].Value != container {
+		t.Fatalf("container parameter = %#v", values[1])
+	}
+}
+
 func TestScalarSubqueryMaterializationReplacesHavingExpressionLiteral(t *testing.T) {
 	runtime := newTestSQLRuntimeWithDirect(t, func(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
 		return ExecutionResult{RowSet: qsbridge.QuantaProjectedRowSet{

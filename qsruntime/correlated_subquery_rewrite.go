@@ -358,9 +358,10 @@ func (r SQLRuntime) correlatedAveragePartKeys(ctx context.Context, partAlias str
 	return keys, diagnostics, reports, err
 }
 
-func (r SQLRuntime) correlatedAveragePartKeySeeds(ctx context.Context, partAlias string, brand string, container string, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) ([]q17PartKeySeed, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
-	query := fmt.Sprintf("select %s.p_partkey from part as %s where %s.p_brand = '%s' and %s.p_container = '%s' order by %s.p_partkey", partAlias, partAlias, partAlias, escapeSQLString(brand), partAlias, escapeSQLString(container), partAlias)
-	request := correlatedParentKeyHelperRequest(partAlias, brand, container, query, options, values...)
+func (r SQLRuntime) correlatedAveragePartKeySeeds(ctx context.Context, partAlias string, brand string, container string, options qsbridge.ExecutionOptions, _ ...qsbridge.ParameterValue) ([]q17PartKeySeed, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
+	query := correlatedAveragePartKeySeedSQL(partAlias)
+	// Helper SQL is planned independently, so it uses helper-scoped bind values.
+	request := correlatedParentKeyHelperRequest(partAlias, brand, container, query, options, correlatedAveragePartKeySeedParameters(brand, container)...)
 	helper, err := r.executeParentKeyNativeSubqueryStep(ctx, request)
 	helperReports := []PreflightHelperExecutionRequestReport{helper.Report()}
 	diagnostics := append(qsbridge.DiagnosticSet(nil), helper.Diagnostics...)
@@ -387,6 +388,17 @@ func (r SQLRuntime) correlatedAveragePartKeySeeds(ctx context.Context, partAlias
 		seeds = append(seeds, q17PartKeySeed{PartKey: key, ParentRownum: helper.Result.Runtime.RowSet.Rownums[i]})
 	}
 	return seeds, nil, helperReports, nil
+}
+
+func correlatedAveragePartKeySeedSQL(partAlias string) string {
+	return fmt.Sprintf("select %s.p_partkey from part as %s where %s.p_brand = ? and %s.p_container = ? order by %s.p_partkey", partAlias, partAlias, partAlias, partAlias, partAlias)
+}
+
+func correlatedAveragePartKeySeedParameters(brand string, container string) []qsbridge.ParameterValue {
+	return []qsbridge.ParameterValue{
+		qsbridge.IndexedParameterValue(1, qsbridge.ValueString, brand),
+		qsbridge.IndexedParameterValue(2, qsbridge.ValueString, container),
+	}
 }
 
 func (r SQLRuntime) correlatedAverageThresholds(ctx context.Context, partKeys []int64, factor float64, options qsbridge.ExecutionOptions, values ...qsbridge.ParameterValue) ([]q17PartThreshold, qsbridge.DiagnosticSet, []PreflightHelperExecutionRequestReport, error) {
@@ -517,8 +529,4 @@ func resultCellFloat64(cell qsbridge.ResultCell) (float64, bool) {
 		return parsed, err == nil
 	}
 	return 0, false
-}
-
-func escapeSQLString(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
 }
