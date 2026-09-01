@@ -1,8 +1,15 @@
 package qsbridge
 
 import (
+	"fmt"
 	"sort"
 	"sync"
+)
+
+const (
+	// DefaultMaxPreparedStatements caps adapter-owned prepared statements per
+	// protocol session. It bounds clients that PREPARE without DEALLOCATE.
+	DefaultMaxPreparedStatements = 1024
 )
 
 // PreparedStatementRegistry stores adapter-owned prepared statement handles.
@@ -19,18 +26,27 @@ type PreparedStatementRegistry interface {
 
 // MemoryPreparedStatementRegistry is a lock-protected in-memory registry.
 type MemoryPreparedStatementRegistry struct {
-	mu     sync.RWMutex
-	nextID PreparedStatementID
-	byID   map[PreparedStatementID]PreparedPlan
-	byName map[string]PreparedStatementID
+	mu            sync.RWMutex
+	nextID        PreparedStatementID
+	maxStatements int
+	byID          map[PreparedStatementID]PreparedPlan
+	byName        map[string]PreparedStatementID
 }
 
 // NewMemoryPreparedStatementRegistry creates an empty prepared statement registry.
 func NewMemoryPreparedStatementRegistry() *MemoryPreparedStatementRegistry {
+	return NewMemoryPreparedStatementRegistryWithLimit(DefaultMaxPreparedStatements)
+}
+
+// NewMemoryPreparedStatementRegistryWithLimit creates an empty prepared
+// statement registry with a maximum live statement count. A non-positive limit
+// disables eviction for tests and embedded adapters that provide their own cap.
+func NewMemoryPreparedStatementRegistryWithLimit(maxStatements int) *MemoryPreparedStatementRegistry {
 	return &MemoryPreparedStatementRegistry{
-		nextID: 1,
-		byID:   make(map[PreparedStatementID]PreparedPlan),
-		byName: make(map[string]PreparedStatementID),
+		nextID:        1,
+		maxStatements: maxStatements,
+		byID:          make(map[PreparedStatementID]PreparedPlan),
+		byName:        make(map[string]PreparedStatementID),
 	}
 }
 
@@ -43,8 +59,27 @@ func (r *MemoryPreparedStatementRegistry) Register(plan PreparedPlan) PreparedPl
 	defer r.mu.Unlock()
 
 	handle := plan.Handle
+	if handle.Name != "" {
+		if existingID, exists := r.byName[handle.Name]; exists && existingID != handle.ID {
+			r.removePreparedStatementLocked(existingID)
+		}
+	}
+	replacing := false
+	if handle.ID != 0 {
+		if existing, exists := r.byID[handle.ID]; exists {
+			replacing = true
+			if existing.Handle.Name != "" && existing.Handle.Name != handle.Name {
+				delete(r.byName, existing.Handle.Name)
+			}
+		}
+	}
 	if handle.ID == 0 {
+		if r.atPreparedStatementLimitLocked() {
+			return r.preparedStatementLimitDescription(plan)
+		}
 		handle.ID = r.nextStatementID()
+	} else if !replacing && r.atPreparedStatementLimitLocked() {
+		return r.preparedStatementLimitDescription(plan)
 	}
 	plan = clonePreparedPlan(plan.WithHandle(handle))
 	r.byID[handle.ID] = plan
@@ -110,15 +145,10 @@ func (r *MemoryPreparedStatementRegistry) Close(request PreparedStatementCloseRe
 			return false
 		}
 	}
-	plan, ok := r.byID[id]
-	if !ok {
+	if _, ok := r.byID[id]; !ok {
 		return false
 	}
-	delete(r.byID, id)
-	if plan.Handle.Name != "" {
-		delete(r.byName, plan.Handle.Name)
-	}
-	return true
+	return r.removePreparedStatementLocked(id)
 }
 
 // Clear removes all registered prepared statements.
@@ -142,4 +172,30 @@ func (r *MemoryPreparedStatementRegistry) nextStatementID() PreparedStatementID 
 			}
 		}
 	}
+}
+
+func (r *MemoryPreparedStatementRegistry) atPreparedStatementLimitLocked() bool {
+	return r.maxStatements > 0 && len(r.byID) >= r.maxStatements
+}
+
+func (r *MemoryPreparedStatementRegistry) preparedStatementLimitDescription(plan PreparedPlan) PreparedPlanDescription {
+	plan.Diagnostics = append(plan.Diagnostics, ErrorDiagnostic(
+		DiagnosticInvalidExecutionOption,
+		PhaseExecute,
+		fmt.Sprintf("too many prepared statements: max %d live statements per session", r.maxStatements),
+	))
+	plan.Supported = false
+	return plan.Description()
+}
+
+func (r *MemoryPreparedStatementRegistry) removePreparedStatementLocked(id PreparedStatementID) bool {
+	plan, ok := r.byID[id]
+	if !ok {
+		return false
+	}
+	delete(r.byID, id)
+	if plan.Handle.Name != "" {
+		delete(r.byName, plan.Handle.Name)
+	}
+	return true
 }

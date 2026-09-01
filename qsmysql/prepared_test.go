@@ -3,6 +3,7 @@ package qsmysql
 import (
 	"bytes"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +204,29 @@ func TestDecodePreparedExecuteParametersScalarEdges(t *testing.T) {
 	}
 	if values[3].Kind != qsbridge.ValueNull || values[3].Value != nil {
 		t.Fatalf("null value = %#v", values[3])
+	}
+}
+
+func TestDecodePreparedExecuteParametersRejectsInvalidDateTime(t *testing.T) {
+	payload := []byte{byte(CommandStmtExecute)}
+	payload = appendUint32LE(payload, 7)
+	payload = append(payload, 0)
+	payload = appendUint32LE(payload, 1)
+	payload = append(payload, 0, 1)
+	payload = append(payload, byte(ColumnTypeDateTime), 0)
+	payload = append(payload, 7)
+	payload = appendUint16LE(payload, 2026)
+	payload = append(payload, 2, 30, 12, 34, 56)
+
+	execute, err := DecodePreparedExecuteCommand(payload)
+	if err != nil {
+		t.Fatalf("DecodePreparedExecuteCommand failed: %v", err)
+	}
+	_, _, err = DecodePreparedExecuteParametersWithOptions(execute, []qsbridge.ParameterRef{
+		{Index: 1, Type: qsbridge.DataTypeTime},
+	}, PreparedExecuteDecodeOptions{})
+	if err == nil || !strings.Contains(err.Error(), "invalid datetime 2026-02-30") {
+		t.Fatalf("DecodePreparedExecuteParametersWithOptions error = %v, want invalid datetime", err)
 	}
 }
 

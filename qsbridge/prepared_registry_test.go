@@ -55,6 +55,45 @@ func TestMemoryPreparedStatementRegistryHonorsAdapterProvidedID(t *testing.T) {
 	}
 }
 
+func TestMemoryPreparedStatementRegistryRejectsNewStatementsAtLimit(t *testing.T) {
+	registry := NewMemoryPreparedStatementRegistryWithLimit(2)
+
+	first := registry.Register(testPreparedSelectPlan(t).PreparedPlan().WithHandle(PreparedStatementHandle{Name: "first"}))
+	second := registry.Register(testPreparedSelectPlan(t).PreparedPlan().WithHandle(PreparedStatementHandle{Name: "second"}))
+	rejected := registry.Register(testPreparedSelectPlan(t).PreparedPlan().WithHandle(PreparedStatementHandle{Name: "third"}))
+
+	if rejected.SupportedForPrepare() {
+		t.Fatalf("third prepared statement should be rejected at limit")
+	}
+	if codes := rejected.Diagnostics.Codes(); len(codes) != 1 || codes[0] != DiagnosticInvalidExecutionOption {
+		t.Fatalf("diagnostics = %#v, want invalid execution option", codes)
+	}
+	for _, handle := range []PreparedStatementHandle{first.Handle, second.Handle} {
+		if _, ok := registry.Get(handle); !ok {
+			t.Fatalf("expected prepared statement %v to remain registered", handle)
+		}
+	}
+	if plans := registry.List(); len(plans) != 2 {
+		t.Fatalf("plans = %#v, want two live prepared statements", plans)
+	}
+}
+
+func TestMemoryPreparedStatementRegistryReplacingIDClearsOldName(t *testing.T) {
+	registry := NewMemoryPreparedStatementRegistryWithLimit(2)
+	first := registry.Register(testPreparedSelectPlan(t).PreparedPlan().WithHandle(PreparedStatementHandle{ID: 42, Name: "old_name"}))
+	second := registry.Register(testPreparedSelectPlan(t).PreparedPlan().WithHandle(PreparedStatementHandle{ID: 42, Name: "new_name"}))
+
+	if first.Handle.ID != second.Handle.ID {
+		t.Fatalf("handles = %#v %#v, want same id", first.Handle, second.Handle)
+	}
+	if _, ok := registry.Get(PreparedStatementHandle{Name: "old_name"}); ok {
+		t.Fatalf("expected replaced prepared statement name to be removed")
+	}
+	if plan, ok := registry.Get(PreparedStatementHandle{Name: "new_name"}); !ok || plan.Handle.ID != 42 {
+		t.Fatalf("new name lookup = %#v ok=%v, want id 42", plan.Handle, ok)
+	}
+}
+
 func TestMemoryPreparedStatementRegistryCopiesMutablePreparedPlans(t *testing.T) {
 	registry := NewMemoryPreparedStatementRegistry()
 	prepared := testPreparedSelectPlan(t).PreparedPlan()

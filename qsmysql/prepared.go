@@ -352,17 +352,32 @@ func readBinaryDateTime(payload []byte, offset int) (time.Time, int, error) {
 	year := int(readUint16LE(payload[offset : offset+2]))
 	month := time.Month(payload[offset+2])
 	day := int(payload[offset+3])
-	hour, minute, second, nanosecond := 0, 0, 0, 0
+	hour, minute, second := 0, 0, 0
+	microsecond := uint32(0)
 	if length >= 7 {
 		hour = int(payload[offset+4])
 		minute = int(payload[offset+5])
 		second = int(payload[offset+6])
 	}
 	if length == 11 {
-		microseconds := readUint32LE(payload[offset+7 : offset+11])
-		nanosecond = int(microseconds) * 1000
+		microsecond = readUint32LE(payload[offset+7 : offset+11])
 	}
-	return time.Date(year, month, day, hour, minute, second, nanosecond, time.UTC), offset + length, nil
+	if err := validateBinaryDateTime(year, month, day, hour, minute, second, microsecond); err != nil {
+		return time.Time{}, offset, err
+	}
+	return time.Date(year, month, day, hour, minute, second, int(microsecond)*1000, time.UTC), offset + length, nil
+}
+
+func validateBinaryDateTime(year int, month time.Month, day, hour, minute, second int, microsecond uint32) error {
+	if month < time.January || month > time.December || day < 1 || hour > 23 || minute > 59 || second > 59 || microsecond > 999999 {
+		return fmt.Errorf("invalid datetime %04d-%02d-%02d %02d:%02d:%02d.%06d", year, int(month), day, hour, minute, second, microsecond)
+	}
+	nanosecond := int(microsecond) * 1000
+	value := time.Date(year, month, day, hour, minute, second, nanosecond, time.UTC)
+	if value.Year() != year || value.Month() != month || value.Day() != day || value.Hour() != hour || value.Minute() != minute || value.Second() != second || value.Nanosecond() != nanosecond {
+		return fmt.Errorf("invalid datetime %04d-%02d-%02d %02d:%02d:%02d.%06d", year, int(month), day, hour, minute, second, microsecond)
+	}
+	return nil
 }
 
 func readBinaryTimeString(payload []byte, offset int) (string, int, error) {
