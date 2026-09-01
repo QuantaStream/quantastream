@@ -151,6 +151,13 @@ func standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config StandardCon
 		return nil
 	}
 	for entryIndex := range manifest.Entries {
+		artifacts, err := standardDiscoverBSIPrimaryKeyAuthorityArtifacts(config, manifest.Entries[entryIndex])
+		if err != nil {
+			return err
+		}
+		if len(artifacts) > 0 {
+			manifest.Entries[entryIndex].Artifacts = artifacts
+		}
 		for artifactIndex := range manifest.Entries[entryIndex].Artifacts {
 			count, exists, err := standardBSIPrimaryKeyAuthorityArtifactFileCount(config, manifest.Entries[entryIndex].Artifacts[artifactIndex].Path)
 			if err != nil {
@@ -163,6 +170,57 @@ func standardPopulateBSIPrimaryKeyAuthorityArtifactFileCounts(config StandardCon
 		}
 	}
 	return nil
+}
+
+func standardDiscoverBSIPrimaryKeyAuthorityArtifacts(config StandardConfig, entry core.BSIPrimaryKeyAuthorityManifestEntry) ([]core.BSIPrimaryKeyAuthorityManifestArtifact, error) {
+	if len(entry.Artifacts) == 0 {
+		return nil, nil
+	}
+	rootPath := path.Join("bitmap", strings.TrimSpace(entry.TableName), "_bsi_pack")
+	root, err := standardBSIPrimaryKeyAuthorityArtifactPhysicalPath(config, rootPath)
+	if err != nil {
+		return nil, err
+	}
+	shards, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	artifacts := make([]core.BSIPrimaryKeyAuthorityManifestArtifact, 0, len(shards))
+	for _, shard := range shards {
+		if !shard.IsDir() {
+			continue
+		}
+		artifactPath := path.Join(rootPath, shard.Name(), "bundle")
+		count, exists, err := standardBSIPrimaryKeyAuthorityArtifactFileCount(config, artifactPath)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		artifacts = append(artifacts, core.BSIPrimaryKeyAuthorityManifestArtifact{
+			Kind:      core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
+			Path:      artifactPath,
+			FileCount: count,
+		})
+	}
+	if len(artifacts) > 1 {
+		count, exists, err := standardBSIPrimaryKeyAuthorityArtifactFileCount(config, rootPath)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return []core.BSIPrimaryKeyAuthorityManifestArtifact{{
+				Kind:      core.BSIPrimaryKeyAuthorityArtifactKindPrimaryKeyBSI,
+				Path:      rootPath,
+				FileCount: count,
+			}}, nil
+		}
+	}
+	return artifacts, nil
 }
 
 // RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts ensures the

@@ -140,6 +140,9 @@ func TestFieldListPacketsWithOptionsEncodeColumnDefinitionsWithoutResultHeader(t
 			t.Fatalf("field-list column payload = %q, want %q", packets[0].Payload, want)
 		}
 	}
+	if packets[0].Payload[len(packets[0].Payload)-1] != nullTextValue {
+		t.Fatalf("field-list column payload = %v, want trailing NULL default value", packets[0].Payload)
+	}
 	if !bytes.Equal(packets[1].Payload, []byte{eofPacketHeader, 0, 0, byte(StatusAutocommit), 0}) {
 		t.Fatalf("EOF payload = %v", packets[1].Payload)
 	}

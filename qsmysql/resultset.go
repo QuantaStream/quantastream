@@ -105,6 +105,14 @@ func (c ColumnDefinition) Payload() []byte {
 	return payload
 }
 
+// FieldListPayload encodes the COM_FIELD_LIST variant of a MySQL 4.1 column
+// definition. That command requires a trailing length-encoded default value;
+// QuantaStream does not expose column defaults through this legacy command.
+func (c ColumnDefinition) FieldListPayload() []byte {
+	payload := c.Payload()
+	return append(payload, nullTextValue)
+}
+
 // TextResultSetPackets encodes a protocol-neutral query result into MySQL text-result packets.
 func TextResultSetPackets(result qsbridge.ExecutionResult) ([]Packet, error) {
 	return TextResultSetPacketsWithOptions(result, ResultSetOptions{})
@@ -155,7 +163,7 @@ func FieldListPacketsWithOptions(result qsbridge.ExecutionResult, options Result
 		if !fieldListPatternMatches(pattern, column.Name) {
 			continue
 		}
-		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinitionWithOptions(column, options).Payload()})
+		packets = append(packets, Packet{SequenceID: sequence, Payload: NewColumnDefinitionWithOptions(column, options).FieldListPayload()})
 		sequence++
 	}
 	packets = append(packets, Packet{SequenceID: sequence, Payload: eofPayload(0)})

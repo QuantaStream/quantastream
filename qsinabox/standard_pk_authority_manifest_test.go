@@ -328,6 +328,48 @@ func TestRefreshStandardBSIPrimaryKeyAuthorityManifestArtifactsBootstrapsMissing
 	}
 }
 
+func TestRefreshStandardBSIPrimaryKeyAuthorityManifestArtifactsDiscoversTimeShards(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	configDir := filepath.Join(dataDir, "config")
+	writeStandardCompoundPrimaryKeyTestSchema(t, configDir, "lineitem")
+	for _, shard := range []string{"1992-01-02T00", "1992-01-03T00"} {
+		artifactFile := filepath.Join(dataDir, "bitmap", "lineitem", "_bsi_pack", shard, "bundle")
+		if err := os.MkdirAll(filepath.Dir(artifactFile), 0755); err != nil {
+			t.Fatalf("mkdir artifact dir: %v", err)
+		}
+		if err := os.WriteFile(artifactFile, []byte(shard), 0644); err != nil {
+			t.Fatalf("write artifact file: %v", err)
+		}
+	}
+
+	published, err := RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts(StandardConfig{DataDir: dataDir}, "unit-test")
+	if err != nil {
+		t.Fatalf("RefreshStandardBSIPrimaryKeyAuthorityManifestArtifacts returned error: %v", err)
+	}
+	if !published {
+		t.Fatal("published = false, want time-sharded manifest")
+	}
+	manifest, err := core.LoadBSIPrimaryKeyAuthorityManifest(dataDir)
+	if err != nil {
+		t.Fatalf("LoadBSIPrimaryKeyAuthorityManifest returned error: %v", err)
+	}
+	if len(manifest.Entries) != 1 || len(manifest.Entries[0].Artifacts) != 1 {
+		t.Fatalf("manifest entries = %+v, want one time-sharded artifact root", manifest.Entries)
+	}
+	artifact := manifest.Entries[0].Artifacts[0]
+	if artifact.Path != "bitmap/lineitem/_bsi_pack" {
+		t.Fatalf("artifact path = %q, want partitioned BSI root", artifact.Path)
+	}
+	if artifact.FileCount != 2 {
+		t.Fatalf("artifact file count = %d, want 2", artifact.FileCount)
+	}
+	observation := ObserveStandardBSIPrimaryKeyAuthorityManifest(StandardConfig{DataDir: dataDir})
+	if observation.ArtifactPresence != core.BSIPrimaryKeyAuthorityArtifactPresencePresent {
+		t.Fatalf("artifact presence = %s detail=%s, want present", observation.ArtifactPresence, observation.ArtifactDetail)
+	}
+}
+
 func TestObserveStandardBSIPrimaryKeyAuthorityManifestReportsInvalidVersion(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
