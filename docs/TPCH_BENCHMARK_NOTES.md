@@ -53,6 +53,14 @@ representative set of relationship-heavy analytical shapes:
 - Q16 shows count-only bitmap filtering over selective part predicates.
 - Q21 shows repeated-alias sibling membership becoming practical at SF1.
 
+The Q3, Q5, and Q21 join results above are relationship-vector graph paths over
+configured schema relationships. They should not be read as evidence for
+arbitrary peer-table joins. The current direct bitmap peer-join fallback in
+`qsruntime/direct_bitmap_peer_join.go` materializes both sides and uses guarded
+nested-loop comparison caps as a safety valve for small compatibility shapes;
+it is not the scalable join algorithm behind the relationship-vector benchmark
+story.
+
 Q19 remains slower than MySQL by ratio, but the remaining absolute gap is small
 in this suite. The isolated readonly Q19 rerun at the same commit was stable:
 
