@@ -131,6 +131,47 @@ func TestStandardLocalBackendDirectRuntimeWiresFilterDictionaryResolver(t *testi
 	}
 }
 
+func TestStandardLocalBackendDirectRuntimeWiresMutationMaterialization(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "schemas")
+	writeStandardTestSchema(t, configDir, "sample")
+	config := StandardConfig{
+		ConfigDir: configDir,
+		DataDir:   filepath.Join(root, "data"),
+	}
+
+	backend, err := MountStandardLocalBackend(config, nil)
+	if err != nil {
+		t.Fatalf("MountStandardLocalBackend() error = %v", err)
+	}
+	defer backend.Close()
+	mount := backend.NewDirectRuntime(config, nil, 1)
+	defer mount.Close()
+
+	provider, ok := mount.Runtime.Sessions.(StandardDirectSessionProvider)
+	if !ok {
+		t.Fatalf("Sessions = %T, want StandardDirectSessionProvider", mount.Runtime.Sessions)
+	}
+	if provider.Materialization == nil {
+		t.Fatal("provider Materialization = nil, want mutation materialization kernel")
+	}
+
+	handle, diagnostics, err := provider.BorrowDirectSession(context.Background(), qsruntime.NewExecutionRequest(qsbridge.QuantaIntermediateQuery{
+		Fragments: []qsbridge.QuantaQueryFragment{{Index: "sample"}},
+	}))
+	if err != nil || diagnostics.BlocksNative() {
+		t.Fatalf("BorrowDirectSession() error = %v diagnostics = %#v", err, diagnostics)
+	}
+	defer handle.Release(context.Background())
+	standardHandle, ok := handle.(StandardDirectSessionHandle)
+	if !ok {
+		t.Fatalf("handle = %T, want StandardDirectSessionHandle", handle)
+	}
+	if standardHandle.legacyHandle().Materialization == nil {
+		t.Fatal("legacy handle Materialization = nil, want mutation materialization kernel")
+	}
+}
+
 func TestStandardDirectSessionProviderQueriesLocalBitmapIndex(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")

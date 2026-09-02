@@ -150,6 +150,7 @@ func (b StandardLocalBackend) NewDirectRuntime(config StandardConfig, tableCache
 			},
 		},
 	}
+	sessions.Materialization = materialization
 	sameRowComparison := qsruntime.LegacyDirectSameRowBSIComparisonKernel{
 		TableCache: tableCache,
 		Reader:     bsiReader,
@@ -226,6 +227,7 @@ type StandardDirectSessionProvider struct {
 	Direct                               *server.BitmapIndex
 	PrimaryKeyResolverFactory            core.SessionPrimaryKeyResolverFactory
 	PrimaryKeyAuthorityManifestPublisher StandardBSIPrimaryKeyAuthorityManifestPublisher
+	Materialization                      qsruntime.ProjectionMaterializationKernel
 }
 
 // BorrowDirectSession returns a direct session handle for the request root table.
@@ -243,13 +245,14 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 	}
 	if standardSchemaMutationNeedsSyntheticHandle(request.Mutation.Kind) && strings.TrimSpace(p.SchemaDir) != "" {
 		return StandardDirectSessionHandle{
-			Config:    p.Config,
-			Pool:      p.Pool,
-			Table:     table,
-			Session:   p.syntheticSchemaMutationSession(),
-			Query:     qsruntime.LegacyBitmapQueryAdapter{},
-			Result:    qsruntime.LegacyBitmapQueryResultAdapter{},
-			Synthetic: true,
+			Config:          p.Config,
+			Pool:            p.Pool,
+			Table:           table,
+			Session:         p.syntheticSchemaMutationSession(),
+			Query:           qsruntime.LegacyBitmapQueryAdapter{},
+			Result:          qsruntime.LegacyBitmapQueryResultAdapter{},
+			Materialization: p.Materialization,
+			Synthetic:       true,
 		}, nil, nil
 	}
 	session, err := p.Pool.Borrow(table)
@@ -266,6 +269,7 @@ func (p StandardDirectSessionProvider) BorrowDirectSession(ctx context.Context, 
 		Session:                              session,
 		Query:                                qsruntime.LegacyBitmapQueryAdapter{},
 		Result:                               qsruntime.LegacyBitmapQueryResultAdapter{},
+		Materialization:                      p.Materialization,
 		PrimaryKeyAuthorityManifestPublisher: p.PrimaryKeyAuthorityManifestPublisher,
 	}, nil, nil
 }
@@ -339,6 +343,7 @@ type StandardDirectSessionHandle struct {
 	Query                                qsruntime.LegacyBitmapQueryAdapter
 	Result                               qsruntime.LegacyBitmapQueryResultAdapter
 	PrimaryKeyAuthorityManifestPublisher StandardBSIPrimaryKeyAuthorityManifestPublisher
+	Materialization                      qsruntime.ProjectionMaterializationKernel
 	// Synthetic handles schema mutations for tables that are not active yet.
 	Synthetic bool
 }
@@ -410,12 +415,13 @@ func (h StandardDirectSessionHandle) Release(ctx context.Context) qsbridge.Diagn
 
 func (h StandardDirectSessionHandle) legacyHandle() qsruntime.LegacyQuantaSessionHandle {
 	return qsruntime.LegacyQuantaSessionHandle{
-		TableName: h.Table,
-		Pool:      h.Pool,
-		Session:   h.Session,
-		Query:     h.Query,
-		Result:    h.Result,
-		Synthetic: h.Synthetic,
+		TableName:       h.Table,
+		Pool:            h.Pool,
+		Session:         h.Session,
+		Query:           h.Query,
+		Result:          h.Result,
+		Materialization: h.Materialization,
+		Synthetic:       h.Synthetic,
 	}
 }
 
