@@ -255,6 +255,25 @@ QuantaStream can ingest that shape when the parent schema declares a
 `ChildRelation` and the child schema declares the corresponding
 `ParentRelation`.
 
+### Choosing Flat Or Nested Events
+
+Choose the input shape that matches the source boundary:
+
+- Use a nested envelope when a live source naturally emits one complete
+  aggregate event, such as an order and its lineitems. The loader can resolve
+  the enclosing parent relationship within one session without a separate
+  committed-parent lookup.
+- Use flat records for table-oriented batch migration, independent change
+  events, or sources where parent and child records arrive separately. Load and
+  commit referenced parents before their children; use a shared `shard_key`
+  when related streaming records should stay on the same session worker.
+- Do not nest arbitrary relational graphs solely to avoid load ordering. Foreign
+  keys outside the enclosing parent-child edge still require their referenced
+  rows to exist and be visible.
+
+In short, batch migration preserves relational table boundaries; streaming
+ingestion preserves natural event boundaries. The loader supports both.
+
 Parent schema excerpt:
 
 ```yaml
