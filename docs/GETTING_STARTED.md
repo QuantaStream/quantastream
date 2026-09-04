@@ -4,19 +4,70 @@ This guide starts a local single-node QuantaStream engine, restores the bundled
 TPC-H SF0.01 sample, and runs a few queries through the MySQL-compatible
 endpoint.
 
-The packaged `configuration/` directory contains schema documentation. The
-runnable sample schema and backup live under `./samples/tpch-sf-0.01/`.
+You can begin here from a website, GitHub, a release announcement, or an
+already-extracted release bundle. No earlier README steps are required.
 
-## 1. Unpack
+## Before You Start
+
+You need:
+
+- Linux AMD64 or WSL2 on an AMD64 Windows host;
+- a shell with `sha256sum` and `tar`;
+- a MySQL-compatible command-line client for the final query step; and
+- about 1 GB of free space for the archive, extracted bundle, and sample data.
+
+On WSL2, download and unpack inside the Linux filesystem, such as under your
+Linux home directory. Extraction on a Windows-mounted path such as `/mnt/c`
+can be substantially slower.
+
+Check the required commands:
+
+```bash
+command -v sha256sum
+command -v tar
+command -v mysql
+```
+
+MySQL Workbench can be used instead of the `mysql` command for querying, but
+the command-line client gives the shortest reproducible path.
+
+## 1. Download
+
+Create a working directory and download the current release archive and its
+checksum file:
+
+```bash
+mkdir -p ~/quantastream-evaluation
+cd ~/quantastream-evaluation
+
+QS_VERSION=0.1.3
+
+gh release download "v${QS_VERSION}" \
+  --repo QuantaStream/quantastream \
+  --pattern "qstream-${QS_VERSION}-linux-amd64.tar.gz" \
+  --pattern SHA256SUMS
+```
+
+If you do not use the GitHub CLI, download both files from
+[GitHub Releases](https://github.com/QuantaStream/quantastream/releases):
+
+- `qstream-0.1.3-linux-amd64.tar.gz`
+- `SHA256SUMS`
+
+Place both files in the same directory before continuing.
+
+## 2. Verify and Unpack
 
 Run this from the directory containing the downloaded release archive and
 `SHA256SUMS` file.
 
 ```bash
-archive="$(ls -1 qstream-*-linux-amd64.tar.gz | tail -n 1)"
+QS_VERSION=0.1.3
+archive="qstream-${QS_VERSION}-linux-amd64.tar.gz"
+
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "$archive"
-cd "$(tar -tzf "$archive" | sed -n '1s#/.*##p')"
+cd "qstream-${QS_VERSION}-linux-amd64"
 QSTREAM_HOME="$PWD"
 
 echo "Using QStream bundle at: $QSTREAM_HOME"
@@ -26,7 +77,24 @@ echo "Using QStream bundle at: $QSTREAM_HOME"
 ./bin/qstream-loader -version
 ```
 
-## 2. Restore The Sample Data
+If you are reading this file from inside an already-extracted release bundle,
+do not download or unpack it again. Start here instead:
+
+```bash
+cd /path/to/qstream-0.1.3-linux-amd64
+QSTREAM_HOME="$PWD"
+
+./bin/quantastream -version
+./bin/qstream-admin version
+./bin/qstream-loader -version
+```
+
+Then continue with step 3.
+
+The packaged `configuration/` directory contains schema reference material.
+The runnable sample schema and backup live under `samples/tpch-sf-0.01/`.
+
+## 3. Restore The Sample Data
 
 The release bundle includes a small TPC-H SF0.01 backup. Restore it into the
 local data directory.
@@ -35,14 +103,12 @@ The restore can take a few minutes and currently does not print progress while
 it copies and validates the backup contents.
 
 ```bash
-rm -rf ./data
-
 ./bin/qstream-admin backup restore \
   --source "file://${QSTREAM_HOME}/samples/tpch-sf-0.01/backup" \
   --data-dir ./data
 ```
 
-`QSTREAM_HOME` is set in step 1 to the unpacked release directory. If you open
+`QSTREAM_HOME` is set in step 2 to the unpacked release directory. If you open
 a new terminal, return to that directory and set it again:
 
 ```bash
@@ -50,7 +116,7 @@ cd /path/to/qstream-<version>-linux-amd64
 QSTREAM_HOME="$PWD"
 ```
 
-## 3. Start QuantaStream
+## 4. Start QuantaStream
 
 ```bash
 mkdir -p runtime logs
@@ -84,7 +150,7 @@ evaluation. Permissive mode accepts every syntactically valid MySQL handshake
 and cannot be used with a non-loopback MySQL bind. Use static authentication
 with configured credentials before exposing QuantaStream to another host.
 
-## 4. Run Doctor
+## 5. Run Doctor
 
 ```bash
 ./bin/qstream-admin doctor local \
@@ -97,7 +163,7 @@ with configured credentials before exposing QuantaStream to another host.
 
 `doctor_result=PASS` means the local engine is ready.
 
-## 5. Query The Sample
+## 6. Query The Sample
 
 Use the MySQL command-line client:
 
@@ -155,7 +221,7 @@ group by n.n_name
 order by customers desc;
 ```
 
-## 6. Stop
+## 7. Stop
 
 ```bash
 if [ -f ./runtime/quantastream.pid ]; then

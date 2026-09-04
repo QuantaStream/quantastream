@@ -8,54 +8,24 @@ For latest news and information, as well as benchmark results, please visit [qua
 
 ## Download QuantaStream
 
-The fastest way to try QuantaStream is the Linux AMD64 binary release bundle.
-It includes the single-node engine, admin tool, JSON loader, TPC-H loader,
-documentation, example service files, and a small TPC-H SF0.01 sample backup.
-This path does not require Go. The packaged `configuration/` directory is
-documentation and schema reference material; the first runnable sample lives
-under `samples/tpch-sf-0.01/`.
+Choose the evaluation that matches what you want to learn:
 
-Use the source checkout path when you want to build from source, use the
-development startup scripts, run on macOS or another platform, or make code
-changes. Go must be installed before using the source workflow.
+- [Run a first query](docs/GETTING_STARTED.md) from the bundled TPC-H sample.
+- [Migrate a small MySQL model](docs/EVALUATE.md#track-b-migrate-a-small-mysql-model).
+- [Connect Tableau](docs/EVALUATE.md#track-c-connect-tableau) through the
+  validated JDBC path.
 
-Recommended binary download path:
+The self-contained [Getting Started](docs/GETTING_STARTED.md) guide includes
+prerequisites, download, checksum verification, unpacking, startup, health
+checks, and first queries. No earlier README steps are required.
 
-```bash
-QS_VERSION=0.1.2
+The Linux AMD64 release bundle includes the single-node engine, admin tool,
+loaders, operational examples, and a small restorable TPC-H sample. It does not
+require Go. Browse the published artifacts on the
+[GitHub Releases](https://github.com/QuantaStream/quantastream/releases) page.
 
-gh release download "v${QS_VERSION}" \
-  --repo QuantaStream/quantastream \
-  --pattern "qstream-${QS_VERSION}-linux-amd64.tar.gz" \
-  --pattern SHA256SUMS
-
-sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf "qstream-${QS_VERSION}-linux-amd64.tar.gz"
-cd "qstream-${QS_VERSION}-linux-amd64"
-```
-
-The `gh` command downloads the release assets from GitHub. The accompanying
-`SHA256SUMS` file verifies that the bundle you unpack is the bundle published
-with the release.
-
-If you do not have the GitHub CLI installed, open the
-[GitHub Releases](https://github.com/QuantaStream/quantastream/releases) page
-in a browser and download both files manually:
-
-- `qstream-0.1.2-linux-amd64.tar.gz`
-- `SHA256SUMS`
-
-Then run the same verification and unpack commands:
-
-```bash
-QS_VERSION=0.1.2
-
-sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf "qstream-${QS_VERSION}-linux-amd64.tar.gz"
-cd "qstream-${QS_VERSION}-linux-amd64"
-```
-
-For source builds and development scripts:
+Build from source when you want to make code changes or run on another
+platform. Go is required:
 
 ```bash
 git clone git@github.com:QuantaStream/quantastream.git
@@ -63,13 +33,9 @@ cd quantastream
 go test ./...
 ```
 
-Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary
-runbook or [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source checkout
-workflow.
-
-If you are evaluating the project, use
-[docs/EVALUATE.md](docs/EVALUATE.md) to choose a bounded first-query, MySQL
-migration, or Tableau compatibility track and report the result.
+Use [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source-checkout workflow.
+Use [docs/EVALUATE.md](docs/EVALUATE.md) to report what worked, became
+confusing, or failed.
 
 ## Why QuantaStream
 
@@ -202,7 +168,7 @@ license details.
 
 Useful starting points:
 
-- [Evaluate QuantaStream 0.1.2](docs/EVALUATE.md)
+- [Evaluate QuantaStream 0.1.3](docs/EVALUATE.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Schema Design](docs/SCHEMA_DESIGN.md)
