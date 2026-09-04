@@ -101,6 +101,7 @@ start_standard_server() {
   (
     cd "${REPO_ROOT}"
     go run ./cmd/quantastream \
+      -auth-mode permissive \
       -config-dir "${STANDARD_CONFIG_DIR}" \
       -data-dir "${STANDARD_DATA_DIR}" \
       -bind "${HOST}" \

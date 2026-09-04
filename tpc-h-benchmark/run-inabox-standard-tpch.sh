@@ -273,6 +273,7 @@ if [[ "${START_SERVER}" == "1" ]]; then
   (
     cd "${REPO_ROOT}"
     go run ./cmd/quantastream \
+      -auth-mode permissive \
       -config-dir "${CONFIG_DIR}" \
       -data-dir "${STANDARD_DATA_DIR}" \
       -bind "${HOST}" \
