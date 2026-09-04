@@ -1,0 +1,95 @@
+name: Reproducible bug report
+description: Report a QuantaStream 0.1.1 failure with enough evidence to reproduce it.
+title: ""
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing QuantaStream. Do not include credentials, private data, or unsanitized logs. For a private security concern, use the private reporting link in the issue chooser instead.
+
+  - type: input
+    id: outcome
+    attributes:
+      label: Attempted outcome
+      description: What were you trying to accomplish?
+      placeholder: Restore the bundled sample and run the first aggregate query.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: QuantaStream version or commit
+      description: Use the binary version output or source commit. The current public release is 0.1.1.
+      placeholder: 0.1.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation path
+      options:
+        - Linux AMD64 release bundle
+        - Source checkout
+        - Container or custom package
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, relevant client or driver versions, and available memory. Remove secrets.
+      placeholder: Ubuntu 24.04, AMD64, mysql client 8.x, 32 GB RAM
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest numbered sequence that reproduces the failure.
+      placeholder: |
+        1. Download and verify qstream-0.1.1-linux-amd64.tar.gz.
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Observed behavior
+      description: Include the exact error or smallest relevant sanitized log excerpt.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sample
+    attributes:
+      label: Minimal public or synthetic example
+      description: Provide a minimal schema, query, data fragment, or repository that can be shared publicly.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials, private data, and other sensitive information.
+          required: true
+        - label: I checked the documented supported SQL and known SQL boundaries when this is a SQL report.
+          required: true
+        - label: I can reproduce this on the version identified above.
+          required: true
+

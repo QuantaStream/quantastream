@@ -67,6 +67,10 @@ Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the binary
 runbook or [docs/QUICKSTART.md](docs/QUICKSTART.md) for the source checkout
 workflow.
 
+If you are evaluating the project, use
+[docs/EVALUATE.md](docs/EVALUATE.md) to choose a bounded first-query, MySQL
+migration, or Tableau compatibility track and report the result.
+
 ## Why QuantaStream
 
 Traditional databases usually optimize around row storage, indexes, and tuple-oriented execution. QuantaStream starts from a different assumption: analytical workloads often want to reduce large sets quickly, combine those sets, and materialize only the final values needed by the user.
@@ -198,6 +202,7 @@ license details.
 
 Useful starting points:
 
+- [Evaluate QuantaStream 0.1.1](docs/EVALUATE.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Schema Design](docs/SCHEMA_DESIGN.md)
