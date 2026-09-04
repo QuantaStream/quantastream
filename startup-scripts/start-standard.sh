@@ -14,7 +14,7 @@ MYSQL_PORT="${QUANTASTREAM_MYSQL_PORT:-4000}"
 NATIVE_GRPC_BIND="${QUANTASTREAM_NATIVE_GRPC_BIND:-}"
 NATIVE_GRPC_PORT="${QUANTASTREAM_NATIVE_GRPC_PORT:-0}"
 DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
-AUTH_MODE="${QUANTASTREAM_AUTH_MODE:-permissive}"
+AUTH_MODE="${QUANTASTREAM_AUTH_MODE:-}"
 AUTH_USER="${QUANTASTREAM_AUTH_USER:-}"
 AUTH_PASSWORD="${QUANTASTREAM_AUTH_PASSWORD:-}"
 AUTH_ACCOUNT_FILE="${QUANTASTREAM_AUTH_ACCOUNT_FILE:-}"
@@ -36,7 +36,8 @@ Environment:
                            Native node gRPC listen port for high-throughput loaders.
                            Defaults to 0, which disables the listener.
   QUANTASTREAM_DATABASE     Default database/schema. Defaults to quanta.
-  QUANTASTREAM_AUTH_MODE    MySQL auth mode: permissive or static. Defaults to permissive.
+  QUANTASTREAM_AUTH_MODE    Required MySQL auth mode. Use permissive only for isolated
+                           local evaluation, or static with configured credentials.
   QUANTASTREAM_AUTH_USER    Static auth username. Defaults to qstream when static auth is enabled.
   QUANTASTREAM_AUTH_PASSWORD
                            Static auth password. Empty password is allowed.
@@ -46,10 +47,11 @@ Environment:
                            Set to true to log runtime execution probes.
 
 Examples:
-  ./start-standard.sh
+  QUANTASTREAM_AUTH_MODE=permissive ./start-standard.sh
 
   QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
   QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+  QUANTASTREAM_AUTH_MODE=permissive \
     ./start-standard.sh
 EOF
 }
@@ -67,6 +69,11 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [[ -z "${AUTH_MODE}" ]]; then
+  echo "QUANTASTREAM_AUTH_MODE is required; choose permissive for isolated local evaluation or static with configured credentials" >&2
+  exit 2
+fi
 
 echo "Starting inabox-standard process"
 echo "config_dir=${CONFIG_DIR}"

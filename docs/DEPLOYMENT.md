@@ -171,10 +171,10 @@ Skeleton status command:
 
 ```bash
 cd ~/projects/quantastream
-go run ./cmd/quantastream -status
-go run ./cmd/quantastream -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
-go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard
-go run ./cmd/quantastream -config-dir configuration -data-dir /tmp/quantastream-standard -wal-path /tmp/quantastream-standard/storage.wal
+go run ./cmd/quantastream -auth-mode permissive -status
+go run ./cmd/quantastream -auth-mode permissive -status -mount-local-node -config-dir configuration -data-dir /tmp/quantastream-standard
+go run ./cmd/quantastream -auth-mode permissive -config-dir configuration -data-dir /tmp/quantastream-standard
+go run ./cmd/quantastream -auth-mode permissive -config-dir configuration -data-dir /tmp/quantastream-standard -wal-path /tmp/quantastream-standard/storage.wal
 ```
 
 Local backup commands:
@@ -226,7 +226,7 @@ Convenience startup command:
 
 ```bash
 cd ~/projects/quantastream
-./startup-scripts/start-standard.sh
+QUANTASTREAM_AUTH_MODE=permissive ./startup-scripts/start-standard.sh
 ```
 
 For an already loaded TPC-H standard data directory:
@@ -235,6 +235,7 @@ For an already loaded TPC-H standard data directory:
 cd ~/projects/quantastream
 QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
 QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+QUANTASTREAM_AUTH_MODE=permissive \
   ./startup-scripts/start-standard.sh
 ```
 
@@ -772,12 +773,16 @@ The local development defaults are not a production security profile.
 
 ### Authentication and Authorization
 
-The MySQL front door currently supports two startup auth modes:
+The MySQL front door requires an explicit startup auth mode:
 
-- `permissive`, the default local/development mode. It accepts syntactically
-  valid MySQL handshakes and preserves existing smoke-test ergonomics.
+- `permissive`, an explicit isolated local-development mode. It accepts
+  syntactically valid MySQL handshakes and is rejected on non-loopback binds.
 - `static`, a product-style account/password mode backed by the core
   `qsmysql.StaticAuthenticator`.
+
+An omitted mode fails startup. Permissive mode must never be used as a network
+security boundary. Static authentication verifies identity, but authorization
+remains permissive unless an access-policy file is also configured.
 
 Both `inabox-standard` and the distributed proxy accept the same knobs:
 

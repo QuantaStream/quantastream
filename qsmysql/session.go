@@ -82,7 +82,7 @@ func (r *SessionRunner) SendHandshake(ctx context.Context) error {
 	return nil
 }
 
-// AcceptHandshakeResponse reads a client response, performs permissive auth, and writes an OK packet.
+// AcceptHandshakeResponse reads a client response, performs configured auth, and writes a response packet.
 func (r *SessionRunner) AcceptHandshakeResponse(ctx context.Context) (CommandResponse, error) {
 	if r.Stream == nil {
 		return CommandResponse{}, fmt.Errorf("mysql session runner stream is nil")

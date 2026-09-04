@@ -6,8 +6,17 @@ import (
 	"testing"
 )
 
-func TestAuthConfigDefaultsToPermissive(t *testing.T) {
-	authenticator, err := (AuthConfig{}).Authenticator("quanta")
+func TestAuthConfigRequiresExplicitMode(t *testing.T) {
+	if _, err := (AuthConfig{}).Authenticator("quanta"); err == nil {
+		t.Fatal("Authenticator accepted an omitted auth mode")
+	}
+	if got := (AuthConfig{}).SummaryMode("quanta"); got != "" {
+		t.Fatalf("SummaryMode = %q, want empty", got)
+	}
+}
+
+func TestAuthConfigBuildsExplicitPermissiveAuthenticator(t *testing.T) {
+	authenticator, err := (AuthConfig{Mode: AuthModePermissive}).Authenticator("quanta")
 	if err != nil {
 		t.Fatalf("Authenticator failed: %v", err)
 	}
@@ -18,11 +27,27 @@ func TestAuthConfigDefaultsToPermissive(t *testing.T) {
 	if permissive.DefaultDatabase != "quanta" {
 		t.Fatalf("permissive default database = %q, want quanta", permissive.DefaultDatabase)
 	}
-	if got := (AuthConfig{}).SummaryMode("quanta"); got != AuthModePermissive {
+	if got := (AuthConfig{Mode: AuthModePermissive}).SummaryMode("quanta"); got != AuthModePermissive {
 		t.Fatalf("SummaryMode = %q, want permissive", got)
 	}
 	if got := (AuthConfig{}).SummaryUser("quanta"); got != "" {
 		t.Fatalf("SummaryUser = %q, want hidden for permissive", got)
+	}
+}
+
+func TestValidateModeForBindRestrictsPermissiveToLoopback(t *testing.T) {
+	for _, bind := range []string{"127.0.0.1", "::1", "[::1]", "localhost"} {
+		if err := ValidateModeForBind(AuthModePermissive, bind); err != nil {
+			t.Fatalf("ValidateModeForBind(%q) failed: %v", bind, err)
+		}
+	}
+	for _, bind := range []string{"0.0.0.0", "::", "192.0.2.1", "database.internal"} {
+		if err := ValidateModeForBind(AuthModePermissive, bind); err == nil {
+			t.Fatalf("ValidateModeForBind(%q) accepted non-loopback bind", bind)
+		}
+	}
+	if err := ValidateModeForBind(AuthModeStatic, "0.0.0.0"); err != nil {
+		t.Fatalf("static auth rejected on network bind: %v", err)
 	}
 }
 

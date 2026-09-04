@@ -12,6 +12,9 @@ unsanitized logs in a public issue.
 Use the Linux/AMD64 release bundle to restore the included TPC-H SF0.01 sample,
 run the local health checks, and execute an aggregate query.
 
+Run permissive authentication only on the documented loopback bind. It accepts
+all valid MySQL handshakes and is provided solely for isolated evaluation.
+
 Start with [Getting Started](GETTING_STARTED.md).
 
 When you finish, report:
@@ -63,4 +66,3 @@ Before reporting an SQL compatibility failure, check
 [Supported SQL](SUPPORTED_SQL.md) and [Known SQL Boundaries](UNSUPPORTED_SQL.md).
 For private workload discussions, email
 [info@quantastream.org](mailto:info@quantastream.org).
-

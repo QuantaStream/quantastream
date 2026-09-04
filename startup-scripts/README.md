@@ -130,8 +130,13 @@ and read-only benchmark runs live in `startup-scripts/aws/`.
 ```sh
 QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
 QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
+QUANTASTREAM_AUTH_MODE=permissive \
   ./start-standard.sh
 ```
+
+This explicit permissive mode is limited to a loopback-bound local evaluation.
+Use `QUANTASTREAM_AUTH_MODE=static` with configured credentials for any
+networked environment.
 
 The MySQL front door is the compatibility/control lane. For high-throughput
 loaders, standard mode can also expose the native bitmap/KV gRPC node surface
@@ -141,5 +146,6 @@ on a separate port:
 QUANTASTREAM_CONFIG_DIR=tpc-h-benchmark/config \
 QUANTASTREAM_DATA_DIR=tpc-h-benchmark/local/standard-data \
 QUANTASTREAM_NATIVE_GRPC_PORT=4100 \
+QUANTASTREAM_AUTH_MODE=permissive \
   ./start-standard.sh
 ```

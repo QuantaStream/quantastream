@@ -91,6 +91,9 @@ func (c StandardConfig) MySQLAuthConfig() qsmysql.AuthConfig {
 // MySQLAuthenticator builds the configured MySQL front-door authenticator.
 func (c StandardConfig) MySQLAuthenticator() (qsmysql.Authenticator, error) {
 	c = c.WithDefaults()
+	if err := qsmysql.ValidateModeForBind(c.AuthMode, c.BindAddress); err != nil {
+		return nil, err
+	}
 	return c.MySQLAuthConfig().Authenticator(c.Database)
 }
 

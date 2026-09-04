@@ -45,7 +45,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	sessionPoolSize := flags.Int("session-pool-size", envInt("QUANTASTREAM_SESSION_POOL_SIZE", 0), "direct runtime session pool size; zero uses runtime default")
 	schemaDir := flags.String("schema-dir", envString("QUANTASTREAM_SCHEMA_DIR", "configuration"), "schema/catalog configuration directory for SQL schema mutations")
 	database := flags.String("database", envString("QUANTASTREAM_DATABASE", "quanta"), "default database/schema name")
-	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
+	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", ""), "required MySQL auth mode: permissive for isolated local evaluation or static with configured credentials")
 	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to qstream when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")
@@ -282,6 +282,9 @@ func (c distributedProxyConfig) mysqlAuthConfig() qsmysql.AuthConfig {
 
 func (c distributedProxyConfig) mysqlAuthenticator() (qsmysql.Authenticator, error) {
 	c = c.withDefaults()
+	if err := qsmysql.ValidateModeForBind(c.AuthMode, c.BindAddress); err != nil {
+		return nil, err
+	}
 	return c.mysqlAuthConfig().Authenticator(c.Database)
 }
 

@@ -64,6 +64,7 @@ nohup ./bin/quantastream \
   -native-grpc-bind 127.0.0.1 \
   -native-grpc-port 4100 \
   -database quanta \
+  -auth-mode permissive \
   > ./logs/quantastream.log 2>&1 &
 
 echo "$!" > ./runtime/quantastream.pid
@@ -77,6 +78,11 @@ Expected lines include:
 listening=127.0.0.1:4000
 native_grpc_listening=127.0.0.1:4100
 ```
+
+This walkthrough opts into permissive authentication for an isolated loopback
+evaluation. Permissive mode accepts every syntactically valid MySQL handshake
+and cannot be used with a non-loopback MySQL bind. Use static authentication
+with configured credentials before exposing QuantaStream to another host.
 
 ## 4. Run Doctor
 

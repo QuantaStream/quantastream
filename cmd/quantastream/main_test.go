@@ -17,7 +17,7 @@ import (
 
 func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status"}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -36,9 +36,31 @@ func TestRunStatusPrintsInaboxStandardSkeleton(t *testing.T) {
 	}
 }
 
+func TestRunRejectsOmittedAuthMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-status"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("omitted auth mode exited successfully: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "mysql auth mode is required") {
+		t.Fatalf("stderr = %q, want required auth guidance", stderr.String())
+	}
+}
+
+func TestRunRejectsPermissiveAuthOnNetworkBind(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-auth-mode", "permissive", "-bind", "0.0.0.0", "-status"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("network permissive auth exited successfully: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "requires a loopback bind") {
+		t.Fatalf("stderr = %q, want loopback guidance", stderr.String())
+	}
+}
+
 func TestRunStatusPrintsStaticAuthWithoutPassword(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-auth-mode", "static", "-auth-user", "bench", "-auth-password", "secret"}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-auth-mode", "static", "-auth-user", "bench", "-auth-password", "secret"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -59,7 +81,7 @@ func TestRunStatusPrintsStaticAuthAccountFile(t *testing.T) {
 		t.Fatalf("write account file: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-auth-mode", "static", "-auth-account-file", accountFile}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-auth-mode", "static", "-auth-account-file", accountFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -77,7 +99,7 @@ func TestRunStatusPrintsStaticAuthAccountFile(t *testing.T) {
 func TestRunStatusPrintsAccessPolicyFile(t *testing.T) {
 	policyFile := writeCommandTestAccessPolicyFile(t)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-access-policy-file", policyFile}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-access-policy-file", policyFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -91,7 +113,7 @@ func TestRunStatusPrintsAccessPolicyFile(t *testing.T) {
 
 func TestRunRejectsInvalidAccessPolicyFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-access-policy-file", filepath.Join(t.TempDir(), "missing.yaml")}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-access-policy-file", filepath.Join(t.TempDir(), "missing.yaml")}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("missing policy file exited successfully; stdout=%s", stdout.String())
 	}
@@ -102,7 +124,7 @@ func TestRunRejectsInvalidAccessPolicyFile(t *testing.T) {
 
 func TestRunRejectsUnsupportedAuthMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-auth-mode", "jwt"}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-auth-mode", "jwt"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("unsupported auth mode exited successfully; stdout=%s", stdout.String())
 	}
@@ -113,7 +135,7 @@ func TestRunRejectsUnsupportedAuthMode(t *testing.T) {
 
 func TestRunStatusPrintsNativeGRPCWhenConfigured(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-status", "-native-grpc-bind", "0.0.0.0", "-native-grpc-port", "4100"}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-status", "-native-grpc-bind", "0.0.0.0", "-native-grpc-port", "4100"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -124,7 +146,7 @@ func TestRunStatusPrintsNativeGRPCWhenConfigured(t *testing.T) {
 
 func TestRunRejectsUnsupportedMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"-mode", "distributed"}, &stdout, &stderr)
+	code := run([]string{"-auth-mode", "permissive", "-mode", "distributed"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("unsupported mode exited successfully")
 	}
@@ -139,7 +161,7 @@ func TestRunPrintsBSIPrimaryKeyAuthorityManifest(t *testing.T) {
 	writeCommandTestSchema(t, filepath.Join(dataDir, "config"), "sample")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{
+	code := run([]string{"-auth-mode", "permissive",
 		"-data-dir", dataDir,
 		"-print-bsi-pk-authority-manifest",
 	}, &stdout, &stderr)
@@ -171,7 +193,7 @@ func TestRunWritesBSIPrimaryKeyAuthorityManifest(t *testing.T) {
 	writeCommandTestSchema(t, filepath.Join(dataDir, "config"), "sample")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{
+	code := run([]string{"-auth-mode", "permissive",
 		"-data-dir", dataDir,
 		"-write-bsi-pk-authority-manifest",
 	}, &stdout, &stderr)
@@ -202,7 +224,7 @@ func TestRunWritesBSIPrimaryKeyAuthorityManifest(t *testing.T) {
 
 func TestRunRejectsConflictingBSIPrimaryKeyAuthorityManifestActions(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{
+	code := run([]string{"-auth-mode", "permissive",
 		"-print-bsi-pk-authority-manifest",
 		"-write-bsi-pk-authority-manifest",
 	}, &stdout, &stderr)
@@ -227,6 +249,7 @@ func TestRunStartsInaboxStandardListenerUntilContextCanceled(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- runWithContext(ctx, []string{
+			"-auth-mode", "permissive",
 			"-bind", "127.0.0.1",
 			"-mysql-port", strconv.Itoa(port),
 			"-config-dir", configDir,

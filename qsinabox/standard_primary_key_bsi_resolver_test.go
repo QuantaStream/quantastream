@@ -36,7 +36,7 @@ func TestStandardBSIPrimaryKeyResolverUsesExistingPrimaryKeyBSIOnReplay(t *testi
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -259,7 +259,7 @@ func TestStandardSessionBSIPrimaryKeyResolverUsesNativeLoaderConnection(t *testi
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -381,7 +381,7 @@ func TestStandardDirectPrimaryKeyResolverFactoryUsesBSIWhenManifestMissing(t *te
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -400,7 +400,7 @@ func TestStandardDirectPrimaryKeyResolverFactoryBlocksStaleManifest(t *testing.T
 	dataDir := filepath.Join(root, "data")
 	configDir := filepath.Join(dataDir, "config")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   dataDir,
 	}
@@ -448,7 +448,7 @@ func TestStandardDirectPrimaryKeyResolverFactoryUsesTrustedManifest(t *testing.T
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}

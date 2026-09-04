@@ -16,7 +16,6 @@ import (
 
 	"github.com/QuantaStream/quantastream/qsbridge"
 	"github.com/QuantaStream/quantastream/qsinabox"
-	"github.com/QuantaStream/quantastream/qsmysql"
 	"github.com/QuantaStream/quantastream/shared"
 	"github.com/QuantaStream/quantastream/version"
 	"gopkg.in/yaml.v2"
@@ -45,7 +44,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	dataDir := flags.String("data-dir", "data", "local data directory")
 	walPath := flags.String("wal-path", envString("QUANTASTREAM_WAL_PATH", ""), "optional local write-ahead log path; disabled when empty")
 	database := flags.String("database", "quanta", "default database/schema name")
-	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", qsmysql.AuthModePermissive), "MySQL auth mode: permissive or static")
+	authMode := flags.String("auth-mode", envString("QUANTASTREAM_AUTH_MODE", ""), "required MySQL auth mode: permissive for isolated local evaluation or static with configured credentials")
 	authUser := flags.String("auth-user", envString("QUANTASTREAM_AUTH_USER", ""), "static MySQL auth username; defaults to qstream when auth-mode=static")
 	authPassword := flags.String("auth-password", envString("QUANTASTREAM_AUTH_PASSWORD", ""), "static MySQL auth password; prefer QUANTASTREAM_AUTH_PASSWORD for scripts")
 	authAccountFile := flags.String("auth-account-file", envString("QUANTASTREAM_AUTH_ACCOUNT_FILE", ""), "YAML static auth account file; used when auth-mode=static")

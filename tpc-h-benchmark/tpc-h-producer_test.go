@@ -127,6 +127,7 @@ func TestLoadModeIncludesDirectTopology(t *testing.T) {
 func TestInitStandardRemoteDirectUsesRunningNativeEndpoint(t *testing.T) {
 	config := qsinabox.StandardConfig{
 		BindAddress:    "127.0.0.1",
+		AuthMode:       "permissive",
 		MySQLPort:      reserveTPCHEphemeralPort(t),
 		NativeGRPCPort: reserveTPCHEphemeralPort(t),
 		ConfigDir:      "config",

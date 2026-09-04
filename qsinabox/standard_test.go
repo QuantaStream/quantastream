@@ -64,7 +64,7 @@ func TestStandardPlanReportsMissingLocalBackend(t *testing.T) {
 	if !strings.Contains(lines, "wal=disabled") {
 		t.Fatalf("summary lines missing WAL state: %s", lines)
 	}
-	if !strings.Contains(lines, "auth=permissive") {
+	if !strings.Contains(lines, "auth=") {
 		t.Fatalf("summary lines missing auth state: %s", lines)
 	}
 }
@@ -148,10 +148,10 @@ func TestObservedStandardPlanWarnsWhenBSIPrimaryKeyManifestMissing(t *testing.T)
 	}
 }
 
-func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
-	config := StandardConfig{BindAddress: "0.0.0.0", MySQLPort: 4400}.NativeProxyFrontDoorConfig().WithDefaults()
-	if config.BindAddress != "0.0.0.0" || config.Port != 4400 {
-		t.Fatalf("front door bind = %s:%d, want 0.0.0.0:4400", config.BindAddress, config.Port)
+func TestStandardFrontDoorConfigUsesExplicitLocalPermissiveAuth(t *testing.T) {
+	config := StandardConfig{BindAddress: "127.0.0.1", MySQLPort: 4400, AuthMode: "permissive"}.NativeProxyFrontDoorConfig().WithDefaults()
+	if config.BindAddress != "127.0.0.1" || config.Port != 4400 {
+		t.Fatalf("front door bind = %s:%d, want 127.0.0.1:4400", config.BindAddress, config.Port)
 	}
 	if !config.PacketIOReady {
 		t.Fatalf("front door packet IO should be ready for the existing MySQL adapter")
@@ -160,7 +160,21 @@ func TestStandardFrontDoorConfigUsesMySQLWireDefaults(t *testing.T) {
 		t.Fatalf("front door should use current MySQL byte-model readiness")
 	}
 	if _, ok := config.Authenticator.(qsmysql.PermissiveAuthenticator); !ok {
-		t.Fatalf("authenticator = %T, want permissive default", config.Authenticator)
+		t.Fatalf("authenticator = %T, want explicit permissive auth", config.Authenticator)
+	}
+}
+
+func TestStandardFrontDoorConfigRejectsOmittedAuthMode(t *testing.T) {
+	config := StandardConfig{}.NativeProxyFrontDoorConfig().WithDefaults()
+	if _, ok := config.Authenticator.(qsmysql.RejectingAuthenticator); !ok {
+		t.Fatalf("authenticator = %T, want rejecting authenticator", config.Authenticator)
+	}
+}
+
+func TestStandardFrontDoorConfigRejectsNetworkPermissiveAuth(t *testing.T) {
+	config := StandardConfig{BindAddress: "0.0.0.0", AuthMode: "permissive"}.NativeProxyFrontDoorConfig().WithDefaults()
+	if _, ok := config.Authenticator.(qsmysql.RejectingAuthenticator); !ok {
+		t.Fatalf("authenticator = %T, want rejecting authenticator", config.Authenticator)
 	}
 }
 

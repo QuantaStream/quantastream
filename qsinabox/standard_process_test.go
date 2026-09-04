@@ -27,7 +27,7 @@ func TestMountStandardProcessBuildsReadyNativeFrontDoor(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -50,7 +50,7 @@ func TestMountStandardProcessEnablesWriteAheadLogWhenConfigured(t *testing.T) {
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
 	walPath := filepath.Join(root, "wal", "standard.wal")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir:         configDir,
 		DataDir:           filepath.Join(root, "data"),
 		WriteAheadLogPath: walPath,
@@ -111,7 +111,7 @@ func TestMountStandardProcessReplaysCommittedWriteAheadLogTail(t *testing.T) {
 		t.Fatalf("Close WAL returned error: %v", err)
 	}
 
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir:         configDir,
 		DataDir:           filepath.Join(root, "data"),
 		WriteAheadLogPath: walPath,
@@ -180,7 +180,7 @@ func TestMountStandardProcessBlocksOnWriteAheadLogReplayFailure(t *testing.T) {
 		t.Fatalf("Close WAL returned error: %v", err)
 	}
 
-	process, diagnostics, err := MountStandardProcess(context.Background(), StandardConfig{
+	process, diagnostics, err := MountStandardProcess(context.Background(), StandardConfig{AuthMode: "permissive",
 		ConfigDir:         configDir,
 		DataDir:           filepath.Join(root, "data"),
 		WriteAheadLogPath: walPath,
@@ -201,7 +201,7 @@ func TestStandardProcessNativeGRPCServesNodeAPIs(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -269,7 +269,7 @@ func TestStandardProcessNativeGRPCLoaderPutRowFlushesThroughBatchBuffer(t *testi
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -386,7 +386,7 @@ func TestStandardProcessNativeGRPCLoaderRefreshesStringEnumDictionary(t *testing
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardStringEnumTestSchema(t, configDir, "sample_enum")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -512,7 +512,7 @@ func TestStandardProcessNativeGRPCLoaderIngestsTPCHNestedOrderLineitems(t *testi
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTPCHNestedSchemas(t, configDir)
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -794,7 +794,7 @@ func TestStandardProcessCompoundBSIPrimaryKeyAuthoritySurvivesRestart(t *testing
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTPCHNestedSchemas(t, configDir)
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -862,7 +862,7 @@ func TestStandardProcessNativeGRPCRouterFlatTimeShardedLineitemReplayUsesCompoun
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTPCHFlatSchemas(t, configDir)
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(t),
 		NativeGRPCPort: reserveStandardTestPort(t),
@@ -1279,7 +1279,7 @@ func runStandardProcessNativeGRPCRouterTPCHNestedOrderLineitems(tb testing.TB,
 	root := tb.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTPCHNestedSchemas(tb, configDir)
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		BindAddress:    "127.0.0.1",
 		MySQLPort:      reserveStandardTestPort(tb),
 		NativeGRPCPort: reserveStandardTestPort(tb),
@@ -1383,7 +1383,7 @@ func TestStandardProcessExecutesSQLThroughLocalFrontDoor(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1427,7 +1427,7 @@ func TestStandardProcessExecutesGroupedBooleanFilterThroughLocalFrontDoor(t *tes
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1479,7 +1479,7 @@ func TestStandardProcessObservesPhysicalBSIPrimaryKeyAuthorityArtifactAfterCommi
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1562,7 +1562,7 @@ func TestStandardProcessDocumentsTransactionCompatibilityPosture(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1594,7 +1594,7 @@ func TestStandardProcessCreateAndDropTableMaintainCatalogObjects(t *testing.T) {
 	if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
 		t.Fatalf("write empty catalog objects: %v", err)
 	}
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1696,7 +1696,7 @@ func TestStandardProcessAlterTableAddColumnWorksWithExistingRows(t *testing.T) {
 	if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
 		t.Fatalf("write empty catalog objects: %v", err)
 	}
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir:           configDir,
 		DataDir:             filepath.Join(root, "data"),
 		BindAddress:         "127.0.0.1",
@@ -1844,7 +1844,7 @@ attributes:
 			if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
 				t.Fatalf("write empty catalog objects: %v", err)
 			}
-			config := StandardConfig{
+			config := StandardConfig{AuthMode: "permissive",
 				ConfigDir: configDir,
 				DataDir:   filepath.Join(root, "data"),
 			}
@@ -1893,7 +1893,7 @@ func TestStandardProcessSearchableTextWorksLocally(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardSearchableTextSchema(t, configDir, "search_sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1920,7 +1920,7 @@ func TestStandardProcessRejectsLocalWritesWhileStorageQuiesced(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}
@@ -1980,7 +1980,7 @@ func TestStandardProcessCatalogLifecycleEnforcesRelationships(t *testing.T) {
 	if err := shared.SaveCatalogObjectsFile(configDir, shared.CatalogObjectsFile{}); err != nil {
 		t.Fatalf("write empty catalog objects: %v", err)
 	}
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}

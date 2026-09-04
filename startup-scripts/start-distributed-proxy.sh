@@ -13,6 +13,11 @@ CONSUL_ENDPOINT="${QUANTASTREAM_CONSUL_ENDPOINT:-127.0.0.1:8500}"
 NODE_PORT="${QUANTASTREAM_NODE_PORT:-4400}"
 SCHEMA_DIR="${QUANTASTREAM_SCHEMA_DIR:-$repo_root/tpc-h-benchmark/config}"
 DATABASE="${QUANTASTREAM_DATABASE:-quanta}"
+AUTH_MODE="${QUANTASTREAM_AUTH_MODE:-}"
+AUTH_USER="${QUANTASTREAM_AUTH_USER:-}"
+AUTH_PASSWORD="${QUANTASTREAM_AUTH_PASSWORD:-}"
+AUTH_ACCOUNT_FILE="${QUANTASTREAM_AUTH_ACCOUNT_FILE:-}"
+ACCESS_POLICY_FILE="${QUANTASTREAM_ACCESS_POLICY_FILE:-}"
 RUNTIME_PROBES="${QUANTASTREAM_RUNTIME_PROBES:-false}"
 SESSION_POOL_SIZE="${QUANTASTREAM_SESSION_POOL_SIZE:-0}"
 PPROF_BIND="${QUANTASTREAM_PPROF_BIND:-}"
@@ -33,6 +38,13 @@ Environment:
   QUANTASTREAM_NODE_PORT         QuantaStream data-node service port. Defaults to 4400.
   QUANTASTREAM_SCHEMA_DIR        Schema/catalog directory. Defaults to tpc-h-benchmark/config.
   QUANTASTREAM_DATABASE          Default database/schema. Defaults to quanta.
+  QUANTASTREAM_AUTH_MODE         Required MySQL auth mode. Distributed listeners
+                                  must use static with configured credentials.
+  QUANTASTREAM_AUTH_USER         Static auth username.
+  QUANTASTREAM_AUTH_PASSWORD     Static auth password; prefer a secret manager.
+  QUANTASTREAM_AUTH_ACCOUNT_FILE YAML static auth account file.
+  QUANTASTREAM_ACCESS_POLICY_FILE YAML static SQL access policy file. Empty leaves
+                                  authorization permissive after authentication.
   QUANTASTREAM_RUNTIME_PROBES    Set to true to log runtime execution probes.
   QUANTASTREAM_SESSION_POOL_SIZE Direct runtime session pool size. Defaults to runtime default.
   QUANTASTREAM_PPROF_BIND        Optional pprof bind address.
@@ -55,6 +67,11 @@ for arg in "$@"; do
   esac
 done
 
+if [[ -z "${AUTH_MODE}" ]]; then
+  echo "QUANTASTREAM_AUTH_MODE is required; distributed listeners must use static with configured credentials" >&2
+  exit 2
+fi
+
 if [[ ! -x "$PROXY_BIN" ]]; then
   echo "quantastream-proxy binary is not executable: $PROXY_BIN" >&2
   echo "Run startup-scripts/install-distributed-proxy-service.sh first." >&2
@@ -67,6 +84,7 @@ echo "consul=${CONSUL_ENDPOINT}"
 echo "node_port=${NODE_PORT}"
 echo "schema_dir=${SCHEMA_DIR}"
 echo "database=${DATABASE}"
+echo "auth=${AUTH_MODE}"
 echo "runtime_probes=${RUNTIME_PROBES}"
 echo "graph_equality_role_seed=${GRAPH_EQUALITY_ROLE_SEED}"
 
@@ -79,6 +97,11 @@ exec "$PROXY_BIN" \
   -node-port "$NODE_PORT" \
   -schema-dir "$SCHEMA_DIR" \
   -database "$DATABASE" \
+  -auth-mode "$AUTH_MODE" \
+  -auth-user "$AUTH_USER" \
+  -auth-password "$AUTH_PASSWORD" \
+  -auth-account-file "$AUTH_ACCOUNT_FILE" \
+  -access-policy-file "$ACCESS_POLICY_FILE" \
   -session-pool-size "$SESSION_POOL_SIZE" \
   -runtime-probes="$RUNTIME_PROBES" \
   -pprof-bind "$PPROF_BIND"

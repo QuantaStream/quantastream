@@ -13,7 +13,7 @@ func TestStandardSingleColumnBSIPrimaryKeyReaderLooksUpCommittedKey(t *testing.T
 	root := t.TempDir()
 	configDir := filepath.Join(root, "schemas")
 	writeStandardTestSchema(t, configDir, "sample")
-	config := StandardConfig{
+	config := StandardConfig{AuthMode: "permissive",
 		ConfigDir: configDir,
 		DataDir:   filepath.Join(root, "data"),
 	}

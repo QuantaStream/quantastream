@@ -61,6 +61,7 @@ nohup ./bin/quantastream \
   -native-grpc-bind 127.0.0.1 \
   -native-grpc-port 4100 \
   -database quanta \
+  -auth-mode permissive \
   > ./logs/quantastream.log 2>&1 &
 
 echo "$!" > ./runtime/quantastream.pid

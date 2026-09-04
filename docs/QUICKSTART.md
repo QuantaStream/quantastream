@@ -41,8 +41,12 @@ consul agent -dev -client=0.0.0.0
 
 ```bash
 cd startup-scripts
-./start-standard.sh
+QUANTASTREAM_AUTH_MODE=permissive ./start-standard.sh
 ```
+
+Permissive authentication is restricted to the loopback listener and is only
+for isolated local development. Use static authentication with configured
+credentials for any shared or networked environment.
 
 This starts:
 

@@ -27,8 +27,21 @@ func TestDistributedProxyConfigDefaults(t *testing.T) {
 	if config.Database != "quanta" {
 		t.Fatalf("database = %q, want quanta", config.Database)
 	}
-	if config.mysqlAuthConfig().SummaryMode(config.Database) != "permissive" {
-		t.Fatalf("auth mode = %q, want permissive", config.mysqlAuthConfig().SummaryMode(config.Database))
+	if config.mysqlAuthConfig().SummaryMode(config.Database) != "" {
+		t.Fatalf("auth mode = %q, want unset", config.mysqlAuthConfig().SummaryMode(config.Database))
+	}
+}
+
+func TestDistributedProxyAuthRequiresExplicitMode(t *testing.T) {
+	if _, err := (distributedProxyConfig{}).mysqlAuthenticator(); err == nil || !strings.Contains(err.Error(), "mysql auth mode is required") {
+		t.Fatalf("mysqlAuthenticator error = %v, want required auth guidance", err)
+	}
+}
+
+func TestDistributedProxyRejectsPermissiveAuthOnNetworkBind(t *testing.T) {
+	config := distributedProxyConfig{BindAddress: "0.0.0.0", AuthMode: "permissive"}
+	if _, err := config.mysqlAuthenticator(); err == nil || !strings.Contains(err.Error(), "requires a loopback bind") {
+		t.Fatalf("mysqlAuthenticator error = %v, want loopback guidance", err)
 	}
 }
 
@@ -41,6 +54,9 @@ func TestDistributedProxySummaryLines(t *testing.T) {
 			NodePort:      4400,
 			SchemaDir:     "tpc-h-benchmark/config",
 			Database:      "quanta",
+			AuthMode:      "static",
+			AuthUser:      "bench",
+			AuthPassword:  "secret",
 		},
 		Tables: []string{"lineitem", "orders"},
 	}
@@ -51,7 +67,7 @@ func TestDistributedProxySummaryLines(t *testing.T) {
 		"node_port=4400",
 		"mysql=0.0.0.0:4000",
 		"schema_dir=tpc-h-benchmark/config",
-		"auth=permissive",
+		"auth=static",
 		"tables=2 [lineitem,orders]",
 	} {
 		if !strings.Contains(output, want) {

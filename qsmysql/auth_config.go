@@ -2,6 +2,7 @@ package qsmysql
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -25,9 +26,6 @@ type AuthConfig struct {
 // WithDefaults returns a normalized auth configuration.
 func (c AuthConfig) WithDefaults(defaultDatabase string) AuthConfig {
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
-	if c.Mode == "" {
-		c.Mode = AuthModePermissive
-	}
 	if strings.TrimSpace(c.Username) == "" {
 		c.Username = defaultAuthUser
 	}
@@ -41,6 +39,8 @@ func (c AuthConfig) WithDefaults(defaultDatabase string) AuthConfig {
 func (c AuthConfig) Authenticator(defaultDatabase string) (Authenticator, error) {
 	c = c.WithDefaults(defaultDatabase)
 	switch c.Mode {
+	case "":
+		return nil, fmt.Errorf("mysql auth mode is required; choose %q for isolated local evaluation or %q with configured credentials", AuthModePermissive, AuthModeStatic)
 	case AuthModePermissive:
 		return PermissiveAuthenticator{DefaultDatabase: c.Database}, nil
 	case AuthModeStatic:
@@ -59,6 +59,24 @@ func (c AuthConfig) Authenticator(defaultDatabase string) (Authenticator, error)
 	default:
 		return nil, fmt.Errorf("unsupported mysql auth mode %q", c.Mode)
 	}
+}
+
+// ValidateModeForBind rejects permissive authentication on a non-loopback
+// MySQL listener. Permissive mode is intentionally limited to explicit local
+// evaluation and must never become an accidentally exposed network endpoint.
+func ValidateModeForBind(mode, bindAddress string) error {
+	if strings.ToLower(strings.TrimSpace(mode)) != AuthModePermissive {
+		return nil
+	}
+	host := strings.Trim(strings.TrimSpace(bindAddress), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("mysql auth mode %q requires a loopback bind; use %q with configured credentials for bind address %q", AuthModePermissive, AuthModeStatic, bindAddress)
+	}
+	return nil
 }
 
 // SummaryMode returns the normalized mode string safe for startup output.

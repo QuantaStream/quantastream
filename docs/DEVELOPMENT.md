@@ -87,7 +87,7 @@ For quick iteration it is also fine to run commands with `go run`.
 The easiest source checkout runtime is the standard single-node process:
 
 ```bash
-./startup-scripts/start-standard.sh
+QUANTASTREAM_AUTH_MODE=permissive ./startup-scripts/start-standard.sh
 ```
 
 By default it starts the MySQL-compatible endpoint on `127.0.0.1:4000` and the
@@ -102,8 +102,13 @@ QUANTASTREAM_MYSQL_PORT=4000 \
 QUANTASTREAM_NATIVE_GRPC_BIND=127.0.0.1 \
 QUANTASTREAM_NATIVE_GRPC_PORT=4100 \
 QUANTASTREAM_DATABASE=quanta \
+QUANTASTREAM_AUTH_MODE=permissive \
 ./startup-scripts/start-standard.sh
 ```
+
+Permissive authentication is an explicit opt-in for loopback-only local
+development. Use static authentication with configured credentials for any
+networked environment.
 
 Verify from another terminal:
 
