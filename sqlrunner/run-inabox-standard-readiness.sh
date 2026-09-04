@@ -119,6 +119,7 @@ run_suite() {
   (
     cd "${repo_root}"
     go run ./cmd/quantastream \
+      -auth-mode permissive \
       -config-dir "${runtime_config}" \
       -data-dir "${runtime_data}" \
       -bind "${HOST}" \
