@@ -1,5 +1,5 @@
 name: Reproducible bug report
-description: Report a QuantaStream 0.1.1 failure with enough evidence to reproduce it.
+description: Report a QuantaStream 0.1.2 failure with enough evidence to reproduce it.
 title: ""
 labels:
   - bug
@@ -22,8 +22,8 @@ body:
     id: version
     attributes:
       label: QuantaStream version or commit
-      description: Use the binary version output or source commit. The current public release is 0.1.1.
-      placeholder: 0.1.1
+      description: Use the binary version output or source commit. The current public release is 0.1.2.
+      placeholder: 0.1.2
     validations:
       required: true
 
@@ -54,7 +54,7 @@ body:
       label: Reproduction steps
       description: Provide the smallest numbered sequence that reproduces the failure.
       placeholder: |
-        1. Download and verify qstream-0.1.1-linux-amd64.tar.gz.
+        1. Download and verify qstream-0.1.2-linux-amd64.tar.gz.
         2. Run ...
         3. Observe ...
     validations:
@@ -92,4 +92,3 @@ body:
           required: true
         - label: I can reproduce this on the version identified above.
           required: true
-

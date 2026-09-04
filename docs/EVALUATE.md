@@ -1,4 +1,4 @@
-# Evaluate QuantaStream 0.1.1
+# Evaluate QuantaStream 0.1.2
 
 QuantaStream is in an early adoption phase. The most useful feedback comes from
 trying one bounded workflow and reporting the exact point where it succeeds,
@@ -55,7 +55,7 @@ passwords and other sensitive values from JDBC URLs and logs.
 ## Report Results
 
 Add a short result to the
-[0.1.1 feedback thread](https://github.com/QuantaStream/quantastream/issues/16).
+[0.1.2 feedback thread](https://github.com/QuantaStream/quantastream/issues/16).
 
 For a reproducible defect, use the repository's structured bug report form. A
 useful report states the attempted outcome, affected version, environment,
