@@ -1,361 +1,237 @@
-# ARCHITECTURE.md
-
 # QuantaStream Architecture Overview
 
-## Overview
+QuantaStream is a bitmap-native analytical database with a MySQL-compatible
+SQL front door. It filters compressed sets, executes BSI and relationship-vector
+operations, and materializes values when needed for expressions and output.
 
-QuantaStream is a distributed bitmap-oriented analytical processing engine optimized for:
+This overview describes the implementation reviewed on 2026-09-06 against
+commit `ebfff0f`. The current product baseline is **single-node**. Distributed
+node services and development harnesses also exist, but their presence does not
+imply validated multi-node recovery, rebalancing, or rolling upgrades.
 
-- high-speed filtering
-- distributed joins
-- analytical aggregation
-- streaming ingestion
+## Process And Deployment Boundaries
 
----
-
-# Major Components
-
-## Data Nodes
-
-QuantaStream data nodes:
-
-- own shards
-- store bitmap and BSI data
-- store backing string data (where applicable)
-- execute bitmap operations
-- participate in distributed query execution
-
-Data nodes are shard-aware and coordinated through Consul.
-
----
-
-## Query Front Door And Processor
-
-The MySQL-compatible query front door and query processor:
-
-- accepts SQL requests
-- performs SQL parsing/planning
-- generates logical query plans
-- coordinates distributed query execution
-
-The current product-facing network surface exposes a MySQL-compatible interface.
-
-### MySQL Wire Adapter Boundary
-
-`qsmysql` owns the MySQL wire-protocol byte model: packet framing, initial
-handshake payloads, and command packet decoding. It deliberately does not own
-SQL planning, bitmap execution, catalog access, authentication policy, or
-result-set production.
-
-`qsruntime` mounts this adapter readiness into the native MySQL front door so
-the protocol surface can mature independently from the SQL engine. This keeps
-`qsbridge` protocol-neutral while still giving QuantaStream a MySQL-compatible
-network path.
-
----
-
-## Logical Query Layer
-
-SQL queries are translated into an intermediate logical query representation before execution.
-
-This layer separates:
-
-- SQL syntax/planning
-from:
-- bitmap execution semantics
-
-### Planning And Per-Table Execution Boundary
-
-QuantaStream nodes should remain deliberately simple. A node-facing execution request
-is expected to describe work for one table at a time: bitmap predicates, BSI
-predicates, dictionary predicates, projection reads, and local aggregate work
-that can be evaluated against that table's shards.
-
-The broader SQL meaning of a query belongs above that boundary. The planner and
-query processor must understand the full query graph before issuing node work:
-
-- table instances and aliases
-- join relationships and join type
-- per-table pushdown fragments
-- residual predicates
-- hidden projection fields required for joins, grouping, ordering, and output
-- driver legality and result assembly strategy
-
-This separation is intentional. The QuantaStream intermediate language should stay
-close to node-executable, per-table physical intent, while the planner owns
-relationship-aware query assembly. The initial engine often discovered too much
-join behavior late in execution; the native planning work should make those
-fragments explicit before the nodes are called.
-
----
-
-## Bitmap Execution Engine
-
-The bitmap execution engine is the core architectural focus of QuantaStream.
-
-Current capabilities include:
-
-- bitmap filtering
-- BSI processing
-- joins
-- aggregate operations
-- top-N analytics
-- distributed shard execution
-
-### Native Kernels And Materialization Boundaries
-
-The new query engine should prefer bitmap and BSI kernels over materialized row
-loops whenever the predicate can be expressed against encoded columnar state.
-Same-row field comparisons are the clearest example. A predicate such as:
-
-```sql
-l_receiptdate > l_commitdate
-```
-
-should eventually execute as:
+`cmd/quantastream` starts one service containing the SQL front door, native
+query runtime, catalog, and local storage adapter. Its current mode flag is
+`inabox-standard`, the compatibility name for the single-node profile.
+The default MySQL address is `127.0.0.1:4000`, with database `quanta`.
 
 ```text
-receiptdate BSI + commitdate BSI -> comparison bitmap -> count/filter
+MySQL clients
+      |
+      v
+quantastream process
+  qsmysql wire formats + qsruntime listener/session handling
+      |
+  qsbridge parsing, planning, and execution contracts
+      |
+  qsruntime execution and materialization kernels
+      |
+  shared local-node contracts -> server BitmapIndex / KVStore
+      |
+  local catalog and persisted bitmap, BSI, dictionary, and backing values
+
+quantastream-loader process
+  HTTP JSON -> selectors -> worker-owned sessions
+      |
+      +-- optional native gRPC endpoint -> quantastream storage services
 ```
 
-rather than:
+The local query-to-storage path uses in-process adapters, without Consul or
+gRPC serialization. A separate loader can use the native node gRPC endpoint,
+enabled explicitly with `-native-grpc-port` (for example, `4100`); it is disabled
+by default. Enabling that endpoint does not create a multi-node cluster.
 
-```text
-hydrate receiptdate values + hydrate commitdate values -> row loop compare
-```
+The distributed shape separates query processors, loaders, and data nodes.
+Nodes own shards and expose bitmap and KV services over gRPC. Consul supplies
+discovery, service registration, cluster coordination, and catalog metadata.
+`cmd/quantastream-proxy` provides the separate native query front door.
 
-The historical `core.Projector.Next` path is useful as a compatibility
-reference, but it is intentionally not the desired center of the native engine.
-It hides
-backend retrievals, transport/serialization costs, and row hydration behavior
-behind a broad materialization API. Native planner and executor work should
-make these boundaries visible:
+| Profile | Query engine and storage boundary |
+| --- | --- |
+| `inabox-standard` | One service with an in-process local node; no Consul requirement. |
+| `inabox-direct` | SQLRunner hosts the engine and accesses a local data-node cluster through Consul and gRPC. |
+| `inabox-local` | A separate MySQL front door accesses local nodes through discovery and gRPC. |
 
-- bitmap/BSI comparison kernels
-- relationship-vector projection kernels
-- late materialization points
-- transport adapter choice
-- residual predicates that truly require hydrated values
+QuantaStream-in-a-Box is not synonymous with the historical local three-node
+harness. See [Deployment](DEPLOYMENT.md) and
+[Deployment Diagrams](DEPLOYMENT_DIAGRAMS.md) for topology and operational limits.
 
-This distinction matters for deployment shape. In distributed mode,
-serialization across the node boundary is an acceptable cost when it preserves
-node isolation and scale-out. In QuantaStream-in-a-Box, the same logical node
-operation should be able to use an in-process adapter that avoids network
-serialization while preserving the planner/executor contract.
+## Package Responsibilities
 
-### Join Driver Legality
+| Package | Responsibility |
+| --- | --- |
+| [`qsbridge`](../qsbridge) | Native parser, planner, catalog/session vocabulary, execution handoff, and engine contracts. Independent of runtime and legacy storage packages. |
+| [`qsexpr`](../qsexpr) | Native expression primitives used by engine and ingestion paths. |
+| [`qsruntime`](../qsruntime) | SQL execution composition, MySQL listener/session behavior, bitmap and relationship execution, result assembly, and narrow storage/session adapters. |
+| [`qsmysql`](../qsmysql) | MySQL packet framing, handshake, command, and result-set wire formats. SQL planning and authentication policy belong above this byte boundary. |
+| [`qsinabox`](../qsinabox) | Single-node configuration, local backend mounting, runtime composition, startup recovery, and optional native node endpoint. |
+| [`server`](../server), [`shared`](../shared), [`grpc`](../grpc) | BitmapIndex and KVStore implementations, local/remote service contracts, clustering support, and network service definitions. |
+| [`core`](../core) | Storage-facing schema, session, mutation, and ingestion machinery reused by native adapters. |
+| [`qsloader`](../qsloader) | HTTP ingestion adapter, selector routing, session-worker orchestration, and ingestion statistics. |
+| [`qstream-admin-lib`](../qstream-admin-lib) | Administrative implementation, including backup, restore, and WAL inspection. |
+| [`sqlrunner`](../sqlrunner) | Executable SQL correctness and compatibility suites. |
 
-Current join projection is driven from the structural child/FK-side table. The
-projector starts from the selected driver table and can translate row IDs
-toward parent tables by following `ParentRelation` BSI links. This makes
-child-to-parent projection and grouping practical for joins such as
-`orders -> customer` and `lineitem -> orders -> customer`.
+The native SQL path is active in the single-node service. Historical qlbridge
+query execution and `core.Projector.Next` are not its materialization path.
+Legacy storage/session dependencies remain behind explicit adapters while
+engine contracts are separated from runtime composition. Architecture tests in
+[`qsbridge`](../qsbridge/architecture_test.go) and
+[`qsruntime`](../qsruntime/architecture_test.go), together with the
+[projector quarantine tests](../qsruntime/legacy_projector_quarantine_test.go),
+enforce these boundaries.
 
-The reverse direction, where a parent table such as `orders` drives expansion
-into child rows such as `lineitem`, is not a general materialization path yet.
-Even if a parent-side predicate produces a smaller candidate set, that table is
-not automatically a legal final driver for the current projector. A future
-optimizer must therefore separate driver legality from driver cost:
+## Planning And Query Execution
 
-- first identify which candidate drivers can produce correct rows for the
-  requested projection, grouping, and aggregate shape
-- then rank only legal candidates using bitmap-derived cost signals such as
-  reduced cardinality, shard participation, and value distribution
-- introduce a separate parent-to-child expansion path before costing parent-side
-  drivers for child-side materialization
+The planner owns the SQL query graph: table instances and aliases, join
+relationships and types, per-table predicates, residual expressions, hidden
+fields needed for grouping and ordering, and result assembly requirements.
+Node-facing work stays close to physical operations on a table's shards:
+bitmap and BSI predicates, dictionary lookups, projection reads, and local
+aggregate work.
 
-This is especially visible in TPC-H Q3/Q5, where `orders` may be smaller after
-date filtering, but `lineitem` remains the legal driver for current join
-materialization.
+The execution flow is:
 
----
+1. Decode the MySQL command and apply session, authentication, and access-policy
+   handling in the front door.
+2. Parse SQL, resolve catalog objects, and plan supported query shapes through
+   `qsbridge`.
+3. Route execution through `qsruntime`, applying per-table bitmap/BSI filters
+   and relationship operations through the selected backend.
+4. Compute aggregates and evaluate residual expressions, reading scalar or
+   string values where the query requires them.
+5. Assemble, order, and limit results as required by the plan, then encode the
+   MySQL response.
 
-## Consul Integration
+Native kernels include bitmap filtering, same-row BSI comparisons,
+relationship-vector traversal, grouping, aggregation, and late materialization.
+For supported encoded fields, a predicate such as
+`l_receiptdate > l_commitdate` can produce a comparison bitmap directly from
+the two BSIs. This is implemented in the single-node
+[same-row comparison adapter](../qsinabox/standard_same_row_comparison.go),
+rather than being solely a future optimization.
 
-Consul is used for:
+Materialization remains explicit: some expressions need hydrated values, and
+some supported SQL shapes use intermediate rowsets. Request-scoped
+[`QueryScratchpad`](../qsruntime/query_scratchpad.go) memoization supports reuse
+within execution. Execution inspection and probes expose kernel and fallback
+choices; SQL support does not mean every shape runs entirely as bitmap algebra.
 
-- node discovery
-- cluster coordination
-- shard metadata
-- service registration
+### Relationship Joins
 
----
+Relationship fields encode child-to-parent links in BSIs. The native
+[relationship execution contracts](../qsbridge/relationship_execution.go)
+describe reduce, expand, semi, anti, and null-extension operations, with
+runtime adapters handling vector reads and materialization. Parent-to-child
+expansion is part of this vocabulary; the old projector-only description is
+no longer an adequate account of join execution.
+
+Driver legality still depends on the requested query shape and executable
+kernel. A smaller filtered table is not automatically a legal or faster
+materialization driver. Projection, grouping, multiplicity, and outer-join
+preservation must remain correct before cost can select among alternatives.
+[Reverse relationship artifacts](../qsruntime/relationship_vector_reverse_artifact.go)
+also have explicitly opt-in experimental modes; their existence is not a
+promise of unrestricted join reordering.
+
+The authoritative SQL contract is [Supported SQL](SUPPORTED_SQL.md), its
+SQLRunner suites, and [SQL Boundaries](UNSUPPORTED_SQL.md).
+
+## Storage And Catalog
+
+Schemas describe physical representation as well as logical type:
+
+- Standard bitmaps represent membership and low-cardinality values.
+- BSIs represent numeric and timestamp values and relationship vectors.
+- StringEnum dictionaries encode categorical strings.
+- Backing value storage supplies high-cardinality strings and other values
+  needed during materialization.
+- Scalar/set multiplicity and time-quantum configuration shape storage and
+  query behavior.
+
+`server.BitmapIndex` and `server.KVStore` provide the node storage services.
+Single-node mounting stages schema configuration into the data directory and
+builds local sessions over `shared.Conn.LocalNodeServices`. Distributed
+adapters use the corresponding discovery and transport boundary. Catalog and
+dictionary changes require metadata invalidation so subsequent planning and
+materialization observe updated definitions and encodings.
+
+See [Schema Design](SCHEMA_DESIGN.md) and the
+[Schema Configuration Reference](../configuration/SCHEMA_CONFIG_REFERENCE.md).
 
 ## Ingestion
 
-QuantaStream supports:
+SQL writes, bulk loaders, and streaming adapters feed database-managed bitmap,
+BSI, dictionary, and backing-value state. Streaming accumulates the database's
+known state; it is not intrinsically a collection of independent time windows.
+Schema time fields can still determine physical partitioning and query ranges.
 
-- streaming ingestion
-- SQL INSERT
-- bulk loading
-- Parquet export/import workflows
+`cmd/quantastream-loader` is a separate process. Its HTTP JSON adapter produces
+normalized `IngestEnvelope` records, evaluates schema selectors, and routes
+accepted records through `core.SessionRouter` to engine sessions. Native
+[selector evaluation](../core/ingest_selector.go) uses `qsexpr` and does not
+require the historical qlbridge expression VM.
 
-Current ingestion work is focused on:
+Router workers own their sessions. Sessions are not safe for concurrent use:
+parallel ingestion uses multiple sessions and rendezvous hashing of loader
+shard keys to preserve affinity. Loader routing is distinct from upstream
+stream partition ownership and from distributed storage-node placement.
+Optional physical build routing adds time-quantum-aware routing for eligible
+source shapes.
 
-- simplified local workflows
-- TPC-H loading
-- streaming demonstrations
+| Endpoint | Role |
+| --- | --- |
+| `POST /ingest/json` | Accept and enqueue JSON records. Acceptance is not a durable commit. |
+| `POST /flush` | Flush through worker queues after records already ahead of the flush markers. |
+| `POST /commit` | Flush, then request a backend storage savepoint. |
+| `GET /healthz` | Loader readiness. |
+| `GET /stats` | Queue, session, processing, flush, commit, and runtime counters. |
 
-### Batch And Stream Ingestion Model
+The loader supports `standard-native` connections to the optional single-node
+gRPC endpoint and `distributed` connections through Consul. Orderly shutdown
+commits by default. Batch replay can use the same ingestion interface;
+`tpc-h-benchmark/tpch-stream-producer` supplies a development workload, with
+normal foreign-key prerequisites still applying.
 
-QuantaStream is intended to support both complete batch-style data sets and
-near-real-time streams through the same storage and query model.
+See [Streaming Loader Configuration](../configuration/STREAMING_LOADER.md) for
+payloads, connection settings, routing, and flush/commit semantics.
 
-For workloads such as TPC-H, the data set may be presented in whole and loaded
-as a bounded batch. For streaming workloads, data arrives continuously. In both
-cases, QuantaStream stores incoming records in database-managed bitmap and BSI
-structures that represent the current known state of the data set.
+## Durability And Operations
 
-The system intentionally does not model streaming ingestion as independent time
-windows that lose knowledge of the complete current data set. Time can be part
-of the schema and query model, but the storage engine is still maintaining a
-database view of accumulated state.
+Single-node data is persisted locally. The optional write-ahead log is enabled
+with `-wal-path` or `QUANTASTREAM_WAL_PATH`; an empty path disables it. Its
+mutation-intent and commit records, checkpoint handling, and startup replay
+form a separate recovery layer over storage persistence.
 
-### Selector-Based Stream Routing
+[`MountStandardProcess`](../qsinabox/standard_process.go) enables WAL recovery
+before composing the ready front door. Committed replay records are applied;
+pending uncommitted tail records are not. Recovery handles a final torn frame,
+while complete corrupt frames fail validation. These mechanisms do not provide
+full MySQL rollback or MVCC transaction semantics.
 
-Schemas may define selector expressions that identify which table shape an
-incoming record belongs to. This is a durable ingestion concept and should not
-depend on the historical `qlbridge` expression VM.
+Administrative tooling includes WAL inspection, backup/restore, and support
+bundles. Quiesced backup uses a local write barrier while taking a filesystem
+snapshot. These are single-node operational mechanisms, not distributed
+consensus or automatic failover.
 
-The future selector engine should provide a small, deterministic expression
-surface for decoded payloads:
+The front door requires an explicit authentication mode: permissive evaluation
+or configured static accounts. Optional access-policy files control SQL access.
+See [Authentication And Access](../configuration/AUTH_ACCESS.md) and
+[Deployment](DEPLOYMENT.md) for operational details and remaining limits.
 
-- evaluate schema selectors against incoming records
-- choose the target table and ingestion session
-- preserve parent/child context for nested payloads
-- route heterogeneous streams without embedding SQL planner dependencies in the
-  ingestion path
+## Validation And Further Reading
 
-Selector evaluation can share expression primitives with the SQL engine where
-that is useful, but it should remain an ingestion-facing contract. Its purpose
-is dispatch and shape recognition, not query planning.
+Architecture and unit tests guard package boundaries and kernel behavior.
+SQLRunner supplies executable correctness and client-compatibility coverage;
+TPC-H suites validate analytical query shapes and benchmark methodology.
+Repository CI runs `go test ./...` and the single-node readiness suites.
 
-### Batch Data As Stream Replay
+- [Getting Started](GETTING_STARTED.md): binary evaluation workflow.
+- [Quickstart](QUICKSTART.md): source-checkout workflow.
+- [MySQL Compatibility](MYSQL-COMPATIBILITY.md): client/protocol coverage.
+- [TPC-H](TPCH.md): analytical validation.
+- [Glossary](GLOSSARY.md): deployment and engine terminology.
 
-Batch data sets can also be replayed through the streaming ingestion contract.
-This gives QuantaStream a deterministic way to test streaming ingestion without
-depending on live external feeds.
-
-TPC-H is a useful candidate for this mode because the same source data can
-validate both batch loading and stream replay. Replay modes can include:
-
-- table-by-table replay
-- parent/child relationship replay
-- time-ordered replay by configured time fields
-- rate-limited replay for throughput testing
-- deterministic seeded replay for CI and development
-
-The expected end state is that batch loaders and streaming adapters converge on
-the same schema selection, session routing, dictionary update, and mutation
-writer contracts.
-
-### Streaming Loader Endpoint
-
-`cmd/quantastream-loader` is the first standalone streaming loader process. It
-listens for JSON events over HTTP, normalizes them into `IngestEnvelope`
-records, evaluates table selectors, and routes accepted records through
-`SessionRouter` to the native engine mutation lane.
-
-The initial protocol surface is:
-
-```text
-POST /ingest/json
-GET  /healthz
-```
-
-JSON is the first adapter, not the loader architecture. Additional protocol
-adapters should plug into the same normalized envelope boundary.
-
-For `inabox-standard`, the loader connects to the native gRPC endpoint exposed
-by a separately running `cmd/quantastream` process:
-
-```bash
-go run ./cmd/quantastream-loader \
-  -config-dir tpc-h-benchmark/config \
-  -native-grpc-addr 127.0.0.1:4100 \
-  -listen 127.0.0.1:8088 \
-  -tables orders,lineitem
-```
-
-`tpc-h-benchmark/tpch-stream-producer` is the first driver for this endpoint. It
-generates TPC-H-shaped `orders` and `lineitem` JSON events and posts them to the
-loader. Against the full TPC-H schema, dimension and parent tables such as
-`customer`, `part`, and `supplier` must already be loaded because normal FK
-rules still apply. See `../configuration/STREAMING_LOADER.md` for user-facing
-setup and payload details.
-
-### Streaming Loader Routing
-
-Streaming consumers use schema selectors to determine which QuantaStream table a
-record belongs to. A selector lets one incoming stream contain multiple record
-shapes or logical table types while still routing each record to the correct
-table schema before mutation.
-
-After table selection, the loader uses its configured shard key and rendezvous
-hashing to route the record to an internal shard channel. This routing is
-independent of upstream stream partition ownership. The purpose is to fan
-records out across QuantaStream session workers while preserving affinity for like
-data.
-
-That affinity is important because records with the same loader shard key should
-flow through the same session and connection objects. This keeps ingestion
-ordering and any session-local state predictable, and avoids sharing a single
-session across concurrent workers.
-
-### Session Concurrency Contract
-
-QuantaStream session objects are intentionally not thread-safe. A session should be
-owned by one worker/goroutine at a time, or protected externally by an owning
-queue/channel. Components that need ingestion parallelism should create or
-reuse multiple sessions and route records to them deterministically rather than
-calling one session concurrently from multiple goroutines.
-
----
-
-# Query Flow
-
-```text
-SQL
-  ↓
-SQL parser/planner
-  ↓
-Logical query representation
-  ↓
-Distributed bitmap execution
-  ↓
-Shard/node aggregation
-  ↓
-Result assembly
-```
-
----
-
-# QuantaStream-in-a-Box
-
-QuantaStream-in-a-Box (QIAB) provides:
-
-- local 3-node cluster startup
-- local MySQL-compatible front-door startup
-- integration test environment
-- reproducible development workflows
-
-The current implementation uses:
-
-- startup-scripts/start-local.sh
-- Ensure_Cluster
-- in-process node startup
-
-QIAB is the preferred development and conformance environment. It is not the
-intended limit of production topology. Containerized and multi-host deployment
-requirements are documented in [`DEPLOYMENT.md`](DEPLOYMENT.md).
-
----
-
-# Current Architectural Priorities
-
-- startup simplification
-- query correctness stabilization
-- TPC-H analytical validation
-- streaming demo workflows
-- SQL support expansion
-- ingestion cleanup
+Forward work is tracked in [GitHub Issues](https://github.com/QuantaStream/quantastream/issues).
+This overview describes implemented boundaries and their limits rather than a
+release checklist or a duplicate roadmap.
