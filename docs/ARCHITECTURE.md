@@ -72,8 +72,7 @@ harness. See [Deployment](DEPLOYMENT.md) and
 | [`qstream-admin-lib`](../qstream-admin-lib) | Administrative implementation, including backup, restore, and WAL inspection. |
 | [`sqlrunner`](../sqlrunner) | Executable SQL correctness and compatibility suites. |
 
-The native SQL path is active in the single-node service. Historical qlbridge
-query execution and `core.Projector.Next` are not its materialization path.
+The single-node service uses native SQL execution and materialization kernels.
 Legacy storage/session dependencies remain behind explicit adapters while
 engine contracts are separated from runtime composition. Architecture tests in
 [`qsbridge`](../qsbridge/architecture_test.go) and
