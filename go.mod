@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/Jeffail/tunny v0.0.0-20190930221602-f13eb662a36a
-	github.com/RoaringBitmap/roaring/v2 v2.25.0
+	github.com/RoaringBitmap/roaring/v2 v2.29.0
 	github.com/akrylysov/pogreb v0.9.1
 	github.com/alecthomas/kong v0.2.17
 	github.com/araddon/dateparse v0.0.0-20210207001429-0eec95c9db7e
@@ -70,7 +70,7 @@ require (
 	github.com/steakknife/hamming v0.0.0-20180906055917-c99c65617cd3 // indirect
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8 // indirect
 	golang.org/x/net v0.34.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
