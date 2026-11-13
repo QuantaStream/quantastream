@@ -244,12 +244,6 @@ Use loader tests and small local runs before scaling to AWS. For performance
 work, keep the target table schema, shard key, worker count, batch size, data
 set, and row count in the notes or benchmark artifact.
 
-The design and measurement sequence for the next ingestion-performance effort
-is documented in
-[`INGESTION_THROUGHPUT_PLAN.md`](INGESTION_THROUGHPUT_PLAN.md). It is
-transport-neutral: external brokers are optional adapters, not core ingestion
-dependencies.
-
 ## TPC-H And Benchmarks
 
 TPC-H is the analytical validation and benchmark lane, not the only source of
